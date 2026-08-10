@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: creating a saved view didn't verify the project, though listing them did
+
+Low severity, stated precisely: `SavedView.project_id` is read only to filter the list and
+to unset sibling defaults, so the row grants no data access. This is write-side
+pollution, **not** a disclosure.
+
+What made it worth fixing is the asymmetry. When the read path on this router was guarded,
+the write path was left alone — so on the live deployment a zero-membership VIEWER could:
+
+```
+POST /api/v1/saved-views {"project_id": "<theirs>", ...}   -> 201
+GET  /api/v1/saved-views?project_id=<theirs>               -> 403
+```
+
+Create it, then be forbidden from reading it back. A guard on one half of a resource and
+not the other becomes a real finding the moment someone consumes the field — the digests
+router already carries a note saying exactly that about `saved_view_id`.
+
+Found by extending the authorization sweep to **non-GET** methods, which the earlier pass
+had not covered even though two of its findings (digest subscriptions, chat sessions) were
+POST-body leaks. Of 23 non-GET endpoints taking a `project_id`, this was the only gap;
+the rest carry `require_role`, `require_project_access` or `resolve_project_scope`.
+
 ### 2026-08-10 — Fix: a failing test was hidden by a later same-named passing one
 
 Persistence is keyed on `(test_run_id, test_fingerprint)` and `_upsert_test_case` does a

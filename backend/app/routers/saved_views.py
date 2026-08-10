@@ -55,6 +55,17 @@ async def create_saved_view(
     current_user: User = Depends(get_current_active_user),
 ):
     """Create a new saved view."""
+    # F-046 (low): the GET on this router verifies project access; this POST
+    # did not, so a non-member could create a view bound to another tenant's
+    # project and then get a 403 reading it back. No disclosure — SavedView's
+    # project_id is only used to filter the list and to unset sibling defaults,
+    # so the row grants nothing. It is a write-side asymmetry introduced when
+    # the read path alone was guarded, and it is fixed here so the pair agrees.
+    if payload.project_id:
+        from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+        await resolve_project_scope(db, current_user, str(payload.project_id))
+
     view = SavedView(
         user_id=current_user.id,
         project_id=payload.project_id,
