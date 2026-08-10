@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: the runs list returned runs from deleted projects
+
+`DELETE /projects/{id}` is a **soft** delete — it flips `is_active` to False. `my_failures`
+already carries a helper for this whose docstring names the problem exactly:
+
+> `DELETE /projects/{id}` is a SOFT delete — it flips `is_active` to False. **Only the
+> project LIST honours that flag**, so a deleted project's failures kept appearing in the
+> assignment inbox: actionable work items for a project the user cannot open, filter by,
+> or navigate to, and which is gone from every project picker.
+
+That was fixed for the assignment inbox alone. `GET /api/v1/runs` had the identical defect
+— the same shape as the authorization sweep, where a guard was corrected in one router
+while identical copies survived elsewhere.
+
+Measured on the live deployment: **43 deleted projects holding 1,422 runs** against 2 live
+ones holding 67. The project picker showed 2 projects; the unscoped runs list returned rows
+from 13. (Many of those 43 were throwaway projects created during exploration, so that
+ratio is deployment-specific — but one deleted project is enough to put unreachable runs
+in the list, and every window metric derived from runs counted them.)
+
+The exclusion goes in the **shared** `filters` list, reused by both the row query and the
+count query. A count that includes rows the list excludes is the next bug along —
+`/analytics/defects` already shipped exactly that (`items: []` with `total: 5`).
+
+**BEHAVIOUR CHANGE:** runs belonging to archived projects no longer appear in `/api/v1/runs`
+or in metrics derived from it. Retention purge is unaffected — it addresses projects by
+explicit id.
+
+An existing IDOR regression test asserted "no `IN (`" on the admin path to mean "no
+membership constraint". The activity exclusion is also an `IN`, so that assertion was
+tightened to name the membership form specifically rather than conflating the two.
+
 ### 2026-08-10 — Fix: an MCP tool called a route that does not exist
 
 `list_digest_subscriptions` called `GET /api/v1/digests`. The digests router mounts

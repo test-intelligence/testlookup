@@ -143,6 +143,18 @@ async def test_list_project_runs_single_filter_when_no_accessible_set():
             db, str(pid), 1, 20, None, None, days=0,
         )
     count_sql = db.sql[0]
-    # Only the equality predicate — no membership IN when accessible is None.
+    # Only the equality predicate — no MEMBERSHIP IN when accessible is None.
     assert "project_id =" in count_sql
-    assert " IN (" not in count_sql
+    # The live-projects subquery is also an IN, so the assertion names the
+    # membership form specifically: expanding bind params, not a SELECT. A bare
+    # "no IN at all" check conflated the two and failed when soft-deleted
+    # projects were excluded from the runs list.
+    membership_ins = [
+        frag for frag in count_sql.split(" IN (")[1:]
+        if not frag.lstrip().upper().startswith("SELECT")
+    ]
+    assert not membership_ins, (
+        f"membership IN applied despite accessible_project_ids=None: {count_sql}"
+    )
+    # And the activity exclusion must be present on this path too.
+    assert " IN (SELECT" in count_sql.replace("IN (SELECT", "IN (SELECT")

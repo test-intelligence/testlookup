@@ -215,6 +215,22 @@ async def list_project_runs(
         DISTINCT.
     """
     filters = []
+    # DELETE /projects/{id} is a SOFT delete — it flips is_active to False, and
+    # only the project LIST honoured that flag. Runs from deleted projects kept
+    # appearing here: rows for a project the user cannot open, filter by, or
+    # navigate to, and which is gone from every picker. Measured live at 1422
+    # runs across 43 deleted projects against 67 in the 2 live ones.
+    #
+    # my_failures already carries the same exclusion (_live_projects_only); this
+    # is the identical defect one endpoint over.
+    #
+    # It goes in the SHARED filters list deliberately: `filters` is reused by
+    # both the row query and the count query, and a count that includes rows the
+    # list excludes is the next bug along (see F-038, /analytics/defects
+    # returning items: [] with total: 5).
+    filters.append(
+        TestRun.project_id.in_(select(Project.id).where(Project.is_active.is_(True)))
+    )
     if days and days > 0:
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         filters.append(TestRun.created_at >= cutoff)
