@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
+import { useProjectStore } from '@/store/projectStore'
 import { zip as zipAsync, zipSync } from 'fflate'
 import toast from 'react-hot-toast'
 import {
@@ -23,8 +24,12 @@ import {
 } from '@/services/reportUploadService'
 
 interface UploadReportModalProps {
-  /** Project the run will be ingested into (a concrete UUID, never "all"). */
-  projectId: string
+  /** Project the run will be ingested into, when one is already active.
+   *  ``null`` when the app scope is All Projects — the modal then asks for
+   *  the project itself rather than refusing to open. A report must land in
+   *  exactly one project, but that is a question to ask, not a reason to
+   *  send the user away from the thing they just clicked. */
+  projectId: string | null
   onClose: () => void
   /** Called with the new run_id once the upload is accepted (202). */
   onSuccess: (runId: string) => void
@@ -69,6 +74,14 @@ export default function UploadReportModal({
   onClose,
   onSuccess,
 }: UploadReportModalProps) {
+  // When the caller has no concrete project (All Projects scope), pick one
+  // here. Sourced from the same store that backs the header selector, so the
+  // options match what the user already knows.
+  const projects = useProjectStore((s) => s.projects)
+  const [chosenProjectId, setChosenProjectId] = useState<string>(projectId ?? '')
+  const effectiveProjectId = projectId ?? chosenProjectId
+  const needsProjectChoice = !projectId
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [files, setFiles] = useState<File[]>([])
   const [format, setFormat] = useState<ReportFormat>('auto')
@@ -192,7 +205,7 @@ export default function UploadReportModal({
   )
 
   const handleSubmit = useCallback(async () => {
-    if (!files.length || busy) return
+    if (!files.length || busy || !effectiveProjectId) return
     setPhase('uploading')
     setProgress(0)
     setErrorMsg('')
@@ -221,7 +234,7 @@ export default function UploadReportModal({
         return
       }
       const res = await reportUploadService.upload({
-        projectId,
+        projectId: effectiveProjectId,
         file: upload,
         buildNumber,
         format,
@@ -249,7 +262,7 @@ export default function UploadReportModal({
       )
       setPhase('error')
     }
-  }, [files, busy, projectId, buildNumber, format, branch, commitHash, releaseName, runAi])
+  }, [files, busy, effectiveProjectId, buildNumber, format, branch, commitHash, releaseName, runAi])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm">
@@ -370,6 +383,33 @@ export default function UploadReportModal({
                   </>
                 )}
               </div>
+
+              {/* Project — only when the app scope is All Projects. A report
+                  lands in exactly one project, so ask here instead of sending
+                  the user back to the header selector. */}
+              {needsProjectChoice && (
+                <div>
+                  <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+                    Project <span className="text-[var(--status-failed)]">*</span>
+                  </label>
+                  <select
+                    value={chosenProjectId}
+                    disabled={busy}
+                    onChange={(e) => setChosenProjectId(e.target.value)}
+                    className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] border border-[var(--color-border)] rounded px-3 py-2 text-sm"
+                  >
+                    <option value="">Select a project…</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                  {!chosenProjectId && (
+                    <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                      Choose which project this report belongs to.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Format */}
               <div>
@@ -494,7 +534,7 @@ export default function UploadReportModal({
               </button>
               <button
                 onClick={handleSubmit}
-                disabled={!files.length || busy}
+                disabled={!files.length || busy || !effectiveProjectId}
                 className="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium text-white bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {busy && <Loader2 className="h-4 w-4 animate-spin" />}

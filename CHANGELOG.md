@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: "Upload Report" now actually uploads, under any scope
+
+Reported twice. The first time the sidebar link was a silent no-op. The fix for that
+rendered an explanation — *"choose a project to upload into"* — and was reported again,
+correctly: **a user who clicks "Upload Report" wants to upload**, and being told to go
+and change a header selector first is still a dead end.
+
+That fix addressed the *silence*, not the *goal*. Worse, the probe suite passed
+throughout, because it asserted the behaviour that had been decided rather than the one
+that was asked for.
+
+The upload panel now opens under **any** scope and asks for the project itself, with a
+required picker sourced from the same store that backs the header selector. Scope is a
+question, not a refusal.
+
+Role remains a genuine block: `POST /api/v1/ingest/file` rejects a non-QA-Engineer with
+403, so opening the panel would only defer the failure to submit time. That distinction —
+a precondition the UI can satisfy versus one it cannot — is now what the tests pin.
+
+Verified end-to-end on the live deployment: from All Projects, the deep link opens the
+panel, the in-modal picker selects a project, and the upload completes
+(`202` → *"Processed 4 tests · 2 passed · 1 failed · 1 skipped"*).
+
 ### 2026-08-10 — Fix: creating a saved view didn't verify the project, though listing them did
 
 Low severity, stated precisely: `SavedView.project_id` is read only to filter the list and

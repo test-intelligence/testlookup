@@ -268,23 +268,20 @@ function findLatestFailed(runs: TestRun[]): TestRun | null {
 
 /** Why an ``?upload=1`` deep link could not open the upload panel.
  *
- *  The sidebar's "Upload Report" entry links to ``/runs?upload=1``. When a
- *  precondition failed, the page rendered the ordinary runs list and said
- *  nothing — the only explanation lived in a disabled button's `title`, which
- *  a user arriving from that click never hovers. Returning an explicit reason
- *  forces the page to account for the request instead of dropping it.
+ *  Originally this also reported a 'scope' reason: the panel refused to open
+ *  under All Projects, and the page explained why. That explanation was not
+ *  the fix it looked like — a user who clicks "Upload Report" wants to upload,
+ *  and being told to go and change a selector first is still a dead end. The
+ *  modal now asks for the project itself, so scope no longer blocks anything.
  *
- *  Scope is reported ahead of role because it is the one the user can fix
- *  themselves, and it is the far more common case: All Projects is the
- *  default scope, so the plain deep link hits it every time. */
+ *  Role remains a genuine block: the backend rejects the upload with 403, so
+ *  opening the panel would only lead to a failure at submit time. */
 export function resolveUploadBlockedReason(input: {
   /** ``?upload=1`` present *and* the manual_upload flag on. */
   uploadRequested: boolean
-  isAllProjects: boolean
   isQaEngineer: boolean
-}): 'scope' | 'role' | null {
+}): 'role' | null {
   if (!input.uploadRequested) return null
-  if (input.isAllProjects) return 'scope'
   if (!input.isQaEngineer) return 'role'
   return null
 }
@@ -1726,7 +1723,7 @@ export default function RunsPage() {
   // render via the previous-value pattern instead of a setState-in-effect so a
   // transition false→true opens once, and re-navigating after a close re-opens.
   const uploadRequested = searchParams.get('upload') === '1' && uploadEnabled
-  const shouldAutoOpenUpload = uploadRequested && !isAllProjects && isQaEngineer
+  const shouldAutoOpenUpload = uploadRequested && isQaEngineer
   // Why the deep link could not honour the request. The reason has to be
   // *rendered*: it previously lived only in the disabled button's `title`, so
   // arriving from the sidebar's "Upload Report" entry showed an unchanged runs
@@ -1734,7 +1731,6 @@ export default function RunsPage() {
   // so resolving the reason opens the panel via the transition below.
   const uploadBlockedReason = resolveUploadBlockedReason({
     uploadRequested,
-    isAllProjects,
     isQaEngineer,
   })
   const [prevShouldAutoOpenUpload, setPrevShouldAutoOpenUpload] = useState(false)
@@ -2082,13 +2078,11 @@ export default function RunsPage() {
           {uploadEnabled && (
             <GhostBtn
               onClick={() => setUploadOpen(true)}
-              disabled={!isQaEngineer || isAllProjects}
+              disabled={!isQaEngineer}
               title={
                 !isQaEngineer
                   ? 'QA Engineer role required'
-                  : isAllProjects
-                    ? 'Select a single project to upload a report into'
-                    : 'Upload a JUnit / TestNG / Allure / Playwright / Cypress report file'
+                  : 'Upload a JUnit / TestNG / Allure / Playwright / Cypress report file'
               }
             >
               <Upload className="h-3.5 w-3.5" />
@@ -2136,7 +2130,7 @@ export default function RunsPage() {
         </div>
       </header>
 
-      {uploadBlockedReason && (
+      {uploadBlockedReason === 'role' && (
         <div
           className="flex items-start gap-2 rounded px-3 py-2.5 text-sm"
           style={{
@@ -2146,24 +2140,11 @@ export default function RunsPage() {
         >
           <Upload className="h-4 w-4 mt-0.5 shrink-0" style={{ color: 'var(--color-accent)' }} />
           <span className="text-[var(--color-text)]">
-            {uploadBlockedReason === 'scope' ? (
-              <>
-                <span className="font-medium">Choose a project to upload into.</span>{' '}
-                <span className="text-[var(--color-text-muted)]">
-                  A report is ingested into one project, so uploading is unavailable while the
-                  scope is All&nbsp;Projects. Pick a project above and the upload panel opens
-                  automatically.
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="font-medium">QA Engineer role required to upload reports.</span>{' '}
-                <span className="text-[var(--color-text-muted)]">
-                  Ask an admin to grant the role, or ingest results through the CLI or SDK with an
-                  API key that has it.
-                </span>
-              </>
-            )}
+            <span className="font-medium">QA Engineer role required to upload reports.</span>{' '}
+            <span className="text-[var(--color-text-muted)]">
+              Ask an admin to grant the role, or ingest results through the CLI or SDK with an
+              API key that has it.
+            </span>
           </span>
         </div>
       )}
@@ -2300,9 +2281,9 @@ export default function RunsPage() {
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
 
-      {uploadOpen && uploadEnabled && isQaEngineer && !isAllProjects && activeProjectId && (
+      {uploadOpen && uploadEnabled && isQaEngineer && (
         <UploadReportModal
-          projectId={activeProjectId}
+          projectId={isAllProjects ? null : activeProjectId}
           onClose={closeUpload}
           onSuccess={(runId) => {
             closeUpload()
