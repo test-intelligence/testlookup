@@ -40,8 +40,15 @@ from app.services import metrics_service  # noqa: E402
 
 pytestmark = pytest.mark.regression
 
-#: Functions in this module that aggregate over ``test_runs`` across projects.
-AGGREGATORS = ("get_trend_data", "_period_stats")
+#: Functions in this module that aggregate across projects. Not only
+#: ``test_runs`` sums — the defect counters were the sixth surface in this
+#: family precisely because the first version of this guard looked for
+#: ``SUM(tr.*_tests)`` and a ``COUNT(defects.id)`` does not match that shape.
+AGGREGATORS = (
+    "get_trend_data",
+    "_period_stats",
+    "count_open_critical_defects",
+)
 
 
 @pytest.mark.parametrize("fn_name", AGGREGATORS)
@@ -79,12 +86,22 @@ def test_a_scoped_call_still_pins_its_project(fn_name: str):
     assert "project_id" in src
 
 
-def test_no_run_aggregating_function_was_missed():
+def test_no_cross_project_aggregate_was_missed():
     """The whole point: this family recurred because siblings went unswept.
 
-    Any function in the module that sums ``test_runs`` columns must appear in
-    AGGREGATORS, so adding a sixth one fails here until it is covered.
+    The first version of this scan looked only for ``SUM(tr.*_tests)``. The
+    defect counters — ``COUNT(defects.id)`` — did not match, and shipped the
+    same bug: the Overview KPI read 4 active defects (all on soft-deleted
+    projects) while the Defects page read 0.
+
+    So the scan now covers any function aggregating **either** table.
     """
+    patterns = (
+        r"SUM\(tr\.\w+_tests\)",
+        r"func\.sum\(TestRun\.\w+_tests\)",
+        r"func\.count\(Defect\.\w+\)",
+        r"func\.count\(TestRun\.\w+\)",
+    )
     missed = []
     for name, obj in vars(metrics_service).items():
         if name in AGGREGATORS or not callable(obj):
@@ -95,12 +112,18 @@ def test_no_run_aggregating_function_was_missed():
             continue
         if getattr(obj, "__module__", "") != metrics_service.__name__:
             continue
-        aggregates = re.search(r"SUM\(tr\.\w+_tests\)", src) or re.search(
-            r"func\.sum\(TestRun\.\w+_tests\)", src
-        )
-        if aggregates and "is_active" not in src:
+        if any(re.search(p, src) for p in patterns) and "is_active" not in src:
             missed.append(name)
     assert not missed, (
-        f"these functions aggregate test_runs without excluding deleted "
-        f"projects, and are not covered by AGGREGATORS: {missed}"
+        f"these functions aggregate across projects without excluding "
+        f"soft-deleted ones, and are not covered by AGGREGATORS: {missed}"
+    )
+
+
+def test_the_defect_counters_exclude_deleted_projects():
+    """The measured case: KPI 4, Defects page 0, all four on deleted projects."""
+    src = inspect.getsource(metrics_service.get_dashboard_summary)
+    assert "Project.is_active" in src, (
+        "the Overview active-defects KPI counts defects on soft-deleted "
+        "projects — measured live at 4 where the Defects page showed 0"
     )

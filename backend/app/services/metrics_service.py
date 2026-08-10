@@ -29,7 +29,14 @@ async def count_open_critical_defects(db: AsyncSession, project_id) -> int:
     (metrics readiness + release-council synth/deep) each matched nothing or
     the wrong severity, silently defeating the ``max_p0_defects`` cap.
     """
-    conds = [Defect.resolution_status == "OPEN", Defect.severity == P0_DEFECT_SEVERITY]
+    conds = [
+        Defect.resolution_status == "OPEN",
+        Defect.severity == P0_DEFECT_SEVERITY,
+        # Soft-deleted projects are excluded unconditionally. This feeds the
+        # ``max_p0_defects`` hard cap, so without it a P0 on a project nobody
+        # can open could block a release gate on a project that is live.
+        Defect.project_id.in_(select(Project.id).where(Project.is_active.is_(True))),
+    ]
     if project_id:
         conds.append(Defect.project_id == project_id)
     result = await db.execute(select(func.count(Defect.id)).where(*conds))
@@ -128,7 +135,22 @@ async def get_dashboard_summary(
     total_exec_trend = trend(total_executions, prev["total_executions"])
 
     # Active defects (all open, not time-bounded)
-    defect_conditions = [Defect.resolution_status == "OPEN"]
+    #
+    # The live-project restriction is unconditional; the pin is added on top.
+    # Previously the project filter existed only when one was named, so the
+    # unscoped Overview KPI counted defects on soft-deleted projects. Measured
+    # live: the KPI read **4** while the Defects page — which routes through
+    # ``_tenant_filter`` and was fixed earlier — read **0**, because all four
+    # OPEN defects belong to two deleted probe projects. Clicking the KPI
+    # landed the user on an empty list.
+    #
+    # Sixth surface in this family, and the one the F-066 guard could not have
+    # caught: that test scans for functions summing ``test_runs`` columns, and
+    # this counts the ``defects`` table.
+    defect_conditions = [
+        Defect.resolution_status == "OPEN",
+        Defect.project_id.in_(select(Project.id).where(Project.is_active.is_(True))),
+    ]
     if project_id:
         defect_conditions.append(Defect.project_id == project_id)
     defect_stmt = select(func.count(Defect.id))

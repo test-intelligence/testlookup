@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: the Overview defect KPI counted soft-deleted projects
+
+`get_dashboard_summary`'s active-defects query, and `count_open_critical_defects`, both applied
+their project filter only `if project_id:`. Unscoped, they counted every project. Measured live:
+
+| surface | value |
+|---|---|
+| Overview KPI (`metrics/summary.active_defects`) | **4** |
+| Defects page (`analytics/defects`, fixed earlier) | **0** |
+| DB, live projects | **0** |
+| DB, soft-deleted projects | 4 OPEN |
+
+So the KPI advertised four active defects and clicking through landed on an empty list — all four
+belong to two deleted probe projects.
+
+`count_open_critical_defects` feeds the release-gate `max_p0_defects` hard cap, so a P0 on a
+project nobody can open could block a release on a project that is live.
+
+**Sixth surface in this family, and the one the previous guard could not catch**: the F-066 test
+scans for functions summing `test_runs` columns, and a `COUNT(defects.id)` does not match that
+shape. The scan now covers defect and run counts as well as run sums.
+
 ### 2026-08-10 — Docs: the summary report's pass rate does not match the Overview headline
 
 `summary_report_service` documented `weighted_pass_rate_pct` as *"matches the /overview headline so
