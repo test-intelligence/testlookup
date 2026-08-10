@@ -41,6 +41,7 @@ from app.models.postgres import (
     DefectCandidate,
     FailureCluster,
     FlakyCoachResult,
+    Project,
     ReleaseDecision,
     RunIntelligenceSnapshot,
     TestRun,
@@ -633,6 +634,45 @@ def get_methodology() -> dict:
 # ── Legacy operational counters (pre-US-12.1 consumers) ─────────────────────
 
 
+def _live_project_ids():
+    """Subquery of the projects that still exist.
+
+    ``DELETE /projects/{id}`` is a soft delete, so a deleted project's rows
+    stay queryable. Every count below was guarded by ``if project_id:`` alone,
+    which is the shape that made the dashboard over-count (#538) and the
+    analytics helper leak (#539): unscoped, nothing restricted them.
+
+    Measured on the live deployment, ``flaky_tests_identified`` returned 3
+    unscoped — 2 from the live project and 1 from a soft-deleted one. The ROI
+    page renders that as "FLAKY TESTS FOUND 3". An ROI figure gets quoted, so
+    counting projects nobody can open overstates the product's own value.
+    """
+    return select(Project.id).where(Project.is_active.is_(True))
+
+
+def _scope_via_run(stmt, on_clause, project_id):
+    """Restrict a run-linked count to live projects, pinning one when given.
+
+    The join is now unconditional. It was previously applied only on the
+    scoped path, which is precisely why the unscoped path counted everything;
+    joining on a foreign key to a single row does not multiply the count.
+    """
+    stmt = stmt.join(TestRun, on_clause).where(
+        TestRun.project_id.in_(_live_project_ids())
+    )
+    if project_id:
+        stmt = stmt.where(TestRun.project_id == project_id)
+    return stmt
+
+
+def _scope_direct(stmt, column, project_id):
+    """Same, for tables carrying ``project_id`` themselves."""
+    stmt = stmt.where(column.in_(_live_project_ids()))
+    if project_id:
+        stmt = stmt.where(column == project_id)
+    return stmt
+
+
 async def get_value_metrics(
     db: AsyncSession,
     project_id: Optional[uuid.UUID] = None,
@@ -655,8 +695,9 @@ async def get_value_metrics(
         FailureCluster.created_at >= cutoff,
         FailureCluster.size >= 2,
     )
-    if project_id:
-        cluster_stmt = cluster_stmt.join(TestRun, FailureCluster.test_run_id == TestRun.id).where(TestRun.project_id == project_id)
+    cluster_stmt = _scope_via_run(
+        cluster_stmt, FailureCluster.test_run_id == TestRun.id, project_id
+    )
     defects_grouped = (await db.execute(cluster_stmt)).scalar() or 0
 
     # Total tests grouped (sum of member_count across clusters)
@@ -664,8 +705,9 @@ async def get_value_metrics(
         FailureCluster.created_at >= cutoff,
         FailureCluster.size >= 2,
     )
-    if project_id:
-        tests_grouped_stmt = tests_grouped_stmt.join(TestRun, FailureCluster.test_run_id == TestRun.id).where(TestRun.project_id == project_id)
+    tests_grouped_stmt = _scope_via_run(
+        tests_grouped_stmt, FailureCluster.test_run_id == TestRun.id, project_id
+    )
     tests_grouped = (await db.execute(tests_grouped_stmt)).scalar() or 0
 
     # ── Duplicate tickets avoided ────────────────────────────────────────────
@@ -673,8 +715,7 @@ async def get_value_metrics(
         Defect.created_at >= cutoff,
         Defect.is_duplicate.is_(True),
     )
-    if project_id:
-        dup_stmt = dup_stmt.where(Defect.project_id == project_id)
+    dup_stmt = _scope_direct(dup_stmt, Defect.project_id, project_id)
     duplicates_avoided = (await db.execute(dup_stmt)).scalar() or 0
 
     # Also count candidates flagged as duplicate (not yet promoted)
@@ -682,8 +723,9 @@ async def get_value_metrics(
         DefectCandidate.created_at >= cutoff,
         DefectCandidate.is_duplicate.is_(True),
     )
-    if project_id:
-        dup_cand_stmt = dup_cand_stmt.join(TestRun, DefectCandidate.run_id == TestRun.id).where(TestRun.project_id == project_id)
+    dup_cand_stmt = _scope_via_run(
+        dup_cand_stmt, DefectCandidate.run_id == TestRun.id, project_id
+    )
     dup_candidates = (await db.execute(dup_cand_stmt)).scalar() or 0
     total_duplicates_avoided = duplicates_avoided + dup_candidates
 
@@ -692,8 +734,7 @@ async def get_value_metrics(
         Defect.created_at >= cutoff,
         Defect.promotion_source == "cluster_promotion",
     )
-    if project_id:
-        promoted_stmt = promoted_stmt.where(Defect.project_id == project_id)
+    promoted_stmt = _scope_direct(promoted_stmt, Defect.project_id, project_id)
     defects_promoted = (await db.execute(promoted_stmt)).scalar() or 0
 
     # ── Flaky tests identified ───────────────────────────────────────────────
@@ -713,10 +754,9 @@ async def get_value_metrics(
     from app.services.test_health_coach_service import history_is_intermittent
 
     flaky_rows_stmt = select(FlakyCoachResult.status_history)
-    if project_id:
-        flaky_rows_stmt = flaky_rows_stmt.where(
-            FlakyCoachResult.project_id == project_id
-        )
+    flaky_rows_stmt = _scope_direct(
+        flaky_rows_stmt, FlakyCoachResult.project_id, project_id
+    )
     flaky_identified = sum(
         1
         for (history,) in (await db.execute(flaky_rows_stmt)).all()
@@ -726,8 +766,9 @@ async def get_value_metrics(
     quarantine_stmt = select(sa_func.count(FlakyCoachResult.id)).where(
         FlakyCoachResult.quarantine_recommendation == "QUARANTINE",
     )
-    if project_id:
-        quarantine_stmt = quarantine_stmt.where(FlakyCoachResult.project_id == project_id)
+    quarantine_stmt = _scope_direct(
+        quarantine_stmt, FlakyCoachResult.project_id, project_id
+    )
     quarantine_recommended = (await db.execute(quarantine_stmt)).scalar() or 0
 
     # ── Risky releases blocked ───────────────────────────────────────────────
@@ -735,32 +776,36 @@ async def get_value_metrics(
         ReleaseDecision.created_at >= cutoff,
         ReleaseDecision.recommendation == "NO_GO",
     )
-    if project_id:
-        blocked_stmt = blocked_stmt.join(TestRun, ReleaseDecision.test_run_id == TestRun.id).where(TestRun.project_id == project_id)
+    blocked_stmt = _scope_via_run(
+        blocked_stmt, ReleaseDecision.test_run_id == TestRun.id, project_id
+    )
     releases_blocked = (await db.execute(blocked_stmt)).scalar() or 0
 
     conditional_stmt = select(sa_func.count(ReleaseDecision.id)).where(
         ReleaseDecision.created_at >= cutoff,
         ReleaseDecision.recommendation == "CONDITIONAL_GO",
     )
-    if project_id:
-        conditional_stmt = conditional_stmt.join(TestRun, ReleaseDecision.test_run_id == TestRun.id).where(TestRun.project_id == project_id)
+    conditional_stmt = _scope_via_run(
+        conditional_stmt, ReleaseDecision.test_run_id == TestRun.id, project_id
+    )
     releases_conditional = (await db.execute(conditional_stmt)).scalar() or 0
 
     overrides_stmt = select(sa_func.count(ReleaseDecision.id)).where(
         ReleaseDecision.created_at >= cutoff,
         ReleaseDecision.human_override.isnot(None),
     )
-    if project_id:
-        overrides_stmt = overrides_stmt.join(TestRun, ReleaseDecision.test_run_id == TestRun.id).where(TestRun.project_id == project_id)
+    overrides_stmt = _scope_via_run(
+        overrides_stmt, ReleaseDecision.test_run_id == TestRun.id, project_id
+    )
     release_overrides = (await db.execute(overrides_stmt)).scalar() or 0
 
     # ── Intelligence reports ─────────────────────────────────────────────────
     intel_stmt = select(sa_func.count(RunIntelligenceSnapshot.id)).where(
         RunIntelligenceSnapshot.created_at >= cutoff,
     )
-    if project_id:
-        intel_stmt = intel_stmt.join(TestRun, RunIntelligenceSnapshot.run_id == TestRun.id).where(TestRun.project_id == project_id)
+    intel_stmt = _scope_via_run(
+        intel_stmt, RunIntelligenceSnapshot.run_id == TestRun.id, project_id
+    )
     intelligence_reports = (await db.execute(intel_stmt)).scalar() or 0
 
     # ── Triage time saved estimate (legacy scalar — assumptions-based) ──────

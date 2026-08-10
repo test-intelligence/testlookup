@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: ROI metrics counted soft-deleted projects
+
+All 11 counts in `get_value_metrics` were guarded by `if project_id:` alone — the shape that made
+the dashboard over-count (#538) and the analytics helper leak (#539). Unscoped, nothing restricted
+them, and the `TestRun` joins existed *only* on the scoped path, which is precisely why the
+unscoped path counted everything.
+
+Confirmed by reproducing the service's real predicate rather than assuming. A first pass logged
+this as "needs confirmation" because the numbers did not corroborate a naive comparison: the API
+returned `flaky_tests_identified: 3` while the coach table held 5 live rows and 5 deleted ones.
+Neither matched — the metric counts only rows whose `status_history` actually oscillates. Running
+that predicate over the live rows resolved it:
+
+| source | count |
+|---|---|
+| live project (Checkout Service) | 2 |
+| soft-deleted project (ZZ Probe, multi-day trends) | 1 |
+| **total — exactly the unscoped API response** | **3** |
+
+User-visible: the ROI page renders `FLAKY TESTS FOUND 3` in All-Projects scope. Only the *hero*
+hours-saved number is gated on `available`; the component cards render regardless. An ROI figure
+gets quoted to stakeholders, so counting projects nobody can open overstates the product's own
+value.
+
+Scoped behaviour is unchanged — both helpers keep the pin when a project is supplied; only the
+life-cycle restriction became unconditional.
+
 ### 2026-08-10 — Fix: Coverage named one project for rows spanning several
 
 `coverage_stats` groups suite rows by suite name alone, so in All-Projects scope a row can
