@@ -251,7 +251,27 @@ async def get_trend_data(
     """Return daily pass/fail/skip breakdown for the trend chart."""
     period_start = datetime.now(timezone.utc) - timedelta(days=days)
     suite_key = _normalize_suite_name(suite_name)
-    project_filter = "AND tr.project_id = :project_id" if project_id else ""
+    # Soft-deleted projects are excluded UNCONDITIONALLY, and the pin is added
+    # on top when a project is named.
+    #
+    # This previously read ``"AND tr.project_id = :project_id" if project_id
+    # else ""`` — the exact shape ``_period_stats`` carried before it was fixed,
+    # in this same module. Unscoped, nothing restricted the query, so the trend
+    # chart aggregated every deleted project. Measured live at days=4:
+    #
+    #     trend series summed   44,061      <- all projects
+    #     DB, live projects        192
+    #     dashboard KPI            192      <- already fixed, so the chart and
+    #                                          the number beside it disagreed
+    #                                          by 229x on the same screen
+    #
+    # Fifth surface in this class (my_failures -> /runs -> dashboard summary ->
+    # analytics -> ROI -> here). It survived the earlier pass because that pass
+    # fixed the function the bug was measured in and did not sweep its
+    # siblings in the same file.
+    project_filter = (
+        "AND tr.project_id = :project_id " if project_id else ""
+    ) + "AND tr.project_id IN (SELECT id FROM projects WHERE is_active)"
     # 2026-05-15 bug fix: matching this filter via INNER JOIN test_cases
     # silently dropped every run whose ``test_cases`` rows weren't persisted
     # (a common state for live-stream ingest, which writes aggregates onto

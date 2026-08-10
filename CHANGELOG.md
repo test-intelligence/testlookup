@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: the trend chart plotted soft-deleted projects
+
+`get_trend_data` built its scope as `"AND tr.project_id = :project_id" if project_id else ""` — the
+exact shape `_period_stats` carried before it was fixed, **in this same module**. Unscoped, nothing
+restricted the query. Measured live at `days=4`:
+
+| source | total |
+|---|---|
+| trend series, summed | **44,061** |
+| DB, live projects only | 192 |
+| dashboard KPI (fixed earlier) | 192 |
+
+So the chart and the number printed beside it disagreed by **229× on the same screen** — the
+cross-surface disagreement class this repo keeps hitting, this time between two elements of one
+page.
+
+Fifth surface in this family (`my_failures` → `/runs` → dashboard summary → analytics → ROI →
+trends). It survived the earlier pass because that pass fixed the function the bug was *measured*
+in and did not sweep its siblings in the same file. The regression test now asserts the property
+for **every** run-aggregating query in the module and fails if a new one appears uncovered, so a
+sixth cannot slip through the same way.
+
 ### 2026-08-10 — Fix: a digest subscription was largely immutable after creation
 
 Two drifts between `DigestSubscriptionCreate` and `DigestSubscriptionUpdate`, both measured against
