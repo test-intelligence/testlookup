@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-09 — Security: `/onboarding/events` served instance-wide analytics to anyone
+
+The handler took the authenticated user and **threw it away**:
+
+```python
+async def list_usage_events(..., _: User = Depends(get_current_active_user)):
+    return await get_usage_events(db, event_name=..., project_id=pid, limit=limit)
+```
+
+`get_usage_events` applies no scoping either — and no project filter at all when none is
+named. So any authenticated account read the most recent product usage events across
+every project, each carrying another user's `user_id`, a `project_id`, and the raw
+`event_payload`. Every other endpoint in this router uses `require_project_access()`;
+this one alone did not, and *could not* — it discarded the identity it would have needed.
+
+Confirmed live with a zero-membership VIEWER after seeding one event (the table was
+empty, and "no data" is not "no leak").
+
+Fixed as **ADMIN-only**, matching `/audit-dashboard/export` — the other instance-wide
+analytics export here. Membership scoping was the alternative, but this is cross-project
+analytics by nature and **has no consumer**: no frontend, CLI, MCP or SDK caller
+references it. Admin-only breaks nothing and matches what the endpoint is.
+
 ### 2026-08-09 — Security: `scope=team` guarded cross-user escalation but not cross-tenant (HIGH)
 
 `/api/v1/me/assigned-failures` drops the per-assignee filter when `scope=team`, and

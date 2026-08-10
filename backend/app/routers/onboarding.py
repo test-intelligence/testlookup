@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_project_access
+from app.core.deps import get_current_active_user, require_project_access, require_role
 from app.db.postgres import get_db
-from app.models.postgres import User
+from app.models.postgres import User, UserRole
 from app.services.onboarding_service import (
     auto_detect_progress,
     complete_step,
@@ -140,9 +140,20 @@ async def list_usage_events(
     project_id: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
 ):
-    """List recent product usage events for analytics."""
+    """List recent product usage events for analytics. Requires ADMIN.
+
+    F-044: this served **instance-wide** analytics to any authenticated caller.
+    ``get_usage_events`` applies no project filter when none is named, and the
+    handler bound the user to ``_`` — so it discarded the identity it would
+    have needed to scope by. A zero-membership VIEWER read another user's
+    ``user_id``, an inaccessible ``project_id``, and the raw ``event_payload``.
+
+    ADMIN-only rather than membership-scoped: this is cross-project analytics
+    by nature, mirroring ``/audit-dashboard/export``, and it has no consumer —
+    no frontend, CLI, MCP or SDK caller references it.
+    """
     pid = None
     if project_id:
         try:
