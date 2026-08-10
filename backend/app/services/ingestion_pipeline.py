@@ -241,6 +241,16 @@ async def ingest_test_results(
     # downstream consumers (analytics, suite_sync_service, primary_suite_name
     # attribution) while CanonicalTestCase rows are reconciled in finalize_run.
     # Lookup is hoisted out of the loop so it costs one query per ingest, not N.
+    # One report may name the same test more than once — parameterised cases,
+    # and above all retry frameworks emitting the failed attempt and the passing
+    # retry side by side. Persistence is keyed on (run, fingerprint), so the
+    # last occurrence used to overwrite the rest: the same three cases reported
+    # PASSED or FAILED purely by document order. Collapse first, worst outcome
+    # winning, so a failure can't be hidden by a later pass.
+    from app.services.ingestion import collapse_duplicate_cases  # noqa: PLC0415
+
+    results = collapse_duplicate_cases(results)
+
     default_suite_name: Optional[str] = None
     needs_default = any(
         not (case.get("suite_name") or "").strip() for case in results

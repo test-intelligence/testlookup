@@ -47,6 +47,74 @@ def make_test_fingerprint(test_name: str, class_name: Optional[str]) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
+#: How concerning each outcome is when one report names the same test more
+#: than once. Higher wins. Ties keep the later entry, which preserves the
+#: previous last-one-wins behaviour for combinations that were never harmful.
+#:
+#: The ordering says: a failure must never be hidden by a later pass, and a
+#: skip should not be reported as a pass either — claiming coverage that did
+#: not run is the same class of misreport, just smaller.
+_DUPLICATE_STATUS_PRECEDENCE = {
+    "failed": 3,
+    "broken": 2,
+    "skipped": 1,
+    "passed": 0,
+    "unknown": 0,
+}
+
+
+def collapse_duplicate_cases(results: list[dict]) -> list[dict]:
+    """Collapse repeated tests within ONE report, worst outcome winning.
+
+    A single report may legitimately name the same test more than once —
+    parameterised cases that share a name, and above all **retry frameworks**,
+    which emit the failing attempt and the passing retry as sibling
+    ``<testcase>`` elements.
+
+    Persistence is keyed on ``(test_run_id, test_fingerprint)``, which is the
+    right idempotency key for re-ingesting a file but also means the last
+    occurrence overwrote every earlier one. Measured on the live deployment
+    with three same-named cases:
+
+        failure listed first -> run reported PASSED, 0 failures
+        failure listed last  -> run reported FAILED, 1 failure
+
+    Identical inputs, opposite verdicts, decided by document order. The
+    fail-then-pass shape is exactly what a retry emits, so the signal most
+    worth keeping was the one most reliably dropped.
+
+    Collapsing here rather than in ``_upsert_test_case`` keeps that upsert's
+    semantics intact: a *separate* re-ingest of the same run still overwrites,
+    so a corrected report can still flip a verdict. Only duplicates **within
+    one payload** are merged.
+
+    Returns a new list in first-appearance order; the input is not mutated.
+    """
+    winners: dict[str, dict] = {}
+    order: list[str] = []
+
+    for case in results:
+        fp = make_test_fingerprint(
+            case.get("test_name", ""), case.get("class_name")
+        )
+        incumbent = winners.get(fp)
+        if incumbent is None:
+            winners[fp] = case
+            order.append(fp)
+            continue
+
+        def _rank(c: dict) -> int:
+            return _DUPLICATE_STATUS_PRECEDENCE.get(
+                str(c.get("status", "unknown")).lower(), 0
+            )
+
+        # `>=` keeps the later entry on a tie — the prior behaviour.
+        if _rank(case) >= _rank(incumbent):
+            winners[fp] = case
+
+    return [winners[fp] for fp in order]
+
+
 async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
     """
     Main ingestion entry point — called after sentinel file upload.

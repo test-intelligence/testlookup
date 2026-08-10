@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: a failing test was hidden by a later same-named passing one
+
+Persistence is keyed on `(test_run_id, test_fingerprint)` and `_upsert_test_case` does a
+blind `existing.status = status`, so when one report named the same test more than once
+the **last occurrence won** and every earlier one was discarded.
+
+Measured on the live deployment with three same-named cases, one failing:
+
+| report | run verdict |
+|---|---|
+| `fail, pass, pass` | **PASSED** — 0 failures |
+| `pass, pass, fail` | FAILED — 1 failure |
+
+Identical inputs, opposite verdicts, decided by document order — and the run that
+genuinely contained a failure was the one reported green.
+
+**This shape is common, not exotic.** Retry frameworks emit the failed attempt and the
+passing retry as sibling `<testcase>` elements with the same name. That fail-then-pass
+ordering is exactly what resolved to PASSED, so the signal this product exists to
+surface was the one most reliably dropped.
+
+Duplicates are now collapsed **within one payload** before persistence, worst outcome
+winning (`failed` > `broken` > `skipped` > `passed`; ties keep the later entry, the prior
+behaviour). `_upsert_test_case` is deliberately unchanged, so a *separate* re-ingest of
+the same run still overwrites and a corrected report can still flip a verdict.
+
+Also covered in the same exploration and found **clean**: malformed, truncated,
+non-XML, empty and format-mismatched uploads are all handled honestly — the upload
+returns 202, and `GET /ingest/uploads/{task_id}` reports `state: failed` with an
+actionable code (`empty_report`) rather than failing silently.
+
 ### 2026-08-09 — Security: `/onboarding/events` served instance-wide analytics to anyone
 
 The handler took the authenticated user and **threw it away**:
