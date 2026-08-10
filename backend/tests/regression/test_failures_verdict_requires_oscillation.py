@@ -52,7 +52,9 @@ from app.services.flaky_signals import MIN_FLIPS_FOR_INTERMITTENCY  # noqa: E402
 PROJECT = str(uuid.uuid4())
 
 DDL = [
-    "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT)",
+    # ``is_active`` mirrors the real column: analytics scopes every query to
+    # live projects, so a stub without it errors instead of returning rows.
+    "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, is_active BOOLEAN DEFAULT 1)",
     "CREATE TABLE test_runs (id TEXT PRIMARY KEY, project_id TEXT, primary_suite_name TEXT)",
     # triage_* columns are needed by the manual-triage merge that runs after the
     # auto query; without them the whole call errors rather than returning rows.
@@ -92,7 +94,10 @@ async def session():
         for stmt in DDL:
             await conn.execute(text(stmt))
         await conn.execute(
-            text("INSERT INTO projects (id, name) VALUES (:i, 'Checkout Service')"),
+            text(
+                "INSERT INTO projects (id, name, is_active)"
+                " VALUES (:i, 'Checkout Service', 1)"
+            ),
             {"i": PROJECT},
         )
     maker = async_sessionmaker(engine, expire_on_commit=False)

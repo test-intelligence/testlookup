@@ -100,19 +100,33 @@ def _tenant_filter(
     * ``project_id`` None + ``allowed_project_ids`` empty set →
       ``AND FALSE`` (zero results, no cross-tenant leak)
     * ``project_id`` None + ``allowed_project_ids`` None →
-      ``""`` (no filter; unrestricted — admin-only callers must opt in
-      explicitly by passing ``None``; new non-admin callers should
-      always pass a set, even empty)
+      unrestricted *tenancy* (admin path) — but still life-cycle filtered,
+      see below. Admin-only callers must opt in explicitly by passing
+      ``None``; new non-admin callers should always pass a set, even empty.
+
+    **Every branch also excludes soft-deleted projects.** Tenancy answers
+    "who may see this project"; it does not answer "does this project still
+    exist". ``DELETE /projects/{id}`` only flips ``is_active``, so on the
+    admin path — where the tenancy clause is empty by design — every
+    analytics query aggregated over deleted projects. Measured live, the
+    unscoped Coverage response was built *entirely* from them: 27 suites
+    across 13 deleted projects, 47,105 executions where the live projects
+    account for 672. The two real projects did not appear at all.
 
     Mutates ``params`` in place to bind the placeholder values.
     """
+    # Life-cycle scope, applied on top of whichever tenancy clause is chosen.
+    # A subquery rather than a join: the callers are ~20 hand-written SQL
+    # strings with their own FROM lists, and adding a join to each is both
+    # more invasive and easy to get subtly wrong (row multiplication).
+    live = f"AND {table_alias}.{column} IN (SELECT id FROM projects WHERE is_active)"
     if project_id:
         params["project_id"] = str(project_id)
-        return f"AND {table_alias}.{column} = :project_id"
+        return f"AND {table_alias}.{column} = :project_id {live}"
     if allowed_project_ids is None:
-        # Unrestricted scope — admin path. Callers that don't intend this
+        # Unrestricted tenancy — admin path. Callers that don't intend this
         # should pass an empty set, which fails closed.
-        return ""
+        return live
     ids = list(allowed_project_ids)
     if not ids:
         # Empty membership set — fail closed.
@@ -120,7 +134,7 @@ def _tenant_filter(
     placeholders = ", ".join(f":pid_{i}" for i, _ in enumerate(ids))
     for i, pid in enumerate(ids):
         params[f"pid_{i}"] = str(pid)
-    return f"AND {table_alias}.{column} IN ({placeholders})"
+    return f"AND {table_alias}.{column} IN ({placeholders}) {live}"
 
 
 async def flaky_tests(

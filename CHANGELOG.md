@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: analytics was built entirely from deleted projects
+
+`_tenant_filter` is the single scoping helper behind every analytics query (9 call sites:
+flaky tests, failure categories, top-failing, coverage, defects, …). It answered *who may see
+a project*, not *whether the project still exists* — and `DELETE /projects/{id}` is a **soft**
+delete that only flips `is_active`. On the admin path the tenancy clause is empty by design,
+so the query ran with no project restriction at all.
+
+Measured live, 90-day window:
+
+| surface | API returns | DB, live projects |
+|---|---|---|
+| `analytics/coverage` executions | **47,105** | 672 |
+| `analytics/coverage` suites | **27** | 7 |
+| `analytics/coverage` unique tests | **1,612** | 32 |
+| failures behind `failure-categories` | **5,675** | 72 |
+
+The Coverage page was not merely inflated — it was built *entirely* from unreachable data.
+All 27 suites belonged to 13 soft-deleted projects, every one a `ZZ … delete me` throwaway,
+each rendered **with its deleted project's name**. The deployment's two real projects did not
+appear on their own Coverage page at all.
+
+Fourth surface in this class (`my_failures` → `/runs` #535 → dashboard metrics #538 →
+analytics), so the fix goes in the shared helper rather than on the endpoints: one chokepoint
+every analytics query already passes through, which a tenth call site inherits for free.
+Tenancy behaviour is unchanged — the life-cycle clause is additional, and the existing
+contract tests still assert the tenancy fragment exactly.
+
 ### 2026-08-10 — Fix: dashboard metrics aggregated over deleted projects
 
 `_period_stats` added a project condition **only when one was supplied**. Unscoped — the
