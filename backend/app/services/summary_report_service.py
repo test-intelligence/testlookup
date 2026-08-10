@@ -158,8 +158,31 @@ async def build_summary_report(
             "fail_rate_pct": totals.pct(totals.failed),
             "skip_rate_pct": totals.pct(totals.skipped),
             "broken_rate_pct": totals.pct(totals.broken),
-            # Weighted pass rate that ignores skipped tests — matches the
-            # /overview headline so two surfaces agree.
+            # Pass rate over EVALUATED tests (skipped excluded).
+            #
+            # This comment used to claim it "matches the /overview headline so
+            # two surfaces agree". **It does not, and cannot.** The two numbers
+            # are computed over different populations:
+            #
+            #   /overview (metrics/summary.avg_pass_rate_7d) -> EXECUTIONS
+            #   this report                                  -> UNIQUE TESTS
+            #
+            # Measured live on Checkout Service (30d):
+            #
+            #   executions   47 passed / 9 failed / 2 broken  -> 47/58 = 81.0%
+            #   unique tests 10 passed / 2 failed / 0 broken  -> 10/12 = 83.3%
+            #
+            # Excluding skips is the only thing this shares with the headline.
+            # The broken executions vanish here because a unique test carries
+            # one status, so its BROKEN runs are not separately counted — which
+            # is exactly why the rates diverge.
+            #
+            # Both figures are internally correct; which one a user should see
+            # for "the" pass rate is a product decision, recorded in the
+            # exploratory ledger rather than silently resolved here. Do not
+            # "fix" this by switching the basis without deciding that first —
+            # the unique-test basis is what makes this report's counts match
+            # Coverage's unique_tests.
             "weighted_pass_rate_pct": (
                 round(totals.passed / totals.evaluated * 100.0, 1)
                 if totals.evaluated

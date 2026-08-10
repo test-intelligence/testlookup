@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Docs: the summary report's pass rate does not match the Overview headline
+
+`summary_report_service` documented `weighted_pass_rate_pct` as *"matches the /overview headline so
+two surfaces agree"*. It does not, and cannot — the two are computed over different populations.
+Measured live on Checkout Service (30d):
+
+| surface | population | rate |
+|---|---|---|
+| `/overview` (`avg_pass_rate_7d`) | executions | 81.0% |
+| `metrics/trends` (weighted) | executions | 81.03% |
+| `analytics/coverage` | executions | 81.0% |
+| **summary report** (`weighted_pass_rate_pct`) | **unique tests** | **83.3%** |
+
+DB truth: 47 passed / 9 failed / 2 broken / 2 skipped across 60 executions of 12 unique tests.
+`47/58 = 81.03`; `10/12 = 83.3`. The BROKEN executions disappear from the report because a unique
+test carries a single status, which is exactly why the rates diverge.
+
+**No behaviour changed.** Both figures are internally correct, and which one a user should see as
+"the" pass rate is a product decision — switching the basis would break this report's counts
+matching Coverage's `unique_tests`. The comment now states the real relationship with the measured
+numbers, and a test pins each basis so the semantics cannot drift while that decision is pending.
+
 ### 2026-08-10 — Fix: the trend chart plotted soft-deleted projects
 
 `get_trend_data` built its scope as `"AND tr.project_id = :project_id" if project_id else ""` — the
