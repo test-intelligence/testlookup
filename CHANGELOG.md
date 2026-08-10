@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: an MCP tool called a route that does not exist
+
+`list_digest_subscriptions` called `GET /api/v1/digests`. The digests router mounts
+`/subscriptions`, `/preview` and the `/subscriptions/{id}` verbs beneath that prefix —
+never the bare prefix. Verified against the running server:
+
+```
+GET /api/v1/digests               -> 404
+GET /api/v1/digests/subscriptions -> 200
+```
+
+`client.get` calls `raise_for_status()`, so the tool did not degrade — it raised, and
+every invocation surfaced an error to the model.
+
+**A second defect hid behind the first.** The tool advertises a `project_id` argument and
+passed it as a query param. `list_subscriptions` declares no such parameter, and FastAPI
+ignores undeclared query params — so correcting the path alone would have produced a tool
+that silently returned **unfiltered** results while its docstring promised scoping. The
+404 was masking a silent-wrong-answer bug. Filtering now happens on the returned rows,
+which carry `project_id`, and the docstring says where the filter is applied.
+
+Found by diffing every `/api/v1/...` literal in `mcp/tools/` against the live route table:
+**58 paths referenced, 1 wrong**. The new test derives its cases from the source, so a tool
+added later against a route that does not exist fails the same way.
+
+**Also checked and clean:** the MCP client posts `data=` (form-encoded) to the login
+endpoint — the contract the CLI got wrong — and all five verbs (`get/post/put/patch/delete`)
+carry consistent 401 re-auth-and-retry.
+
 ### 2026-08-10 — Fix: `testlookup auth login` could not succeed against any server
 
 Two independent defects on the CLI's primary authentication path, both reproduced

@@ -92,14 +92,23 @@ def register(mcp) -> None:  # noqa: ANN001
         project_id: Optional[str] = None,
     ) -> str:
         """
-        List digest subscriptions — scheduled quality reports emailed or
-        posted to Slack/Teams at a cadence.
+        List **your** digest subscriptions — scheduled quality reports emailed
+        or posted to Slack/Teams at a cadence. The backend scopes these to the
+        calling user; it does not expose other users' subscriptions.
 
         Args:
-            project_id: Optional — scope to a single project.
+            project_id: Optional — scope to a single project. Filtered
+                client-side, since the endpoint takes no such parameter.
         """
-        params = {"project_id": project_id} if project_id else None
-        data = await api.get("/api/v1/digests", params=params)
+        # The route is /digests/subscriptions — the bare prefix 404s, and
+        # client.get raises on it, so this tool always errored. Correcting the
+        # path alone would have been worse: list_subscriptions declares no
+        # project_id, FastAPI ignores undeclared query params, and the tool
+        # would have returned unfiltered rows while promising to scope. Filter
+        # on the returned rows, which carry project_id.
+        data = await api.get("/api/v1/digests/subscriptions")
+        if project_id and data:
+            data = [s for s in data if str(s.get("project_id") or "") == str(project_id)]
         if not data:
             return "No digest subscriptions configured."
 
