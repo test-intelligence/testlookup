@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: a saved view's `page` was accepted, discarded, and unfilterable
+
+Two halves of one broken field, found by sweeping every MCP tool's query params against the params
+its endpoint actually declares (66 call sites; this was the only mismatch).
+
+**1. `POST /api/v1/saved-views` silently discarded `page`.** The handler built the row from a
+hand-written field list that omitted it, while `SavedViewCreate` declares it, `SavedViewResponse`
+returns it, the column stores it, and `PATCH` sets it — PATCH `setattr`s over the payload instead
+of naming fields. The caller got a **201** and a response whose `page` was `null`, having just
+supplied one:
+
+| action | stored `page` |
+|---|---|
+| `POST` with `page="coverage"` | `None` |
+| `PATCH` with `page="trends"` | `'trends'` |
+
+**2. `GET /api/v1/saved-views` had no `page` filter.** The MCP tool `list_saved_views` advertises
+*"page: Optional — restrict to a specific dashboard page"* and sent it. FastAPI ignores undeclared
+query params, so it was dropped and the tool returned everything while promising scoping. Measured
+live with two views present: no filter → 2 rows, `?page=trends` → 2 rows, `?page=zzz-no-such-page`
+→ 2 rows.
+
+That is the silent-wrong-answer half of the digests bug (#534), where a 404 was masking a filter
+that never applied. Here there was no 404 to notice. Half 2 alone would have been cosmetic — you
+cannot usefully filter by a field nothing persists — so both are fixed together.
+
 ### 2026-08-10 — Fix: the Java SDK could not log in behind a reverse proxy
 
 `TestLookupReporter.login()` built its client with `HttpClient.newHttpClient()`, which defaults to

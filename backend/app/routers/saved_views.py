@@ -19,6 +19,7 @@ router = APIRouter(prefix="/api/v1/saved-views", tags=["Saved Views"])
 @router.get("", response_model=list[SavedViewResponse])
 async def list_saved_views(
     project_id: uuid.UUID | None = None,
+    page: str | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -43,6 +44,15 @@ async def list_saved_views(
         query = query.where(
             (SavedView.project_id == project_id) | (SavedView.project_id.is_(None))
         )
+    # The MCP tool ``list_saved_views`` advertises "page: Optional — restrict to
+    # a specific dashboard page" and sent it as a query param. FastAPI ignores
+    # undeclared query params, so the filter was silently dropped and the tool
+    # returned every view while its own docstring promised scoping — the same
+    # silent-wrong-answer that hid behind the digests 404 (F-033/#534). Verified
+    # live before the fix: ?page=trends and ?page=zzz-no-such-page both returned
+    # all rows. Declaring it here makes the promise real rather than removing it.
+    if page:
+        query = query.where(SavedView.page == page)
     query = query.order_by(SavedView.is_default.desc(), SavedView.name)
     result = await db.execute(query)
     return result.scalars().all()
@@ -71,6 +81,13 @@ async def create_saved_view(
         project_id=payload.project_id,
         name=payload.name,
         description=payload.description,
+        # ``page`` was accepted by SavedViewCreate, returned by
+        # SavedViewResponse, stored by the column, and settable through PATCH —
+        # but this hand-written field list omitted it, so every create silently
+        # discarded it. The caller got a 201 and a response whose ``page`` was
+        # null, having just supplied one. PATCH persisted it correctly because
+        # it setattr's over the payload rather than naming fields.
+        page=payload.page,
         filters=payload.filters,
         is_shared=payload.is_shared,
         is_default=payload.is_default,
