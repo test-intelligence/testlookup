@@ -426,6 +426,36 @@ jobs:
       - name: Run SDK + CLI tests
         run: python -m pytest client/tests cli/tests -q
 
+  # ─────────────────────────────────────────────────────────────
+  java-sdk-test:
+    name: Java SDK — Test
+    runs-on: ubuntu-latest
+    # The Java client had 29 passing unit tests and NOTHING ran them — the
+    # sdk-cli-test job above covers only the Python SDK and CLI. That gap let a
+    # real defect ship: `login()` used HttpClient.newHttpClient(), which
+    # defaults to HTTP/2 and attempts an h2c upgrade over plain http://. Traefik
+    # rejects it with a bare "400 Invalid HTTP request received.", so the
+    # documented entry point could not authenticate behind a reverse proxy,
+    # while every other call in the class already pinned HTTP/1.1.
+    #
+    # Without this job the regression test guarding that fix would be
+    # decorative, which is the same trap called out in sdk-cli-test.
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          # The pom targets Java 11; 17 is the oldest current LTS that builds it
+          # and is closer to what a consumer runs than the newest JDK.
+          java-version: "17"
+          distribution: temurin
+          cache: maven
+
+      - name: Build and test the Java SDK
+        working-directory: client/java
+        run: mvn --batch-mode --no-transfer-progress test
+
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest

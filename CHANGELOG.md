@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: the Java SDK could not log in behind a reverse proxy
+
+`TestLookupReporter.login()` built its client with `HttpClient.newHttpClient()`, which defaults to
+**HTTP/2**. Over plain `http://` that attempts an h2c upgrade, which Traefik — and reverse proxies
+generally — reject. Measured against the live deployment:
+
+| client version | result |
+|---|---|
+| `HTTP_2` (the default) | **HTTP 400 — "Invalid HTTP request received."** |
+| `HTTP_1_1` | **HTTP 200, token returned** |
+
+The error names nothing to do with the protocol, so it reads as a server fault or bad credentials.
+
+The constructor **already pinned** `HTTP_1_1` for the instance client, so sessions and event
+batches were fine — this static helper was the one that was missed. That made `login()`, the
+documented entry point, the only call in the SDK that could not succeed behind a proxy. Go, JS,
+Python and the CLI were all unaffected because they use HTTP/1.1.
+
+Also adds a **Java SDK CI job**. The client had 29 passing unit tests and nothing ever ran them:
+`sdk-cli-test` covers only the Python SDK and CLI, so `client/go`, `client/js` and `client/java`
+had no coverage at all. That gap is why this shipped — and without the job the regression test
+guarding it would be decorative, the same trap `sdk-cli-test` was created to fix.
+
 ### 2026-08-10 — Fix: report share links pointed at localhost
 
 `POST /api/v1/reports/runs/{run_id}/share` built its URL from an **SSO** setting:

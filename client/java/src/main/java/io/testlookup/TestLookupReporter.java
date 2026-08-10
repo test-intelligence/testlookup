@@ -314,7 +314,25 @@ public class TestLookupReporter {
     public static String login(String baseUrl, String username, String password)
             throws TestLookupException {
         String formBody = "username=" + urlEncode(username) + "&password=" + urlEncode(password);
-        HttpClient client = HttpClient.newHttpClient();
+        // HTTP/1.1, matching the instance client built in the constructor.
+        //
+        // HttpClient.newHttpClient() defaults to HTTP_2, which over plain http://
+        // attempts an h2c upgrade. Traefik — and reverse proxies generally —
+        // reject that, and the rejection arrives as a bare
+        // "HTTP 400: Invalid HTTP request received." with nothing to point at
+        // the protocol. Measured against the live deployment:
+        //
+        //     HTTP_2   -> HTTP 400 "Invalid HTTP request received."
+        //     HTTP_1_1 -> HTTP 200, token returned
+        //
+        // Every other request in this class already went through the pinned
+        // instance client; this static helper was the one that did not, so
+        // login() — the documented entry point — was the only call that could
+        // not succeed behind a proxy.
+        HttpClient client = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SEC))
+            .version(HttpClient.Version.HTTP_1_1)
+            .build();
         HttpRequest req = HttpRequest.newBuilder()
             .uri(URI.create(baseUrl.replaceAll("/$", "") + "/api/v1/auth/login"))
             .header("Content-Type", "application/x-www-form-urlencoded")
