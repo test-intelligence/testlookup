@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: a digest subscription was largely immutable after creation
+
+Two drifts between `DigestSubscriptionCreate` and `DigestSubscriptionUpdate`, both measured against
+the live deployment.
+
+**1. Four of six schedules could not be set by PATCH.** The update schema's pattern stayed at
+`^(DAILY|WEEKLY)$` while the enum, the create schema, the Celery beat and the UI selector all grew
+`WEEKLY_RETRO`, `PER_RUN`, `PER_RELEASE` and `PER_SUITE`:
+
+| PATCH `schedule` to… | result |
+|---|---|
+| `DAILY` / `WEEKLY` | 200 |
+| `WEEKLY_RETRO` | **422** |
+| `PER_RUN` / `PER_RELEASE` / `PER_SUITE` | **422** |
+
+Since create was the only route to those values, a `WEEKLY_RETRO` subscription PATCHed to `DAILY`
+could not be put back — the remedy was delete-and-recreate.
+
+**2. `scope_type`, `scope_value` and `trigger_filter` could not be changed at all.** Settable at
+create (fixed in the previous entry) and stored on the row, but absent from the update schema —
+so Pydantic dropped them and PATCH returned **200 with the old values retained**:
+
+```
+PATCH {"trigger_filter":"all","scope_type":"project","scope_value":"smoke"}
+-> 200, still trigger_filter='failed_only' scope_type='suite' scope_value='api'
+```
+
+`trigger_filter` gates delivery, so a user could not switch an existing subscription between
+"everything" and "failures only". The frontend's own `updateSubscription` is typed to send all
+three.
+
+`project_id` is deliberately left non-updatable and a test now pins that: it is
+authorization-checked once at create and the delivery task never re-checks membership, so allowing
+it on update would let a caller re-point an existing subscription at another tenant's project.
+
+The vocabulary test now covers **every** request schema carrying a schedule pattern, discovered by
+inspection rather than named — the original bug was one schema being forgotten, and listing them
+would rebuild the same trap.
+
 ### 2026-08-10 — Fix: digest subscriptions discarded their own scope and trigger filter
 
 `POST /api/v1/digests/subscriptions` built the row from a hand-written keyword list that omitted

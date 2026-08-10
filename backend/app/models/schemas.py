@@ -3598,9 +3598,35 @@ class DigestSubscriptionCreate(BaseModel):
 
 class DigestSubscriptionUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=255)
-    schedule: Optional[str] = Field(None, pattern="^(DAILY|WEEKLY)$")
+    # Same vocabulary as ``DigestSubscriptionCreate`` — pinned for BOTH schemas
+    # by tests/regression/test_digest_schedule_vocab.py. This pattern was left
+    # at DAILY|WEEKLY when the other four members were added, so a subscription
+    # could be *created* as WEEKLY_RETRO / PER_RUN / PER_RELEASE / PER_SUITE but
+    # never *changed* to one — PATCH 422'd. Worse, a WEEKLY_RETRO subscription
+    # PATCHed to DAILY could not be put back, since the only route to those
+    # values was create; the fix was delete-and-recreate.
+    schedule: Optional[str] = Field(
+        None,
+        pattern="^(DAILY|WEEKLY|WEEKLY_RETRO|PER_RUN|PER_RELEASE|PER_SUITE)$",
+    )
     channel: Optional[str] = Field(None, pattern="^(email|slack|teams)$")
     saved_view_id: Optional[uuid.UUID] = None
+    # Settable at create (and stored) but previously absent here, so a PATCH
+    # carrying them returned 200 with the old values silently retained — a
+    # subscription's scope and trigger were immutable after creation. The UI's
+    # own `updateSubscription` is typed to send all three.
+    #
+    # ``trigger_filter`` is the one that bites: the delivery task gates on it,
+    # so a user could not switch an existing subscription between "everything"
+    # and "failures only" at all.
+    #
+    # ``project_id`` is deliberately NOT updatable. It is authorization-checked
+    # once at create, and the delivery task reads it straight off the row
+    # without re-checking membership — allowing it here would let a caller
+    # re-point an existing subscription at another tenant's project.
+    scope_type: Optional[str] = Field(None, pattern="^(project|release|suite|global)$")
+    scope_value: Optional[str] = Field(None, max_length=255)
+    trigger_filter: Optional[str] = Field(None, pattern="^(all|failed_only|degraded_only)$")
     is_active: Optional[bool] = None
     is_paused: Optional[bool] = None
     send_when_unchanged: Optional[bool] = None
