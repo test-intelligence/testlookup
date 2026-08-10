@@ -135,7 +135,12 @@ def test_metrics_service_accepts_none_project_id():
 
     with patch.dict(
         "sys.modules",
-        {"app.models.postgres": SimpleNamespace(
+        # _FakeModelsModule (not a bare SimpleNamespace) so a new
+        # ``from app.models.postgres import X`` in metrics_service does not
+        # re-break this test with an ImportError unrelated to what it asserts —
+        # the reason that helper exists. It happened with ``Project`` when the
+        # unscoped dashboard learned to exclude soft-deleted projects.
+        {"app.models.postgres": _FakeModelsModule(
             Defect=object, TestCase=object, TestRun=object, TestStatus=object
         )},
         clear=False,

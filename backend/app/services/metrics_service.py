@@ -6,7 +6,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-from app.models.postgres import Defect, TestCase, TestRun, TestStatus
+from app.models.postgres import Defect, Project, TestCase, TestRun, TestStatus
 
 logger = logging.getLogger(__name__)
 
@@ -344,6 +344,17 @@ async def _period_stats(
     suite_name: str | None = None,
 ) -> dict:
     conditions = [TestRun.created_at >= start, TestRun.created_at < end]
+    # DELETE /projects/{id} is a SOFT delete (is_active -> False). Scoped calls
+    # already name one project, but the UNSCOPED dashboard aggregated over every
+    # project ever created, deleted ones included: measured live at 44,315
+    # executions where only 192 belonged to live projects — 99.6% of the
+    # headline came from projects the user cannot open or navigate to.
+    #
+    # Unconditional on purpose. Sitting this behind `if project_id:` would put
+    # it in the one branch that cannot over-count.
+    conditions.append(
+        TestRun.project_id.in_(select(Project.id).where(Project.is_active.is_(True)))
+    )
     if project_id:
         conditions.append(TestRun.project_id == project_id)
     if suite_name:

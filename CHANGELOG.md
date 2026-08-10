@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: dashboard metrics aggregated over deleted projects
+
+`_period_stats` added a project condition **only when one was supplied**. Unscoped — the
+dashboard's own "all projects" view — nothing restricted it, so every soft-deleted project
+was counted. Measured live:
+
+| surface | executions |
+|---|---|
+| `metrics/summary` (unscoped) | **44,315** |
+| DB, live projects | 192 |
+| DB, deleted projects | 44,123 |
+
+`192 + 44,123 = 44,315` exactly. **99.6% of the headline came from projects the user
+cannot see, open or navigate to.**
+
+**Found by re-verifying an earlier fix, and partly self-inflicted.** #535 excluded deleted
+projects from `GET /api/v1/runs` and left this aggregation alone, so the runs list reported
+68 runs while the dashboard headline reported 44,315 executions. Before that change the two
+were at least *consistently* wrong; afterwards they disagreed — the cross-surface
+disagreement class this repo keeps hitting (F-013, F-014, F-038, F-039).
+
+The exclusion is unconditional: putting it behind `if project_id:` would place it in the
+one branch that cannot over-count.
+
+**Scope deliberately narrow.** A survey found 80 of 82 TestRun-aggregating functions carry
+no `is_active` filter — but nearly all are *project-scoped*, where the caller has already
+resolved one project and the filter is redundant. Only cross-project aggregation is
+affected. This fixes the one measured; the survey is recorded in the ledger rather than
+turned into a blanket edit nobody verified.
+
+An existing test stubbed `app.models.postgres` with a bare `SimpleNamespace` and broke on
+the new `Project` import. That file already ships `_FakeModelsModule` for exactly this
+reason ("keeps this test from re-breaking with an ImportError unrelated to what it
+asserts"); the metrics case now uses it.
+
 ### 2026-08-10 — Fix: the CLI crashed on a legacy console *after* succeeding (F-051)
 
 `testlookup auth login` exited **1 with a traceback** on a Windows cp1252 console —
