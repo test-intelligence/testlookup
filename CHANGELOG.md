@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: the CLI crashed on a legacy console *after* succeeding (F-051)
+
+`testlookup auth login` exited **1 with a traceback** on a Windows cp1252 console —
+after the login had already completed and the profile was saved:
+
+```
+UnicodeEncodeError: 'charmap' codec can't encode character '✓'
+```
+
+The credentials were fine; the command reported failure anyway. A CI wrapper reads the
+exit code, not the profile on disk.
+
+Measured per helper with `PYTHONIOENCODING=cp1252`:
+
+| helper | glyph | stream | before |
+|---|---|---|---|
+| `print_success` | `✓` | stdout | **exit 1, UnicodeEncodeError** |
+| `print_error` | `✗` | stderr | exit 0 |
+| `print_warning` | `⚠` | stderr | exit 0 |
+
+Rich already degrades its **own** rendering — a full `projects list` table renders fine
+under cp1252, because Rich substitutes ASCII box-drawing when the encoding cannot carry
+the Unicode characters. What it does not do is rescue a literal glyph handed to it inside
+markup; that is just text, passed straight to an encoder that cannot represent it.
+
+The glyph is now chosen against the destination stream's real encoding: a UTF-8 terminal
+still gets `✓` (verified: output bytes `â`), a legacy console gets `[OK]`.
+All three helpers are covered, not only the one that crashed.
+
+Deliberately **not** a global `sys.stdout.reconfigure`: mutating the process's streams
+from a library import has a far larger blast radius than choosing a character, and would
+change byte-for-byte output for every consumer. A stream with no `encoding` (StringIO,
+pytest capture) is treated as capable, so test harnesses keep the Unicode form.
+
+Verified end to end: `auth login` on a cp1252 console now exits **0** with
+`[OK] Logged in as admin (profile: default)`.
+
 ### 2026-08-10 — Fix: the runs list returned runs from deleted projects
 
 `DELETE /projects/{id}` is a **soft** delete — it flips `is_active` to False. `my_failures`

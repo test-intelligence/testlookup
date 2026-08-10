@@ -57,13 +57,45 @@ def render(data: Any, output_format: str, columns: list[str] | None = None, titl
         print_json(data)
 
 
+def _glyph(preferred: str, fallback: str, stream) -> str:
+    """Return ``preferred`` if the stream can encode it, else ``fallback``.
+
+    ``auth login`` exited 1 with a UnicodeEncodeError on a Windows cp1252
+    console — *after* the login succeeded and the profile was saved. The
+    credentials were fine; the command reported failure anyway, and a CI
+    wrapper reads the exit code, not the profile on disk.
+
+    Rich already degrades its own rendering (a full table renders under cp1252
+    because it substitutes ASCII box-drawing), but a literal glyph handed to it
+    inside markup is just text, and Rich passes it straight through to an
+    encoder that cannot represent it.
+
+    Deliberately not a global ``sys.stdout.reconfigure``: mutating the
+    process's streams from a library import has a far larger blast radius than
+    choosing a character, and would change byte-for-byte output for every
+    consumer of this CLI.
+
+    A stream with no ``encoding`` (StringIO, pytest capture) is treated as
+    capable — degrading output for every harness that captures stdout would be
+    the wrong trade.
+    """
+    encoding = getattr(stream, "encoding", None)
+    if not encoding:
+        return preferred
+    try:
+        preferred.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return fallback
+    return preferred
+
+
 def print_success(message: str) -> None:
-    console.print(f"[green]✓[/] {message}")
+    console.print(f"[green]{_glyph('✓', '[OK]', sys.stdout)}[/] {message}")
 
 
 def print_error(message: str) -> None:
-    error_console.print(f"[red]✗[/] {message}")
+    error_console.print(f"[red]{_glyph('✗', '[X]', sys.stderr)}[/] {message}")
 
 
 def print_warning(message: str) -> None:
-    error_console.print(f"[yellow]⚠[/] {message}")
+    error_console.print(f"[yellow]{_glyph('⚠', '[!]', sys.stderr)}[/] {message}")
