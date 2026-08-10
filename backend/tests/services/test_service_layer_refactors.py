@@ -1209,7 +1209,18 @@ async def test_stream_service_list_active_sessions_combines_sources():
         start_time=datetime(2026, 1, 3, tzinfo=timezone.utc),
         end_time=datetime(2026, 1, 3, tzinfo=timezone.utc),
     )
-    db = FakeAsyncDB([FakeExecuteResult(scalars=[completed_session]), FakeExecuteResult(scalars=[fallback_run])])
+    # Three canned results, in call order. The FIRST is the live-project
+    # lookup ``list_active_sessions`` now runs before anything else: the
+    # endpoint unions Redis + completed LiveSessions + live_stream TestRuns,
+    # and all three must exclude soft-deleted projects (an ADMIN with no
+    # project pinned previously matched neither of the conditional filters and
+    # saw sessions from projects that no longer exist). Returning this test's
+    # project keeps it "live" so the rest of the assertions are unchanged.
+    db = FakeAsyncDB([
+        FakeExecuteResult(scalars=[project_id]),
+        FakeExecuteResult(scalars=[completed_session]),
+        FakeExecuteResult(scalars=[fallback_run]),
+    ])
     active = [
         {
             "run_id": "active-run",

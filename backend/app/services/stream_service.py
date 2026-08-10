@@ -946,7 +946,25 @@ async def list_active_sessions(
 
     suite_key = (suite_name or "").strip().lower()
 
+    # Soft-deleted projects are excluded for every caller. The two filters
+    # below are conditional by design (a pinned project, or a non-admin's
+    # membership set), so an ADMIN with no project pinned matched neither and
+    # saw sessions from projects that no longer exist. Measured live: of 9
+    # entries, 4 belonged to two deleted probe projects.
+    #
+    # Eighth surface in this family (#535 runs, #538 dashboard, #539 analytics,
+    # #541 ROI, #547 trends, #549 defect KPI, #550 releases). Applied to the
+    # Redis set and both DB queries below, because this endpoint unions three
+    # sources and filtering only one would leave the other two leaking.
+    live_project_ids = {
+        str(pid)
+        for pid in (
+            await db.execute(select(Project.id).where(Project.is_active.is_(True)))
+        ).scalars().all()
+    }
+
     all_active = await RedisLiveRunState.get_all_active()
+    all_active = [s for s in all_active if s.get("project_id") in live_project_ids]
     if project_id:
         all_active = [session for session in all_active if session.get("project_id") == project_id]
     elif allowed_project_ids is not None:
@@ -969,7 +987,13 @@ async def list_active_sessions(
     )
     stmt = (
         select(LiveSession)
-        .where(LiveSession.status == "completed")
+        .where(
+            LiveSession.status == "completed",
+            # Same life-cycle exclusion as the Redis set above.
+            LiveSession.project_id.in_(
+                select(Project.id).where(Project.is_active.is_(True))
+            ),
+        )
         .order_by(LiveSession.completed_at.desc())
         .limit(50)
     )
@@ -998,7 +1022,13 @@ async def list_active_sessions(
 
     tr_stmt = (
         select(TestRun)
-        .where(TestRun.trigger_source == "live_stream")
+        .where(
+            TestRun.trigger_source == "live_stream",
+            # Third source of this union — the same exclusion applies.
+            TestRun.project_id.in_(
+                select(Project.id).where(Project.is_active.is_(True))
+            ),
+        )
         .order_by(TestRun.start_time.desc())
         .limit(50)
     )

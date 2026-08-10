@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: the Live page listed sessions from soft-deleted projects
+
+`list_active_sessions` unions **three** sources — the Redis active set, completed `LiveSession`
+rows, and `live_stream` `TestRun` rows — and each was filtered only by the two *conditional* scopes
+(`if project_id:` / `elif allowed_project_ids:`). An ADMIN with no project pinned matches neither,
+so nothing restricted any of the three.
+
+Measured live: of 9 entries returned, **4 belonged to two deleted probe projects**.
+
+The exclusion is applied to all three sources — filtering one would leave the other two leaking,
+and merging them is this endpoint's entire job.
+
+Eighth surface in this family (#535 runs, #538 dashboard, #539 analytics, #541 ROI, #547 trends,
+#549 defect KPI, #550 releases).
+
+**Not changed**: the endpoint also returns *completed* sessions. Its docstring says so — "List
+active + recent live sessions", with `days` bounding the completed set. The `/stream/active` name
+is loose, but the contract is deliberate, and a test now pins it so nobody "fixes" it away.
+
 ### 2026-08-10 — Fix: the releases list returned soft-deleted projects
 
 `list_releases` applied its project filter only when one was supplied. Measured live:
