@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: report share links pointed at localhost
+
+`POST /api/v1/reports/runs/{run_id}/share` built its URL from an **SSO** setting:
+
+```python
+base_url = settings.SAML_BASE_URL  # reuse the base URL setting
+```
+
+`SAML_BASE_URL` defaults to `http://localhost:8000` and has no reason to be set on a deployment
+that doesn't use SAML — and the config's own localhost warning for it is gated on `SSO_ENABLED`,
+so on a non-SSO deployment nothing ever flagged the default.
+
+Measured against the live homelab, which sets `PUBLIC_BASE_URL` correctly:
+
+| | result |
+|---|---|
+| `PUBLIC_BASE_URL` (configured) | `http://testlookup.local` |
+| `settings.public_base_url` would resolve | `http://testlookup.local` |
+| `SAML_BASE_URL` (default, SSO off) | `http://localhost:8000` |
+| issued `share_url`, followed verbatim | **connection failed** |
+| same token on the real ingress | **HTTP 200, the report** |
+
+The deployment was configured correctly and the feature still emitted a dead link — this was never
+a misconfiguration. The link was otherwise valid; only the host was wrong. A share link exists to
+be sent to someone else, and both the CLI (`testlookup reports share`) and the UI's
+copy-to-clipboard on the release-gate page handed out the localhost URL.
+
+Now uses `settings.public_base_url` (`PUBLIC_BASE_URL` → first `CORS_ORIGINS` entry → localhost),
+the property already used by the GitHub checks, GitHub PR-comment and GitLab integrations.
+
 ### 2026-08-10 — Fix: ROI metrics counted soft-deleted projects
 
 All 11 counts in `get_value_metrics` were guarded by `if project_id:` alone — the shape that made

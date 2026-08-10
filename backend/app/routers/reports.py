@@ -177,7 +177,22 @@ async def create_share_link_endpoint(
     await db.refresh(link)
 
     from app.core.config import settings
-    base_url = settings.SAML_BASE_URL  # reuse the base URL setting
+    # A share link exists to be sent to someone else, so it must carry the
+    # hostname *they* can open. This used to read SAML_BASE_URL ("reuse the
+    # base URL setting") — an SSO setting that defaults to localhost:8000 and
+    # has no reason to be set on a deployment that doesn't use SAML. Its
+    # localhost warning only fires when SSO_ENABLED, so nothing flagged it.
+    #
+    # Measured live on a correctly-configured deployment: the issued URL was
+    # http://localhost:8000/... and did not connect, while the same token on
+    # the real ingress returned the report with HTTP 200. Only the host was
+    # wrong — the link was otherwise valid, and both the CLI and the UI's
+    # copy-to-clipboard handed it out.
+    #
+    # ``public_base_url`` is the setting documented for exactly this
+    # (PUBLIC_BASE_URL → first CORS origin → localhost), already used by the
+    # GitHub checks, PR-comment and GitLab integrations for the same purpose.
+    base_url = settings.public_base_url
     share_url = f"{base_url}/api/v1/shared/reports/{raw_token}"
 
     return ShareLinkResponse(
