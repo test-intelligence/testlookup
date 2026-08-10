@@ -102,6 +102,15 @@ async def _dispatch_to_channel(
             to = pref.email_override or user_email
             if not to:
                 return "failed", "No email address available"
+            # An unconfigured channel is a failure, not a send. send_notification
+            # returns early and silently when SMTP is disabled, so without this
+            # the "no exception means it worked" path below reported "sent" —
+            # and that status is what NotificationLog records, so suppressed
+            # emails were logged as delivered. The Slack branch below has always
+            # reported its missing webhook honestly; this makes email match.
+            cfg = smtp_cfg if smtp_cfg is not None else await email_service.get_smtp_config()
+            if not (cfg or {}).get("enabled"):
+                return "failed", "SMTP is not configured — no email was sent"
             await email_service.send_notification(
                 to=to,
                 title=title,

@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: "test notification" reported success when SMTP was not configured
+
+Measured on the live deployment, which has an empty `SMTP_HOST`:
+
+```
+POST /api/v1/notifications/test  {"channel": "email"}
+-> 200 {"status": "sent", "channel": "email"}
+```
+
+Nothing could have been delivered. The whole point of a "send test notification" button
+is to answer *is my channel configured?* — it answered yes when the answer was no.
+
+The asymmetry sat inside one function. `_dispatch_to_channel` guards Slack honestly
+(`return "failed", "No Slack webhook URL configured"`), while the email branch checked
+only that a recipient address existed. `email_service.send_notification` then returns
+**early and silently** when SMTP is disabled — a bare `return` behind a `logger.debug` —
+so no exception reached the caller and the "no exception means it worked" path reported
+success.
+
+**Not just a misleading button.** That return value is what gets written to
+`NotificationLog`, so every suppressed email was recorded as **delivered** — the
+notification history asserted deliveries that never left the box.
+
+Email now matches Slack: an unconfigured channel is a `failed` with an actionable reason.
+
+**Also examined and found clean:** notification history and unread-count are user-scoped;
+`mark_notification_read` filters on `user_id == current_user.id`, so no cross-user IDOR;
+Slack and Teams already reported missing webhooks correctly.
+
+**Recorded, not fixed — needs a product decision.** No part of the notification delivery
+chain checks `AI_OFFLINE_MODE`, though `ai_config_resolver`'s own docstring claims *"every
+other outbound integration … reads `settings.AI_OFFLINE_MODE` directly"* and that the env
+var "means the same thing everywhere". With `AI_OFFLINE_MODE=true`, configured SMTP/Slack/
+Teams channels would still send. Either the code or that claim is wrong, and making
+offline mode silence notifications is a behaviour change worth deciding deliberately
+rather than inferring.
+
 ### 2026-08-10 — Fix: a missing bucket 500'd the retention preview and could half-finish a purge
 
 `POST /projects/{id}/retention-policy/preview` returned **HTTP 500** the moment a project

@@ -15,6 +15,20 @@ logger = logging.getLogger(__name__)
 
 # ── DB-backed SMTP config resolver ────────────────────────────
 
+async def get_smtp_config() -> dict[str, Any]:
+    """Public accessor for the effective SMTP config.
+
+    Callers outside this module need to know whether email can be delivered at
+    all — dispatch reports an unconfigured channel as a failure rather than
+    letting a silent skip read as a send.
+
+    Resolves on demand and therefore opens a DB session; concurrent delivery
+    paths must keep threading a pre-resolved ``smtp_cfg`` instead (see
+    ``send_notification``).
+    """
+    return await _get_smtp_cfg()
+
+
 async def _get_smtp_cfg() -> dict[str, Any]:
     """
     Return effective SMTP configuration.
