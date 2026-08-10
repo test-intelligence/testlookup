@@ -61,6 +61,19 @@ async def list_releases(
         .options(selectinload(Release.phases))
         .order_by(Release.created_at.desc())
     )
+    # Soft-deleted projects are excluded unconditionally; the pin below is
+    # added on top. Without this the unscoped list returned every release ever
+    # created — measured live, **36 of 38 rows belonged to 36 deleted
+    # projects**, so the Releases page was almost entirely entries the user
+    # cannot open, filter by, or navigate to.
+    #
+    # Seventh surface in this family (#535 runs, #538 dashboard, #539
+    # analytics, #541 ROI, #547 trends, #549 defect KPI). Found by sweeping for
+    # the *class* — a project filter conditional on ``project_id`` — rather
+    # than waiting for the next one to be reported.
+    stmt = stmt.where(
+        Release.project_id.in_(select(Project.id).where(Project.is_active.is_(True)))
+    )
     if project_id:
         stmt = stmt.where(Release.project_id == uuid.UUID(project_id))
     if accessible_project_ids is not None:

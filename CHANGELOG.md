@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: the releases list returned soft-deleted projects
+
+`list_releases` applied its project filter only when one was supplied. Measured live:
+
+| projects | releases |
+|---|---|
+| `is_active = false` (deleted) | **36** |
+| `is_active = true` | 2 |
+| API, unscoped | **38** |
+
+**36 of 38 rows** on the Releases page belonged to projects the user cannot open, filter by, or
+navigate to.
+
+Seventh surface in this family (#535 runs, #538 dashboard, #539 analytics, #541 ROI, #547 trends,
+#549 defect KPI). The first six were each found by noticing a wrong number; this one was found by
+sweeping for the **class** — any query whose project filter is conditional on `project_id` — which
+is what six repeats should have prompted sooner.
+
+Tenant isolation (`accessible_project_ids`) and the explicit project pin are both preserved and
+pinned by tests.
+
 ### 2026-08-10 — Fix: the Overview defect KPI counted soft-deleted projects
 
 `get_dashboard_summary`'s active-defects query, and `count_open_critical_defects`, both applied
