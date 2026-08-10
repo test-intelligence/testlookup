@@ -523,7 +523,23 @@ async def coverage_stats(
         f"""
         SELECT
             {effective_suite} AS suite_name,
-            MAX(p.name)                              AS project_name,
+            -- Rows group by suite name alone, so in All-Projects scope one row
+            -- can span several projects — `api`, `smoke` and `regression` are
+            -- the most collidable names there are. The old `MAX(p.name)` then
+            -- stated a single project as fact: measured live, the `api` row
+            -- summed Checkout Service (5 tests) and a probe project (10) and
+            -- labelled all 15 with whichever name sorted highest.
+            --
+            -- Answer honestly instead: name the project only when the row has
+            -- exactly one, and publish the count so a consumer can tell a
+            -- roll-up from a single-project row. The aggregation itself is
+            -- unchanged — merging a suite across projects is a legitimate
+            -- org-wide view, and no consumer reads this field today (the UI
+            -- type omits it; the MCP tool and the report service both scope by
+            -- project). This keeps the payload from lying to the next one.
+            CASE WHEN COUNT(DISTINCT tr.project_id) = 1 THEN MAX(p.name) END
+                                                     AS project_name,
+            COUNT(DISTINCT tr.project_id)            AS project_count,
             COUNT(DISTINCT tc.test_fingerprint)      AS unique_tests,
             COUNT(*) FILTER (WHERE tc.status = 'PASSED') AS passed,
             COUNT(*) FILTER (WHERE tc.status IN ('FAILED', 'BROKEN')) AS failed,

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: Coverage named one project for rows spanning several
+
+`coverage_stats` groups suite rows by suite name alone, so in All-Projects scope a row can
+aggregate several projects — `api`, `smoke` and `regression` are the most collidable suite names
+there are. The row was then labelled `MAX(p.name) AS project_name`, stating one project as fact.
+Measured live, the `api` row summed two projects (5 unique tests + 10) and attributed all 15 to
+whichever name sorted highest.
+
+**Low severity, stated plainly: no consumer reads the field today.** `CoverageSuite` in the
+frontend types has no `project_name`, the MCP tool `get_coverage_report` takes a *required*
+`project_id`, and `analysis_report_service` scopes its call too. A live probe of the rendered page
+showed suite rows carrying no project attribution at all. This fixes a payload that would lie to
+the next consumer, not a visible defect.
+
+`project_name` is now emitted only when the row belongs to exactly one project, with a new
+`project_count` alongside it so a roll-up is distinguishable from a single-project row. The
+aggregation is deliberately unchanged — regrouping by `(project_id, suite)` would change what the
+All-Projects view means and break the UI's one-row-per-suite keying.
+
 ### 2026-08-10 — Fix: analytics was built entirely from deleted projects
 
 `_tenant_filter` is the single scoping helper behind every analytics query (9 call sites:
