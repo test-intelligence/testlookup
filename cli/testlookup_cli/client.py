@@ -97,9 +97,13 @@ async def _try_refresh(client: httpx.AsyncClient, base_url: str, profile: dict, 
 async def login(base_url: str, username: str, password: str) -> dict:
     """Authenticate and return tokens."""
     async with httpx.AsyncClient(timeout=15.0) as client:
+        # The endpoint is OAuth2PasswordRequestForm — form-encoded only.
+        # Posting json= returns 422, which this function then reported as
+        # "check username and password", blaming the user for a protocol
+        # mismatch.
         resp = await client.post(
             f"{base_url.rstrip('/')}/api/v1/auth/login",
-            json={"username": username, "password": password},
+            data={"username": username, "password": password},
         )
         if resp.status_code != 200:
             raise CLIError("Login failed — check username and password", EXIT_AUTH)

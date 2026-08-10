@@ -10,7 +10,7 @@ auth_app = typer.Typer(name="auth", help="Authenticate with TestLookup")
 
 @auth_app.command()
 def login(
-    url: str = typer.Option("http://localhost:8000", "--url", help="TestLookup server URL"),
+    url: str = typer.Option(None, "--url", help="TestLookup server URL (defaults to TESTLOOKUP_URL / active profile)"),
     username: str = typer.Option(None, "--username", "-u", help="Username (prompted if omitted)"),
     password: str = typer.Option(None, "--password", "-p", help="Password (prompted if omitted)"),
     profile_name: str = typer.Option(None, "--profile", help="Profile name to save as"),
@@ -22,6 +22,10 @@ def login(
         password = Prompt.ask("Password", password=True)
 
     name = profile_name or config.get_active_profile_name()
+    # Resolve like every other command does. Hardcoding localhost here meant
+    # TESTLOOKUP_URL was honoured everywhere except the one command that
+    # establishes the session.
+    url = url or config.get_profile(profile_name).get("url")
 
     try:
         data = asyncio.run(client.login(url, username, password))

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: `testlookup auth login` could not succeed against any server
+
+Two independent defects on the CLI's primary authentication path, both reproduced
+against the live deployment.
+
+**The request body was the wrong encoding.** `client.login` posted `json={...}`;
+`POST /api/v1/auth/login` takes `OAuth2PasswordRequestForm = Depends()`, which is
+form-encoded only. Measured side by side against the running server:
+
+```
+json= -> 422 {"detail":[{"loc":["body","username"],"msg":"Field required"}]}
+data= -> 200 {"access_token": "eyJ..."}
+```
+
+The 422 was then reported as **"Login failed — check username and password"** with
+*correct* credentials — a protocol mismatch blamed on the user, who would rotate
+passwords chasing a bug in the client.
+
+**`--url` ignored `TESTLOOKUP_URL`.** Declared as `typer.Option("http://localhost:8000")`,
+so with the variable set — and honoured by every other command — login still dialled
+localhost and failed with "All connection attempts failed". The one command that
+establishes a session was the one that ignored the environment.
+
+Verified end-to-end after the fix: login saves a real JWT and `auth whoami` reports
+`Authenticated: True` against the homelab.
+
+**Also found, recorded not fixed:** on a Windows cp1252 console the CLI crashes with
+`UnicodeEncodeError: '✓'` when printing its success tick. The login itself has
+already completed and the profile is saved, so the credentials are fine — but the process
+exits 1 with a traceback, which a CI wrapper would read as failure. Needs a console-safe
+output path rather than a one-character patch.
+
 ### 2026-08-10 — Fix: "test notification" reported success when SMTP was not configured
 
 Measured on the live deployment, which has an empty `SMTP_HOST`:
