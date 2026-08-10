@@ -1,5 +1,6 @@
 """Storage Provider abstraction for S3, MinIO, and Local File System."""
 import asyncio
+import logging
 import os
 from abc import ABC, abstractmethod
 from functools import lru_cache
@@ -7,6 +8,8 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, cast
 
 from app.core.config import settings
+
+logger = logging.getLogger("db.storage")
 
 class StorageProvider(ABC):
     """Abstract base class for storage operations."""
@@ -48,6 +51,26 @@ class StorageProvider(ABC):
         raise NotImplementedError()
 
 
+def _is_missing_bucket(exc: Exception) -> bool:
+    """True for S3's "bucket does not exist" error.
+
+    An absent bucket is not a failure for a *read*: it holds no objects, so
+    the honest answers are ``[]`` and ``0``. Reported live as an HTTP 500 from
+    the read-only retention preview, and — worse — as an abort partway through
+    an execute-mode purge, after the Mongo deletes had already run.
+
+    Narrow on purpose: AccessDenied, network failures and everything else
+    still raise, because "nothing there" and "we could not look" must not
+    render identically.
+    """
+    from botocore.exceptions import ClientError  # noqa: PLC0415
+
+    if not isinstance(exc, ClientError):
+        return False
+    code = (exc.response or {}).get("Error", {}).get("Code")
+    return code in ("NoSuchBucket", "404")
+
+
 def _require_prefix(prefix: str) -> None:
     """Refuse bucket-wiping prefixes for delete_prefix implementations."""
     if not prefix or not prefix.strip("/").strip():
@@ -82,11 +105,17 @@ class S3StorageProvider(StorageProvider):
     async def list_objects(self, prefix: str, bucket: str | None = None) -> list[dict]:
         bucket = bucket or settings.MINIO_BUCKET_NAME
         objects = []
-        async with self.get_client_context() as s3:
-            paginator = s3.get_paginator("list_objects_v2")
-            async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-                for obj in page.get("Contents", []):
-                    objects.append(obj)
+        try:
+            async with self.get_client_context() as s3:
+                paginator = s3.get_paginator("list_objects_v2")
+                async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                    for obj in page.get("Contents", []):
+                        objects.append(obj)
+        except Exception as exc:  # noqa: BLE001 — re-raised unless missing bucket
+            if not _is_missing_bucket(exc):
+                raise
+            logger.debug("list_objects: bucket %s does not exist", bucket)
+            return []
         return objects
 
     async def get_object_content(self, key: str, bucket: str | None = None) -> bytes:
@@ -133,19 +162,25 @@ class S3StorageProvider(StorageProvider):
         _require_prefix(prefix)
         bucket = bucket or settings.MINIO_BUCKET_NAME
         deleted = 0
-        async with self.get_client_context() as s3:
-            paginator = s3.get_paginator("list_objects_v2")
-            keys: list[str] = []
-            async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-                keys.extend(obj["Key"] for obj in page.get("Contents", []))
-            # DeleteObjects caps at 1000 keys per request.
-            for i in range(0, len(keys), 1000):
-                batch = keys[i:i + 1000]
-                await s3.delete_objects(
-                    Bucket=bucket,
-                    Delete={"Objects": [{"Key": k} for k in batch], "Quiet": True},
-                )
-                deleted += len(batch)
+        try:
+            async with self.get_client_context() as s3:
+                paginator = s3.get_paginator("list_objects_v2")
+                keys: list[str] = []
+                async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                    keys.extend(obj["Key"] for obj in page.get("Contents", []))
+                # DeleteObjects caps at 1000 keys per request.
+                for i in range(0, len(keys), 1000):
+                    batch = keys[i:i + 1000]
+                    await s3.delete_objects(
+                        Bucket=bucket,
+                        Delete={"Objects": [{"Key": k} for k in batch], "Quiet": True},
+                    )
+                    deleted += len(batch)
+        except Exception as exc:  # noqa: BLE001 — re-raised unless missing bucket
+            if not _is_missing_bucket(exc):
+                raise
+            logger.debug("delete_prefix: bucket %s does not exist", bucket)
+            return 0
         return deleted
 
 

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: a missing bucket 500'd the retention preview and could half-finish a purge
+
+`POST /projects/{id}/retention-policy/preview` returned **HTTP 500** the moment a project
+had anything to purge:
+
+```
+botocore.errorfactory.NoSuchBucket: An error occurred (NoSuchBucket) when calling
+the ListObjectsV2 operation: The specified bucket does not exist
+```
+
+It worked while the answer was zero — with no runs past the cutoff there are no artifact
+prefixes to list — so the bug stayed hidden until the feature had something to say.
+
+Two consequences, the second more serious:
+
+- **Preview is read-only and still crashed.** It is the operation admins are told to run
+  before enabling retention ("preview is how admins decide whether to enable"). On any
+  deployment where nothing has uploaded an artifact yet — the default state — that
+  decision could not be made.
+- **Execute would abort mid-purge.** The documented order is Mongo → MinIO → Postgres.
+  Mongo deletes happen at step (2); the MinIO listing that raises is at step (3). A purge
+  would delete Mongo documents, throw, and never reach the Postgres deletes or the audit
+  row — a partial purge with no record of itself, on a path whose own docstring notes the
+  stores are "inherently non-transactional".
+
+`list_objects` and `delete_prefix` now treat a missing bucket as zero objects. Narrow on
+purpose: `AccessDenied`, network failures and everything else still raise, because
+"nothing there" and "we could not look" must not render identically.
+
+**The rest of retention was exercised end-to-end on a throwaway project and is clean:**
+preview and execute agree exactly (2 runs / 8 test cases predicted, 2 runs / 8 cases
+deleted), the cascade reaches test_cases, the purge-audit row records per-store counts,
+execute is gated behind a type-the-project-name confirmation, and a second execute is
+idempotent.
+
 ### 2026-08-10 — Fix: "Upload Report" now actually uploads, under any scope
 
 Reported twice. The first time the sidebar link was a silent no-op. The fix for that
