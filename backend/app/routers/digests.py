@@ -66,6 +66,22 @@ async def create_subscription(
         name=payload.name,
         schedule=payload.schedule,
         channel=payload.channel,
+        # These three were declared by DigestSubscriptionCreate, returned by
+        # DigestSubscriptionResponse, and stored by their own columns — but the
+        # hand-written field list below omitted them, so every create silently
+        # replaced them with the column defaults. Measured live: a subscription
+        # sent as scope_type="suite" / scope_value="api" /
+        # trigger_filter="failed_only" came back as "project" / None / "all",
+        # with a 201.
+        #
+        # ``trigger_filter`` is not cosmetic — the delivery task gates on it
+        # (worker/tasks.py: `if sub.trigger_filter == "failed_only" and
+        # _failed_tests == 0`). Dropping it means a user who asked to hear only
+        # about failures is subscribed to everything, and gets all-green
+        # digests they explicitly opted out of, on a schedule.
+        scope_type=payload.scope_type,
+        scope_value=payload.scope_value,
+        trigger_filter=payload.trigger_filter,
         send_when_unchanged=payload.send_when_unchanged,
         # US-7.5: attached HTML analysis report (email digests only).
         report_attachment=payload.report_attachment,

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: digest subscriptions discarded their own scope and trigger filter
+
+`POST /api/v1/digests/subscriptions` built the row from a hand-written keyword list that omitted
+`scope_type`, `scope_value` and `trigger_filter` — though `DigestSubscriptionCreate` declares all
+three (with patterns and defaults), `DigestSubscriptionResponse` returns them, and each has its own
+column. Measured live:
+
+| sent | stored |
+|---|---|
+| `scope_type="suite"` | `'project'` |
+| `scope_value="api"` | `None` |
+| `trigger_filter="failed_only"` | `'all'` |
+
+…all behind a **201**, with the response echoing the wrong values back.
+
+**`trigger_filter` is not cosmetic.** The delivery task gates on it:
+
+```python
+if sub.trigger_filter == "failed_only" and _failed_tests == 0:   # skip
+if sub.trigger_filter == "degraded_only" and _pass_rate >= 90:   # skip
+```
+
+A user who subscribed to *failures only* was stored as *all*, and received every all-green digest
+they had explicitly opted out of — on a schedule. `scope_type`/`scope_value` currently have no
+reader in the backend, so those two are inert; they are fixed alongside because the API accepts and
+echoes them, but the harm above is the reason this matters.
+
+Second instance of the shape, found by a request-body contract sweep of every router that builds an
+ORM row from a Pydantic payload. The first was `page` on saved views (#544). Handlers that build the
+row from `payload.model_dump()` cannot have this bug.
+
 ### 2026-08-10 — Fix: a saved view's `page` was accepted, discarded, and unfilterable
 
 Two halves of one broken field, found by sweeping every MCP tool's query params against the params
