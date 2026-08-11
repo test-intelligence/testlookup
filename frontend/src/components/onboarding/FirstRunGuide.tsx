@@ -24,7 +24,7 @@ const STEPS: Step[] = [
     n: 2,
     title: 'Or ingest your own test results',
     body: 'Point your CI at the ingest API (JUnit / TestNG / Allure / Cypress / Playwright / pytest), or upload a file from the CLI.',
-    command: 'testlookup upload results.xml',
+    command: 'testlookup upload file results.xml -p <project-id> -b <build>',
   },
   {
     n: 3,

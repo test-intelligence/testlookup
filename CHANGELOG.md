@@ -950,6 +950,21 @@ Fixed as **ADMIN-only**, matching `/audit-dashboard/export` — the other instan
 analytics export here. Membership scoping was the alternative, but this is cross-project
 analytics by nature and **has no consumer**: no frontend, CLI, MCP or SDK caller
 references it. Admin-only breaks nothing and matches what the endpoint is.
+### 2026-08-10 — Fix: onboarding showed a `testlookup upload` command the CLI rejects
+
+The first-run guide (shown on an empty dashboard — the first thing a new self-host
+user reads and copies) displayed `testlookup upload results.xml`. There is no bare
+`upload <file>` command: `upload` is a Typer group whose only leaf commands are `file`
+and `dir`, and `--project`/`--build` are both required. Pasting the guide's command
+failed immediately with a Typer usage error — exactly at the moment adoption is most
+fragile.
+
+Corrected the displayed command to the CLI's own documented form,
+`testlookup upload file results.xml -p <project-id> -b <build>`, and fixed the two
+matching `user-guide/getting-results-in.md` snippets (the general CLI example and the
+CI step) that used the same broken bare form and omitted the required `--build`. A
+frontend regression test pins the exact command string so an accidental revert to the
+bare form is caught.
 
 ### 2026-08-09 — Security: `scope=team` guarded cross-user escalation but not cross-tenant (HIGH)
 
