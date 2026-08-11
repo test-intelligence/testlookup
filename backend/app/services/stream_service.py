@@ -1106,9 +1106,12 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
     failed = int(state.get("failed", 0))
     skipped = int(state.get("skipped", 0))
     broken = int(state.get("broken", 0))
+    # Results whose status the server could not interpret. Included in the
+    # total fallback so they cannot be erased from the run's own arithmetic.
+    unknown = int(state.get("unknown", 0))
     total = int(state.get("total", session.total_tests or 0))
     # Fallback: if total wasn't tracked, derive it from component counts
-    total = total or (passed + failed + skipped + broken)
+    total = total or (passed + failed + skipped + broken + unknown)
     # Pass rate EXCLUDES skipped from the denominator (passed / passed+failed+broken),
     # consistent with live_consumer and ingestion. Skips are neither pass nor fail.
     executed = passed + failed + broken
@@ -1117,7 +1120,7 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
     # STOPPED, not PASSED — mirrors ingestion._update_run_aggregates via the
     # shared helper. Runs at close_session only; the drainer creates the
     # in-progress row as IN_PROGRESS, so this never mislabels a live run.
-    run_status = terminal_run_status(executed, failed, broken)
+    run_status = terminal_run_status(executed, failed, broken, unknown)
     now = datetime.now(timezone.utc)
 
     # Run-level suite identifier supplied by the SDK on session create. We
@@ -1151,6 +1154,7 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
             failed_tests=failed,
             skipped_tests=skipped,
             broken_tests=broken,
+            unknown_tests=unknown,
             pass_rate=pass_rate,
             primary_suite_name=suite_label,
             suite_names=[suite_label] if suite_label else None,
@@ -1168,6 +1172,7 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
         run.failed_tests = failed
         run.skipped_tests = skipped
         run.broken_tests = broken
+        run.unknown_tests = unknown
         run.pass_rate = pass_rate
         run.end_time = now
         # Only overwrite suite when SDK provided one — preserve any value

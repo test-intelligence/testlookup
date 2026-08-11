@@ -383,14 +383,25 @@ async def _finalise_run_in_db(run_id: str, state: dict) -> None:
                 failed = int(state.get("failed", 0))
                 skipped = int(state.get("skipped", 0))
                 broken = int(state.get("broken", 0))
-                total = int(state.get("total", 0)) or (passed + failed + skipped + broken)
+                unknown = int(state.get("unknown", 0))
+                total = int(state.get("total", 0)) or (
+                    passed + failed + skipped + broken + unknown
+                )
 
-                run.status = LaunchStatus.FAILED if (failed + broken) > 0 else LaunchStatus.PASSED
+                # Shared grader, not an inline ternary: this path used to grade
+                # PASSED whenever failed+broken == 0, so a run whose only
+                # non-passing result was uninterpretable went out green.
+                from app.services.run_status import terminal_run_status
+
+                run.status = terminal_run_status(
+                    passed + failed + broken, failed, broken, unknown
+                )
                 run.total_tests = total
                 run.passed_tests = passed
                 run.failed_tests = failed
                 run.skipped_tests = skipped
                 run.broken_tests = broken
+                run.unknown_tests = unknown
                 # Pass rate intentionally EXCLUDES skipped from the denominator
                 # (passed / passed+failed+broken), consistent with stream_service
                 # and ingestion. Skips are neither a pass nor a failure.

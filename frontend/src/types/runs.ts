@@ -12,6 +12,8 @@ export interface TestRun {
   failed_tests: number
   skipped_tests: number
   broken_tests?: number
+  /** Results whose reported status was outside PASSED/FAILED/SKIPPED/BROKEN. */
+  unknown_tests?: number
   total_tests: number
   pass_rate: number
   duration_ms?: number

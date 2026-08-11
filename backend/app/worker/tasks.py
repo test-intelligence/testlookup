@@ -205,9 +205,10 @@ def persist_live_session(
         from app.db.redis_client import get_redis
         from app.streams import LIVE_TESTCASES_KEY
         from app.models.postgres import (
-            LaunchStatus, TestCase, TestRun, TestStatus,
+            TestCase, TestRun, TestStatus,
         )
         from app.services.stream_service import canonical_test_run_uuid
+        from app.services.run_status import terminal_run_status
 
         redis = get_redis()
         list_key = LIVE_TESTCASES_KEY.format(run_id=run_id)
@@ -240,12 +241,21 @@ def persist_live_session(
             failed  = int(final_state.get("failed",  0) or 0)
             skipped = int(final_state.get("skipped", 0) or 0)
             broken  = int(final_state.get("broken",  0) or 0)
+            unknown = int(final_state.get("unknown", 0) or 0)
             total   = int(fs_total)
         else:
             passed  = sum(1 for e in events if (e.get("status") or "").upper() == "PASSED")
             failed  = sum(1 for e in events if (e.get("status") or "").upper() == "FAILED")
             skipped = sum(1 for e in events if (e.get("status") or "").upper() == "SKIPPED")
             broken  = sum(1 for e in events if (e.get("status") or "").upper() == "BROKEN")
+            # Everything the vocabulary does not cover. ``total`` is len(events)
+            # here, so without this the remainder was inside the total with no
+            # bucket accounting for it.
+            unknown = sum(
+                1 for e in events
+                if (e.get("status") or "").upper()
+                not in ("PASSED", "FAILED", "SKIPPED", "BROKEN")
+            )
             total   = len(events) or final_state.get("total", 0)
 
         # Empty buffer at close — surface loudly so the empty Run
@@ -264,10 +274,13 @@ def persist_live_session(
             )
 
         # If total wasn't tracked explicitly, derive it from component counts
-        total = total or (passed + failed + skipped + broken)
+        total = total or (passed + failed + skipped + broken + unknown)
 
         pass_rate = round(passed / (passed + failed + broken) * 100, 2) if (passed + failed + broken) > 0 else None
-        run_status = LaunchStatus.FAILED if (failed + broken) > 0 else LaunchStatus.PASSED
+        # Use the shared grader rather than an inline ternary: this path used to
+        # grade PASSED whenever failed+broken == 0, which meant a run whose only
+        # non-passing result was uninterpretable went out green.
+        run_status = terminal_run_status(passed + failed + broken, failed, broken, unknown)
 
         # ── Resolve project UUID ──────────────────────────────────────────────
         try:
@@ -332,6 +345,7 @@ def persist_live_session(
                     failed_tests=failed,
                     skipped_tests=skipped,
                     broken_tests=broken,
+                    unknown_tests=unknown,
                     pass_rate=pass_rate,
                     primary_suite_name=session_suite,
                     suite_names=[session_suite] if session_suite else None,
@@ -348,6 +362,7 @@ def persist_live_session(
                 run.failed_tests = failed
                 run.skipped_tests = skipped
                 run.broken_tests  = broken
+                run.unknown_tests = unknown
                 run.pass_rate     = pass_rate
                 run.end_time      = now
                 # Stamp primary_suite_name if upsert_test_run never ran
@@ -473,6 +488,7 @@ def persist_live_session(
                 # = no duplicates).
                 placeholder_count = (
                     int(passed) + int(failed) + int(skipped) + int(broken)
+                    + int(unknown)
                 )
                 if placeholder_count > 0:
                     from sqlalchemy.dialects.postgresql import insert as _pg_insert
@@ -482,6 +498,7 @@ def persist_live_session(
                         (int(failed),  TestStatus.FAILED.value),
                         (int(broken),  TestStatus.BROKEN.value),
                         (int(skipped), TestStatus.SKIPPED.value),
+                        (int(unknown), TestStatus.UNKNOWN.value),
                     )
                     i = 0
                     for count, status_value in bucket_sequence:

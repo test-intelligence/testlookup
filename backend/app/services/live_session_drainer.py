@@ -224,8 +224,14 @@ async def drain_run_buffer(
         agg_failed = int(state.get("failed", 0) or 0)
         agg_skipped = int(state.get("skipped", 0) or 0)
         agg_broken = int(state.get("broken", 0) or 0)
+        # Results the server could not interpret. Counted here so they cannot
+        # vanish from ``total`` — an unrecognised status used to increment no
+        # counter at all while its TestCase row was still written as UNKNOWN.
+        agg_unknown = int(state.get("unknown", 0) or 0)
         agg_total = int(state.get("total", 0) or 0)
-        agg_total = agg_total or (agg_passed + agg_failed + agg_skipped + agg_broken)
+        agg_total = agg_total or (
+            agg_passed + agg_failed + agg_skipped + agg_broken + agg_unknown
+        )
 
         session_suite = (suite_name or state.get("suite_name") or "").strip() or None
         started_at = _resolved_started_at(state, now)
@@ -248,6 +254,7 @@ async def drain_run_buffer(
                     failed_tests=agg_failed,
                     skipped_tests=agg_skipped,
                     broken_tests=agg_broken,
+                    unknown_tests=agg_unknown,
                     primary_suite_name=session_suite,
                     suite_names=[session_suite] if session_suite else None,
                     start_time=started_at,
@@ -264,6 +271,7 @@ async def drain_run_buffer(
                 run.failed_tests = agg_failed
                 run.skipped_tests = agg_skipped
                 run.broken_tests = agg_broken
+                run.unknown_tests = agg_unknown
                 run.end_time = now
                 if session_suite and not run.primary_suite_name:
                     run.primary_suite_name = session_suite

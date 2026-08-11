@@ -511,7 +511,8 @@ export default function RunDetailPage() {
                       This live run reported <strong>{totalReported}</strong> test{totalReported === 1 ? '' : 's'}
                       {' '}({run?.passed_tests ?? 0} passed, {run?.failed_tests ?? 0} failed
                       {(run?.skipped_tests ?? 0) > 0 && `, ${run?.skipped_tests} skipped`}
-                      {(run?.broken_tests ?? 0) > 0 && `, ${run?.broken_tests} broken`}),
+                      {(run?.broken_tests ?? 0) > 0 && `, ${run?.broken_tests} broken`}
+                      {(run?.unknown_tests ?? 0) > 0 && `, ${run?.unknown_tests} unrecognised status`}),
                       but per-test details aren't loaded yet.
                     </p>
                     <p className="text-xs">

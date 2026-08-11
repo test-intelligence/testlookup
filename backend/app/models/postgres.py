@@ -302,6 +302,10 @@ class TestRun(Base):
     failed_tests: Mapped[int] = mapped_column(Integer, default=0)
     skipped_tests: Mapped[int] = mapped_column(Integer, default=0)
     broken_tests: Mapped[int] = mapped_column(Integer, default=0)
+    # Results whose reported status was outside PASSED/FAILED/SKIPPED/BROKEN.
+    # Without this column the four above did not add up to ``total_tests`` and
+    # an uninterpretable result was invisible in every breakdown.
+    unknown_tests: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     pass_rate: Mapped[Optional[float]] = mapped_column(Float)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer)
 

@@ -822,6 +822,7 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
             func.sum((TestCase.status == TestStatus.FAILED).cast(Integer)).label("failed"),
             func.sum((TestCase.status == TestStatus.SKIPPED).cast(Integer)).label("skipped"),
             func.sum((TestCase.status == TestStatus.BROKEN).cast(Integer)).label("broken"),
+            func.sum((TestCase.status == TestStatus.UNKNOWN).cast(Integer)).label("unknown"),
         ).where(TestCase.test_run_id == run_id)
     )
     counts = result.one()
@@ -830,6 +831,10 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
     passed = counts.passed or 0
     failed = counts.failed or 0
     broken = counts.broken or 0
+    # ``total`` is a COUNT(*), so UNKNOWN rows were always inside it while no
+    # column reported them — the four status columns simply did not add up to
+    # total_tests. Counted explicitly now, on both ingest paths.
+    unknown = counts.unknown or 0
     # Canonical pass_rate (single source of truth — finalize_run calls this for
     # BOTH file and live ingestion). EXCLUDES skipped from the denominator: a
     # skipped test wasn't executed, so it's neither a pass nor a fail. This now
@@ -873,7 +878,7 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
     # A finalized run that executed nothing (empty/parse-failed upload, or a
     # fully-skipped suite) grades as STOPPED, not PASSED — see run_status
     # for the rationale. Shared with the live-stream close path for parity.
-    run_status = terminal_run_status(executed, failed, broken)
+    run_status = terminal_run_status(executed, failed, broken, unknown)
 
     values_to_update: dict = {
         "total_tests":   total,
@@ -881,6 +886,7 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
         "failed_tests":  counts.failed or 0,
         "skipped_tests": counts.skipped or 0,
         "broken_tests":  counts.broken or 0,
+        "unknown_tests": unknown,
         "pass_rate":     pass_rate,
         "status":        run_status,
         "end_time":      datetime.now(timezone.utc),

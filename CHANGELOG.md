@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-11 — Fix: a test result with an unrecognised status was erased, and the run went green
+
+**Migration `0118`** adds `test_runs.unknown_tests`.
+
+`LiveEvent.status` is a free-form `Optional[str]` — documented as
+`PASSED | FAILED | SKIPPED | BROKEN`, never validated. Streaming four events to
+`POST /api/v1/stream/ingest`, three `PASSED` and one `"FAIL"` (a plausible typo, and the
+spelling several frameworks use natively), was accepted with `{"accepted": 4}` and produced:
+
+```
+status=PASSED  total_tests=3  passed=3  failed=0  skipped=0  broken=0  pass_rate=100.0
+```
+
+while the run's own `test_cases` rows were:
+
+```
+test_alpha                 PASSED
+test_beta                  PASSED
+test_gamma                 PASSED
+test_delta_REALLY_FAILED   UNKNOWN     <- persisted, and uncounted
+```
+
+A release gate reading that run would green-light a build whose test failed.
+
+`RedisLiveRunState.record_test_event` had a four-entry `field_map` and did
+`counter_field = field_map.get(status_upper)` — `None` for anything else — with the increment
+behind `if counter_field:`, so **no counter moved at all**, not even `total`. `total` then fell
+back to `passed + failed + skipped + broken` = 3 and the fourth test disappeared from the run's
+own arithmetic, even though `_event_to_row` had written its row as `UNKNOWN`.
+
+Now: unrecognised statuses bucket as `unknown` rather than incrementing nothing; `unknown` is
+included in every `total` fallback and persisted via the new column on both ingest paths; and
+`terminal_run_status` grades a run with uninterpretable results **STOPPED** rather than PASSED.
+That extends the rule the helper's own docstring already established — a run we cannot vouch for
+must not masquerade as green — and real failures still outrank it, so `FAILED` is unchanged.
+
+The file-upload path had a milder form of the same hole: `total_tests` there is a `COUNT(*)`, so
+`UNKNOWN` rows sat inside the total with no column reporting them and the four status columns
+simply did not add up. Both paths now agree.
+
+**Not fixed here, flagged instead**: `LiveEvent.status` still accepts any string. Rejecting
+unrecognised values at the boundary would be the loudest fix, but it turns a partially-usable
+batch into a 422 for clients already sending e.g. `"error"` — a compatibility call, not an
+agent's to make.
+
 ### 2026-08-11 — Fix: Integration Health trends hid timed-out and auth-rejected probes
 
 The probe service persists **five** statuses — `healthy`, `degraded`, `down`, `timeout` and

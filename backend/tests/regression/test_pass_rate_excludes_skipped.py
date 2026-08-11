@@ -62,7 +62,11 @@ async def test_pass_rate_excludes_skipped_from_denominator():
 
     # 8 passed, 2 failed, 0 broken, 90 skipped → total 100.
     # Excluding skipped: 8 / (8+2+0) = 80.0.  Including skipped (old bug): 8.0.
-    counts = SimpleNamespace(total=100, passed=8, failed=2, skipped=90, broken=0)
+    # ``unknown`` added when test_runs gained an unknown_tests column (0118) —
+    # the fixture is extended, not the assertion weakened.
+    counts = SimpleNamespace(
+        total=100, passed=8, failed=2, skipped=90, broken=0, unknown=0
+    )
     db = _CapturingDB(counts)
 
     await ing._update_run_aggregates(db, uuid.uuid4())
@@ -82,7 +86,9 @@ async def test_pass_rate_is_100_when_all_executed_pass_despite_skips():
 
     # 5 passed, 0 failed, 0 broken, 5 skipped. "Of the tests that ran, all
     # passed" → 100.0, not 50.0.
-    counts = SimpleNamespace(total=10, passed=5, failed=0, skipped=5, broken=0)
+    counts = SimpleNamespace(
+        total=10, passed=5, failed=0, skipped=5, broken=0, unknown=0
+    )
     db = _CapturingDB(counts)
 
     await ing._update_run_aggregates(db, uuid.uuid4())

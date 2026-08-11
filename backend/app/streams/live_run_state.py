@@ -71,6 +71,7 @@ class RedisLiveRunState:
             "failed":       0,
             "skipped":      0,
             "broken":       0,
+            "unknown":      0,
             "current_test": "",
             "started_at":   now,
             "last_event_at": now,
@@ -111,8 +112,17 @@ class RedisLiveRunState:
             "FAILED": "failed",
             "SKIPPED": "skipped",
             "BROKEN": "broken",
+            "UNKNOWN": "unknown",
         }
-        counter_field = field_map.get(status_upper)
+        # Anything outside the vocabulary buckets as ``unknown`` rather than
+        # incrementing nothing. Previously an unrecognised status (a client
+        # sending "FAIL" instead of "FAILED", say) left every counter untouched
+        # while ``_event_to_row`` still persisted the TestCase as UNKNOWN — so
+        # the run's aggregates disagreed with its own test_cases rows, and a
+        # genuinely failing test was erased from a run that then graded PASSED
+        # at 100%. Counting it keeps the aggregates honest; run_status.py
+        # decides what an uninterpretable result means for the grade.
+        counter_field = field_map.get(status_upper, "unknown")
 
         # Build the metadata update.
         now = datetime.now(timezone.utc).isoformat()
@@ -218,7 +228,7 @@ class RedisLiveRunState:
     @staticmethod
     def _deserialise(raw: dict[str, Any]) -> dict[str, Any]:
         """Convert Redis string values back to typed Python values."""
-        int_fields = {"total", "passed", "failed", "skipped", "broken"}
+        int_fields = {"total", "passed", "failed", "skipped", "broken", "unknown"}
         result: dict[str, Any] = {}
         for k, v in raw.items():
             if k in int_fields:
@@ -235,7 +245,10 @@ class RedisLiveRunState:
         # in Redis but the UI needs it to reflect tests seen so far.
         # When a pre-announced total IS given (e.g. 100), max() keeps it unchanged
         # until completed count surpasses it (shouldn't happen, but safe).
+        # ``unknown`` is included so an uninterpretable result cannot be
+        # silently dropped from the run's total the way it was before.
         all_completed = (result.get("passed", 0) + result.get("failed", 0)
-                         + result.get("skipped", 0) + result.get("broken", 0))
+                         + result.get("skipped", 0) + result.get("broken", 0)
+                         + result.get("unknown", 0))
         result["total"] = max(result.get("total", 0), all_completed)
         return result

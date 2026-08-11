@@ -338,6 +338,7 @@ class TestRunSummary(BaseModel):
     failed_tests: int
     skipped_tests: int
     broken_tests: int
+    unknown_tests: int = 0
     pass_rate: Optional[float] = None
     duration_ms: Optional[int] = None
     ocp_pod_name: Optional[str] = None
@@ -4682,6 +4683,7 @@ class RunCompareSummary(BaseModel):
     failed_tests: int = 0
     broken_tests: int = 0
     skipped_tests: int = 0
+    unknown_tests: int = 0
     pass_rate: Optional[float] = None
     duration_ms: Optional[int] = None
     start_time: Optional[datetime] = None
