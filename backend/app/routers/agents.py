@@ -22,7 +22,7 @@ from app.core.deps import (
     require_run_access,
 )
 from app.db.postgres import get_db
-from app.models.postgres import AgentPipelineRun, AgentStageResult, TestRun, UserRole
+from app.models.postgres import AgentPipelineRun, AgentStageResult, Project, TestRun, UserRole
 from app.models.schemas import (
     AgentPipelineResponse,
     AgentRunSummaryResponse,
@@ -211,12 +211,18 @@ async def list_pipelines(
     q = select(AgentPipelineRun)
     if run_id:
         q = q.where(AgentPipelineRun.test_run_id == run_id)
-    if project_id is not None or accessible is not None:
-        q = q.join(TestRun, AgentPipelineRun.test_run_id == TestRun.id)
-        if project_id is not None:
-            q = q.where(TestRun.project_id == project_id)
-        if accessible is not None:
-            q = q.where(TestRun.project_id.in_(accessible))
+    # The join and life-cycle filter are UNCONDITIONAL: previously both lived
+    # inside the `project_id is not None or accessible is not None` branch, so
+    # an ADMIN with no project pinned got neither. Measured live, 861 of 874
+    # pipeline runs belonged to deleted projects, and with the default
+    # ``limit=20`` the 13 real ones were crowded out entirely.
+    q = q.join(TestRun, AgentPipelineRun.test_run_id == TestRun.id).where(
+        TestRun.project_id.in_(select(Project.id).where(Project.is_active.is_(True)))
+    )
+    if project_id is not None:
+        q = q.where(TestRun.project_id == project_id)
+    if accessible is not None:
+        q = q.where(TestRun.project_id.in_(accessible))
     # NOTE: the ``status`` filter intentionally applies to the *stored*
     # status, not the derived one. If a caller asks for ``status=running``
     # we return the rows currently stored as running — and then derive the

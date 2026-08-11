@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: two router-level lists returned soft-deleted projects
+
+`GET /runs/failed-ids` and `GET /agents/pipelines` build their queries **inline** rather than
+delegating to a service, so neither the original sweep nor the widened service sweep could see
+them. Both scoped only inside a conditional branch an ADMIN never enters.
+
+| endpoint | deleted-project rows | live rows |
+|---|---|---|
+| `/runs/failed-ids` | **1,133** FAILED runs | 17 |
+| `/agents/pipelines` | **861** pipeline runs | 13 |
+
+`failed-ids` returned its full cap of **1,000 ids** from that pool — and its own `limit` exists
+*"to prevent runaway fan-outs"*, so the fan-out was almost entirely work against projects nobody
+can open. `pipelines` defaults to `limit=20`, so its 13 real rows were crowded out completely.
+
+Twelfth and thirteenth surfaces in this family. The progression is the point: instances 1–9 were
+found one at a time; #555 came from widening the sweep to the *router-computes / service-skips*
+shape; these came from widening it again to **routers that never call a service at all**. Each
+widening found what the previous model of the defect could not express.
+
+Tenant isolation is preserved in both — including `failed-ids`' fail-closed empty branch — and
+pinned by tests.
+
 ### 2026-08-10 — Fix: the suites and quarantine lists returned soft-deleted projects
 
 Both applied their project filter only when the caller supplied one. The routers pass

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_accessible_project_ids, get_current_active_user, require_run_access
 from app.db.postgres import get_db
-from app.models.postgres import LaunchStatus, TestCase, TestRun, User
+from app.models.postgres import LaunchStatus, Project, TestCase, TestRun, User
 from app.models.schemas import TestCaseHistoryResponse, TestCaseListResponse
 from app.services.runs_service import get_run_with_release, list_project_runs, list_run_test_cases
 
@@ -121,6 +121,17 @@ async def list_failed_run_ids(
     )
 
     stmt = select(TestRun.id).where(TestRun.status == LaunchStatus.FAILED)
+    # Soft-deleted projects are excluded for every caller. The two branches
+    # below are conditional by design (a pinned project, or a non-admin's
+    # membership set), so an ADMIN with neither matched no filter at all.
+    #
+    # This endpoint feeds a fan-out — its own ``limit`` exists "to prevent
+    # runaway fan-outs" — and measured live there were **1,133 FAILED runs on
+    # deleted projects against 17 on live ones**, so the capped 1,000 ids it
+    # returned were almost entirely work against projects nobody can open.
+    stmt = stmt.where(
+        TestRun.project_id.in_(select(Project.id).where(Project.is_active.is_(True)))
+    )
     if cutoff is not None:
         stmt = stmt.where(TestRun.created_at >= cutoff)
 
