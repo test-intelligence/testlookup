@@ -47,6 +47,7 @@ from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import (
     FlakyQuarantineRequest,
     FlakyQuarantineStatus,
+    Project,
     QuarantineLifecyclePolicy,
     TestStatus,
     User,
@@ -488,6 +489,15 @@ async def list_requests(
     limit: int = 200,
 ) -> list[FlakyQuarantineRequest]:
     stmt = select(FlakyQuarantineRequest)
+    # Same unconditional life-cycle exclusion as the suites list. Measured
+    # live, **every** quarantine request returned (3 of 3) belonged to
+    # soft-deleted projects, so the whole Quarantine queue was proposals for
+    # tests in projects nobody can open.
+    stmt = stmt.where(
+        FlakyQuarantineRequest.project_id.in_(
+            select(Project.id).where(Project.is_active.is_(True))
+        )
+    )
     if project_ids is not None:
         if not project_ids:
             return []

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: the suites and quarantine lists returned soft-deleted projects
+
+Both applied their project filter only when the caller supplied one. The routers pass
+`project_ids=None` for an ADMIN, so the unscoped lists applied **no project filter at all**.
+Measured live:
+
+| list | deleted-project rows | total returned |
+|---|---|---|
+| `/api/v1/suites` | **93** of 103 — 90% | 103 |
+| `/api/v1/quarantine` | **3** of 3 — **100%** | 3 |
+
+Every proposal in the Quarantine queue was for a test in a project nobody can open.
+
+Tenth and eleventh surfaces in this family, and both were found by **widening the class sweep after
+#554**. The original sweep looked for `if project_id:` guarding a filter inside one function; this
+shape is split across two files — the *router* computes
+`project_ids = None if accessible is None else list(accessible)` and the *service* skips filtering
+when it receives `None`. A single-function scan cannot match that.
+
+Membership confinement and the fail-closed empty branch are preserved in both, and pinned by tests.
+`quarantine/stats` (zeros, different code path) and `webhooks` (no rows) were checked in the same
+pass and are **not** claimed as covered.
+
 ### 2026-08-10 — Fix: the canonical test-case list returned soft-deleted projects
 
 `list_canonical_test_cases` applied a project filter only when the caller supplied one. The router

@@ -488,6 +488,15 @@ async def list_test_suites(
     ``TestSuite`` row so the navigate-to-id flow keeps working.
     """
     stmt = select(TestSuite)
+    # Soft-deleted projects excluded unconditionally; the membership / pinned
+    # restriction below applies on top. ``project_ids`` is None for an ADMIN,
+    # so before this the unscoped list applied no project filter at all —
+    # measured live at **103 suites returned, 93 of them on deleted projects**.
+    stmt = stmt.where(
+        TestSuite.project_id.in_(
+            select(Project.id).where(Project.is_active.is_(True))
+        )
+    )
     if project_ids is not None:
         if not project_ids:
             return []
