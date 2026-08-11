@@ -161,29 +161,29 @@ export default function ProjectsPage() {
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Project Name *</label>
-                <input type="text" className="input" placeholder="e.g. Payment Gateway API"
+                <label htmlFor="np-name" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Project Name *</label>
+                <input id="np-name" type="text" className="input" placeholder="e.g. Payment Gateway API"
                   value={form.name} onChange={e => handleNameChange(e.target.value)} required autoFocus />
               </div>
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Slug *</label>
-                <input type="text" className="input font-mono text-sm" placeholder="e.g. payment-gateway-api"
+                <label htmlFor="np-slug" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Slug *</label>
+                <input id="np-slug" type="text" className="input font-mono text-sm" placeholder="e.g. payment-gateway-api"
                   value={form.slug} onChange={e => setForm(f => ({ ...f, slug: slugify(e.target.value) }))} required />
               </div>
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Description</label>
-                <textarea className="input resize-none" rows={2} placeholder="Optional"
+                <label htmlFor="np-desc" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Description</label>
+                <textarea id="np-desc" className="input resize-none" rows={2} placeholder="Optional"
                   value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jira Project Key</label>
-                  <input type="text" className="input font-mono text-sm" placeholder="e.g. PAY"
+                  <label htmlFor="np-jira" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jira Project Key</label>
+                  <input id="np-jira" type="text" className="input font-mono text-sm" placeholder="e.g. PAY"
                     value={form.jira_project_key} onChange={e => setForm(f => ({ ...f, jira_project_key: e.target.value.toUpperCase() }))} />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">OCP Namespace</label>
-                  <input type="text" className="input text-sm" placeholder="e.g. qa-testing"
+                  <label htmlFor="np-ocp" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">OCP Namespace</label>
+                  <input id="np-ocp" type="text" className="input text-sm" placeholder="e.g. qa-testing"
                     value={form.ocp_namespace} onChange={e => setForm(f => ({ ...f, ocp_namespace: e.target.value }))} />
                 </div>
               </div>
@@ -264,34 +264,34 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
         </div>
         <form onSubmit={handleSave} className="p-6 space-y-4">
           <div>
-            <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Project Name *</label>
-            <input type="text" className="input" value={name} onChange={e => setName(e.target.value)} required />
+            <label htmlFor="ep-name" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Project Name *</label>
+            <input id="ep-name" type="text" className="input" value={name} onChange={e => setName(e.target.value)} required />
           </div>
           <div>
-            <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Slug</label>
-            <input type="text" className="input font-mono text-sm bg-[var(--color-bg-card)]/50" value={project.slug} readOnly disabled />
+            <label htmlFor="ep-slug" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Slug</label>
+            <input id="ep-slug" type="text" className="input font-mono text-sm bg-[var(--color-bg-card)]/50" value={project.slug} readOnly disabled />
             <p className="text-xs text-[var(--color-text-faint)] mt-1">Slug cannot be changed after creation</p>
           </div>
           <div>
-            <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Description</label>
-            <textarea className="input resize-none" rows={3} value={description}
+            <label htmlFor="ep-desc" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Description</label>
+            <textarea id="ep-desc" className="input resize-none" rows={3} value={description}
               onChange={e => setDescription(e.target.value)} placeholder="Project description" />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Start Date</label>
-              <input type="date" className="input" value={startDate} onChange={e => setStartDate(e.target.value)} />
+              <label htmlFor="ep-start" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Start Date</label>
+              <input id="ep-start" type="date" className="input" value={startDate} onChange={e => setStartDate(e.target.value)} />
             </div>
             <div>
-              <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">End Date</label>
-              <input type="date" className="input" value={endDate} onChange={e => setEndDate(e.target.value)} />
+              <label htmlFor="ep-end" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">End Date</label>
+              <input id="ep-end" type="date" className="input" value={endDate} onChange={e => setEndDate(e.target.value)} />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Tags (comma-separated)</label>
-            <input type="text" className="input" value={tagsInput} onChange={e => setTagsInput(e.target.value)}
+            <label htmlFor="ep-tags" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Tags (comma-separated)</label>
+            <input id="ep-tags" type="text" className="input" value={tagsInput} onChange={e => setTagsInput(e.target.value)}
               placeholder="e.g. backend, payments, critical" />
           </div>
 
@@ -299,23 +299,23 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
             <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-3">Integrations</p>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jira Project Key</label>
-                <input type="text" className="input font-mono text-sm" value={jiraKey}
+                <label htmlFor="ep-jira" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jira Project Key</label>
+                <input id="ep-jira" type="text" className="input font-mono text-sm" value={jiraKey}
                   onChange={e => setJiraKey(e.target.value.toUpperCase())} placeholder="PAY" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Splunk Index</label>
-                <input type="text" className="input text-sm" value={splunkIndex}
+                <label htmlFor="ep-splunk" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Splunk Index</label>
+                <input id="ep-splunk" type="text" className="input text-sm" value={splunkIndex}
                   onChange={e => setSplunkIndex(e.target.value)} placeholder="main" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">OCP Namespace</label>
-                <input type="text" className="input text-sm" value={ocpNamespace}
+                <label htmlFor="ep-ocp" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">OCP Namespace</label>
+                <input id="ep-ocp" type="text" className="input text-sm" value={ocpNamespace}
                   onChange={e => setOcpNamespace(e.target.value)} placeholder="qa-testing" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jenkins Job Pattern</label>
-                <input type="text" className="input text-sm" value={jenkinsPattern}
+                <label htmlFor="ep-jenkins" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jenkins Job Pattern</label>
+                <input id="ep-jenkins" type="text" className="input text-sm" value={jenkinsPattern}
                   onChange={e => setJenkinsPattern(e.target.value)} placeholder="**/payment-*" />
               </div>
             </div>

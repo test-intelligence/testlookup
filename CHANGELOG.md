@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-11 — Fix: project forms were unusable with a screen reader
+
+Found during UAT of the onboarding journey — the first real task a new user performs.
+
+Every field in the **New Project** dialog rendered a visible `<label>` ("Project Name *",
+"Slug *", …) that was **not associated with its control**. Measured live on the deployment, all
+five create-dialog inputs reported:
+
+```
+hasIdLabel: false, hasWrappingLabel: false, ariaLabel: null, ariaLabelledBy: null
+```
+
+Only a placeholder. A screen reader announces "edit text, blank" for the required Project Name
+field, and because placeholders vanish on first keystroke, even a sighted user loses the field
+name while typing. That is WCAG 2.1 **1.3.1 Info and Relationships** and **3.3.2 Labels or
+Instructions**, on the primary onboarding form.
+
+All **15** labels across the create and edit dialogs are now wired with `htmlFor`/`id`. No visual
+or behavioural change — the same markup, correctly associated.
+
+The regression tests query by accessible name only (`getByLabelText` resolves through the same
+accessibility tree a screen reader uses), so they fail on unassociated markup rather than
+asserting on implementation details.
+
 ### 2026-08-11 — Fix: every suite-filtered dashboard request returned HTTP 500 (regression from #492)
 
 `GET /api/v1/metrics/summary?project_id=…&suite_name=api` → **500**. `suite_name` is a
