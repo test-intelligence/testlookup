@@ -379,9 +379,26 @@ export default function RunDetailPage() {
                 releaseName={run.release_name}
                 onSet={handleSetRelease}
               />
+              {/* Every persisted status gets a bucket, so the counts reconcile
+                  with total_tests. Previously only passed/failed/skipped were
+                  shown: a run of 2 pass / 2 fail / 1 skip / 1 BROKEN rendered
+                  "2 passed, 2 failed, 1 skipped / 6 total" — 5 of 6 accounted
+                  for, with the infrastructure error invisible on the primary
+                  run screen. BROKEN and UNKNOWN are rendered only when
+                  non-zero so the common all-green run stays uncluttered.
+                  `skipped` also moves off the broken token, which it was
+                  borrowing — it now reads as the neutral state it is. */}
               <span className="text-[var(--status-passed)] font-medium">{run.passed_tests} passed</span>
               <span className="text-[var(--status-failed)] font-medium">{run.failed_tests} failed</span>
-              <span className="text-[var(--status-broken)] font-medium">{run.skipped_tests} skipped</span>
+              {(run.broken_tests ?? 0) > 0 && (
+                <span className="text-[var(--status-broken)] font-medium">{run.broken_tests} broken</span>
+              )}
+              <span className="text-[var(--color-text-muted)] font-medium">{run.skipped_tests} skipped</span>
+              {(run.unknown_tests ?? 0) > 0 && (
+                <span className="text-[var(--status-broken)] font-medium" title="Reported status was outside PASSED/FAILED/SKIPPED/BROKEN">
+                  {run.unknown_tests} unrecognised
+                </span>
+              )}
               <span className="text-[var(--color-text-muted)]">/ {run.total_tests} total</span>
               <StatusBadge status={run.status} />
               {isQaEngineer && (

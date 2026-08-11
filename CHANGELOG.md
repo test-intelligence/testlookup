@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-11 — Fix: the run header did not account for every test in the run
+
+Found during UAT of the ingest journey. A JUnit report of 6 tests (2 pass / 2 fail / 1 `<error>`
+→ BROKEN / 1 skip) uploaded through the UI stored **perfectly** — but the run header rendered:
+
+```
+2 passed   2 failed   1 skipped   / 6 total
+```
+
+Five of six accounted for. The infrastructure error was invisible on the primary screen a user
+reads about a run, and the arithmetic visibly did not close — which undermines trust in every
+other number on the page.
+
+`RunDetailPage` rendered exactly four spans (passed / failed / skipped / total). It is the same
+vocabulary-subset class as the Integration Health trends bug and the "New failures (24h)" KPI
+fixed earlier, this time in the UI — and it also missed `unknown_tests`, which migration 0118 had
+already added to the model and API.
+
+`broken` and `unrecognised` now render when non-zero, so the buckets reconcile with
+`total_tests`, while an all-green run stays uncluttered. `skipped` also stops borrowing the
+`--status-broken` colour token, which would have read as two broken counts side by side.
+
+The regression tests assert the **invariant, not the markup**: the rendered per-status buckets
+must sum to `total_tests`. A status that gains a data column but not a header bucket fails there.
+
 ### 2026-08-11 — Fix: project forms were unusable with a screen reader
 
 Found during UAT of the onboarding journey — the first real task a new user performs.
