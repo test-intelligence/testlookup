@@ -977,7 +977,27 @@ async def list_active_sessions(
             if (session.get("suite_name") or "").strip().lower() == suite_key
         ]
 
-    active_run_ids = {session.get("run_id") for session in all_active}
+    # Dedup on the CANONICAL run UUID, not the raw id.
+    #
+    # Redis keys a live run by whatever the SDK supplied — frequently a slug
+    # like ``local-abc12345`` — while the DB rows carry the UUID persisted for
+    # it. Comparing the two forms directly never matches, so one logical run
+    # was listed twice. Measured live after the scoping fix, the Live page
+    # showed exactly two rows and both were the same run:
+    #
+    #     sdk-probe-1 -> sdk-probe-1                            (Redis, slug)
+    #     sdk-probe-1 -> bd337e00-38ae-50ee-b2e5-0f21077a711b   (DB, UUID)
+    #
+    # ``canonical_test_run_uuid`` is the module's existing mapping for exactly
+    # this; its docstring already records three earlier call sites that drifted
+    # apart the same way. This is the *opposite* failure to the older
+    # build_number dedup bug: two runs may legitimately share a build number,
+    # but one run must never carry two identities.
+    active_run_ids = {
+        canonical_test_run_uuid(str(session.get("run_id")))
+        for session in all_active
+        if session.get("run_id")
+    }
     active_sessions = [build_live_session_state(session) for session in all_active]
 
     # ``days=0`` disables the cutoff so the caller sees every completed session
@@ -1015,9 +1035,10 @@ async def list_active_sessions(
     seen_run_ids = set(active_run_ids)
     completed_sessions = []
     for session in db_sessions:
-        if session.run_id in seen_run_ids:
+        canonical = canonical_test_run_uuid(str(session.run_id))
+        if canonical in seen_run_ids:
             continue
-        seen_run_ids.add(session.run_id)
+        seen_run_ids.add(canonical)
         completed_sessions.append(build_completed_session_state(session))
 
     tr_stmt = (
@@ -1046,9 +1067,9 @@ async def list_active_sessions(
 
     tr_runs = (await db.execute(tr_stmt)).scalars().all()
     for run in tr_runs:
-        if str(run.id) in seen_run_ids:
+        if run.id in seen_run_ids:
             continue
-        seen_run_ids.add(str(run.id))
+        seen_run_ids.add(run.id)
         completed_sessions.append(build_test_run_fallback_state(run))
 
     sessions = active_sessions + completed_sessions

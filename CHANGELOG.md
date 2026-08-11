@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: the Live page listed one run twice, under slug and UUID
+
+`list_active_sessions` merges Redis state with two DB queries and dedups on `run_id`. Redis keys a
+run by whatever the SDK supplied — frequently a slug like `local-abc12345` — while the DB rows
+carry the UUID persisted for it, so the comparison never matched.
+
+Measured live (after the deleted-project fix trimmed the list to two rows, both of which turned out
+to be the same run):
+
+| build_number | run_id | source |
+|---|---|---|
+| `sdk-probe-1` | `sdk-probe-1` | Redis (slug) |
+| `sdk-probe-1` | `bd337e00-38ae-50ee-b2e5-0f21077a711b` | DB (UUID) |
+
+Dedup now compares `canonical_test_run_uuid(...)` — the module's existing mapping for exactly this,
+whose own docstring records three earlier call sites that drifted apart the same way. This is a
+fourth.
+
+The `TestRun` loop also compared `str(run.id)` against what is now a set of UUIDs, which would
+silently never match; it compares UUIDs directly.
+
+**This is the opposite of the older dedup bug**: "dedup by `run_id`, NOT `build_number`" still
+holds — two genuinely different runs may share a build number. Here one run carried two identities.
+
 ### 2026-08-10 — Fix: the Live page listed sessions from soft-deleted projects
 
 `list_active_sessions` unions **three** sources — the Redis active set, completed `LiveSession`
