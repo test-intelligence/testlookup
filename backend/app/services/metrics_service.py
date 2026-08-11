@@ -6,7 +6,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-from app.models.postgres import Defect, Project, TestCase, TestRun, TestStatus
+from app.models.postgres import Defect, Project, TestCase, TestRun
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,13 @@ async def count_open_critical_defects(db: AsyncSession, project_id) -> int:
         conds.append(Defect.project_id == project_id)
     result = await db.execute(select(func.count(Defect.id)).where(*conds))
     return int(result.scalar() or 0)
+
+
+# The canonical failed set, imported rather than re-declared: this constant
+# already exists in four modules (flaky_signals, analysis_report_service,
+# digest_content_service, agents.ingestion_agent) and they happen to agree
+# today. A fifth copy is how they stop agreeing.
+from app.services.flaky_signals import _FAILED_STATUSES  # noqa: E402
 
 
 def _evaluated(passed: int, failed: int, broken: int) -> int:
@@ -167,10 +174,25 @@ async def get_dashboard_summary(
     # Flaky tests (>20% failure rate over last 10 runs)
     flaky_count = await _count_flaky_tests(db, project_id, suite_key)
 
-    # New failures in last 24h
+    # New failures in last 24h.
+    #
+    # A "failure" is FAILED *or* BROKEN — the canonical set this module already
+    # names three lines from here (see the ``_FLAKY_WINDOW_RUNS`` comment) and
+    # applies in ``_evaluated`` and the trend query. This counter was the last
+    # holdout: it matched FAILED only, so BROKEN results were absent from the
+    # headline while simultaneously dragging the pass rate down beside it.
+    #
+    # Measured on a throwaway project holding 1 passed / 1 failed / 1 broken:
+    # ``new_failures_24h`` reported **1** against a truth of 2, in the SAME
+    # response where ``avg_pass_rate_7d`` reported 33.3% — i.e. 1/3, which only
+    # works if BROKEN counts as a non-pass. One payload, two definitions.
+    #
+    # The trend query at ~line 328 carries a comment describing this exact bug
+    # being fixed there ("a day whose only failures were BROKEN charted as a
+    # flat 100%"); this is the same defect, one metric over.
     yesterday = now - timedelta(hours=24)
     fail_conditions = [
-        TestCase.status == TestStatus.FAILED,
+        TestCase.status.in_(_FAILED_STATUSES),
         TestCase.created_at >= yesterday,
     ]
     if project_id:

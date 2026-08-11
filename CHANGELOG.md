@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-11 — Fix: the "New failures (24h)" KPI did not count BROKEN
+
+`metrics_service` states the rule in its own comment, three lines from the offending code —
+*"a 'failure' is FAILED **or** BROKEN — the canonical failed set used everywhere else"* — and
+applies it in `_evaluated` and in the trend query, whose comment describes this exact bug being
+fixed there: *"a day whose only failures were BROKEN charted as a flat 100%"*.
+`new_failures_24h` was the last holdout.
+
+Reproduced on a throwaway project holding one PASSED, one FAILED and one BROKEN test (the BROKEN
+one ingested from a JUnit `<error>` element):
+
+```
+new_failures_24h : 1        <- truth is 2
+avg_pass_rate_7d : 33.3     <- 1/3, so BROKEN *is* counted as a non-pass
+```
+
+One payload, two definitions of failure. A day whose only failures were infrastructure errors
+showed zero new failures on the dashboard while the pass rate beside it fell.
+
+The fix imports `flaky_signals._FAILED_STATUSES` rather than writing a fifth copy of the
+constant — it already exists in four modules (`flaky_signals`, `analysis_report_service`,
+`digest_content_service`, `agents.ingestion_agent`). They agree today; a fifth copy is how they
+stop agreeing. **The four existing duplicates are left alone and flagged** — consolidating them
+is a refactor across four modules with no bug behind it today.
+
 ### 2026-08-11 — Fix: Test Management's suite filter was the only case-sensitive one
 
 Third find in the same class: a canonical rule with a hand-rolled copy that drifted.
