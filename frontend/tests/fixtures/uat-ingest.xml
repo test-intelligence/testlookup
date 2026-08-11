@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="checkout-uat" tests="6" failures="2" errors="1" skipped="1" time="4.２">
+  <testcase classname="uat.Cart" name="test_add_item" time="0.10"/>
+  <testcase classname="uat.Cart" name="test_remove_item" time="0.12"/>
+  <testcase classname="uat.Pay" name="test_card_declined" time="0.20"><failure message="expected 200 got 402">AssertionError</failure></testcase>
+  <testcase classname="uat.Pay" name="test_refund_partial" time="0.31"><failure message="rounding mismatch">AssertionError: 10.005 != 10.01</failure></testcase>
+  <testcase classname="uat.Infra" name="test_db_reachable" time="0.05"><error message="connection refused">OperationalError</error></testcase>
+  <testcase classname="uat.Cart" name="test_currency_émoji_🛒_and_a_very_long_name_that_goes_on" time="0.02"><skipped/></testcase>
+</testsuite>
