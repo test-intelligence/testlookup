@@ -3049,6 +3049,10 @@ Fixes for the verified 2026-07 backend-audit findings in commit attribution (Epi
 
 - **`frontend/src/pages/settings/IntegrationsPage.tsx`** — the four "(set)" credential indicators (shown next to Jira / Splunk / OpenShift / GitHub secret fields once a token is stored) migrated from the raw `text-emerald-400` palette class to the per-theme success token `text-[var(--status-passed)]`. Raw palette greens are illegible in the light theme; the token resolves per-theme via `index.css`. Semantic role: "credential is configured/present" → success. Drops the file's `no-restricted-syntax` (palette) warning count to zero.
 - **Regression test** (`IntegrationsPage.test.tsx`, new) — asserts one "(set)" indicator renders per stored-token provider, that the indicator carries `text-[var(--status-passed)]` and no `emerald` class, and that it is omitted when no token is stored.
+### 2026-08-01 — Compute-graph RightRail activity icons → theme tokens (design-audit palette ratchet)
+
+- **`frontend/src/components/agents/computeGraph/RightRail.tsx`** — the Activity-tab stage-event icons used raw Tailwind palette classes (`text-emerald-400` / `text-red-400` / `text-amber-400`) that bypass the per-theme CSS-token system and read poorly in light themes. Migrated by semantic role: `completed` → `text-[var(--status-passed)]`, `failed` → `text-[var(--status-failed)]`, `retry` (warning/retry) → `text-[var(--status-broken)]`; the `started` (`--color-accent`) and default (`--color-text-muted`) icons were already tokenised. No behavioural change — icon selection and copy are untouched.
+- Tests: new `frontend/src/components/agents/computeGraph/RightRail.test.tsx` renders the rail on the Activity tab with one event of each kind and asserts the icons carry the per-theme status/accent tokens and that no raw palette classes remain. Validated with `npm run lint` (file's `no-restricted-syntax` warn count 3 → 0), `type-check`, `build`, and the new test. Frontend-only; no backend files touched.
 
 ### 2026-07-16 — GitLab integration: MR notes + commit statuses + CI recipe (PMF backlog Epic 3 US-3.1/3.2/3.3)
 
