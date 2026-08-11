@@ -61,7 +61,7 @@ The `testlookup` CLI (in `cli/`, installable with `pip install ./cli`) wraps the
 
 ```bash
 testlookup auth login                       # or set an API key in the config
-testlookup upload results.xml --project $PROJECT_ID --format auto
+testlookup upload file results.xml --project $PROJECT_ID --build "$BUILD_ID" --format auto
 testlookup runs list --project $PROJECT_ID  # confirm it landed
 ```
 
@@ -71,7 +71,7 @@ Typical CI step (after the test command, even when tests fail — use your CI's 
 
 ```bash
 pytest --junitxml=results.xml || true
-testlookup upload results.xml --project "$PROJECT_ID"
+testlookup upload file results.xml --project "$PROJECT_ID" --build "$BUILD_ID"
 ```
 
 ## 4. Live-streaming SDKs

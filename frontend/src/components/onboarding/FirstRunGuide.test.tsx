@@ -23,7 +23,9 @@ describe('FirstRunGuide', () => {
     expect(screen.getByText(/Load the demo dataset/i)).toBeInTheDocument()
     expect(screen.getByText('make quickstart')).toBeInTheDocument()
     expect(screen.getByText(/ingest your own test results/i)).toBeInTheDocument()
-    expect(screen.getByText('testlookup upload results.xml')).toBeInTheDocument()
+    expect(
+      screen.getByText('testlookup upload file results.xml -p <project-id> -b <build>'),
+    ).toBeInTheDocument()
     expect(screen.getByText(/explore the intelligence/i)).toBeInTheDocument()
   })
 

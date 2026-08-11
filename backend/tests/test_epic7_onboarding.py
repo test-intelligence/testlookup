@@ -236,3 +236,125 @@ class TestEdgeCases:
         assert callable(auto_detect_progress)
         assert callable(track_event)
         assert callable(get_usage_events)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# QAI-704: Auto-detection of integration steps (Jira + telemetry)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class _FakeResult:
+    """Minimal stand-in for a SQLAlchemy Result."""
+
+    def __init__(self, *, scalar_value=None, scalar_one=None, scalars_all=None):
+        self._scalar_value = scalar_value
+        self._scalar_one = scalar_one
+        self._scalars_all = scalars_all or []
+
+    def scalar(self):
+        return self._scalar_value
+
+    def scalar_one_or_none(self):
+        return self._scalar_one
+
+    def scalars(self):
+        outer = self
+
+        class _Scalars:
+            def all(self_inner):
+                return outer._scalars_all
+
+        return _Scalars()
+
+
+class _FakeOnboardingSession:
+    """Stateful async-session double for auto_detect_progress.
+
+    Routes each ``execute`` by the shape of the statement so the service walks
+    its real code path — table-exists probe, run count, integrations lookup,
+    and the per-step / all-steps onboarding-status queries — against an
+    in-memory row store keyed by step_key. Rows the service ``add``s (or
+    mutates in place) persist across the flushes within one call.
+    """
+
+    def __init__(self, *, run_count=0, integrations_row=None, seed_rows=None):
+        self.run_count = run_count
+        self.integrations_row = integrations_row
+        # step_key -> TenantOnboardingStatus (real ORM instances)
+        self.store = {r.step_key: r for r in (seed_rows or [])}
+        self.added = []
+
+    async def execute(self, stmt):
+        sql = str(stmt)
+        try:
+            params = stmt.compile().params
+        except Exception:  # pragma: no cover - defensive
+            params = {}
+
+        if "information_schema" in sql:
+            return _FakeResult(scalar_value=True)
+        if "count(" in sql.lower():
+            return _FakeResult(scalar_value=self.run_count)
+        if "app_settings" in sql:
+            return _FakeResult(scalar_one=self.integrations_row)
+        if "tenant_onboarding_status" in sql:
+            step_key = next(
+                (v for k, v in params.items() if k.startswith("step_key")), None
+            )
+            if step_key is not None:
+                return _FakeResult(scalar_one=self.store.get(step_key))
+            return _FakeResult(scalars_all=list(self.store.values()))
+        return _FakeResult()
+
+    def add(self, obj):
+        self.added.append(obj)
+        self.store[obj.step_key] = obj
+
+    async def flush(self):
+        return None
+
+
+def _integrations(**flags):
+    return types.SimpleNamespace(value=dict(flags))
+
+
+def _status_of(result: dict, step_key: str) -> str:
+    return next(s["status"] for s in result["steps"] if s["key"] == step_key)
+
+
+class TestAutoDetectTelemetry:
+    async def test_telemetry_step_autocompletes_when_slack_enabled(self):
+        from app.services.onboarding_service import auto_detect_progress
+
+        db = _FakeOnboardingSession(integrations_row=_integrations(slack_enabled=True))
+        result = await auto_detect_progress(uuid.uuid4(), db)
+
+        assert _status_of(result, "connect_telemetry") == "completed"
+
+    @pytest.mark.parametrize("flag", ["splunk_enabled", "ocp_enabled", "slack_enabled"])
+    async def test_any_telemetry_provider_satisfies_step(self, flag):
+        from app.services.onboarding_service import auto_detect_progress
+
+        db = _FakeOnboardingSession(integrations_row=_integrations(**{flag: True}))
+        result = await auto_detect_progress(uuid.uuid4(), db)
+
+        assert _status_of(result, "connect_telemetry") == "completed"
+
+    async def test_telemetry_step_stays_pending_when_no_provider_enabled(self):
+        from app.services.onboarding_service import auto_detect_progress
+
+        db = _FakeOnboardingSession(integrations_row=_integrations(jira_enabled=True))
+        result = await auto_detect_progress(uuid.uuid4(), db)
+
+        # Jira is on but no telemetry provider — the step must not be credited.
+        assert _status_of(result, "connect_telemetry") == "pending"
+        # Regression guard: the Jira detection still works after the refactor.
+        assert _status_of(result, "connect_jira") == "completed"
+
+    async def test_no_integration_config_leaves_both_steps_pending(self):
+        from app.services.onboarding_service import auto_detect_progress
+
+        db = _FakeOnboardingSession(integrations_row=None)
+        result = await auto_detect_progress(uuid.uuid4(), db)
+
+        assert _status_of(result, "connect_telemetry") == "pending"
+        assert _status_of(result, "connect_jira") == "pending"

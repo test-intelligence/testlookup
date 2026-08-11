@@ -116,10 +116,29 @@ test('runs and coverage render the SAME passed-green', async ({ page }) => {
 })
 
 
-test('every page draws each status hue from the same base colour', async ({ page }) => {
+test('every rendered colour comes from the theme palette', async ({ page }) => {
   await login(page)
+  await page.goto(`${BASE}/runs`, { waitUntil: 'networkidle' })
 
-  // Base colour ignoring alpha; browsers report colour-mix as color(srgb ...).
+  // Self-calibrating: read the theme's OWN token values rather than guessing
+  // hue bands. The earlier version binned amber as red and violet as blue and
+  // reported false mismatches — the tokens are the ground truth, not my eye.
+  const palette = await page.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement)
+    const names = ['--status-passed', '--status-failed', '--status-broken', '--status-skipped',
+                   '--status-flaky', '--color-accent', '--color-accent-ink', '--color-purple', '--color-cyan']
+    const out: Record<string, string> = {}
+    for (const n of names) {
+      const v = cs.getPropertyValue(n).trim()
+      if (!v) continue
+      const m = v.match(/^#([0-9a-f]{6})$/i)
+      if (m) out[n] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16)).join(',')
+    }
+    return out
+  })
+  const allowed = new Set(Object.values(palette))
+  expect(allowed.size, 'no theme tokens resolved — the probe would pass vacuously').toBeGreaterThan(4)
+
   const baseOf = (c: string): string | null => {
     const srgb = c.match(/color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/)
     if (srgb) return [1, 2, 3].map((i) => Math.round(Number(srgb[i]) * 255)).join(',')
@@ -127,47 +146,26 @@ test('every page draws each status hue from the same base colour', async ({ page
     if (rgb) return [1, 2, 3].map((i) => Number(rgb[i])).join(',')
     return null
   }
-  const band = (base: string): string | null => {
+  const isChromatic = (base: string) => {
     const [r, g, b] = base.split(',').map(Number)
-    if (r < 40 && g < 40 && b < 40) return null            // near-black surfaces
-    if (r > 215 && g > 215 && b > 215) return null          // near-white text
-    if (Math.max(r, g, b) - Math.min(r, g, b) < 30) return null  // greys
-    if (g > r + 25 && g > b + 15) return 'green'
-    if (r > g + 40 && r > b + 40) return 'red'
-    if (r > 140 && g > 90 && b < 110 && r > b + 60) return 'amber'
-    if (b > r + 40 && b > g + 20) return 'blue'
-    if (r > g + 20 && b > g + 30) return 'violet'
-    return null
+    return Math.max(r, g, b) - Math.min(r, g, b) >= 40   // skip greys/surfaces
   }
 
-  const perPage: Record<string, Record<string, Set<string>>> = {}
+  const offenders: string[] = []
   for (const path of PAGES) {
     await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle' })
     await page.waitForTimeout(900)
     const colours = await renderedColours(page)
-    const bands: Record<string, Set<string>> = {}
     for (const c of Object.keys(colours)) {
-      const b = baseOf(c)
-      if (!b) continue
-      const k = band(b)
-      if (!k) continue
-      ;(bands[k] ??= new Set()).add(b)
+      const base = baseOf(c)
+      if (!base || !isChromatic(base) || allowed.has(base)) continue
+      offenders.push(`${path}: ${base}`)
     }
-    perPage[path] = bands
   }
 
-  // For each hue band, every page that renders it must use the SAME base.
-  const problems: string[] = []
-  for (const hue of ['green', 'red', 'amber', 'blue', 'violet']) {
-    const seen = new Map<string, string[]>()
-    for (const [path, bands] of Object.entries(perPage)) {
-      for (const base of bands[hue] ?? []) {
-        seen.set(base, [...(seen.get(base) ?? []), path])
-      }
-    }
-    if (seen.size > 1) {
-      problems.push(`${hue}: ${[...seen.entries()].map(([b, ps]) => `${b} on ${ps.join('+')}`).join('  |  ')}`)
-    }
-  }
-  expect(problems, 'pages disagree on a status hue: ' + problems.join(' ;; ')).toHaveLength(0)
+  // Known categorical palettes are not status colours and are excluded by
+  // design: avatar gradients and Search's entity-type accents.
+  const CATEGORICAL = ['236,72,153', '99,102,241', '139,92,246', '6,182,212', '249,168,212', '165,180,252', '216,180,254']
+  const real = [...new Set(offenders)].filter((o) => !CATEGORICAL.some((c) => o.endsWith(c)))
+  expect(real, 'colours rendering that are not in the theme palette: ' + real.join(' ;; ')).toHaveLength(0)
 })

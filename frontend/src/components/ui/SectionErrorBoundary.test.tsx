@@ -77,4 +77,19 @@ describe('SectionErrorBoundary', () => {
     expect(screen.getByText('Section A')).toBeInTheDocument()
     expect(screen.getByTestId('section-b')).toHaveTextContent('Still works')
   })
+
+  // Palette ratchet (no-restricted-syntax): the fallback's warning icon must use
+  // the per-theme --status-broken token, not a raw Tailwind palette class, so it
+  // stays legible on light themes.
+  it('renders the warning icon with the broken status token, no raw palette', () => {
+    const { container } = render(
+      <SectionErrorBoundary message="Failed">
+        <ThrowingChild shouldThrow />
+      </SectionErrorBoundary>,
+    )
+    expect(container.innerHTML).toContain('text-[var(--status-broken)]')
+    expect(container.innerHTML).not.toMatch(
+      /(text|bg|border)-(emerald|green|red|amber|yellow|orange|purple|blue)-[0-9]{2,3}/,
+    )
+  })
 })

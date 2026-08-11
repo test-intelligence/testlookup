@@ -81,7 +81,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.11"
 
@@ -118,7 +118,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.11"
 
@@ -152,7 +152,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Node.js 20
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -204,7 +204,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.11"
           cache: pip
@@ -268,7 +268,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Node.js 20
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -328,7 +328,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.11"
           cache: pip
@@ -400,7 +400,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.11"
           cache: pip
@@ -475,7 +475,7 @@ jobs:
       # Generate package-lock.json before Docker build so npm ci works inside the image.
       # This avoids needing to commit a lockfile while still getting reproducible installs.
       - name: Set up Node.js 20
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
 
@@ -484,21 +484,21 @@ jobs:
         run: npm install --package-lock-only
 
       - name: Log in to Docker Hub (avoids pull rate limits on base images and buildkit)
-        uses: docker/login-action@v4.2.0
+        uses: docker/login-action@v4.6.0
         if: env.DOCKERHUB_USERNAME != ''
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4.2.0
+        uses: docker/login-action@v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4.1.0
+        uses: docker/setup-buildx-action@v4.2.0
 
       - name: Extract metadata
         id: meta

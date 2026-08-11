@@ -304,6 +304,19 @@ Eighth surface in this family (#535 runs, #538 dashboard, #539 analytics, #541 R
 active + recent live sessions", with `days` bounding the completed set. The `/stream/active` name
 is loose, but the contract is deliberate, and a test now pins it so nobody "fixes" it away.
 
+### 2026-08-11 — Fix: onboarding auto-detection never credited the telemetry step
+
+`auto_detect_progress` auto-completes `create_project`, `upload_run`, and `connect_jira` by
+probing real state, but it stopped there — the `connect_telemetry` step (whose description is
+literally "Add Splunk, OCP, or Slack integration") was never detected. A self-hoster who wired
+up Splunk, OCP, or Slack got no credit for it, so the setup wizard sat stuck below 100% until
+they manually skipped a step they'd actually completed.
+
+Jira and telemetry both live in the one `integrations_config` `AppSetting` row, so the fix reuses
+that same lookup: if any of `splunk_enabled` / `ocp_enabled` / `slack_enabled` is on, the
+telemetry step auto-completes — symmetric with the existing `jira_enabled` check, and pending
+otherwise. Stage-only, following the service/router transaction boundary.
+
 ### 2026-08-10 — Fix: the releases list returned soft-deleted projects
 
 `list_releases` applied its project filter only when one was supplied. Measured live:
@@ -950,6 +963,21 @@ Fixed as **ADMIN-only**, matching `/audit-dashboard/export` — the other instan
 analytics export here. Membership scoping was the alternative, but this is cross-project
 analytics by nature and **has no consumer**: no frontend, CLI, MCP or SDK caller
 references it. Admin-only breaks nothing and matches what the endpoint is.
+### 2026-08-10 — Fix: onboarding showed a `testlookup upload` command the CLI rejects
+
+The first-run guide (shown on an empty dashboard — the first thing a new self-host
+user reads and copies) displayed `testlookup upload results.xml`. There is no bare
+`upload <file>` command: `upload` is a Typer group whose only leaf commands are `file`
+and `dir`, and `--project`/`--build` are both required. Pasting the guide's command
+failed immediately with a Typer usage error — exactly at the moment adoption is most
+fragile.
+
+Corrected the displayed command to the CLI's own documented form,
+`testlookup upload file results.xml -p <project-id> -b <build>`, and fixed the two
+matching `user-guide/getting-results-in.md` snippets (the general CLI example and the
+CI step) that used the same broken bare form and omitted the required `--build`. A
+frontend regression test pins the exact command string so an accidental revert to the
+bare form is caught.
 
 ### 2026-08-09 — Security: `scope=team` guarded cross-user escalation but not cross-tenant (HIGH)
 
@@ -2584,6 +2612,9 @@ and no image by design. Pure TS/React, zero runtime dependencies, no native
 build step, renders inline SVG. The manual-entry secret is shown next to the QR
 in every case, because QR-only setup locks out anyone configuring this on a
 desktop.
+### 2026-08-06 — App error-boundary fallbacks migrated to per-theme status tokens
+
+- **Frontend** — the two last-resort error screens no longer hard-code Tailwind palette classes that bypass the per-theme CSS-token system and read poorly on light themes. `ErrorBoundary`'s error-detail text now uses `--status-failed` (was `text-red-400`) and `SectionErrorBoundary`'s warning icon uses `--status-broken` (was `text-amber-400`), mapped by semantic role. Removes 2 `no-restricted-syntax` palette warnings; extended each component's existing test with a regression guard against reintroducing raw palette classes.
 
 ### 2026-08-05 — TOTP MFA, recovery codes, account lockout (closes the compliance gap)
 
@@ -3041,6 +3072,18 @@ Fixes for the verified 2026-07 backend-audit findings in commit attribution (Epi
 - **Bulk import ops + 5000-entry cap** — the CODEOWNERS re-import replaces prior rows with one bulk `DELETE` (rowcount-reported) instead of a per-row ORM delete loop, and rejects files parsing to more than 5,000 entries with a clear `ValueError` that `POST …/codeowners/import` maps to a 422. Imported rules occupy the `0..N` priority band; hand-authored path rules that must always win should use `priority >= 1_000_000`, and the import now WARNs when hand-authored rules sit inside the imported band. Also: an empty Contents-API `content` now reports `empty_content` instead of a "successful" zero-rule import, and inbox reason-derivation failures log at warning with the affected row count.
 - **Backfill de-N+1 (`services/failed_test_assignment_service.py`, finding #13)** — `backfill_unassigned_failures` builds a per-project `ProjectAssignmentContext` (owner config, QA-lead/admin pools, path rules + member-scoped handle map) **once** and shares it across that project's runs — previously each of up to 200 runs re-ran the full lookup set (~1,400 queries per sweep). The single-run path is unchanged (context built on demand). Path rules now load lazily only when a failure actually reaches the path-owner branch; `assigned` counts report the UPDATE's `rowcount` (effect) instead of intent; and the failure/coverage queries select a bounded 4000-char `substr` of `stack_trace`/`error_message` (only the path locator consumes them) instead of whole multi-MB blobs.
 - Tests: `test_commit_attribution_service.py` rewritten for the phase-split (connector-target extraction, pooled-client fetch, capped + chunked fan-out, once-per-fetch SSRF re-check, cooldown matrix, `needs_resolution` gate, ON-CONFLICT SQL shape incl. the supplied-wins guard, per-file-path cap); `test_codeowners_service.py` gains a 14-case glob-semantics battery (GitHub's own `docs/*` example, root anchoring, dir rules, `**` zero-dir, legacy-row compat), bulk-delete/rowcount import tests, the 5000-entry rejection, the band-overlap warning, and member-scoping assertions. Both architectural ratchets, `quality_gate.py`, and ruff green.
+### 2026-07-25 — Design-audit token ratchet: VerdictBand blocker-severity icons
+
+- **`frontend/src/components/releases/VerdictBand.tsx`** — the release-health hero band's per-blocker severity icons now use per-theme status tokens instead of raw Tailwind palette classes: `resolved` → `text-[var(--status-passed)]`, `warn` → `text-[var(--status-broken)]`, `red` → `text-[var(--status-failed)]` (was `text-emerald-400` / `text-amber-400` / `text-red-400`). Fixes light-theme legibility for these icons and drops the file's `no-restricted-syntax` (palette) warning count to zero. The `GATE_ACCENT` map already used `--gate-*` tokens and is unchanged.
+- **Regression test** (`frontend/src/components/releases/VerdictBand.test.tsx`) — renders the band with one blocker of each severity and asserts each maps to its status token, guarding against a regression back to the raw palette classes.
+### 2026-07-27 — Theme tokens: Integrations settings "(set)" indicators (palette ratchet)
+
+- **`frontend/src/pages/settings/IntegrationsPage.tsx`** — the four "(set)" credential indicators (shown next to Jira / Splunk / OpenShift / GitHub secret fields once a token is stored) migrated from the raw `text-emerald-400` palette class to the per-theme success token `text-[var(--status-passed)]`. Raw palette greens are illegible in the light theme; the token resolves per-theme via `index.css`. Semantic role: "credential is configured/present" → success. Drops the file's `no-restricted-syntax` (palette) warning count to zero.
+- **Regression test** (`IntegrationsPage.test.tsx`, new) — asserts one "(set)" indicator renders per stored-token provider, that the indicator carries `text-[var(--status-passed)]` and no `emerald` class, and that it is omitted when no token is stored.
+### 2026-08-01 — Compute-graph RightRail activity icons → theme tokens (design-audit palette ratchet)
+
+- **`frontend/src/components/agents/computeGraph/RightRail.tsx`** — the Activity-tab stage-event icons used raw Tailwind palette classes (`text-emerald-400` / `text-red-400` / `text-amber-400`) that bypass the per-theme CSS-token system and read poorly in light themes. Migrated by semantic role: `completed` → `text-[var(--status-passed)]`, `failed` → `text-[var(--status-failed)]`, `retry` (warning/retry) → `text-[var(--status-broken)]`; the `started` (`--color-accent`) and default (`--color-text-muted`) icons were already tokenised. No behavioural change — icon selection and copy are untouched.
+- Tests: new `frontend/src/components/agents/computeGraph/RightRail.test.tsx` renders the rail on the Activity tab with one event of each kind and asserts the icons carry the per-theme status/accent tokens and that no raw palette classes remain. Validated with `npm run lint` (file's `no-restricted-syntax` warn count 3 → 0), `type-check`, `build`, and the new test. Frontend-only; no backend files touched.
 
 ### 2026-07-16 — GitLab integration: MR notes + commit statuses + CI recipe (PMF backlog Epic 3 US-3.1/3.2/3.3)
 

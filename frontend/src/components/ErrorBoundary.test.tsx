@@ -66,4 +66,23 @@ describe('ErrorBoundary', () => {
     expect(screen.getByRole('button', { name: 'Reload page' })).toBeInTheDocument()
     spy.mockRestore()
   })
+
+  // Palette ratchet (no-restricted-syntax): the fallback's error-detail text must
+  // use the per-theme --status-failed token, not a raw Tailwind palette class, so
+  // it stays legible on light themes.
+  it('renders the error detail with the failed status token, no raw palette', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { container } = render(
+      <ErrorBoundary>
+        <Thrower />
+      </ErrorBoundary>,
+    )
+
+    expect(screen.getByText('boom').className).toContain('text-[var(--status-failed)]')
+    expect(container.innerHTML).not.toMatch(
+      /(text|bg|border)-(emerald|green|red|amber|yellow|orange|purple|blue)-[0-9]{2,3}/,
+    )
+    spy.mockRestore()
+  })
 })
