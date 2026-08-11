@@ -463,6 +463,13 @@ async def _period_stats(
         pass_rate = (sum_passed / denom * 100.0) if denom else 0.0
         return {
             "total_runs": row.total_runs or 0,
+            # MUST mirror the unscoped return below, key for key: the caller
+            # reads ``cur["total_executions"]`` unconditionally. #492 added
+            # that key to the unscoped branch and to the caller but not here,
+            # so from 2026-08-08 every suite-filtered dashboard request raised
+            # KeyError -> HTTP 500. Picking a suite on Overview took the whole
+            # dashboard down.
+            "total_executions": int(getattr(row, "sum_total", 0) or 0),
             "pass_rate": pass_rate,
             "avg_duration_ms": int(row.avg_duration_ms or 0),
         }

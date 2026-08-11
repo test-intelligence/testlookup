@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-11 — Fix: every suite-filtered dashboard request returned HTTP 500 (regression from #492)
+
+`GET /api/v1/metrics/summary?project_id=…&suite_name=api` → **500**. `suite_name` is a
+documented query param and the Overview page's suite filter goes through it, so picking a suite
+took the whole dashboard down.
+
+`_period_stats` has two returns. The suite-scoped early return (inside `if suite_name:`) returned
+three keys; the unscoped return grew a fourth, `total_executions`, and the caller reads it
+unconditionally:
+
+```python
+total_executions = cur["total_executions"]        # KeyError on the suite path
+```
+
+**This was self-inflicted.** #492 ("Total executions KPI counted runs, not executions",
+2026-08-08) added the key to the unscoped branch and to the caller but not to the suite branch.
+It has been broken on the deployment since that date. It survived because nothing exercised
+`_period_stats` with a suite name — the endpoint's tests never combine `project_id` with
+`suite_name`, and no exploratory pass had crossed those two filters either.
+
+The regression test guards the **class**: the two returns must stay key-for-key identical, and
+the caller may not read a key neither branch returns. The real defect is a two-branch function
+whose branches drifted, not the one missing key.
+
 ### 2026-08-11 — Fix: the "New failures (24h)" KPI did not count BROKEN
 
 `metrics_service` states the rule in its own comment, three lines from the offending code —
