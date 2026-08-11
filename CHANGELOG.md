@@ -26,6 +26,19 @@ Eighth surface in this family (#535 runs, #538 dashboard, #539 analytics, #541 R
 active + recent live sessions", with `days` bounding the completed set. The `/stream/active` name
 is loose, but the contract is deliberate, and a test now pins it so nobody "fixes" it away.
 
+### 2026-08-11 — Fix: onboarding auto-detection never credited the telemetry step
+
+`auto_detect_progress` auto-completes `create_project`, `upload_run`, and `connect_jira` by
+probing real state, but it stopped there — the `connect_telemetry` step (whose description is
+literally "Add Splunk, OCP, or Slack integration") was never detected. A self-hoster who wired
+up Splunk, OCP, or Slack got no credit for it, so the setup wizard sat stuck below 100% until
+they manually skipped a step they'd actually completed.
+
+Jira and telemetry both live in the one `integrations_config` `AppSetting` row, so the fix reuses
+that same lookup: if any of `splunk_enabled` / `ocp_enabled` / `slack_enabled` is on, the
+telemetry step auto-completes — symmetric with the existing `jira_enabled` check, and pending
+otherwise. Stage-only, following the service/router transaction boundary.
+
 ### 2026-08-10 — Fix: the releases list returned soft-deleted projects
 
 `list_releases` applied its project filter only when one was supplied. Measured live:

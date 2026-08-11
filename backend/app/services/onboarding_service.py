@@ -207,14 +207,24 @@ async def auto_detect_progress(
         await _auto_complete_if_pending(db, project_id, "upload_run")
         await db.flush()
 
-    # Check Jira config
+    # Check integration config — Jira and telemetry share one AppSetting row.
     from app.models.postgres import AppSetting
-    jira_result = await db.execute(
+    integrations_result = await db.execute(
         select(AppSetting).where(AppSetting.key == "integrations_config")
     )
-    jira_row = jira_result.scalar_one_or_none()
-    if jira_row and jira_row.value and jira_row.value.get("jira_enabled"):
+    integrations_row = integrations_result.scalar_one_or_none()
+    integrations = (integrations_row.value if integrations_row else None) or {}
+
+    if integrations.get("jira_enabled"):
         await _auto_complete_if_pending(db, project_id, "connect_jira")
+        await db.flush()
+
+    # connect_telemetry is satisfied by any of Splunk / OCP / Slack being
+    # enabled (mirrors the step description "Add Splunk, OCP, or Slack
+    # integration"). Without this, a self-hoster who wires up telemetry never
+    # gets credit for the step and it stays pending on the setup wizard.
+    if any(integrations.get(k) for k in ("splunk_enabled", "ocp_enabled", "slack_enabled")):
+        await _auto_complete_if_pending(db, project_id, "connect_telemetry")
         await db.flush()
 
     return await get_onboarding_status(project_id, db)
