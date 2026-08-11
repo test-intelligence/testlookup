@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-10 — Fix: the canonical test-case list returned soft-deleted projects
+
+`list_canonical_test_cases` applied a project filter only when the caller supplied one. The router
+passes `project_ids=None` for an ADMIN (no membership confinement), so the unscoped list applied
+**no project filter at all**. Measured live:
+
+| projects | cases |
+|---|---|
+| `is_active = false` (deleted) | **1,205** across 36 projects |
+| `is_active = true` | 32 across 2 projects |
+| **API, unscoped** | **1,237** |
+
+**97% of the Test Management canonical-case list** was tests belonging to projects the user cannot
+open, filter by, or navigate to.
+
+Ninth surface in this family (#535, #538, #539, #541, #547, #549, #550, #551). Found by giving
+`canonical-test-cases/:canonicalId` its first coverage — the *detail* endpoint's edge cases were all
+correct (200 / 404 for a missing id / 422 for a malformed one); the **list** behind it was not.
+
+The membership confinement and its fail-closed empty branch are both preserved and pinned by tests.
+
 ### 2026-08-10 — Fix: the Live page listed one run twice, under slug and UUID
 
 `list_active_sessions` merges Redis state with two DB queries and dedups on `run_id`. Redis keys a

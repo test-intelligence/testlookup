@@ -738,6 +738,22 @@ async def list_canonical_test_cases(
     status_filter: Optional[str] = None,
 ) -> list[CanonicalTestCase]:
     stmt = select(CanonicalTestCase)
+    # Soft-deleted projects are excluded unconditionally; the membership /
+    # pinned-project restriction below is applied on top.
+    #
+    # ``project_ids`` is None for an ADMIN (no membership confinement), so
+    # before this the unscoped list applied no project filter at all. Measured
+    # live: **1,237 rows returned, 1,205 of them across 36 deleted projects** —
+    # 97% of the Test Management canonical-case list was tests belonging to
+    # projects the user cannot open.
+    #
+    # Ninth surface in this family (#535 runs, #538 dashboard, #539 analytics,
+    # #541 ROI, #547 trends, #549 defect KPI, #550 releases, #551 live page).
+    stmt = stmt.where(
+        CanonicalTestCase.project_id.in_(
+            select(Project.id).where(Project.is_active.is_(True))
+        )
+    )
     if project_ids is not None:
         if not project_ids:
             return []
