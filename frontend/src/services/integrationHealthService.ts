@@ -35,6 +35,10 @@ export interface HealthTrend {
   healthy: number;
   degraded: number;
   down: number;
+  /** Probe timed out. Counted in `total_probes` but had no column until #557. */
+  timeout: number;
+  /** Credentials rejected — the most actionable failure this page can show. */
+  auth_error: number;
   avg_response_ms: number;
   uptime_pct: number;
 }

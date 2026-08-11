@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-11 — Fix: Integration Health trends hid timed-out and auth-rejected probes
+
+The probe service persists **five** statuses — `healthy`, `degraded`, `down`, `timeout` and
+`auth_error` (`skipped` is dropped before insert). `GET /integration-health/trends` counted all
+five toward `total_probes`, and therefore let all five drag `uptime_pct` down, but only ever
+reported three of them.
+
+A provider whose API token had expired rendered as:
+
+    Uptime 0%   Healthy 0   Degraded 0   Down 0
+
+— which reads as "never probed" rather than "your credentials are being rejected", on the one
+page whose job is to say which integration is broken and why. The Trends tab now carries
+**Timeout** and **Auth failed** columns, so the per-status counts account for every probe in
+`total_probes`.
+
+The same block also computed `avg_response_ms` inside the per-`(provider, status)` loop, so a
+provider's "Avg Latency" was whichever *status group* the database returned last — order-dependent,
+since a `GROUP BY` has no defined row order — and an `if row.avg_ms:` guard silently skipped any
+group averaging exactly `0.0`. Latency is now its own per-provider aggregate, excluding the
+`response_ms = 0` sentinel a `down` probe records when it never got a response.
+
+On the homelab the two defects cancelled (ollama's only non-healthy group is `down`, whose
+sentinel zeros the falsy guard skipped), so the displayed 47ms was correct by accident. Deployed
+values are unchanged; the accident is gone.
+
+Not reproducible on a deployment with every optional integration disabled — proven from the
+persisted status vocabulary, with a regression test that reads that vocabulary out of the prober
+rather than hard-coding it, so a sixth status fails the build instead of silently vanishing.
+
 ### 2026-08-10 — Fix: two router-level lists returned soft-deleted projects
 
 `GET /runs/failed-ids` and `GET /agents/pipelines` build their queries **inline** rather than

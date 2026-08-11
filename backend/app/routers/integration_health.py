@@ -111,7 +111,17 @@ async def get_health_trends(
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get aggregated health trends for all providers over a period."""
+    """Get aggregated health trends for all providers over a period.
+
+    Every status the probe service persists gets its own counter. The probers
+    emit five (``skipped`` is dropped before insert, see
+    ``integration_probe_service._persist``), and reporting only three left
+    ``auth_error`` and ``timeout`` probes counted in ``total_probes`` — so they
+    dragged ``uptime_pct`` down — while appearing in no column at all. A
+    provider whose token had expired rendered as 0% uptime with 0 healthy,
+    0 degraded and 0 down, which reads as "no data" rather than "your
+    credentials are wrong".
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     # Count by provider and status
@@ -120,29 +130,58 @@ async def get_health_trends(
             IntegrationProbeResult.provider,
             IntegrationProbeResult.status,
             func.count(IntegrationProbeResult.id).label("count"),
-            func.avg(IntegrationProbeResult.response_ms).label("avg_ms"),
         )
         .where(IntegrationProbeResult.checked_at >= cutoff)
         .group_by(IntegrationProbeResult.provider, IntegrationProbeResult.status)
     )
     rows = result.all()
 
+    # Average latency, one row per provider. Computed separately rather than
+    # per-status: the per-status averages cannot be combined without their
+    # weights, and the previous code simply let the last group win — an
+    # order-dependent value, since a GROUP BY has no defined row order.
+    # ``response_ms = 0`` is the sentinel a ``down`` probe records when it never
+    # got a response (`ProbeResult(provider, "down", 0, ...)`), not a 0ms
+    # measurement, so those rows are excluded from the average instead of
+    # deflating it.
+    latency = await db.execute(
+        select(
+            IntegrationProbeResult.provider,
+            func.avg(IntegrationProbeResult.response_ms).label("avg_ms"),
+        )
+        .where(
+            IntegrationProbeResult.checked_at >= cutoff,
+            IntegrationProbeResult.response_ms > 0,
+        )
+        .group_by(IntegrationProbeResult.provider)
+    )
+    avg_by_provider = {r.provider: r.avg_ms for r in latency.all()}
+
     trends: dict[str, dict] = {}
     for row in rows:
         provider = row.provider
         if provider not in trends:
-            trends[provider] = {"provider": provider, "total_probes": 0, "healthy": 0, "degraded": 0, "down": 0, "avg_response_ms": 0}
+            trends[provider] = {
+                "provider": provider,
+                "total_probes": 0,
+                "healthy": 0,
+                "degraded": 0,
+                "down": 0,
+                "timeout": 0,
+                "auth_error": 0,
+                "avg_response_ms": 0,
+            }
         trends[provider][row.status] = trends[provider].get(row.status, 0) + row.count
         trends[provider]["total_probes"] += row.count
-        if row.avg_ms:
-            trends[provider]["avg_response_ms"] = round(float(row.avg_ms), 0)
 
     # Calculate uptime percentage
-    for t in trends.values():
+    for provider, t in trends.items():
         total = t["total_probes"]
         if total > 0:
             t["uptime_pct"] = round((t.get("healthy", 0) / total) * 100, 1)
         else:
             t["uptime_pct"] = 0
+        avg_ms = avg_by_provider.get(provider)
+        t["avg_response_ms"] = round(float(avg_ms), 0) if avg_ms is not None else 0
 
     return list(trends.values())

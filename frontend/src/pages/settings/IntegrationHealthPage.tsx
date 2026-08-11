@@ -124,11 +124,11 @@ export default function IntegrationHealthPage() {
           {tab === 'trends' && (
             <div className="space-y-2">
               {trends.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No trend data available.</div>}
-              <div className="bg-[var(--color-bg-hover)]/50 rounded-lg px-4 py-2 grid grid-cols-6 gap-2 text-xs text-[var(--color-text-muted)] font-medium">
-                <span>Provider</span><span>Uptime</span><span>Healthy</span><span>Degraded</span><span>Down</span><span>Avg Latency</span>
+              <div className="bg-[var(--color-bg-hover)]/50 rounded-lg px-4 py-2 grid grid-cols-8 gap-2 text-xs text-[var(--color-text-muted)] font-medium">
+                <span>Provider</span><span>Uptime</span><span>Healthy</span><span>Degraded</span><span>Down</span><span>Timeout</span><span>Auth failed</span><span>Avg Latency</span>
               </div>
               {trends.map(t => (
-                <div key={t.provider} className="bg-[var(--color-bg-secondary)] rounded-lg px-4 py-3 grid grid-cols-6 gap-2 items-center text-sm">
+                <div key={t.provider} className="bg-[var(--color-bg-secondary)] rounded-lg px-4 py-3 grid grid-cols-8 gap-2 items-center text-sm">
                   <span className="text-[var(--color-text)] capitalize font-medium">{t.provider}</span>
                   <span className={clsx('font-mono', t.uptime_pct >= 99 ? 'text-[var(--status-passed)]' : t.uptime_pct >= 90 ? 'text-[var(--status-skipped)]' : 'text-[var(--status-failed)]')}>
                     {t.uptime_pct}%
@@ -136,6 +136,8 @@ export default function IntegrationHealthPage() {
                   <span className="text-[var(--status-passed)] text-xs">{t.healthy}</span>
                   <span className="text-[var(--status-skipped)] text-xs">{t.degraded}</span>
                   <span className="text-[var(--status-failed)] text-xs">{t.down}</span>
+                  <span className="text-[var(--status-broken)] text-xs">{t.timeout ?? 0}</span>
+                  <span className="text-[var(--status-broken)] text-xs">{t.auth_error ?? 0}</span>
                   <span className="text-[var(--color-text-muted)] text-xs">{t.avg_response_ms}ms</span>
                 </div>
               ))}
