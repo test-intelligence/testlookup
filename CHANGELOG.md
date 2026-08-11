@@ -3045,6 +3045,10 @@ Fixes for the verified 2026-07 backend-audit findings in commit attribution (Epi
 
 - **`frontend/src/components/releases/VerdictBand.tsx`** — the release-health hero band's per-blocker severity icons now use per-theme status tokens instead of raw Tailwind palette classes: `resolved` → `text-[var(--status-passed)]`, `warn` → `text-[var(--status-broken)]`, `red` → `text-[var(--status-failed)]` (was `text-emerald-400` / `text-amber-400` / `text-red-400`). Fixes light-theme legibility for these icons and drops the file's `no-restricted-syntax` (palette) warning count to zero. The `GATE_ACCENT` map already used `--gate-*` tokens and is unchanged.
 - **Regression test** (`frontend/src/components/releases/VerdictBand.test.tsx`) — renders the band with one blocker of each severity and asserts each maps to its status token, guarding against a regression back to the raw palette classes.
+### 2026-07-27 — Theme tokens: Integrations settings "(set)" indicators (palette ratchet)
+
+- **`frontend/src/pages/settings/IntegrationsPage.tsx`** — the four "(set)" credential indicators (shown next to Jira / Splunk / OpenShift / GitHub secret fields once a token is stored) migrated from the raw `text-emerald-400` palette class to the per-theme success token `text-[var(--status-passed)]`. Raw palette greens are illegible in the light theme; the token resolves per-theme via `index.css`. Semantic role: "credential is configured/present" → success. Drops the file's `no-restricted-syntax` (palette) warning count to zero.
+- **Regression test** (`IntegrationsPage.test.tsx`, new) — asserts one "(set)" indicator renders per stored-token provider, that the indicator carries `text-[var(--status-passed)]` and no `emerald` class, and that it is omitted when no token is stored.
 
 ### 2026-07-16 — GitLab integration: MR notes + commit statuses + CI recipe (PMF backlog Epic 3 US-3.1/3.2/3.3)
 
