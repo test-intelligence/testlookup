@@ -2584,6 +2584,9 @@ and no image by design. Pure TS/React, zero runtime dependencies, no native
 build step, renders inline SVG. The manual-entry secret is shown next to the QR
 in every case, because QR-only setup locks out anyone configuring this on a
 desktop.
+### 2026-08-06 — App error-boundary fallbacks migrated to per-theme status tokens
+
+- **Frontend** — the two last-resort error screens no longer hard-code Tailwind palette classes that bypass the per-theme CSS-token system and read poorly on light themes. `ErrorBoundary`'s error-detail text now uses `--status-failed` (was `text-red-400`) and `SectionErrorBoundary`'s warning icon uses `--status-broken` (was `text-amber-400`), mapped by semantic role. Removes 2 `no-restricted-syntax` palette warnings; extended each component's existing test with a regression guard against reintroducing raw palette classes.
 
 ### 2026-08-05 — TOTP MFA, recovery codes, account lockout (closes the compliance gap)
 
