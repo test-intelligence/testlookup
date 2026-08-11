@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-11 — Fix: run compare scoped to the wrong tests and used the wrong pass-rate base
+
+Two shared rules had hand-rolled copies in `run_compare_service` that no longer agreed with
+them. Both reproduced on live data (Checkout Service runs 101 and 102).
+
+**Suite scoping over-matched.** `_load_test_rows` applied its run-level fallback
+unconditionally, with a comment asserting *"if this run's `primary_suite_name` matches, ALL
+test cases for the run belong to that suite"*. That is false for a file upload carrying several
+`<testsuite>` blocks. Run 101 (`trigger_source=api`, `ingestion_source=upload`,
+`primary_suite_name='api'`, per-row suites `api`/`regression`/`smoke`) scoped to `api` returned
+**all 12 rows instead of 5** — the diff for suite "api" listed `test_inventory_sync` (a FAILED
+`regression` test) and `test_discount_stacking` (also `regression`). `smoke` (3) and
+`regression` (4) scoped correctly, so the same page behaved differently per suite.
+
+The fallback is now keyed to `trigger_source = 'live_stream'`, mirroring
+`analytics_service._effective_suite_sql()` — the canonical answer to "which suite does this test
+belong to". Nothing is lost: on the deployment every NULL/blank per-row suite belongs to a
+live_stream run (8 rows), while 1,493 api+upload and api+sdk runs have none.
+
+**The pass rate used a different denominator than the rest of the product.** `_summary_dict`
+returns the stored `run.pass_rate` when unscoped (canonical: `passed / (passed + failed +
+broken)`) but recomputed `passed / total` when scoped to a suite. So one page reported two
+bases — run 101 (10 passed / 1 failed / 1 skipped) showed **90.91%** unscoped and **83.33%**
+the moment a suite was selected, with no pass or fail having changed.
+
+`test_summary_dict_scopes_counts_to_suite_cases` asserted `33.333` for 1 passed / 1 failed /
+1 skipped, pinning the buggy formula; it now asserts `50.0`. That is not a weakened test — it
+is the same denominator `test_pass_rate_excludes_skipped` was written to eliminate, whose
+docstring describes this exact formula as the bug and records the fix landing in
+`_update_run_aggregates`. run_compare simply kept the pre-fix version.
+
+Scoped and unscoped summaries also now carry `unknown_tests`, so the per-status counts add up
+to `total_tests` here the way they do everywhere else after 0118.
+
 ### 2026-08-11 — Fix: a test result with an unrecognised status was erased, and the run went green
 
 **Migration `0118`** adds `test_runs.unknown_tests`.

@@ -262,14 +262,34 @@ async def _load_test_rows(
     stmt = select(TestCase).where(TestCase.test_run_id == run_id)
     suite_key = normalize_suite_name(suite_name)
     if suite_key:
-        # Run-level match: if this run's ``primary_suite_name`` matches,
-        # ALL test cases for the run belong to that suite regardless of
-        # the per-row column. Embedded as a correlated EXISTS so the
-        # whole filter stays a single query.
+        # Run-level match, restricted to ``live_stream`` runs — the case this
+        # fallback was written for, and the only one where it is true that all
+        # of a run's test cases belong to ``primary_suite_name``.
+        #
+        # Unrestricted, it over-matched: a file upload with several
+        # ``<testsuite>`` blocks has an authoritative per-row ``suite_name``
+        # AND a run-level ``primary_suite_name`` naming just one of them, so
+        # scoping to that one returned the WHOLE run. Measured on the live
+        # homelab: run 101 (trigger_source=api, ingestion_source=upload,
+        # primary_suite_name='api', per-row suites api/regression/smoke)
+        # scoped to ``api`` returned all 12 rows instead of 5 — the diff for
+        # suite "api" listed ``test_inventory_sync`` and
+        # ``test_discount_stacking``, both of which are ``regression`` tests.
+        # ``smoke`` and ``regression`` scoped correctly, so the same page
+        # behaved differently depending on which suite you picked.
+        #
+        # This mirrors ``analytics_service._effective_suite_sql()``, the
+        # canonical answer to "which suite does this test belong to": the
+        # run-level label wins for live_stream runs (those SDKs stamp the test
+        # class name on every per-event ``suite_name``, so per-row is
+        # unreliable); per-row wins for everything else. Every NULL/blank
+        # per-row suite on the deployment belongs to a live_stream run, so
+        # nothing this fallback exists to serve stops being served.
         run_level_match = (
             select(TestRun.id)
             .where(
                 TestRun.id == run_id,
+                TestRun.trigger_source == "live_stream",
                 func.lower(func.trim(TestRun.primary_suite_name)) == suite_key,
             )
             .exists()
@@ -304,8 +324,19 @@ def _summary_dict(
         failed = sum(1 for tc in scoped_tests if _status_bucket(tc.status) == "failed")
         broken = sum(1 for tc in scoped_tests if _status_bucket(tc.status) == "broken")
         skipped = sum(1 for tc in scoped_tests if _status_bucket(tc.status) == "skipped")
+        unknown = sum(1 for tc in scoped_tests if _status_bucket(tc.status) == "unknown")
         duration_ms = sum(int(tc.duration_ms or 0) for tc in scoped_tests)
-        pass_rate = round((passed / total) * 100, 3) if total else 0.0
+        # Denominator is evaluated tests — passed + failed + broken — NOT
+        # ``total``. Skips were never evaluated, so including them understates
+        # the rate; see ``metrics_service._evaluated`` and the existing
+        # ``test_pass_rate_excludes_skipped`` regression. Dividing by ``total``
+        # here made the SAME comparison page report two different bases: the
+        # unscoped branch below returns the stored ``run.pass_rate`` (canonical),
+        # so on live run 101 (10 passed / 1 failed / 1 skipped) the page showed
+        # 90.91% unscoped and 83.33% the moment a suite was selected, with no
+        # pass or fail having changed.
+        evaluated = passed + failed + broken
+        pass_rate = round((passed / evaluated) * 100, 3) if evaluated else 0.0
         display_suite = suite_name or (scoped_tests[0].suite_name if scoped_tests else None)
         return {
             "id": run.id,
@@ -319,6 +350,7 @@ def _summary_dict(
             "failed_tests": failed,
             "broken_tests": broken,
             "skipped_tests": skipped,
+            "unknown_tests": unknown,
             "pass_rate": pass_rate,
             "duration_ms": duration_ms,
             "start_time": run.start_time,
@@ -339,6 +371,7 @@ def _summary_dict(
         "failed_tests": int(run.failed_tests or 0),
         "broken_tests": int(run.broken_tests or 0),
         "skipped_tests": int(run.skipped_tests or 0),
+        "unknown_tests": int(getattr(run, "unknown_tests", 0) or 0),
         "pass_rate": float(run.pass_rate) if run.pass_rate is not None else None,
         "duration_ms": int(run.duration_ms) if run.duration_ms is not None else None,
         "start_time": run.start_time,

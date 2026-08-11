@@ -218,7 +218,18 @@ def test_summary_dict_scopes_counts_to_suite_cases():
     assert summary["passed_tests"] == 1
     assert summary["failed_tests"] == 1
     assert summary["skipped_tests"] == 1
-    assert summary["pass_rate"] == pytest.approx(33.333, abs=0.001)
+    # 1 passed / 1 failed / 1 skipped -> 1/(1+1) = 50%, NOT 1/3.
+    #
+    # This previously asserted 33.333, pinning `passed / total`. That is the
+    # denominator `test_pass_rate_excludes_skipped` was written to eliminate:
+    # its docstring describes this exact formula as the bug ("divided
+    # passed / total where total INCLUDED skipped ... a run that was mostly
+    # skips showed a misleadingly low pass rate"), and records the fix landing
+    # in `_update_run_aggregates`. run_compare kept the pre-fix formula, so the
+    # same comparison page reported 90.91% unscoped and 83.33% suite-scoped for
+    # one live run. Skips are excluded on purpose -- see
+    # `metrics_service._evaluated`.
+    assert summary["pass_rate"] == pytest.approx(50.0, abs=0.001)
     assert summary["primary_suite_name"] == "Auth"
     assert summary["suite_names"] == ["Auth"]
 

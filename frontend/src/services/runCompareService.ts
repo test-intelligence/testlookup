@@ -12,6 +12,8 @@ export interface RunCompareSummary {
   failed_tests: number
   broken_tests: number
   skipped_tests: number
+  /** Results whose reported status was outside PASSED/FAILED/SKIPPED/BROKEN. */
+  unknown_tests?: number
   pass_rate: number | null
   duration_ms: number | null
   start_time: string | null

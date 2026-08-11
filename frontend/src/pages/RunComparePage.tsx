@@ -520,6 +520,11 @@ function SideCard({
         <span className="text-[var(--status-failed)]">✗ {run.failed_tests}</span>
         <span className="text-[var(--status-broken)]">⚠ {run.broken_tests}</span>
         <span className="text-[var(--color-text-muted)]">◯ {run.skipped_tests}</span>
+        {(run.unknown_tests ?? 0) > 0 && (
+          <span className="text-[var(--status-broken)]" title="Unrecognised status">
+            ? {run.unknown_tests}
+          </span>
+        )}
         <span className="ml-auto text-[var(--color-text-faint)]">
           {run.pass_rate != null ? `${run.pass_rate.toFixed(1)}%` : '—'}
         </span>
