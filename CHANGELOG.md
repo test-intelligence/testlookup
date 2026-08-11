@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-11 — Fix: Test Management's suite filter was the only case-sensitive one
+
+Third find in the same class: a canonical rule with a hand-rolled copy that drifted.
+`test_management_service` filtered with a bare `suite_name == suite_name`, bypassing both
+`normalize_suite_name` and `analytics_service._effective_suite_sql()`. Measured live — same
+project, same suite, three surfaces:
+
+| endpoint | `suite_name=api` | `suite_name=API` |
+|---|---|---|
+| `analytics/coverage` | 5 | **5** |
+| `runs/compare` | 5 | **5** |
+| `test-management/cases` | 5 | **0** |
+
+Two of three answer the same question the same way for either spelling; this one silently
+returned nothing. The UI populates its filter from the data so it sends the exact case, but the
+API is public — a CLI, SDK or MCP caller passing `"API"` got an empty list and no error.
+
+The automation list additionally now honours the effective-suite rule `backend/CLAUDE.md` states
+as a hard convention: for a `live_stream` run the SDK sends the suite once at session-create, so
+it lands on `TestRun.primary_suite_name` while per-event `TestCase.suite_name` stays NULL, and a
+bare per-row filter returns nothing for those runs. The run-level arm is restricted to
+`live_stream` — a multi-`<testsuite>` upload has an authoritative per-row value that must win,
+the shape #559 gave `run_compare_service` after it was found returning other suites' tests.
+
+**Stated honestly**: the live-stream half is *not* reproducible on the homelab — no live_stream
+run there has both a NULL per-row suite and a `primary_suite_name`, so the fallback has nothing
+to recover. It is fixed because it is the documented rule and the query already joins `TestRun`,
+not because a probe showed it failing. The case-sensitivity half was reproduced.
+
 ### 2026-08-11 — Fix: run compare scoped to the wrong tests and used the wrong pass-rate base
 
 Two shared rules had hand-rolled copies in `run_compare_service` that no longer agreed with

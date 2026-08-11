@@ -14,9 +14,10 @@ from datetime import datetime, timezone
 from typing import Optional, cast
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.run_compare_service import normalize_suite_name
 from app.models.postgres import (
     ManagedTestCase,
     Project,
@@ -76,7 +77,15 @@ async def list_managed_test_cases(
     if ai_generated is not None:
         query = query.where(ManagedTestCase.ai_generated == ai_generated)
     if suite_name:
-        query = query.where(ManagedTestCase.suite_name == suite_name)
+        # Case-insensitive, like every other suite filter in the product.
+        # A raw ``==`` made this the odd one out: measured live, suite "api"
+        # returned 5 rows here while "API" returned 0, where both
+        # ``analytics/coverage`` and ``runs/compare`` returned 5 for either
+        # spelling. See ``run_compare_service.normalize_suite_name``.
+        query = query.where(
+            func.lower(func.trim(ManagedTestCase.suite_name))
+            == normalize_suite_name(suite_name)
+        )
     if search:
         from app.services.sql_utils import like_contains
         query = query.where(ManagedTestCase.title.ilike(like_contains(search), escape="\\"))
@@ -134,7 +143,31 @@ async def list_automation_test_cases(
     if project_id is not None:
         base = base.where(TestRun.project_id == project_id)
     if suite_name:
-        base = base.where(TestCase.suite_name == suite_name)
+        # Case-insensitive (see ``list_managed_test_cases``) *and* honouring the
+        # effective-suite rule: for a ``live_stream`` run the SDK sends the
+        # suite once at session-create, so it lands on
+        # ``TestRun.primary_suite_name`` while per-event ``TestCase.suite_name``
+        # stays NULL. A bare per-row filter returns nothing for those runs even
+        # though they are correctly tagged. Mirrors
+        # ``analytics_service._effective_suite_sql()`` and the shape #559 gave
+        # ``run_compare_service._load_test_rows``: the run-level label applies
+        # to live_stream runs only, since a multi-``<testsuite>`` upload has an
+        # authoritative per-row value that must win.
+        #
+        # Stated honestly: the live-stream half is NOT reproducible on the
+        # homelab today — no live_stream run there has both a NULL per-row
+        # suite and a ``primary_suite_name``. The case-sensitivity half was
+        # reproduced (api -> 5, API -> 0).
+        suite_key = normalize_suite_name(suite_name)
+        base = base.where(
+            or_(
+                func.lower(func.trim(TestCase.suite_name)) == suite_key,
+                and_(
+                    TestRun.trigger_source == "live_stream",
+                    func.lower(func.trim(TestRun.primary_suite_name)) == suite_key,
+                ),
+            )
+        )
     if search:
         pattern = like_contains(search)
         base = base.where(
