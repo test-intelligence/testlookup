@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-11 — Chore: close the design-audit palette-token ESLint ratchet (`no-restricted-syntax` → error)
+
+The `no-restricted-syntax` rule in `frontend/eslint.config.js` — which flags raw Tailwind palette
+classes (`text-emerald-400`, `bg-red-900/40`, `border-amber-700/60`, …) that bypass the per-theme
+CSS-token system (`--status-*`, `--gate-*`, `--color-*`) and are each a light-theme legibility
+defect — was the last frontend lint rule still at `warn`. Every raw palette class in `src/` had
+already been mapped, page by page, to its semantic token, leaving zero UI sites.
+
+The only remaining literal matches were assertion guards in two test files (`RightRail.test.tsx`,
+`VerdictBand.test.tsx`) that name the raw classes to prove they are **absent**, not to render them.
+Those now carry scoped `eslint-disable`s with a one-line justification, mirroring the existing
+avatar-color-swatch and test-only-`any` exemptions. With those exempt, the rule is promoted to
+`error`, so a token-bypassing palette class can no longer be reintroduced in app code. A
+source-text promotion regression test (`paletteRatchet.promotion.test.ts`) locks the severity in,
+matching the sibling `no-explicit-any` / `no-non-null-assertion` ratchet guards.
+
 ### 2026-08-11 — Fix: the run header did not account for every test in the run
 
 Found during UAT of the ingest journey. A JUnit report of 6 tests (2 pass / 2 fail / 1 `<error>`

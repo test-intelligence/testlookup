@@ -63,8 +63,12 @@ describe('VerdictBand blocker severity icons', () => {
     expect(html).toContain('text-[var(--status-failed)]')
 
     // Guard against regressing to the light-theme-illegible raw palette classes.
+    // These raw palette strings are assertion guards (proving the classes are
+    // absent), not UI — scoped-exempt from the design-audit token rule.
+    /* eslint-disable no-restricted-syntax */
     expect(html).not.toContain('text-emerald-400')
     expect(html).not.toContain('text-amber-400')
     expect(html).not.toContain('text-red-400')
+    /* eslint-enable no-restricted-syntax */
   })
 })

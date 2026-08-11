@@ -56,6 +56,9 @@ describe('RightRail activity icons', () => {
 
   it('leaves no raw Tailwind palette classes on the event icons', () => {
     const container = renderActivity()
+    // These raw palette strings are assertion guards (proving the classes are
+    // absent), not UI — scoped-exempt from the design-audit token rule.
+    // eslint-disable-next-line no-restricted-syntax
     for (const raw of ['text-emerald-400', 'text-red-400', 'text-amber-400']) {
       expect(container.querySelector(`[class~="${raw}"]`)).toBeNull()
     }
