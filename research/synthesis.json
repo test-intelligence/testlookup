@@ -1,0 +1,326 @@
+{
+ "question": "Research question: What are the core problems that a software test-reporting and test-intelligence application should solve — for test automation engineers and QA teams — in order to (1) optimize reporting, (2) improve QA team productivity, (3) speed up test-report analysis, and (4) generate trustworthy AI-driven intelligence (root-cause analysis, flaky-test management, release-readiness / go-no-go signals) from test results?\n\nContext for angle selection (the product being improved): TestLookup is a local-first, self-hosted test-failure intelligence platform. It already has: multi-format ingestion (JUnit, pytest, TestNG, Allure, Cypress, Playwright, Robot, Cucumber), live streaming of in-flight runs, failure clustering by fingerprint, rules/ML/local-LLM root-cause classification, flaky detection (window + flip heuristics) with a quarantine lifecycle, a release-readiness gate (GO/CONDITIONAL_GO/NO_GO with published thresholds and verdict drivers), an agentic \"Investigator\" (LangGraph) and a budgeted draft-PR \"Fixer\" agent (shadow mode), PDF/share-link reports, digests, Jira/GitHub/GitLab integration, MCP server + chat, per-project RBAC/tenancy, and ROI/value metrics. The user wants to IMPROVE existing features to meet the core requirements of software engineering teams — so findings should emphasize where products like this typically fall short for practitioners (pain points with existing tools like Allure TestOps, ReportPortal, Launchable, Datadog Test Optimization, Trunk, BuildPulse, TestRail, currents.dev etc.), what practitioners actually complain about (flaky-test triage fatigue, alert noise, trust in AI verdicts, time-to-diagnose failures, cross-run correlation, test-impact analysis, CI feedback-loop time), and evidence on what AI/agentic capabilities genuinely help vs. which are gimmicks. Prioritize practitioner surveys (e.g. State of Testing, DORA, developer surveys), engineering-blog case studies (Google, Microsoft, Meta, Netflix, Uber, Spotify test infrastructure), academic work on flaky tests and failure triage, and vendor-neutral comparisons. The deliverable feeds a feature-improvement roadmap, so each finding should be actionable: problem → why current tools fail → what a better implementation looks like.",
+ "summary": "The verified evidence converges on one dominant, quantified conclusion: for a test-intelligence product, signal quality — separating flaky noise from real regressions — is the load-bearing problem, and everything else (reporting, productivity, analysis speed, AI trust) depends on solving it first. At industrial scale flakiness is routine rather than exceptional (Google: ~16% of tests with some flakiness, ~1.5% of test runs flaky, ~84% of pass→fail transitions flaky; GitHub 2020: ~9% of commits red from a flake; Atlassian: up to 21% of Jira Frontend master build failures, >150k developer-hours/year lost), and Google's own data shows insertion rate ≈ fix rate, so it must be engineered as a permanent steady state to manage, not a backlog to burn down. The practitioner-side evidence (Gruber & Fraser, ICST 2022, n=335) shows the gap is adoption, not desire: 51% hit flakiness weekly and 66% call it moderate/serious, yet manual rerunning dominates (2.80/4) while automated detect/debug/quarantine sit at the very bottom (1.16/1.11/1.03), and the top wishes are a tied cluster of visualization of per-test outcome history with environment metadata (32), auto-detection (31), auto root-cause debugging (28), and education (25). The strongest actionable upgrades the evidence supports are: probabilistic multi-signal flakiness scoring over a moving window (Atlassian's Bayesian fusion of duration variability, environment consistency, result patterns, retry frequency into a 0–1 score) rather than flip-count heuristics; in-pipeline flip-signal detection at ingest (81% detection rate at Atlassian) layered on continuous all-test analysis (new/modified-test-only strategies have a measured 15% blind spot, Lam et al. OOPSLA 2020); a closed-loop quarantine with ownership routing, deadlines, continued shadow execution and automatic re-instatement plus unmasking safeguards; per-project calibrated, confidence-reported failure classification, because fingerprint/de-dup matching swings from 100% specificity to no better than random across projects (Alshammari et al., ICST 2024); and cluster-level triage, since 75% of flaky tests fail in co-occurring clusters with shared root causes (Parry et al., EASE 2025). Crucially, the verified corpus says almost nothing about release-readiness gating, agentic root-cause quality, or test-impact analysis — those parts of the research question remain unevidenced here.",
+ "findings": [
+  {
+   "claim": "Flakiness is a routine, high-volume signal-quality problem at industrial scale — not an edge case — and it is a first-order productivity cost, so it deserves first-class product architecture rather than a side feature.",
+   "confidence": "high",
+   "vote": "3-0 (claims 0, 4, 9, 14 merged; 2-1 on the duplicate framing of 14)",
+   "sources": [
+    "https://www.atlassian.com/blog/atlassian-engineering/taming-test-flakiness-how-we-built-a-scalable-tool-to-detect-and-manage-flaky-tests",
+    "https://testing.googleblog.com/2016/05/flaky-tests-at-google-and-how-we.html",
+    "https://www.sciencedirect.com/science/article/pii/S0164121223002327",
+    "https://arxiv.org/pdf/2212.00908",
+    "https://github.blog/2020-12-16-reducing-flaky-builds-by-18x"
+   ],
+   "evidence": "Atlassian (Dec 2025, first-party): flaky tests caused up to 21% of master build failures in the Jira Frontend repo and ~15% of Jira backend failures, with reruns wasting 'over 150,000 hours of developer time each year.' Google (2016, John Micco): 'about 1.5% of all test runs reporting a flaky result' and 'Almost 16% of our tests have some level of flakiness'; Google's own worked example is that a 1000-test project at 1.5% expects ~15 flaky failures per release-gating cycle, 'requiring expensive investigation by a build cop or developer.' GitHub (Dec 2020, first-party): '1 in 11 commits had at least one red build caused by a flaky test, or about 9 percent of commits.' Relayed and peer-reviewed in Tahir et al.'s multivocal review (JSS 206, 2023). PRODUCT IMPLICATION: flaky handling belongs on the ingest hot path and in the release-gate math, not in a secondary 'flaky tests' tab.",
+   "confidence_note": "Denominators differ and must not be conflated: Google's 16% is cumulative 'has ever shown flakiness', while concurrent per-week prevalence is ~1.5% (Listfield 2017, ~63k of 4.2M tests). GitHub's 9% is the 'before' number — it fell to 1 in 200 commits after dedicated tooling, which supports building the product but must be cited alongside. Academic open-source corpora report far lower per-test rates (~0.5–1%), so magnitude is scale-dependent and may not transfer to small self-hosted teams."
+  },
+  {
+   "claim": "Flakiness must be modeled as a permanent steady state to manage, not a backlog to burn down — insertion rate roughly equals fix rate even under heavy investment, so a 'flaky debt burndown' chart will never trend to zero and will erode user trust in the tool.",
+   "confidence": "high",
+   "vote": "3-0",
+   "sources": [
+    "https://testing.googleblog.com/2016/05/flaky-tests-at-google-and-how-we.html",
+    "https://engineering.fb.com/2020/12/10/developer-tools/probabilistic-flakiness/"
+   ],
+   "evidence": "Micco (Google, 2016): 'We have invested a lot of effort in removing flakiness from tests, but overall the insertion rate is about the same as the fix rate, meaning we are stuck with a certain rate of tests that provide value, but occasionally produce a flaky result.' Independently corroborated four years later by Meta's probabilistic-flakiness work: 'All real-world tests are flaky to some extent, even if they are implemented following best engineering principles' — Meta explicitly shifted the question from 'is this test flaky' to 'how flaky is it', maintaining scores for all tests on an ongoing basis. WHAT A BETTER IMPLEMENTATION LOOKS LIKE: a continuously-updated per-test flakiness score weighted by test class/size, surfaced as an operational signal and a budget (e.g. 'flake load' per suite), explicitly NOT a zero-target burndown. Flakiness is also concentrated by test size at Google (0.5% small / 1.6% medium / 14% large), so scoring should be size/tier-aware.",
+   "confidence_note": "The Google figure is from May 2016 and has never been refreshed; cite as a historical datapoint establishing a structural pattern, not a current rate. Both sources are hyperscale monorepos."
+  },
+  {
+   "claim": "The core trust problem is that a pass→fail transition is a very weak signal of a real regression — at Google ~84% of pass-to-fail transitions involved a flaky test — and this false-positive flood trains engineers to dismiss genuine failures, which is the alert-noise problem a test-intelligence product exists to solve.",
+   "confidence": "high",
+   "vote": "3-0",
+   "sources": [
+    "https://testing.googleblog.com/2016/05/flaky-tests-at-google-and-how-we.html",
+    "https://research.google/pubs/taming-google-scale-continuous-testing/"
+   ],
+   "evidence": "Micco (2016): 'about 84% of the transitions we observe from pass to fail involve a flaky test! This causes extra repetitive work to determine whether a new failure is a flaky result or a legitimate failure. It is quite common to ignore legitimate failures in flaky tests due to the high number of false-positives.' The peer-reviewed follow-up (Memon et al., ICSE-SEIP 2017) is compatible at a different denominator: 2.07% of test targets both passed and failed at least once, but only 1.23% revealed a real breakage — ~41% of alternating targets flaky at target level vs 84% event-weighted, i.e. a minority of chronically flaky tests generates a disproportionate share of transitions. WHY CURRENT TOOLS FAIL: most reporting tools treat any new red as an alert of equal weight. BETTER: rank and route failures by probability-of-real-regression (new-failure signal x per-test flakiness score x cluster context), and never present a raw pass→fail transition as a regression verdict. CRITICAL SAFEGUARD: Google's 2017 follow-up found that when a previously stable test turned flaky, roughly 1 in 6 times the cause was a real production bug — so 'flaky' must never be a synonym for 'safe to auto-suppress'.",
+   "confidence_note": "84% is Google monorepo postsubmit CI in 2016; a mid-size team's per-transition flake share is unmeasured and likely lower. Note that three separate claims asserting practitioner trust-erosion as the dominant cost (from the multivocal review and the ICST survey) were REFUTED on quote fidelity in verification — the trust argument survives here only on Google's own data, not on the survey/review evidence."
+  },
+  {
+   "claim": "Flip-count heuristics should be upgraded to probabilistic multi-signal scoring: Bayesian inference over a moving window of historical runs, fusing duration variability, environment consistency, result patterns and retry frequency into a single 0–1 flakiness score.",
+   "confidence": "high",
+   "vote": "3-0",
+   "sources": [
+    "https://www.atlassian.com/blog/atlassian-engineering/taming-test-flakiness-how-we-built-a-scalable-tool-to-detect-and-manage-flaky-tests",
+    "https://engineering.fb.com/2020/12/10/developer-tools/probabilistic-flakiness/"
+   ],
+   "evidence": "Atlassian's Flakinator: 'we use the prior probability distribution of a test case's historic runs and create the posterior probability from it'; Historical Analysis uses 'a moving window approach... applying Bayesian inference to calculate the probability of a test being flaky'; Signal Processors 'consider multiple signal distributions (e.g., duration variability, environment consistency, result patterns, retry frequency)'; Scoring assigns 'a flakiness score between 0 and 1'. Production evidence: 12+ Atlassian products, 22,000+ builds recovered, 7,000 unique flaky tests identified. Meta's PFS independently validates the continuous-score framing. ACTIONABLE DELTA FOR A WINDOW+FLIP IMPLEMENTATION: (a) add duration-variance and environment/agent-consistency as first-class signals — most tools use outcome history only; (b) emit a calibrated 0–1 score with an explicit prior rather than a boolean; (c) recompute over a moving window so the score decays as a test stabilizes, which is also what makes automatic un-quarantine safe.",
+   "confidence_note": "The blog does not publish the fusion math or the prior's parameterization, so this is a directional architecture blueprint rather than an algorithm spec. Self-reported, no external validation."
+  },
+  {
+   "claim": "Detection should run at ingest inside the pipeline (retry-on-unknown-failure with circuit-break on the first pass/fail flip), not only as post-hoc window analysis — Atlassian reports an 81% detection rate for some products with this mechanism.",
+   "confidence": "medium",
+   "vote": "2-1",
+   "sources": [
+    "https://www.atlassian.com/blog/atlassian-engineering/taming-test-flakiness-how-we-built-a-scalable-tool-to-detect-and-manage-flaky-tests"
+   ],
+   "evidence": "Flakinator's CLI 'checks whether failing test cases are already designated as flaky... an implicit retry mechanism is employed to collect flaky signals, with the circuit breaking at the first occurrence of a flip signal. ... This approach has enabled us to achieve an impressive 81% detection rate for certain products.' WHAT THIS MEANS CONCRETELY: the known-flaky list is consulted in-pipeline so known flakes cost zero retries, and retry budget is spent only on unknown failures, stopping at the first flip — a bounded-cost detector rather than blind N-reruns. This is the design that makes flakiness verdicts available before the run is gated, rather than a day later in a dashboard.",
+   "confidence_note": "'Detection rate' is undefined — no methodology, denominator, or ground truth disclosed — and it is scoped to 'certain products'. Academic work cuts against first-flip retry as a complete detector in general (iDFlakies, DeFlaker; some studies find ~100 reruns needed to surface half of flaky tests). Present as one company's self-reported operational result, and pair it with the CI-smell caveat below."
+  },
+  {
+   "claim": "Rerunning is the dominant detection technique in practice but is a weak and expensive primary mechanism — it is classified in the literature as a CI smell that slows progress and hides real bugs — so reruns must be budgeted, made explicit in the UI, and complemented by history/static/ML signals rather than run blindly.",
+   "confidence": "high",
+   "vote": "3-0",
+   "sources": [
+    "https://www.sciencedirect.com/science/article/pii/S0164121223002327",
+    "https://arxiv.org/pdf/2212.00908"
+   ],
+   "evidence": "Tahir et al. (JSS 206, 2023; 200 articles — 109 academic + 91 grey): 'Rerun (in different forms) is the most common dynamic approach for detecting flaky tests. Approaches that use rerun focus on making flaky tests detection less expensive...'; 'it can be costly to run detectors after each change and hence organizations run them only on new or changed tests, which might not be the best approach as this would affect the recall' (attributed to Pinto et al.); and 'Vassallo et al. identified retrying failure to deal with flakiness as a CI smell, as it has a negative impact on development experience by slowing down progress and hiding bugs' (Vassallo et al., ESEC/FSE 2020). PRODUCT IMPLICATION: never silently absorb a retry. Surface 'this passed on attempt 3' as a first-class verdict with retry count and cost, attribute the machine-time spent on flake absorption (a defensible ROI line), and treat retries as evidence collection feeding the score — not as a way to make the build green.",
+   "confidence_note": "A related claim quantifying rerun cost (2–16% of compute; Maven rerun confirming only 23% of flaky failures) was REFUTED 0-3 in verification, so do not cite those specific numbers."
+  },
+  {
+   "claim": "Detecting flakiness only on new or directly modified tests has a measured 15% blind spot: 85% of flaky tests can be caught that way, but the remainder become flaky from changes elsewhere (code under test, other tests, library dependencies) and are only catchable by continuously applying detection to all tests.",
+   "confidence": "medium",
+   "vote": "2-1",
+   "sources": [
+    "https://mir.cs.illinois.edu/marinov/publications/LamETAL20LongitudinalFlakyTests.pdf"
+   ],
+   "evidence": "Lam, Winter, Wei, Xie, Marinov, Bell, 'A Large-Scale Longitudinal Study of Flaky Tests' (PACMPL/OOPSLA 2020): '208 of 245 (85%) tests can be detected by running flaky-test detectors on newly added or existing, but directly modified tests. However, it still leaves 15% of flaky tests that become flaky due to changes not being directly in the test class itself but rather elsewhere in the test suite, code under test, or library dependencies.' The paper names Mozilla and Netflix as organizations running detectors only on new/modified tests, so the blind spot is a real industrial practice, not a strawman. ARCHITECTURE IMPLICATION: a two-tier detector — cheap in-pipeline detection on new/changed tests for fast feedback, plus a continuous background pass over the whole corpus for environment/dependency-induced flakiness. The paper also reports a latency cost worth surfacing: flakiness detected via test-class modification arrives a median 61 commits / 22 days after the test's introduction commit.",
+   "confidence_note": "Population is 245 flaky tests across 55 Java/Maven OSS projects found by only two detectors (iDFlakies + NonDex), skewing toward order-dependent and implementation-dependent flakiness (155 OD-victim, 23 OD-brittle, 190 implementation-dependent vs only 64 non-deterministic). Async-wait/concurrency/network flakiness — which dominates practitioner reports — is under-sampled. The paper explicitly states results 'may not generalize'. Cite as '85/15 among order- and implementation-dependent flaky tests in 55 Java OSS projects', not as a constant. The companion claim that 75% are flaky at their introducing commit was REFUTED 1-2."
+  },
+  {
+   "claim": "Quarantine is only useful as a closed loop with accountability: ownership-routed ticket creation with resolution deadlines, notifications, continued execution of quarantined tests to keep collecting health signals, automatic re-instatement after a healthy period, and safeguards against masking real bugs. Suppression without these mechanisms is an incomplete — and actively harmful — implementation.",
+   "confidence": "high",
+   "vote": "3-0 (claims 3 and 12 merged)",
+   "sources": [
+    "https://www.atlassian.com/blog/atlassian-engineering/taming-test-flakiness-how-we-built-a-scalable-tool-to-detect-and-manage-flaky-tests",
+    "https://testing.googleblog.com/2016/05/flaky-tests-at-google-and-how-we.html",
+    "https://dropbox.tech/infrastructure/athena-our-automated-build-health-management-system",
+    "https://mergify.com/learn/test-quarantine"
+   ],
+   "evidence": "Atlassian describes the full loop: 'Once a flaky test is detected, a Jira ticket is created for the owning team with pre-decided due dates to provide resolution. Additionally, the Flakinator Bot sends out Slack notifications'; 'We collect signals for quarantined tests by running them in branch builds, scheduled jobs, or quarantine pipelines to gather results with the latest code changes... If a test remains healthy for a configured period, we remove it from quarantine and reintroduce it into the system.' Google documents the two failure modes that the loop must defend against: retry-suppression 'reduces false positives, but encourages developers to ignore flakiness in their own tests unless their tests start failing 3 times in a row, which is hardly a perfect solution' — with a worked latency example where a 15-minute integration test's real breakage isn't discovered for 45 minutes — and quarantine 'prevents it from becoming a problem for developers, but could easily mask a real race condition or some other bug in the code being tested.' Dropbox's Athena and practitioner guidance (Trunk, Mergify: auto-quarantine + owner + 14-day/2-4-week SLA + scheduled promotion back) independently prescribe the same loop; Fowler's long-standing warning is that unmanaged quarantine becomes where tests go to die. CONCRETE GAPS TO CLOSE: time-bounded SLA with escalation, an unmasking safeguard (surface when a quarantined test's failure signature changes or correlates with a production incident), and a visible quarantine-population trend so the quarantine can't silently grow.",
+   "confidence_note": "Google's 2016 quarantine already filed bugs automatically, so ticket-filing is parity rather than novelty; the genuinely additive asks are the time-bounded SLA and the re-admission/unmasking safeguard. The 45-minute figure is Google's hypothetical worked example, not measured field data."
+  },
+  {
+   "claim": "Fingerprint / failure-message de-duplication — the standard clustering approach for classifying a new failure as flaky — has wildly project-dependent accuracy (100% specificity on some projects, no better than random on others), so a product cannot ship one global matching strategy; it needs per-project calibration, measured specificity per project, and reported confidence instead of a single universal verdict.",
+   "confidence": "high",
+   "vote": "2-1 on each of two merged claims (15, 16), but the underlying paper is peer-reviewed and both verifiers rated evidence high",
+   "sources": [
+    "https://arxiv.org/pdf/2401.15788",
+    "https://arxiv.org/abs/2310.06298"
+   ],
+   "evidence": "Alshammari, Ammann, Hilton, Bell, '230,439 Test Failures Later: An Empirical Evaluation of Flaky Failure Classifiers' (IEEE ICST 2024; 498 flaky tests, 22 Java projects, 230,439 failure messages): 'for some projects, this approach is extremely effective (with 100% specificity), while for other projects, the approach is entirely ineffective', and 'because flaky test failure symptoms might resemble those of true failures, there is a risk of misclassifying a true test failure as a flaky failure to be ignored.' Per-project specificity in Table III ranges from 100% (wildfly, spring-boot) down to ~59-73% (apache httpcore, undertow). The driver is diagnosable: projects whose flaky failures carry distinctive exception types (e.g. UnknownHostException) match well; projects dominated by generic AssertionError/NullPointerException collapse. Error-rate comparison across methods: exact text matching 8,587 false positives, decision-tree failure-log classifier 4,745, TF-IDF similarity 1,437 — TF-IDF best, none uniformly reliable. Authors conclude 'it will be challenging to create general-purpose solutions for determining whether a failure is flaky or not' and recommend per-project case studies plus richer failure-log information. A second lever is symptom ABSTRACTION: SAP HANA's just-in-time abstracted-symptom matching reports >=96% precision and ~58% machine-time savings over six months, but explicitly depends on 'descriptive and informative failure symptoms'. WHAT BETTER LOOKS LIKE: (1) measure and display per-project classifier specificity on that project's own history; (2) prefer TF-IDF/abstracted-symptom similarity over exact stack-trace matching; (3) gate auto-suppression on measured specificity, defaulting to advisory-only where the classifier is weak; (4) invest in normalizing/abstracting failure symptoms at ingest per framework.",
+   "confidence_note": "The 'authors argue for confidence reporting' framing is the reviewer's inference — the paper's stated recommendations are per-project case studies and richer failure logs. Ground-truth 'true failures' were synthesized with PIT mutants, not real field defects; Java/JUnit only, single revision, so message informativeness may differ for pytest/Cypress/Playwright/Robot. The headline metric is specificity (true-negative rate), which is the right metric for the 'wrongly waved through a real failure' risk but narrower than 'accuracy'. Post-2024 LLM-based classifiers were not evaluated."
+  },
+  {
+   "claim": "Most flaky failures are systemic rather than independent: 75% of flaky tests fail in co-occurring clusters driven by shared root causes (mostly networking and external-dependency instability), so per-test quarantine and per-test triage mismatch the dominant failure mode — cluster-level triage should be layered on top.",
+   "confidence": "high",
+   "vote": "3-0",
+   "sources": [
+    "https://arxiv.org/html/2504.16777"
+   ],
+   "evidence": "Parry, Kapfhammer, Hilton, McMinn, 'Systemic Flakiness: An Empirical Analysis of Co-Occurring Flaky Test Failures' (EASE 2025; FlakeFlagger dataset, 10,000 test-suite runs per project, ~5 years of compute): 'Of the 810 flaky tests, 606 (75%) belong to a cluster'; mean cluster size 13.5 across 45 clusters. Clusters were built by agglomerative clustering on Jaccard distance over sets of identical failing run IDs — i.e. literal same-run co-failure, not loose correlation — gated at mean silhouette >= 0.6, and shared root causes were validated by four-author independent stack-trace inspection: networking (25 clusters), external-dependency instability (14), filesystem pollution (5), timeouts (4), unknown (2), system clock (1). The authors' own implication: developers 'can reduce the cost of repairing flaky tests by targeting shared root causes, allowing them to simultaneously fix numerous flaky tests instead of addressing them in isolation.' PRODUCT IMPLICATION: cluster co-failing flaky tests within and across runs, name the shared infrastructure cause (network/dependency/disk/clock), and let quarantine, ticketing, and root-cause explanation operate on the cluster as the unit. This also reframes root-cause AI: for the majority case the correct answer is an environmental/shared cause, not a per-test code defect — which is a far more tractable and verifiable AI output.",
+   "confidence_note": "Material qualification the headline omits: only 10 of the 22 projects containing flaky tests (45%) contain any cluster at all; 75% is a pooled per-test statistic, and for the median project clustering may be absent entirely. Java-only, rerun-based detection at a fixed commit (order-dependent flakiness largely absent). The networking/external-dependency mix is plausibly inflated by rerunning OSS Java/Maven integration suites in a lab; hermetic/mocked CI would distribute differently. Treat cluster triage as an additional view, not a replacement for per-test handling."
+  },
+  {
+   "claim": "The practitioner gap is adoption, not appetite: developers hit flakiness constantly and rate it serious, but fall back overwhelmingly on manual reruns while automated detection, debugging, and quarantine rank dead last in actual use — and the tools they most want are cross-run visualization of a test's outcome history with environment metadata, automatic detection, and automated root-cause debugging.",
+   "confidence": "high",
+   "vote": "3-0 (claims 6, 7, 8 merged)",
+   "sources": [
+    "https://arxiv.org/pdf/2203.00483"
+   ],
+   "evidence": "Gruber & Fraser, ICST 2022, n=335 professionals (233 Prolific global + 102 BMW). PREVALENCE: '51% of all participants experiencing it at least weekly and 66% rating it as a moderate or serious problem', and 'The usage of automated testing and continuous integration... are both strong positive predictors for the prevalence (and partially severity) of flaky failures' — i.e. the CI-heavy population a test-intelligence product targets is exactly the population hit hardest. BEHAVIOR (Table VI, 0=never to 4=always): Rerun 2.80, rerun in different environment 1.89, auto report 1.51, flag 1.51, shuffle test order 1.43, incentives/penalties 1.40, disable 1.29, quantify 1.27, visualize 1.26, auto detect 1.16, auto debug 1.11, auto disable 1.03 — 'Rerunning tests is by far the most common reaction, while automated techniques rank lowest.' The authors' explanation: 'many sophisticated mitigation tools are implemented as plugins to Java build tools, however, many industrial projects—especially in the automotive industry—do not use Java, preventing developers from applying these techniques without re-implementing them.' WISHES (Table VII, 153 usable answers): Visualization 32 (test result history 14), Auto Detection 31 (via static analysis 12), Auto Debug 28 (find root cause 6, find location 5, find failure cause 4), Education 25 (guides/examples/best practices 16), Rerun 17, Manual debugging tools 16, Stable infrastructure 16, Logging 13, Management 11, Reproducibility 9. Participant rationale: 'We run tests so often, I often miss the bigger picture' (P187); 'A tool to visualize how tests fail and succeed over time' (P12); should include meta information like 'on which device / environment' (P292). ACTIONABLE: the highest-leverage reporting surface is a per-test timeline of outcomes across runs annotated with environment/agent/device and duration — the cross-run 'bigger picture' — and Education (25) is a real, underserved product surface: inline guidance on the flake category detected, not just a verdict.",
+   "confidence_note": "32 vs 31 vs 28 vs 25 is a knife-edge with no statistical separation — treat the top four as a tied cluster, not a ranking. '32 of 153' is ~21% of usable answers but only ~9.6% of the 335 surveyed (only 187 answered the wishes question). Both samples are self-flagged as biased (Prolific recruitment; BMW convenience sampling, and 'developers who experience flakiness more often might be more likely to respond'). Data is from ~2021, pre-dating current LLM/agentic tooling, so state it as 'in the 2022 ICST survey'. The Java-plugin explanation is the authors' untested conjecture and is weaker in 2026 now that cross-language auto-quarantine is commoditized (Trunk, BuildPulse, Buildkite Test Engine, CircleCI, Datadog, Develocity). A related claim ranking the perceived CONSEQUENCES of flakiness (wasted time 2.44 vs compute 1.91, asymmetric trust loss) was REFUTED 0-3 — do not cite those figures."
+  }
+ ],
+ "caveats": "SCOPE GAP — THE BIGGEST CAVEAT. The verified corpus answers the flaky-test half of the research question thoroughly and says essentially nothing about the rest. Zero surviving claims address: release-readiness / GO-NO_GO gating design or threshold credibility; whether agentic/LLM root-cause analysis genuinely helps vs. is a gimmick; time-to-diagnose measurement; test-impact analysis; CI feedback-loop latency; alert routing/digest design; or practitioner pain with named commercial tools (Allure TestOps, ReportPortal, Launchable, Datadog Test Optimization, Trunk, BuildPulse, TestRail, currents.dev) — the vendor-neutral comparison angle produced nothing verifiable. Any roadmap conclusion about AI trustworthiness or release gating is NOT supported by this research and needs a second pass. The one adjacent inference the evidence does license is that most flaky failures are systemic/environmental (75% clustered, networking + external dependencies dominant), which makes cluster-level environmental root-cause a far more verifiable AI output than per-test code-defect explanation.\n\nSOURCE-BASE CONCENTRATION. Ten of eighteen surviving claims trace to just three source families: Google's 2016 testing blog, Atlassian's Dec 2025 Flakinator post, and the Gruber & Fraser ICST 2022 survey. The two industrial engineering-blog sources are self-reported, unaudited first-party metrics with no disclosed methodology (Atlassian's '81% detection rate' has no defined denominator; Google's 150k-hour-equivalent figures are internal telemetry), and Atlassian's post promotes its own internal tool. They are the right source class for a company's own numbers but should never be presented as independently validated benchmarks.\n\nDATEDNESS. The Google figures (16%, 1.5%, 84%, insertion≈fix, the 3-strike and quarantine failure modes) are all from May 2016 and have never been refreshed by Google; the GitHub 9% is from 2020; the practitioner survey data is from ~2021. None of these are fast-moving quantities and later work is directionally consistent, but every Google number should be cited as 'Google, 2016' rather than as a present-tense industry rate. Conversely, the classification-difficulty finding (ICST 2024) predates the current generation of LLM-based flaky classifiers, so the 'general-purpose classification is inherently hard' conclusion may be softening.\n\nGENERALIZATION RISK TO THE TARGET AUDIENCE. Nearly all quantitative evidence comes from hyperscale monorepos (Google, Atlassian, GitHub, Meta, Dropbox) or Java/Maven OSS corpora. Academic open-source studies find per-test flakiness an order of magnitude lower (~0.5–1%) than the hyperscale headline numbers. A local-first, self-hosted product serving small-to-mid teams cannot assume these magnitudes hold; the mechanisms (scoring, clustering, closed-loop quarantine, per-project calibration) transfer better than the numbers do.\n\nMETHODOLOGICAL SKEW IN THE ACADEMIC EVIDENCE. The two strongest empirical papers (Lam et al. OOPSLA 2020; Parry et al. EASE 2025) both use Java/Maven projects with rerun- or NonDex-based detection at fixed commits, which oversamples order-dependent and implementation-dependent flakiness and undersamples async-wait/concurrency/network flakiness — the categories practitioners report most. Findings about detection coverage and clustering should be treated as directionally right but numerically unproven for pytest, Cypress, Playwright, Robot, and Cucumber stacks.\n\nDENOMINATOR CONFUSION IS THE MOST LIKELY WAY THIS RESEARCH GETS MISQUOTED. 'Flaky' is measured at four incompatible denominators across these sources: share of tests ever flaky (Google 16%), share of tests flaky in a given week (~1.5%), share of test RUNS flaky (1.5%), and share of pass→fail TRANSITIONS flaky (84%). Similarly Parry's 75% is per-test pooled while only 45% of projects contain any cluster at all. Roadmap prose must carry the denominator every time.\n\nREFUTED-CLAIM PATTERN WORTH NOTING. Seven claims were voted down, and five of them were trust-erosion or rerun-cost claims sourced to the multivocal review and the ICST survey (e.g. '50%+ flaky organizations where developers stopped writing tests'; the 2.44/1.91 consequence ratings; '2–16% of compute spent on reruns'; 'Maven rerun confirmed only 23%'). These failed on quote fidelity, not because the underlying intuition is wrong — but none of those specific numbers should appear in the roadmap.",
+ "openQuestions": [
+  "Does agentic/LLM root-cause analysis actually reduce time-to-diagnose, and by how much? Nothing in the verified corpus evaluates LLM or agentic failure triage against a human or rules baseline. Given the ICST 2024 finding that even narrow flaky-vs-real classification resists general-purpose solutions, and the EASE 2025 finding that most flaky failures are environmental rather than per-test code defects, the specific open question is: which AI output is verifiable enough to be trustworthy — cluster-level environmental cause attribution, or per-test defect explanation? A follow-up pass should target post-2024 LLM flaky-classifier evaluations and any published time-to-diagnose measurements.",
+  "What makes a release-readiness / GO-NO_GO verdict credible to engineers, and how should a gate consume a probabilistic flakiness score? Zero surviving claims touch release gating. Concretely unanswered: should flaky-attributed failures be excluded from the gate, discounted by score, or shown as a separate 'signal quality' dimension alongside the verdict? Google's finding that ~1 in 6 newly-flaky tests reflected a real bug suggests full exclusion is unsafe, but the correct discounting policy is unevidenced.",
+  "What do practitioners actually complain about with the incumbent products (Allure TestOps, ReportPortal, Launchable, Datadog Test Optimization, Trunk, BuildPulse, currents.dev)? The vendor-neutral comparison angle produced no verifiable findings, so the competitive/differentiation half of the roadmap rests on assumption. Worth a targeted pass over practitioner forums, migration write-ups, and 2024–2026 tooling surveys.",
+  "Do the hyperscale magnitudes hold for small self-hosted teams? Every quantitative datapoint comes from monorepos of 10k+ engineers or Java OSS corpora, while academic per-test rates are ~10x lower. Unanswered: at what suite size and run frequency does probabilistic scoring beat simple flip heuristics, and below what volume does a moving-window Bayesian score lack enough data to be calibrated at all? This directly determines whether the scoring upgrade is worth building for the actual user base."
+ ],
+ "refuted": [
+  {
+   "claim": "Unmanaged flakiness destroys trust in the entire test signal: the review quotes practitioners reporting organizations where 50%+ of tests were flaky and developers stopped writing tests and stopped looking at results — the core justification for trustworthy flaky-classification, quarantine lifecycles, and honest release-gate signals.",
+   "vote": "0-3",
+   "source": "https://www.sciencedirect.com/science/article/pii/S0164121223002327"
+  },
+  {
+   "claim": "The most severe perceived consequences of flaky tests are wasted developer time (mean 2.44/4) and loss of trust in test outcomes — not wasted compute from reruns (1.91/4); trust loss is asymmetric (Wilcoxon p<0.001): developers stop believing failing tests ('rerun failures without analyzing', 2.08/4) more than passing ones, so tooling that reduces reruns' machine cost misses the real pain, which is restoring signal credibility and diagnosis time.",
+   "vote": "0-3",
+   "source": "https://arxiv.org/pdf/2203.00483"
+  },
+  {
+   "claim": "75% of flaky tests (184 of 245 studied) are already flaky at the commit that introduces the test, so running flaky-test detectors on newly added tests catches the large majority of flakiness at the moment it is cheapest to fix — a test-intelligence platform should therefore flag flakiness at test-introduction time (PR/first-run), not only after longitudinal history accumulates.",
+   "vote": "1-2",
+   "source": "https://mir.cs.illinois.edu/marinov/publications/LamETAL20LongitudinalFlakyTests.pdf"
+  },
+  {
+   "claim": "The dominant cost of flakiness is erosion of trust in the test signal itself — practitioners report that once confidence is lost, the test suite loses its value entirely, which is why a reporting tool's core job is preserving signal trustworthiness (clearly separating flaky from real failures) rather than just displaying results.",
+   "vote": "0-3",
+   "source": "https://arxiv.org/pdf/2212.00908"
+  },
+  {
+   "claim": "Unmanaged flakiness compounds into organizational failure: the review cites organizations that reached 50%+ flaky tests, at which point developers stopped writing tests and stopped looking at results — evidence that flaky-test management (detection + quarantine lifecycle + burn-down) is a productivity feature, not a nice-to-have.",
+   "vote": "0-3",
+   "source": "https://arxiv.org/pdf/2212.00908"
+  },
+  {
+   "claim": "The most common industry response — automatic retry/rerun of failures in CI — is characterized in the literature as an anti-pattern ('CI smell') because it slows feedback and hides real bugs; a better implementation should surface flakiness explicitly (verdicts with history and root-cause categories) instead of silently retrying, and should account for retry cost.",
+   "vote": "1-2",
+   "source": "https://arxiv.org/pdf/2212.00908"
+  },
+  {
+   "claim": "Rerun-based flaky detection is both costly and weak as a primary mechanism: organizations spend 2-16% of compute just re-running flaky tests, and Maven's built-in rerun feature could only confirm 23% of flaky test failures — evidence that a test-intelligence product should lean on history/fingerprint-based triage rather than reruns alone.",
+   "vote": "0-3",
+   "source": "https://arxiv.org/pdf/2401.15788"
+  }
+ ],
+ "unverified": [],
+ "sources": [
+  {
+   "url": "https://testdino.com/blog/allure-report-limitations/",
+   "quality": "unreliable",
+   "angle": "Practitioner pain points with existing test-reporting tools",
+   "claimCount": 0
+  },
+  {
+   "url": "https://news.ycombinator.com/item?id=20028057",
+   "quality": "unreliable",
+   "angle": "Practitioner pain points with existing test-reporting tools",
+   "claimCount": 0
+  },
+  {
+   "url": "https://www.atlassian.com/blog/atlassian-engineering/taming-test-flakiness-how-we-built-a-scalable-tool-to-detect-and-manage-flaky-tests",
+   "quality": "primary",
+   "angle": "Practitioner pain points with existing test-reporting tools",
+   "claimCount": 5
+  },
+  {
+   "url": "https://www.sciencedirect.com/science/article/pii/S0164121223002327",
+   "quality": "primary",
+   "angle": "Practitioner pain points with existing test-reporting tools",
+   "claimCount": 5
+  },
+  {
+   "url": "https://www.capterra.com/p/227555/Allure-TestOps/",
+   "quality": "forum",
+   "angle": "Practitioner pain points with existing test-reporting tools",
+   "claimCount": 5
+  },
+  {
+   "url": "https://medium.com/@sarah.thoma.456/reportportal-vs-allure-report-a-comprehensive-comparison-5eb0d153ce73",
+   "quality": "blog",
+   "angle": "Practitioner pain points with existing test-reporting tools",
+   "claimCount": 5
+  },
+  {
+   "url": "https://arxiv.org/pdf/2203.00483",
+   "quality": "primary",
+   "angle": "Flaky-test management research and industry practice",
+   "claimCount": 5
+  },
+  {
+   "url": "https://testing.googleblog.com/2016/05/flaky-tests-at-google-and-how-we.html",
+   "quality": "primary",
+   "angle": "Flaky-test management research and industry practice",
+   "claimCount": 5
+  },
+  {
+   "url": "https://mir.cs.illinois.edu/marinov/publications/LamETAL20LongitudinalFlakyTests.pdf",
+   "quality": "primary",
+   "angle": "Flaky-test management research and industry practice",
+   "claimCount": 5
+  },
+  {
+   "url": "https://arxiv.org/pdf/2212.00908",
+   "quality": "primary",
+   "angle": "Flaky-test management research and industry practice",
+   "claimCount": 5
+  },
+  {
+   "url": "https://arxiv.org/pdf/2401.15788",
+   "quality": "primary",
+   "angle": "Flaky-test management research and industry practice",
+   "claimCount": 5
+  },
+  {
+   "url": "https://arxiv.org/html/2504.16777",
+   "quality": "primary",
+   "angle": "Flaky-test management research and industry practice",
+   "claimCount": 5
+  },
+  {
+   "url": "https://arxiv.org/pdf/2402.09651",
+   "quality": "primary",
+   "angle": "Time-to-diagnose and CI feedback-loop productivity evidence",
+   "claimCount": 5
+  },
+  {
+   "url": "https://dl.acm.org/doi/10.1145/3595878",
+   "quality": "primary",
+   "angle": "Time-to-diagnose and CI feedback-loop productivity evidence",
+   "claimCount": 5
+  },
+  {
+   "url": "https://getautonoma.com/blog/flaky-tests-ci-cd-engineering-cost",
+   "quality": "blog",
+   "angle": "Time-to-diagnose and CI feedback-loop productivity evidence",
+   "claimCount": 4
+  },
+  {
+   "url": "https://dl.acm.org/doi/10.1145/3351095.3372852",
+   "quality": "primary",
+   "angle": "Trust in AI verdicts and release-readiness signals",
+   "claimCount": 4
+  },
+  {
+   "url": "https://trunk.io/assets/flaky-tests-waitlist/2022-04-08-a-survey-on-how-test-flakiness-affects-developers.pdf",
+   "quality": "primary",
+   "angle": "Trust in AI verdicts and release-readiness signals",
+   "claimCount": 5
+  },
+  {
+   "url": "https://dora.dev/research/2024/ai-preview/",
+   "quality": "primary",
+   "angle": "Trust in AI verdicts and release-readiness signals",
+   "claimCount": 5
+  },
+  {
+   "url": "https://incident.io/blog/ai-root-cause-analysis-accuracy-testing-guide",
+   "quality": "blog",
+   "angle": "Trust in AI verdicts and release-readiness signals",
+   "claimCount": 5
+  },
+  {
+   "url": "https://arxiv.org/abs/1810.05286",
+   "quality": "primary",
+   "angle": "State-of-the-art test intelligence: TIA, failure clustering, agentic repair",
+   "claimCount": 5
+  },
+  {
+   "url": "https://arxiv.org/html/2605.01471v1",
+   "quality": "primary",
+   "angle": "State-of-the-art test intelligence: TIA, failure clustering, agentic repair",
+   "claimCount": 5
+  },
+  {
+   "url": "https://dl.acm.org/doi/10.1145/3510003.3510132",
+   "quality": "primary",
+   "angle": "State-of-the-art test intelligence: TIA, failure clustering, agentic repair",
+   "claimCount": 5
+  },
+  {
+   "url": "https://help.launchableinc.com/features/predictive-test-selection/faq/",
+   "quality": "primary",
+   "angle": "State-of-the-art test intelligence: TIA, failure clustering, agentic repair",
+   "claimCount": 5
+  }
+ ],
+ "stats": {
+  "angles": 5,
+  "sourcesFetched": 23,
+  "claimsExtracted": 103,
+  "claimsVerified": 25,
+  "confirmed": 18,
+  "killed": 7,
+  "unverified": 0,
+  "afterSynthesis": 11,
+  "urlDupes": 2,
+  "budgetDropped": 5,
+  "agentCalls": 105
+ }
+}

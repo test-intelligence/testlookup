@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-13 — Docs: test-intelligence research corpus (`research/`)
+
+Adds `research/` — the evidence base for the feature-improvement roadmap. A deep-research pass
+over practitioner surveys, hyperscale engineering case studies (Google, Atlassian, Meta, GitHub,
+Dropbox, Facebook) and peer-reviewed work on flaky tests, failure triage and predictive test
+selection: **25 sources, 124 extracted claims, 25 put to a 3-vote adversarial panel — 18 survived,
+7 were killed, merged into 11 findings.**
+
+Tracked here rather than under `docs/` (gitignored, local-only) because the roadmap cites it and
+the extraction phase is expensive to reproduce: the generating workflow's cache is session-bound,
+so `claims-corpus.md` + `claims-raw.json` + `synthesis.json` are the permanent record. Every claim
+carries its source, verbatim quote and verification status.
+
+Findings that bear on existing subsystems:
+
+- **Fingerprint clustering does not transfer across projects.** ICST 2024 (230,439 failures, 22
+  projects) measured per-project specificity from 100% down to no better than random, driven by
+  whether failures carry distinctive exception types. Per-project calibration and a measured
+  specificity gate on auto-suppression are now roadmap items.
+- **Most flaky failures are systemic** — 75% fail in co-occurring clusters, dominated by networking
+  and external-dependency causes (EASE 2025) — so cluster-level triage is a better unit than
+  per-test, and a more verifiable AI output than per-test defect explanation.
+- **A pass→fail transition is a weak regression signal** (~84% of Google's involve a flaky test),
+  but ~1 in 6 newly-flaky tests reflected a real bug — so flaky must never imply auto-suppress,
+  which constrains how the release gate may discount flaky failures.
+- Independent support for the **Fixer's budgeted, draft-PR-gated shadow design**: an enterprise
+  agentic-repair study observed agents reaching green by weakening assertions and deleting tests.
+
+The report states verification tier per finding and lists the 7 refuted claims explicitly — five of
+which had appeared in earlier drafts — so retracted figures are not silently reused.
+
 ### 2026-08-11 — Chore: close the design-audit palette-token ESLint ratchet (`no-restricted-syntax` → error)
 
 The `no-restricted-syntax` rule in `frontend/eslint.config.js` — which flags raw Tailwind palette
