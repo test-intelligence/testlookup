@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-13 — Productionization: the CLI now explains an unreachable server instead of dumping a traceback
+
+The CLI is the first thing a new self-hoster runs (`testlookup upload …`, `testlookup health`).
+Its shared HTTP client only mapped *HTTP-status* errors (401/403/404/422/timeout) to friendly
+messages via `map_http_error`. But a server that is **not up yet**, a mistyped URL, or a DNS
+failure raises an `httpx.ConnectError`/timeout *before any response exists* — so nothing mapped it,
+and the command surfaced a bare `[Errno 111] Connection refused` (often with an empty message and a
+generic exit 1) at the highest-friction moment of adoption.
+
+Added `errors.map_connection_error(exc, base_url)`, which turns any `httpx.RequestError` into an
+actionable `CLIError`: connection failures say *"Cannot reach the TestLookup server at <url>. Is it
+running? Check the URL with 'testlookup auth login --url <url>' (or the TESTLOOKUP_URL env var)."*,
+while client-side timeouts keep the dedicated `EXIT_TIMEOUT` code (matching the existing 408/504
+mapping). It is wired into the shared `client.request` / `client.download` paths and the upload
+command's own httpx call, so every command benefits. Regression tests assert connect errors and
+timeouts become the right `CLIError` (with the base URL and the correct exit code), that the upload
+path is covered, and — critically — that real HTTP-status errors still flow through
+`map_http_error` unchanged (the new transport guard does not swallow a 404).
 ### 2026-08-13 — Feat: cheap `GET /health/version` build-identity probe
 
 Added a dependency-free `GET /health/version` endpoint that returns the running

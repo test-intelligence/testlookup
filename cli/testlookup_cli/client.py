@@ -3,7 +3,7 @@ import httpx
 from typing import Any, Optional
 
 from testlookup_cli.config import get_profile, save_profile
-from testlookup_cli.errors import CLIError, map_http_error, EXIT_AUTH
+from testlookup_cli.errors import CLIError, map_http_error, map_connection_error, EXIT_AUTH
 
 
 def _build_headers(profile: dict) -> dict[str, str]:
@@ -31,27 +31,33 @@ async def request(
     url = f"{base_url}{path}"
     headers = _build_headers(profile)
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.request(method, url, headers=headers, params=params, json=json_body)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.request(method, url, headers=headers, params=params, json=json_body)
 
-        # Auto-refresh JWT on 401 if refresh token available
-        if resp.status_code == 401 and profile.get("auth_type") == "jwt" and profile.get("refresh_token"):
-            refreshed = await _try_refresh(client, base_url, profile, profile_name)
-            if refreshed:
-                headers = _build_headers(profile)
-                resp = await client.request(method, url, headers=headers, params=params, json=json_body)
+            # Auto-refresh JWT on 401 if refresh token available
+            if resp.status_code == 401 and profile.get("auth_type") == "jwt" and profile.get("refresh_token"):
+                refreshed = await _try_refresh(client, base_url, profile, profile_name)
+                if refreshed:
+                    headers = _build_headers(profile)
+                    resp = await client.request(method, url, headers=headers, params=params, json=json_body)
 
-        if resp.status_code >= 400:
-            detail = ""
-            try:
-                detail = resp.json().get("detail", "")
-            except Exception:
-                pass
-            raise map_http_error(resp.status_code, str(detail))
+            if resp.status_code >= 400:
+                detail = ""
+                try:
+                    detail = resp.json().get("detail", "")
+                except Exception:
+                    pass
+                raise map_http_error(resp.status_code, str(detail))
 
-        if resp.status_code == 204:
-            return None
-        return resp.json()
+            if resp.status_code == 204:
+                return None
+            return resp.json()
+    except httpx.RequestError as exc:
+        # Server unreachable / DNS failure / client-side timeout — no HTTP
+        # response ever arrived, so map_http_error can't classify it. Surface an
+        # actionable hint instead of a raw transport traceback.
+        raise map_connection_error(exc, base_url) from exc
 
 
 async def download(
@@ -67,11 +73,14 @@ async def download(
     url = f"{base_url}{path}"
     headers = _build_headers(profile)
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.get(url, headers=headers, params=params)
-        if resp.status_code >= 400:
-            raise map_http_error(resp.status_code)
-        return resp.content
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, headers=headers, params=params)
+            if resp.status_code >= 400:
+                raise map_http_error(resp.status_code)
+            return resp.content
+    except httpx.RequestError as exc:
+        raise map_connection_error(exc, base_url) from exc
 
 
 async def _try_refresh(client: httpx.AsyncClient, base_url: str, profile: dict, profile_name: Optional[str]) -> bool:

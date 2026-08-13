@@ -10,6 +10,7 @@ from testlookup_cli import client, output
 from testlookup_cli.ci_context import resolve_ci_context
 from testlookup_cli.commit_range import resolve_commit_range
 from testlookup_cli.config import get_profile
+from testlookup_cli.errors import map_connection_error
 
 upload_app = typer.Typer(name="upload", help="Upload test result files")
 
@@ -254,20 +255,26 @@ async def _upload_file(
         commit_range=commit_range, format=format,
     )
 
-    async with httpx.AsyncClient(timeout=60.0) as http:
-        with open(path, "rb") as f:
-            resp = await http.post(
-                f"{base_url}/api/v1/ingest/file",
-                headers=headers,
-                files={"file": (path.name, f, "application/octet-stream")},
-                data=form_data,
-            )
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as http:
+            with open(path, "rb") as f:
+                resp = await http.post(
+                    f"{base_url}/api/v1/ingest/file",
+                    headers=headers,
+                    files={"file": (path.name, f, "application/octet-stream")},
+                    data=form_data,
+                )
 
-        if resp.status_code >= 400:
-            try:
-                detail = resp.json().get("detail", resp.text)
-            except Exception:
-                detail = resp.text
-            raise Exception(f"HTTP {resp.status_code}: {detail}")
+            if resp.status_code >= 400:
+                try:
+                    detail = resp.json().get("detail", resp.text)
+                except Exception:
+                    detail = resp.text
+                raise Exception(f"HTTP {resp.status_code}: {detail}")
 
-        return resp.json()
+            return resp.json()
+    except httpx.RequestError as exc:
+        # Server unreachable / DNS failure / timeout on the primary ingest path
+        # (the first thing a new self-hoster runs) — give an actionable hint
+        # rather than a raw transport traceback.
+        raise map_connection_error(exc, base_url) from exc
