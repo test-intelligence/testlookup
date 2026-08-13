@@ -54,6 +54,23 @@ avatar-color-swatch and test-only-`any` exemptions. With those exempt, the rule 
 source-text promotion regression test (`paletteRatchet.promotion.test.ts`) locks the severity in,
 matching the sibling `no-explicit-any` / `no-non-null-assertion` ratchet guards.
 
+### 2026-08-12 — Deps: bump prettier 3.8.1 → 3.9.6 (`^3.9.4`), superseding Dependabot #335
+
+The dev-only formatter `prettier` was pinned at `3.8.1` in the frontend lockfile. Dependabot #335
+(3.8.1 → 3.9.4) had sat open and conflicted (`mergeable_state: dirty`) since July with automatic
+rebases disabled after 30 days, so it could not land on its own. Superseded with a clean bump from
+the current `main`: the `frontend/package.json` spec moves from `^3.4.2` to `^3.9.4` and the
+lockfile resolves to `3.9.6` (the newest release satisfying the range, which subsumes the 3.9.4
+target). prettier 3.9 brought parser upgrades and small formatting refinements (e.g. Angular
+`@content (name)` spacing) — none of which touch this TypeScript/React codebase's output.
+
+prettier is a **manual** convenience only (`npm run format` → `prettier --write src`); it is not
+part of the CI lint/type-check/build gate and there is no `prettier --check`, so the bump has no
+behavioural surface to unit-test and no committed-formatting drift to reconcile. Validated on the
+bumped lockfile: `npm run lint` (0 errors), `npm run type-check`, and `npm run build` all green —
+the same validation path used for the prior dev-tooling bumps (tailwindcss, vitest). The lockfile
+diff is limited to prettier's own `version`/`resolved`/`integrity` entries.
+
 ### 2026-08-11 — Fix: the run header did not account for every test in the run
 
 Found during UAT of the ingest journey. A JUnit report of 6 tests (2 pass / 2 fail / 1 `<error>`
