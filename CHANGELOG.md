@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-13 — Feat: cheap `GET /health/version` build-identity probe
+
+Added a dependency-free `GET /health/version` endpoint that returns the running
+image's `version`, `build` provenance (git `revision` + `built_at`), `env`, and
+`uptime_seconds`. It answers "which commit + build is this pod running?" fast
+enough for a post-deploy CD smoke test or an uptime monitor.
+
+The `build` block was already surfaced on `GET /health/details`, but that
+endpoint probes six services (Postgres, Mongo, Redis, MinIO, Ollama, ChromaDB)
+and is documented as "not intended for K8s probes (too slow)"; root `GET /`
+returns the version but not the revision or build date, so neither could verify
+a *specific* build cheaply. The new endpoint runs no probes — a regression test
+asserts every dependency probe raises if invoked from this path — so a
+self-host operator gets a fast rollout-verification check without shelling into
+the pod.
 ### 2026-08-12 — Productionization: the first-run guide now emits a runnable upload command
 
 The empty-dashboard `FirstRunGuide` (shown on a fresh install with no runs) walks a new self-hoster

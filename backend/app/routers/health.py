@@ -10,6 +10,12 @@ GET /health/ready   — Kubernetes readiness probe.
                       are reachable before traffic is routed to the pod.
                       Returns 503 when any critical dependency is unavailable.
 
+GET /health/version — Cheap build-identity probe: version + git revision +
+                      build date + env, with NO dependency probes. Answers
+                      "which build is this pod running?" fast enough for a CD
+                      smoke test or an uptime monitor, where /health/details
+                      (which probes six services) is too slow.
+
 GET /health/details — Full dependency status report for operations dashboards.
                       Checks all services: PostgreSQL, MongoDB, Redis, MinIO, Ollama, ChromaDB.
                       Not intended for K8s probes (too slow).
@@ -212,6 +218,35 @@ async def readiness():
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
+
+
+@router.get("/version", summary="Build identity — version, revision, build date (no probes)")
+async def version():
+    """
+    Cheap build-identity report — the running image's version and provenance
+    with **no** dependency probes, so it answers in microseconds.
+
+    ``/health/details`` also carries the ``build`` block, but it probes six
+    services (Postgres, Mongo, Redis, MinIO, Ollama, ChromaDB) and is
+    documented as "not intended for K8s probes (too slow)". A post-deploy CD
+    smoke test, an uptime monitor, or an operator confirming a rollout landed
+    all want a single fast answer to "which commit + build is this pod?" —
+    that is what this endpoint is for. Root ``GET /`` returns the version but
+    not the git revision or build date, so it cannot verify a specific build.
+
+    Always returns 200 (the process is alive if it can answer at all).
+    ``build.revision`` / ``build.built_at`` fall back to ``"unknown"`` in
+    local/dev runs where the image-build env is unset.
+    """
+    return {
+        "status": "ok",
+        "service": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "build": build_provenance(),
+        "env": settings.APP_ENV,
+        "uptime_seconds": int(time.time() - _START_TIME),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.get("/details", summary="Full dependency status — for ops dashboards")
