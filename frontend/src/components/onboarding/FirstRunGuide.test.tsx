@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 import FirstRunGuide, { FIRST_RUN_DISMISS_KEY } from './FirstRunGuide'
+import { uploadCommand } from './firstRunSteps'
 
 const copyMock = vi.fn(async (_value: string) => true)
 vi.mock('@/utils/clipboard', () => ({
@@ -39,6 +40,49 @@ describe('FirstRunGuide', () => {
   it('shows the project name when provided', () => {
     renderGuide({ projectName: 'Checkout API' })
     expect(screen.getByText(/Checkout API/)).toBeInTheDocument()
+  })
+
+  it('splices the real project id into the upload command when scoped to a project', () => {
+    const id = '6783f331-9f51-4b0b-a27a-acc31e117b21'
+    renderGuide({ projectId: id })
+    // The copy-ready command carries the actual id, not the placeholder.
+    expect(
+      screen.getByText(`testlookup upload file results.xml -p ${id} -b <build>`),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/-p <project-id>/)).toBeNull()
+  })
+
+  it('copies the id-substituted command verbatim', async () => {
+    const id = '6783f331-9f51-4b0b-a27a-acc31e117b21'
+    renderGuide({ projectId: id })
+    fireEvent.click(screen.getByRole('button', { name: /copy command: testlookup upload/i }))
+    await waitFor(() =>
+      expect(copyMock).toHaveBeenCalledWith(
+        `testlookup upload file results.xml -p ${id} -b <build>`,
+      ),
+    )
+  })
+
+  it('keeps the <project-id> placeholder in All Projects mode (no id / blank id)', () => {
+    renderGuide()
+    expect(
+      screen.getByText('testlookup upload file results.xml -p <project-id> -b <build>'),
+    ).toBeInTheDocument()
+  })
+
+  describe('uploadCommand', () => {
+    it('uses the placeholder for undefined, empty, and whitespace-only ids', () => {
+      const placeholder = 'testlookup upload file results.xml -p <project-id> -b <build>'
+      expect(uploadCommand()).toBe(placeholder)
+      expect(uploadCommand('')).toBe(placeholder)
+      expect(uploadCommand('   ')).toBe(placeholder)
+    })
+
+    it('splices a concrete id in', () => {
+      expect(uploadCommand('abc-123')).toBe(
+        'testlookup upload file results.xml -p abc-123 -b <build>',
+      )
+    })
   })
 
   it('copies a command to the clipboard', async () => {

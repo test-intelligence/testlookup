@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-12 — Productionization: the first-run guide now emits a runnable upload command
+
+The empty-dashboard `FirstRunGuide` (shown on a fresh install with no runs) walks a new self-hoster
+through their first ingest. Step 2's copy-paste CLI command was hard-coded with a `<project-id>`
+placeholder — so the "copy" button handed the user a command that fails until they hunt down and
+paste the project UUID themselves, right at the highest-friction moment of adoption.
+
+When the dashboard is scoped to a concrete project, the guide now splices that project's real id
+into the command, so the copy button yields an immediately-runnable
+`testlookup upload file results.xml -p <real-uuid> -b <build>` (the CLI's `-p` flag takes the
+project **ID** — see `cli/testlookup_cli/commands/upload.py`). In "All Projects" mode, where there
+is no single project, the `<project-id>` placeholder is preserved; `-b <build>` stays a placeholder
+in both cases since the build label is per-run and only the user knows it.
+
+The step-building logic moved to a co-located pure helper (`firstRunSteps.ts`) so the substitution
+is unit-testable in isolation and the component file keeps exporting only its component (no new
+`react-refresh/only-export-components` lint warning). Regression tests assert the id is spliced in
+when scoped, the placeholder survives for undefined / empty / whitespace-only ids, and the copied
+string matches what is rendered.
 ### 2026-08-13 — Docs: test-intelligence research corpus (`research/`)
 
 Adds `research/` — the evidence base for the feature-improvement roadmap. A deep-research pass

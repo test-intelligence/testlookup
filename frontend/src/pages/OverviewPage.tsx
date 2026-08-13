@@ -964,6 +964,7 @@ export default function OverviewPage() {
       {showFirstRunGuide && (
         <FirstRunGuide
           projectName={project?.name}
+          projectId={project?.id}
           onDismiss={() => {
             try { localStorage.setItem(FIRST_RUN_DISMISS_KEY, '1') } catch { /* ignore */ }
             setGuideDismissed(true)

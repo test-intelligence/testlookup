@@ -1,37 +1,11 @@
-import { ReactNode, useState } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Rocket, Copy, Check, ArrowRight, X } from 'lucide-react'
 import { copyTextToClipboard } from '@/utils/clipboard'
+import { buildSteps } from './firstRunSteps'
 
 /** localStorage key — once dismissed the guide stays hidden for this browser. */
 export const FIRST_RUN_DISMISS_KEY = 'tl_first_run_guide_dismissed'
-
-interface Step {
-  n: number
-  title: string
-  body: ReactNode
-  command?: string
-}
-
-const STEPS: Step[] = [
-  {
-    n: 1,
-    title: 'Load the demo dataset',
-    body: 'Spin up a fully populated instance — sample runs, failures, flaky tests, trends, and a release gate — in a few minutes.',
-    command: 'make quickstart',
-  },
-  {
-    n: 2,
-    title: 'Or ingest your own test results',
-    body: 'Point your CI at the ingest API (JUnit / TestNG / Allure / Cypress / Playwright / pytest), or upload a file from the CLI.',
-    command: 'testlookup upload file results.xml -p <project-id> -b <build>',
-  },
-  {
-    n: 3,
-    title: 'Then explore the intelligence',
-    body: 'Once a run lands, dig into clustered failures, the flaky coach, and the release-risk gate.',
-  },
-]
 
 function CommandRow({ command }: { command: string }) {
   const [copied, setCopied] = useState(false)
@@ -64,11 +38,14 @@ function CommandRow({ command }: { command: string }) {
  */
 export default function FirstRunGuide({
   projectName,
+  projectId,
   onDismiss,
 }: {
   projectName?: string
+  projectId?: string
   onDismiss?: () => void
 }) {
+  const steps = buildSteps(projectId)
   return (
     <section
       aria-label="Getting started"
@@ -100,7 +77,7 @@ export default function FirstRunGuide({
       </div>
 
       <ol className="mt-5 space-y-4">
-        {STEPS.map((s) => (
+        {steps.map((s) => (
           <li key={s.n} className="flex gap-3">
             <span className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-bg-secondary)] text-xs font-semibold text-[var(--color-text-secondary)]">
               {s.n}
