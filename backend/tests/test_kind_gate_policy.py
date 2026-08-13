@@ -354,6 +354,11 @@ class TestEvaluatePolicyKindAware:
         a, d = absent.to_dict(), disabled.to_dict()
         for key in ("evaluated_at", "policy_id"):
             a.pop(key), d.pop(key)
+        # The behavioral trail remains identical. The new replay snapshot is
+        # intentionally configuration-faithful, so it preserves the disabled
+        # block even though that block has no verdict effect.
+        a.pop("policy_snapshot")
+        d.pop("policy_snapshot")
         assert a == d
 
     @pytest.mark.asyncio

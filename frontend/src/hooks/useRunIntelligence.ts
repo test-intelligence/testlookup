@@ -5,14 +5,17 @@ import {
   RunIntelligence,
   RunModeSummary,
   ScoringModel,
+  DecisionReportVersionSummary,
 } from '@/services/runIntelligenceService'
 
-export function useRunIntelligence(runId: string | null) {
+export function useRunIntelligence(runId: string | null, reportVersion?: number | null) {
   const { data, error, isLoading, mutate } = useSWR<RunIntelligence>(
-    runId ? `run-intelligence-${runId}` : null,
+    runId ? `run-intelligence-${runId}-${reportVersion ?? 'latest'}` : null,
     () => {
       if (!runId) throw new Error('runId is required')
-      return runIntelligenceService.get(runId)
+      return reportVersion == null
+        ? runIntelligenceService.get(runId)
+        : runIntelligenceService.get(runId, undefined, reportVersion)
     },
     { revalidateOnFocus: false },
   )
@@ -29,6 +32,22 @@ export function useRunIntelligence(runId: string | null) {
     summaryModes: data?.summary_modes ?? null,
     provenance: data?.provenance ?? null,
     allGreen: data?.all_green ?? false,
+  }
+}
+
+export function useDecisionReportVersions(runId: string | null) {
+  const { data, error, isLoading } = useSWR<DecisionReportVersionSummary[]>(
+    runId ? `decision-report-versions-${runId}` : null,
+    () => {
+      if (!runId) throw new Error('runId is required')
+      return runIntelligenceService.getReportVersions(runId)
+    },
+    { revalidateOnFocus: false },
+  )
+  return {
+    versions: data ?? [],
+    isLoading,
+    isError: !!error,
   }
 }
 

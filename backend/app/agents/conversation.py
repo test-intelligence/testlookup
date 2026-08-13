@@ -13,6 +13,7 @@ Context engineering improvements over v1:
 """
 import asyncio
 import hashlib
+import json
 import structlog
 import re
 import time
@@ -38,6 +39,7 @@ from app.models.postgres import (
 from app.services.llm_factory import get_llm
 from app.services.prompt_registry import get_prompt_text
 from app.services.redaction_service import redact_text
+from app.services.privacy_service import sanitize_for_llm
 
 logger = structlog.get_logger("agents.conversation")
 
@@ -156,6 +158,9 @@ class ConversationAgent:
         user_message: str,
         user_id: str,
         project_id: Optional[str] = None,
+        test_run_id: Optional[str] = None,
+        report_id: Optional[str] = None,
+        report_version: Optional[int] = None,
     ) -> dict:
         """Process one user message and return the assistant reply."""
 
@@ -179,7 +184,7 @@ class ConversationAgent:
         # legacy single-shot path). Any loop failure falls back to the
         # single-shot path below, unchanged.
         loop_result: Optional[dict] = None
-        if project_id and self._tool_loop_enabled():
+        if project_id and self._tool_loop_enabled() and not report_id:
             loop_result = await self._run_tool_loop(
                 user_message, project_id, history, summary_ctx
             )
@@ -210,9 +215,15 @@ class ConversationAgent:
             }
 
         # 4. Fetch context and project metadata concurrently
-        context_coro  = self._retrieve_context(user_message, project_id, intent)
-        project_coro  = self._fetch_project_name(project_id)
-        (context, sources), project_name = await asyncio.gather(context_coro, project_coro)
+        context_coro = self._retrieve_context(user_message, project_id, intent)
+        report_coro = self._fetch_bound_report_context(project_id, test_run_id, report_id, report_version)
+        project_coro = self._fetch_project_name(project_id)
+        (context, sources), (report_context, report_sources), project_name = await asyncio.gather(
+            context_coro, report_coro, project_coro
+        )
+        if report_context:
+            context = f"{report_context}\n\n{context}" if context else report_context
+            sources = report_sources + sources
 
         # 5. Build grounded system prompt
         project_scope = (
@@ -502,6 +513,56 @@ class ConversationAgent:
 
     # ── Focused data fetchers ─────────────────────────────────────────────────
 
+    async def _fetch_bound_report_context(
+        self,
+        project_id: Optional[str],
+        test_run_id: Optional[str],
+        report_id: Optional[str],
+        report_version: Optional[int],
+    ) -> tuple[str, list[dict]]:
+        """Load only the immutable report explicitly bound to this session."""
+        if not project_id or not test_run_id or not report_id:
+            return "", []
+        source_base = {
+            "type": "decision_report",
+            "id": str(report_id),
+            "test_run_id": str(test_run_id),
+            "report_version": report_version,
+        }
+        try:
+            query = {
+                "report_id": str(report_id),
+                "project_id": str(project_id),
+                "test_run_id": str(test_run_id),
+                "status": "published",
+            }
+            if report_version is not None:
+                query["report_version"] = int(report_version)
+            report = await get_mongo_db()[Collections.DECISION_REPORTS].find_one(query, {"_id": 0})
+            if report is None:
+                return (
+                    "### Bound Decision Report\nThe selected DecisionReport version is unavailable. Do not substitute an unbound or latest report.",
+                    [{**source_base, "status": "unavailable"}],
+                )
+            version = int(report.get("report_version") or report_version or 0)
+            projection = {
+                "report_id": report.get("report_id"),
+                "report_version": version,
+                "test_run_id": report.get("test_run_id"),
+                "verification": report.get("verification"),
+                "decision_intelligence": report.get("decision_intelligence"),
+            }
+            rendered = sanitize_for_llm(json.dumps(projection, default=str, ensure_ascii=False))[:30_000]
+            return (
+                f"### Bound Decision Report (immutable v{version})\n{rendered}",
+                [{**source_base, "report_version": version, "status": "published"}],
+            )
+        except Exception as exc:
+            logger.warning("bound_report_context_unavailable", error_type=type(exc).__name__, report_id=str(report_id)[:64])
+            return (
+                "### Bound Decision Report\nThe selected DecisionReport could not be loaded. Do not substitute an unbound or latest report.",
+                [{**source_base, "status": "unavailable"}],
+            )
     async def _fetch_run_context(
         self, project_id: Optional[str], limit: int = 5
     ) -> tuple[str, list[dict]]:

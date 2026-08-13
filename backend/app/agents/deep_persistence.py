@@ -12,10 +12,11 @@ persisted them. This module closes that gap:
     analyses into one per-cluster finding: majority failure category,
     mean confidence, the highest-confidence member's root cause, bounded
     evidence + recommended actions.
-  * ``persist_deep_results`` upserts one FailureCluster + DeepFinding row
-    per ``(test_run_id, cluster_id)`` — idempotent per the repo's
-    per-(entity, run) convention; re-running the pipeline updates rows in
-    place instead of duplicating them.
+  * ``persist_failure_cluster_snapshot`` freezes one immutable cluster set per
+    producing pipeline. A retry with identical bytes is idempotent; changed
+    membership under the same pipeline identity is rejected.
+  * ``persist_deep_results`` persists the immutable cluster snapshot and keeps
+    the latest run-level DeepFinding projection for existing consumers.
 
 Honesty notes:
   * ``causal_chain`` / ``affected_services`` / ``contract_violations``
@@ -42,7 +43,8 @@ import structlog
 from sqlalchemy import select
 
 from app.db.postgres import AsyncSessionLocal
-from app.models.postgres import DeepFinding, FailureCluster
+from app.models.postgres import DeepFinding, FailureCluster, TestCase, TestStatus
+from app.services.evidence_sanitizer import sanitize_reference_text
 
 logger = structlog.get_logger("agents.deep_persistence")
 
@@ -51,6 +53,8 @@ ORIGIN_SEED = "seed"
 
 _MAX_EVIDENCE_PER_FINDING = 10
 _MAX_ACTIONS_PER_FINDING = 5
+_MAX_CLUSTERS_PER_SNAPSHOT = 200
+_MAX_MEMBERS_PER_CLUSTER = 500
 
 
 def _member_analyses(
@@ -158,13 +162,7 @@ async def persist_deep_results(
     pipeline_run_id: str | None,
     final_state: dict[str, Any],
 ) -> dict[str, dict]:
-    """Upsert FailureCluster + DeepFinding rows for a completed deep run.
-
-    Idempotent per (test_run_id, cluster_id): re-running the deep pipeline
-    for the same run updates existing rows (including replacing stale seed
-    rows for that cluster_id) rather than inserting duplicates.
-    Returns the synthesized findings map for ``state["deep_findings"]``.
-    """
+    """Persist immutable pipeline clusters plus the latest finding projection."""
     findings = synthesize_deep_findings(final_state)
     clusters = [
         c for c in (final_state.get("failure_clusters") or [])
@@ -174,41 +172,9 @@ async def persist_deep_results(
         return findings
 
     run_uuid = uuid.UUID(str(test_run_id))
-    pr_uuid: uuid.UUID | None = None
-    if pipeline_run_id:
-        try:
-            pr_uuid = uuid.UUID(str(pipeline_run_id))
-        except ValueError:
-            pr_uuid = None
+    await persist_failure_cluster_snapshot(test_run_id, pipeline_run_id, clusters)
 
     async with AsyncSessionLocal() as db:
-        # ── Clusters ─────────────────────────────────────────────────
-        existing_clusters = {
-            row.cluster_id: row
-            for row in (
-                await db.execute(
-                    select(FailureCluster).where(FailureCluster.test_run_id == run_uuid)
-                )
-            ).scalars()
-        }
-        for c in clusters:
-            cid = str(c["cluster_id"])[:20]
-            member_ids = [str(m) for m in (c.get("member_test_ids") or [])]
-            values = {
-                "pipeline_run_id": pr_uuid,
-                "label": (str(c.get("label") or cid))[:500],
-                "representative_error": c.get("representative_error"),
-                "member_test_ids": member_ids,
-                "size": int(c.get("size") or len(member_ids) or 1),
-                "cohesion_score": c.get("cohesion_score"),
-            }
-            row = existing_clusters.get(cid)
-            if row is not None:
-                for key, val in values.items():
-                    setattr(row, key, val)
-            else:
-                db.add(FailureCluster(test_run_id=run_uuid, cluster_id=cid, **values))
-
         # ── Findings ─────────────────────────────────────────────────
         existing_findings = {
             row.cluster_id: row
@@ -247,3 +213,116 @@ async def persist_deep_results(
         finding_count=len(findings),
     )
     return findings
+
+
+async def persist_failure_cluster_snapshot(
+    test_run_id: str,
+    pipeline_run_id: str | None,
+    clusters: list[dict[str, Any]],
+) -> list[FailureCluster]:
+    """Freeze validated clusters for one producing pipeline.
+
+    Cluster identity is the database row plus the producing pipeline, never the
+    model-generated display ``cluster_id`` alone. Existing rows may only be
+    reused when every authoritative field is identical.
+    """
+    run_uuid = uuid.UUID(str(test_run_id))
+    if pipeline_run_id is None:
+        raise ValueError("pipeline_run_id is required for cluster authority")
+    pipeline_uuid = uuid.UUID(str(pipeline_run_id))
+    if len(clusters) > _MAX_CLUSTERS_PER_SNAPSHOT:
+        raise ValueError("cluster snapshot exceeds bounded candidate count")
+
+    normalized: dict[str, dict[str, Any]] = {}
+    claimed_members: set[str] = set()
+    for cluster in clusters:
+        if not isinstance(cluster, dict):
+            raise ValueError("cluster snapshot entries must be objects")
+        cluster_id = str(cluster.get("cluster_id") or "")[:20]
+        if not cluster_id or cluster_id in normalized:
+            raise ValueError("cluster snapshot contains a missing or duplicate cluster_id")
+        raw_members = cluster.get("member_test_ids")
+        if not isinstance(raw_members, list) or not raw_members:
+            raise ValueError(f"cluster {cluster_id} has no member authority")
+        if len(raw_members) > _MAX_MEMBERS_PER_CLUSTER:
+            raise ValueError(f"cluster {cluster_id} exceeds member bound")
+        members = sorted({str(uuid.UUID(str(member))) for member in raw_members})
+        if len(members) != len(raw_members):
+            raise ValueError(f"cluster {cluster_id} contains duplicate members")
+        overlap = claimed_members.intersection(members)
+        if overlap:
+            raise ValueError("cluster snapshot contains overlapping membership")
+        claimed_members.update(members)
+        normalized[cluster_id] = {
+            "pipeline_run_id": pipeline_uuid,
+            "label": sanitize_reference_text(
+                str(cluster.get("label") or cluster_id), limit=500
+            )[0],
+            "representative_error": sanitize_reference_text(
+                str(cluster.get("representative_error") or ""), limit=2_000
+            )[0] or None,
+            "member_test_ids": members,
+            "size": len(members),
+            "cohesion_score": cluster.get("cohesion_score"),
+        }
+
+    async with AsyncSessionLocal() as db:
+        authorized_members = {
+            str(item)
+            for item in (
+                await db.execute(
+                    select(TestCase.id).where(
+                        TestCase.test_run_id == run_uuid,
+                        TestCase.id.in_([uuid.UUID(item) for item in claimed_members]),
+                        TestCase.status.in_((TestStatus.FAILED, TestStatus.BROKEN)),
+                    )
+                )
+            ).scalars().all()
+        }
+        if authorized_members != claimed_members:
+            raise ValueError(
+                "cluster snapshot contains non-failed or foreign-run members"
+            )
+        existing = {
+            row.cluster_id: row
+            for row in (
+                await db.execute(
+                    select(FailureCluster).where(
+                        FailureCluster.test_run_id == run_uuid,
+                        FailureCluster.pipeline_run_id == pipeline_uuid,
+                    )
+                )
+            ).scalars()
+        }
+        if set(existing).difference(normalized):
+            raise RuntimeError("persisted cluster snapshot has unexpected extra clusters")
+        for cluster_id, values in normalized.items():
+            row = existing.get(cluster_id)
+            if row is None:
+                row = FailureCluster(
+                    test_run_id=run_uuid,
+                    cluster_id=cluster_id,
+                    **values,
+                )
+                db.add(row)
+                continue
+            observed = {
+                "pipeline_run_id": row.pipeline_run_id,
+                "label": row.label,
+                "representative_error": row.representative_error,
+                "member_test_ids": sorted(str(item) for item in (row.member_test_ids or [])),
+                "size": int(row.size or 0),
+                "cohesion_score": row.cohesion_score,
+            }
+            if observed != values:
+                raise RuntimeError(f"cluster snapshot mutation rejected for {cluster_id}")
+        await db.commit()
+        rows = (
+            await db.execute(
+                select(FailureCluster).where(
+                    FailureCluster.test_run_id == run_uuid,
+                    FailureCluster.pipeline_run_id == pipeline_uuid,
+                )
+            )
+        ).scalars().all()
+        return list(rows)

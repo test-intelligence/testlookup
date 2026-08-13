@@ -1261,6 +1261,64 @@ class AgentInvestigation(Base):
     __table_args__ = (
         Index("ix_agent_investigations_project_created", "project_id", "created_at"),
         Index("ix_agent_investigations_run", "run_id"),
+        Index(
+            "uq_agent_investigations_active_run_scope",
+            "run_id",
+            unique=True,
+            postgresql_where=text(
+                "scope_type = 'run' AND status IN ('queued', 'running', 'synthesizing')"
+            ),
+        ),
+        Index(
+            "uq_agent_investigations_active_failure_cluster",
+            "parent_pipeline_run_id",
+            "failure_cluster_id",
+            unique=True,
+            postgresql_where=text(
+                "scope_type = 'failure_cluster' "
+                "AND status IN ('queued', 'running', 'synthesizing')"
+            ),
+        ),
+        Index(
+            "ux_agent_investigations_spawn_key",
+            "spawn_key",
+            unique=True,
+            postgresql_where=text("spawn_key IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "scope_type IN ('run', 'failure_cluster')",
+            name="ck_agent_investigation_scope_type",
+        ),
+        CheckConstraint(
+            "spawn_depth >= 0 AND spawn_depth <= 8",
+            name="ck_agent_investigation_spawn_depth",
+        ),
+        CheckConstraint(
+            "cluster_scope_sha256 IS NULL "
+            "OR cluster_scope_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_agent_investigation_cluster_scope_sha256",
+        ),
+        CheckConstraint(
+            "spawn_key IS NULL OR spawn_key ~ '^[0-9a-f]{64}$'",
+            name="ck_agent_investigation_spawn_key_sha256",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(cluster_member_test_ids) = 'array'",
+            name="ck_agent_investigation_cluster_members_array",
+        ),
+        CheckConstraint(
+            "(scope_type = 'run' AND failure_cluster_id IS NULL "
+            "AND cluster_scope_sha256 IS NULL AND parent_pipeline_run_id IS NULL "
+            "AND parent_task_id IS NULL AND spawn_lineage_id IS NULL "
+            "AND spawn_key IS NULL AND spawn_depth = 0 "
+            "AND jsonb_array_length(cluster_member_test_ids) = 0) "
+            "OR (scope_type = 'failure_cluster' AND failure_cluster_id IS NOT NULL "
+            "AND cluster_scope_sha256 IS NOT NULL AND parent_pipeline_run_id IS NOT NULL "
+            "AND parent_task_id IS NOT NULL AND length(parent_task_id) > 0 "
+            "AND spawn_lineage_id IS NOT NULL AND spawn_key IS NOT NULL "
+            "AND spawn_depth >= 1 AND jsonb_array_length(cluster_member_test_ids) > 0)",
+            name="ck_agent_investigation_scope_consistency",
+        ),
     )
 
     # Keep in sync with _ACTIVE_STATUSES_SQL in migration 0108.
@@ -1273,6 +1331,28 @@ class AgentInvestigation(Base):
     run_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False
     )
+    scope_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="run", server_default="run"
+    )
+    failure_cluster_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("failure_clusters.id", ondelete="CASCADE"), nullable=True
+    )
+    cluster_scope_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    cluster_member_test_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    parent_pipeline_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("agent_pipeline_runs.id", ondelete="CASCADE"), nullable=True
+    )
+    parent_task_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    spawn_lineage_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    spawn_depth: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    spawn_key: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    selection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # queued | running | synthesizing | completed | cancelled | failed
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
     # shadow | suggest | act (act reserved — no actions taken this slice)
@@ -1300,6 +1380,72 @@ class AgentInvestigation(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class AgentChildDispatchOutbox(Base):
+    """Durable dispatch record for a planner-spawned Investigator child."""
+
+    __tablename__ = "agent_child_dispatch_outbox"
+    __table_args__ = (
+        Index(
+            "ix_agent_child_dispatch_status_next_attempt",
+            "status",
+            "next_attempt_at",
+        ),
+        CheckConstraint(
+            "spawn_key ~ '^[0-9a-f]{64}$'",
+            name="ck_agent_child_outbox_spawn_key_sha256",
+        ),
+        CheckConstraint(
+            "attempts >= 0",
+            name="ck_agent_child_outbox_attempts_nonnegative",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'sending', 'sent', 'failed')",
+            name="ck_agent_child_outbox_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    spawn_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    investigation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agent_investigations.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    parent_pipeline_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agent_pipeline_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sent_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        onupdate=func.now(),
+        server_default=func.now(),
+    )
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class AgentPolicy(Base):
@@ -1441,10 +1587,21 @@ class AgentPipelineRun(Base):
     __table_args__ = (
         Index("ix_pipeline_runs_test_run", "test_run_id"),
         Index("ix_pipeline_runs_status", "status"),
+        CheckConstraint(
+            "spawn_depth >= 0 AND spawn_depth <= 8",
+            name="ck_agent_pipeline_spawn_depth",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
+    parent_pipeline_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("agent_pipeline_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    parent_task_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    spawn_depth: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     workflow_type: Mapped[str] = mapped_column(String(20), default="offline")  # offline | live | deep
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|running|completed|failed|partial
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -1452,7 +1609,7 @@ class AgentPipelineRun(Base):
     error: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # Pipeline-level provenance (added in migration 0017)
-    execution_metadata: Mapped[Optional[dict]] = mapped_column(JSON)    # {tools_used, schema_version, fallback_used}
+    execution_metadata: Mapped[Optional[dict]] = mapped_column(JSON)    # {tools_used, schema_version, fallback_used, run_budget, budget_spend}
     provenance_metadata: Mapped[Optional[dict]] = mapped_column(JSON)   # {generated_by, tools_used_count, generated_at}
 
     # Relationships
@@ -1469,10 +1626,47 @@ class AgentStageResult(Base):
         # (stage_name, status) backs agent_cost_service.check_alerts' 24h
         # repeated-failure count — migration 0090.
         Index("ix_agent_stage_results_stage_status", "stage_name", "status"),
+        Index(
+            "ux_agent_stage_pipeline_task_key",
+            "pipeline_run_id",
+            "task_key",
+            unique=True,
+            postgresql_where=text("task_key IS NOT NULL"),
+        ),
+        Index(
+            "ux_agent_stage_pipeline_idempotency",
+            "pipeline_run_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+        CheckConstraint("attempt >= 1", name="ck_agent_stage_attempt_positive"),
+        CheckConstraint(
+            "idempotency_key IS NULL OR idempotency_key ~ '^[0-9a-f]{64}$'",
+            name="ck_agent_stage_idempotency_sha256",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pipeline_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_pipeline_runs.id", ondelete="CASCADE"), nullable=False)
+    task_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    capability_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    parent_task_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    failure_cluster_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("failure_clusters.id", ondelete="SET NULL"), nullable=True
+    )
+    attempt: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    selected: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    required: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    dependencies: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    allocated_budget: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    stop_reason: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     stage_name: Mapped[str] = mapped_column(String(50), nullable=False)  # ingestion|anomaly|analysis|summary|triage
     status: Mapped[str] = mapped_column(String(20), default="pending")   # pending|running|completed|failed|skipped
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -1517,6 +1711,10 @@ class ChatSession(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    # Optional immutable-report anchor used by report-grounded chat sessions.
+    active_test_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    active_report_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    active_report_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     title: Mapped[Optional[str]] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
@@ -1581,6 +1779,35 @@ class AIFeedback(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class DecisionReportFeedback(Base):
+    """Structured human feedback bound to one immutable DecisionReport version."""
+    __tablename__ = "decision_report_feedback"
+    __table_args__ = (
+        Index("ix_decision_report_feedback_report", "project_id", "test_run_id", "report_id", "report_version"),
+        Index("ix_decision_report_feedback_created", "created_at"),
+        UniqueConstraint("user_id", "idempotency_key", name="uq_decision_report_feedback_user_idempotency"),
+        CheckConstraint("report_version >= 1", name="ck_decision_report_feedback_report_version_positive"),
+        CheckConstraint("feedback_kind IN ('utility', 'claim_correction')", name="ck_decision_report_feedback_kind"),
+        CheckConstraint("utility_rating IS NULL OR utility_rating IN ('useful', 'partially_useful', 'not_useful')", name="ck_decision_report_feedback_utility_rating"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
+    report_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    report_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    report_evidence_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    feedback_kind: Mapped[str] = mapped_column(String(30), nullable=False)  # utility | claim_correction
+    utility_rating: Mapped[Optional[str]] = mapped_column(String(25), nullable=True)
+    claim_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    claim_kind: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    correction_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    corrected_value: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence_refs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 class ModelVersion(Base):
     """
     Registry of fine-tuned model versions per training track.
@@ -1623,6 +1850,11 @@ class FailureCluster(Base):
     __tablename__ = "failure_clusters"
     __table_args__ = (
         Index("ix_failure_clusters_run", "test_run_id"),
+        UniqueConstraint(
+            "pipeline_run_id",
+            "cluster_id",
+            name="uq_failure_clusters_pipeline_cluster",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1726,6 +1958,11 @@ class ReleaseDecision(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False, unique=True)
+    pipeline_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("agent_pipeline_runs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     recommendation: Mapped[str] = mapped_column(String(20), nullable=False)       # GO | NO_GO | CONDITIONAL_GO
     risk_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)  # 0-100
     blocking_issues: Mapped[Optional[list]] = mapped_column(JSON)
@@ -2452,7 +2689,6 @@ class TestCaseAuditLog(Base):
     entity_type: Mapped[str] = mapped_column(String(30), nullable=False)   # test_case|test_plan|test_strategy|review
     entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
-
     # Action type
     action: Mapped[str] = mapped_column(String(50), nullable=False)        # created|updated|status_changed|reviewed|approved|rejected|deleted|assigned|executed|ai_generated|ai_reviewed
 
@@ -2762,22 +2998,55 @@ class RunIntelligenceSnapshot(Base):
 
 
 class EvidenceArtifact(Base):
-    """Reusable evidence item linked to a run and optionally a cluster/test."""
+    """Tenant-bound immutable evidence captured from an executed tool."""
     __tablename__ = "evidence_artifacts"
     __table_args__ = (
         Index("ix_evidence_run_id", "run_id"),
         Index("ix_evidence_cluster", "cluster_id"),
+        Index("ix_evidence_project_run", "project_id", "run_id"),
+        Index("ix_evidence_run_test", "run_id", "test_case_id"),
+        Index("ix_evidence_pipeline", "producer_pipeline_run_id"),
+        Index("ux_evidence_idempotency", "idempotency_key", unique=True),
+        CheckConstraint(
+            "content_sha256 IS NULL OR content_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_evidence_content_sha256",
+        ),
+        CheckConstraint(
+            "content_size_bytes IS NULL OR content_size_bytes >= 0",
+            name="ck_evidence_content_size_nonnegative",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True,
+    )
+    producer_pipeline_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("agent_pipeline_runs.id", ondelete="CASCADE"), nullable=True,
+    )
     cluster_id: Mapped[Optional[str]] = mapped_column(String(20))
-    test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_cases.id", ondelete="SET NULL"), nullable=True)
+    test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_cases.id", ondelete="CASCADE"), nullable=True)
     artifact_type: Mapped[str] = mapped_column(String(50), nullable=False)      # stack_trace | log_anomaly | api_contract | metric | build_change | config_diff
     source_system: Mapped[str] = mapped_column(String(100), nullable=False)     # splunk | mongodb | prometheus | github | ocp | chromadb
     uri_or_ref: Mapped[Optional[str]] = mapped_column(String(1000))
     summary_excerpt: Mapped[Optional[str]] = mapped_column(Text)
     relevance_score: Mapped[Optional[float]] = mapped_column(Float)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    source_version: Mapped[Optional[str]] = mapped_column(String(100))
+    content_sha256: Mapped[Optional[str]] = mapped_column(String(64))
+    content_size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger)
+    media_type: Mapped[Optional[str]] = mapped_column(String(100))
+    sensitivity: Mapped[Optional[str]] = mapped_column(String(20))
+    freshness: Mapped[Optional[str]] = mapped_column(String(20))
+    observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    integrity_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="legacy_unverified"
+    )
+    retention_class: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="artifacts"
+    )
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -3553,6 +3822,101 @@ class AIEvalGateRun(Base):
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class DecisionReportEvalCycle(Base):
+    """Durable evidence for a report-level evaluation corpus cycle."""
+    __tablename__ = "decision_report_eval_cycles"
+    __table_args__ = (
+        Index("ix_drec_corpus_evaluated", "corpus_version", "evaluated_at"),
+        Index("ix_drec_status", "status"),
+        UniqueConstraint("cycle_key", name="uq_drec_cycle_key"),
+        CheckConstraint(
+            "status IN ('pass', 'warn', 'fail')",
+            name="ck_drec_status",
+        ),
+        CheckConstraint(
+            "corpus_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_drec_corpus_hash",
+        ),
+        CheckConstraint("report_count >= 0", name="ck_drec_report_count"),
+        CheckConstraint(
+            "consecutive_passes >= 0",
+            name="ck_drec_consecutive_nonnegative",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    corpus_version: Mapped[str] = mapped_column(String(120), nullable=False)
+    corpus_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    report_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    metrics: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    checks: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    unavailable_metrics: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    consecutive_passes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    evaluated_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class DecisionReportSupersessionRequest(Base):
+    """Durable, idempotent request to publish a child-enriched report version.
+
+    The parent deep pipeline never carries child prompts or evidence through a
+    broker payload.  It records this small, tenant-bound request instead; a
+    worker later re-resolves the immutable parent report and terminal child
+    rows before publishing a new DecisionReportV1 version.
+    """
+    __tablename__ = "decision_report_supersession_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "parent_pipeline_run_id",
+            name="uq_drsr_parent_pipeline",
+        ),
+        Index("ix_drsr_status_next_attempt", "status", "next_attempt_at"),
+        CheckConstraint(
+            "status IN ('pending', 'processing', 'published', 'rejected', 'failed')",
+            name="ck_drsr_status",
+        ),
+        CheckConstraint("attempts >= 0", name="ck_drsr_attempts_nonnegative"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    test_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    parent_pipeline_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agent_pipeline_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
+    reason: Mapped[str] = mapped_column(String(120), nullable=False, default="children_terminal")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    published_report_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    published_report_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now()
+    )
+
+
 # ── Agent Memory (P3 — Unified Memory & Retrieval) ──────────────────────────
 
 
@@ -3594,8 +3958,105 @@ class AgentMemoryEntry(Base):
     payload: Mapped[Optional[dict]] = mapped_column(JSON)  # entity-type-specific data
     confidence: Mapped[Optional[int]] = mapped_column(Integer)  # 0-100
     resolution: Mapped[Optional[str]] = mapped_column(String(50))  # resolved | open | wont_fix | duplicate
+    # Provenance and lifecycle are first-class authority fields. Consumers
+    # must not infer trust or freshness from arbitrary payload keys.
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, default="pipeline_agent")
+    trust_level: Mapped[str] = mapped_column(String(30), nullable=False, default="derived")
+    lifecycle_status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    source_snapshot_id: Mapped[Optional[str]] = mapped_column(String(128))
+    source_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    superseded_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("agent_memory_entries.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    superseded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AgentActionLedger(Base):
+    """Append-only proposal/execution ledger for agent-originated actions.
+
+    The ledger is the durable approval boundary for external mutations. The
+    request payload is sanitized and hashed at proposal time; execution and
+    rollback outcomes are recorded separately so a caller can never replace a
+    proposal with a different payload under the same idempotency key.
+    """
+
+    __tablename__ = "agent_action_ledger"
+    __table_args__ = (
+        Index("ix_agent_action_project_created", "project_id", "created_at"),
+        Index("ix_agent_action_status", "project_id", "status"),
+        Index("ix_agent_action_target", "project_id", "target_type", "target_id"),
+        UniqueConstraint(
+            "project_id", "idempotency_key", name="uq_agent_action_project_idempotency"
+        ),
+        CheckConstraint(
+            "status IN ('proposed', 'pending_review', 'approved', 'executing', "
+            "'executed', 'failed', 'rejected', 'rolled_back')",
+            name="ck_agent_action_status",
+        ),
+        CheckConstraint(
+            "request_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_agent_action_request_hash",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    test_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
+    pipeline_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("agent_pipeline_runs.id", ondelete="SET NULL"), nullable=True)
+    actor_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    action_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    target_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="proposed", server_default="proposed")
+    approval_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    execution_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    execution_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    result_payload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    rollback_payload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AgentActionDispatchOutbox(Base):
+    """Durable delivery intent for approved actions; never contains prompts."""
+
+    __tablename__ = "agent_action_dispatch_outbox"
+    __table_args__ = (
+        Index("ix_agent_action_outbox_status_next", "status", "next_attempt_at"),
+        CheckConstraint(
+            "status IN ('pending', 'sending', 'sent', 'failed')",
+            name="ck_agent_action_outbox_status",
+        ),
+        CheckConstraint("attempts >= 0", name="ck_agent_action_outbox_attempts_nonnegative"),
+        UniqueConstraint("action_id", name="uq_agent_action_outbox_action"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    action_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agent_action_ledger.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 # ── Feature Flags (Tier 0A) ──────────────────────────────────────────────────

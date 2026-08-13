@@ -250,8 +250,21 @@ class Settings(BaseSettings):
 
     # ── AI Agent ─────────────────────────────────────────────
     AI_OFFLINE_MODE: bool = True
+    # Optional defense-in-depth provider allowlist. Empty preserves the
+    # configured provider set; when populated, every get_llm() construction
+    # and invocation must use one of these normalized provider ids.
+    AI_LLM_PROVIDER_ALLOWLIST: str = ""
+    # Optional comma-separated HTTP(S) origins for provider endpoint overrides.
+    AI_LLM_ALLOWED_BASE_URLS: str = ""
+    AGENT_MEMORY_RETENTION_DAYS: int = 365
     AI_CONFIDENCE_THRESHOLD: int = 80
     AIQ_GAP_REFINEMENT_ENABLED: bool = False         # AIQ-P4: gap_detection + report_refinement deep stages (default off)
+    AIQ_CONTRACT_VALIDATION_ENABLED: bool = False    # AIQ-P4: API contract specialist (default off)
+    AIQ_CHANGE_OWNERSHIP_ENABLED: bool = False      # AIQ-P4: baseline/change + ownership specialist (default off)
+    AIQ_ASYNC_DECISION_REPORT_SUPERSESSION_ENABLED: bool = False  # Phase 3: dark by default
+    # Report-level evaluation must use published, tenant-authorized reports in
+    # deployed environments.  Tests/fixture automation may opt in explicitly.
+    AI_REPORT_EVAL_ALLOW_CALLER_CORPUS: bool = False
     AI_MAX_RETRIES: int = 3
     AI_TIMEOUT_SECONDS: int = 300
     AI_ANALYSIS_CACHE_TTL: int = 3600                # seconds — Redis cache TTL for analysis results

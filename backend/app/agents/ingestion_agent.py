@@ -116,6 +116,7 @@ class IngestionAgent(BaseAgent):
                 "failed_tests": run.failed_tests,
                 "skipped_tests": run.skipped_tests,
                 "broken_tests": run.broken_tests,
+                "unknown_tests": run.unknown_tests,
                 "pass_rate": run.pass_rate,
                 "duration_ms": run.duration_ms,
                 "status": getattr(run.status, "value", run.status) or "UNKNOWN",

@@ -43,10 +43,13 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(Bearer\s+)[A-Za-z0-9\-_\.]{20,}", re.IGNORECASE), r"\1[REDACTED]"),
     # Authorization headers
     (re.compile(r"(Authorization:\s*)[^\s\n]{10,}", re.IGNORECASE), r"\1[REDACTED]"),
+    # Cookies frequently contain session credentials and must be removed even
+    # when their values do not resemble long random tokens.
+    (re.compile(r"((?:Set-)?Cookie:\s*)[^\r\n]+", re.IGNORECASE), r"\1[REDACTED]"),
     # API keys (common formats)
-    (re.compile(r"(api[_-]?key\s*[:=]\s*)['\"]?[A-Za-z0-9\-_]{16,}['\"]?", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"(api[_-]?key\s*[:=]\s*)['\"]?[^\s'\",]{4,}['\"]?", re.IGNORECASE), r"\1[REDACTED]"),
     # Generic tokens
-    (re.compile(r"(token\s*[:=]\s*)['\"]?[A-Za-z0-9\-_\.]{20,}['\"]?", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"(token\s*[:=]\s*)['\"]?[^\s'\",]{4,}['\"]?", re.IGNORECASE), r"\1[REDACTED]"),
     # Passwords
     (re.compile(r"(password\s*[:=]\s*)['\"]?[^\s'\",]{4,}['\"]?", re.IGNORECASE), r"\1[REDACTED]"),
     # Secret keys

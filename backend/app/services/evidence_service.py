@@ -188,6 +188,7 @@ def _build_confidence_reason(
 
 async def get_evidence_for_run(
     db: AsyncSession,
+    project_id: uuid.UUID,
     run_id: uuid.UUID,
     cluster_id: Optional[str] = None,
     limit: int = 50,
@@ -195,7 +196,11 @@ async def get_evidence_for_run(
     """Retrieve evidence artifacts for a run, optionally filtered by cluster."""
     stmt = (
         select(EvidenceArtifact)
-        .where(EvidenceArtifact.run_id == run_id)
+        .where(
+            EvidenceArtifact.project_id == project_id,
+            EvidenceArtifact.run_id == run_id,
+            EvidenceArtifact.integrity_status == "verified",
+        )
         .order_by(EvidenceArtifact.relevance_score.desc().nulls_last())
         .limit(limit)
     )
@@ -210,7 +215,14 @@ async def get_evidence_for_run(
             "source_system": e.source_system,
             "summary_excerpt": e.summary_excerpt,
             "relevance_score": e.relevance_score,
-            "uri_or_ref": e.uri_or_ref,
+            "content_sha256": e.content_sha256,
+            "sensitivity": e.sensitivity,
+            "freshness": e.freshness,
+            "integrity_status": e.integrity_status,
+            "test_case_id": str(e.test_case_id) if e.test_case_id else None,
+            "producer_pipeline_run_id": (
+                str(e.producer_pipeline_run_id) if e.producer_pipeline_run_id else None
+            ),
             "cluster_id": e.cluster_id,
         }
         for e in result.scalars().all()

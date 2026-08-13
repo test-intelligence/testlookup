@@ -103,8 +103,15 @@ async def run_triage_agent(
     test_name = sanitize_free_text(test_name, max_length=500)
 
     # ── Cache lookup: skip LLM for identical failures ──────────────────────
-    cached = await _check_analysis_cache(test_name, error_message or "", stack_trace or "", project_id)
+    cached = (
+        await _check_analysis_cache(
+            test_name, error_message or "", stack_trace or "", project_id
+        )
+        if project_id
+        else None
+    )
     if cached is not None:
+        cached["evidence_references"] = []
         logger.info("Cache hit for test '%s' — returning cached analysis", test_name)
         cached["cache_hit"] = True
         await _store_audit_trail(test_case_id, f"cache_hit:{test_name}", cached, [])
@@ -119,8 +126,15 @@ async def run_triage_agent(
     # ── Semantic cache: skip LLM for similar failures ────────────────────
     try:
         from app.services.semantic_cache import semantic_cache_lookup
-        sem_cached = await semantic_cache_lookup(test_name, error_message or "", stack_trace or "", project_id=project_id)
+        sem_cached = (
+            await semantic_cache_lookup(
+                test_name, error_message or "", stack_trace or "", project_id=project_id
+            )
+            if project_id
+            else None
+        )
         if sem_cached is not None:
+            sem_cached["evidence_references"] = []
             await _store_audit_trail(test_case_id, f"semantic_cache_hit:{test_name}", sem_cached, [])
             await _emit_event(
                 pipeline_run_id or "",
@@ -147,6 +161,7 @@ async def run_triage_agent(
             )
             if quick is not None:
                 quick["tools_used"] = []  # Fast classifier uses no tools — honest empty list
+                quick["evidence_references"] = []
                 # US-15.1: the fast classifier IS an LLM call, just a single-shot
                 # one — say so rather than leaving provenance blank.
                 quick["_routing"] = {
@@ -220,7 +235,25 @@ async def run_triage_agent(
     # Bind the investigation identity for the recall_similar_failures tool
     # (AI-F3). Server-side ContextVar — the LLM never supplies identifiers, so
     # recall stays project-scoped even if the model passes garbage input.
+    from app.tools.investigation_context import (
+        InvestigationContext,
+        reset_investigation_context,
+        set_investigation_context,
+    )
     from app.tools.recall_memory import reset_recall_context, set_recall_context
+    _investigation_token = None
+    if project_id and run_id:
+        _investigation_token = set_investigation_context(InvestigationContext(
+            project_id=str(project_id),
+            run_id=str(run_id),
+            test_case_id=str(test_case_id),
+            test_name=test_name,
+            test_fingerprint=test_fingerprint,
+            service_name=service_name,
+            timestamp=timestamp,
+            ocp_pod_name=ocp_pod_name,
+            ocp_namespace=ocp_namespace,
+        ))
     _recall_token = set_recall_context(
         project_id=project_id,
         test_fingerprint=test_fingerprint,
@@ -263,6 +296,16 @@ async def run_triage_agent(
                 # Record which tools were actually invoked so the frontend can show honest stage progress.
                 tools_used = _extract_tools_used(intermediate_steps)
                 analysis["tools_used"] = tools_used
+                # Model-produced citations are untrusted. Build the citation
+                # candidates solely from tools that actually executed; the
+                # terminal artifact service later binds these to tenant/run/test.
+                analysis["evidence_references"] = _tool_observation_references(
+                    intermediate_steps,
+                    project_id=project_id,
+                    run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
+                    test_case_id=test_case_id,
+                )
 
                 # Record tool call details as OTEL span events and pipeline events
                 _record_tool_spans(triage_span, intermediate_steps)
@@ -355,6 +398,8 @@ async def run_triage_agent(
                 intermediate_steps = []
     finally:
         reset_recall_context(_recall_token)
+        if _investigation_token is not None:
+            reset_investigation_context(_investigation_token)
 
     # ── US-15.2: one confidence gate for every exit path ──────────────────────
     # Previously only the happy path compared confidence to a threshold, and it
@@ -408,15 +453,79 @@ def _extract_tools_used(intermediate_steps: list) -> list[str]:
     return seen
 
 
+def _tool_observation_references(
+    intermediate_steps: list,
+    *,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    pipeline_run_id: str | None = None,
+    test_case_id: str | None = None,
+) -> list[dict[str, str]]:
+    """Create bounded citation candidates from actual tool observations."""
+    from app.services.evidence_sanitizer import sanitize_reference_text
+
+    references: list[dict[str, str]] = []
+    for step in intermediate_steps[:100]:
+        try:
+            action = step[0] if isinstance(step, (tuple, list)) else step
+            observation = (
+                step[1]
+                if isinstance(step, (tuple, list)) and len(step) > 1
+                else ""
+            )
+            tool_name, _, _ = sanitize_reference_text(
+                str(getattr(action, "tool", "unknown")), limit=100
+            )
+            excerpt, _, _ = sanitize_reference_text(str(observation), limit=500)
+            normalized = excerpt.strip().lower()
+            if not excerpt or any(marker in normalized for marker in (
+                " lookup denied:",
+                " lookup unavailable:",
+                " query failed:",
+                "no authorized investigation context",
+                "no allure result found",
+                "no rest api payload captured",
+            )):
+                continue
+            reference = {
+                "source": tool_name,
+                "kind": "tool_observation",
+                "excerpt": excerpt,
+                "freshness": "current_run",
+                "sensitivity": "restricted",
+            }
+            if all((project_id, run_id, pipeline_run_id, test_case_id)):
+                from app.services.evidence_artifact_service import (
+                    tool_observation_attestation,
+                )
+                reference["producer_attestation"] = tool_observation_attestation(
+                    project_id=str(project_id),
+                    run_id=str(run_id),
+                    pipeline_id=str(pipeline_run_id),
+                    test_case_id=str(test_case_id),
+                    source=tool_name,
+                    kind="tool_observation",
+                    excerpt=excerpt,
+                )
+            references.append(reference)
+        except Exception:
+            continue
+    return references
+
+
 def _record_tool_spans(parent_span: Any, intermediate_steps: list) -> None:
     """Record each ReAct tool invocation as an OTEL span event on the parent span."""
+    from app.services.evidence_sanitizer import sanitize_reference_text
+
     for i, step in enumerate(intermediate_steps):
         try:
             action = step[0] if isinstance(step, (tuple, list)) else step
             observation = step[1] if isinstance(step, (tuple, list)) and len(step) > 1 else ""
             tool_name = getattr(action, "tool", "unknown")
-            tool_input = str(getattr(action, "tool_input", ""))[:300]
-            obs_preview = str(observation)[:300]
+            tool_input, _, _ = sanitize_reference_text(
+                str(getattr(action, "tool_input", "")), limit=300
+            )
+            obs_preview, _, _ = sanitize_reference_text(str(observation), limit=300)
 
             parent_span.add_event(
                 f"tool_call.{tool_name}",
@@ -517,15 +626,43 @@ def _fallback_analysis(error_msg: str) -> dict:
 
 
 async def _store_audit_trail(test_case_id: str, prompt: str, analysis: dict, steps: list) -> None:
-    """Persist full agent reasoning trace to MongoDB for auditing."""
+    """Persist a bounded, sanitized execution audit without chain-of-thought."""
+    from app.services.evidence_sanitizer import (
+        sanitize_persistence_payload,
+        sanitize_reference_text,
+    )
+
+    safe_prompt, _, _ = sanitize_reference_text(prompt, limit=2000)
+    safe_analysis, stats = sanitize_persistence_payload(analysis)
+    if stats.omitted_items or stats.truncated_strings:
+        safe_analysis = {
+            "failure_category": analysis.get("failure_category", "UNKNOWN"),
+            "confidence_score": analysis.get("confidence_score", 0),
+            "requires_human_review": True,
+            "audit_truncated": True,
+        }
+    safe_steps: list[dict[str, str]] = []
+    for step in steps[:100]:
+        try:
+            action = step[0] if isinstance(step, (tuple, list)) else step
+            observation = step[1] if isinstance(step, (tuple, list)) and len(step) > 1 else ""
+            safe_observation, _, _ = sanitize_reference_text(
+                str(observation), limit=500
+            )
+            safe_steps.append({
+                "tool": str(getattr(action, "tool", "unknown"))[:100],
+                "observation": safe_observation,
+            })
+        except Exception:
+            continue
     db = get_mongo_db()
     await db[Collections.AI_ANALYSIS_PAYLOADS].update_one(
         {"test_case_id": test_case_id},
         {"$set": {
             "test_case_id": test_case_id,
-            "prompt": prompt,
-            "analysis": analysis,
-            "intermediate_steps": [str(s) for s in steps],
+            "prompt": safe_prompt,
+            "analysis": safe_analysis,
+            "intermediate_steps": safe_steps,
             "llm_provider": settings.LLM_PROVIDER,
             "llm_model": settings.LLM_MODEL,
             "updated_at": datetime.now(timezone.utc),
@@ -578,7 +715,15 @@ async def _store_analysis_cache(
         redis = get_redis()
         cache_key = _scoped_cache_key(test_name, error_message, stack_trace, project_id)
         # Store a clean copy without transient fields
-        cacheable = {k: v for k, v in analysis.items() if k not in ("cache_hit",)}
+        from app.services.evidence_sanitizer import sanitize_persistence_payload
+
+        cacheable = {
+            k: v for k, v in analysis.items()
+            if k not in ("cache_hit", "evidence_references")
+        }
+        cacheable, stats = sanitize_persistence_payload(cacheable)
+        if stats.omitted_items or stats.truncated_strings:
+            return
         await redis.set(cache_key, json.dumps(cacheable, default=str), ex=settings.AI_ANALYSIS_CACHE_TTL)
     except Exception as exc:
         logger.debug("Analysis cache store failed (non-critical): %s", exc)

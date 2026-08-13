@@ -14,6 +14,10 @@ from app.models.agent_contracts import (
 )
 from app.tools.detect_log_anomaly import detect_log_rate_anomaly
 from app.tools.reconstruct_trace import reconstruct_distributed_trace
+from app.services.evidence_sanitizer import (
+    sanitize_persistence_payload,
+    sanitize_reference_text,
+)
 
 logger = structlog.get_logger("agents.log_intelligence")
 
@@ -78,42 +82,54 @@ class LogIntelligenceAgent:
         """
         evidence = {}
 
+        safe_service, _, _ = sanitize_reference_text(service_name, limit=200)
+        safe_timestamp, _, _ = sanitize_reference_text(timestamp_utc, limit=80)
+        safe_correlation, _, _ = sanitize_reference_text(correlation_id, limit=200)
+        safe_related = []
+        for item in related_services or [service_name]:
+            safe_item, _, _ = sanitize_reference_text(item, limit=200)
+            safe_related.append(safe_item)
+
         # 1. Reconstruct distributed trace
         try:
             trace_json = await reconstruct_distributed_trace.ainvoke({
                 "params_json": json.dumps({
-                    "correlation_id": correlation_id,
-                    "timestamp_utc": timestamp_utc,
-                    "services": related_services or [service_name],
+                    "correlation_id": safe_correlation,
+                    "timestamp_utc": safe_timestamp,
+                    "services": safe_related,
                     "window_seconds": 45,
                 })
             })
             trace_data = json.loads(trace_json)
-            evidence["distributed_trace"] = trace_data
+            evidence["distributed_trace"] = sanitize_persistence_payload(trace_data)[0]
         except Exception as exc:
-            logger.debug("trace_reconstruction_failed", error=str(exc))
-            evidence["distributed_trace"] = {"error": str(exc)}
+            logger.debug("trace_reconstruction_failed", error_type=type(exc).__name__)
+            evidence["distributed_trace"] = {"error": type(exc).__name__}
 
         # 2. Detect log rate anomaly for primary service
         try:
             anomaly_json = await detect_log_rate_anomaly.ainvoke({
                 "params_json": json.dumps({
-                    "service_name": service_name,
-                    "timestamp_utc": timestamp_utc,
+                    "service_name": safe_service,
+                    "timestamp_utc": safe_timestamp,
                     "window_minutes": 10,
                     "baseline_days": 7,
                 })
             })
             anomaly_data = json.loads(anomaly_json)
-            evidence["log_anomaly"] = anomaly_data
+            evidence["log_anomaly"] = sanitize_persistence_payload(anomaly_data)[0]
         except Exception as exc:
-            logger.debug("log_anomaly_detection_failed", error=str(exc))
-            evidence["log_anomaly"] = {"error": str(exc)}
+            logger.debug("log_anomaly_detection_failed", error_type=type(exc).__name__)
+            evidence["log_anomaly"] = {"error": type(exc).__name__}
 
         # Build a summary for the calling agent
         trace_summary = evidence.get("distributed_trace", {}).get("causal_summary", "Trace unavailable.")
         anomaly_assessment = evidence.get("log_anomaly", {}).get("assessment", "Anomaly check unavailable.")
-        evidence["log_summary"] = f"Trace: {trace_summary} | Anomaly: {anomaly_assessment}"
+        safe_trace_summary, _, _ = sanitize_reference_text(trace_summary, limit=500)
+        safe_anomaly_assessment, _, _ = sanitize_reference_text(anomaly_assessment, limit=500)
+        evidence["log_summary"] = (
+            f"Trace: {safe_trace_summary} | Anomaly: {safe_anomaly_assessment}"
+        )
 
         trace_ok = "error" not in evidence.get("distributed_trace", {})
         anomaly_ok = "error" not in evidence.get("log_anomaly", {})
@@ -124,8 +140,8 @@ class LogIntelligenceAgent:
             )
             structured_evidence.append(EvidenceRef(
                 source="distributed_trace",
-                ref_id=service_name,
-                excerpt=trace_summary,
+                ref_id=safe_service,
+                excerpt=safe_trace_summary,
                 strength=trace_strength,
                 contribution=trace_contribution,
             ))
@@ -135,12 +151,13 @@ class LogIntelligenceAgent:
             )
             structured_evidence.append(EvidenceRef(
                 source="log_anomaly",
-                ref_id=service_name,
-                excerpt=anomaly_assessment,
+                ref_id=safe_service,
+                excerpt=safe_anomaly_assessment,
                 strength=anomaly_strength,
                 contribution=anomaly_contribution,
             ))
         fallback_used = not (trace_ok and anomaly_ok)
+        evidence["status"] = "complete" if not fallback_used else "failed"
         return validate_agent_contract(
             LogIntelligenceAgentOutput, evidence, agent_name="log_intelligence",
             agent_version="v1", fallback_used=fallback_used,

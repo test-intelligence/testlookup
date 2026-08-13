@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import random
+import uuid
 from typing import Any, cast
 
 import structlog
@@ -1171,7 +1172,7 @@ def run_live_test_analysis(
     Runs on the critical queue (priority=9) so results appear in the dashboard fast.
     Protected by the LLM circuit breaker — skips silently if the provider is down.
     """
-    from app.services.agent import run_triage_agent
+    from app.services.analysis_router import classify_test
     from app.streams.circuit_breaker import LLMCircuitBreaker
 
     async def _run():
@@ -1184,11 +1185,14 @@ def run_live_test_analysis(
             return None
 
         try:
-            result = await run_triage_agent(
-                test_case_id=test_case_id,
-                test_name=test_name,
-                run_id=run_id,
-                project_id=project_id,
+            result = await classify_test(
+                test_case={
+                    "test_case_id": test_case_id,
+                    "test_name": test_name,
+                    "run_id": run_id,
+                    "project_id": project_id,
+                },
+                run_context={"run_id": run_id, "project_id": project_id},
             )
             await LLMCircuitBreaker.record_success()
             return result
@@ -1223,7 +1227,7 @@ def run_ai_analysis(self, test_case_id: str, test_name: str, **kwargs):
     Background task: run the LangChain ReAct agent for a single test case.
     Used by the offline auto-analyzer. Protected by the LLM circuit breaker.
     """
-    from app.services.agent import run_triage_agent
+    from app.services.analysis_router import classify_test
     from app.streams.circuit_breaker import LLMCircuitBreaker
 
     async def _run():
@@ -1232,10 +1236,20 @@ def run_ai_analysis(self, test_case_id: str, test_name: str, **kwargs):
             raise RuntimeError(f"LLM circuit open — retry in {retry_after}s")
 
         try:
-            result = await run_triage_agent(
-                test_case_id=test_case_id,
-                test_name=test_name,
+            test_case = {
+                "test_case_id": test_case_id,
+                "test_name": test_name,
                 **kwargs,
+            }
+            run_context = test_case.pop("run_context", None) or {
+                "run_id": test_case.get("run_id"),
+                "project_id": test_case.get("project_id"),
+            }
+            result = await classify_test(
+                test_case=test_case,
+                history=test_case.get("history"),
+                run_context=run_context,
+                mode=test_case.get("mode"),
             )
             await LLMCircuitBreaker.record_success()
             return result
@@ -1420,7 +1434,11 @@ def run_agent_pipeline(
             _run_async(_do_invalidate())
             logger.debug("[Task %s] Intelligence snapshot invalidated for run %s", self.request.id, test_run_id)
         except Exception as inv_exc:
-            logger.warning("[Task %s] Snapshot invalidation failed (non-blocking): %s", self.request.id, inv_exc)
+            logger.warning(
+                "[Task %s] Snapshot invalidation failed (non-blocking, %s)",
+                self.request.id,
+                type(inv_exc).__name__,
+            )
 
         # EM-1: Dispatch AI summary email after pipeline completes
         if "summary" in stages_done:
@@ -1432,18 +1450,27 @@ def run_agent_pipeline(
                 )
                 logger.debug("[Task %s] AI summary email queued for run %s", self.request.id, test_run_id)
             except Exception as email_exc:
-                logger.warning("[Task %s] AI summary email dispatch failed (non-blocking): %s", self.request.id, email_exc)
+                logger.warning(
+                    "[Task %s] AI summary email dispatch failed (non-blocking, %s)",
+                    self.request.id,
+                    type(email_exc).__name__,
+                )
 
         return {"completed_stages": stages_done, "error_count": len(errors)}
     except Exception as exc:
-        logger.error("[Task %s] Pipeline failed: %s", self.request.id, exc, exc_info=True)
+        safe_error = f"{type(exc).__name__}: agent pipeline failed"
+        logger.error(
+            "[Task %s] Pipeline failed (%s)",
+            self.request.id,
+            type(exc).__name__,
+        )
         try:
             _run_async(_release_duplicate_lock(dedup_key, dedup_owner))
         except Exception as release_exc:
             logger.warning(
-                "[Task %s] Failed to release pipeline dedup lock after error: %s",
+                "[Task %s] Failed to release pipeline dedup lock after error (%s)",
                 self.request.id,
-                release_exc,
+                type(release_exc).__name__,
             )
         if self.request.retries >= self.max_retries:
             # Move to DLQ before the final exception propagates
@@ -1451,12 +1478,39 @@ def run_agent_pipeline(
                 task_name=self.name,
                 task_id=self.request.id,
                 kwargs={"test_run_id": test_run_id, "build_number": build_number},
-                error=str(exc),
+                error=safe_error,
             ))
         countdown = _exponential_backoff(self.request.retries)
-        raise self.retry(exc=exc, countdown=countdown)
+        raise self.retry(exc=RuntimeError(safe_error), countdown=countdown)
 
 
+@celery_app.task(
+    name="app.worker.tasks.resume_agent_pipeline",
+    bind=True,
+    max_retries=0,
+    queue="ai_analysis",
+    time_limit=1800,
+)
+def resume_agent_pipeline(self, pipeline_run_id: str, build_number: str = "resume"):
+    """Resume a failed/partial pipeline under its existing pipeline identity.
+
+    The workflow atomically claims the terminal row, preserves the immutable
+    initial plan, and replays only checksum-authorized completed checkpoints.
+    Duplicate deliveries return ``pipeline_not_resumable`` without spending
+    another model call.
+    """
+    _bind_task_context(self, pipeline_run_id=pipeline_run_id)
+    from app.agents.workflow import resume_pipeline
+
+    try:
+        return _run_async(resume_pipeline(pipeline_run_id, build_number))
+    except Exception as exc:
+        logger.error(
+            "[Task %s] Pipeline resume failed (%s)",
+            self.request.id,
+            type(exc).__name__,
+        )
+        raise RuntimeError(f"{type(exc).__name__}: pipeline resume failed") from None
 @celery_app.task(
     name="app.worker.tasks.run_agent_investigation",
     bind=True,
@@ -1495,10 +1549,172 @@ def run_agent_investigation(self, investigation_id: str):
         # The workflow already finalized the row as failed + wrote the
         # ledger entry; surface the failure to Celery without retrying.
         logger.error(
-            "[Task %s] Investigation %s failed: %s",
-            self.request.id, investigation_id, exc, exc_info=True,
+            "[Task %s] Investigation %s failed (%s)",
+            self.request.id, investigation_id, type(exc).__name__,
         )
         raise
+
+
+@celery_app.task(
+    name="app.worker.tasks.run_agent_child_investigation",
+    bind=True,
+    max_retries=0,
+    queue="agent_children",
+    time_limit=900,
+)
+def run_agent_child_investigation(self, investigation_id: str):
+    """Execute one ID-only, cluster-scoped child on the isolated queue."""
+    _bind_task_context(self, investigation_id=investigation_id)
+    from app.agents.investigator.workflow import run_investigation
+
+    logger.info(
+        "[Task %s] Starting cluster child investigation %s",
+        self.request.id,
+        investigation_id,
+    )
+    try:
+        final_state = _run_async(run_investigation(investigation_id))
+        verdict = (final_state or {}).get("verdict") or {}
+        return {
+            "investigation_id": investigation_id,
+            "primary_cause": verdict.get("primary_cause"),
+        }
+    except Exception as exc:
+        logger.error(
+            "[Task %s] Cluster child investigation %s failed (%s)",
+            self.request.id,
+            investigation_id,
+            type(exc).__name__,
+        )
+        raise
+
+
+
+@celery_app.task(
+    name="app.worker.tasks.resume_agent_child_investigation",
+    bind=True,
+    max_retries=0,
+    queue="agent_children",
+    time_limit=900,
+)
+def resume_agent_child_investigation(self, investigation_id: str):
+    """Resume a failed cluster child under its stable investigation identity."""
+    _bind_task_context(self, investigation_id=investigation_id)
+    from app.agents.investigator.workflow import resume_investigation
+
+    try:
+        return _run_async(resume_investigation(investigation_id))
+    except Exception as exc:
+        logger.error(
+            "cluster_child_resume_failed",
+            investigation_id=investigation_id,
+            error_type=type(exc).__name__,
+        )
+        raise RuntimeError(
+            f"{type(exc).__name__}: child resume failed"
+        ) from None
+
+
+@celery_app.task(
+    name="app.worker.tasks.relay_agent_child_dispatch_outbox",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=120,
+)
+def relay_agent_child_dispatch_outbox(self):
+    """Recover pending/stale cluster-child dispatches from the PG outbox."""
+    _bind_task_context(self)
+    from app.services.cluster_investigation_orchestrator import relay_child_dispatch_outbox
+
+    try:
+        return _run_async(relay_child_dispatch_outbox())
+    except Exception as exc:
+        logger.error(
+            "[Task %s] Cluster child outbox relay failed (%s)",
+            self.request.id,
+            type(exc).__name__,
+        )
+        raise
+
+
+@celery_app.task(
+    name="app.worker.tasks.process_decision_report_supersessions",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=120,
+)
+def process_decision_report_supersessions(self):
+    """Publish terminal child-enriched report versions from durable requests."""
+    _bind_task_context(self)
+    from app.services.decision_report_supersession_service import (
+        process_pending_decision_report_supersessions,
+    )
+
+    try:
+        return _run_async(process_pending_decision_report_supersessions())
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "decision_report_supersession_failed",
+            error_type=type(exc).__name__,
+        )
+        raise RuntimeError(
+            f"{type(exc).__name__}: report supersession failed"
+        ) from None
+
+
+@celery_app.task(
+    name="app.worker.tasks.relay_agent_action_dispatch_outbox",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=120,
+)
+def relay_agent_action_dispatch_outbox(self):
+    """Publish approved action IDs to the guarded action executor."""
+    _bind_task_context(self)
+    from app.services.agent_action_ledger_service import relay_action_dispatch_outbox
+
+    try:
+        return _run_async(relay_action_dispatch_outbox())
+    except Exception as exc:
+        logger.error(
+            "agent_action_dispatch_relay_failed",
+            error_type=type(exc).__name__,
+        )
+        raise RuntimeError(
+            f"{type(exc).__name__}: action dispatch relay failed"
+        ) from None
+
+
+@celery_app.task(
+    name="app.worker.tasks.execute_agent_action",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=120,
+)
+def execute_agent_action(self, project_id: str, action_id: str):
+    """Resolve and consume one action; unregistered effects fail closed."""
+    _bind_task_context(self, project_id=project_id, action_id=action_id)
+    from app.services.agent_action_ledger_service import execute_agent_action as _execute
+
+    try:
+        return _run_async(
+            _execute(
+                project_id=uuid.UUID(str(project_id)),
+                action_id=uuid.UUID(str(action_id)),
+            )
+        )
+    except Exception as exc:
+        logger.error(
+            "agent_action_execution_failed",
+            error_type=type(exc).__name__,
+        )
+        raise RuntimeError(
+            f"{type(exc).__name__}: action execution failed"
+        ) from None
 
 
 @celery_app.task(
@@ -2974,7 +3190,6 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
         closed = 0
         skipped_recent = 0
         errors = 0
-
         async with AsyncSessionLocal() as db:
             active = (
                 await db.execute(
@@ -3083,6 +3298,18 @@ def reap_stuck_agent_pipelines(self, stale_minutes: int = 30) -> dict:
         failed_due_to_stage = 0
         failed_due_to_age = 0
         errors = 0
+        investigator_recovery = {"checked": 0, "reaped": 0}
+
+        try:
+            from app.agents.investigator.workflow import reap_stale_investigations
+
+            investigator_recovery = await reap_stale_investigations()
+        except Exception as exc:  # noqa: BLE001
+            errors += 1
+            logger.warning(
+                "reap_stuck_agent_pipelines: Investigator recovery failed (%s)",
+                type(exc).__name__,
+            )
 
         async with AsyncSessionLocal() as db:
             running = (
@@ -3127,17 +3354,29 @@ def reap_stuck_agent_pipelines(self, stale_minutes: int = 30) -> dict:
                         failed_due_to_stage += 1
                     else:
                         failed_due_to_age += 1
+
+                    # A worker can die after reserving a graph budget but before
+                    # _mark_pipeline_done. Reconcile the durable receipt while
+                    # terminalizing the pipeline so no reservation remains stuck.
+                    from app.services.pipeline_budget_service import reconcile_reaped_pipeline_metadata
+
+                    pipeline.execution_metadata = reconcile_reaped_pipeline_metadata(
+                        dict(pipeline.execution_metadata or {})
+                    )
                 except Exception as exc:
                     errors += 1
                     logger.warning(
-                        "reap_stuck_agent_pipelines: failed for %s: %s",
-                        pipeline.id, exc,
+                        "reap_stuck_agent_pipelines: failed for %s (%s)",
+                        pipeline.id, type(exc).__name__,
                     )
 
             try:
                 await db.commit()
             except Exception as exc:
-                logger.error("reap_stuck_agent_pipelines: commit failed: %s", exc)
+                logger.error(
+                    "reap_stuck_agent_pipelines: commit failed (%s)",
+                    type(exc).__name__,
+                )
                 await db.rollback()
                 errors += 1
 
@@ -3147,6 +3386,7 @@ def reap_stuck_agent_pipelines(self, stale_minutes: int = 30) -> dict:
             "failed_due_to_age": failed_due_to_age,
             "errors": errors,
             "stale_minutes": stale_minutes,
+            "investigator_recovery": investigator_recovery,
         }
 
     logger.info(

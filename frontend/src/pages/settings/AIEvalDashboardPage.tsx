@@ -8,7 +8,9 @@ import { buildAIEvalWorkflow } from '@/components/workflow/workflowPresets';
 import {
   type EvalGateResult,
   createDatasetFromFeedback,
+  getReportEvalReadiness,
   getDashboard,
+  listReportEvalCycles,
   listBaselines,
   listDatasets,
   runEvaluation,
@@ -44,6 +46,15 @@ export default function AIEvalDashboardPage() {
     isLoading: datasetsLoading,
     mutate: mutateDatasets,
   } = useSWR('ai-eval/datasets', () => listDatasets());
+  const { data: reportCycles = [] } = useSWR(
+    'ai-eval/report-cycles',
+    () => listReportEvalCycles({ limit: 10 }),
+  );
+  const readinessCorpus = reportCycles[0]?.corpus_version;
+  const { data: reportReadiness } = useSWR(
+    readinessCorpus ? (['ai-eval/report-cycles/readiness', readinessCorpus] as const) : null,
+    ([, corpus]) => getReportEvalReadiness(corpus),
+  );
   const { data: baselines = [], isLoading: baselinesLoading } = useSWR(
     'ai-eval/baselines',
     () => listBaselines(),
@@ -58,6 +69,8 @@ export default function AIEvalDashboardPage() {
     () => buildAIEvalWorkflow(dashboard, baselines, gateResult),
     [dashboard, baselines, gateResult],
   );
+  const latestActionCount = reportCycles[0]?.metrics?.action_count;
+  const latestActionResolution = reportCycles[0]?.metrics?.action_resolution_rate;
 
   const handleGenerateDataset = async () => {
     try {
@@ -228,6 +241,77 @@ export default function AIEvalDashboardPage() {
                   )}
                 </div>
               )}
+
+              <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-[var(--color-text)]">Decision Report Evaluation</h2>
+                    <p className="text-xs text-[var(--color-text-muted)]">Durable corpus-cycle evidence for pilot gates</p>
+                  </div>
+                  {reportCycles[0] && (
+                    <span className={clsx('px-2 py-1 rounded text-xs font-medium', {
+                      'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': reportCycles[0].status === 'pass',
+                      'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)]': reportCycles[0].status === 'warn',
+                      'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]': reportCycles[0].status === 'fail',
+                    })}>
+                      {reportCycles[0].status.toUpperCase()}
+                    </span>
+                  )}
+                </div>
+                {reportCycles.length ? (
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--color-text)]">{reportCycles[0].report_count}</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Reports in latest cycle</div>
+                    </div>
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--color-text)]">{reportCycles[0].consecutive_passes}</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Consecutive passes</div>
+                    </div>
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--color-text)]">{reportCycles[0].corpus_version}</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Corpus version</div>
+                    </div>
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--color-text)]">{reportCycles.length}</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Recorded cycles</div>
+                    </div>
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--color-text)]">
+                        {typeof latestActionCount === 'number' ? latestActionCount : 'N/A'}
+                      </div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Proposed actions</div>
+                      {typeof latestActionResolution === 'number' && (
+                        <div className="text-[10px] text-[var(--color-text-muted)]">
+                          {`${(latestActionResolution * 100).toFixed(0)}% resolved`}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-[var(--color-text-muted)]">No report evaluation cycles recorded yet.</p>
+                )}
+                {reportReadiness && (
+                  <div className={clsx(
+                    'mt-4 rounded border p-3 text-xs',
+                    reportReadiness.status === 'ready'
+                      ? 'border-[var(--status-passed-bd)]/50 bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]'
+                      : 'border-[var(--status-broken-bd)]/50 bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]',
+                  )}>
+                    <div className="font-semibold">
+                      Pilot readiness: {reportReadiness.status === 'ready' ? 'READY' : 'NOT READY'}
+                    </div>
+                    <div className="mt-1">
+                      Same-corpus passes: {reportReadiness.consecutive_passes}/{reportReadiness.required_consecutive_passes}
+                      {' · '}
+                      Qualified-user utility: {reportReadiness.utility_rate == null ? 'not evaluated' : `${(reportReadiness.utility_rate * 100).toFixed(0)}%`}
+                    </div>
+                    {reportReadiness.reasons.length > 0 && (
+                      <div className="mt-1">Reasons: {reportReadiness.reasons.join(', ')}</div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {/* Drift detection */}
               {dashboard.drift && (

@@ -39,13 +39,19 @@ import time
 from typing import Any, Optional
 
 from app.agents.base import BaseAgent
-from app.agents.investigator.persistence import is_cancel_requested
+from app.agents.investigator.persistence import (
+    is_cancel_requested,
+    reserve_investigation_budget,
+    settle_investigation_budget,
+)
 from app.core.config import settings
 from app.models.agent_contracts import (
     InvestigatorSynthesisOutput,
     validate_agent_contract,
 )
-from app.services.llm_pricing import TokenUsage, extract_token_usage
+from app.services.llm_pricing import TokenUsage, estimate_cost, extract_token_usage
+from app.services.resilience import estimate_token_count
+from app.services.evidence_sanitizer import sanitize_persistence_payload
 
 CONFLICT_MARGIN = 10
 UNKNOWN_CONFIDENCE = 25
@@ -160,7 +166,7 @@ class SynthesisAgent(BaseAgent):
 
     async def _narrative_with_llm(
         self, primary_cause: str, hypotheses: list[dict[str, Any]], state: dict[str, Any]
-    ) -> tuple[Optional[str], TokenUsage]:
+    ) -> tuple[Optional[str], TokenUsage, Optional[str]]:
         """One bounded narrative call. Returns (narrative|None, usage).
 
         The input/output split is preserved so the call can be priced: output
@@ -168,47 +174,99 @@ class SynthesisAgent(BaseAgent):
         a collapsed total cannot be costed correctly.
         """
         if settings.AI_OFFLINE_MODE:
-            return None, TokenUsage()
-        budget = state.get("budget") or {}
-        # Respect the LLM-call budget across the whole investigation: the five
-        # hypothesis nodes used at most one call each.
-        used = int(state.get("spend_llm_calls") or 0)
-        if used + 1 > int(budget.get("max_llm_calls", 0)):
-            return None, TokenUsage()
-        if int(state.get("spend_tokens") or 0) >= int(budget.get("max_tokens", 0)):
-            return None, TokenUsage()
+            return None, TokenUsage(), None
         remaining = float(state.get("deadline_ts", 0)) - time.monotonic()
         if remaining <= 5:
-            return None, TokenUsage()
+            return None, TokenUsage(), "wall_clock_budget_exhausted"
+        prompt = ""
+        reservation = None
+        reservation_attempted = False
+        attempted = False
+        usage = TokenUsage()
+        async def settle_safely() -> Optional[str]:
+            if reservation is None or not reservation.allowed:
+                return None
+            try:
+                observed_cost = estimate_cost(
+                    settings.LLM_PROVIDER,
+                    settings.LLM_MODEL,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                )
+                settled = await settle_investigation_budget(
+                    str(state.get("investigation_id") or ""),
+                    reservation,
+                    actual_llm_calls=1 if attempted else 0,
+                    actual_tokens=usage.total_tokens,
+                    actual_cost_usd=observed_cost.cost_usd,
+                    cost_source=observed_cost.source,
+                )
+                return None if settled else "budget_settlement_failed"
+            except Exception as exc:  # noqa: BLE001 - preserve deterministic result
+                self.logger.warning(
+                    "synthesis_budget_settlement_failed",
+                    error_type=type(exc).__name__,
+                )
+                return "budget_settlement_failed"
         try:
             from app.services.llm_factory import get_llm
             from app.services.prompt_registry import get_prompt_text
 
             bundle = state.get("bundle") or {}
             run = bundle.get("run") or {}
+            safe_hypotheses, _ = sanitize_persistence_payload([
+                {k: h.get(k) for k in ("id", "status", "confidence", "summary")}
+                for h in hypotheses
+            ])
+            safe_run_context, _ = sanitize_persistence_payload({
+                "build_number": run.get("build_number"),
+                "branch": run.get("branch"),
+                "failed_tests": run.get("failed_tests"),
+                "broken_tests": run.get("broken_tests"),
+                "total_tests": run.get("total_tests"),
+            })
             prompt = get_prompt_text("investigator_synthesis_narrative").format(
                 primary_cause=primary_cause,
                 hypotheses_json=json.dumps(
-                    [
-                        {k: h.get(k) for k in ("id", "status", "confidence", "summary")}
-                        for h in hypotheses
-                    ],
+                    safe_hypotheses,
                     sort_keys=True,
                     default=str,
                 ),
                 run_context=json.dumps(
-                    {
-                        "build_number": run.get("build_number"),
-                        "branch": run.get("branch"),
-                        "failed_tests": run.get("failed_tests"),
-                        "broken_tests": run.get("broken_tests"),
-                        "total_tests": run.get("total_tests"),
-                    },
+                    safe_run_context,
                     sort_keys=True,
                     default=str,
                 ),
             )
+            token_ceiling = len(prompt.encode("utf-8")) + int(settings.LLM_MAX_TOKENS)
+            reserved_cost = estimate_cost(
+                settings.LLM_PROVIDER,
+                settings.LLM_MODEL,
+                output_tokens=token_ceiling,
+            )
+            reservation_attempted = True
+            reservation = await reserve_investigation_budget(
+                str(state.get("investigation_id") or ""),
+                reservation_id=f"investigation:{state.get('investigation_id')}:synthesis",
+                llm_calls=1,
+                tokens=token_ceiling,
+                reserved_cost_usd=reserved_cost.cost_usd,
+                cost_source=f"reserved_{reserved_cost.source}",
+                project_id=str(state.get("project_id") or ""),
+                run_id=str(state.get("run_id") or ""),
+                pipeline_run_id=str(state.get("pipeline_run_id") or ""),
+                stage_name=self.stage_name,
+            )
+            if not reservation.allowed:
+                return None, TokenUsage(), reservation.stop_reason
+            # A cancellation may arrive after reservation admission. Avoid a
+            # provider call and release the reservation as unattempted.
+            if await is_cancel_requested(str(state.get("investigation_id") or "")):
+                return None, TokenUsage(), (await settle_safely()) or "cancelled"
             llm = await get_llm(temperature=0.0)
+            if await is_cancel_requested(str(state.get("investigation_id") or "")):
+                return None, TokenUsage(), (await settle_safely()) or "cancelled"
+            attempted = True
             response = await asyncio.wait_for(
                 llm.ainvoke(prompt), timeout=min(_LLM_CALL_TIMEOUT_S, remaining),
             )
@@ -228,13 +286,43 @@ class SynthesisAgent(BaseAgent):
                     parsed = json.loads(text[start : end + 1])
                     narrative = str(parsed.get("narrative") or "").strip()
                     if narrative:
-                        return narrative[:2000], usage
+                        return narrative[:2000], usage, await settle_safely()
                 except (ValueError, TypeError):
                     pass
-            return None, usage
+            settlement_reason = await settle_safely()
+            return (
+                None,
+                usage,
+                settlement_reason
+                or (
+                    "budget_reservation_failed"
+                    if reservation_attempted and reservation is None
+                    else None
+                ),
+            )
         except Exception as exc:  # noqa: BLE001 — narrative falls back to template
-            self.logger.debug("synthesis_llm_narrative_failed", error=str(exc))
-            return None, TokenUsage()
+            self.logger.debug(
+                "synthesis_llm_narrative_failed", error_type=type(exc).__name__
+            )
+            if attempted and reservation is not None:
+                prompt_tokens = estimate_token_count(prompt)
+                usage = TokenUsage(
+                    input_tokens=prompt_tokens,
+                    output_tokens=max(0, reservation.reserved_tokens - prompt_tokens),
+                    source="estimated",
+                    details={"reason": "provider_outcome_unknown"},
+                )
+            settlement_reason = await settle_safely()
+            return (
+                None,
+                usage,
+                settlement_reason
+                or (
+                    "budget_reservation_failed"
+                    if reservation_attempted and reservation is None
+                    else None
+                ),
+            )
 
     async def run(self, state: dict) -> dict:
         pipeline_run_id = state.get("pipeline_run_id", "")
@@ -264,7 +352,22 @@ class SynthesisAgent(BaseAgent):
         exhausted = [
             h.get("id")
             for h in hypotheses
-            if h.get("status") == "inconclusive" and "budget exhausted" in str(h.get("summary", "")).lower()
+            if (
+                h.get("llm_enrichment_stop_reason")
+                in {
+                    "llm_call_budget_exhausted",
+                    "token_budget_exhausted",
+                    "cost_budget_exhausted",
+                    "wall_clock_budget_exhausted",
+                    "budget_settlement_failed",
+                    "budget_overrun",
+                    "reservation_lease_expired",
+                }
+                or (
+                    h.get("status") == "inconclusive"
+                    and "budget exhausted" in str(h.get("summary", "")).lower()
+                )
+            )
         ]
         over_deadline = time.monotonic() >= float(state.get("deadline_ts", float("inf")))
         budget_note: Optional[str] = None
@@ -275,7 +378,15 @@ class SynthesisAgent(BaseAgent):
                 f"{len(exhausted)} hypothesis(es) were left inconclusive{named}."
             )
 
-        narrative, usage = await self._narrative_with_llm(primary_cause, hypotheses, state)
+        narrative, usage, synthesis_stop_reason = await self._narrative_with_llm(
+            primary_cause, hypotheses, state
+        )
+        if synthesis_stop_reason:
+            if not budget_note:
+                budget_note = (
+                    "Note: the investigation hit its budget — synthesis LLM "
+                    f"enrichment was skipped ({synthesis_stop_reason})."
+                )
         llm_calls = 1 if usage.total_tokens else 0
         if narrative is not None and budget_note:
             narrative = f"{narrative} {budget_note}"
@@ -291,6 +402,21 @@ class SynthesisAgent(BaseAgent):
             "recommended_actions": list(
                 RECOMMENDED_ACTIONS.get(primary_cause, RECOMMENDED_ACTIONS["unknown"])
             ),
+            "degradation": {
+                "degraded": bool(exhausted or synthesis_stop_reason),
+                "budget_exhausted": bool(
+                    exhausted
+                    or synthesis_stop_reason
+                    in {
+                        "llm_call_budget_exhausted",
+                        "token_budget_exhausted",
+                        "cost_budget_exhausted",
+                        "wall_clock_budget_exhausted",
+                    }
+                ),
+                "hypotheses_with_stops": [str(item) for item in exhausted],
+                "synthesis_stop_reason": synthesis_stop_reason,
+            },
         }
 
         # {"provider","model"} once ANY LLM weighing happened this run.
@@ -316,6 +442,7 @@ class SynthesisAgent(BaseAgent):
                 "confidence": confidence,
                 "validated": [h.get("id") for h in hypotheses if h.get("status") == "validated"],
                 "budget_note": budget_note,
+                "synthesis_stop_reason": synthesis_stop_reason,
             },
         )
 
@@ -339,7 +466,11 @@ class SynthesisAgent(BaseAgent):
 
         await self.mark_stage_done(
             pipeline_run_id,
-            result_data={"primary_cause": primary_cause, "confidence": confidence},
+            result_data={
+                "primary_cause": primary_cause,
+                "confidence": confidence,
+                "stop_reason": synthesis_stop_reason,
+            },
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
             cost_usd=synthesis_cost,

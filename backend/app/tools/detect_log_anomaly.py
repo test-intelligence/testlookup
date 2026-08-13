@@ -2,7 +2,7 @@
 Tool: Detect log rate anomalies by comparing error/warn rates against historical baseline.
 """
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from langchain_core.tools import tool
 
@@ -14,7 +14,7 @@ logger = logging.getLogger("tools.detect_log_anomaly")
 
 
 async def _count_splunk_events(service: str, level: str, start: str, end: str) -> int:
-    if not settings.SPLUNK_ENABLED or not settings.SPLUNK_BASE_URL:
+    if settings.AI_OFFLINE_MODE or not settings.SPLUNK_ENABLED or not settings.SPLUNK_BASE_URL:
         return 0
     # Phase 4: Sanitise query components
     service = sanitize_service_name(service)
@@ -36,7 +36,7 @@ async def _count_splunk_events(service: str, level: str, start: str, end: str) -
                 result = json.loads(line).get("result", {})
                 return int(result.get("count", 0))
     except Exception as exc:
-        logger.debug("Splunk count query failed: %s", exc)
+        logger.debug("splunk_count_query_failed", error_type=type(exc).__name__)
     return 0
 
 
@@ -58,8 +58,8 @@ async def detect_log_rate_anomaly(params_json: str) -> str:
 
     try:
         params = json.loads(params_json)
-    except (json.JSONDecodeError, AttributeError) as exc:
-        return json.dumps({"error": f"Invalid JSON: {exc}"})
+    except (json.JSONDecodeError, AttributeError):
+        return json.dumps({"error": "invalid_json"})
 
     service: str = sanitize_service_name(params.get("service_name", ""))
     timestamp_str: str = sanitize_query_param(params.get("timestamp_utc", ""))
@@ -67,7 +67,7 @@ async def detect_log_rate_anomaly(params_json: str) -> str:
     baseline_days: int = int(params.get("baseline_days", 7))
     levels: list[str] = params.get("levels", ["ERROR", "WARN"])
 
-    if not settings.SPLUNK_ENABLED:
+    if settings.AI_OFFLINE_MODE or not settings.SPLUNK_ENABLED:
         return json.dumps({
             "anomaly_detected": False,
             "assessment": "Splunk integration disabled — cannot measure log rate anomaly.",
@@ -76,7 +76,7 @@ async def detect_log_rate_anomaly(params_json: str) -> str:
     try:
         ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
     except (ValueError, TypeError):
-        ts = datetime.now(timezone.utc)
+        return json.dumps({"error": "invalid_timestamp"})
 
     window_start = (ts - timedelta(minutes=window_min)).strftime("%Y-%m-%dT%H:%M:%S")
     window_end = ts.strftime("%Y-%m-%dT%H:%M:%S")

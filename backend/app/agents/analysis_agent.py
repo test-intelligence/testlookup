@@ -620,6 +620,7 @@ class AnalysisAgent(BaseAgent):
                             error_message=meta.get("error_message"),
                             stack_trace=meta.get("stack_trace"),
                             pipeline_run_id=pipeline_run_id,
+                            run_id=str(state.get("test_run_id")) if state.get("test_run_id") else None,
                             # Scope the analysis caches to this tenant.
                             project_id=str(state.get("project_id")) if state.get("project_id") else None,
                             # Feeds the recall_similar_failures tool's

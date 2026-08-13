@@ -1,0 +1,109 @@
+# Dedicated bounded sub-agent worker. Parent decision pipelines may wait for a
+# selected cluster child, so this queue must never share their worker pool.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testlookup-worker-children
+  namespace: testlookup
+  labels:
+    app: testlookup-worker-children
+    app.kubernetes.io/component: worker
+    queue: agent_children
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: testlookup-worker-children
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: /metrics
+      labels:
+        app: testlookup-worker-children
+        app.kubernetes.io/component: worker
+        queue: agent_children
+    spec:
+      serviceAccountName: testlookup-sa
+      terminationGracePeriodSeconds: 960
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z testlookup-redis 6379; do
+                echo "wait-for-redis: Redis unavailable, retrying in 2s"
+                sleep 2
+              done
+      containers:
+        - name: worker
+          image: testlookup/backend:0.0.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - celery
+            - -A
+            - app.worker.celery_app
+            - worker
+            - --loglevel=info
+            - --concurrency=1
+            - --prefetch-multiplier=1
+            - -Q
+            - agent_children
+            - --max-tasks-per-child=25
+            - --hostname=agent-children@%h
+          ports:
+            - name: metrics
+              containerPort: 9100
+          envFrom:
+            - configMapRef:
+                name: testlookup-config
+            - secretRef:
+                name: testlookup-secrets
+          env:
+            - name: PROMETHEUS_MULTIPROC_DIR
+              value: /tmp/prometheus-multiproc
+          volumeMounts:
+            - name: prometheus-multiproc
+              mountPath: /tmp/prometheus-multiproc
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          livenessProbe:
+            exec:
+              command: [sh, -c, "pgrep -f 'celery.*worker' > /dev/null"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - >-
+                  celery -A app.worker.celery_app inspect ping
+                  --destination "agent-children@$(hostname)" --timeout=10
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 15
+            failureThreshold: 3
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: prometheus-multiproc
+          emptyDir: {}

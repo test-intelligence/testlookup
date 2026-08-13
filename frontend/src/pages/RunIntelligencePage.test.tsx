@@ -9,7 +9,7 @@
  * - Failure cluster cards
  * - Executive summary text from layer1
  */
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Provenance, RunModeSummary, ScoringModel } from '@/services/runIntelligenceService'
@@ -223,10 +223,203 @@ describe('RunIntelligencePage', () => {
     // sync. Wipe between tests so one test's recorded decision doesn't
     // leak into the next.
     try {
+      localStorage.removeItem('tl.runIntel.persona')
       Object.keys(localStorage)
         .filter(k => k.startsWith('tl.runIntel.decision.'))
         .forEach(k => localStorage.removeItem(k))
     } catch { /* ignore */ }
+  })
+
+  it('wires terminal decision fields before the release verdict', () => {
+    const intelligence = structuredClone(MOCK_INTELLIGENCE) as typeof MOCK_INTELLIGENCE & {
+      structured_summary: typeof MOCK_INTELLIGENCE.structured_summary & Record<string, unknown>
+    }
+    intelligence.structured_summary.decision_intelligence = {
+      schema_version: 1,
+      status: 'complete',
+      generated_at: '2026-08-11T19:00:00Z',
+      metrics: { total_tests: 200, failed_tests: 15, pass_rate: 92.5 },
+      failure_clusters: [],
+      deep_findings: {},
+      flaky_findings: [],
+      test_health_findings: [],
+      release_decision: { recommendation: 'NO_GO', risk_score: 68 },
+      quality_review: {
+        missing_or_failed_specialists: [],
+        contradictions: [],
+        gap_report: null,
+        refined_report: null,
+        requires_human_review: false,
+      },
+      source_stages: ['decision_report'],
+      evidence_bundle_sha256: 'a'.repeat(64),
+      verification: { status: 'passed', checks: [], repairs: [] },
+    }
+    intelligence.structured_summary.decision_report_verification = {
+      status: 'passed', checks: [],
+    }
+    intelligence.structured_summary.latest_decision_attempt = {
+      pipeline_run_id: 'pipeline-1',
+      status: 'published',
+      verification_status: 'passed',
+      at: '2026-08-11T19:01:00Z',
+    }
+    mockHooks({ intelligence })
+
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const panel = screen.getByRole('status')
+    const verdict = screen.getByText(/ship blocked/i).closest('section')
+    expect(panel.compareDocumentPosition(verdict as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByText('Verified', { selector: 'span' })).toBeTruthy()
+  })
+
+  it('ignores a persisted local decision when terminal verification rejects the latest attempt', () => {
+    localStorage.setItem('tl.runIntel.decision.run-abc', JSON.stringify({
+      action: 'OVERRIDE', gate: 'GO', label: 'Override applied by you', at: '2026-08-11T19:00:00Z',
+    }))
+    const intelligence = structuredClone(MOCK_INTELLIGENCE) as typeof MOCK_INTELLIGENCE & {
+      structured_summary: typeof MOCK_INTELLIGENCE.structured_summary & Record<string, unknown>
+    }
+    intelligence.structured_summary.decision_intelligence = null
+    intelligence.structured_summary.decision_report_verification = { status: 'failed', checks: [] }
+    intelligence.structured_summary.latest_decision_attempt = {
+      pipeline_run_id: 'pipeline-2', status: 'rejected', verification_status: 'failed', at: '2026-08-11T19:02:00Z',
+    }
+    mockHooks({ intelligence })
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes><Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} /></Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(/No verified decision report is available/)).toBeInTheDocument()
+    expect(screen.queryByText(/Override applied by you/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /Override gate/i })).toBeNull()
+    expect(screen.getByText(/awaiting evidence/i)).toBeInTheDocument()
+  })
+
+  it('uses only terminal-report verdict provenance and ignores persona and legacy decision fields', () => {
+    const intelligence = structuredClone(MOCK_INTELLIGENCE) as typeof MOCK_INTELLIGENCE & {
+      structured_summary: typeof MOCK_INTELLIGENCE.structured_summary & Record<string, unknown>
+    }
+    intelligence.structured_summary.decision_intelligence = {
+      schema_version: 1, status: 'complete', generated_at: '2026-08-11T19:00:00Z',
+      metrics: {}, failure_clusters: [], deep_findings: {}, flaky_findings: [], test_health_findings: [],
+      release_decision: {
+        recommendation: 'GO', risk_score: 12, reasoning: 'Terminal verified rationale.',
+        dimension_scores: { criticality: 80, impact: 40 },
+      },
+      quality_review: { missing_or_failed_specialists: [], contradictions: [], gap_report: null, refined_report: null, requires_human_review: false },
+      source_stages: ['decision_report'], evidence_bundle_sha256: 'a'.repeat(64),
+      verification: { status: 'passed', checks: [], repairs: [] },
+    }
+    intelligence.structured_summary.decision_report_verification = { status: 'passed', checks: [] }
+    intelligence.structured_summary.latest_decision_attempt = {
+      pipeline_run_id: 'pipeline-1', status: 'published', verification_status: 'passed', at: '2026-08-11T19:01:00Z',
+    }
+    mockHooks({ intelligence })
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes><Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} /></Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getAllByText(/^Go$/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Terminal verified rationale.').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole('tab', { name: 'Developer' }))
+    expect(screen.getAllByText('Terminal verified rationale.').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Developer summary')).toBeNull()
+    expect(screen.queryByText(/PaymentSuite suite/)).toBeNull()
+    expect(screen.getByText(/Dimension scores will appear/)).toBeInTheDocument()
+  })
+
+  it('does not let a saved legacy override mask a newly verified terminal report', () => {
+    localStorage.setItem('tl.runIntel.decision.run-abc', JSON.stringify({
+      action: 'OVERRIDE', gate: 'GO', label: 'Override applied by you', at: '2026-08-10T19:00:00Z',
+    }))
+    const intelligence = structuredClone(MOCK_INTELLIGENCE) as typeof MOCK_INTELLIGENCE & {
+      structured_summary: typeof MOCK_INTELLIGENCE.structured_summary & Record<string, unknown>
+    }
+    intelligence.structured_summary.decision_intelligence = {
+      schema_version: 1, status: 'complete', generated_at: '2026-08-11T19:00:00Z',
+      metrics: {}, failure_clusters: [], deep_findings: {}, flaky_findings: [], test_health_findings: [],
+      release_decision: { recommendation: 'NO_GO', risk_score: 80, reasoning: 'New verified verdict.' },
+      quality_review: { missing_or_failed_specialists: [], contradictions: [], gap_report: null, refined_report: null, requires_human_review: false },
+      source_stages: ['decision_report'], evidence_bundle_sha256: 'a'.repeat(64),
+      verification: { status: 'passed', checks: [], repairs: [] },
+    }
+    intelligence.structured_summary.decision_report_verification = { status: 'passed', checks: [] }
+    intelligence.structured_summary.latest_decision_attempt = {
+      pipeline_run_id: 'pipeline-3', status: 'published', verification_status: 'passed', at: '2026-08-11T19:01:00Z',
+    }
+    mockHooks({ intelligence })
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes><Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} /></Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getAllByText(/No-Go/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('New verified verdict.').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/Override applied by you/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /Override gate/i })).toBeNull()
+  })
+
+  it('shows unavailable instead of zero when a verified terminal report has no risk score', () => {
+    const intelligence = structuredClone(MOCK_INTELLIGENCE) as typeof MOCK_INTELLIGENCE & {
+      structured_summary: typeof MOCK_INTELLIGENCE.structured_summary & Record<string, unknown>
+    }
+    intelligence.structured_summary.decision_intelligence = {
+      schema_version: 1, status: 'complete', generated_at: '2026-08-11T19:00:00Z',
+      metrics: {}, failure_clusters: [], deep_findings: {}, flaky_findings: [], test_health_findings: [],
+      release_decision: { recommendation: 'NO_GO', reasoning: 'Risk source unavailable.' },
+      quality_review: { missing_or_failed_specialists: [], contradictions: [], gap_report: null, refined_report: null, requires_human_review: false },
+      source_stages: ['decision_report'], evidence_bundle_sha256: 'a'.repeat(64),
+      verification: { status: 'passed', checks: [], repairs: [] },
+    }
+    intelligence.structured_summary.decision_report_verification = { status: 'passed', checks: [] }
+    intelligence.structured_summary.latest_decision_attempt = {
+      pipeline_run_id: 'pipeline-1', status: 'published', verification_status: 'passed', at: '2026-08-11T19:01:00Z',
+    }
+    mockHooks({ intelligence })
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes><Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} /></Routes>
+      </MemoryRouter>,
+    )
+    const meter = screen.getByText('Composite risk score').parentElement
+    expect(within(meter as HTMLElement).getByText('—')).toBeInTheDocument()
+  })
+
+  it('does not expose local decision actions for a stale retained report', () => {
+    const intelligence = structuredClone(MOCK_INTELLIGENCE) as typeof MOCK_INTELLIGENCE & {
+      structured_summary: typeof MOCK_INTELLIGENCE.structured_summary & Record<string, unknown>
+    }
+    intelligence.structured_summary.decision_intelligence = {
+      schema_version: 1, status: 'complete', generated_at: '2026-08-11T19:00:00Z',
+      metrics: {}, failure_clusters: [], deep_findings: {}, flaky_findings: [], test_health_findings: [],
+      release_decision: { recommendation: 'NO_GO', risk_score: 80, reasoning: 'Last verified rationale.' },
+      quality_review: { missing_or_failed_specialists: [], contradictions: [], gap_report: null, refined_report: null, requires_human_review: false },
+      source_stages: ['decision_report'], evidence_bundle_sha256: 'a'.repeat(64),
+      verification: { status: 'passed', checks: [], repairs: [] },
+    }
+    intelligence.structured_summary.decision_report_verification = { status: 'failed', checks: [] }
+    intelligence.structured_summary.latest_decision_attempt = {
+      pipeline_run_id: 'pipeline-2', status: 'rejected', verification_status: 'failed', at: '2026-08-11T19:02:00Z',
+    }
+    mockHooks({ intelligence })
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes><Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} /></Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(/Showing the last verified report/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Override gate/i })).toBeNull()
+    expect(screen.getByRole('link', { name: /Review policy and overrides/i })).toHaveAttribute('href', '/release-gate/run-abc')
   })
 
   it('shows loading spinner while data is loading', async () => {

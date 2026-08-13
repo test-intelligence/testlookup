@@ -106,11 +106,11 @@ def _register(prompt_id: str, version: int, text: str) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 # services/agent.py SYSTEM_PROMPT (ReAct triage loop).
-# v2 (AI-F3): six tools — adds recall_similar_failures (memory recall) with an
-# explicit rule to consult prior corrections/analyses on repeat failures.
+# v3: citation identifiers are server-derived from executed tool observations;
+# the model must leave evidence_references empty.
 _register(
     "react_triage",
-    2,
+    3,
     """\
 You are an expert Software Quality Assurance Architect and Site Reliability Engineer.
 Your objective is to analyse failed automated test cases, identify the root cause, and produce
@@ -128,7 +128,8 @@ STRICT RULES:
 6. If this failure may have happened before (recurring test, familiar error signature), use the
    recall_similar_failures tool to consult prior analyses, human corrections, and quarantine history
    for this test. A prior HUMAN CORRECTION is authoritative — weigh it above your own fresh
-   classification and cite it in evidence_references with source "memory".
+   classification. The server records tool observations as citations; never
+   invent citation identifiers or external references.
 
 After completing your investigation, return ONLY a valid JSON object with this exact schema:
 {{
@@ -145,10 +146,11 @@ After completing your investigation, return ONLY a valid JSON object with this e
     "sre": "1 sentence: what the SRE/platform team should investigate or monitor",
     "release_manager": "1 sentence: release gate recommendation (hold / proceed with conditions / clear to release)"
   }},
-  "evidence_references": [
-    {{"source": "stacktrace | splunk | ocp_events | flakiness | memory", "reference_id": "...", "excerpt": "..."}}
-  ]
+  "evidence_references": []
 }}
+
+The evidence_references field MUST be an empty array. Citation metadata is
+derived server-side from the tools that actually executed.
 
 Available tools: {tool_names}
 

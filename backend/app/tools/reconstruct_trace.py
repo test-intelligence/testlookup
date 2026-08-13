@@ -13,7 +13,7 @@ logger = logging.getLogger("tools.reconstruct_trace")
 
 
 async def _query_splunk(spl: str, earliest: str = "-10m", latest: str = "now") -> list[dict]:
-    if not settings.SPLUNK_ENABLED or not settings.SPLUNK_BASE_URL:
+    if settings.AI_OFFLINE_MODE or not settings.SPLUNK_ENABLED or not settings.SPLUNK_BASE_URL:
         return []
     try:
         client = get_http_client()
@@ -36,7 +36,7 @@ async def _query_splunk(spl: str, earliest: str = "-10m", latest: str = "now") -
         import json
         return [json.loads(ln).get("result", {}) for ln in lines if ln]
     except Exception as exc:
-        logger.debug("Splunk query failed: %s", exc)
+        logger.debug("splunk_query_failed", error_type=type(exc).__name__)
         return []
 
 
@@ -55,19 +55,19 @@ async def reconstruct_distributed_trace(params_json: str) -> str:
     Returns: JSON with trace_steps (service, timestamp, level, message) and causal_summary.
     """
     import json
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     try:
         params = json.loads(params_json)
-    except (json.JSONDecodeError, AttributeError) as exc:
-        return json.dumps({"error": f"Invalid JSON: {exc}"})
+    except (json.JSONDecodeError, AttributeError):
+        return json.dumps({"error": "invalid_json"})
 
     correlation_id: str = params.get("correlation_id", "")
     timestamp_str: str = params.get("timestamp_utc", "")
     services: list[str] = params.get("services", [])
     window: int = int(params.get("window_seconds", 30))
 
-    if not settings.SPLUNK_ENABLED:
+    if settings.AI_OFFLINE_MODE or not settings.SPLUNK_ENABLED:
         return json.dumps({
             "trace_steps": [],
             "causal_summary": "Splunk integration is disabled. Enable SPLUNK_ENABLED to use distributed trace reconstruction.",
@@ -78,7 +78,7 @@ async def reconstruct_distributed_trace(params_json: str) -> str:
     try:
         ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
     except (ValueError, TypeError):
-        ts = datetime.now(timezone.utc)
+        return json.dumps({"error": "invalid_timestamp"})
 
     earliest = (ts - timedelta(seconds=window)).strftime("%Y-%m-%dT%H:%M:%S")
     latest = (ts + timedelta(seconds=window)).strftime("%Y-%m-%dT%H:%M:%S")

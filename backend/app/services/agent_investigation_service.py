@@ -41,6 +41,7 @@ from app.models.postgres import (
     AgentInvestigation,
     AgentPolicy,
     AgentRun,
+    Project,
     TestRun,
 )
 
@@ -53,11 +54,20 @@ KNOWN_AGENT_IDS: tuple[str, ...] = (AGENT_ID_INVESTIGATOR,)
 VALID_MODES: tuple[str, ...] = ("shadow", "suggest", "act")
 
 # Default policy budgets when no AgentPolicy row exists (API contract).
-DEFAULT_BUDGETS: dict[str, int] = {
+DEFAULT_BUDGETS: dict[str, int | float] = {
     "max_runs_per_day": 10,
     "max_llm_calls_per_run": 30,
     "max_tokens_per_run": 60000,
+    "max_cost_usd_per_run": 5.0,
     "max_seconds_per_run": 300,
+    "max_cluster_children_per_run": 1,
+    "max_cluster_members_per_child": 50,
+    "max_cluster_child_llm_calls_per_parent": 6,
+    "max_cluster_child_tokens_per_parent": 12000,
+    "max_cluster_child_cost_usd_per_parent": 2.0,
+    "max_cluster_child_seconds_per_parent": 180,
+    "max_active_cluster_children_per_project": 2,
+    "max_cluster_children_per_day": 20,
 }
 
 # The five hypotheses, in fixed presentation order. Seeded as "pending"
@@ -101,13 +111,15 @@ class InvestigationDailyBudgetExceeded(Exception):
 # ── Policies ─────────────────────────────────────────────────────────────────
 
 
-def _effective_budgets(raw: Optional[dict]) -> dict[str, int]:
+def _effective_budgets(raw: Optional[dict]) -> dict[str, int | float]:
     """Merge a stored budgets JSONB over the defaults (missing keys resolve)."""
     budgets = dict(DEFAULT_BUDGETS)
     for key in DEFAULT_BUDGETS:
         value = (raw or {}).get(key)
+        if isinstance(value, bool):
+            continue
         if isinstance(value, (int, float)) and value >= 0:
-            budgets[key] = int(value)
+            budgets[key] = float(value) if isinstance(DEFAULT_BUDGETS[key], float) else int(value)
     return budgets
 
 
@@ -184,12 +196,13 @@ async def upsert_policy(
     return row
 
 
-def run_budget_from_policy(policy: dict[str, Any]) -> dict[str, int]:
+def run_budget_from_policy(policy: dict[str, Any]) -> dict[str, int | float]:
     """Per-run budget (InvestigationDetail.budget shape) from a policy dict."""
     budgets = _effective_budgets(policy.get("budgets"))
     return {
         "max_llm_calls": budgets["max_llm_calls_per_run"],
         "max_tokens": budgets["max_tokens_per_run"],
+        "max_cost_usd": budgets["max_cost_usd_per_run"],
         "max_seconds": budgets["max_seconds_per_run"],
     }
 
@@ -221,6 +234,7 @@ async def get_active_investigation_for_run(
         select(AgentInvestigation)
         .where(
             AgentInvestigation.run_id == run_id,
+            AgentInvestigation.scope_type == "run",
             AgentInvestigation.status.in_(INVESTIGATION_ACTIVE_STATUSES),
         )
         .limit(1)
@@ -239,6 +253,7 @@ async def count_investigations_today(
     result = await db.execute(
         select(func.count(AgentInvestigation.id)).where(
             AgentInvestigation.project_id == project_id,
+            AgentInvestigation.scope_type == "run",
             AgentInvestigation.created_at >= midnight,
         )
     )
@@ -259,6 +274,12 @@ async def start_investigation(
         InvestigationAlreadyActive: an active investigation exists for the run.
         InvestigationDailyBudgetExceeded: max_runs_per_day exhausted.
     """
+    # Serialize the count+insert gate per project so concurrent runs cannot
+    # both pass max_runs_per_day. The project row always exists, unlike an
+    # optional AgentPolicy row.
+    await db.execute(
+        select(Project.id).where(Project.id == run.project_id).with_for_update()
+    )
     policy = await get_effective_policy(db, run.project_id, AGENT_ID_INVESTIGATOR)
     if not policy["enabled"]:
         raise InvestigationPolicyDisabled()
@@ -278,7 +299,15 @@ async def start_investigation(
         mode=policy["mode"],
         triggered_by=triggered_by,
         budget=run_budget_from_policy(policy),
-        spend={"llm_calls": 0, "tokens": 0, "cost_usd": 0.0, "seconds": 0.0},
+        spend={
+            "ledger_version": 2,
+            "llm_calls": 0,
+            "tokens": 0,
+            "cost_usd": 0.0,
+            "seconds": 0.0,
+            "reservations": {},
+            "completed_reservations": {},
+        },
         hypotheses=_pending_hypotheses(),
     )
     db.add(investigation)
@@ -317,7 +346,7 @@ def enqueue_investigation_task(investigation_id: uuid.UUID) -> bool:
         logger.warning(
             "investigation_enqueue_failed",
             investigation_id=str(investigation_id),
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
         return False
 
@@ -373,7 +402,7 @@ async def maybe_auto_trigger(run_id: uuid.UUID, trigger: str) -> Optional[uuid.U
             "investigation_auto_trigger_failed",
             run_id=str(run_id),
             trigger=trigger,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
         return None
 
@@ -458,7 +487,7 @@ async def write_agent_run_row(
             "agent_run_mongo_mirror_failed",
             agent_id=agent_id,
             event_source_id=event_source_id,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
     return entry
 

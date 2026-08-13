@@ -409,8 +409,13 @@ async def _classify_llm(
             service_name=test_case.get("suite_name"),
             error_message=test_case.get("error_message"),
             stack_trace=test_case.get("stack_trace"),
+            timestamp=test_case.get("timestamp"),
+            ocp_pod_name=test_case.get("ocp_pod_name"),
+            ocp_namespace=test_case.get("ocp_namespace"),
             pipeline_run_id=test_case.get("pipeline_run_id"),
+            run_id=test_case.get("run_id") or (run_context or {}).get("run_id"),
             project_id=str(_pid) if _pid else None,
+            test_fingerprint=test_case.get("test_fingerprint"),
         )
     except Exception as exc:  # noqa: BLE001
         reason = f"llm_error: {type(exc).__name__}: {exc}"

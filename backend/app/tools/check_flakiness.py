@@ -3,6 +3,7 @@ from langchain_core.tools import tool
 from sqlalchemy import text
 
 from app.db.postgres import AsyncSessionLocal
+from app.tools.investigation_context import get_investigation_context
 
 
 @tool
@@ -18,17 +19,27 @@ async def check_test_flakiness(test_name: str) -> str:
     Returns:
         A summary of the test's history over the last 10 runs.
     """
+    context = get_investigation_context()
+    if context is None:
+        return "Flakiness lookup unavailable: no authorized investigation context."
+    if str(test_name) != context.test_name:
+        return "Flakiness lookup denied: requested test is outside the investigation scope."
     async with AsyncSessionLocal() as db:
         query = text("""
             SELECT tch.status, COUNT(*) as cnt
             FROM test_case_history tch
             JOIN test_cases tc ON tc.id = tch.test_case_id
+            JOIN test_runs tr ON tr.id = tc.test_run_id
             WHERE tc.test_name = :test_name
+              AND tr.project_id = :project_id
             GROUP BY tch.status
             ORDER BY cnt DESC
             LIMIT 10
         """)
-        result = await db.execute(query, {"test_name": test_name})
+        result = await db.execute(query, {
+            "test_name": context.test_name,
+            "project_id": context.project_id,
+        })
         rows = result.fetchall()
 
         if not rows:

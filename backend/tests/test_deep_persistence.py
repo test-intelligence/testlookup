@@ -17,6 +17,8 @@ DB access is fully mocked; no live Postgres needed.
 from __future__ import annotations
 
 import re
+import sys
+import types
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -134,6 +136,12 @@ class _ScalarsResult:
         self._rows = rows
 
     def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._rows)
+
+    def __iter__(self):
         return iter(self._rows)
 
 
@@ -142,7 +150,12 @@ def _fake_db(cluster_rows, finding_rows):
     db.added = []
     db.add = lambda obj: db.added.append(obj)  # sync, like the real session
     db.execute = AsyncMock(
-        side_effect=[_ScalarsResult(cluster_rows), _ScalarsResult(finding_rows)]
+        side_effect=[
+            _ScalarsResult([uuid.UUID(T1), uuid.UUID(T2), uuid.UUID(T3)]),
+            _ScalarsResult(cluster_rows),
+            _ScalarsResult(cluster_rows),
+            _ScalarsResult(finding_rows),
+        ]
     )
     db.commit = AsyncMock()
     return db
@@ -172,37 +185,47 @@ async def test_persist_inserts_on_first_run(monkeypatch):
     assert set(findings) == {"cl_001", "cl_002"}
     # 2 clusters + 2 findings inserted
     assert len(db.added) == 4
-    db.commit.assert_awaited_once()
+    assert db.commit.await_count == 2
     finding_rows = [r for r in db.added if getattr(r, "root_cause", None) is not None]
     assert all(r.log_evidence["origin"] == ORIGIN_PIPELINE for r in finding_rows)
 
 
 @pytest.mark.asyncio
 async def test_persist_is_idempotent_per_run_and_cluster(monkeypatch):
-    """Second run for the same (run, cluster) set updates in place: zero new
-    rows, fields refreshed on the existing ORM objects."""
+    """An identical cluster snapshot is reused while findings stay mutable."""
     from app.agents import deep_persistence as dp
 
-    existing_cluster = SimpleNamespace(
-        cluster_id="cl_001", label="stale", representative_error=None,
-        member_test_ids=[], size=0, cohesion_score=None, pipeline_run_id=None,
-    )
+    pipeline_id = uuid.uuid4()
+    existing_clusters = [
+        SimpleNamespace(
+            cluster_id="cl_001", label="Connection refused",
+            representative_error="ECONNREFUSED db:5432",
+            member_test_ids=sorted([T1, T2]), size=2,
+            cohesion_score=0.9, pipeline_run_id=pipeline_id,
+        ),
+        SimpleNamespace(
+            cluster_id="cl_002", label="Assertion drift",
+            representative_error="expected 5 but was 3",
+            member_test_ids=[T3], size=1,
+            cohesion_score=None, pipeline_run_id=pipeline_id,
+        ),
+    ]
     stale_seed_finding = SimpleNamespace(
         cluster_id="cl_001", root_cause="seeded fiction", failure_category="FLAKY",
         confidence_score=99, causal_chain=[{"step": 1}], evidence=None,
         affected_services=["fake-svc"], contract_violations=None,
         recommended_actions=None, log_evidence={"origin": "seed"},
     )
-    db = _fake_db([existing_cluster], [stale_seed_finding])
+    db = _fake_db(existing_clusters, [stale_seed_finding])
     monkeypatch.setattr(dp, "AsyncSessionLocal", _session_local(db))
 
-    await persist_deep_results(str(uuid.uuid4()), None, _final_state())
+    await persist_deep_results(
+        str(uuid.uuid4()), str(pipeline_id), _final_state()
+    )
 
-    # cl_001 updated in place (including replacing the stale seed finding),
-    # only cl_002 (cluster + finding) newly added.
-    assert len(db.added) == 2
-    assert existing_cluster.label == "Connection refused"
-    assert existing_cluster.size == 2
+    # The immutable clusters are not rewritten. The stale cl_001 finding is
+    # refreshed in place and only the missing cl_002 finding is inserted.
+    assert len(db.added) == 1
     assert stale_seed_finding.root_cause == "Upstream DB unreachable"
     assert stale_seed_finding.confidence_score == 65
     assert stale_seed_finding.log_evidence["origin"] == ORIGIN_PIPELINE
@@ -236,7 +259,10 @@ def _finding_row(log_evidence):
     )
 
 
-def test_endpoint_flags_seed_pipeline_and_legacy_rows():
+def test_endpoint_flags_seed_pipeline_and_legacy_rows(monkeypatch):
+    worker_tasks = types.ModuleType("app.worker.tasks")
+    worker_tasks.run_agent_pipeline = SimpleNamespace(delay=None)
+    monkeypatch.setitem(sys.modules, "app.worker.tasks", worker_tasks)
     from app.routers.deep_investigation import _to_finding_response
 
     assert _to_finding_response(_finding_row({"origin": "seed"})).origin == "seed"

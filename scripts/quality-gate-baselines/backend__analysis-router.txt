@@ -2,6 +2,3 @@
 # Each line is a tolerated <relpath>:<lineno> match for this guard.
 # Reviewed in PR; remove entries as the code is cleaned up.
 backend/app/agents/analysis_agent.py:613
-backend/app/routers/analyze.py:262
-backend/app/worker/tasks.py:1187
-backend/app/worker/tasks.py:1235

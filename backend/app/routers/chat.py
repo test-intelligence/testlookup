@@ -13,7 +13,7 @@ Transaction model (pilot of the target "one commit per request" pattern):
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -82,6 +82,10 @@ async def create_session(
         from app.core.deps import resolve_project_scope  # noqa: PLC0415
 
         await resolve_project_scope(db, current_user, str(payload.project_id))
+    try:
+        await chat_service.validate_report_binding(db, payload, current_user)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     session = await chat_service.create_session(db, payload, current_user)
     await db.commit()
@@ -120,7 +124,9 @@ async def send_message(
     # so a per-message project re-points an otherwise legitimate session at
     # another tenant. Session *ownership* is guarded by require_session_access
     # (creator-only); the project named inside it was not.
-    if payload.project_id:
+    if payload.project_id and session.project_id and str(session.project_id) != str(payload.project_id):
+        raise HTTPException(status_code=422, detail="message project_id must match the session project")
+    if payload.project_id and not session.project_id:
         from app.core.deps import resolve_project_scope  # noqa: PLC0415
 
         await resolve_project_scope(db, current_user, str(payload.project_id))

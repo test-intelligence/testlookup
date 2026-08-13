@@ -44,11 +44,31 @@ from app.models.schemas import (
 from app.models.constants import DIMENSION_METADATA
 from app.services.criticality_service import score_cluster
 from app.services.run_diff_service import get_baseline_diff
+from app.services.decision_report_service import load_decision_report
 
 logger = logging.getLogger("services.run_intelligence")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _structured_summary_projection(summary_doc: dict[str, Any]) -> dict[str, Any]:
+    """Project summary fields without conflating a report with its latest attempt."""
+    return {
+        "executive_summary": summary_doc.get("executive_summary")
+        or summary_doc.get("layer1_executive_summary"),
+        "layer1_executive": summary_doc.get("layer1_executive_summary"),
+        "layer2_incident": summary_doc.get("layer2_incident_view"),
+        "layer3_evidence": summary_doc.get("layer3_evidence_pack"),
+        "layer4_action_plan": summary_doc.get("layer4_action_plan"),
+        "executive_panel": summary_doc.get("executive_panel"),
+        "decision_intelligence": summary_doc.get("decision_intelligence"),
+        "decision_report_verification": summary_doc.get("decision_report_verification"),
+        "latest_decision_attempt": summary_doc.get("latest_decision_attempt"),
+        "decision_report": summary_doc.get("decision_report"),
+        "decision_report_attempt": summary_doc.get("decision_report_attempt"),
+        "generated_at": summary_doc.get("generated_at"),
+        "schema_version": summary_doc.get("schema_version", 1),
+    }
 
 def _criticality_from_cluster_size(size: int) -> str:
     if size >= 20:
@@ -89,6 +109,7 @@ async def get_run_intelligence(
     db: AsyncSession,
     mongo_db: Any,
     include: set[str] | None = None,
+    report_version: int | None = None,
 ) -> dict:
     """
     Aggregate all AI pipeline outputs for a test run.
@@ -101,6 +122,8 @@ async def get_run_intelligence(
     a live recompute. The full payload is always returned regardless.
     """
     include = include or set()
+    if report_version is not None and report_version < 1:
+        raise ValueError("decision_report_version_invalid")
 
     # ── 1. Fetch the test run ─────────────────────────────────────────────────
     run_result = await db.execute(select(TestRun).where(TestRun.id == run_id))
@@ -136,7 +159,29 @@ async def get_run_intelligence(
 
     async def _fetch_summary_doc():
         try:
-            return await mongo_db[Collections.RUN_SUMMARIES].find_one({"test_run_id": str(run_id)})
+            summary = await mongo_db[Collections.RUN_SUMMARIES].find_one({"test_run_id": str(run_id)})
+            # The immutable report is authoritative; the singleton summary is
+            # only a compatibility projection and may lag after a partial write.
+            published = await load_decision_report(
+                mongo_db, str(run_id), report_version=report_version
+            )
+            if report_version is not None and published is None:
+                raise ValueError("decision_report_version_not_found")
+            if published:
+                summary = dict(summary or {})
+                summary["decision_intelligence"] = published.get("decision_intelligence")
+                summary["decision_report_verification"] = published.get("verification")
+                summary["markdown_report"] = published.get("markdown_report")
+                summary["decision_report"] = {
+                    "report_id": published.get("report_id"),
+                    "report_version": published.get("report_version"),
+                    "supersedes_report_id": published.get("supersedes_report_id"),
+                    "status": published.get("status"),
+                    "generated_at": published.get("generated_at"),
+                }
+            return summary
+        except ValueError:
+            raise
         except Exception as exc:
             logger.warning("Failed to fetch summary from MongoDB: %s", exc)
             _partial_errors.append("summary_unavailable")
@@ -251,16 +296,7 @@ async def get_run_intelligence(
 
     if summary_doc:
         summary_doc.pop("_id", None)
-        structured_summary = {
-            "executive_summary":   summary_doc.get("executive_summary") or summary_doc.get("layer1_executive_summary"),
-            "layer1_executive":    summary_doc.get("layer1_executive_summary"),
-            "layer2_incident":     summary_doc.get("layer2_incident_view"),
-            "layer3_evidence":     summary_doc.get("layer3_evidence_pack"),
-            "layer4_action_plan":  summary_doc.get("layer4_action_plan"),
-            "executive_panel":     summary_doc.get("executive_panel"),
-            "generated_at":        summary_doc.get("generated_at"),
-            "schema_version":      summary_doc.get("schema_version", 1),
-        }
+        structured_summary = _structured_summary_projection(summary_doc)
         fallback_used = bool(summary_doc.get("fallback_used", False))
         generated_at = summary_doc.get("generated_at")
 

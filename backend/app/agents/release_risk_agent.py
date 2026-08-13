@@ -100,9 +100,14 @@ class ReleaseRiskAgent(BaseAgent):
 
         # Assemble input snapshot for audit/reproducibility
         state["release_memory_context"] = decision.get("memory_context")
-        input_snapshot = await self._assemble_input_snapshot(state)
+        input_snapshot = await self._assemble_input_snapshot(state, decision)
         decision["input_snapshot"] = input_snapshot
-        await self._persist_decision(test_run_id, decision, input_snapshot=input_snapshot)
+        await self._persist_decision(
+            test_run_id,
+            pipeline_run_id,
+            decision,
+            input_snapshot=input_snapshot,
+        )
 
         await self.mark_stage_done(
             pipeline_run_id,
@@ -180,6 +185,14 @@ class ReleaseRiskAgent(BaseAgent):
         # Resolve the effective policy for this project and evaluate all rules.
         # If no policy is configured, falls back to hardcoded thresholds.
         policy_result = None
+        policy_context = {
+            "flaky_count": sum(1 for a in analyses.values() if a.get("is_flaky")),
+            "open_defects": open_defects,
+            "open_defects_source": release_memory_context.get("source"),
+            "regression_test_count": len(regression_tests),
+            "failure_kind_counts": self._failure_kind_counts(analyses),
+            "failure_kind_confidences": self._failure_kind_confidences(analyses),
+        }
         try:
             from app.services.policy_evaluator_service import evaluate_policy
             async with AsyncSessionLocal() as policy_db:
@@ -187,19 +200,7 @@ class ReleaseRiskAgent(BaseAgent):
                     project_id=state["project_id"],
                     dim_scores=dim_scores,
                     pass_rate=pass_rate,
-                    context={
-                        "flaky_count": sum(1 for a in analyses.values() if a.get("is_flaky")),
-                        "open_defects": open_defects,
-                        "open_defects_source": release_memory_context.get("source"),
-                        "regression_test_count": len(regression_tests),
-                        # Derived failure-kind breakdown (US-9.3) — consumed
-                        # only by opt-in kind_rules policies; inert otherwise.
-                        "failure_kind_counts": self._failure_kind_counts(analyses),
-                        # Per-failure kind confidences (AI-4) — consumed only
-                        # by kind budgets with a min_confidence_to_excuse
-                        # floor; inert otherwise.
-                        "failure_kind_confidences": self._failure_kind_confidences(analyses),
-                    },
+                    context=policy_context,
                     db=policy_db,
                 )
                 composite = policy_result.effective_composite
@@ -209,11 +210,47 @@ class ReleaseRiskAgent(BaseAgent):
             policy_result = None
 
         if policy_result is None:
-            # Fallback: use hardcoded thresholds
+            # Freeze the hardcoded fallback as an explicit synthetic policy so
+            # the terminal critic can replay the exact verdict later without
+            # consulting mutable configuration or active policy state.
             threshold = settings.RELEASE_PASS_RATE_THRESHOLD
-            if pass_rate < threshold * 0.7:
-                composite = max(composite, 60.0)
-            recommendation = score_to_recommendation(composite, pass_rate, threshold)
+            try:
+                from types import SimpleNamespace
+
+                from app.services.criticality_service import HARD_FLOOR_FACTOR, _weights
+                from app.services.policy_evaluator_service import evaluate_policy
+
+                frozen_default = SimpleNamespace(
+                    id=None,
+                    version=None,
+                    rules={
+                        "thresholds": {
+                            "go_threshold": 20.0,
+                            "no_go_threshold": 55.0,
+                            "pass_rate_minimum": threshold,
+                            "pass_rate_hard_floor_factor": HARD_FLOOR_FACTOR,
+                        },
+                        "dimension_weights": _weights(),
+                        "rules": [],
+                    },
+                )
+                policy_result = await evaluate_policy(
+                    project_id=None,
+                    dim_scores=dim_scores,
+                    pass_rate=pass_rate,
+                    context=policy_context,
+                    db=None,  # type: ignore[arg-type] -- override is DB-free
+                    policy_override=frozen_default,
+                )
+                policy_result.policy_level = "hardcoded"
+                policy_result.policy_snapshot["policy_level"] = "hardcoded"
+                composite = policy_result.effective_composite
+                recommendation = policy_result.recommendation
+            except Exception as exc:
+                logger.error("hardcoded_policy_snapshot_failed", error=str(exc))
+                if pass_rate < threshold * 0.7:
+                    composite = max(composite, 60.0)
+                recommendation = score_to_recommendation(composite, pass_rate, threshold)
 
         # ── Step 2: LLM reasoning (non-blocking — failures gracefully degrade) ─
         # Cost optimization: skip LLM for extreme scores (saves ~10K tokens/day)
@@ -251,6 +288,7 @@ class ReleaseRiskAgent(BaseAgent):
             "reasoning": llm_extras.get("reasoning", f"Composite risk {composite:.0f}/100."),
             "score_model_version": SCORE_MODEL_VERSION,
             "memory_context": release_memory_context,
+            "policy_replay_context": policy_context,
         }
 
         # Attach policy evaluation for persistence (ENT-02)
@@ -400,10 +438,12 @@ class ReleaseRiskAgent(BaseAgent):
     # ── Input snapshot ──────────────────────────────────────────────────────
 
     @staticmethod
-    async def _assemble_input_snapshot(state: dict) -> dict:
+    async def _assemble_input_snapshot(state: dict, decision: dict | None = None) -> dict:
         """Build a JSON-serializable snapshot of all inputs used for the decision."""
         from datetime import datetime, timezone as tz
         clusters = state.get("failure_clusters", [])
+        decision = decision or {}
+        policy_evaluation = decision.get("policy_evaluation") or {}
         return {
             "assembled_at": datetime.now(tz.utc).isoformat(),
             "score_model_version": SCORE_MODEL_VERSION,
@@ -435,6 +475,10 @@ class ReleaseRiskAgent(BaseAgent):
             "failure_kind_confidences": ReleaseRiskAgent._failure_kind_confidences(
                 state.get("analyses", {}) or {}
             ),
+            "dimension_scores": decision.get("dimension_scores") or {},
+            "policy_context": decision.get("policy_replay_context") or {},
+            "policy_snapshot": policy_evaluation.get("policy_snapshot") or {},
+            "policy_evaluator_version": policy_evaluation.get("evaluator_version"),
         }
 
     # ── DB helpers ────────────────────────────────────────────────────────────
@@ -487,7 +531,13 @@ class ReleaseRiskAgent(BaseAgent):
         )
         return int(result.scalar() or 0)
 
-    async def _persist_decision(self, test_run_id: str, decision: dict, input_snapshot: dict | None = None) -> None:
+    async def _persist_decision(
+        self,
+        test_run_id: str,
+        pipeline_run_id: str,
+        decision: dict,
+        input_snapshot: dict | None = None,
+    ) -> None:
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select
             existing = await db.execute(
@@ -495,6 +545,7 @@ class ReleaseRiskAgent(BaseAgent):
             )
             record = existing.scalar_one_or_none()
             if record:
+                record.pipeline_run_id = uuid.UUID(str(pipeline_run_id))
                 record.recommendation = decision["recommendation"]
                 record.risk_score = decision["risk_score"]
                 record.blocking_issues = decision.get("blocking_issues", [])
@@ -510,6 +561,7 @@ class ReleaseRiskAgent(BaseAgent):
             else:
                 db.add(ReleaseDecision(
                     test_run_id=test_run_id,
+                    pipeline_run_id=uuid.UUID(str(pipeline_run_id)),
                     recommendation=decision["recommendation"],
                     risk_score=decision["risk_score"],
                     blocking_issues=decision.get("blocking_issues", []),

@@ -335,6 +335,46 @@ services:
     networks:
       - testlookup_net
 
+  # Isolated bounded queue for planner-spawned Investigator children.
+  worker-children:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: testlookup_worker_children
+    restart: unless-stopped
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=1 --prefetch-multiplier=1 -Q agent_children --max-tasks-per-child=25
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - MONGO_HOST=mongo
+      - MINIO_ENDPOINT=minio:9000
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
+      - MONGO_URI=mongodb://${MONGO_USER:-testlookup}:${MONGO_PASSWORD}@mongo:27017/${MONGO_DB:-testlookup_logs}?authSource=admin
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
+      - APP_ENV=${APP_ENV:-production}
+      - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
+    depends_on:
+      - backend
+      - redis
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          memory: 512M
+    networks:
+      - testlookup_net
+
   # Celery Beat scheduler for periodic tasks
   beat:
     build:

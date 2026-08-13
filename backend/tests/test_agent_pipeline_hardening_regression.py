@@ -587,8 +587,9 @@ def test_r2_planner_and_verifier_service_is_deterministic():
     assert "unplanned_stages_not_executed" in verifier
     assert "route_rationale_persisted" in verifier
     assert "all_green_skips_analysis_work" in verifier
-    assert 'state["workflow_plan"] = plan' in attach
-    assert 'state["workflow_verification"] = verify_workflow_execution(plan, state)' in attach
+    assert 'state["initial_workflow_plan"] = initial_plan' in attach
+    assert 'state["workflow_plan"] = explained_plan' in attach
+    assert 'state["workflow_verification"] = verify_workflow_execution(explained_plan, state)' in attach
 
 
 def test_r2_verifier_checks_evidence_and_policy_alignment():
@@ -649,8 +650,9 @@ def test_workflow_persists_r2_plan_and_verification():
 
     assert "workflow_plan: dict" in state
     assert "workflow_verification: dict" in state
-    assert "build_workflow_plan(workflow_type=workflow_type)" in run_offline
-    assert "build_workflow_plan(workflow_type=\"deep\")" in run_deep
+    assert 'pipeline_setup["initial_workflow_plan"]' in run_offline
+    assert 'pipeline_setup["initial_workflow_plan"]' in run_deep
+    assert "cluster_child_settings" in run_deep
     assert "attach_workflow_plan_and_verification" in run_offline
     assert "attach_workflow_plan_and_verification" in run_deep
     assert '"workflow_verified"' in workflow

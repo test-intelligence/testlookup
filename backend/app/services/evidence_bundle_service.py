@@ -12,8 +12,9 @@ import zipfile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import EvidenceArtifact, RunIntelligenceSnapshot
+from app.models.postgres import RunIntelligenceSnapshot, TestRun
 from app.services.report_composition_service import compose_report
+from app.services.report_export_sanitizer import sanitize_report_export_payload
 from app.services.report_pdf_renderer import render_report_pdf
 
 logger = logging.getLogger("services.evidence_bundle")
@@ -21,14 +22,14 @@ logger = logging.getLogger("services.evidence_bundle")
 
 async def build_evidence_bundle(
     db: AsyncSession,
+    project_id: uuid.UUID,
     run_id: uuid.UUID,
     include_pdf: bool = True,
 ) -> bytes:
     """
     Build a ZIP archive containing:
       - intelligence-report.pdf (engineering layout)
-      - intelligence-snapshot.json (full cached payload)
-      - evidence/ directory with individual evidence artifacts
+      - intelligence-snapshot.json (safe, evidence-free projection)
       - release-decision.json (extracted from snapshot)
       - provenance.json (extracted from snapshot)
 
@@ -39,10 +40,15 @@ async def build_evidence_bundle(
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         # ── Intelligence snapshot JSON ──────────────────────────────────
         snapshot_result = await db.execute(
-            select(RunIntelligenceSnapshot).where(RunIntelligenceSnapshot.run_id == run_id)
+            select(RunIntelligenceSnapshot)
+            .join(TestRun, TestRun.id == RunIntelligenceSnapshot.run_id)
+            .where(
+                RunIntelligenceSnapshot.run_id == run_id,
+                TestRun.project_id == project_id,
+            )
         )
         snapshot = snapshot_result.scalar_one_or_none()
-        payload = snapshot.payload if snapshot else {}
+        payload = sanitize_report_export_payload(snapshot.payload) if snapshot else {}
 
         zf.writestr(
             "intelligence-snapshot.json",
@@ -72,29 +78,9 @@ async def build_evidence_bundle(
                 json.dumps(cluster, indent=2, default=str),
             )
 
-        # ── Evidence artifacts from DB ──────────────────────────────────
-        evidence_result = await db.execute(
-            select(EvidenceArtifact)
-            .where(EvidenceArtifact.run_id == run_id)
-            .order_by(EvidenceArtifact.created_at)
-        )
-        artifacts = evidence_result.scalars().all()
-        for artifact in artifacts:
-            artifact_data = {
-                "id": str(artifact.id),
-                "artifact_type": artifact.artifact_type,
-                "source_system": artifact.source_system,
-                "uri_or_ref": artifact.uri_or_ref,
-                "summary_excerpt": artifact.summary_excerpt,
-                "relevance_score": artifact.relevance_score,
-                "cluster_id": artifact.cluster_id,
-                "test_case_id": str(artifact.test_case_id) if artifact.test_case_id else None,
-            }
-            safe_type = (artifact.artifact_type or "unknown").replace("/", "_")
-            zf.writestr(
-                f"evidence/{safe_type}_{str(artifact.id)[:8]}.json",
-                json.dumps(artifact_data, indent=2, default=str),
-            )
+        # Restricted artifact excerpts are deliberately not exported until a
+        # published-snapshot allowlist and dedicated evidence permission are
+        # available. The signed report retains opaque IDs/checksums only.
 
         # ── PDF report (engineering layout) ─────────────────────────────
         if include_pdf:

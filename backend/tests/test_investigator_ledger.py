@@ -210,7 +210,12 @@ async def test_start_investigation_inherits_policy_mode_and_budgets():
     inv = await svc.start_investigation(db, _test_run(), triggered_by="auto:gate_no_go")
     assert inv.mode == "suggest"
     assert inv.triggered_by == "auto:gate_no_go"
-    assert inv.budget == {"max_llm_calls": 7, "max_tokens": 1000, "max_seconds": 60}
+    assert inv.budget == {
+        "max_llm_calls": 7,
+        "max_tokens": 1000,
+        "max_cost_usd": 5.0,
+        "max_seconds": 60,
+    }
     assert inv.status == "queued"
 
 

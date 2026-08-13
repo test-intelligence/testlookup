@@ -239,6 +239,24 @@ jobs:
             --cov-report=term-missing \
             --junit-xml=test-results.xml
 
+      - name: Verify late-ack broker redelivery
+        env:
+          # DATABASE_URL/MONGO_URI are required even though this probe touches
+          # neither: the disposable worker imports app.worker.celery_app, and
+          # app/db/postgres.py builds its engine at IMPORT time. Without them
+          # the worker subprocess dies instantly and the probe just waits out
+          # its timeout on a process that already exited.
+          DATABASE_URL: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
+          MONGO_URI: mongodb://localhost:27017
+          REDIS_URL: redis://localhost:6379/0
+          CELERY_BROKER_URL: redis://localhost:6379/0
+          CELERY_RESULT_BACKEND: redis://localhost:6379/0
+          TESTLOOKUP_RUN_CELERY_VISIBILITY: "1"
+          AI_OFFLINE_MODE: "true"
+          APP_SECRET_KEY: test-secret-key-for-ci
+          JWT_SECRET_KEY: test-jwt-key-for-ci
+        run: pytest tests/regression/test_celery_visibility_redelivery.py -v
+
       - name: Upload coverage report
         uses: codecov/codecov-action@v7
         if: always()
@@ -252,6 +270,176 @@ jobs:
         with:
           name: backend-test-results
           path: backend/test-results.xml
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 1a: Protected PostgreSQL/Mongo race, rollback, and publication coverage
+  # The normal backend job keeps most tests hermetic. Phase 3 claim, outbox,
+  # retention, evidence, and report-supersession tests are opt-in and skip
+  # unless TESTLOOKUP_POSTGRES_TEST_DSN is present. Keep this separate so a
+  # clean migrated database is authoritative and skipped coverage is visible.
+  # ─────────────────────────────────────────────────────────────
+  postgres-integration:
+    name: Backend — PostgreSQL/Mongo integration and rollback
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: testlookup_test
+          POSTGRES_USER: testlookup_user
+          POSTGRES_PASSWORD: test_password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      mongo:
+        image: mongo:7
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: ./backend
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Apply migrations to the clean integration database
+        env:
+          DATABASE_URL: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
+          APP_SECRET_KEY: test-secret-key-for-ci
+          JWT_SECRET_KEY: test-jwt-key-for-ci
+        run: alembic upgrade head
+
+      - name: Seed disposable authority rows for integration fixtures
+        env:
+          TESTLOOKUP_POSTGRES_TEST_DSN: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
+        run: |
+          python - <<'PY'
+          import asyncio
+          import os
+          import uuid
+
+          import asyncpg
+
+          dsn = os.environ["TESTLOOKUP_POSTGRES_TEST_DSN"].replace(
+              "+asyncpg", ""
+          )
+          project_id = uuid.uuid4()
+          run_id = uuid.uuid4()
+          test_case_id = uuid.uuid4()
+          parent_pipeline_id = uuid.uuid4()
+          cluster_row_id = uuid.uuid4()
+
+          async def seed():
+              conn = await asyncpg.connect(dsn)
+              try:
+                  await conn.execute(
+                      """
+                      INSERT INTO projects (id, name, slug, is_active)
+                      VALUES ($1, 'CI PostgreSQL Integration', $2, true)
+                      """,
+                      project_id,
+                      f"ci-postgres-{project_id.hex}",
+                  )
+                  await conn.execute(
+                      """
+                      INSERT INTO test_runs
+                        (id, project_id, build_number, jenkins_job, status,
+                         ingestion_source, failed_tests, total_tests)
+                      VALUES ($1, $2, $3, 'ci-postgres-integration',
+                              'FAILED', 'unknown', 1, 1)
+                      """,
+                      run_id,
+                      project_id,
+                      f"ci-{run_id.hex}",
+                  )
+                  await conn.execute(
+                      """
+                      INSERT INTO test_cases
+                        (id, test_run_id, test_fingerprint, test_name,
+                         suite_name, class_name, status, error_message)
+                      VALUES ($1, $2, $3, 'ci_seed_failed_test',
+                              'ci-integration', 'CIIntegration', 'FAILED',
+                              'seeded integration failure')
+                      """,
+                      test_case_id,
+                      run_id,
+                      uuid.uuid4().hex[:64].ljust(64, "0"),
+                  )
+                  await conn.execute(
+                      """
+                      INSERT INTO agent_pipeline_runs
+                        (id, test_run_id, workflow_type, status,
+                         execution_metadata)
+                      VALUES ($1, $2, 'deep', 'completed', '{}'::jsonb)
+                      """,
+                      parent_pipeline_id,
+                      run_id,
+                  )
+                  await conn.execute(
+                      """
+                      INSERT INTO failure_clusters
+                        (id, test_run_id, pipeline_run_id, cluster_id, label,
+                         member_test_ids, size)
+                      VALUES ($1, $2, $3, 'ci_seed_cluster',
+                              'CI seeded failure cluster', $4::jsonb, 1)
+                      """,
+                      cluster_row_id,
+                      run_id,
+                      parent_pipeline_id,
+                      '["' + str(test_case_id) + '"]',
+                  )
+              finally:
+                  await conn.close()
+
+          asyncio.run(seed())
+          PY
+
+      - name: Run protected PostgreSQL integration suite
+        env:
+          DATABASE_URL: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
+          TESTLOOKUP_POSTGRES_TEST_DSN: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
+          MONGO_URI: mongodb://localhost:27017
+          APP_SECRET_KEY: test-secret-key-for-ci
+          JWT_SECRET_KEY: test-jwt-key-for-ci
+          AI_OFFLINE_MODE: "true"
+          LLM_PROVIDER: ollama
+          LLM_MODEL: qwen2.5:7b
+        run: >-
+          pytest -m integration -v --tb=short
+          tests/integration/test_agent_action_ledger_postgres.py
+          tests/integration/test_agent_memory_lifecycle_postgres.py
+          tests/integration/test_change_ownership_postgres.py
+          tests/integration/test_cluster_child_cancellation_postgres.py
+          tests/integration/test_cluster_child_outbox_postgres.py
+          tests/integration/test_cluster_child_retention_postgres.py
+          tests/integration/test_evidence_artifact_authority_postgres.py
+          tests/integration/test_investigator_budget_postgres.py
+          tests/integration/test_investigator_claim_provider_postgres.py
+          tests/integration/test_investigator_resume_postgres.py
+          tests/integration/test_pipeline_resume_postgres.py
+          tests/integration/test_report_eval_cycle_postgres.py
+          tests/integration/test_decision_report_supersession_postgres_mongo.py
+          tests/regression/test_notification_history_schema.py
 
   # ─────────────────────────────────────────────────────────────
   # JOB 2: Frontend tests and type check
@@ -459,7 +647,7 @@ jobs:
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
-    needs: [quality-gate, backend-test, frontend-test, mcp-test]
+    needs: [quality-gate, backend-test, postgres-integration, frontend-test, mcp-test]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     permissions:

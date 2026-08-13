@@ -22,6 +22,12 @@ from langgraph.graph import END, StateGraph
 from app.agents.analysis_agent import AnalysisAgent
 from app.agents.anomaly_agent import AnomalyDetectionAgent
 from app.agents.cluster_agent import ClusterAgent
+from app.agents.contract_agent import ContractAgent
+from app.agents.log_intelligence_agent import LogIntelligenceAgent
+from app.agents.regression_watchman import RegressionWatchman
+from app.agents.change_ownership_agent import ChangeOwnershipAgent
+from app.agents.decision_report_agent import DecisionReportAgent
+from app.agents.decision_report_critic_agent import DecisionReportCriticAgent
 from app.agents.flaky_sentinel_agent import FlakySentinelAgent
 from app.agents.gap_detection_agent import GapDetectionAgent
 from app.agents.ingestion_agent import IngestionAgent
@@ -34,20 +40,42 @@ from app.agents.triage_agent import DefectTriageAgent
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.enums import ExecutionPath
-from app.models.postgres import AgentPipelineRun, AgentStageResult
+from app.models.postgres import AgentPipelineRun, AgentStageResult, TestRun
 from app.services.agent_planner import (
     attach_workflow_plan_and_verification,
     build_workflow_plan,
 )
+from app.services.agent_capability_registry import get_capability
 from app.services.pipeline_event_log import emit_event
+from app.services.evidence_sanitizer import (
+    sanitize_persistence_payload,
+    sanitize_reference_text,
+)
 
 import structlog
 
 # WF-3: Stage classification for partial-completion logic
-DEEP_REQUIRED_STAGES = frozenset({"ingestion", "anomaly_detection", "failure_clustering", "root_cause_analysis", "summary"})
-DEEP_OPTIONAL_STAGES = frozenset({"triage", "gap_detection", "report_refinement", "flaky_sentinel", "test_health", "release_risk"})
+DEEP_REQUIRED_STAGES = frozenset({"ingestion", "anomaly_detection", "failure_clustering", "root_cause_analysis", "summary", "decision_report", "decision_report_critic"})
+DEEP_OPTIONAL_STAGES = frozenset({"triage", "contract_validation", "log_intelligence", "regression_watchman", "change_ownership", "gap_detection", "report_refinement", "flaky_sentinel", "test_health", "release_risk"})
 
 logger = structlog.get_logger("agents.workflow")
+
+
+def _safe_workflow_error(exc: BaseException, *, limit: int = 1200) -> str:
+    safe, _, _ = sanitize_reference_text(str(exc), limit=limit)
+    return f"{type(exc).__name__}: {safe}"
+
+# These outputs carry the producing pipeline ID in PostgreSQL and/or the
+# immutable Mongo evidence key. Reusing them in a different pipeline would
+# make the terminal critic look for authority that cannot belong to the retry.
+_PIPELINE_BOUND_CHECKPOINT_STAGES = frozenset({
+    "failure_clustering",
+    "cluster_investigation_dispatch",
+    "cluster_investigation_join",
+    "release_risk",
+    "decision_report",
+    "decision_report_critic",
+})
 
 # Singleton agent instances (stateless — safe to share across concurrent pipeline runs)
 _ingestion     = IngestionAgent()
@@ -56,11 +84,17 @@ _analysis      = AnalysisAgent()
 _summary       = SummaryAgent()
 _triage        = DefectTriageAgent()
 _cluster       = ClusterAgent()
+_contract_agent = ContractAgent()
+_log_intelligence = LogIntelligenceAgent()
+_regression_watchman = RegressionWatchman()
+_change_ownership = ChangeOwnershipAgent()
 _gap_detection = GapDetectionAgent()
 _report_refinement = ReportRefinementAgent()
 _flaky_sentinel = FlakySentinelAgent()
 _test_health   = TestHealthAgent()
 _release_risk  = ReleaseRiskAgent()
+_decision_report = DecisionReportAgent()
+_decision_report_critic = DecisionReportCriticAgent()
 
 
 def _canonical_checksum(data: Any) -> str:
@@ -90,6 +124,49 @@ def _runtime_version_snapshot() -> dict[str, str]:
     except Exception:  # pragma: no cover — snapshot must never break the pipeline
         pass
     return versions
+
+
+def _checkpoint_restore_metadata(stage: AgentStageResult) -> dict[str, Any] | None:
+    """Return trusted replay metadata for a completed checkpoint, if present."""
+    result_data = stage.result_data if isinstance(stage.result_data, dict) else {}
+    replay = result_data.get("_replay")
+    if not isinstance(replay, dict):
+        return None
+    expected_checksum = replay.get("output_checksum_sha256")
+    runtime_versions = replay.get("runtime_versions")
+    if (
+        not isinstance(expected_checksum, str)
+        or len(expected_checksum) != 64
+        or any(char not in "0123456789abcdef" for char in expected_checksum)
+    ):
+        return None
+    if not isinstance(runtime_versions, dict) or not runtime_versions:
+        return None
+    attempt = replay.get("attempt")
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+        return None
+    attempt_key = replay.get("attempt_idempotency_key")
+    if (
+        not isinstance(attempt_key, str)
+        or len(attempt_key) != 64
+        or any(char not in "0123456789abcdef" for char in attempt_key)
+    ):
+        return None
+    checkpoint_data = stage.checkpoint_data
+    if not isinstance(checkpoint_data, dict):
+        return None
+    actual_checksum = _canonical_checksum(checkpoint_data)
+    if actual_checksum != expected_checksum:
+        return None
+    return {
+        "source_pipeline_run_id": str(stage.pipeline_run_id),
+        "stage_name": stage.stage_name,
+        "input_checksum_sha256": replay.get("input_checksum_sha256"),
+        "output_checksum_sha256": expected_checksum,
+        "runtime_versions": runtime_versions,
+        "attempt": attempt,
+        "attempt_idempotency_key": attempt_key,
+    }
 
 
 def _prompt_registry_versions() -> dict[str, str]:
@@ -210,6 +287,318 @@ async def cluster_node(state: WorkflowState) -> dict:
     return await _cluster.run(cast(dict[str, Any], state))
 
 
+async def cluster_investigation_dispatch_node(state: WorkflowState) -> dict:
+    """Freeze cluster authority, then stage idempotent child dispatches."""
+    from app.agents.deep_persistence import persist_failure_cluster_snapshot
+    from app.services.cluster_investigation_orchestrator import (
+        stage_cluster_investigations,
+    )
+
+    await persist_failure_cluster_snapshot(
+        state["test_run_id"],
+        state["pipeline_run_id"],
+        list(state.get("failure_clusters") or []),
+    )
+    plan = await stage_cluster_investigations(
+        parent_pipeline_run_id=state["pipeline_run_id"],
+        project_id=state["project_id"],
+        run_id=state["test_run_id"],
+        frozen_settings=dict(state.get("cluster_child_settings") or {}),
+    )
+    return {
+        "cluster_investigation_plan": plan,
+        "completed_stages": ["cluster_investigation_dispatch"],
+        "current_stage": "cluster_investigation_join",
+        "errors": [],
+    }
+
+
+async def cluster_investigation_join_node(state: WorkflowState) -> dict:
+    """Join children, or schedule an immutable async report supersession."""
+    from app.services.cluster_investigation_orchestrator import (
+        wait_for_cluster_children,
+    )
+
+    settings_snapshot = dict(state.get("cluster_child_settings") or {})
+    if state.get("async_decision_report_supersession_enabled") is True:
+        from app.services.decision_report_supersession_service import (
+            schedule_decision_report_supersession,
+        )
+
+        request = await schedule_decision_report_supersession(
+            project_id=str(state["project_id"]),
+            test_run_id=str(state["test_run_id"]),
+            parent_pipeline_run_id=str(state["pipeline_run_id"]),
+        )
+        joined = {
+            "status": "pending",
+            "selected_count": 0,
+            "completed_count": 0,
+            "children": [],
+            "stop_reasons": ["cluster_investigation_pending"],
+            "supersession_request": request,
+        }
+        return {
+            "cluster_investigation_results": joined,
+            "completed_stages": ["cluster_investigation_join"],
+            "current_stage": "summary",
+            "stage_quality": "degraded",
+            "errors": ["cluster investigations deferred to asynchronous report supersession"],
+        }
+    aggregate = settings_snapshot.get("aggregate_budget")
+    timeout = int((aggregate or {}).get("max_seconds", 0) or 0)
+    joined = await wait_for_cluster_children(
+        parent_pipeline_run_id=state["pipeline_run_id"],
+        timeout_seconds=timeout,
+    )
+    dispatch = state.get("cluster_investigation_plan") or {}
+    capacity_skips = list(dispatch.get("dispatch_capacity_skips") or [])
+    if capacity_skips:
+        joined = {
+            **joined,
+            "status": "degraded",
+            "stop_reasons": sorted({
+                *(joined.get("stop_reasons") or []),
+                "project_child_capacity_exhausted",
+            }),
+            "dispatch_capacity_skips": capacity_skips,
+        }
+    degraded = joined.get("status") == "degraded"
+    return {
+        "cluster_investigation_results": joined,
+        "completed_stages": ["cluster_investigation_join"],
+        "current_stage": "summary",
+        "stage_quality": "degraded" if degraded else state.get("stage_quality"),
+        "errors": [
+            f"cluster investigations degraded: {', '.join(joined.get('stop_reasons') or [])}"
+        ] if degraded else [],
+    }
+
+
+async def contract_validation_node(state: WorkflowState) -> dict:
+    """Run the default-off, server-scoped API contract specialist."""
+    if not state.get("contract_agent_enabled"):
+        return {
+            "contract_findings": {
+                "status": "not_enough_evidence",
+                "violations": [],
+                "violation_count": 0,
+                "critical_count": 0,
+                "drift_count": 0,
+                "endpoints_checked": [],
+                "evidence_refs": [],
+                "summary": "Contract Agent feature flag is disabled.",
+                "suggests_product_bug": False,
+            },
+            "skipped_stages": ["contract_validation"],
+            "completed_stages": ["contract_validation"],
+            "current_stage": "gap_detection",
+            "errors": [],
+        }
+    result = await _contract_agent.validate_cluster(
+        list(state.get("failed_test_ids") or []),
+        project_id=str(state.get("project_id") or ""),
+        run_id=str(state.get("test_run_id") or ""),
+        pipeline_run_id=str(state.get("pipeline_run_id") or ""),
+    )
+    from app.models.agent_contracts import ContractAgentOutput, validate_agent_contract
+    contracted = validate_agent_contract(
+        ContractAgentOutput,
+        {"contract_findings": result},
+        agent_name="contract_validation",
+        fallback_used=result.get("status") != "complete",
+        confidence=80 if result.get("status") == "complete" else 0,
+        evidence_refs=list(result.get("evidence_refs") or []),
+        decision_reason=(
+            "contract evidence evaluated"
+            if result.get("status") == "complete"
+            else "no_contract_evidence_or_validation_failed"
+        ),
+    )
+    return {
+        "contract_findings": contracted.get("contract_findings", result),
+        "agent_contracts": contracted.get("agent_contracts", {}),
+        "completed_stages": ["contract_validation"],
+        "current_stage": "gap_detection",
+        "errors": [] if result.get("status") != "failed" else ["contract_validation_failed"],
+    }
+
+
+async def log_intelligence_node(state: WorkflowState) -> dict:
+    """Run the default-off, bounded log/trace specialist per failure cluster.
+
+    The first implementation used the first analysis in the run, which could
+    attribute one service's trace to every failure.  We now select at most five
+    deterministic cluster representatives and retain the first result as the
+    backwards-compatible top-level projection.  All cluster calls are scoped
+    to data already present in the run state; no caller-supplied evidence is
+    accepted.
+    """
+    if not state.get("log_intelligence_enabled"):
+        return {
+            "log_findings": {
+                "status": "not_enough_evidence",
+                "distributed_trace": {},
+                "log_anomaly": {},
+                "cluster_findings": [],
+                "log_summary": "Log Intelligence feature flag is disabled.",
+            },
+            "skipped_stages": ["log_intelligence"],
+            "completed_stages": ["log_intelligence"],
+            "current_stage": "gap_detection",
+            "errors": [],
+        }
+    analyses = state.get("analyses") or {}
+    first = next((item for item in analyses.values() if isinstance(item, dict)), {})
+    run_data = state.get("test_run_data") or {}
+
+    def _context(analysis: dict[str, Any]) -> tuple[str, str, str, list[str]] | None:
+        service = analysis.get("service_name") or analysis.get("affected_service") or run_data.get("service_name")
+        timestamp = analysis.get("timestamp_utc") or analysis.get("failed_at") or run_data.get("completed_at")
+        correlation = analysis.get("correlation_id") or analysis.get("trace_id") or ""
+        related = analysis.get("related_services") or analysis.get("affected_services") or []
+        if not service or not timestamp:
+            return None
+        safe_related = [str(item) for item in related] if isinstance(related, list) else []
+        return str(service), str(timestamp), str(correlation), safe_related
+
+    contexts: list[tuple[str, tuple[str, str, str, list[str]]]] = []
+    seen_contexts: set[tuple[str, str, str]] = set()
+    clusters = state.get("failure_clusters") or []
+    candidate_clusters = sorted(
+        (item for item in clusters if isinstance(item, dict)),
+        key=lambda item: str(item.get("cluster_id") or ""),
+    ) if isinstance(clusters, list) else []
+    for index, cluster in enumerate(candidate_clusters[:5]):
+        members = cluster.get("member_test_ids") or cluster.get("test_ids") or []
+        members = sorted({str(item) for item in members}) if isinstance(members, list) else []
+        representative = next(
+            (analyses.get(str(member)) for member in members if isinstance(analyses.get(str(member)), dict)),
+            first,
+        )
+        context = _context(representative if isinstance(representative, dict) else {})
+        if context is None:
+            continue
+        key = (context[0], context[1], context[2])
+        if key in seen_contexts:
+            continue
+        seen_contexts.add(key)
+        contexts.append((str(cluster.get("cluster_id") or f"cluster_{index + 1}"), context))
+
+    if not contexts:
+        context = _context(first)
+        if context is not None:
+            contexts.append(("run", context))
+
+    if not contexts:
+        return {
+            "log_findings": {
+                "status": "not_enough_evidence",
+                "distributed_trace": {},
+                "log_anomaly": {},
+                "cluster_findings": [],
+                "log_summary": "Log evidence requires a scoped service and failure timestamp.",
+            },
+            "completed_stages": ["log_intelligence"],
+            "current_stage": "gap_detection",
+            "errors": [],
+        }
+    cluster_results: list[dict[str, Any]] = []
+    for cluster_id, (service, timestamp, correlation, related) in contexts:
+        try:
+            result = await _log_intelligence.investigate(
+                service, timestamp, correlation, related,
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve cluster-level degradation
+            result = {
+                "status": "failed",
+                "distributed_trace": {"error": type(exc).__name__},
+                "log_anomaly": {},
+                "log_summary": "Log specialist failed for this cluster.",
+            }
+        safe_result, _ = sanitize_persistence_payload(result if isinstance(result, dict) else {})
+        safe_cluster_id, _, _ = sanitize_reference_text(cluster_id, limit=64)
+        cluster_results.append({
+            "cluster_id": safe_cluster_id,
+            "status": safe_result.get("status", "failed"),
+            "distributed_trace": safe_result.get("distributed_trace") or {},
+            "log_anomaly": safe_result.get("log_anomaly") or {},
+            "log_summary": str(safe_result.get("log_summary") or "")[:500],
+            "evidence_refs": list(safe_result.get("evidence_refs") or [])[:20],
+        })
+
+    # Reuse the first cluster result for the legacy top-level fields without
+    # issuing a duplicate provider/tool call.
+    result = dict(cluster_results[0])
+    result["cluster_findings"] = [dict(item) for item in cluster_results]
+    result["cluster_count"] = len(cluster_results)
+    result["evidence_refs"] = [
+        ref
+        for item in cluster_results
+        for ref in item.get("evidence_refs", [])
+    ][:20]
+    statuses = [item["status"] for item in cluster_results]
+    if all(item == "complete" for item in statuses):
+        result["status"] = "complete"
+    elif all(item == "not_enough_evidence" for item in statuses):
+        result["status"] = "not_enough_evidence"
+    else:
+        result["status"] = "failed"
+    result["log_summary"] = " | ".join(
+        item["log_summary"] for item in cluster_results if item["log_summary"]
+    )[:1000]
+    from app.models.agent_contracts import LogIntelligenceAgentOutput, validate_agent_contract
+    contracted = validate_agent_contract(
+        LogIntelligenceAgentOutput,
+        {"log_findings": result},
+        agent_name="log_intelligence",
+        fallback_used=result.get("status") != "complete",
+        confidence=70 if result.get("status") == "complete" else 0,
+        evidence_refs=list(result.get("evidence_refs") or [])[:20],
+        decision_reason="log_evidence_evaluated" if result.get("log_summary") else "no_log_evidence",
+    )
+    return {
+        "log_findings": contracted.get("log_findings", result),
+        "agent_contracts": contracted.get("agent_contracts", {}),
+        "completed_stages": ["log_intelligence"],
+        "current_stage": "gap_detection",
+        "errors": [],
+    }
+
+async def regression_watchman_node(state: WorkflowState) -> dict:
+    """Run the default-off baseline/regression specialist for failed clusters."""
+    if not state.get("regression_watchman_enabled"):
+        return {
+            "regression_classification": {},
+            "skipped_stages": ["regression_watchman"],
+            "completed_stages": ["regression_watchman"],
+            "current_stage": "gap_detection",
+            "errors": [],
+        }
+    if not state.get("failure_clusters"):
+        return {
+            "regression_classification": {},
+            "completed_stages": ["regression_watchman"],
+            "current_stage": "gap_detection",
+            "errors": [],
+        }
+    result = await _regression_watchman.run(cast(dict[str, Any], state))
+    return {
+        "regression_classification": result.get("regression_classification", {}),
+        "agent_contracts": result.get("agent_contracts", {}),
+        "completed_stages": ["regression_watchman"],
+        "current_stage": "gap_detection",
+        "errors": list(result.get("errors") or []),
+    }
+async def change_ownership_node(state: WorkflowState) -> dict:
+    """Run the default-off baseline/change and ownership specialist."""
+    if not state.get("change_ownership_enabled"):
+        result = {"status": "not_enough_evidence", "baseline_diff": {}, "ownership_resolutions": [], "summary": "Change/Ownership feature flag is disabled."}
+        return {"change_ownership_findings": result, "skipped_stages": ["change_ownership"], "completed_stages": ["change_ownership"], "current_stage": "gap_detection", "errors": []}
+    result = await _change_ownership.run(dict(state))
+    from app.models.agent_contracts import ChangeOwnershipAgentOutput, validate_agent_contract
+    contracted = validate_agent_contract(ChangeOwnershipAgentOutput, {"change_ownership_findings": result}, agent_name="change_ownership", fallback_used=result.get("status") != "complete", confidence=70 if result.get("status") == "complete" else 0, evidence_refs=([{"source": "regression_diff_service", "kind": "baseline_diff"}, {"source": "ownership_resolver_service", "kind": "cluster_ownership"}] if result.get("status") == "complete" else []), decision_reason=str(result.get("summary") or "change_and_ownership_evaluated"))
+    return {"change_ownership_findings": contracted.get("change_ownership_findings", result), "agent_contracts": contracted.get("agent_contracts", {}), "completed_stages": ["change_ownership"], "current_stage": "gap_detection", "errors": [] if result.get("status") != "failed" else ["change_ownership_failed"]}
 async def gap_detection_node(state: WorkflowState) -> dict:
     # AIQ-P4 optional stage. The node is always present so the graph topology is
     # identical whether the flag is on or off; when off it early-returns a skip
@@ -258,6 +647,14 @@ async def test_health_node(state: WorkflowState) -> dict:
 
 async def release_risk_node(state: WorkflowState) -> dict:
     return await _release_risk.run(cast(dict[str, Any], state))
+
+
+async def decision_report_node(state: WorkflowState) -> dict:
+    return await _decision_report.run(cast(dict[str, Any], state))
+
+
+async def decision_report_critic_node(state: WorkflowState) -> dict:
+    return await _decision_report_critic.run(cast(dict[str, Any], state))
 
 
 # ── Routing functions (conditional edges) ────────────────────────────────────
@@ -444,6 +841,7 @@ def _build_offline_graph() -> StateGraph:
     graph.add_node("summary",              _make_checkpointed_node(summary_node, "summary"))
     graph.add_node("triage",               _make_checkpointed_node(triage_node, "triage"))
 
+
     graph.set_entry_point("ingestion")
 
     # Conditional routing after ingestion:
@@ -490,23 +888,36 @@ def _build_deep_graph() -> StateGraph:
     Graph topology:
                                     ┌─ anomaly_detection ─────────────────────────────────┐
       ingestion ─(conditional)──────┤                                                      ├─ summary ─(conditional)─ triage ─┐
-                                    └─ root_cause_analysis ─┐                              │                                   ├─ flaky_sentinel ─ test_health ─ release_risk ─ END
+                                    └─ root_cause_analysis ─┐                              │                                   ├─ flaky_sentinel ─ test_health ─ release_risk ─ decision_report ─ END
                                     └─ failure_clustering   ─┘  (fan-in to summary)        │  (no triage) ─────────────────────┘
-                  (no failures) └──────────────────────────────────────────────────────────── summary ─ flaky_sentinel ─ test_health ─ release_risk ─ END
+                  (no failures) └──────────────────────────────────────────────────────────── summary ─ flaky_sentinel ─ test_health ─ release_risk ─ decision_report ─ END
     """
     graph = StateGraph(WorkflowState)
 
     graph.add_node("ingestion",            _make_checkpointed_node(ingestion_node, "ingestion"))
     graph.add_node("anomaly_detection",    _make_checkpointed_node(anomaly_node, "anomaly_detection"))
     graph.add_node("failure_clustering",   _make_checkpointed_node(cluster_node, "failure_clustering"))
+    graph.add_node("cluster_investigation_dispatch", _make_checkpointed_node(
+        cluster_investigation_dispatch_node, "cluster_investigation_dispatch"
+    ))
+    graph.add_node("cluster_investigation_join", _make_checkpointed_node(
+        cluster_investigation_join_node, "cluster_investigation_join"
+    ))
     graph.add_node("root_cause_analysis",  _make_checkpointed_node(analysis_node, "root_cause_analysis"))
     graph.add_node("summary",              _make_checkpointed_node(summary_node, "summary"))
     graph.add_node("triage",               _make_checkpointed_node(triage_node, "triage"))
+    graph.add_node("contract_validation",  _make_checkpointed_node(contract_validation_node, "contract_validation"))
+    graph.add_node("log_intelligence", _make_checkpointed_node(log_intelligence_node, "log_intelligence"))
+    graph.add_node("regression_watchman", _make_checkpointed_node(regression_watchman_node, "regression_watchman"))
+    graph.add_node("change_ownership", _make_checkpointed_node(change_ownership_node, "change_ownership"))
+
     graph.add_node("gap_detection",        _make_checkpointed_node(gap_detection_node, "gap_detection"))
     graph.add_node("report_refinement",    _make_checkpointed_node(report_refinement_node, "report_refinement"))
     graph.add_node("flaky_sentinel",       _make_checkpointed_node(flaky_sentinel_node, "flaky_sentinel"))
     graph.add_node("test_health",          _make_checkpointed_node(test_health_node, "test_health"))
     graph.add_node("release_risk",         _make_checkpointed_node(release_risk_node, "release_risk"))
+    graph.add_node("decision_report",      _make_checkpointed_node(decision_report_node, "decision_report"))
+    graph.add_node("decision_report_critic", _make_checkpointed_node(decision_report_critic_node, "decision_report_critic"))
 
     graph.set_entry_point("ingestion")
 
@@ -528,7 +939,9 @@ def _build_deep_graph() -> StateGraph:
     # Fan-in: all three parallel branches → summary
     graph.add_edge("anomaly_detection",   "summary")
     graph.add_edge("root_cause_analysis", "summary")
-    graph.add_edge("failure_clustering",  "summary")
+    graph.add_edge("failure_clustering", "cluster_investigation_dispatch")
+    graph.add_edge("cluster_investigation_dispatch", "cluster_investigation_join")
+    graph.add_edge("cluster_investigation_join", "summary")
 
     # After summary: triage if triageable, else jump to gap_detection
     # (specialist stages always run in the deep pipeline). AIQ-P4 inserts
@@ -540,17 +953,23 @@ def _build_deep_graph() -> StateGraph:
         _route_after_summary_deep,
         {
             "triage":         "triage",
-            "flaky_sentinel": "gap_detection",
+            "flaky_sentinel": "contract_validation",
         },
     )
 
     # Specialist stages run sequentially after triage (or directly after summary)
-    graph.add_edge("triage",            "gap_detection")
+    graph.add_edge("triage",            "contract_validation")
+    graph.add_edge("contract_validation", "log_intelligence")
+    graph.add_edge("log_intelligence", "regression_watchman")
+    graph.add_edge("regression_watchman", "change_ownership")
+    graph.add_edge("change_ownership", "gap_detection")
     graph.add_edge("gap_detection",     "report_refinement")
     graph.add_edge("report_refinement", "flaky_sentinel")
     graph.add_edge("flaky_sentinel",  "test_health")
     graph.add_edge("test_health",     "release_risk")
-    graph.add_edge("release_risk",    END)
+    graph.add_edge("release_risk",    "decision_report")
+    graph.add_edge("decision_report", "decision_report_critic")
+    graph.add_edge("decision_report_critic", END)
 
     return graph
 
@@ -599,28 +1018,48 @@ async def _checkpoint_stage(
             )
             stage = result.scalar_one_or_none()
             if stage and stage.status == "completed":
-                # Store the state delta produced by this stage for potential replay
-                stage.checkpoint_data = _safe_serialize(stage_output)
+                # Store the state delta produced by this stage for potential replay.
+                # The attempt receipt is deterministic and persisted with the
+                # checkpoint so a retry cannot silently reuse a different output.
+                checkpoint_data = _safe_serialize(stage_output)
+                attempt = stage.attempt if isinstance(stage.attempt, int) and stage.attempt >= 1 else 1
+                output_checksum = _canonical_checksum(checkpoint_data)
+                attempt_key = _canonical_checksum({
+                    "pipeline_run_id": str(pipeline_run_id),
+                    "stage_name": stage_name,
+                    "attempt": attempt,
+                    "output_checksum_sha256": output_checksum,
+                })
+                stage.checkpoint_data = checkpoint_data
                 replay_metadata = {
                     "input_checksum_sha256": input_checksum_sha256,
-                    "output_checksum_sha256": _canonical_checksum(stage_output),
+                    "output_checksum_sha256": output_checksum,
                     "runtime_versions": _runtime_version_snapshot(),
+                    "attempt": attempt,
+                    "attempt_idempotency_key": attempt_key,
                 }
+                prior_result_data = stage.result_data if isinstance(stage.result_data, dict) else {}
                 stage.result_data = {
-                    **(stage.result_data or {}),
+                    **prior_result_data,
                     "_replay": replay_metadata,
                 }
+                stage.idempotency_key = attempt_key
                 await db.commit()
     except Exception as exc:
         logger.warning(
             "checkpoint_write_failed",
             pipeline_run_id=pipeline_run_id,
             stage_name=stage_name,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
 
 
-async def _load_checkpoint(test_run_id: str, workflow_type: str) -> Optional[dict]:
+async def _load_checkpoint(
+    test_run_id: str,
+    workflow_type: str,
+    *,
+    pipeline_run_id: str | None = None,
+) -> Optional[dict]:
     """
     Look for a prior failed pipeline run for the same test_run_id.
     If one exists with completed stages, return the merged checkpoint state
@@ -630,17 +1069,27 @@ async def _load_checkpoint(test_run_id: str, workflow_type: str) -> Optional[dic
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select as sa_select  # noqa: PLC0415
 
-            # Find most recent failed pipeline for this test run
-            result = await db.execute(
-                sa_select(AgentPipelineRun)
-                .where(
-                    AgentPipelineRun.test_run_id == test_run_id,
-                    AgentPipelineRun.workflow_type == workflow_type,
-                    AgentPipelineRun.status.in_(["failed", "partial"]),
+            # Same-pipeline resumes use the claimed pipeline as authority;
+            # new pipeline attempts retain the latest-failed lookup.
+            if pipeline_run_id is not None:
+                result = await db.execute(
+                    sa_select(AgentPipelineRun).where(
+                        AgentPipelineRun.id == pipeline_run_id,
+                        AgentPipelineRun.test_run_id == test_run_id,
+                        AgentPipelineRun.workflow_type == workflow_type,
+                    )
                 )
-                .order_by(AgentPipelineRun.started_at.desc())
-                .limit(1)
-            )
+            else:
+                result = await db.execute(
+                    sa_select(AgentPipelineRun)
+                    .where(
+                        AgentPipelineRun.test_run_id == test_run_id,
+                        AgentPipelineRun.workflow_type == workflow_type,
+                        AgentPipelineRun.status.in_(["failed", "partial"]),
+                    )
+                    .order_by(AgentPipelineRun.started_at.desc())
+                    .limit(1)
+                )
             prev_run = result.scalar_one_or_none()
             if not prev_run:
                 return None
@@ -658,19 +1107,34 @@ async def _load_checkpoint(test_run_id: str, workflow_type: str) -> Optional[dic
             if not completed_stages:
                 return None
 
-            # Merge all completed stage outputs into a single state dict
+            # Merge only checkpoints whose stored replay authority still
+            # matches the checkpoint body. Invalid rows are rerun, not fatal.
             merged_state: dict = {}
             checkpoint_stage_names: list[str] = []
+            checkpoint_replay_metadata: dict[str, dict[str, Any]] = {}
             for stage in completed_stages:
-                if stage.checkpoint_data:
-                    data = stage.checkpoint_data if isinstance(stage.checkpoint_data, dict) else {}
-                    merged_state.update(data)
-                    checkpoint_stage_names.append(stage.stage_name)
+                if stage.stage_name in _PIPELINE_BOUND_CHECKPOINT_STAGES:
+                    continue
+                metadata = _checkpoint_restore_metadata(stage)
+                if metadata is None:
+                    logger.info(
+                        "checkpoint_restore_skipped",
+                        previous_pipeline_run_id=str(prev_run.id),
+                        stage_name=stage.stage_name,
+                        reason="missing_or_mismatched_replay_metadata",
+                    )
+                    continue
+                data = stage.checkpoint_data if isinstance(stage.checkpoint_data, dict) else {}
+                merged_state.update(data)
+                checkpoint_stage_names.append(stage.stage_name)
+                checkpoint_replay_metadata[stage.stage_name] = metadata
 
             if checkpoint_stage_names:
+                merged_state["_checkpoint_replay_metadata"] = checkpoint_replay_metadata
                 logger.info(
-                    "Loaded checkpoint from previous run %s: stages=%s",
-                    prev_run.id, checkpoint_stage_names,
+                    "checkpoint_loaded",
+                    previous_pipeline_run_id=str(prev_run.id),
+                    stages=checkpoint_stage_names,
                 )
                 merged_state["_checkpoint_stages"] = checkpoint_stage_names
                 return merged_state
@@ -679,10 +1143,166 @@ async def _load_checkpoint(test_run_id: str, workflow_type: str) -> Optional[dic
         logger.warning(
             "checkpoint_load_failed",
             test_run_id=test_run_id,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
 
     return None
+
+
+async def _claim_pipeline_resume(pipeline_run_id: str) -> dict[str, Any] | None:
+    """Atomically claim a failed/partial pipeline for same-ID replay.
+
+    The row lock is the idempotency boundary: only one worker can transition a
+    terminal pipeline back to ``running``. Completed stages remain immutable;
+    every other stage is reset to ``pending`` and receives a new attempt number
+    before the graph is invoked.
+    """
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select as sa_select  # noqa: PLC0415
+
+        result = await db.execute(
+            sa_select(AgentPipelineRun)
+            .where(AgentPipelineRun.id == pipeline_run_id)
+            .with_for_update()
+        )
+        pipeline = result.scalar_one_or_none()
+        if pipeline is None or pipeline.status not in {"failed", "partial"}:
+            return None
+
+        ownership = await db.execute(
+            sa_select(TestRun.project_id).where(TestRun.id == pipeline.test_run_id)
+        )
+        project_id = ownership.scalar_one_or_none()
+        if project_id is None:
+            return None
+
+        metadata = dict(pipeline.execution_metadata or {})
+        initial_plan = metadata.get("initial_workflow_plan")
+        if not isinstance(initial_plan, dict) or not isinstance(initial_plan.get("stages"), list):
+            # Never reconstruct a plan during resume; the original authority is
+            # required to keep budgets/flags and task selection stable.
+            return None
+        mode_snapshot = metadata.get("analysis_mode_resolution")
+        if not isinstance(mode_snapshot, dict) or not mode_snapshot.get("resolved"):
+            # Analysis routing is part of the replay authority. Legacy rows that
+            # never persisted it must take a new pipeline attempt instead.
+            return None
+
+        current_attempt = metadata.get("resume_attempt", 0)
+        if isinstance(current_attempt, bool) or not isinstance(current_attempt, int) or current_attempt < 0:
+            current_attempt = 0
+        resume_attempt = current_attempt + 1
+        metadata["resume_attempt"] = resume_attempt
+        metadata["resume_started_at"] = datetime.now(timezone.utc).isoformat()
+        metadata["resume_source_pipeline_run_id"] = str(pipeline.id)
+        pipeline.execution_metadata = metadata
+        pipeline.status = "running"
+        pipeline.started_at = datetime.now(timezone.utc)
+        pipeline.completed_at = None
+        pipeline.error = None
+
+        stage_result = await db.execute(
+            sa_select(AgentStageResult)
+            .where(AgentStageResult.pipeline_run_id == pipeline.id)
+            .order_by(AgentStageResult.stage_name)
+        )
+        for stage in stage_result.scalars().all():
+            if stage.status == "completed":
+                continue
+            prior_attempt = stage.attempt if isinstance(stage.attempt, int) and stage.attempt >= 1 else 1
+            prior_key = stage.idempotency_key
+            stage.attempt = prior_attempt + 1
+            stage.status = "pending"
+            stage.started_at = None
+            stage.completed_at = None
+            stage.error = None
+            stage.stop_reason = None
+            stage.skipped_reason = None
+            stage.execution_path = None
+            stage.idempotency_key = None
+            prior_result_data = stage.result_data if isinstance(stage.result_data, dict) else {}
+            stage.result_data = {
+                **prior_result_data,
+                "_resume": {
+                    "resume_attempt": resume_attempt,
+                    "previous_attempt": prior_attempt,
+                    "previous_idempotency_key": prior_key,
+                },
+            }
+
+        await db.commit()
+        return {
+            "test_run_id": str(pipeline.test_run_id),
+            "project_id": str(project_id),
+            "workflow_type": pipeline.workflow_type,
+            "initial_workflow_plan": initial_plan,
+            "cluster_child_settings": metadata.get("cluster_child_settings") or {},
+            "async_decision_report_supersession_enabled": bool(
+                metadata.get("async_decision_report_supersession_enabled", False)
+            ),
+            "contract_agent_settings": metadata.get("contract_agent_settings") or {"enabled": False},
+            "log_intelligence_settings": metadata.get("log_intelligence_settings") or {"enabled": False},
+            "regression_watchman_settings": metadata.get("regression_watchman_settings") or {"enabled": False},
+            "change_ownership_settings": metadata.get("change_ownership_settings") or {"enabled": False},
+            "analysis_mode_resolution": mode_snapshot,
+            "resume_attempt": resume_attempt,
+        }
+
+
+async def resume_pipeline(pipeline_run_id: str, build_number: str = "resume") -> dict:
+    """Resume a failed/partial pipeline under its existing pipeline identity."""
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select as sa_select  # noqa: PLC0415
+
+        result = await db.execute(
+            sa_select(AgentPipelineRun).where(AgentPipelineRun.id == pipeline_run_id)
+        )
+        pipeline = result.scalar_one_or_none()
+        if pipeline is None:
+            raise ValueError("pipeline_not_found")
+        workflow_type = str(pipeline.workflow_type)
+
+    if workflow_type == "deep":
+        return await run_deep_pipeline(
+            build_number=build_number,
+            pipeline_run_id=pipeline_run_id,
+        )
+    return await run_offline_pipeline(
+        build_number=build_number,
+        workflow_type=workflow_type,
+        pipeline_run_id=pipeline_run_id,
+    )
+async def _persist_execution_context(
+    pipeline_run_id: str,
+    mode_snapshot: dict[str, Any],
+) -> None:
+    """Persist mode routing before graph execution can fail."""
+    if not pipeline_run_id or not isinstance(mode_snapshot, dict):
+        return
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select as sa_select  # noqa: PLC0415
+
+            result = await db.execute(
+                sa_select(AgentPipelineRun).where(AgentPipelineRun.id == pipeline_run_id)
+            )
+            pipeline = result.scalar_one_or_none()
+            if pipeline is None:
+                return
+            metadata = dict(pipeline.execution_metadata or {})
+            metadata.update({
+                "analysis_mode_requested": mode_snapshot.get("requested"),
+                "analysis_mode_resolved": mode_snapshot.get("resolved"),
+                "analysis_mode_resolution": mode_snapshot,
+            })
+            pipeline.execution_metadata = metadata
+            await db.commit()
+    except Exception as exc:
+        logger.warning(
+            "execution_context_persist_failed",
+            pipeline_run_id=pipeline_run_id,
+            error_type=type(exc).__name__,
+        )
 
 
 def _safe_serialize(data: dict) -> dict:
@@ -704,11 +1324,64 @@ def _safe_serialize(data: dict) -> dict:
 
 # ── Checkpointed node wrappers ──────────────────────────────────────────────
 
+def _planner_stage_selection(
+    state: WorkflowState,
+    stage_name: str,
+) -> tuple[bool, str]:
+    """Read selection from the immutable starting plan.
+
+    The graph topology is intentionally stable for checkpoint compatibility,
+    but the frozen planner must still control whether an optional capability
+    executes. Missing/legacy plan metadata remains backward-compatible and
+    executes the stage; an explicit ``planned=false`` is authoritative.
+    """
+    plan = state.get("initial_workflow_plan") or state.get("workflow_plan")
+    if not isinstance(plan, dict):
+        return True, "legacy_plan_missing"
+    stages = plan.get("stages")
+    if not isinstance(stages, list):
+        return True, "legacy_plan_stages_missing"
+    for item in stages:
+        if isinstance(item, dict) and item.get("stage") == stage_name:
+            if item.get("planned") is False:
+                rationale = item.get("rationale")
+                return False, str(rationale or "planner_not_selected")[:500]
+            return True, str(item.get("rationale") or "planner_selected")[:500]
+    return True, "legacy_plan_stage_missing"
+
+
 def _make_checkpointed_node(original_node, stage_name: str):
     """Wrap a node function so its output is checkpointed after successful execution."""
     async def wrapper(state: WorkflowState) -> dict[str, Any]:
         pipeline_run_id = state.get("pipeline_run_id", "")
         input_checksum = _canonical_checksum(state)
+
+        selected, selection_reason = _planner_stage_selection(state, stage_name)
+        if not selected:
+            await _write_stage_skipped(
+                pipeline_run_id,
+                stage_name,
+                skipped_reason=f"Planner did not select stage: {selection_reason}",
+                execution_path=ExecutionPath.CONDITIONAL_SKIP,
+                stop_reason="planner_not_selected",
+            )
+            await emit_event(
+                pipeline_run_id,
+                "stage_skipped",
+                stage_name=stage_name,
+                detail={
+                    "reason": "planner_not_selected",
+                    "rationale": selection_reason,
+                    "input_checksum_sha256": input_checksum,
+                },
+            )
+            return {
+                "completed_stages": [stage_name],
+                "skipped_stages": [stage_name],
+                "current_stage": stage_name,
+                "execution_path": ExecutionPath.CONDITIONAL_SKIP,
+                "errors": [],
+            }
 
         # Skip if this stage was loaded from a checkpoint
         checkpoint_stages = cast(list[str], state.get("_checkpoint_stages", []))
@@ -729,11 +1402,11 @@ def _make_checkpointed_node(original_node, stage_name: str):
             result = cast(dict[str, Any], await original_node(state))
         except Exception as exc:
             # Mark the individual stage as failed so it doesn't stay stuck in "running"
-            error_msg = f"{stage_name} failed: {exc}"
+            error_msg = f"{stage_name} failed: {_safe_workflow_error(exc)}"
             logger.error(
                 "stage_unhandled_exception",
                 stage_name=stage_name,
-                error=str(exc),
+                error_type=type(exc).__name__,
                 exc_info=True,
             )
             try:
@@ -784,7 +1457,7 @@ async def _persist_deep_outputs(
         logger.warning(
             "deep_persistence_failed",
             test_run_id=str(test_run_id),
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
     return final_state
 
@@ -792,10 +1465,12 @@ async def _persist_deep_outputs(
 # ── Public entry points ───────────────────────────────────────────────────────
 
 async def run_offline_pipeline(
-    test_run_id: str,
-    project_id: str,
-    build_number: str,
+    test_run_id: str | None = None,
+    project_id: str | None = None,
+    build_number: str = "resume",
     workflow_type: str = "offline",
+    *,
+    pipeline_run_id: str | None = None,
 ) -> dict:
     """
     Execute the full offline analysis pipeline for a completed test run.
@@ -804,12 +1479,31 @@ async def run_offline_pipeline(
     - Selects the appropriate compiled graph (offline vs live)
     - Returns the final LangGraph state dict
     """
-    pipeline_run_id = str(uuid.uuid4())
-    await _create_pipeline_run(pipeline_run_id, test_run_id, workflow_type)
+    if pipeline_run_id is not None:
+        pipeline_setup = await _claim_pipeline_resume(pipeline_run_id)
+        if pipeline_setup is None:
+            raise ValueError("pipeline_not_resumable")
+        test_run_id = pipeline_setup["test_run_id"]
+        project_id = pipeline_setup["project_id"]
+    else:
+        if not test_run_id or not project_id:
+            raise ValueError("test_run_and_project_required")
+        pipeline_run_id = str(uuid.uuid4())
+        pipeline_setup = await _create_pipeline_run(
+            pipeline_run_id, test_run_id, project_id, workflow_type
+        )
 
-    # Attempt to load checkpoint from a previous failed run
-    checkpoint = await _load_checkpoint(test_run_id, workflow_type)
-    mode_snapshot = await _resolve_analysis_mode_snapshot()
+    # Attempt to load a checksum-authorized checkpoint. Same-pipeline resume
+    # reads only the atomically claimed pipeline; new attempts use the legacy
+    # latest-failed source and intentionally get a new pipeline identity.
+    checkpoint = await _load_checkpoint(
+        test_run_id, workflow_type, pipeline_run_id=pipeline_run_id if pipeline_setup.get("resume_attempt") else None
+    )
+    if pipeline_setup.get("resume_attempt"):
+        mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
+    else:
+        mode_snapshot = await _resolve_analysis_mode_snapshot()
+    await _persist_execution_context(pipeline_run_id, mode_snapshot)
 
     initial_state: WorkflowState = {
         "pipeline_run_id":    pipeline_run_id,
@@ -833,10 +1527,27 @@ async def run_offline_pipeline(
         "summary_markdown":   None,
         "structured_summary": None,
         "summary_provenance": None,
+        "decision_intelligence": None,
+        "decision_evidence_snapshot": None,
+        "decision_report_verification": None,
         "triage_results":     [],
         # Deep pipeline state (empty for offline/live pipelines)
         "failure_clusters":   [],
         "cluster_map":        {},
+        "cluster_child_settings": pipeline_setup["cluster_child_settings"],
+        "async_decision_report_supersession_enabled": bool(
+            pipeline_setup.get("async_decision_report_supersession_enabled", False)
+        ),
+        "contract_agent_enabled": bool(pipeline_setup.get("contract_agent_settings", {}).get("enabled", False)),
+        "contract_findings": None,
+        "log_intelligence_enabled": bool(pipeline_setup.get("log_intelligence_settings", {}).get("enabled", False)),
+        "log_findings": None,
+        "regression_watchman_enabled": bool(pipeline_setup.get("regression_watchman_settings", {}).get("enabled", False)),
+        "regression_classification": None,
+        "change_ownership_enabled": bool(pipeline_setup.get("change_ownership_settings", {}).get("enabled", False)),
+        "change_ownership_findings": None,
+        "cluster_investigation_plan": None,
+        "cluster_investigation_results": None,
         "deep_findings":      {},
         "flaky_findings":     [],
         "test_health_findings": [],
@@ -856,12 +1567,15 @@ async def run_offline_pipeline(
         "analysis_mode_resolved": mode_snapshot["resolved"],
         "analysis_mode_resolution": mode_snapshot,
         "_workflow_route_decisions": [],
-        "workflow_plan": build_workflow_plan(workflow_type=workflow_type),
+        "_checkpoint_stages": [],
+        "_checkpoint_replay_metadata": {},
+        "workflow_plan": pipeline_setup["initial_workflow_plan"],
         "workflow_verification": {},
         "agent_contracts": {},
         "schema_version":     2,
         "stage_metrics":      {},
     }
+    initial_state["initial_workflow_plan"] = initial_state["workflow_plan"]
 
     # Merge checkpoint data into initial state (restored stage outputs)
     if checkpoint:
@@ -922,30 +1636,63 @@ async def run_offline_pipeline(
         await _persist_memory(project_id, test_run_id, pipeline_run_id, final_state)
         return cast(dict[str, Any], final_state)
     except Exception as exc:
-        error_msg = f"Pipeline execution error: {exc}"
-        logger.error(error_msg, exc_info=True)
+        error_msg = f"Pipeline execution error: {_safe_workflow_error(exc)}"
+        logger.error("pipeline_execution_failed", error_type=type(exc).__name__, exc_info=True)
+        if workflow_type == "deep":
+            from app.services.cluster_investigation_orchestrator import (
+                cancel_cluster_children,
+            )
+
+            try:
+                await cancel_cluster_children(
+                    pipeline_run_id, reason="parent_pipeline_failed"
+                )
+            except Exception as cancel_exc:  # noqa: BLE001
+                logger.error(
+                    "cluster_child_cancel_failed",
+                    error_type=type(cancel_exc).__name__,
+                )
         await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)
         await emit_event(pipeline_run_id, "error_occurred", detail={
             "workflow_type": workflow_type,
-            "error": str(exc)[:500],
+            "error": error_msg[:500],
         })
         raise
 
 
 async def run_deep_pipeline(
-    test_run_id: str,
-    project_id: str,
-    build_number: str,
+    test_run_id: str | None = None,
+    project_id: str | None = None,
+    build_number: str = "resume",
+    *,
+    pipeline_run_id: str | None = None,
 ) -> dict:
     """
     Execute the deep investigation pipeline with clustering, flaky sentinel,
     test health analysis, and release risk assessment.
     """
-    pipeline_run_id = str(uuid.uuid4())
-    await _create_pipeline_run(pipeline_run_id, test_run_id, "deep")
+    if pipeline_run_id is not None:
+        pipeline_setup = await _claim_pipeline_resume(pipeline_run_id)
+        if pipeline_setup is None:
+            raise ValueError("pipeline_not_resumable")
+        test_run_id = pipeline_setup["test_run_id"]
+        project_id = pipeline_setup["project_id"]
+    else:
+        if not test_run_id or not project_id:
+            raise ValueError("test_run_and_project_required")
+        pipeline_run_id = str(uuid.uuid4())
+        pipeline_setup = await _create_pipeline_run(
+            pipeline_run_id, test_run_id, project_id, "deep"
+        )
 
-    checkpoint = await _load_checkpoint(test_run_id, "deep")
-    mode_snapshot = await _resolve_analysis_mode_snapshot()
+    checkpoint = await _load_checkpoint(
+        test_run_id, "deep", pipeline_run_id=pipeline_run_id if pipeline_setup.get("resume_attempt") else None
+    )
+    if pipeline_setup.get("resume_attempt"):
+        mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
+    else:
+        mode_snapshot = await _resolve_analysis_mode_snapshot()
+    await _persist_execution_context(pipeline_run_id, mode_snapshot)
 
     initial_state: WorkflowState = {
         "pipeline_run_id":    pipeline_run_id,
@@ -968,9 +1715,26 @@ async def run_deep_pipeline(
         "summary_markdown":   None,
         "structured_summary": None,
         "summary_provenance": None,
+        "decision_intelligence": None,
+        "decision_evidence_snapshot": None,
+        "decision_report_verification": None,
         "triage_results":     [],
         "failure_clusters":   [],
         "cluster_map":        {},
+        "cluster_child_settings": pipeline_setup["cluster_child_settings"],
+        "async_decision_report_supersession_enabled": bool(
+            pipeline_setup.get("async_decision_report_supersession_enabled", False)
+        ),
+        "contract_agent_enabled": bool(pipeline_setup.get("contract_agent_settings", {}).get("enabled", False)),
+        "contract_findings": None,
+        "log_intelligence_enabled": bool(pipeline_setup.get("log_intelligence_settings", {}).get("enabled", False)),
+        "log_findings": None,
+        "regression_watchman_enabled": bool(pipeline_setup.get("regression_watchman_settings", {}).get("enabled", False)),
+        "regression_classification": None,
+        "change_ownership_enabled": bool(pipeline_setup.get("change_ownership_settings", {}).get("enabled", False)),
+        "change_ownership_findings": None,
+        "cluster_investigation_plan": None,
+        "cluster_investigation_results": None,
         "deep_findings":      {},
         "flaky_findings":     [],
         "test_health_findings": [],
@@ -990,12 +1754,15 @@ async def run_deep_pipeline(
         "analysis_mode_resolved": mode_snapshot["resolved"],
         "analysis_mode_resolution": mode_snapshot,
         "_workflow_route_decisions": [],
-        "workflow_plan": build_workflow_plan(workflow_type="deep"),
+        "_checkpoint_stages": [],
+        "_checkpoint_replay_metadata": {},
+        "workflow_plan": pipeline_setup["initial_workflow_plan"],
         "workflow_verification": {},
         "agent_contracts": {},
         "schema_version":     2,
         "stage_metrics":      {},
     }
+    initial_state["initial_workflow_plan"] = initial_state["workflow_plan"]
 
     if checkpoint:
         checkpoint_stages = checkpoint.pop("_checkpoint_stages", [])
@@ -1047,12 +1814,25 @@ async def run_deep_pipeline(
         await _persist_memory(project_id, test_run_id, pipeline_run_id, final_state)
         return cast(dict[str, Any], final_state)
     except Exception as exc:
-        error_msg = f"Deep pipeline execution error: {exc}"
-        logger.error(error_msg, exc_info=True)
+        error_msg = f"Deep pipeline execution error: {_safe_workflow_error(exc)}"
+        logger.error("deep_pipeline_execution_failed", error_type=type(exc).__name__, exc_info=True)
+        from app.services.cluster_investigation_orchestrator import (
+            cancel_cluster_children,
+        )
+
+        try:
+            await cancel_cluster_children(
+                pipeline_run_id, reason="parent_pipeline_failed"
+            )
+        except Exception as cancel_exc:  # noqa: BLE001
+            logger.error(
+                "cluster_child_cancel_failed",
+                error_type=type(cancel_exc).__name__,
+            )
         await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)
         await emit_event(pipeline_run_id, "error_occurred", detail={
             "workflow_type": "deep",
-            "error": str(exc)[:500],
+            "error": error_msg[:500],
         })
         raise
 
@@ -1064,6 +1844,7 @@ async def _write_stage_skipped(
     stage_name: str,
     skipped_reason: str,
     execution_path: ExecutionPath,
+    stop_reason: str | None = None,
 ) -> None:
     """
     Update an AgentStageResult row to record why a stage was skipped.
@@ -1086,13 +1867,15 @@ async def _write_stage_skipped(
                 stage.status = "skipped"
                 stage.skipped_reason = skipped_reason
                 stage.execution_path = execution_path.value
+                if stop_reason:
+                    stage.stop_reason = stop_reason
                 await db.commit()
     except Exception as exc:
         logger.warning(
             "skipped_stage_write_failed",
             pipeline_run_id=pipeline_run_id,
             stage_name=stage_name,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
 
 
@@ -1130,7 +1913,7 @@ async def _mark_stage_failed(
             "mark_stage_failed_error",
             pipeline_run_id=pipeline_run_id,
             stage_name=stage_name,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
 
 
@@ -1154,8 +1937,30 @@ async def _mark_stage_restored(pipeline_run_id: str, stage_name: str) -> None:
                 stage.status = "completed"
                 stage.started_at = stage.started_at or now
                 stage.completed_at = now
+                prior_result = stage.result_data if isinstance(stage.result_data, dict) else {}
+                replay = prior_result.get("_replay")
+                if isinstance(replay, dict):
+                    attempt = replay.get("attempt")
+                    output_checksum = replay.get("output_checksum_sha256")
+                    if isinstance(attempt, int) and attempt >= 1 and isinstance(output_checksum, str):
+                        restored_key = _canonical_checksum({
+                            "pipeline_run_id": str(pipeline_run_id),
+                            "stage_name": stage_name,
+                            "attempt": attempt,
+                            "output_checksum_sha256": output_checksum,
+                        })
+                        replay = {
+                            **replay,
+                            "source_pipeline_run_id": replay.get(
+                                "source_pipeline_run_id", "unknown"
+                            ),
+                            "restored_into_pipeline_run_id": str(pipeline_run_id),
+                            "attempt_idempotency_key": restored_key,
+                        }
+                        stage.idempotency_key = restored_key
                 stage.result_data = {
-                    **(stage.result_data or {}),
+                    **prior_result,
+                    "_replay": replay if isinstance(replay, dict) else prior_result.get("_replay"),
                     "restored_from_checkpoint": True,
                 }
                 stage.route_rationale = "Restored from previous pipeline checkpoint"
@@ -1165,7 +1970,7 @@ async def _mark_stage_restored(pipeline_run_id: str, stage_name: str) -> None:
             "mark_stage_restored_error",
             pipeline_run_id=pipeline_run_id,
             stage_name=stage_name,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
 
 
@@ -1194,7 +1999,7 @@ async def _persist_memory(
         logger.warning(
             "memory_persistence_failed",
             pipeline_run_id=pipeline_run_id,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
 
 
@@ -1205,8 +2010,11 @@ _PIPELINE_STAGES = [
 ]
 _DEEP_PIPELINE_STAGES = [
     "ingestion", "anomaly_detection", "failure_clustering", "root_cause_analysis",
-    "summary", "triage", "gap_detection", "report_refinement",
+    "cluster_investigation_dispatch", "cluster_investigation_join",
+    "summary", "triage", "contract_validation", "log_intelligence", "regression_watchman", "change_ownership", "gap_detection", "report_refinement",
     "flaky_sentinel", "test_health", "release_risk",
+    "decision_report",
+    "decision_report_critic",
 ]
 _LIVE_PIPELINE_STAGES = [
     "ingestion", "summary",
@@ -1214,8 +2022,11 @@ _LIVE_PIPELINE_STAGES = [
 
 
 async def _create_pipeline_run(
-    pipeline_run_id: str, test_run_id: str, workflow_type: str
-) -> None:
+    pipeline_run_id: str,
+    test_run_id: str,
+    project_id: str,
+    workflow_type: str,
+) -> dict[str, Any]:
     if workflow_type == "deep":
         stages = _DEEP_PIPELINE_STAGES
     elif workflow_type == "live":
@@ -1223,20 +2034,115 @@ async def _create_pipeline_run(
     else:
         stages = _PIPELINE_STAGES
     async with AsyncSessionLocal() as db:
+        cluster_settings: dict[str, Any] = {
+            "enabled": False,
+            "feature_flag_enabled": False,
+            "policy_enabled": False,
+            "mode": "shadow",
+            "max_children": 0,
+            "max_members": 50,
+            "max_active_per_project": 0,
+            "max_children_per_day": 0,
+            "aggregate_budget": {
+                "max_llm_calls": 0,
+                "max_tokens": 0,
+                "max_cost_usd": 0.0,
+                "max_seconds": 0,
+            },
+        }
+        if workflow_type == "deep":
+            from app.services.cluster_investigation_orchestrator import (
+                resolve_cluster_child_settings,
+            )
+
+            cluster_settings = await resolve_cluster_child_settings(
+                db, uuid.UUID(str(project_id))
+            )
+        from app.services.agent_investigation_service import (
+            get_effective_policy,
+            run_budget_from_policy,
+        )
+
+        from app.services.feature_flags import is_enabled
+        async_report_supersession_enabled = await is_enabled(
+            "async_decision_report_supersession",
+            db=db,
+            project_id=uuid.UUID(str(project_id)),
+        ) if workflow_type == "deep" else False
+        contract_agent_enabled = await is_enabled("contract_validation", db=db, project_id=uuid.UUID(str(project_id)))
+        log_intelligence_enabled = await is_enabled("log_intelligence", db=db, project_id=uuid.UUID(str(project_id)))
+        regression_watchman_enabled = await is_enabled("regression_watchman", db=db, project_id=uuid.UUID(str(project_id)))
+        change_ownership_enabled = await is_enabled("change_ownership", db=db, project_id=uuid.UUID(str(project_id)))
+
+        policy = await get_effective_policy(db, uuid.UUID(str(project_id)))
+        run_budget = run_budget_from_policy(policy)
+        initial_plan = build_workflow_plan(
+            workflow_type=workflow_type,
+            cluster_children_enabled=bool(cluster_settings["enabled"]),
+            cluster_children_aggregate_budget=dict(
+                cluster_settings["aggregate_budget"]
+            ),
+            decision_graph_aggregate_budget=dict(run_budget),
+            contract_validation_enabled=contract_agent_enabled,
+            log_intelligence_enabled=log_intelligence_enabled,
+            regression_watchman_enabled=regression_watchman_enabled,
+            change_ownership_enabled=change_ownership_enabled,
+        )
         db.add(AgentPipelineRun(
             id=pipeline_run_id,
             test_run_id=test_run_id,
             workflow_type=workflow_type,
             status="running",
             started_at=datetime.now(timezone.utc),
+            execution_metadata={
+                "initial_workflow_plan": initial_plan,
+                "cluster_child_settings": cluster_settings,
+                "async_decision_report_supersession_enabled": async_report_supersession_enabled,
+                "contract_agent_settings": {"enabled": contract_agent_enabled},
+                "log_intelligence_settings": {"enabled": log_intelligence_enabled},
+                "regression_watchman_settings": {"enabled": regression_watchman_enabled},
+                "change_ownership_settings": {"enabled": change_ownership_enabled},
+                "run_budget": run_budget,
+                "budget_spend": {
+                    "llm_calls": 0,
+                    "tokens": 0,
+                    "cost_usd": 0.0,
+                    "reservations": {},
+                    "completed_reservations": {},
+                    "budget_stop_reasons": [],
+                },
+            },
         ))
+        plan_stages = {
+            str(item.get("stage")): item
+            for item in initial_plan.get("stages", [])
+            if isinstance(item, dict)
+        }
         for stage in stages:
+            planned = plan_stages.get(stage, {})
+            capability = get_capability(stage)
             db.add(AgentStageResult(
                 pipeline_run_id=pipeline_run_id,
+                task_key=stage,
+                capability_id=capability.capability_id,
+                selected=bool(planned.get("planned", True)),
+                required=bool(planned.get("required", False)),
+                dependencies=list(planned.get("dependencies") or capability.dependencies),
+                allocated_budget=planned.get("budget"),
+                route_rationale=str(planned.get("rationale") or "")[:2000],
                 stage_name=stage,
                 status="pending",
             ))
         await db.commit()
+        return {
+            "initial_workflow_plan": initial_plan,
+            "cluster_child_settings": cluster_settings,
+            "async_decision_report_supersession_enabled": async_report_supersession_enabled,
+                "contract_agent_settings": {"enabled": contract_agent_enabled},
+                "log_intelligence_settings": {"enabled": log_intelligence_enabled},
+                "regression_watchman_settings": {"enabled": regression_watchman_enabled},
+                "change_ownership_settings": {"enabled": change_ownership_enabled},
+        }
 
 
 async def _mark_pipeline_done(
@@ -1270,6 +2176,53 @@ async def _mark_pipeline_done(
             if error:
                 run.error = error[:2000]
             if final_state:
+                prior_metadata = dict(run.execution_metadata or {})
+                # Materialize report recommendations as approval-gated action
+                # proposals in the same transaction as pipeline completion.
+                # This is intentionally best-effort for legacy/failed reports;
+                # a malformed proposal must not hide the terminal pipeline.
+                try:
+                    from app.services.agent_action_ledger_service import (
+                        persist_report_action_proposals,
+                    )
+
+                    decision = final_state.get("decision_intelligence") or {}
+                    proposed_actions = (
+                        decision.get("proposed_actions")
+                        if isinstance(decision, dict)
+                        else []
+                    )
+                    await persist_report_action_proposals(
+                        db,
+                        project_id=uuid.UUID(str(run_project_id))
+                        if (run_project_id := getattr(run, "project_id", None))
+                        else uuid.UUID(str(final_state["project_id"])),
+                        test_run_id=uuid.UUID(str(final_state["test_run_id"])),
+                        pipeline_run_id=uuid.UUID(str(pipeline_run_id)),
+                        proposed_actions=proposed_actions,
+                    )
+                except Exception as action_exc:  # noqa: BLE001
+                    logger.warning(
+                        "action_proposal_persistence_failed",
+                        pipeline_run_id=pipeline_run_id,
+                        error_type=type(action_exc).__name__,
+                    )
+                from app.services.pipeline_budget_service import (
+                    reconcile_pipeline_budget,
+                    retry_pending_stage_settlements,
+                )
+
+                budget_metadata = {
+                    "run_budget": prior_metadata.get("run_budget"),
+                    "budget_spend": prior_metadata.get("budget_spend", {}),
+                    "pending_settlements": prior_metadata.get("pending_settlements", {}),
+                }
+                retry_pending_stage_settlements(budget_metadata)
+                if not success or budget_metadata.get("run_budget"):
+                    reconcile_pipeline_budget(
+                        budget_metadata,
+                        reason="pipeline_terminalized" if success else "pipeline_failed",
+                    )
                 run.execution_metadata = {
                     "tools_used": final_state.get("tools_used", []),
                     "schema_version": final_state.get("schema_version", 2),
@@ -1280,19 +2233,45 @@ async def _mark_pipeline_done(
                     "analysis_mode_resolved": final_state.get("analysis_mode_resolved"),
                     "analysis_mode_resolution": final_state.get("analysis_mode_resolution", {}),
                     "checkpoint_stages": final_state.get("_checkpoint_stages", []),
+                    "checkpoint_replay_metadata": final_state.get(
+                        "_checkpoint_replay_metadata", {}
+                    ),
                     "workflow_route_decisions": final_state.get("_workflow_route_decisions", []),
                     "workflow_plan": final_state.get("workflow_plan", {}),
+                    "initial_workflow_plan": final_state.get("initial_workflow_plan", {}),
                     "workflow_verification": final_state.get("workflow_verification", {}),
                     "agent_contracts": final_state.get("agent_contracts", {}),
+                    "cluster_child_settings": final_state.get(
+                        "cluster_child_settings", {}
+                    ),
+                    "async_decision_report_supersession_enabled": bool(
+                        final_state.get("async_decision_report_supersession_enabled", False)
+                    ),
+                    "cluster_investigation_plan": sanitize_persistence_payload(
+                        final_state.get("cluster_investigation_plan")
+                    )[0],
+                    "cluster_investigation_results": sanitize_persistence_payload(
+                        final_state.get("cluster_investigation_results")
+                    )[0],
                     "final_state_checksum_sha256": _canonical_checksum(final_state),
                     "runtime_versions": _runtime_version_snapshot(),
-                    # AI-F2: full id → v<version>:<hash12> map of every
-                    # registered prompt, recorded once per pipeline so any
-                    # verdict from this run can be replayed against the exact
-                    # prompt bytes that produced it.
                     "prompt_versions": _prompt_registry_versions(),
+                    "resume_attempt": prior_metadata.get("resume_attempt", 0),
+                    "resume_started_at": prior_metadata.get("resume_started_at"),
+                    "resume_source_pipeline_run_id": prior_metadata.get(
+                        "resume_source_pipeline_run_id"
+                    ),
+                    "run_budget": prior_metadata.get("run_budget"),
+                    "budget_spend": budget_metadata.get("budget_spend", {}),
+                    "pending_settlements": budget_metadata.get("pending_settlements", {}),
                 }
-
+            else:
+                prior_metadata = dict(run.execution_metadata or {})
+                reconcile_pipeline_budget(
+                    prior_metadata,
+                    reason="pipeline_failed" if not success else "pipeline_terminalized",
+                )
+                run.execution_metadata = prior_metadata
         # Mark stages that were never reached (still "pending") as "skipped".
         # Also tag them with a conditional_skip execution_path so the UI shows
         # "not on active pipeline branch" rather than a generic skipped badge.

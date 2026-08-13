@@ -20,12 +20,13 @@ from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_project_access, require_role
+from app.core.deps import get_current_active_user, require_project_access, require_role, require_run_access
 from app.core.config import settings
 from app.db.postgres import get_db
+from app.db.mongo import get_mongo_db
 from app.models.postgres import (
     FeedbackRating,
     FailureCategory,
@@ -48,6 +49,40 @@ class FeedbackRequest(BaseModel):
     corrected_category: Optional[FailureCategory] = None
     corrected_root_cause: Optional[str] = None
     comment: Optional[str] = None
+
+
+
+class DecisionReportFeedbackRequest(BaseModel):
+    """Utility rating or claim correction for one immutable report version."""
+    report_version: int = Field(..., ge=1)
+    feedback_kind: Literal["utility", "claim_correction"]
+    utility_rating: Optional[Literal["useful", "partially_useful", "not_useful"]] = None
+    claim_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    correction_type: Optional[Literal["category", "cause", "flaky", "release"]] = None
+    corrected_value: Optional[object] = None
+    reason: Optional[str] = Field(default=None, max_length=4000)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=5)
+    idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=128)
+
+    @field_validator("evidence_ids")
+    @classmethod
+    def validate_evidence_ids(cls, values):
+        if any(len(value) > 128 for value in values):
+            raise ValueError("evidence_ids entries must be <= 128 characters")
+        return values
+
+    @model_validator(mode="after")
+    def validate_feedback_shape(self):
+        if self.feedback_kind == "utility":
+            if self.utility_rating is None:
+                raise ValueError("utility_rating is required for utility feedback")
+            if any((self.claim_id, self.correction_type, self.corrected_value is not None, self.reason, self.evidence_ids)):
+                raise ValueError("utility feedback cannot include claim correction fields")
+        elif self.claim_id is None or self.correction_type is None:
+            raise ValueError("claim_id and correction_type are required for a claim correction")
+        elif not self.reason or not self.reason.strip() or not self.evidence_ids or self.corrected_value is None:
+            raise ValueError("claim corrections require a value, reason, and evidence_ids")
+        return self
 
 
 class PromoteModelRequest(BaseModel):
@@ -101,6 +136,25 @@ async def submit_feedback(
     return result
 
 
+
+@router.post("/runs/{run_id}/decision-reports/{report_id}/feedback", status_code=201)
+async def submit_decision_report_feedback(
+    run_id: uuid.UUID,
+    report_id: str,
+    body: DecisionReportFeedbackRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_run_access()),
+):
+    result = await feedback_service.submit_decision_report_feedback(
+        db,
+        get_mongo_db(),
+        run_id=run_id,
+        report_id=report_id,
+        body=body,
+        current_user=current_user,
+    )
+    await db.commit()
+    return result
 @router.put("/feedback/{analysis_id}", status_code=200)
 async def update_feedback(
     analysis_id: uuid.UUID,

@@ -1422,6 +1422,10 @@ async def test_chat_service_send_message_updates_default_title_and_dispatches_ag
         user_id=uuid.uuid4(),
         project_id=uuid.uuid4(),
         title="New conversation",
+        # Report-grounding anchors: unset for an ordinary (non-grounded) chat.
+        active_test_run_id=None,
+        active_report_id=None,
+        active_report_version=None,
     )
     current_user = SimpleNamespace(id=session.user_id)
     payload = SimpleNamespace(message="Investigate latest failures", project_id=None)

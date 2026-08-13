@@ -1,4 +1,9 @@
-# Redis 7 — deployed inside the K3s cluster for homelab
+# Redis 7 — deployed inside the K3s cluster for homelab.
+#
+# Redis is the Celery broker as well as the cache. AOF plus a local-path PVC
+# keeps queued child dispatches recoverable across a pod restart. volatile-lru
+# avoids silently evicting TTL-less broker/session keys under cache pressure;
+# ephemeral cache entries must carry a TTL.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,7 +26,16 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
-          command: ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+          command:
+            - redis-server
+            - --appendonly
+            - "yes"
+            - --appendfsync
+            - everysec
+            - --maxmemory
+            - 512mb
+            - --maxmemory-policy
+            - volatile-lru
           ports:
             - containerPort: 6379
           resources:
@@ -41,3 +55,22 @@ spec:
               command: ["redis-cli", "ping"]
             initialDelaySeconds: 15
             periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: redis-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: testlookup
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi

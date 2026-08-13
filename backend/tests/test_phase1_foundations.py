@@ -375,7 +375,15 @@ class TestGetLlmAsync:
 
     @pytest.mark.asyncio
     async def test_get_llm_returns_model(self):
-        """get_llm() should return a LangChain model (mocked provider)."""
+        """get_llm() should return the provider model wrapped in ``BudgetedLLM``.
+
+        The wrapper is not incidental: it is the single invocation boundary
+        where the pipeline budget ceiling is enforced and where prompts are
+        sanitized/redaction-audited. Every provider branch in ``llm_factory``
+        goes through ``_budgeted``, so an unwrapped model escaping this
+        function would silently bypass both. This pins the wrapper AND that it
+        delegates to the real provider model.
+        """
         mock_llm = MagicMock()
         mock_chat_ollama = MagicMock(return_value=mock_llm)
         mock_module = MagicMock()
@@ -384,9 +392,10 @@ class TestGetLlmAsync:
         import sys
         sys.modules["langchain_ollama"] = mock_module
         try:
-            from app.services.llm_factory import get_llm
+            from app.services.llm_factory import BudgetedLLM, get_llm
             llm = await get_llm(provider="ollama", model="qwen2.5:7b")
-            assert llm is mock_llm
+            assert isinstance(llm, BudgetedLLM), "budget/redaction gate must not be bypassed"
+            assert llm._inner is mock_llm
             mock_chat_ollama.assert_called_once()
         finally:
             del sys.modules["langchain_ollama"]

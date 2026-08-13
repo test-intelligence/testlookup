@@ -2,6 +2,8 @@
 from langchain_core.tools import tool
 
 from app.services.ocp_client import analyze_pod_events
+from app.tools.investigation_context import get_investigation_context
+from app.services.evidence_sanitizer import sanitize_reference_text
 
 
 @tool
@@ -19,4 +21,22 @@ async def analyze_openshift_pod_events(pod_name: str, namespace: str, timestamp_
     Returns:
         Pod status, resource limits, and any critical events as a formatted string.
     """
-    return await analyze_pod_events(pod_name, namespace, timestamp_utc)
+    context = get_investigation_context()
+    if (
+        context is None
+        or not context.ocp_pod_name
+        or not context.ocp_namespace
+        or not context.timestamp
+    ):
+        return "OpenShift lookup unavailable: authorized pod context is missing."
+    if (
+        pod_name != context.ocp_pod_name
+        or namespace != context.ocp_namespace
+        or timestamp_utc != context.timestamp
+    ):
+        return "OpenShift lookup denied: requested scope differs from the investigation context."
+    result = await analyze_pod_events(
+        context.ocp_pod_name, context.ocp_namespace, context.timestamp
+    )
+    safe, _, _ = sanitize_reference_text(str(result), limit=6000)
+    return safe

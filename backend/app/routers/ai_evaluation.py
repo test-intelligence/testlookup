@@ -1,7 +1,7 @@
 """AI Evaluation Dashboard router — datasets, eval runs, quality metrics, release gate (OPS-02 + P5)."""
 import logging
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -15,6 +15,7 @@ from app.models.postgres import (
     AIEvalDataset,
     AIEvalGateRun,
     AIEvalRun,
+    DecisionReportEvalCycle,
     User,
     UserRole,
 )
@@ -266,6 +267,133 @@ class PreReleaseGateRequest(BaseModel):
     task_type: str = "classification"
     agent_name: str = "AnalysisAgent"
     dataset_id: Optional[str] = None
+
+
+class ReportEvalCycleRequest(BaseModel):
+    corpus_version: str = Field(min_length=1, max_length=120)
+    reports: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
+    authorized_evidence_ids: list[str] = Field(default_factory=list, max_length=5_000)
+    project_id: uuid.UUID | None = None
+    test_run_ids: list[uuid.UUID] = Field(default_factory=list, max_length=200)
+    cycle_key: str | None = Field(default=None, max_length=128)
+
+
+def _report_cycle_response(row: DecisionReportEvalCycle) -> dict[str, Any]:
+    return {
+        "id": str(row.id),
+        "cycle_key": row.cycle_key,
+        "corpus_version": row.corpus_version,
+        "corpus_sha256": row.corpus_sha256,
+        "report_count": row.report_count,
+        "status": row.status,
+        "metrics": row.metrics,
+        "checks": row.checks,
+        "unavailable_metrics": row.unavailable_metrics,
+        "consecutive_passes": row.consecutive_passes,
+        "evaluated_by": str(row.evaluated_by) if row.evaluated_by else None,
+        "evaluated_at": row.evaluated_at.isoformat() if row.evaluated_at else None,
+    }
+
+
+@router.get("/report-cycles")
+async def list_report_eval_cycles(
+    corpus_version: str | None = Query(default=None, max_length=120),
+    limit: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    db: AsyncSession = Depends(get_db),
+):
+    """List durable report-level evaluation evidence."""
+    query = (
+        select(DecisionReportEvalCycle)
+        .order_by(DecisionReportEvalCycle.evaluated_at.desc())
+        .limit(limit)
+    )
+    if corpus_version:
+        query = query.where(DecisionReportEvalCycle.corpus_version == corpus_version)
+    rows = (await db.execute(query)).scalars().all()
+    return [_report_cycle_response(row) for row in rows]
+
+
+@router.get("/report-cycles/readiness")
+async def get_report_eval_readiness(
+    corpus_version: str = Query(..., min_length=1, max_length=120),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the fail-closed representative-corpus pilot readiness gate."""
+    from app.services.decision_report_eval_cycle_service import assess_report_eval_readiness
+
+    rows = (
+        await db.execute(
+            select(DecisionReportEvalCycle)
+            .where(DecisionReportEvalCycle.corpus_version == corpus_version)
+            .order_by(DecisionReportEvalCycle.evaluated_at.desc())
+            .limit(2)
+        )
+    ).scalars().all()
+    return assess_report_eval_readiness(rows)
+
+
+@router.post("/report-cycles", status_code=201)
+async def create_report_eval_cycle(
+    payload: ReportEvalCycleRequest,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Evaluate and persist one bounded report corpus cycle (ADMIN only)."""
+    from app.services.decision_report_eval_cycle_service import (
+        evaluate_and_persist_report_cycle,
+        load_authoritative_report_projections,
+        summarize_decision_report_actions,
+        summarize_decision_report_feedback,
+    )
+    from app.core.config import settings
+
+    try:
+        reports = payload.reports
+        feedback_summary = None
+        if payload.test_run_ids:
+            if payload.project_id is None or payload.reports or payload.authorized_evidence_ids:
+                raise ValueError("report_eval_source_invalid")
+            from app.db.mongo import get_mongo_db
+
+            reports = await load_authoritative_report_projections(
+                mongo_db=get_mongo_db(),
+                db=db,
+                project_id=payload.project_id,
+                test_run_ids=payload.test_run_ids,
+            )
+            feedback_summary = await summarize_decision_report_feedback(
+                db,
+                project_id=payload.project_id,
+                test_run_ids=payload.test_run_ids,
+            )
+            action_summary = await summarize_decision_report_actions(
+                db,
+                project_id=payload.project_id,
+                test_run_ids=payload.test_run_ids,
+            )
+        elif payload.reports:
+            if not settings.AI_REPORT_EVAL_ALLOW_CALLER_CORPUS:
+                raise ValueError("report_eval_authoritative_source_required")
+            action_summary = None
+        else:
+            raise ValueError("report_eval_source_required")
+        row, _created = await evaluate_and_persist_report_cycle(
+            db,
+            corpus_version=payload.corpus_version,
+            reports=reports,
+            cycle_key=payload.cycle_key,
+            authorized_evidence_ids=payload.authorized_evidence_ids,
+            feedback_summary=feedback_summary,
+            action_summary=action_summary,
+            evaluated_by=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    await db.commit()
+    await db.refresh(row)
+    return _report_cycle_response(row)
 
 
 class AgentStackReleaseGateRequest(BaseModel):

@@ -1177,7 +1177,7 @@ _SUPPORT_AGENT_FILES = {
     # holds pure stage helpers (candidate selection, glob rejection, PR opener,
     # outcome poller). Their audit surface is the fix_attempts rows + the
     # agent_runs ledger, not the BaseAgent stage/decision contract.
-    "runners.py", "pipeline.py",
+    "runners.py", "pipeline.py", "persistence.py",
 }
 
 

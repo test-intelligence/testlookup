@@ -50,6 +50,38 @@ class AgentContractMetadata(BaseModel):
         return max(0, min(100, int(v)))
 
 
+
+class DecisionClaimV1(BaseModel):
+    """Typed, evidence-aware claim surfaced by the terminal decision report."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim_id: str = Field(min_length=1, max_length=160)
+    kind: Literal["fact", "inference", "unknown", "recommendation"]
+    text: str = Field(min_length=1, max_length=500)
+    confidence: float = Field(ge=0.0, le=1.0)
+    confidence_basis: str = Field(min_length=1, max_length=500)
+    evidence: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    counter_evidence: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    source_stage: str = Field(min_length=1, max_length=80)
+    freshness: str | None = Field(default=None, max_length=80)
+    hypothesis: bool = False
+
+
+class ProposedActionV1(BaseModel):
+    """Approval-aware action proposal; never an execution receipt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action_id: str = Field(min_length=1, max_length=160)
+    title: str = Field(min_length=1, max_length=240)
+    owner: str = Field(min_length=1, max_length=120)
+    rationale: str = Field(min_length=1, max_length=500)
+    evidence: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    risk: Literal["low", "medium", "high", "unknown"] = "unknown"
+    required_permission: str = Field(min_length=1, max_length=120)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+    status: Literal["proposed"] = "proposed"
 class ContractedAgentOutput(BaseModel):
     contract: AgentContractMetadata
 
@@ -205,6 +237,20 @@ class ClusterAgentOutput(ContractedAgentOutput):
     cluster_map: dict[str, str] = Field(default_factory=dict)
 
 
+class ContractAgentOutput(ContractedAgentOutput):
+    """Bounded API-contract specialist result (AIQ-P4)."""
+
+    status: Literal["complete", "not_enough_evidence", "failed"] = "not_enough_evidence"
+    violations: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
+    violation_count: int = Field(default=0, ge=0)
+    critical_count: int = Field(default=0, ge=0)
+    drift_count: int = Field(default=0, ge=0)
+    endpoints_checked: list[str] = Field(default_factory=list, max_length=200)
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
+    summary: str = Field(default="", max_length=2000)
+    suggests_product_bug: bool = False
+
+
 class AnomalyDetectionAgentOutput(ContractedAgentOutput):
     anomalies: list[dict[str, Any]] = Field(default_factory=list)
     is_regression: bool = False
@@ -233,6 +279,26 @@ class SummaryAgentOutput(ContractedAgentOutput):
     completed_stages: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     current_stage: str = "triage"
+
+
+class DecisionReportAgentOutput(ContractedAgentOutput):
+    structured_summary: Optional[dict[str, Any]] = None
+    summary_markdown: Optional[str] = None
+    decision_intelligence: Optional[dict[str, Any]] = None
+    decision_evidence_snapshot: Optional[dict[str, Any]] = None
+    completed_stages: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    current_stage: str = "decision_report_critic"
+
+
+class DecisionReportCriticAgentOutput(ContractedAgentOutput):
+    structured_summary: Optional[dict[str, Any]] = None
+    summary_markdown: Optional[str] = None
+    decision_intelligence: Optional[dict[str, Any]] = None
+    decision_report_verification: Optional[dict[str, Any]] = None
+    completed_stages: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    current_stage: str = "done"
 
 
 class DefectTriageAgentOutput(ContractedAgentOutput):
@@ -289,6 +355,15 @@ class RegressionWatchmanAgentOutput(ContractedAgentOutput):
     completed_stages: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     current_stage: str = "defect_commander"
+
+
+class ChangeOwnershipAgentOutput(ContractedAgentOutput):
+    """Deterministic baseline/change and ownership specialist result."""
+
+    status: Literal["complete", "not_enough_evidence", "failed"] = "not_enough_evidence"
+    baseline_diff: dict[str, Any] = Field(default_factory=dict)
+    ownership_resolutions: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
+    summary: str = Field(default="", max_length=240)
 
 
 class GapReport(BaseModel):
@@ -369,6 +444,60 @@ class ReportRefinementAgentOutput(ContractedAgentOutput):
     current_stage: str = "flaky_sentinel"
 
 
+InvestigatorStopReason = Literal[
+    "cancelled",
+    "llm_call_budget_exhausted",
+    "token_budget_exhausted",
+    "cost_budget_exhausted",
+    "wall_clock_budget_exhausted",
+    "investigation_not_found",
+    "duplicate_reservation",
+    "budget_ledger_invalid",
+    "budget_reservation_identity_mismatch",
+    "budget_reservation_failed",
+    "budget_settlement_failed",
+    "budget_overrun",
+    "reservation_lease_expired",
+]
+
+
+class InvestigatorHypothesisV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: Literal["infra", "commit", "environment", "known_flaky", "regression"]
+    title: str = Field(min_length=1, max_length=300)
+    status: Literal["validated", "invalidated", "inconclusive", "pending"]
+    confidence: int = Field(ge=0, le=100)
+    confidence_basis: Literal["heuristic_estimate", "llm_weighted"]
+    summary: str = Field(max_length=1000)
+    evidence: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+    signals: dict[str, Any] = Field(default_factory=dict)
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    llm_enrichment_stop_reason: Optional[InvestigatorStopReason] = None
+
+
+class InvestigatorDegradationV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    degraded: bool = False
+    budget_exhausted: bool = False
+    hypotheses_with_stops: list[str] = Field(default_factory=list, max_length=5)
+    synthesis_stop_reason: Optional[InvestigatorStopReason] = None
+
+
+class InvestigatorVerdictV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    primary_cause: Literal[
+        "infra", "commit", "environment", "known_flaky", "regression", "unknown"
+    ]
+    narrative: str = Field(min_length=1, max_length=4000)
+    confidence: int = Field(ge=0, le=100)
+    recommended_actions: list[str] = Field(default_factory=list, max_length=10)
+    degradation: InvestigatorDegradationV1 = Field(default_factory=InvestigatorDegradationV1)
+
+
 class InvestigatorHypothesisOutput(ContractedAgentOutput):
     """One hypothesis sub-agent's verdict (Agentic plan AI-1).
 
@@ -379,7 +508,7 @@ class InvestigatorHypothesisOutput(ContractedAgentOutput):
 
     model_config = ConfigDict(extra="ignore")
 
-    hypothesis: dict[str, Any] = Field(default_factory=dict)
+    hypothesis: InvestigatorHypothesisV1
 
 
 class InvestigatorSynthesisOutput(ContractedAgentOutput):
@@ -387,7 +516,7 @@ class InvestigatorSynthesisOutput(ContractedAgentOutput):
 
     model_config = ConfigDict(extra="ignore")
 
-    verdict: dict[str, Any] = Field(default_factory=dict)
+    verdict: InvestigatorVerdictV1
 
 
 TContract = TypeVar("TContract", bound=ContractedAgentOutput)

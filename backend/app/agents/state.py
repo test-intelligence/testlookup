@@ -88,6 +88,11 @@ class WorkflowState(TypedDict):
     summary_markdown: Optional[str]     # Full markdown report (built from all 4 layers)
     structured_summary: Optional[dict]  # All 4 layers: layer1..layer4 keys
     summary_provenance: Optional[dict]  # Hashes, prompt versions, and model config for summary replay
+    decision_intelligence: Optional[dict]  # Terminal deep-report synthesis after all read specialists
+    decision_evidence_snapshot: Optional[dict]  # Durable immutable authority metadata
+    decision_report_verification: Optional[dict]  # Independent terminal critic checks and repairs
+    authorized_evidence_artifacts: list[dict]  # Server-owned artifact projections for signed citations
+    evidence_authorization_errors: list[str]  # Fail-closed resolver errors
 
     # ── Stage 5: Defect Triage Agent ─────────────────────────────
     triage_results: list[dict]          # [{test_case_id, ticket_key, action: created|updated|skipped}]
@@ -95,6 +100,17 @@ class WorkflowState(TypedDict):
     # ── Stage 2b: Failure Clustering (deep workflow only) ────────
     failure_clusters: list[dict]        # [{cluster_id, label, member_test_ids, representative_error, size}]
     cluster_map: dict[str, str]         # test_case_id -> cluster_id
+    cluster_child_settings: dict        # frozen feature/policy/budget gate
+    contract_agent_enabled: bool       # frozen project feature-flag snapshot
+    contract_findings: Optional[dict]  # Contract Agent output contract
+    log_intelligence_enabled: bool       # frozen project feature-flag snapshot
+    log_findings: Optional[dict]        # Log Intelligence output contract
+    regression_watchman_enabled: bool  # frozen project feature-flag snapshot
+    regression_classification: Optional[dict]  # RegressionWatchman output contract
+    change_ownership_enabled: bool      # frozen project feature-flag snapshot
+    change_ownership_findings: Optional[dict]  # baseline + ownership output contract
+    cluster_investigation_plan: Optional[dict]  # hashed selected/skipped cluster tasks
+    cluster_investigation_results: Optional[dict]  # bounded join/result projection
 
     # ── Stage 3 deep: Deep Root-Cause per cluster ─────────────────
     deep_findings: Annotated[dict[str, dict], _merge_dicts]  # cluster_id -> DeepFinding dict
@@ -134,7 +150,10 @@ class WorkflowState(TypedDict):
     analysis_mode_resolved: str   # effective engine frozen for this pipeline
     analysis_mode_resolution: dict  # probe/config snapshot for audit replay
     _workflow_route_decisions: list[dict]  # sync router decisions persisted in pipeline metadata
+    _checkpoint_stages: list[str]  # stage outputs restored from a previous authorized checkpoint
+    _checkpoint_replay_metadata: dict[str, dict]  # replay hashes/version breadcrumbs for restored stages
     workflow_plan: dict  # deterministic planner output for expected stage path
+    initial_workflow_plan: dict  # immutable planner snapshot captured before execution
     workflow_verification: dict  # verifier checks comparing final state to plan
     agent_contracts: Annotated[dict[str, dict], _merge_dicts]  # agent_name -> versioned output contract metadata
     schema_version: int            # pipeline state schema version (increment on breaking changes)

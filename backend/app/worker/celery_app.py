@@ -24,7 +24,8 @@ celery_app = Celery(
 # ── Priority queues ────────────────────────────────────────────────────────────
 # critical  (9)  — live test analysis, immediate user-facing results
 # ingestion (7)  — test report parsing from MinIO
-# ai_analysis(5) — offline pipeline (anomaly, root-cause, summary)
+# ai_analysis(5) — parent offline/deep pipelines
+# agent_children(3) — bounded cluster Investigator children (isolated workers)
 # default   (1)  — notifications, snapshots, housekeeping
 
 _default_exchange = Exchange("default", type="direct")
@@ -40,6 +41,7 @@ def _build_task_queues() -> tuple[Queue, ...]:
         Queue("critical",    _default_exchange, routing_key="critical",    queue_arguments={"x-max-priority": 10}),
         Queue("ingestion",   _default_exchange, routing_key="ingestion",   queue_arguments={"x-max-priority": 10}),
         Queue("ai_analysis", _default_exchange, routing_key="ai_analysis", queue_arguments={"x-max-priority": 10}),
+        Queue("agent_children", _default_exchange, routing_key="agent_children", queue_arguments={"x-max-priority": 10}),
         Queue("default",     _default_exchange, routing_key="default",     queue_arguments={"x-max-priority": 10}),
     ]
     # Lazy import to avoid the ``app.core.config`` → ``Celery`` import
@@ -66,6 +68,7 @@ celery_app.conf.update(
         "app.worker.tasks.ingest_test_run":                 {"queue": "ingestion"},
         "app.worker.tasks.run_ai_analysis":                 {"queue": "ai_analysis"},
         "app.worker.tasks.run_agent_pipeline":              {"queue": "ai_analysis"},
+        "app.worker.tasks.run_agent_child_investigation":   {"queue": "agent_children"},
         "app.worker.tasks.generate_run_compare_report":     {"queue": "ai_analysis"},
         "app.worker.tasks.precompute_suite_comparisons_for_run": {"queue": "ai_analysis"},
         "app.worker.tasks.generate_ai_test_cases_task":     {"queue": "ai_analysis"},
@@ -79,6 +82,12 @@ celery_app.conf.update(
         "app.worker.tasks.run_retention_purges":            {"queue": "default"},
         "app.worker.tasks.*":                               {"queue": "default"},
     },
+    # Redis keeps late-acked deliveries in ``unacked`` until this timeout.
+    # Keep it above the 31-minute hard task limit so a healthy long-running
+    # task is not duplicated, while still bounding recovery after a worker or
+    # broker failure. Durable child outbox reconciliation is the faster
+    # recovery path for cluster investigations.
+    broker_transport_options={"visibility_timeout": 3600},
     beat_schedule={
         "daily-coverage-snapshot": {
             "task": "app.worker.tasks.take_coverage_snapshot",
@@ -182,6 +191,18 @@ celery_app.conf.update(
         "reap-stuck-agent-pipelines": {
             "task": "app.worker.tasks.reap_stuck_agent_pipelines",
             "schedule": crontab(minute="*/10"),
+        },
+        "relay-agent-child-dispatch-outbox": {
+            "task": "app.worker.tasks.relay_agent_child_dispatch_outbox",
+            "schedule": crontab(minute="*"),
+        },
+        "process-decision-report-supersessions": {
+            "task": "app.worker.tasks.process_decision_report_supersessions",
+            "schedule": crontab(minute="*"),
+        },
+        "relay-agent-action-dispatch-outbox": {
+            "task": "app.worker.tasks.relay_agent_action_dispatch_outbox",
+            "schedule": crontab(minute="*"),
         },
         # Tier 1 item 3: flaky-test quarantine maintenance (nightly at 04:00 UTC).
         # No-op until the ``flaky_auto_quarantine`` feature flag is enabled.
@@ -320,6 +341,12 @@ celery_app.conf.update(
     # Worker reliability
     worker_prefetch_multiplier=1,   # fair dispatch — one task at a time per slot
     task_acks_late=True,            # ack only after task completes (safe retries on crash)
+    # If the broker connection drops while a late-acked task is executing,
+    # cancel the child process so Redis can redeliver the message instead of
+    # leaving an in-flight task detached from the consumer.  Durable child
+    # outbox rows remain the source of truth; this setting only bounds the
+    # broker-side recovery path.
+    worker_cancel_long_running_tasks_on_connection_loss=True,
     worker_max_tasks_per_child=200, # recycle worker process after 200 tasks (prevent leaks)
     # Time limits: soft sends SIGTERM to task coroutine, hard sends SIGKILL
     task_soft_time_limit=1740,      # 29 min soft (pipeline tasks can run up to 30 min)

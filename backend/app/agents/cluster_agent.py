@@ -16,12 +16,17 @@ from app.agents.base import BaseAgent
 from app.db.postgres import AsyncSessionLocal
 from app.models.agent_contracts import ClusterAgentOutput, validate_agent_contract
 from app.models.postgres import TestCase
+from app.services.evidence_sanitizer import sanitize_reference_text
 
 logger = structlog.get_logger("agents.cluster")
 
 
 class ClusterAgent(BaseAgent):
     stage_name = "failure_clustering"
+
+    @staticmethod
+    def _safe_cluster_text(value: object, *, limit: int) -> str:
+        return sanitize_reference_text(str(value or ""), limit=limit)[0]
 
     async def run(self, state: dict) -> dict:
         pipeline_run_id: str = state["pipeline_run_id"]
@@ -72,8 +77,12 @@ class ClusterAgent(BaseAgent):
             # Validate and sanitize cluster output
             clusters = self._validate_clusters(raw_clusters, valid_ids)
         except Exception as exc:
-            logger.warning("Clustering failed, using per-test fallback", error=str(exc))
-            fallback_reason = str(exc)
+            safe_error, _, _ = sanitize_reference_text(str(exc), limit=500)
+            logger.warning(
+                "Clustering failed, using per-test fallback",
+                error_type=type(exc).__name__,
+            )
+            fallback_reason = f"{type(exc).__name__}: {safe_error}"
             clusters = self._build_fallback_clusters(test_ids, errors)
 
         # Build reverse map: test_id -> cluster_id
@@ -90,9 +99,14 @@ class ClusterAgent(BaseAgent):
                 error = test_id_to_error.get(tid, "")
                 orphan_cluster = {
                     "cluster_id": f"cl_orphan_{i+1:03d}",
-                    "label": error[:80] if error else "orphaned test",
+                    "label": (
+                        self._safe_cluster_text(error, limit=80)
+                        if error else "orphaned test"
+                    ),
                     "member_test_ids": [tid],
-                    "representative_error": error[:300],
+                    "representative_error": self._safe_cluster_text(
+                        error, limit=300
+                    ),
                     "size": 1,
                 }
                 clusters.append(orphan_cluster)
@@ -176,9 +190,13 @@ class ClusterAgent(BaseAgent):
 
             validated.append({
                 "cluster_id": cid,
-                "label": str(cluster.get("label", ""))[:200] or cid,
+                "label": self._safe_cluster_text(
+                    cluster.get("label", ""), limit=200
+                ) or cid,
                 "member_test_ids": clean_members,
-                "representative_error": str(cluster.get("representative_error", ""))[:500],
+                "representative_error": self._safe_cluster_text(
+                    cluster.get("representative_error", ""), limit=500
+                ),
                 "size": len(clean_members),
             })
 
@@ -191,9 +209,15 @@ class ClusterAgent(BaseAgent):
         return [
             {
                 "cluster_id": f"cl_{i+1:03d}",
-                "label": errors[i][:80] if i < len(errors) else "unknown",
+                "label": (
+                    self._safe_cluster_text(errors[i], limit=80)
+                    if i < len(errors) else "unknown"
+                ),
                 "member_test_ids": [test_ids[i]],
-                "representative_error": errors[i][:300] if i < len(errors) else "",
+                "representative_error": (
+                    self._safe_cluster_text(errors[i], limit=300)
+                    if i < len(errors) else ""
+                ),
                 "size": 1,
             }
             for i in range(len(test_ids))

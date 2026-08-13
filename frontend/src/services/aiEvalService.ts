@@ -64,9 +64,51 @@ export interface AIQualityDashboard {
   label_health: LabelHealth | null;
 }
 
+export interface DecisionReportEvalCycle {
+  id: string;
+  cycle_key: string;
+  corpus_version: string;
+  corpus_sha256: string;
+  report_count: number;
+  status: 'pass' | 'warn' | 'fail';
+  metrics: Record<string, unknown>;
+  checks: Array<{ name: string; status: string; detail?: Record<string, unknown> }>;
+  unavailable_metrics: string[];
+  consecutive_passes: number;
+  evaluated_by: string | null;
+  evaluated_at: string | null;
+}
+
+export interface ReportEvalReadiness {
+  status: 'ready' | 'not_ready';
+  latest_status: 'pass' | 'warn' | 'fail' | 'missing';
+  consecutive_passes: number;
+  required_consecutive_passes: number;
+  utility_rate: number | null;
+  minimum_utility_rate: number;
+  corpus_version: string | null;
+  corpus_sha256: string | null;
+  reasons: string[];
+}
+
 export async function getDashboard(days?: number): Promise<AIQualityDashboard> {
   const { data } = await api.get<AIQualityDashboard>('/api/v1/ai-eval/dashboard', {
     params: days ? { days } : undefined,
+  });
+  return data;
+}
+
+export async function listReportEvalCycles(params?: {
+  corpus_version?: string;
+  limit?: number;
+}): Promise<DecisionReportEvalCycle[]> {
+  const { data } = await api.get<DecisionReportEvalCycle[]>('/api/v1/ai-eval/report-cycles', { params });
+  return data;
+}
+
+export async function getReportEvalReadiness(corpusVersion: string): Promise<ReportEvalReadiness> {
+  const { data } = await api.get<ReportEvalReadiness>('/api/v1/ai-eval/report-cycles/readiness', {
+    params: { corpus_version: corpusVersion },
   });
   return data;
 }

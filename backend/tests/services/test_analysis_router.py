@@ -304,6 +304,48 @@ async def test_llm_success_uses_triage_agent():
     assert r["fallback_from"] is None
 
 
+@pytest.mark.asyncio
+async def test_llm_dispatch_forwards_authoritative_scope_and_runtime_context():
+    """The router must preserve server-derived scope for the triage boundary."""
+    fake_result = {"failure_category": "BUG", "classified_by": "llm_agent"}
+    with patch(
+        "app.services.agent.run_triage_agent",
+        new=AsyncMock(return_value=fake_result),
+    ) as triage:
+        result = await classify_test(
+            {
+                "test_case_id": "tc-1",
+                "test_name": "test_x",
+                "suite_name": "payments",
+                "timestamp": "2026-08-13T03:00:00Z",
+                "ocp_pod_name": "pod-a",
+                "ocp_namespace": "qa",
+                "run_id": "run-1",
+                "pipeline_run_id": "pipe-1",
+                "project_id": "project-1",
+                "test_fingerprint": "fp-1",
+            },
+            run_context={"run_id": "run-context", "project_id": "project-context"},
+            mode=AnalysisMode.LLM,
+        )
+
+    assert result["classified_by"] == "llm_agent"
+    assert triage.await_args.kwargs == {
+        "test_case_id": "tc-1",
+        "test_name": "test_x",
+        "service_name": "payments",
+        "error_message": None,
+        "stack_trace": None,
+        "timestamp": "2026-08-13T03:00:00Z",
+        "ocp_pod_name": "pod-a",
+        "ocp_namespace": "qa",
+        "pipeline_run_id": "pipe-1",
+        "run_id": "run-1",
+        "project_id": "project-1",
+        "test_fingerprint": "fp-1",
+    }
+
+
 # ── generate_summary() ───────────────────────────────────────────────────────
 
 

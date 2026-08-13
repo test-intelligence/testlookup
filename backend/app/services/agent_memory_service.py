@@ -24,10 +24,10 @@ import logging
 import re
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import AgentMemoryEntry
@@ -39,6 +39,10 @@ _SIMILARITY_THRESHOLD = 0.70  # lower than analysis cache — recall should be b
 _MAX_MEMORY_DOCUMENTS = 50000
 _MEMORY_RETRIEVAL_VERSION = "agent_memory.recall:v1"
 _MEMORY_CONSUMER_CONTEXT_VERSION = "agent_memory.consumer_context:v1"
+_ACTIVE_MEMORY_STATUS = "active"
+_MEMORY_SOURCE_TYPES = frozenset({"pipeline_agent", "human_feedback", "system", "external_artifact"})
+_MEMORY_TRUST_LEVELS = frozenset({"authoritative", "derived", "human_verified", "unverified"})
+_MEMORY_LIFECYCLE_STATUSES = frozenset({"active", "superseded", "expired", "revoked"})
 _DEFECT_MEMORY_ENTITY_TYPES = ("promoted_defect", "defect_candidate")
 _OPEN_DEFECT_STATUSES = {
     "",
@@ -186,6 +190,29 @@ def _normalize_memory_signature(signature: str | None) -> str:
     return normalized[:5000]
 
 
+def _active_memory_filters(now: datetime | None = None) -> tuple[Any, Any]:
+    current = now or datetime.now(timezone.utc)
+    return (
+        AgentMemoryEntry.lifecycle_status == _ACTIVE_MEMORY_STATUS,
+        or_(
+            AgentMemoryEntry.expires_at.is_(None),
+            AgentMemoryEntry.expires_at > current,
+        ),
+    )
+
+
+def _memory_expiry(entry_data: dict[str, Any], now: datetime) -> datetime:
+    supplied = entry_data.get("expires_at")
+    if isinstance(supplied, datetime):
+        if supplied.tzinfo is None:
+            return supplied.replace(tzinfo=timezone.utc)
+        return supplied
+    from app.core.config import settings
+
+    days = max(1, min(int(getattr(settings, "AGENT_MEMORY_RETENTION_DAYS", 365) or 365), 3650))
+    return now + timedelta(days=days)
+
+
 def _sanitize_memory_text(value: object) -> Any:
     """Redact PII/secrets from free-text memory fields before persistence.
 
@@ -248,7 +275,18 @@ def build_memory_reference(
         "memory_entry_id": str(entry.id),
         "entity_type": entry.entity_type,
         "entity_id": str(entry.entity_id),
-        "source_snapshot_id": _coerce_uuid(payload.get("source_snapshot_id")),
+        "source_type": getattr(entry, "source_type", "pipeline_agent"),
+        "trust_level": getattr(entry, "trust_level", "derived"),
+        "lifecycle_status": getattr(entry, "lifecycle_status", _ACTIVE_MEMORY_STATUS),
+        "source_snapshot_id": (
+            getattr(entry, "source_snapshot_id", None)
+            or _coerce_uuid(payload.get("source_snapshot_id"))
+        ),
+        "source_hash": getattr(entry, "source_hash", None),
+        "expires_at": (
+            entry.expires_at.isoformat()
+            if getattr(entry, "expires_at", None) else None
+        ),
         "payload_sha256": _hash_json(payload),
         "retrieval_audit": retrieval_audit,
         "evidence_refs": _evidence_refs_from_payload(payload),
@@ -317,6 +355,7 @@ async def load_canonical_memory_entries(
         .where(
             AgentMemoryEntry.project_id == project_id,
             AgentMemoryEntry.entity_type.in_(list(entity_types)),
+            *_active_memory_filters(),
             *(
                 [AgentMemoryEntry.entity_id == entity_id]
                 if entity_id is not None else []
@@ -966,13 +1005,23 @@ async def persist_memory_entries(
 
     count = 0
     index_tasks: list[Any] = []
+    now = datetime.now(timezone.utc)
     for entry_data in entries:
         entry_id = entry_data.get("id") or uuid.uuid4()
+        source_type = str(entry_data.get("source_type") or "pipeline_agent")
+        trust_level = str(entry_data.get("trust_level") or "derived")
+        if source_type not in _MEMORY_SOURCE_TYPES or trust_level not in _MEMORY_TRUST_LEVELS:
+            raise ValueError("memory_provenance_invalid")
         # Redact PII/secrets before the text crosses the persistence boundary
         # (Postgres row + ChromaDB document below). Memory text is re-derived
         # from pipeline state, which may carry raw failure output.
         signature = _sanitize_memory_text(entry_data.get("error_signature"))
         root_cause = _sanitize_memory_text(entry_data.get("root_cause_summary"))
+        payload = entry_data.get("payload")
+        if isinstance(payload, dict):
+            from app.services.privacy_service import sanitize_dict_for_persistence
+
+            payload = sanitize_dict_for_persistence(payload)
         entry = AgentMemoryEntry(
             id=entry_id,
             project_id=entry_data["project_id"],
@@ -983,9 +1032,18 @@ async def persist_memory_entries(
             error_signature=signature,
             failure_category=entry_data.get("failure_category"),
             root_cause_summary=root_cause,
-            payload=entry_data.get("payload"),
+            payload=payload,
             confidence=entry_data.get("confidence"),
             resolution=entry_data.get("resolution"),
+            source_type=source_type,
+            trust_level=trust_level,
+            lifecycle_status=_ACTIVE_MEMORY_STATUS,
+            source_snapshot_id=(
+                str(entry_data.get("source_snapshot_id"))
+                if entry_data.get("source_snapshot_id") is not None else None
+            ),
+            source_hash=str(entry_data.get("source_hash")) if entry_data.get("source_hash") else None,
+            expires_at=_memory_expiry(entry_data, now),
         )
         db.add(entry)
         count += 1
@@ -1014,6 +1072,88 @@ async def persist_memory_entries(
     return count
 
 
+async def supersede_memory_entry(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    memory_entry_id: uuid.UUID,
+    replacement_entry_id: uuid.UUID,
+) -> bool:
+    """Atomically supersede one memory row with a same-tenant replacement."""
+    rows = await db.execute(
+        select(AgentMemoryEntry).where(
+            AgentMemoryEntry.project_id == project_id,
+            AgentMemoryEntry.id.in_([memory_entry_id, replacement_entry_id]),
+        )
+    )
+    entries = {entry.id: entry for entry in rows.scalars().all()}
+    current = entries.get(memory_entry_id)
+    replacement = entries.get(replacement_entry_id)
+    if not current or not replacement or current.id == replacement.id:
+        return False
+    if current.lifecycle_status != _ACTIVE_MEMORY_STATUS:
+        return False
+    if replacement.lifecycle_status != _ACTIVE_MEMORY_STATUS:
+        return False
+    current.lifecycle_status = "superseded"
+    current.superseded_by_id = replacement.id
+    current.superseded_at = datetime.now(timezone.utc)
+    return True
+
+
+async def expire_memory_entries(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID | None = None,
+    now: datetime | None = None,
+) -> int:
+    """Mark expired active memories terminal without deleting audit history."""
+    current = now or datetime.now(timezone.utc)
+    predicates = [
+        AgentMemoryEntry.lifecycle_status == _ACTIVE_MEMORY_STATUS,
+        AgentMemoryEntry.expires_at.is_not(None),
+        AgentMemoryEntry.expires_at <= current,
+    ]
+    if project_id is not None:
+        predicates.append(AgentMemoryEntry.project_id == project_id)
+    result = await db.execute(
+        update(AgentMemoryEntry)
+        .where(*predicates)
+        .values(lifecycle_status="expired")
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
+async def purge_memory_vectors(
+    project_id: uuid.UUID,
+    entry_ids: list[uuid.UUID] | tuple[uuid.UUID, ...],
+) -> int:
+    """Delete Chroma vectors for lifecycle-expired rows, best effort and bounded."""
+    wanted = {str(item) for item in entry_ids[:5000]}
+    if not wanted:
+        return 0
+    try:
+        collection = await _get_or_create_collection()
+        result = await asyncio.to_thread(
+            collection.get,
+            where={"project_id": str(project_id)},
+            include=["metadatas"],
+        )
+        ids = result.get("ids", []) if isinstance(result, dict) else []
+        metadatas = result.get("metadatas", []) if isinstance(result, dict) else []
+        vector_ids = [
+            vector_id
+            for vector_id, metadata in zip(ids, metadatas)
+            if isinstance(metadata, dict) and str(metadata.get("entry_id")) in wanted
+        ]
+        if vector_ids:
+            await asyncio.to_thread(collection.delete, ids=vector_ids)
+        return len(vector_ids)
+    except Exception as exc:
+        logger.warning("memory_vector_purge_failed", extra={"error_type": type(exc).__name__})
+        return 0
+
+
 async def list_project_memories(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -1031,6 +1171,7 @@ async def list_project_memories(
     size = max(1, min(int(size or 50), 200))
     base = select(AgentMemoryEntry).where(
         AgentMemoryEntry.project_id == project_id,
+        *_active_memory_filters(),
     )
     if entity_type:
         base = base.where(AgentMemoryEntry.entity_type == entity_type)
@@ -1057,7 +1198,7 @@ async def get_run_memory_timeline(
     """
     result = await db.execute(
         select(AgentMemoryEntry)
-        .where(AgentMemoryEntry.run_id == run_id)
+        .where(AgentMemoryEntry.run_id == run_id, *_active_memory_filters())
         .order_by(AgentMemoryEntry.created_at.asc())
     )
     entries = list(result.scalars().all())
@@ -1116,6 +1257,7 @@ async def recall_similar(
         select(AgentMemoryEntry).where(
             AgentMemoryEntry.id.in_([uuid.UUID(eid) for eid in valid_ids]),
             AgentMemoryEntry.project_id == project_id,
+            *_active_memory_filters(),
         )
     )
     entries = {str(e.id): e for e in result.scalars().all()}

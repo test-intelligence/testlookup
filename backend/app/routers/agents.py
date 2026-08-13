@@ -22,7 +22,14 @@ from app.core.deps import (
     require_run_access,
 )
 from app.db.postgres import get_db
-from app.models.postgres import AgentPipelineRun, AgentStageResult, Project, TestRun, UserRole
+from app.models.postgres import (
+    AgentInvestigation,
+    AgentPipelineRun,
+    AgentStageResult,
+    Project,
+    TestRun,
+    UserRole,
+)
 from app.models.schemas import (
     AgentPipelineResponse,
     AgentRunSummaryResponse,
@@ -33,6 +40,7 @@ from app.models.schemas import (
     PipelineTimelineEventResponse,
     TriggerPipelineRequest,
 )
+from app.models.agentic_runtime import AgenticRunV1
 from app.services import runs_service
 from app.services.run_summary_service import build_fallback_summary, normalize_summary_doc
 
@@ -525,6 +533,114 @@ async def get_pipeline_timeline(
         ).model_dump(mode="json"),
         "replay_integrity": replay_integrity,
     }
+
+
+@router.get("/pipelines/{pipeline_id}/agentic-runtime", response_model=AgenticRunV1)
+async def get_agentic_runtime(
+    pipeline_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(get_current_active_user),
+):
+    """Return the versioned unified-runtime projection for one pipeline.
+
+    This additive adapter keeps the established timeline API stable while
+    exposing selected/skipped capabilities, parent-child task identity,
+    allocated budgets, actual usage and terminal stop reasons in one model.
+    """
+    from app.services.agentic_runtime_service import (
+        MAX_RUNTIME_CHILDREN,
+        MAX_RUNTIME_TASKS,
+        build_recursive_agentic_run_projection,
+    )
+
+    pipeline = await _load_pipeline_or_404(db, pipeline_id)
+    await _require_pipeline_access(db, current_user, pipeline)
+    result = await db.execute(
+        select(AgentStageResult)
+        .where(AgentStageResult.pipeline_run_id == pipeline_id)
+        .order_by(AgentStageResult.started_at, AgentStageResult.stage_name)
+        .limit(201)
+    )
+    parent_stages = list(result.scalars().all())
+
+    # Parent-linked investigations are additive: until the cluster-orchestration
+    # migration adds the mapped column this endpoint preserves its legacy shape.
+    child_investigations: list[Any] = []
+    parent_link = getattr(AgentInvestigation, "parent_pipeline_run_id", None)
+    if parent_link is not None:
+        child_result = await db.execute(
+            select(AgentInvestigation)
+            .join(TestRun, TestRun.id == AgentInvestigation.run_id)
+            .where(parent_link == pipeline_id)
+            .where(
+                AgentInvestigation.run_id == pipeline.test_run_id,
+                AgentInvestigation.project_id == TestRun.project_id,
+            )
+            .order_by(AgentInvestigation.created_at, AgentInvestigation.id)
+            .limit(MAX_RUNTIME_CHILDREN + 1)
+        )
+        child_investigations = list(child_result.scalars().all())
+
+    child_ids_by_investigation: dict[str, uuid.UUID] = {}
+    for investigation in child_investigations:
+        if str(getattr(investigation, "run_id", "")) != str(pipeline.test_run_id):
+            continue
+        explicit_id = (
+            getattr(investigation, "child_pipeline_run_id", None)
+            or getattr(investigation, "pipeline_run_id", None)
+        )
+        try:
+            child_pipeline_id = (
+                uuid.UUID(str(explicit_id)) if explicit_id
+                else uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"testlookup:investigation:{investigation.id}",
+                )
+            )
+        except (TypeError, ValueError, AttributeError):
+            continue
+        child_ids_by_investigation[str(investigation.id)] = child_pipeline_id
+
+    child_pipelines: dict[uuid.UUID, Any] = {}
+    stages_by_pipeline: dict[uuid.UUID, list[Any]] = {}
+    pipeline_ids = list(dict.fromkeys(child_ids_by_investigation.values()))
+    if pipeline_ids:
+        pipeline_result = await db.execute(
+            select(AgentPipelineRun).where(AgentPipelineRun.id.in_(pipeline_ids))
+        )
+        child_pipelines = {
+            row.id: row for row in pipeline_result.scalars().all()
+            if str(row.test_run_id) == str(pipeline.test_run_id)
+            and str(getattr(row, "parent_pipeline_run_id", ""))
+            == str(pipeline.id)
+        }
+        authorized_ids = list(child_pipelines)
+        if authorized_ids:
+            stage_result = await db.execute(
+                select(AgentStageResult)
+                .where(AgentStageResult.pipeline_run_id.in_(authorized_ids))
+                .order_by(
+                    AgentStageResult.pipeline_run_id,
+                    AgentStageResult.started_at,
+                    AgentStageResult.stage_name,
+                )
+                .limit((MAX_RUNTIME_CHILDREN + 1) * MAX_RUNTIME_TASKS)
+            )
+            for stage in stage_result.scalars().all():
+                stages_by_pipeline.setdefault(stage.pipeline_run_id, []).append(stage)
+
+    children: list[tuple[Any, list[Any], Any]] = []
+    for investigation in child_investigations:
+        child_id = child_ids_by_investigation.get(str(investigation.id))
+        child_pipeline = child_pipelines.get(child_id) if child_id else None
+        if child_pipeline is None:
+            continue
+        children.append((
+            child_pipeline,
+            stages_by_pipeline.get(child_pipeline.id, []),
+            investigation,
+        ))
+    return build_recursive_agentic_run_projection(pipeline, parent_stages, children)
 
 
 @router.get("/event-log/health", response_model=PipelineEventLogHealthResponse)

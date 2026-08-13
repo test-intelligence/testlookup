@@ -110,6 +110,39 @@ async def list_sessions(db: AsyncSession, current_user) -> list[ChatSession]:
     return list(result.scalars().all())
 
 
+async def validate_report_binding(db: AsyncSession, payload, current_user) -> None:
+    """Validate a session's immutable DecisionReport anchor before insert."""
+    fields = (payload.active_test_run_id, payload.active_report_id, payload.active_report_version)
+    if not any(isinstance(value, (str, uuid.UUID, int)) for value in fields):
+        return
+    if not payload.project_id or not payload.active_test_run_id or not payload.active_report_id:
+        raise ValueError("project_id, active_test_run_id, and active_report_id are required for report-grounded chat")
+
+    from app.core.deps import resolve_project_scope
+    await resolve_project_scope(db, current_user, str(payload.project_id))
+    run = (await db.execute(
+        select(TestRun).where(
+            TestRun.id == payload.active_test_run_id,
+            TestRun.project_id == payload.project_id,
+        )
+    )).scalar_one_or_none()
+    if run is None:
+        raise ValueError("Test run not found in the selected project")
+
+    from app.db.mongo import Collections, get_mongo_db
+    query = {
+        "report_id": payload.active_report_id,
+        "project_id": str(payload.project_id),
+        "test_run_id": str(payload.active_test_run_id),
+        "status": "published",
+    }
+    if payload.active_report_version is not None:
+        query["report_version"] = payload.active_report_version
+    report = await get_mongo_db()[Collections.DECISION_REPORTS].find_one(query, {"_id": 0, "report_version": 1})
+    if report is None:
+        raise ValueError("Published DecisionReport version not found")
+    if payload.active_report_version is None:
+        payload.active_report_version = int(report["report_version"])
 async def create_session(db: AsyncSession, payload, current_user) -> ChatSession:
     """Stage a new session. Caller owns the transaction — this only flushes
     so the generated primary key is available to the handler.
@@ -117,6 +150,9 @@ async def create_session(db: AsyncSession, payload, current_user) -> ChatSession
     session = ChatSession(
         user_id=current_user.id,
         project_id=payload.project_id,
+        active_test_run_id=payload.active_test_run_id,
+        active_report_id=payload.active_report_id,
+        active_report_version=payload.active_report_version,
         title=payload.title or "New conversation",
     )
     db.add(session)
@@ -159,6 +195,9 @@ async def send_message(
         user_message=payload.message,
         user_id=str(current_user.id),
         project_id=str(session.project_id) if session.project_id else payload.project_id,
+        test_run_id=str(session.active_test_run_id) if session.active_test_run_id else None,
+        report_id=session.active_report_id,
+        report_version=session.active_report_version,
     )
     return {
         "session_id": session.id,

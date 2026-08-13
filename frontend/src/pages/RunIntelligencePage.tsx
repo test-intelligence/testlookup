@@ -38,7 +38,7 @@
  * actions; Decision Trail wires to the existing drawer.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle, ArrowRight, Bot, Check, ChevronRight, Copy as CopyIcon,
   FileDown, FileText, GitCompare, Layers, Package, RefreshCw,
@@ -52,9 +52,11 @@ import EmptyState from '@/components/ui/EmptyState'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import AISuggestion from '@/components/ai/AISuggestion'
 import DecisionTrailDrawer from '@/components/ai/DecisionTrailDrawer'
+import DecisionIntelligencePanel from '@/components/ai/DecisionIntelligencePanel'
+import { deriveDecisionTrustState } from '@/components/ai/decisionTrustState'
 import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
 import RunStepFlipCard from '@/components/runs/RunStepFlipCard'
-import { useRunIntelligence, useRunModeSummary } from '@/hooks/useRunIntelligence'
+import { useDecisionReportVersions, useRunIntelligence, useRunModeSummary } from '@/hooks/useRunIntelligence'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import type {
   DimensionScore,
@@ -219,11 +221,14 @@ const STAGE_DISPLAY_NAME: Record<string, string> = {
   summary:            'Summary',
   release_risk:       'Release risk',
   release:            'Release risk',
+  decision_report:    'Decision report',
+  decision_report_critic: 'Report critic',
 }
 
 const PIPELINE_ORDER = [
   'ingestion', 'anomaly', 'rca', 'failure_clustering',
   'defect_triage', 'flaky_sentinel', 'test_health', 'summary', 'release_risk',
+  'decision_report', 'decision_report_critic',
 ]
 
 function alignStages(raw: PipelineStage[]): (PipelineStage | null)[] {
@@ -381,8 +386,8 @@ function PersonaTabs({ persona, onChange }: { persona: Persona; onChange: (p: Pe
 
 function RiskMeter({
   gate, score, pillBg, pillBd, pillFg, pillLabel, meterColor,
-}: { gate: Gate; score: number; pillBg: string; pillBd: string; pillFg: string; pillLabel: string; meterColor: string }) {
-  const clamped = Math.max(0, Math.min(100, score))
+}: { gate: Gate; score: number | null; pillBg: string; pillBd: string; pillFg: string; pillLabel: string; meterColor: string }) {
+  const clamped = score === null ? 0 : Math.max(0, Math.min(100, score))
   return (
     <div>
       <div className="flex items-end justify-between">
@@ -394,7 +399,7 @@ function RiskMeter({
             Composite risk score
           </div>
           <span className="font-bold tabular-nums leading-none" style={{ fontSize: 44, color: meterColor, letterSpacing: '-0.02em' }}>
-            {gate === 'PENDING' ? '—' : clamped}
+            {gate === 'PENDING' || score === null ? '—' : clamped}
           </span>
           <span className="text-[13px] text-[var(--color-text-muted)] ml-1">/ 100</span>
         </div>
@@ -408,7 +413,7 @@ function RiskMeter({
       <div className="relative mt-3 rounded-full overflow-hidden" style={{ height: 6, background: 'var(--color-bg-secondary)' }}>
         <i
           className="block h-full rounded-full"
-          style={{ width: `${clamped}%`, background: 'var(--gradient-risk)' }}
+          style={{ width: `${score === null ? 0 : clamped}%`, background: 'var(--gradient-risk)' }}
         />
         <div className="absolute inset-0 flex justify-between pointer-events-none" style={{ padding: '0 33%' }}>
           <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
@@ -590,7 +595,7 @@ function PipelineRibbon({
           fresh run with full per-test detail.
         </div>
       )}
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(9, minmax(0, 1fr))' }}>
+      <div className="grid overflow-x-auto" style={{ gridTemplateColumns: `repeat(${aligned.length}, minmax(100px, 1fr))` }}>
         {aligned.map((s, i) => (
           <StageCell key={i} num={i + 1} slot={PIPELINE_ORDER[i]} stage={s} isLast={i === aligned.length - 1} />
         ))}
@@ -1328,7 +1333,13 @@ export default function RunIntelligencePage() {
   const { runId } = useParams<{ runId: string }>()
   useProjectChangeRedirect('/intelligence', Boolean(runId))
 
-  const { intelligence, isLoading, isError, refresh } = useRunIntelligence(runId ?? null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedReportVersion = Number(searchParams.get('report_version'))
+  const selectedReportVersion = Number.isInteger(requestedReportVersion) && requestedReportVersion > 0
+    ? requestedReportVersion
+    : null
+  const { intelligence, isLoading, isError, refresh } = useRunIntelligence(runId ?? null, selectedReportVersion)
+  const { versions: decisionReportVersions } = useDecisionReportVersions(runId ?? null)
   const [persona, setPersona] = useState<Persona>(() => {
     const saved = localStorage.getItem(PERSONA_KEY)
     return saved === 'developer' || saved === 'manager' ? saved : 'executive'
@@ -1447,9 +1458,36 @@ export default function RunIntelligencePage() {
   const fallbackUsed = !!provenance?.fallback_used
   const hasBaseline = !!what_changed_since_last_good_run
 
-  const ledeForPersona = persona === 'executive'
-    ? (release_decision?.reasoning ?? structured_summary?.executive_summary ?? undefined)
-    : (personaSummary?.executive_summary ?? personaSummary?.layer1_executive ?? release_decision?.reasoning ?? undefined)
+  const decisionReport = structured_summary?.decision_intelligence
+  const latestDecisionVerification = structured_summary?.decision_report_verification
+  const latestDecisionAttempt = structured_summary?.latest_decision_attempt
+  const decisionTrust = deriveDecisionTrustState(
+    decisionReport, latestDecisionVerification, latestDecisionAttempt,
+  )
+  const reportRelease = decisionTrust.displayReport?.release_decision
+  const retainedReleaseDecision: ReleaseDecisionIntel | null = decisionTrust.displayReport
+    && reportRelease?.recommendation
+    ? {
+        recommendation: reportRelease.recommendation,
+        risk_score: reportRelease.risk_score ?? reportRelease.composite_risk,
+        composite_risk: reportRelease.composite_risk ?? null,
+        blocking_issues: reportRelease.blocking_issues ?? [],
+        conditions_for_go: reportRelease.conditions_for_go ?? [],
+        reasoning: reportRelease.reasoning ?? '',
+      }
+    : null
+  const hasDecisionReportEnvelope = Boolean(
+    decisionReport || latestDecisionVerification || latestDecisionAttempt,
+  )
+  const decisionForVerdict = retainedReleaseDecision
+    ?? (hasDecisionReportEnvelope ? null : release_decision)
+
+  const terminalBackedVerdict = Boolean(decisionTrust.displayReport)
+  const ledeForPersona = terminalBackedVerdict
+    ? (decisionForVerdict?.reasoning || undefined)
+    : persona === 'executive'
+      ? (decisionForVerdict?.reasoning ?? structured_summary?.executive_summary ?? undefined)
+      : (personaSummary?.executive_summary ?? personaSummary?.layer1_executive ?? decisionForVerdict?.reasoning ?? undefined)
 
   // Approximate the "dimensions grid" inputs from the per-cluster
   // dimension scores (the first cluster carries the run-level dimensions).
@@ -1473,15 +1511,32 @@ export default function RunIntelligencePage() {
         refreshing={refreshing}
       />
 
+      <DecisionIntelligencePanel
+        runId={run.id}
+        report={decisionReport}
+        latestVerification={latestDecisionVerification}
+        latestAttempt={latestDecisionAttempt}
+        reportVersion={structured_summary?.decision_report}
+        reportVersions={decisionReportVersions}
+        selectedReportVersion={selectedReportVersion}
+        onSelectReportVersion={(version) => {
+          const next = new URLSearchParams(searchParams)
+          if (version == null) next.delete('report_version')
+          else next.set('report_version', String(version))
+          setSearchParams(next)
+        }}
+      />
+
       {/* Verdict — risk meter + dimensions injected via custom variant since
           DimensionGrid wasn't given the scores in the constructor (kept it
           decoupled so multiple call-sites can pass different inputs). */}
       <VerdictCardWithDimensions
-        decision={release_decision}
+        decision={decisionForVerdict}
         ledeOverride={ledeForPersona}
-        affectedSuite={affected_suites[0]?.suite}
-        dimensions={runDimensionScores}
-        userDecision={userDecision}
+        affectedSuite={terminalBackedVerdict ? undefined : affected_suites[0]?.suite}
+        dimensions={terminalBackedVerdict ? [] : runDimensionScores}
+        userDecision={decisionTrust.allowsLocalDecision || !hasDecisionReportEnvelope ? userDecision : null}
+        allowActions={decisionTrust.allowsLocalDecision || !hasDecisionReportEnvelope}
         onHold={() => recordUserDecision('HOLD')}
         onOverride={() => recordUserDecision('OVERRIDE')}
         onApprove={() => recordUserDecision('APPROVE_CONDITIONS')}
@@ -1576,7 +1631,7 @@ export default function RunIntelligencePage() {
 // ── Verdict + Dimensions composed (so the meter and grid share gate state) ─
 function VerdictCardWithDimensions({
   decision, ledeOverride, affectedSuite, dimensions, userDecision,
-  onHold, onOverride, onApprove, onUndoDecision,
+  allowActions, onHold, onOverride, onApprove, onUndoDecision,
 }: {
   decision: ReleaseDecisionIntel | null
   ledeOverride?: string
@@ -1586,6 +1641,7 @@ function VerdictCardWithDimensions({
    *  action buttons. We render the panel as if the gate were the
    *  decision's gate, and surface an "Undo" affordance. */
   userDecision: UserDecision | null
+  allowActions: boolean
   onHold: () => void
   onOverride: () => void
   onApprove: () => void
@@ -1598,7 +1654,8 @@ function VerdictCardWithDimensions({
   const baseGate = gateOf(decision)
   const gate: Gate = userDecision?.gate ?? baseGate
   const t = GATE_THEME[gate]
-  const score = Math.round(decision?.composite_risk ?? decision?.risk_score ?? 0)
+  const rawScore = decision?.composite_risk ?? decision?.risk_score
+  const score = typeof rawScore === 'number' ? Math.round(rawScore) : null
   const blockerCount = decision?.blocking_issues?.length ?? 0
   const userLede = userDecision
     ? `${userDecision.label} on ${new Date(userDecision.at).toLocaleString()}.`
@@ -1669,7 +1726,7 @@ function VerdictCardWithDimensions({
             </div>
           )}
 
-          <div className="flex flex-wrap gap-2 mt-3.5">
+          {decision && allowActions && <div className="flex flex-wrap gap-2 mt-3.5">
             {/* "Hold release" only makes sense when the gate isn't already a clean GO.
                 A 100% pass (GO) is auto-approved and ready to ship — there's nothing
                 for the user to hold. */}
@@ -1698,7 +1755,7 @@ function VerdictCardWithDimensions({
                 Undo decision
               </GhostBtn>
             )}
-          </div>
+          </div>}
         </div>
 
         <div className="flex flex-col gap-3.5 py-1">

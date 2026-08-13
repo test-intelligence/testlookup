@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import RunIntelligenceSnapshot, TestRun
+from app.services.report_export_sanitizer import sanitize_report_export_payload
 
 logger = logging.getLogger("services.report_composition")
 
@@ -85,7 +86,7 @@ async def compose_report(
     if not snapshot or not snapshot.payload:
         raise ValueError(f"No intelligence snapshot found for run {run_id}. Trigger deep investigation first.")
 
-    payload = snapshot.payload
+    payload = sanitize_report_export_payload(snapshot.payload)
 
     # Get test run info
     run_result = await db.execute(select(TestRun).where(TestRun.id == run_id))
@@ -169,13 +170,7 @@ async def compose_report(
         report.failure_clusters = payload.get("failure_clusters", [])
         report.top_analyses = payload.get("top_analyses", [])[:20]
         report.defect_candidates = payload.get("defect_candidates", [])
-        # Evidence from the snapshot (if available)
+        # Restricted evidence is intentionally absent from downloadable reports.
         report.evidence_artifacts = []
-        for analysis in report.top_analyses:
-            for ref in analysis.get("evidence_references", []):
-                report.evidence_artifacts.append({
-                    "source": ref.get("source", "unknown"),
-                    "excerpt": (ref.get("excerpt", ""))[:500],
-                })
 
     return report

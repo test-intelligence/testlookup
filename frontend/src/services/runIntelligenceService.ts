@@ -82,10 +82,170 @@ export interface StructuredSummary {
     rollback_guidance?: string
     owner_hints?: Record<string, string>
   } | null
+  decision_intelligence?: DecisionIntelligence | null
+  decision_report_verification?: DecisionReportVerification | null
+  decision_report?: DecisionReportVersion | null
+  latest_decision_attempt?: DecisionReportAttempt | null
   generated_at: string | null
   schema_version: number
 }
 
+export interface DecisionVerificationCheck {
+  name: string
+  status: 'pass' | 'fail' | 'warn'
+  detail?: Record<string, unknown>
+}
+
+export interface DecisionReportEvaluation {
+  schema_version?: number
+  status: 'pass' | 'warn' | 'fail'
+  metrics?: Record<string, number | null>
+  unavailable_metrics?: string[]
+  checks?: Array<{
+    name: string
+    status: 'pass' | 'warn' | 'fail' | 'not_evaluated'
+    detail?: Record<string, unknown>
+  }>
+}
+
+export interface DecisionReportVerification {
+  schema_version?: number
+  status: 'pending' | 'passed' | 'failed'
+  repair_attempted?: boolean
+  repairs?: string[]
+  checks?: DecisionVerificationCheck[]
+  initial_checks?: DecisionVerificationCheck[]
+  unresolved_failures?: string[]
+  verified_at?: string
+  durable_snapshot?: {
+    schema_version?: number
+    content_sha256?: string
+    signature_key_id?: string
+  }
+  policy_replay?: Record<string, unknown>
+  release_record_comparison?: Record<string, unknown>
+  report_evaluation?: DecisionReportEvaluation
+  error?: string
+}
+
+export interface DecisionReportVersion {
+  report_id: string
+  report_version: number
+  supersedes_report_id?: string | null
+  status: "published"
+  generated_at: string
+}
+
+export type DecisionReportVersionSummary = DecisionReportVersion
+
+export type DecisionReportFeedbackKind = 'utility' | 'claim_correction'
+export type DecisionReportUtilityRating = 'useful' | 'partially_useful' | 'not_useful'
+export type DecisionReportCorrectionType = 'category' | 'cause' | 'flaky' | 'release'
+
+export interface DecisionReportFeedbackPayload {
+  report_version: number
+  feedback_kind: DecisionReportFeedbackKind
+  utility_rating?: DecisionReportUtilityRating
+  claim_id?: string
+  correction_type?: DecisionReportCorrectionType
+  corrected_value?: string | boolean
+  reason?: string
+  evidence_ids?: string[]
+  idempotency_key?: string
+}
+
+export interface DecisionReportFeedbackResponse {
+  feedback_id: string
+  status: 'recorded' | 'already_recorded'
+  report_id: string
+  report_version: number
+  feedback_kind?: DecisionReportFeedbackKind
+}export interface DecisionReportAttempt {
+  pipeline_run_id: string
+  status: 'published' | 'rejected'
+  verification_status: 'passed' | 'failed'
+  at: string
+}
+
+export interface DecisionIntelligence {
+  schema_version: number
+  status: 'complete' | 'degraded'
+  generated_at: string
+  metrics: Record<string, number>
+  metric_snapshot?: {
+    schema_version: number
+    definition_version: string
+    window: { kind: 'single_run'; test_run_id: string }
+    values: Record<string, number>
+    denominators: Record<string, number>
+    source_fields: Record<string, string>
+    quality_flags: Array<{
+      code: string
+      severity: 'warning' | 'error'
+      detail: string
+    }>
+    content_sha256: string
+  }
+  run_evidence_bundle_sha256?: string
+  failure_clusters: Array<Record<string, unknown>>
+  deep_findings: Record<string, Record<string, unknown>>
+  flaky_findings: Array<Record<string, unknown>>
+  test_health_findings: Array<Record<string, unknown>>
+  release_decision: {
+    recommendation?: 'GO' | 'CONDITIONAL_GO' | 'NO_GO'
+    risk_score?: number
+    composite_risk?: number
+    reasoning?: string
+    blocking_issues?: string[]
+    conditions_for_go?: string[]
+    dimension_scores?: Record<string, number>
+    policy_id?: string | null
+    policy_name?: string
+    score_model_version?: string
+  } | null
+  quality_review: {
+    missing_or_failed_specialists: string[]
+    contradictions: Array<Record<string, unknown>>
+    gap_report: Record<string, unknown> | null
+    refined_report: Record<string, unknown> | null
+    requires_human_review: boolean
+    data_quality_flags?: Array<{
+      code: string
+      severity: 'warning' | 'error'
+      detail: string
+    }>
+  }
+  claims?: DecisionClaim[]
+  proposed_actions?: ProposedAction[]
+  source_stages: string[]
+  evidence_bundle_sha256: string
+  verification: DecisionReportVerification
+}
+
+export interface DecisionClaim {
+  claim_id: string
+  kind: 'fact' | 'inference' | 'unknown' | 'recommendation'
+  text: string
+  confidence: number
+  confidence_basis: string
+  evidence: Array<Record<string, unknown>>
+  counter_evidence: Array<Record<string, unknown>>
+  source_stage: string
+  freshness?: string | null
+  hypothesis?: boolean
+}
+
+export interface ProposedAction {
+  action_id: string
+  title: string
+  owner: string
+  rationale: string
+  evidence: Array<Record<string, unknown>>
+  risk: 'low' | 'medium' | 'high' | 'unknown'
+  required_permission: string
+  idempotency_key: string
+  status: 'proposed'
+}
 export interface DimensionScore {
   name: string
   label: string
@@ -120,7 +280,7 @@ export interface AnalysisItem {
 
 export interface ReleaseDecisionIntel {
   recommendation: 'GO' | 'CONDITIONAL_GO' | 'NO_GO'
-  risk_score: number
+  risk_score?: number
   composite_risk: number | null
   blocking_issues: string[]
   conditions_for_go: string[]
@@ -285,9 +445,18 @@ export interface ScoringModel {
 }
 
 export const runIntelligenceService = {
-  async get(runId: string, include?: string): Promise<RunIntelligence> {
-    const params = include ? { include } : {}
+  async get(runId: string, include?: string, reportVersion?: number | null): Promise<RunIntelligence> {
+    const params: Record<string, string | number> = {}
+    if (include) params.include = include
+    if (reportVersion != null) params.report_version = reportVersion
     const { data } = await api.get<RunIntelligence>(`/api/v1/runs/${runId}/intelligence`, { params })
+    return data
+  },
+
+  async getReportVersions(runId: string): Promise<DecisionReportVersionSummary[]> {
+    const { data } = await api.get<DecisionReportVersionSummary[]>(
+      `/api/v1/runs/${encodeURIComponent(runId)}/decision-reports`,
+    )
     return data
   },
 
@@ -310,4 +479,16 @@ export const runIntelligenceService = {
     const { data } = await api.post<RunIntelligence>(`/api/v1/runs/${runId}/intelligence/refresh`)
     return data
   },
+}
+
+export async function submitDecisionReportFeedback(
+  runId: string,
+  reportId: string,
+  payload: DecisionReportFeedbackPayload,
+): Promise<DecisionReportFeedbackResponse> {
+  const response = await api.post<DecisionReportFeedbackResponse>(
+    `/api/v1/runs/${encodeURIComponent(runId)}/decision-reports/${encodeURIComponent(reportId)}/feedback`,
+    payload,
+  )
+  return response.data
 }

@@ -95,6 +95,7 @@ class _FakeDB:
         run_rows=(),
         tc_rows=(),
         pipeline_rows=(),
+        evidence_rows=(),
         live_slugs=(),
         packs=(),
         counts=None,
@@ -107,6 +108,7 @@ class _FakeDB:
         self.run_rows = list(run_rows)
         self.tc_rows = list(tc_rows)
         self.pipeline_rows = list(pipeline_rows)
+        self.evidence_rows = list(evidence_rows)
         self.live_slugs = list(live_slugs)
         self.packs = list(packs)
         self.counts = dict(counts or {})
@@ -163,6 +165,10 @@ class _FakeDB:
             return _Rows(self.live_slugs)
         if "agent_pipeline_runs" in s:
             return _Rows(self.pipeline_rows)
+        if "evidence_artifacts" in s:
+            return _Rows(self.evidence_rows)
+        if "agent_memory_entries" in s:
+            return _Rows([])
         if "test_cases" in s:
             return _Rows(self.tc_rows)
         if "minio_prefix" in s:
@@ -379,7 +385,11 @@ def _purge_fixture(*, run_ages_days=(400,), policy=None):
         },
         events=events,
     )
-    mongo = _FakeMongo(events, counts={"raw_allure_json": 7}, delete_counts={"execution_logs": 5})
+    mongo = _FakeMongo(
+        events,
+        counts={"raw_allure_json": 7, "decision_evidence_snapshots": 1},
+        delete_counts={"execution_logs": 5, "decision_evidence_snapshots": 1},
+    )
     storage = _FakeStorage(events, prefix_counts={}, list_map={})
     return db, mongo, storage, events
 
@@ -405,7 +415,8 @@ async def test_preview_writes_nothing_and_returns_all_count_keys():
     assert set(out["candidates"]) == {
         "runs", "test_cases", "mongo_docs", "minio_objects",
         "event_archive_rows", "audit_rows", "provenance_rows",
-        "compliance_packs_expired",
+            "compliance_packs_expired", "evidence_artifact_rows",
+            "analysis_cache_entries", "memory_entries_expired",
     }
     assert set(out["cutoffs"]) == {"raw_events", "runs", "artifacts", "audit"}
     assert out["candidates"]["runs"] == 1
@@ -414,6 +425,11 @@ async def test_preview_writes_nothing_and_returns_all_count_keys():
     assert out["candidates"]["audit_rows"] == 3  # access(2) + test-case(1)
     assert out["candidates"]["provenance_rows"] == 4
     assert out["candidates"]["mongo_docs"]["raw_allure_json"] == 7
+    assert out["candidates"]["mongo_docs"]["decision_evidence_snapshots"] == 1
+    snapshot_collection = mongo.collections["decision_evidence_snapshots"]
+    assert snapshot_collection.count_filters == [
+        {"test_run_id": {"$in": ["aaaaaaaa-0000-0000-0000-000000000000"]}}
+    ]
 
 
 async def test_preview_works_when_policy_disabled_or_missing():
@@ -427,6 +443,26 @@ async def test_preview_works_when_policy_disabled_or_missing():
     assert out["candidates"]["runs"] == 1  # 400d > default 365d runs window
 
 
+async def test_artifacts_clock_previews_and_deletes_evidence_rows():
+    artifact_id = uuid.uuid4()
+    preview_db, preview_mongo, preview_storage, _ = _purge_fixture()
+    preview_db.evidence_rows = [artifact_id]
+    preview = await svc.run_purge(
+        preview_db, project_id=PROJECT_ID, mode="preview", now=NOW,
+        mongo=preview_mongo, storage=preview_storage,
+    )
+    assert preview["candidates"]["evidence_artifact_rows"] == 1
+
+    execute_db, execute_mongo, execute_storage, _ = _purge_fixture()
+    execute_db.evidence_rows = [artifact_id]
+    execute_db.delete_rowcounts["evidence_artifacts"] = 1
+    executed = await svc.run_purge(
+        execute_db, project_id=PROJECT_ID, mode="execute", now=NOW,
+        mongo=execute_mongo, storage=execute_storage,
+    )
+    assert executed["counts"]["postgres"]["evidence_artifact_rows"] == 1
+
+
 # ── Purge: execute ordering (the ordering trap) ─────────────────────────────
 
 
@@ -437,6 +473,10 @@ async def test_execute_order_mongo_then_minio_then_postgres_run_delete():
         mongo=mongo, storage=storage,
     )
     assert out["mode"] == "execute"
+    snapshot_collection = mongo.collections["decision_evidence_snapshots"]
+    assert snapshot_collection.delete_filters == [
+        {"test_run_id": {"$in": ["aaaaaaaa-0000-0000-0000-000000000000"]}}
+    ]
 
     mongo_deletes = [i for i, (k, _) in enumerate(events) if k == "mongo_delete"]
     minio_deletes = [

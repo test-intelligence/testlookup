@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-13 — Feat: Phase 3 multi-agent test intelligence
+
+Governed multi-agent workflow and capability planning; evidence-authority snapshots with
+sanitization, provenance, critic verification, replay and retention; recursive agentic runtime
+projections with cluster-child investigations, durable dispatch/outbox, scoped budgets,
+cancellation and stale recovery; Decision Intelligence UI, report versioning, structured feedback,
+action ledger, evaluation cycles, memory lifecycle. Migrations `0119` and `0120`.
+
+CI additions: a `postgres-integration` job (migrations applied and rolled back against a clean
+database) that `build-images` now depends on, and a late-ack broker redelivery check.
+
+Fixes applied while integrating against latest `main`:
+
+- **`_allocate_cost` could allocate more than the aggregate budget.** Whole micro-dollars were
+  allocated exactly in integer space, but dividing each share back to a float reintroduced
+  representation error, so the per-stage parts summed to marginally *more* than the whole
+  (`0.100001` → `0.10000100000000003`). A budget whose parts exceed their aggregate is an
+  over-spend, so any drift is now shaved off the largest share.
+- **`change_ownership_agent` emitted an uncontracted analytic payload**, violating the
+  `agents.contract-metadata` ratchet. Its single `_result` choke point now stamps
+  `ChangeOwnershipAgentOutput` via `validate_agent_contract`, so all eight return paths are
+  covered at once.
+- **Checkpoint restore was silently dead whenever logging was configured.** `_load_checkpoint`
+  logged its success line with stdlib-style positional `%s` args, but the module binds a
+  `structlog` logger whose `BoundLogger.info` signature is `(event, **kw)` — so the call raised
+  `TypeError`, the function's blanket `except Exception` swallowed it, and every restore returned
+  `None` after logging `checkpoint_load_failed`. Unconfigured structlog hands back a lazy proxy
+  that tolerates positional args, which is why this only surfaced in the test suite when some
+  earlier test had already imported `app.main` — a real production defect wearing the costume of a
+  test-ordering flake. The `backend.structlog-positional-args` guard missed it because its regex is
+  line-based and this call spans four lines; an AST sweep finds **83 more multi-line instances of
+  the same class** (mostly `worker/tasks.py`), all pre-existing on `main` and left for a scoped
+  follow-up. The checkpoint test now configures `structlog.BoundLogger` itself, so the guard is
+  deterministic instead of order-dependent.
+- **`worker-children` existed only in the dev compose file.** Released stacks would have started
+  without a consumer for the `agent_children` queue, so cluster-child investigations would have
+  queued forever. Added to `docker-compose.release.yml` with its own low concurrency.
+- `resolve_authorized_test_case` (new authorization on the analyze endpoints) is now modelled by
+  the analyze regression tests, which previously stubbed only the analysis lookup.
+- Test expectations updated to pin — rather than bypass — three deliberate behaviour changes: the
+  `BudgetedLLM` wrapper (the single boundary enforcing pipeline budget and prompt redaction), the
+  `react_triage` v3 prompt (citations are server-derived; the model must return an empty
+  `evidence_references`), and the outbox relay's two-phase commit (claim committed before publish
+  so a crash cannot double-publish).
+
 ### 2026-08-13 — Productionization: the CLI now explains an unreachable server instead of dumping a traceback
 
 The CLI is the first thing a new self-hoster runs (`testlookup upload …`, `testlookup health`).

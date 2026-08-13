@@ -40,6 +40,16 @@ _CREDENTIAL_KIND_ATTR = "_testlookup_credential_kind"
 CREDENTIAL_KIND_JWT = "jwt"
 CREDENTIAL_KIND_API_KEY = "api_key"
 
+
+@dataclass(frozen=True)
+class AuthorizedTestCaseContext:
+    """Server-resolved ownership for a test-case scoped operation."""
+
+    test_case: object
+    test_run: object
+    run_id: uuid.UUID
+    project_id: uuid.UUID
+
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="/api/v1/auth/login",
     scheme_name="JWT",
@@ -822,6 +832,52 @@ def require_run_access():
         return current_user
 
     return _check
+
+
+async def resolve_authorized_test_case(
+    db: AsyncSession,
+    current_user: User,
+    test_case_id: uuid.UUID,
+) -> AuthorizedTestCaseContext:
+    """Resolve a test through its run and enforce tenant/API-key membership."""
+    from app.models.postgres import ProjectMember, TestCase, TestRun
+
+    result = await db.execute(
+        select(TestCase, TestRun)
+        .join(TestRun, TestRun.id == TestCase.test_run_id)
+        .where(TestCase.id == test_case_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Test case not found",
+        )
+    test_case, test_run = row
+    project_id = test_run.project_id
+    _enforce_api_key_project_binding(
+        current_user,
+        project_id,
+        detail="This API key is restricted to a different project",
+    )
+    if _normalize_user_role(current_user.role) != UserRole.ADMIN:
+        membership = await db.execute(
+            select(ProjectMember.id).where(
+                ProjectMember.user_id == current_user.id,
+                ProjectMember.project_id == project_id,
+            )
+        )
+        if membership.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this test case''s project",
+            )
+    return AuthorizedTestCaseContext(
+        test_case=test_case,
+        test_run=test_run,
+        run_id=test_case.test_run_id,
+        project_id=project_id,
+    )
 
 
 def _make_project_scoped_guard(

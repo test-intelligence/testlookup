@@ -58,3 +58,12 @@ class InvestigationState(TypedDict):
     verdict: Optional[dict[str, Any]]
     # {"provider": str, "model": str} once any LLM call succeeded, else None.
     model_info: Optional[dict[str, str]]
+
+    # Resume-only authority. These keys are populated by the durable
+    # same-investigation retry path and are intentionally separate from the
+    # reducer-backed outputs so completed hypothesis results are not appended
+    # twice when the LangGraph fan-out runs again.
+    resume_hypotheses: list[dict[str, Any]]
+    resume_completed_hypotheses: set[str]
+    resume_completed_stages: set[str]
+    resume_verdict: Optional[dict[str, Any]]

@@ -5,9 +5,9 @@
 # Prerequisites:
 #   - 3-node K3s cluster running (k3s_setup.md steps 1-7, local-path storage)
 #   - kubectl configured and pointing to the cluster
-#   - Docker Desktop running on dev machine
+#   - Docker Desktop or Podman running on the dev machine
 #   - registry.local in hosts file pointing to 192.168.0.101
-#   - Docker Desktop configured with insecure-registries: ["registry.local:30500"]
+#   - The selected container engine trusts registry.local:30500 as insecure
 #
 # Usage:
 #   ./homelabsetup/deploy-homelab.sh [--skip-registry] [--skip-build] [--skip-models]
@@ -45,6 +45,8 @@ SKIP_REGISTRY=false
 SKIP_BUILD=false
 SKIP_MODELS=false
 SKIP_DNS=false
+CONTAINER_ENGINE="${CONTAINER_ENGINE:-docker}"
+KUBECTL_INSECURE_SKIP_TLS_VERIFY="${KUBECTL_INSECURE_SKIP_TLS_VERIFY:-false}"
 # Bypass the pre-apply K3s containerd mirror check (incident 2026-05-17).
 # Default off — the check catches the "every locally-built image
 # ImagePullBackOffs because /etc/rancher/k3s/registries.yaml is missing"
@@ -155,6 +157,19 @@ stage_tls_ca() {
 }
 
 # ── Teardown mode ───────────────────────────────────────────
+check_command kubectl
+
+# Homelabs commonly use a private/self-signed Kubernetes API certificate.
+# Keep the bypass explicit and process-local; never rewrite the user's
+# kubeconfig or copy its credentials into the repository. Define this before
+# teardown handling so every kubectl path honors the same explicit setting.
+if [ "$KUBECTL_INSECURE_SKIP_TLS_VERIFY" = true ]; then
+  KUBECTL_EXECUTABLE="$(command -v kubectl)"
+  kubectl() {
+    "$KUBECTL_EXECUTABLE" --insecure-skip-tls-verify=true "$@"
+  }
+fi
+
 if [ "$TEARDOWN_ALL" = true ]; then
   header "TEARDOWN (DESTRUCTIVE) — Deleting namespace + all data"
   warn "This will delete ALL data including databases!"
@@ -175,8 +190,7 @@ fi
 # ── Preflight checks ───────────────────────────────────────
 header "Step 0 — Preflight Checks"
 
-check_command kubectl
-check_command docker
+check_command "$CONTAINER_ENGINE"
 
 log "Checking kubectl cluster access..."
 kubectl get nodes >/dev/null 2>&1 || error "Cannot reach K3s cluster. Check your kubeconfig."
@@ -184,8 +198,8 @@ kubectl get nodes >/dev/null 2>&1 || error "Cannot reach K3s cluster. Check your
 NODE_COUNT=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
 log "Cluster has $NODE_COUNT node(s)"
 
-log "Checking Docker Desktop..."
-docker info >/dev/null 2>&1 || error "Docker is not running. Start Docker Desktop first."
+log "Checking container engine (${CONTAINER_ENGINE})..."
+"$CONTAINER_ENGINE" info >/dev/null 2>&1 || error "$CONTAINER_ENGINE is not running. Start the container engine first."
 
 log "Checking local-path StorageClass..."
 kubectl get storageclass local-path >/dev/null 2>&1 || error "local-path StorageClass not found. Is this a K3s cluster?"
@@ -432,7 +446,7 @@ if [ "$SKIP_BUILD" = false ]; then
   fi
 
   log "Building backend image (${BUILD_TAG})..."
-  docker build -t "${PUSH_REGISTRY}/testlookup/backend:${BUILD_TAG}" \
+  "$CONTAINER_ENGINE" build -t "${PUSH_REGISTRY}/testlookup/backend:${BUILD_TAG}" \
     ${CA_BUILD_ARG[@]+"${CA_BUILD_ARG[@]}"} \
     --target production -f backend/Dockerfile backend/
 
@@ -444,25 +458,47 @@ if [ "$SKIP_BUILD" = false ]; then
   # refreshed. We intentionally do NOT pass --no-cache so the npm install
   # layer (slow) stays cached when only frontend/src changes — Docker
   # invalidates downstream layers automatically when source files change.
-  docker build --pull -t "${PUSH_REGISTRY}/testlookup/frontend:${BUILD_TAG}" \
+  "$CONTAINER_ENGINE" build --pull -t "${PUSH_REGISTRY}/testlookup/frontend:${BUILD_TAG}" \
     ${CA_BUILD_ARG[@]+"${CA_BUILD_ARG[@]}"} \
     --target production -f frontend/Dockerfile frontend/
 
   log "Building MCP server image (${BUILD_TAG})..."
-  docker build -t "${PUSH_REGISTRY}/testlookup/mcp:${BUILD_TAG}" \
+  "$CONTAINER_ENGINE" build -t "${PUSH_REGISTRY}/testlookup/mcp:${BUILD_TAG}" \
     ${CA_BUILD_ARG[@]+"${CA_BUILD_ARG[@]}"} \
     -f mcp/Dockerfile mcp/
 
   log "Pushing images to registry..."
-  docker push "${PUSH_REGISTRY}/testlookup/backend:${BUILD_TAG}"
-  docker push "${PUSH_REGISTRY}/testlookup/frontend:${BUILD_TAG}"
-  docker push "${PUSH_REGISTRY}/testlookup/mcp:${BUILD_TAG}"
+  "$CONTAINER_ENGINE" push "${PUSH_REGISTRY}/testlookup/backend:${BUILD_TAG}"
+  "$CONTAINER_ENGINE" push "${PUSH_REGISTRY}/testlookup/frontend:${BUILD_TAG}"
+  "$CONTAINER_ENGINE" push "${PUSH_REGISTRY}/testlookup/mcp:${BUILD_TAG}"
 
-  # Capture the digest of the freshly pushed image so we can compare it
-  # against the digest the pod actually runs after the rollout finishes.
-  FRONTEND_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' \
-    "${PUSH_REGISTRY}/testlookup/frontend:${BUILD_TAG}" 2>/dev/null \
-    | sed 's/.*@//' || echo "")
+  # Capture the registry's manifest digest so we can compare the same digest
+  # type Kubernetes reports in containerStatuses[*].imageID. Podman inspect can
+  # expose a locally cached/config digest that differs from the pushed manifest
+  # digest even when the pod is running the correct immutable image.
+  FRONTEND_MANIFEST_HEADERS=$(curl -fsSI \
+    -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+    "http://${PUSH_REGISTRY}/v2/testlookup/frontend/manifests/${BUILD_TAG}" \
+    2>/dev/null | tr -d '\r') \
+    || error "Could not read the pushed frontend manifest from the registry."
+  FRONTEND_MANIFEST_TYPE=$(printf '%s\n' "$FRONTEND_MANIFEST_HEADERS" \
+    | awk 'tolower($1) == "content-type:" { print tolower($2); exit }' \
+    | cut -d';' -f1)
+  case "$FRONTEND_MANIFEST_TYPE" in
+    application/vnd.oci.image.manifest.v1+json|application/vnd.docker.distribution.manifest.v2+json)
+      ;;
+    application/vnd.oci.image.index.v1+json|application/vnd.docker.distribution.manifest.list.v2+json)
+      error "Frontend tag resolved to a multi-platform index; platform-manifest verification is required before deployment."
+      ;;
+    *)
+      error "Registry returned an unsupported frontend manifest Content-Type: ${FRONTEND_MANIFEST_TYPE:-missing}."
+      ;;
+  esac
+  FRONTEND_DIGEST=$(printf '%s\n' "$FRONTEND_MANIFEST_HEADERS" \
+    | awk 'tolower($1) == "docker-content-digest:" { print $2; exit }' \
+    || echo "")
+  printf '%s\n' "$FRONTEND_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' \
+    || error "Registry response omitted a valid sha256 frontend manifest digest."
   if [ -n "$FRONTEND_DIGEST" ]; then
     log "Frontend image digest just pushed: ${FRONTEND_DIGEST}"
   fi
@@ -800,6 +836,7 @@ if [ "$SKIP_BUILD" = false ]; then
     testlookup-worker-critical
     testlookup-worker-ingestion
     testlookup-worker-ai
+    testlookup-worker-children
     testlookup-worker-default
     testlookup-beat
   )
@@ -822,21 +859,22 @@ if [ "$SKIP_BUILD" = false ]; then
   done
   log "App deployments rolled to image ${BUILD_TAG}."
 
-  # ── Sanity check: digest of the frontend pod matches the one we just pushed.
+  # ── Authority check: every Ready pod on the expected immutable tag must run
+  # the exact manifest digest the registry returned after the push.
   if [ -n "${FRONTEND_DIGEST:-}" ]; then
-    POD_DIGEST=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-frontend \
-      -o jsonpath='{.items[0].status.containerStatuses[0].imageID}' 2>/dev/null \
-      | sed 's/.*@//' || echo "")
-    if [ -z "$POD_DIGEST" ]; then
-      warn "Could not read frontend pod imageID — skipping digest verification."
-    elif [ "$POD_DIGEST" = "$FRONTEND_DIGEST" ]; then
+    EXPECTED_FRONTEND_IMAGE="${REGISTRY}/testlookup/frontend:${BUILD_TAG}"
+    POD_DIGESTS=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-frontend \
+      -o custom-columns='IMAGE:.spec.containers[0].image,READY:.status.containerStatuses[0].ready,IMAGE_ID:.status.containerStatuses[0].imageID' \
+      --no-headers 2>/dev/null \
+      | awk -v expected="$EXPECTED_FRONTEND_IMAGE" \
+          '$1 == expected && $2 == "true" { sub(/^.*@/, "", $3); print $3 }' \
+      | sort -u || echo "")
+    if [ -z "$POD_DIGESTS" ]; then
+      error "No Ready frontend pod is running the expected image tag ${EXPECTED_FRONTEND_IMAGE}."
+    elif [ "$POD_DIGESTS" = "$FRONTEND_DIGEST" ]; then
       log "Frontend pod is running the just-pushed image (digest match)."
     else
-      warn "Frontend pod digest does NOT match the pushed image!"
-      warn "  Pushed: $FRONTEND_DIGEST"
-      warn "  Pod:    $POD_DIGEST"
-      warn "K3s may have served a cached layer. Force re-pull with:"
-      warn "  kubectl -n $NAMESPACE delete pod -l app=testlookup-frontend"
+      error "Frontend authority mismatch: registry=${FRONTEND_DIGEST}, ready-pod digest(s)=${POD_DIGESTS}."
     fi
   fi
 else

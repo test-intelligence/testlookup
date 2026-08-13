@@ -5,9 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_role
+from app.core.deps import (
+    get_current_active_user,
+    require_role,
+    resolve_authorized_test_case,
+)
 from app.db.postgres import get_db
-from app.models.postgres import AIAnalysis, FailureCategory, TestCase, UserRole
+from app.models.postgres import AIAnalysis, FailureCategory, TestCase, User, UserRole
 from app.models.schemas import (
     AnalysisProvenance,
     AnalysisResponse,
@@ -16,7 +20,7 @@ from app.models.schemas import (
     RoleActions,
     ThresholdCheck,
 )
-from app.services.agent import run_triage_agent
+from app.services import analysis_router
 
 router = APIRouter(prefix="/api/v1", tags=["AI Analysis"])
 
@@ -149,6 +153,7 @@ def _build_role_actions(analysis: dict) -> RoleActions:
 async def get_existing_analysis(
     test_case_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
     Return the previously stored AI analysis for a test case without triggering
@@ -160,6 +165,7 @@ async def get_existing_analysis(
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid test_case_id format")
 
+    await resolve_authorized_test_case(db, current_user, tc_uuid)
     row = (await db.execute(
         select(AIAnalysis).where(AIAnalysis.test_case_id == tc_uuid)
     )).scalar_one_or_none()
@@ -244,6 +250,7 @@ async def get_existing_analysis(
 async def analyze_test_case(
     request: AnalyzeRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
     Trigger the LangChain ReAct agent to investigate a failed test case.
@@ -251,21 +258,27 @@ async def analyze_test_case(
     recommended actions, and a 'confidence_why' breakdown showing the evidence basis.
     """
     # Fetch test case details
-    result = await db.execute(
-        select(TestCase).where(TestCase.id == request.test_case_id)
+    authorized = await resolve_authorized_test_case(
+        db, current_user, request.test_case_id
     )
-    tc = result.scalar_one_or_none()
-    if not tc:
-        raise HTTPException(status_code=404, detail="Test case not found")
+    tc = authorized.test_case
+    test_run = authorized.test_run
 
     # Run the AI agent
-    analysis = await run_triage_agent(
-        test_case_id=str(tc.id),
-        test_name=tc.test_name,
-        service_name=request.service_name,
-        timestamp=request.timestamp,
-        ocp_pod_name=request.ocp_pod_name,
-        ocp_namespace=request.ocp_namespace,
+    analysis = await analysis_router.classify_test(
+        test_case={
+            "test_case_id": str(tc.id),
+            "test_name": tc.test_name,
+            "suite_name": tc.suite_name,
+            "timestamp": (test_run.end_time or test_run.start_time).isoformat()
+            if (test_run.end_time or test_run.start_time) else None,
+            "ocp_pod_name": test_run.ocp_pod_name,
+            "ocp_namespace": test_run.ocp_namespace,
+            "run_id": str(authorized.run_id),
+            "project_id": str(authorized.project_id),
+            "test_fingerprint": tc.test_fingerprint,
+        },
+        run_context={"run_id": str(authorized.run_id), "project_id": str(authorized.project_id)},
     )
 
     # Persist structured result to PostgreSQL

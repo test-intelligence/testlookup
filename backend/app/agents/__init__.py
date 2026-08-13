@@ -5,11 +5,11 @@ during unrelated unit tests.
 """
 import importlib
 
-__all__ = ["QueryIntent", "classify_intent", "run_offline_pipeline", "run_deep_pipeline"]
+__all__ = ["QueryIntent", "classify_intent", "run_offline_pipeline", "run_deep_pipeline", "resume_pipeline"]
 
 # Workflow-level node function names that tests may import
 _WORKFLOW_EXPORTS = {
-    "run_offline_pipeline", "run_deep_pipeline",
+    "run_offline_pipeline", "run_deep_pipeline", "resume_pipeline",
     "analysis_node", "cluster_node", "summary_node",
     "triage_node", "anomaly_node", "ingestion_node",
 }

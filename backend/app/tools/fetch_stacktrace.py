@@ -2,6 +2,8 @@
 from langchain_core.tools import tool
 
 from app.db.mongo import Collections, get_mongo_db
+from app.tools.investigation_context import get_investigation_context
+from app.services.evidence_sanitizer import sanitize_reference_text
 
 
 @tool
@@ -17,8 +19,16 @@ async def fetch_allure_stacktrace(test_case_id: str) -> str:
     Returns:
         The stack trace and error message as a formatted string.
     """
+    context = get_investigation_context()
+    if context is None:
+        return "Stack trace lookup unavailable: no authorized investigation context."
+    if str(test_case_id) != context.test_case_id:
+        return "Stack trace lookup denied: requested test is outside the investigation scope."
     db = get_mongo_db()
-    doc = await db[Collections.RAW_ALLURE_JSON].find_one({"test_case_id": test_case_id})
+    doc = await db[Collections.RAW_ALLURE_JSON].find_one({
+        "test_case_id": context.test_case_id,
+        "test_run_id": context.run_id,
+    })
 
     if not doc:
         return f"No Allure result found for test_case_id: {test_case_id}"
@@ -39,7 +49,7 @@ async def fetch_allure_stacktrace(test_case_id: str) -> str:
     attachments = raw.get("attachments", [])
     att_info = f"{len(attachments)} attachment(s) available (screenshots, logs)" if attachments else "No attachments"
 
-    return f"""=== Allure Stack Trace ===
+    rendered = f"""=== Allure Stack Trace ===
 Test: {raw.get('name', 'Unknown')}
 Status: {raw.get('status', 'unknown')}
 Duration: {raw.get('stop', 0) - raw.get('start', 0)}ms
@@ -55,3 +65,5 @@ Failed Steps:
 
 Attachments: {att_info}
 """
+    safe, _, _ = sanitize_reference_text(rendered, limit=6000)
+    return safe

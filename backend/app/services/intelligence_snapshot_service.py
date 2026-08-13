@@ -32,7 +32,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import AgentMemoryEntry, RunIntelligenceSnapshot
-from app.services.agent_memory_service import build_memory_reference
+from app.services.agent_memory_service import _active_memory_filters, build_memory_reference
 
 logger = logging.getLogger("services.intelligence_snapshot")
 
@@ -107,7 +107,7 @@ async def _load_snapshot_memory_entries(
 ) -> list[AgentMemoryEntry]:
     result = await db.execute(
         select(AgentMemoryEntry)
-        .where(AgentMemoryEntry.run_id == run_id)
+        .where(AgentMemoryEntry.run_id == run_id, *_active_memory_filters())
         .order_by(
             AgentMemoryEntry.entity_type,
             AgentMemoryEntry.entity_id,

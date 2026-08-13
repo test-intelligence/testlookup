@@ -50,6 +50,11 @@ async def get_run_intelligence_endpoint(
         default="",
         description="Comma-separated optional expansions: test_cases,evidence,history",
     ),
+    report_version: int | None = Query(
+        default=None,
+        ge=1,
+        description="Immutable DecisionReport version to display; omitted means latest",
+    ),
     db: Any = Depends(get_db),
     _: Any = Depends(require_run_access()),
 ):
@@ -71,15 +76,23 @@ async def get_run_intelligence_endpoint(
     start = time.monotonic()
     try:
         # Read-through cache: try fresh snapshot first
-        cached = await get_cached_snapshot(db, run_id)
-        if cached and not include_set:
+        cached = (
+            await get_cached_snapshot(db, run_id)
+            if report_version is None
+            else None
+        )
+        if cached and not include_set and report_version is None:
             run_intelligence_requests_total.labels(status="cache_hit").inc()
             if isinstance(cached, dict):
                 cached["_snapshot"] = {"cached": True, "stale": False}
             return cached
 
         # Try stale snapshot (serves immediately while refresh is recommended)
-        stale = await get_stale_snapshot(db, run_id) if not include_set else None
+        stale = (
+            await get_stale_snapshot(db, run_id)
+            if not include_set and report_version is None
+            else None
+        )
         if stale and not include_set:
             run_intelligence_requests_total.labels(status="cache_stale").inc()
             if isinstance(stale, dict):
@@ -87,7 +100,13 @@ async def get_run_intelligence_endpoint(
             return stale
 
         # Cache miss — compute live
-        result = await get_run_intelligence(run_id, db, mongo, include=include_set)
+        result = await get_run_intelligence(
+            run_id,
+            db,
+            mongo,
+            include=include_set,
+            report_version=report_version,
+        )
         run_intelligence_requests_total.labels(status="success").inc()
 
         # Cache the result for future requests.
@@ -96,7 +115,7 @@ async def get_run_intelligence_endpoint(
         # **dedicated write session** so this GET handler's own transaction
         # stays read-only. If the write fails, the response still returns
         # successfully — the next GET will just recompute.
-        if not include_set:
+        if not include_set and report_version is None:
             try:
                 fallback = result.get("provenance", {}).get("fallback_used", False) if isinstance(result.get("provenance"), dict) else False
                 from app.db.postgres import AsyncSessionLocal as _AsyncSessionLocal
@@ -113,6 +132,26 @@ async def get_run_intelligence_endpoint(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         run_intelligence_duration_seconds.observe(time.monotonic() - start)
+
+
+@router.get("/{run_id}/decision-reports")
+async def list_run_decision_reports(
+    run_id: uuid.UUID,
+    limit: int = Query(default=50, ge=1, le=100),
+    _: Any = Depends(require_run_access()),
+):
+    """List immutable published DecisionReport versions for an authorized run."""
+    from app.services.decision_report_service import list_decision_report_versions
+
+    try:
+        versions = await list_decision_report_versions(
+            get_mongo_db(), str(run_id), limit=limit
+        )
+    except Exception:
+        # Do not turn a transient Mongo outage into an unbounded error surface;
+        # callers receive a truthful unavailable response.
+        raise HTTPException(status_code=503, detail="decision_report_versions_unavailable") from None
+    return versions
 
 
 @router.get("/{run_id}/summary")
@@ -250,6 +289,8 @@ async def export_intelligence_report(
         "defect_candidates": intelligence.get("defect_candidates", []),
         "role_actions": intelligence.get("role_actions", {}),
         "provenance": intelligence.get("provenance"),
+        "decision_report": intelligence.get("structured_summary", {}).get("decision_report"),
+        "decision_report_verification": intelligence.get("structured_summary", {}).get("decision_report_verification"),
         "category_breakdown": intelligence.get("category_breakdown", {}),
     }
 

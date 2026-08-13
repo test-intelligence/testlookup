@@ -18,7 +18,8 @@ class                   what it covers
                         ``ai_analysis_payloads`` by test_case_id).
 ``artifacts_days``      MinIO objects: ``TestRun.minio_prefix`` +
                         ``uploads/{project_id}/{run_id}/`` prefixes, and
-                        pipeline artifacts
+                        pipeline artifacts plus verified ``EvidenceArtifact``
+                        metadata/content excerpts
                         (``pipeline/{Y}/{m}/{d}/{pipeline_run_id}/…``).
 ``audit_days``          ``access_audit_logs`` + ``test_case_audit_logs``
                         (project-scoped), ``ai_provenance_records`` (via the
@@ -81,8 +82,10 @@ from app.db.storage import get_storage_provider
 from app.models.postgres import (
     AccessAuditLog,
     AgentPipelineRun,
+    AgentMemoryEntry,
     AIProvenanceRecord,
     CompliancePack,
+    EvidenceArtifact,
     LiveSession,
     Project,
     ProjectRetentionPolicy,
@@ -405,6 +408,61 @@ def _pipeline_artifact_keys(
     return keys
 
 
+async def _published_report_artifact_ids(
+    mongo: Any,
+    project_id: uuid.UUID,
+    candidate_ids: list[uuid.UUID],
+) -> set[uuid.UUID]:
+    """Return candidate artifacts still referenced by published reports.
+
+    Decision reports are immutable and may outlive the raw run.  Retention
+    must not delete an artifact that a published report exposes through its
+    signed evidence references.  The production Mongo collection supports
+    ``find``/``to_list``; intentionally minimal test doubles without that API
+    are treated as having no report references.
+    """
+    if not candidate_ids:
+        return set()
+    collection = mongo[Collections.DECISION_REPORTS]
+    find = getattr(collection, "find", None)
+    if find is None:
+        return set()
+    candidate_set = {str(item) for item in candidate_ids}
+    protected: set[uuid.UUID] = set()
+    try:
+        cursor = find(
+            {"project_id": str(project_id), "status": "published"},
+            {"_id": 0, "decision_intelligence": 1, "verification": 1},
+        )
+        reports = await cursor.to_list(length=10_000)
+        stack: list[Any] = list(reports if isinstance(reports, list) else [])
+        visited = 0
+        while stack and len(protected) < 500:
+            value = stack.pop()
+            visited += 1
+            if visited > 100_000:
+                break
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if key in {"artifact_id", "evidence_id"} and str(item) in candidate_set:
+                        protected.add(uuid.UUID(str(item)))
+                    elif key == "evidence_ids" and isinstance(item, list):
+                        for evidence_id in item:
+                            if str(evidence_id) in candidate_set:
+                                protected.add(uuid.UUID(str(evidence_id)))
+                    elif isinstance(item, (dict, list)):
+                        stack.append(item)
+            elif isinstance(value, list):
+                stack.extend(value)
+    except Exception as exc:  # fail closed for artifact deletion
+        logger.warning(
+            "retention_report_reference_scan_failed",
+            error_type=type(exc).__name__,
+        )
+        return set(candidate_ids)
+    return protected
+
+
 @dataclass
 class _Candidates:
     """Everything materialized from Postgres BEFORE any delete (the
@@ -420,6 +478,7 @@ class _Candidates:
     # artifacts clock (∪ runs clock — a deleted run's objects must die too)
     artifact_prefixes: list[str]
     artifact_pipeline_strs: set[str]
+    evidence_artifact_ids: list[uuid.UUID]
     # audit clock
     audit_pipeline_strs: list[str]
 
@@ -517,6 +576,14 @@ async def _collect_candidates(
     ).scalars().all()
     raw_run_strs = [str(r) for r in raw_run_ids]
     raw_live_run_keys = list({*raw_run_strs, *[s for s in live_slugs if s]})
+    evidence_artifact_ids = list((
+        await db.execute(
+            select(EvidenceArtifact.id).where(
+                EvidenceArtifact.project_id == project_id,
+                EvidenceArtifact.created_at < cutoffs["artifacts"],
+            )
+        )
+    ).scalars().all())
 
     return _Candidates(
         purge_run_ids=purge_run_ids,
@@ -527,6 +594,7 @@ async def _collect_candidates(
         raw_live_run_keys=raw_live_run_keys,
         artifact_prefixes=sorted(artifact_prefixes),
         artifact_pipeline_strs=artifact_pipeline_strs,
+        evidence_artifact_ids=evidence_artifact_ids,
         audit_pipeline_strs=audit_pipeline_strs,
     )
 
@@ -543,6 +611,7 @@ _MONGO_PLANS: tuple[tuple[str, str, str], ...] = (
     (Collections.EXECUTION_LOGS, "test_run_id", "purge_run_strs"),
     (Collections.OCP_POD_EVENTS, "test_run_id", "purge_run_strs"),
     (Collections.RUN_SUMMARIES, "test_run_id", "purge_run_strs"),
+    (Collections.DECISION_EVIDENCE_SNAPSHOTS, "test_run_id", "purge_run_strs"),
     (Collections.AI_ANALYSIS_PAYLOADS, "test_case_id", "purge_tc_strs"),
     (_PIPELINE_EVENT_LOG, "pipeline_run_id", "audit_pipeline_strs"),
 )
@@ -576,6 +645,7 @@ async def run_purge(
         raise ValueError(f"Unknown purge mode: {mode!r}")
 
     now = now or datetime.now(timezone.utc)
+    external_stores_injected = mongo is not None or storage is not None
     policy = await get_effective_policy(db, project_id)
     cutoffs = compute_cutoffs(policy, now)
     mongo = mongo if mongo is not None else get_mongo_db()
@@ -583,6 +653,17 @@ async def run_purge(
 
     # ── (1) Materialize BEFORE any delete ────────────────────────────────
     cand = await _collect_candidates(db, project_id, cutoffs)
+    protected_artifacts = await _published_report_artifact_ids(
+        mongo,
+        project_id,
+        cand.evidence_artifact_ids,
+    )
+    if protected_artifacts:
+        cand.evidence_artifact_ids = [
+            artifact_id
+            for artifact_id in cand.evidence_artifact_ids
+            if artifact_id not in protected_artifacts
+        ]
 
     # Shared Postgres-side candidate counts / filters.
     event_archive_where = (
@@ -602,6 +683,19 @@ async def run_purge(
         AIProvenanceRecord.project_id == project_id,
         AIProvenanceRecord.created_at < cutoffs["audit"],
     )
+    memory_expired_where = (
+        AgentMemoryEntry.project_id == project_id,
+        AgentMemoryEntry.lifecycle_status == "active",
+        AgentMemoryEntry.expires_at.is_not(None),
+        AgentMemoryEntry.expires_at <= now,
+    )
+    memory_expired_ids = list(
+        (
+            await db.execute(
+                select(AgentMemoryEntry.id).where(*memory_expired_where)
+            )
+        ).scalars().all()
+    )
 
     expired_packs = (
         await db.execute(
@@ -613,6 +707,17 @@ async def run_purge(
     ).scalars().all()
 
     cutoffs_iso = {k: v.isoformat() for k, v in cutoffs.items()}
+    cache_counts = {"redis": 0, "semantic": 0}
+    if not external_stores_injected:
+        from app.services.analysis_cache_retention import (
+            purge_project_analysis_caches,
+        )
+
+        cache_counts = await purge_project_analysis_caches(
+            str(project_id),
+            cutoff=max(cutoffs["raw_events"], cutoffs["artifacts"]),
+            execute=mode == "execute",
+        )
 
     if mode == "preview":
         mongo_docs: dict[str, int] = {}
@@ -653,6 +758,7 @@ async def run_purge(
             "test_cases": len(cand.purge_tc_strs),
             "mongo_docs": mongo_docs,
             "minio_objects": minio_objects,
+            "evidence_artifact_rows": len(cand.evidence_artifact_ids),
             "event_archive_rows": await _count(TestRun.id, event_archive_where),
             "audit_rows": (
                 await _count(AccessAuditLog.id, access_audit_where)
@@ -660,6 +766,8 @@ async def run_purge(
             ),
             "provenance_rows": await _count(AIProvenanceRecord.id, provenance_where),
             "compliance_packs_expired": len(expired_packs),
+            "analysis_cache_entries": sum(cache_counts.values()),
+            "memory_entries_expired": len(memory_expired_ids),
         }
         return {"mode": "preview", "cutoffs": cutoffs_iso, "candidates": candidates}
 
@@ -688,7 +796,30 @@ async def run_purge(
             await storage.delete_object(key, bucket=_PIPELINE_BUCKET)
             minio_deleted += 1
 
-    # (3.5) Stamp provenance project scope BEFORE the run link detaches —
+    # (3.4) Expire memory rows and remove their vector copies. The SQL row is
+    # retained as an audit trail; all retrieval paths require active + fresh
+    # lifecycle state, and Chroma is purged before the caller commits.
+    memory_vectors_deleted = 0
+    memory_rows_expired = 0
+    if memory_expired_ids:
+        from app.services.agent_memory_service import expire_memory_entries, purge_memory_vectors
+
+        memory_vectors_deleted = await purge_memory_vectors(project_id, memory_expired_ids)
+        memory_rows_expired = await expire_memory_entries(
+            db, project_id=project_id, now=now
+        )
+
+    # (3.5) Delete expired evidence rows after external objects and before
+    # run cascades. A failed earlier storage operation leaves rows available
+    # for retry; no active verified row can outlive the artifacts clock.
+    evidence_rows_deleted = 0
+    for chunk in _chunks(cand.evidence_artifact_ids, _PG_DELETE_CHUNK):
+        result = await db.execute(
+            delete(EvidenceArtifact).where(EvidenceArtifact.id.in_(chunk))
+        )
+        evidence_rows_deleted += int(getattr(result, "rowcount", 0) or 0)
+
+    # (3.6) Stamp provenance project scope BEFORE the run link detaches —
     # 0113 backfilled existing rows, but a row written since (writers only
     # set run_id) would orphan once run_id goes SET NULL below and escape
     # the audit-clock delete forever.
@@ -750,14 +881,18 @@ async def run_purge(
     counts = {
         "postgres": {
             "runs": runs_deleted,
+            "evidence_artifact_rows": evidence_rows_deleted,
             "event_archive_stripped": event_archive_stripped,
             "access_audit_rows": int(getattr(access_result, "rowcount", 0) or 0),
             "test_case_audit_rows": int(getattr(tc_audit_result, "rowcount", 0) or 0),
             "provenance_rows": int(getattr(provenance_result, "rowcount", 0) or 0),
             "compliance_packs": packs_deleted,
+            "memory_entries_expired": memory_rows_expired,
         },
         "mongo": mongo_deleted,
         "minio": {"objects_deleted": minio_deleted},
+        "analysis_cache": cache_counts,
+        "memory": {"vectors_deleted": memory_vectors_deleted},
     }
 
     logger.info(

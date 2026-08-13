@@ -20,7 +20,8 @@ RUN if [ "$INSTALL_EXTRA_CA" = "1" ] && ls /opt/extra-ca/*.crt >/dev/null 2>&1; 
       export NODE_EXTRA_CA_CERTS="$(ls /opt/extra-ca/*.crt | head -n1)"; \
       echo "[frontend] trusting interception CA: $NODE_EXTRA_CA_CERTS"; \
     fi; \
-    npm install --prefer-offline || npm install
+    npm install --include=dev --prefer-offline || npm install --include=dev
+RUN test -x node_modules/.bin/tsc && test -x node_modules/.bin/vite
 
 # Development stage
 FROM base AS development

@@ -1383,8 +1383,13 @@ class EvidenceArtifactResponse(BaseModel):
     source_system: str
     summary_excerpt: Optional[str] = None
     relevance_score: Optional[float] = None
-    uri_or_ref: Optional[str] = None
     cluster_id: Optional[str] = None
+    test_case_id: Optional[str] = None
+    producer_pipeline_run_id: Optional[str] = None
+    content_sha256: Optional[str] = None
+    sensitivity: Optional[str] = None
+    freshness: Optional[str] = None
+    integrity_status: Optional[str] = None
 
 
 class DimensionScore(BaseModel):
@@ -1629,12 +1634,18 @@ class RunModeSummaryResponse(BaseModel):
 
 class ChatSessionCreate(BaseModel):
     project_id: Optional[uuid.UUID] = None
+    active_test_run_id: Optional[uuid.UUID] = None
+    active_report_id: Optional[str] = Field(None, min_length=1, max_length=64)
+    active_report_version: Optional[int] = Field(None, ge=1)
     title: Optional[str] = Field(None, max_length=500)
 
 
 class ChatSessionResponse(BaseModel):
     id: uuid.UUID
     project_id: Optional[uuid.UUID] = None
+    active_test_run_id: Optional[uuid.UUID] = None
+    active_report_id: Optional[str] = None
+    active_report_version: Optional[int] = None
     title: Optional[str] = None
     created_at: Any
     updated_at: Any
@@ -3767,6 +3778,14 @@ class AgentMemoryEntryResponse(BaseModel):
     payload: Optional[dict] = None
     confidence: Optional[int] = None
     resolution: Optional[str] = None
+    source_type: str = "pipeline_agent"
+    trust_level: str = "derived"
+    lifecycle_status: str = "active"
+    source_snapshot_id: Optional[str] = None
+    source_hash: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    superseded_by_id: Optional[uuid.UUID] = None
+    superseded_at: Optional[datetime] = None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 

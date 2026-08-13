@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -95,17 +96,19 @@ async def export_evidence_bundle(
     """Generate and download a ZIP evidence bundle for the given run."""
     from app.services.evidence_bundle_service import build_evidence_bundle
 
+    project_id = (await db.execute(
+        select(TestRun.project_id).where(TestRun.id == run_id)
+    )).scalar_one_or_none()
+    if project_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found")
+
     try:
-        zip_bytes = await build_evidence_bundle(db, run_id)
+        zip_bytes = await build_evidence_bundle(db, project_id, run_id)
     except Exception as exc:
         logger.error("Evidence bundle failed: %s", exc)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Bundle generation failed")
 
     # Audit log — stage + single commit before streaming the response
-    from sqlalchemy import select
-    project_id = (await db.execute(
-        select(TestRun.project_id).where(TestRun.id == run_id)
-    )).scalar_one_or_none()
     _stage_audit(db, "report_export_bundle", current_user, project_id, {
         "run_id": str(run_id),
     })

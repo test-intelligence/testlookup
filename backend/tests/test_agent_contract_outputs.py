@@ -240,3 +240,77 @@ def test_regression_watchman_contract_preserves_undeclared_key():
         {"contract": meta, "extra_workflow_key": [1, 2, 3]}
     )
     assert out.model_dump()["extra_workflow_key"] == [1, 2, 3]
+
+@pytest.mark.asyncio
+async def test_log_intelligence_sanitizes_tool_errors_and_inputs():
+    from app.agents.log_intelligence_agent import LogIntelligenceAgent
+
+    with patch(
+        "app.agents.log_intelligence_agent.reconstruct_distributed_trace",
+        new=_tool_raising(RuntimeError("password=hunter2 https://user:secret@host.invalid")),
+    ), patch(
+        "app.agents.log_intelligence_agent.detect_log_rate_anomaly",
+        new=_tool_raising(RuntimeError("token=super-secret")),
+    ):
+        result = await LogIntelligenceAgent().investigate(
+            service_name="user@example.com?token=sk-secret123",
+            timestamp_utc="2026-06-12T00:00:00Z",
+            correlation_id="password=hunter2",
+        )
+
+    serialized = json.dumps(result)
+    assert "hunter2" not in serialized
+    assert "sk-secret123" not in serialized
+    assert "super-secret" not in serialized
+    assert result["distributed_trace"]["error"] == "RuntimeError"
+@pytest.mark.asyncio
+async def test_log_tools_honor_offline_mode_before_splunk(monkeypatch):
+    from app.core.config import settings
+    from app.tools.detect_log_anomaly import detect_log_rate_anomaly
+    from app.tools.reconstruct_trace import reconstruct_distributed_trace
+
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", True)
+    with patch("app.tools.detect_log_anomaly._count_splunk_events", new=AsyncMock(side_effect=AssertionError("offline bypass"))) as count, patch(
+        "app.tools.reconstruct_trace._query_splunk", new=AsyncMock(side_effect=AssertionError("offline bypass"))
+    ) as query:
+        anomaly = await detect_log_rate_anomaly.coroutine(
+            '{"service_name":"payments","timestamp_utc":"2026-06-12T00:00:00Z"}'
+        )
+        trace = await reconstruct_distributed_trace.coroutine(
+            '{"service_name":"payments","timestamp_utc":"2026-06-12T00:00:00Z"}'
+        )
+
+    assert "disabled" in anomaly.lower()
+    assert "disabled" in trace.lower()
+    count.assert_not_awaited()
+    query.assert_not_awaited()
+@pytest.mark.asyncio
+async def test_log_tools_reject_invalid_timestamp_without_current_time_fallback(monkeypatch):
+    from app.core.config import settings
+    from app.tools.detect_log_anomaly import detect_log_rate_anomaly
+    from app.tools.reconstruct_trace import reconstruct_distributed_trace
+
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
+    monkeypatch.setattr(settings, "SPLUNK_ENABLED", True)
+    anomaly = await detect_log_rate_anomaly.coroutine(
+        '{"service_name":"payments","timestamp_utc":"not-a-timestamp"}'
+    )
+    trace = await reconstruct_distributed_trace.coroutine(
+        '{"service_name":"payments","timestamp_utc":"not-a-timestamp"}'
+    )
+    assert "invalid_timestamp" in anomaly
+    assert "invalid_timestamp" in trace
+@pytest.mark.asyncio
+async def test_regression_watchman_offline_skips_llm_refinement(monkeypatch):
+    from app.agents.regression_watchman import RegressionWatchman
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", True)
+    with patch("app.agents.regression_watchman.get_llm", new=AsyncMock(side_effect=AssertionError("offline bypass"))) as get_model:
+        result = await RegressionWatchman()._llm_classify(
+            {"c1": {"confidence": 40}},
+            [{"cluster_id": "c1", "member_test_ids": ["tc-1"]}],
+            {"c1": {}},
+        )
+    assert result == {}
+    get_model.assert_not_awaited()

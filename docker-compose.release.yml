@@ -272,6 +272,37 @@ services:
     networks:
       - testlookup_net
 
+  # Dedicated consumer for the agent_children queue (cluster-child
+  # investigations). Kept separate from `worker` so a long recursive
+  # investigation cannot starve ingestion/analysis; low concurrency and a short
+  # max-tasks-per-child because these tasks are memory-heavy and long-running.
+  worker-children:
+    <<: *app-backend-image
+    container_name: testlookup_worker_children
+    restart: unless-stopped
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CHILDREN_CONCURRENCY:-1} --prefetch-multiplier=1 -Q agent_children --max-tasks-per-child=25
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - MONGO_HOST=mongo
+      - MINIO_ENDPOINT=minio:9000
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
+      - MONGO_URI=mongodb://${MONGO_USER:-testlookup}:${MONGO_PASSWORD}@mongo:27017/${MONGO_DB:-testlookup_logs}?authSource=admin
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
+      - APP_ENV=${APP_ENV:-production}
+      - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - testlookup_net
+
   beat:
     <<: *app-backend-image
     container_name: testlookup_beat

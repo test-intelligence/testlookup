@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from sqlalchemy import select
@@ -23,6 +24,7 @@ from app.services.criticality_service import (
 )
 
 logger = logging.getLogger("services.policy_evaluator")
+POLICY_EVALUATOR_VERSION = "policy-evaluator:v2"
 
 
 # ── Data classes ─────────────────────────────────────────────────────────────
@@ -58,6 +60,8 @@ class PolicyEvaluationResult:
     kind_breakdown: dict | None = None      # {"product": n, "test_code": n, ...}
     kind_rule_applied: bool = False         # True when a NO_GO was downgraded
     kind_counterfactual: str | None = None  # human-readable "would have been…"
+    policy_snapshot: dict = field(default_factory=dict)
+    evaluator_version: str = POLICY_EVALUATOR_VERSION
 
     def to_dict(self) -> dict:
         """Convert to a JSON-serializable dict for persistence."""
@@ -484,9 +488,14 @@ async def evaluate_policy(
             "explicit policy rules."
         )
 
+    policy_document = deepcopy(policy.rules) if policy and policy.rules else {}
+    policy_document["thresholds"] = deepcopy(thresholds)
+    policy_document["dimension_weights"] = deepcopy(weights)
+    policy_document.setdefault("rules", [])
+
     return PolicyEvaluationResult(
-        policy_id=str(policy.id) if policy else None,
-        policy_version=policy.version if policy else None,
+        policy_id=str(policy.id) if policy and policy.id else None,
+        policy_version=policy.version if policy and policy.version is not None else None,
         policy_level=level,
         overall_result=overall_result,
         recommendation=recommendation,
@@ -498,6 +507,13 @@ async def evaluate_policy(
         kind_breakdown=kind_breakdown,
         kind_rule_applied=kind_rule_applied,
         kind_counterfactual=kind_counterfactual,
+        policy_snapshot={
+            "schema_version": 1,
+            "policy_id": str(policy.id) if policy and policy.id else None,
+            "policy_version": policy.version if policy else None,
+            "policy_level": level,
+            "document": policy_document,
+        },
     )
 
 

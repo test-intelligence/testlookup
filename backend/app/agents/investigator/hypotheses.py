@@ -59,6 +59,8 @@ from app.agents.base import BaseAgent
 from app.agents.investigator.persistence import (
     is_cancel_requested,
     persist_hypothesis,
+    reserve_investigation_budget,
+    settle_investigation_budget,
     utcnow_iso,
 )
 from app.core.config import settings
@@ -66,7 +68,9 @@ from app.models.agent_contracts import (
     InvestigatorHypothesisOutput,
     validate_agent_contract,
 )
-from app.services.llm_pricing import TokenUsage, extract_token_usage
+from app.services.llm_pricing import TokenUsage, estimate_cost, extract_token_usage
+from app.services.resilience import estimate_token_count
+from app.services.evidence_sanitizer import sanitize_persistence_payload
 
 # Deterministic threshold constants (the evidence matrix above).
 INFRA_VALIDATED_RATIO = 0.5
@@ -138,7 +142,7 @@ class HypothesisAgent(BaseAgent):
 
     async def _weigh_with_llm(
         self, det: dict[str, Any], state: dict[str, Any]
-    ) -> tuple[Optional[dict[str, Any]], TokenUsage]:
+    ) -> tuple[Optional[dict[str, Any]], TokenUsage, Optional[str]]:
         """Try the single bounded LLM call. Returns (weighed|None, usage).
         Any failure returns (None, empty usage) — deterministic wins.
 
@@ -147,29 +151,96 @@ class HypothesisAgent(BaseAgent):
         prices the reported input/output split centrally instead.
         """
         if settings.AI_OFFLINE_MODE:
-            return None, TokenUsage()
-        budget = state.get("budget") or {}
-        if int(budget.get("max_llm_calls", 0)) < 1:
-            return None, TokenUsage()
+            return None, TokenUsage(), None
         remaining = float(state.get("deadline_ts", 0)) - time.monotonic()
         if remaining <= 5:
-            return None, TokenUsage()
+            return None, TokenUsage(), "wall_clock_budget_exhausted"
+        prompt = ""
+        reservation = None
+        reservation_attempted = False
+        attempted = False
+        usage = TokenUsage()
+        async def settle_safely() -> Optional[str]:
+            if reservation is None or not reservation.allowed:
+                return None
+            try:
+                observed_cost = estimate_cost(
+                    settings.LLM_PROVIDER,
+                    settings.LLM_MODEL,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                )
+                settled = await settle_investigation_budget(
+                    str(state.get("investigation_id") or ""),
+                    reservation,
+                    actual_llm_calls=1 if attempted else 0,
+                    actual_tokens=usage.total_tokens,
+                    actual_cost_usd=observed_cost.cost_usd,
+                    cost_source=observed_cost.source,
+                )
+                return None if settled else "budget_settlement_failed"
+            except Exception as exc:  # noqa: BLE001 - preserve deterministic result
+                self.logger.warning(
+                    "hypothesis_budget_settlement_failed",
+                    hypothesis_id=self.hypothesis_id,
+                    error_type=type(exc).__name__,
+                )
+                return "budget_settlement_failed"
         try:
             from app.services.llm_factory import get_llm
             from app.services.prompt_registry import get_prompt_text
 
+            safe_det, _ = sanitize_persistence_payload(det)
             evidence_lines = "\n".join(
-                f"- [{e['kind']}] {e['label']}: {e['detail']}" for e in det["evidence"]
+                f"- [{e['kind']}] {e['label']}: {e['detail']}"
+                for e in safe_det["evidence"]
             ) or "- (no evidence lines)"
             prompt = get_prompt_text("investigator_hypothesis_weigh").format(
                 hypothesis_id=self.hypothesis_id,
                 hypothesis_title=self.title,
-                signals_json=json.dumps(det.get("signals", {}), sort_keys=True, default=str),
+                signals_json=json.dumps(
+                    safe_det.get("signals", {}), sort_keys=True, default=str
+                ),
                 evidence_lines=evidence_lines,
-                det_status=det["status"],
-                det_confidence=det["confidence"],
+                det_status=safe_det["status"],
+                det_confidence=safe_det["confidence"],
             )
+            # UTF-8 bytes are a conservative upper bound for normal tokenizer
+            # input units; observed provider usage is still accounted in full.
+            token_ceiling = len(prompt.encode("utf-8")) + int(settings.LLM_MAX_TOKENS)
+            reserved_cost = estimate_cost(
+                settings.LLM_PROVIDER,
+                settings.LLM_MODEL,
+                output_tokens=token_ceiling,
+            )
+            reservation_attempted = True
+            reservation = await reserve_investigation_budget(
+                str(state.get("investigation_id") or ""),
+                reservation_id=(
+                    f"investigation:{state.get('investigation_id')}:"
+                    f"hypothesis:{self.hypothesis_id}"
+                ),
+                llm_calls=1,
+                tokens=token_ceiling,
+                reserved_cost_usd=reserved_cost.cost_usd,
+                cost_source=f"reserved_{reserved_cost.source}",
+                project_id=str(state.get("project_id") or ""),
+                run_id=str(state.get("run_id") or ""),
+                pipeline_run_id=str(state.get("pipeline_run_id") or ""),
+                stage_name=self.stage_name,
+            )
+            if not reservation.allowed:
+                return None, TokenUsage(), reservation.stop_reason
+            # Cancellation can race the durable reservation. Re-check before
+            # constructing/invoking the provider so a queued child does not
+            # spend a call after its parent has cancelled it; settle the
+            # reservation as an unattempted call.
+            if await is_cancel_requested(str(state.get("investigation_id") or "")):
+                return None, TokenUsage(), (await settle_safely()) or "cancelled"
             llm = await get_llm(temperature=0.0)
+            if await is_cancel_requested(str(state.get("investigation_id") or "")):
+                return None, TokenUsage(), (await settle_safely()) or "cancelled"
+            attempted = True
             response = await asyncio.wait_for(
                 llm.ainvoke(prompt),
                 timeout=min(_LLM_CALL_TIMEOUT_S, remaining),
@@ -181,10 +252,11 @@ class HypothesisAgent(BaseAgent):
             )
             parsed = _parse_llm_json(response)
             if parsed is None:
-                return None, usage
+                return None, usage, await settle_safely()
             status = str(parsed.get("status", "")).lower()
             if status not in ("validated", "invalidated", "inconclusive"):
-                return None, usage
+                return None, usage, await settle_safely()
+            settlement_reason = await settle_safely()
             return (
                 {
                     "status": status,
@@ -192,14 +264,44 @@ class HypothesisAgent(BaseAgent):
                     "summary": str(parsed.get("summary") or det["summary"])[:1000],
                 },
                 usage,
+                settlement_reason,
             )
         except Exception as exc:  # noqa: BLE001 — LLM failure falls back
-            self.logger.debug("hypothesis_llm_weigh_failed", error=str(exc))
-            return None, TokenUsage()
+            self.logger.debug(
+                "hypothesis_llm_weigh_failed", error_type=type(exc).__name__
+            )
+            if attempted and reservation is not None:
+                usage = TokenUsage(
+                    input_tokens=estimate_token_count(prompt),
+                    output_tokens=max(
+                        0,
+                        reservation.reserved_tokens - estimate_token_count(prompt),
+                    ),
+                    source="estimated",
+                    details={"reason": "provider_outcome_unknown"},
+                )
+            settlement_reason = await settle_safely()
+            return (
+                None,
+                usage,
+                settlement_reason
+                or (
+                    "budget_reservation_failed"
+                    if reservation_attempted and reservation is None
+                    else None
+                ),
+            )
 
     # ── Node entry ───────────────────────────────────────────────────────
 
     async def run(self, state: dict) -> dict:
+        # A resumed child keeps completed hypothesis outputs and reservation
+        # tombstones authoritative. Do not re-enter the provider path for a
+        # completed hypothesis; the synthesis node will merge the persisted
+        # output back into the reducer state.
+        if self.hypothesis_id in (state.get("resume_completed_hypotheses") or set()):
+            return {"hypotheses": [], "errors": []}
+
         pipeline_run_id = state.get("pipeline_run_id", "")
         investigation_id = state.get("investigation_id", "")
         started_at = utcnow_iso()
@@ -233,6 +335,7 @@ class HypothesisAgent(BaseAgent):
                 "evidence": [],
                 "started_at": started_at,
                 "completed_at": utcnow_iso(),
+                "llm_enrichment_stop_reason": "wall_clock_budget_exhausted",
             }
             await self.log_decision(
                 pipeline_run_id,
@@ -244,7 +347,11 @@ class HypothesisAgent(BaseAgent):
             await persist_hypothesis(investigation_id, hypothesis)
             await self.mark_stage_done(
                 pipeline_run_id,
-                result_data={"hypothesis": self.hypothesis_id, "status": "inconclusive"},
+                result_data={
+                    "hypothesis": self.hypothesis_id,
+                    "status": "inconclusive",
+                    "stop_reason": "wall_clock_budget_exhausted",
+                },
                 project_id=state.get("project_id"),
             )
             return {"hypotheses": [hypothesis], "errors": []}
@@ -252,7 +359,7 @@ class HypothesisAgent(BaseAgent):
         bundle = state.get("bundle") or {}
         det = self.evaluate(bundle)
 
-        weighed, usage = await self._weigh_with_llm(det, state)
+        weighed, usage, enrichment_stop_reason = await self._weigh_with_llm(det, state)
         llm_calls = 1 if usage.total_tokens else 0
         if weighed is not None:
             status = weighed["status"]
@@ -264,6 +371,11 @@ class HypothesisAgent(BaseAgent):
             confidence = det["confidence"]
             summary = det["summary"]
             basis = BASIS_HEURISTIC
+        if enrichment_stop_reason:
+            summary = (
+                f"{summary} LLM enrichment skipped: "
+                f"{enrichment_stop_reason.replace('_', ' ')}."
+            )[:1000]
 
         hypothesis = {
             "id": self.hypothesis_id,
@@ -275,6 +387,7 @@ class HypothesisAgent(BaseAgent):
             "evidence": det["evidence"][:_MAX_EVIDENCE_ITEMS],
             "started_at": started_at,
             "completed_at": utcnow_iso(),
+            "llm_enrichment_stop_reason": enrichment_stop_reason,
         }
 
         await self.log_decision(
@@ -289,6 +402,7 @@ class HypothesisAgent(BaseAgent):
                 "confidence_basis": basis,
                 "deterministic_status": det["status"],
                 "signals": det.get("signals", {}),
+                "llm_enrichment_stop_reason": enrichment_stop_reason,
             },
         )
 
@@ -312,7 +426,11 @@ class HypothesisAgent(BaseAgent):
         cost_usd = estimate.cost_usd if estimate else 0.0
         await self.mark_stage_done(
             pipeline_run_id,
-            result_data={"hypothesis": self.hypothesis_id, "status": status},
+            result_data={
+                "hypothesis": self.hypothesis_id,
+                "status": status,
+                "stop_reason": enrichment_stop_reason,
+            },
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
             llm_calls_count=llm_calls,

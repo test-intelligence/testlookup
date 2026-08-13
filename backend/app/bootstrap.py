@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.deps import get_current_user_or_api_key
 from app.routers import (
     agent_investigations,
+    agent_actions,
     agent_memory,
     agents,
     ai_evaluation,
@@ -174,6 +175,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     duplicates.router,                 # Phase 4: per-project duplicate authored-test-case review queue
     defect_jira.router,                # PMF US-6.1/6.3: one-click Jira defects (project-scoped)
     agent_investigations.router,       # AI-1/AI-3: Investigator + agent policies + agent-runs ledger
+    agent_actions.router,               # Generic typed action proposal review ledger
     fixer.router,                      # AI-2: the Fixer — config + run + fix-attempts
 )
 

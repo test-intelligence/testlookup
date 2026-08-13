@@ -851,7 +851,7 @@ The homelab overlay is at `k8s/overlays/homelab/` and contains:
 | `ingress-traefik.yaml` | Traefik Ingress with Host-based routing for `testlookup.local` |
 | `infra-postgres.yaml` | PostgreSQL 16 + PVC (20Gi, local-path) |
 | `infra-mongo.yaml` | MongoDB 7 + PVC (20Gi, local-path) |
-| `infra-redis.yaml` | Redis 7 (in-memory, no PVC) |
+| `infra-redis.yaml` | Redis 7 broker/cache with AOF, TTL-aware eviction, and a 5Gi PVC |
 | `infra-minio.yaml` | MinIO S3 + PVC (50Gi, local-path) |
 | `infra-chromadb.yaml` | ChromaDB vector DB + PVC (10Gi, local-path) |
 | `nginx-k8s.conf` | K8s-specific nginx config (no proxy_pass — Traefik handles API routing) |

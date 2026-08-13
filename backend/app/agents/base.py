@@ -17,7 +17,7 @@ from app.core.metrics import (
 from app.core.config import settings
 from app.core.tracing import get_tracer
 from app.db.postgres import AsyncSessionLocal
-from app.models.postgres import AgentStageResult
+from app.models.postgres import AgentPipelineRun, AgentStageResult
 from app.services.pipeline_event_log import emit_event
 
 import structlog
@@ -42,6 +42,8 @@ class BaseAgent(ABC):
         # AgentStageResult.decision_log in mark_stage_done and to the
         # pipeline event log as individual ``decision_made`` events.
         self._stage_decisions: dict[str, list[dict[str, Any]]] = {}
+        self._budget_reservations: dict[str, str] = {}
+        self._budget_context_tokens: dict[str, Any] = {}
 
     @abstractmethod
     async def run(self, state: dict) -> dict:
@@ -168,18 +170,66 @@ class BaseAgent(ABC):
 
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select  # noqa: PLC0415
+            from app.services.pipeline_budget_service import (
+                reserve_stage_in_metadata,
+                set_pipeline_budget_context,
+            )
 
-            result = await db.execute(
+            stage = (await db.execute(
                 select(AgentStageResult).where(
                     AgentStageResult.pipeline_run_id == pipeline_run_id,
                     AgentStageResult.stage_name == self.stage_name,
                 )
-            )
-            stage = result.scalar_one_or_none()
-            if stage:
+            )).scalar_one_or_none()
+            pipeline = (await db.execute(
+                select(AgentPipelineRun).where(
+                    AgentPipelineRun.id == pipeline_run_id
+                ).with_for_update()
+            )).scalar_one_or_none()
+            context = {
+                "pipeline_run_id": pipeline_run_id,
+                "stage_name": self.stage_name,
+                "blocked": False,
+                "stop_reason": None,
+            }
+            if stage is not None and pipeline is not None and isinstance(stage.allocated_budget, dict):
+                try:
+                    from app.services.agent_capability_registry import get_capability  # noqa: PLC0415
+                    is_llm_stage = get_capability(stage.stage_name).expected_cost_usd > 0
+                except (KeyError, ValueError):
+                    is_llm_stage = False
+                if is_llm_stage:
+                    pipeline_metadata = (
+                        dict(pipeline.execution_metadata)
+                        if isinstance(pipeline.execution_metadata, dict)
+                        else {}
+                    )
+                    reservation_id = __import__("hashlib").sha256(
+                        f"{pipeline_run_id}:{self.stage_name}:{int(stage.attempt or 1)}".encode()
+                    ).hexdigest()
+                    reservation = reserve_stage_in_metadata(
+                        pipeline_metadata,
+                        reservation_id=reservation_id,
+                        stage_name=self.stage_name,
+                        attempt=int(stage.attempt or 1),
+                        llm_calls=int(stage.allocated_budget.get("max_llm_calls") or 0),
+                        tokens=int(stage.allocated_budget.get("max_tokens") or 0),
+                        cost_usd=float(stage.allocated_budget.get("max_cost_usd") or 0.0),
+                    )
+                    if reservation.allowed and reservation.reservation_id:
+                        self._budget_reservations[pipeline_run_id] = reservation.reservation_id
+                    else:
+                        context["blocked"] = True
+                        context["stop_reason"] = reservation.stop_reason or "budget_reservation_failed"
+                        stage.stop_reason = context["stop_reason"]
+                        stage.fallback_reason = context["stop_reason"]
+                    pipeline.execution_metadata = pipeline_metadata
+            token = set_pipeline_budget_context(**context)
+            self._budget_context_tokens[pipeline_run_id] = token
+            if stage is not None:
                 stage.status = "running"
                 stage.started_at = datetime.now(timezone.utc)
-                await db.commit()
+            await db.commit()
 
     async def _estimate_stage_cost(self, input_tokens: int, output_tokens: int):
         """Price a stage's tokens against the effective provider and model.
@@ -227,9 +277,14 @@ class BaseAgent(ABC):
         analysis_mode: Optional[str] = None,
         project_id: Optional[str] = None,
     ) -> None:
+        from app.services.pipeline_budget_service import get_pipeline_budget_context
+
+        budget_context = get_pipeline_budget_context() or {}
+        input_tokens = max(input_tokens, int(budget_context.get("observed_input_tokens") or 0))
+        output_tokens = max(output_tokens, int(budget_context.get("observed_output_tokens") or 0))
+        llm_calls_count = max(llm_calls_count, int(budget_context.get("observed_llm_calls") or 0))
         status = "failed" if error else "completed"
         total_tokens = input_tokens + output_tokens
-
         # Price the call when the caller reported tokens but no cost. Every
         # stage funnels through here, so deriving centrally is what makes the
         # meter cover the whole pipeline rather than the one or two call sites
@@ -364,6 +419,50 @@ class BaseAgent(ABC):
 
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select  # noqa: PLC0415
+            from app.services.pipeline_budget_service import (
+                append_provider_policy_audit,
+                get_pipeline_budget_context,
+                queue_stage_settlement,
+            )
+
+            pipeline = (await db.execute(
+                select(AgentPipelineRun).where(
+                    AgentPipelineRun.id == pipeline_run_id
+                ).with_for_update()
+            )).scalar_one_or_none()
+            stage_attempt = 1
+            stage_probe = await db.execute(
+                select(AgentStageResult).where(
+                    AgentStageResult.pipeline_run_id == pipeline_run_id,
+                    AgentStageResult.stage_name == self.stage_name,
+                )
+            )
+            stage_probe_row = stage_probe.scalar_one_or_none()
+            if stage_probe_row is not None:
+                stage_attempt = max(int(stage_probe_row.attempt or 1), 1)
+            reservation_id = self._budget_reservations.pop(pipeline_run_id, None)
+            settlement_reason = None
+            if pipeline is not None:
+                pipeline_metadata = (
+                    pipeline.execution_metadata
+                    if isinstance(pipeline.execution_metadata, dict)
+                    else {}
+                )
+                context = get_pipeline_budget_context() or {}
+                append_provider_policy_audit(
+                    pipeline_metadata, context.get("llm_privacy_events")
+                )
+                if reservation_id:
+                    settlement_reason = queue_stage_settlement(
+                        pipeline_metadata,
+                        reservation_id=reservation_id,
+                        stage_name=self.stage_name,
+                        attempt=stage_attempt,
+                        actual_llm_calls=int(llm_calls_count or 0),
+                        actual_tokens=int(total_tokens or 0),
+                        actual_cost_usd=float(cost_usd or 0.0),
+                    )
+                pipeline.execution_metadata = pipeline_metadata
 
             result = await db.execute(
                 select(AgentStageResult).where(
@@ -375,6 +474,9 @@ class BaseAgent(ABC):
             if stage:
                 stage.status = status
                 stage.completed_at = datetime.now(timezone.utc)
+                if settlement_reason:
+                    stage.stop_reason = settlement_reason
+                    stage.fallback_reason = settlement_reason
                 if result_data:
                     stage.result_data = result_data
                 if error:
@@ -399,6 +501,42 @@ class BaseAgent(ABC):
                     stage.decision_log = decisions
                 await db.commit()
 
+        # Settlement is intentionally a second transaction. If its commit
+        # fails, the pending receipt remains durable for the periodic reaper.
+        if reservation_id:
+            try:
+                await self._retry_pipeline_settlement(pipeline_run_id, reservation_id)
+            except Exception as exc:  # pragma: no cover - recovery is retried by beat
+                self.logger.warning(
+                    "pipeline_budget_settlement_deferred",
+                    pipeline_run_id=pipeline_run_id,
+                    stage_name=self.stage_name,
+                    error_type=type(exc).__name__,
+                )
+
+        token = self._budget_context_tokens.pop(pipeline_run_id, None)
+        if token is not None:
+            from app.services.pipeline_budget_service import reset_pipeline_budget_context
+            reset_pipeline_budget_context(token)
+
+    async def _retry_pipeline_settlement(
+        self, pipeline_run_id: str, reservation_id: str
+    ) -> None:
+        from sqlalchemy import select  # noqa: PLC0415
+        from app.services.pipeline_budget_service import retry_pending_stage_settlements
+
+        async with AsyncSessionLocal() as db:
+            pipeline = (await db.execute(
+                select(AgentPipelineRun).where(
+                    AgentPipelineRun.id == pipeline_run_id
+                ).with_for_update()
+            )).scalar_one_or_none()
+            if pipeline is None:
+                return
+            metadata = dict(pipeline.execution_metadata or {})
+            retry_pending_stage_settlements(metadata, reservation_id=reservation_id)
+            pipeline.execution_metadata = metadata
+            await db.commit()
     def track_active(self, workflow_type: str, delta: float) -> None:
         """Increment or decrement the active-pipeline-runs Prometheus gauge."""
         active_pipeline_runs.labels(workflow_type=workflow_type).inc(delta)

@@ -1,6 +1,6 @@
 """LangChain tool: query Splunk for correlated backend errors with retry."""
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, cast
 
 import httpx
@@ -10,6 +10,8 @@ from app.core.config import settings
 from app.core.http_client import get_http_client
 from app.services.input_sanitizer import sanitize_query_param, sanitize_service_name
 from app.services.resilience import async_retry
+from app.tools.investigation_context import get_investigation_context
+from app.services.evidence_sanitizer import sanitize_reference_text
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +30,14 @@ async def query_splunk_logs(service_name: str, timestamp_utc: str) -> str:
     Returns:
         Matching log entries as a formatted string, or a message if none found.
     """
-    # Phase 4: Sanitise inputs to prevent query injection
-    service_name = sanitize_service_name(service_name)
-    timestamp_utc = sanitize_query_param(timestamp_utc)
+    context = get_investigation_context()
+    if context is None or not context.service_name or not context.timestamp:
+        return "Splunk lookup unavailable: authorized service/time context is missing."
+    if service_name != context.service_name or timestamp_utc != context.timestamp:
+        return "Splunk lookup denied: requested scope differs from the investigation context."
+    # Sanitize server-bound values, not model-selected scope.
+    service_name = sanitize_service_name(context.service_name)
+    timestamp_utc = sanitize_query_param(context.timestamp)
 
     if not service_name:
         return "Invalid service name after sanitization. Cannot query Splunk."
@@ -44,7 +51,7 @@ async def query_splunk_logs(service_name: str, timestamp_utc: str) -> str:
     try:
         fail_time = datetime.fromisoformat(timestamp_utc.replace("Z", "+00:00"))
     except ValueError:
-        fail_time = datetime.now(timezone.utc)
+        return "Splunk lookup unavailable: invalid authorized timestamp."
 
     window_start = (fail_time - timedelta(minutes=5)).strftime("%m/%d/%Y:%H:%M:%S")
     window_end = (fail_time + timedelta(minutes=5)).strftime("%m/%d/%Y:%H:%M:%S")
@@ -93,7 +100,8 @@ async def query_splunk_logs(service_name: str, timestamp_utc: str) -> str:
             level = entry.get("level", "?")
             lines.append(f"[{ts}] [{level}] {msg[:300]}")
 
-        return "\n".join(lines)
+        rendered, _, _ = sanitize_reference_text("\n".join(lines), limit=6000)
+        return rendered
 
     except httpx.HTTPStatusError as e:
         logger.warning("Splunk API error: %s", e)

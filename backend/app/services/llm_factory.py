@@ -13,6 +13,115 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class PipelineBudgetExceeded(RuntimeError):
+    """Raised before provider invocation when a graph budget envelope is denied."""
+
+
+class BudgetedLLM:
+    """Small LangChain-compatible gate around a provider model.
+
+    The lifecycle hook installs a ContextVar for the active graph stage. This
+    wrapper checks it at the actual invocation boundary so every provider,
+    including direct graph call sites, shares the same admission decision.
+    """
+
+    def __init__(self, inner: BaseChatModel, *, provider: str = "unknown", model: str = "unknown"):
+        self._inner = inner
+        self._provider = provider
+        self._model = model
+
+    def _check(self) -> None:
+        from app.services.pipeline_budget_service import get_pipeline_budget_context
+
+        context = get_pipeline_budget_context()
+        if context and context.get("blocked"):
+            raise PipelineBudgetExceeded(
+                str(context.get("stop_reason") or "pipeline_budget_exhausted")
+            )
+
+    def _prepare_invocation(self, args, kwargs):
+        from app.services.llm_policy_service import (
+            record_invocation_audit,
+            sanitize_invocation,
+        )
+
+        stats = {"redacted_strings": 0}
+        clean_args = tuple(sanitize_invocation(item, stats=stats) for item in args)
+        clean_kwargs = {
+            key: sanitize_invocation(value, stats=stats)
+            for key, value in kwargs.items()
+        }
+        record_invocation_audit(provider=self._provider, model=self._model, stats=stats)
+        return clean_args, clean_kwargs
+
+    @staticmethod
+    def _record_usage(result) -> None:
+        from app.services.pipeline_budget_service import get_pipeline_budget_context
+
+        context = get_pipeline_budget_context()
+        if context is None:
+            return
+        context["observed_llm_calls"] = int(context.get("observed_llm_calls") or 0) + 1
+        usage = getattr(result, "usage_metadata", None) or {}
+        if not isinstance(usage, dict):
+            usage = {}
+        response_usage = getattr(result, "response_metadata", None) or {}
+        if isinstance(response_usage, dict):
+            response_usage = response_usage.get("token_usage") or response_usage.get("usage") or {}
+        if not isinstance(response_usage, dict):
+            response_usage = {}
+        input_tokens = usage.get("input_tokens", response_usage.get("prompt_tokens", 0))
+        output_tokens = usage.get("output_tokens", response_usage.get("completion_tokens", 0))
+        if isinstance(input_tokens, int) and input_tokens >= 0:
+            context["observed_input_tokens"] = int(context.get("observed_input_tokens") or 0) + input_tokens
+        if isinstance(output_tokens, int) and output_tokens >= 0:
+            context["observed_output_tokens"] = int(context.get("observed_output_tokens") or 0) + output_tokens
+
+    async def ainvoke(self, *args, **kwargs):
+        self._check()
+        args, kwargs = self._prepare_invocation(args, kwargs)
+        result = await self._inner.ainvoke(*args, **kwargs)
+        self._record_usage(result)
+        return result
+
+    def invoke(self, *args, **kwargs):
+        self._check()
+        args, kwargs = self._prepare_invocation(args, kwargs)
+        result = self._inner.invoke(*args, **kwargs)
+        self._record_usage(result)
+        return result
+
+    def bind(self, *args, **kwargs):
+        return BudgetedLLM(
+            self._inner.bind(*args, **kwargs),
+            provider=self._provider,
+            model=self._model,
+        )
+
+    def with_structured_output(self, *args, **kwargs):
+        return BudgetedLLM(
+            self._inner.with_structured_output(*args, **kwargs),
+            provider=self._provider,
+            model=self._model,
+        )
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _budgeted(model: BaseChatModel, *, provider: str, model_name: str) -> BudgetedLLM:
+    return BudgetedLLM(model, provider=provider, model=model_name)
+
+
+def _default_llm_base_url(provider: str) -> str | None:
+    return {
+        "ollama": settings.OLLAMA_BASE_URL,
+        "lmstudio": settings.LMSTUDIO_BASE_URL,
+        "localai": settings.LOCALAI_BASE_URL,
+        "vllm": settings.VLLM_BASE_URL,
+    }.get(provider)
+
+
 async def get_llm(
     provider: Optional[str] = None,
     model: Optional[str] = None,
@@ -44,8 +153,11 @@ async def get_llm(
     _provider = (provider or _effective.get("provider") or settings.LLM_PROVIDER).lower()
     _temperature = temperature if temperature is not None else _effective.get("temperature", settings.LLM_TEMPERATURE)
     _max_tokens = _effective.get("max_tokens", settings.LLM_MAX_TOKENS)
-    _base_url = _effective.get("base_url")
+    _base_url = _effective.get("base_url") or _default_llm_base_url(_provider)
     _offline = _effective.get("offline_mode", settings.AI_OFFLINE_MODE)
+    from app.services.llm_policy_service import enforce_provider_policy
+
+    enforce_provider_policy(_provider, offline=bool(_offline), base_url=_base_url)
 
     # Resolve model name: explicit override > fine-tuned registry > effective config > env default
     if model:
@@ -62,66 +174,66 @@ async def get_llm(
 
     if _provider == "ollama":
         from langchain_ollama import ChatOllama
-        return ChatOllama(
+        return _budgeted(ChatOllama(
             model=_model,
             base_url=_base_url or settings.OLLAMA_BASE_URL,
             temperature=_temperature,
             num_predict=_max_tokens,
-        )
+        ), provider=_provider, model_name=_model)
 
     elif _provider == "lmstudio":
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(  # type: ignore
+        return _budgeted(ChatOpenAI(  # type: ignore
             model=_model,
             base_url=_base_url or settings.LMSTUDIO_BASE_URL,
             api_key="lm-studio",  # type: ignore
             temperature=_temperature,
             max_tokens=_max_tokens,
-        )
+        ), provider=_provider, model_name=_model)
 
     elif _provider == "localai":
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(  # type: ignore
+        return _budgeted(ChatOpenAI(  # type: ignore
             model=_model,
             base_url=_base_url or settings.LOCALAI_BASE_URL,
             api_key="localai",  # type: ignore
             temperature=_temperature,
             max_tokens=_max_tokens,
-        )
+        ), provider=_provider, model_name=_model)
 
     elif _provider == "vllm":
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(  # type: ignore
+        return _budgeted(ChatOpenAI(  # type: ignore
             model=_model,
             base_url=_base_url or settings.VLLM_BASE_URL,
             api_key="vllm",  # type: ignore
             temperature=_temperature,
             max_tokens=_max_tokens,
-        )
+        ), provider=_provider, model_name=_model)
 
     elif _provider == "openai":
         if _offline:
             raise ValueError("AI_OFFLINE_MODE=true but LLM_PROVIDER=openai — refusing to call external API")
         _api_key = _effective.get("openai_api_key") or settings.OPENAI_API_KEY
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(  # type: ignore
+        return _budgeted(ChatOpenAI(  # type: ignore
             model=_model,
             api_key=_api_key,  # type: ignore
             **({"base_url": _base_url} if _base_url else {}),
             temperature=_temperature,
             max_tokens=_max_tokens,
-        )
+        ), provider=_provider, model_name=_model)
 
     elif _provider == "gemini":
         if _offline:
             raise ValueError("AI_OFFLINE_MODE=true but LLM_PROVIDER=gemini — refusing to call external API")
         _api_key = _effective.get("google_api_key") or settings.GOOGLE_API_KEY
         from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(  # type: ignore
+        return _budgeted(ChatGoogleGenerativeAI(  # type: ignore
             model=_model,
             google_api_key=_api_key,
             temperature=_temperature,
-        )
+        ), provider=_provider, model_name=_model)
 
     elif _provider == "anthropic":
         if _offline:
@@ -130,12 +242,12 @@ async def get_llm(
         if not _api_key:
             raise ValueError("Anthropic API key not configured. Set it in Settings > AI Configuration.")
         from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(  # type: ignore
+        return _budgeted(ChatAnthropic(  # type: ignore
             model=_model,
             api_key=_api_key,
             temperature=_temperature,
             max_tokens=_max_tokens,
-        )
+        ), provider=_provider, model_name=_model)
 
     else:
         raise ValueError(f"Unknown LLM provider: '{_provider}'. "
@@ -146,6 +258,13 @@ def get_embedding_model():
     """Return a LangChain embedding model for semantic search."""
     provider = settings.EMBEDDING_PROVIDER.lower()
     model = settings.EMBEDDING_MODEL
+    from app.services.llm_policy_service import enforce_provider_policy
+
+    enforce_provider_policy(
+        provider,
+        offline=bool(settings.AI_OFFLINE_MODE),
+        base_url=settings.OLLAMA_BASE_URL if provider == "ollama" else None,
+    )
 
     logger.info(f"Initialising embedding model: provider={provider}, model={model}")
 

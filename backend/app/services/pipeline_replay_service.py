@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import AgentMemoryEntry, AgentPipelineRun, AgentStageResult
-from app.services.agent_memory_service import build_memory_reference
+from app.services.agent_memory_service import _active_memory_filters, build_memory_reference
 from app.services.pipeline_event_log import get_pipeline_timeline
 
 
@@ -163,7 +163,10 @@ async def _load_pipeline_memory_references(
 ) -> list[dict[str, Any]]:
     result = await db.execute(
         select(AgentMemoryEntry)
-        .where(AgentMemoryEntry.pipeline_run_id == pipeline_id)
+        .where(
+            AgentMemoryEntry.pipeline_run_id == pipeline_id,
+            *_active_memory_filters(),
+        )
         .order_by(
             AgentMemoryEntry.entity_type,
             AgentMemoryEntry.entity_id,

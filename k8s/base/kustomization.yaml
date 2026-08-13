@@ -10,7 +10,8 @@ resources:
   - rbac.yaml
   - backend-deployment.yaml
   - frontend-deployment.yaml
-  - worker-deployments.yaml   # 4 queue-scoped workers + beat (independently scalable)
+  - worker-deployments.yaml   # parent queues + beat (independently scalable)
+  - worker-children-deployment.yaml  # isolated bounded cluster sub-agents
   - mcp-deployment.yaml
   - ollama-deployment.yaml
   - hpa.yaml                  # all HPAs consolidated here (not embedded in deployments)

@@ -117,7 +117,16 @@ class AgentPolicyBudgets(BaseModel):
     max_runs_per_day: int = Field(default=10, ge=0, le=10000)
     max_llm_calls_per_run: int = Field(default=30, ge=0, le=100000)
     max_tokens_per_run: int = Field(default=60000, ge=0, le=100_000_000)
-    max_seconds_per_run: int = Field(default=300, ge=1, le=86400)
+    max_cost_usd_per_run: float = Field(default=5.0, ge=0, le=1_000_000)
+    max_seconds_per_run: int = Field(default=300, ge=0, le=86400)
+    max_cluster_children_per_run: int = Field(default=1, ge=0, le=20)
+    max_cluster_members_per_child: int = Field(default=50, ge=1, le=500)
+    max_cluster_child_llm_calls_per_parent: int = Field(default=6, ge=0, le=1000)
+    max_cluster_child_tokens_per_parent: int = Field(default=12000, ge=0, le=10_000_000)
+    max_cluster_child_cost_usd_per_parent: float = Field(default=2.0, ge=0, le=1_000_000)
+    max_cluster_child_seconds_per_parent: int = Field(default=180, ge=0, le=86400)
+    max_active_cluster_children_per_project: int = Field(default=2, ge=0, le=20)
+    max_cluster_children_per_day: int = Field(default=20, ge=0, le=1000)
 
 
 class AgentPolicyPromotion(BaseModel):

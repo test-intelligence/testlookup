@@ -7,7 +7,10 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import AIAnalysis, AIFeedback, Defect, FeedbackRating, ModelVersion
+from app.db.mongo import Collections
+from app.services.privacy_service import sanitize_for_persistence
+
+from app.models.postgres import AIAnalysis, AIFeedback, DecisionReportFeedback, Defect, FeedbackRating, ModelVersion, TestRun
 
 
 async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, current_user) -> dict:
@@ -402,4 +405,173 @@ async def jira_resolution_webhook(db: AsyncSession, payload: dict) -> dict:
     return {
         "message": f"Feedback recorded: {issue_key} → {rating if analysis else 'no analysis found'}",
         "defect_id": str(defect.id),
+    }
+
+# ── Immutable DecisionReport feedback (Phase 5 FR-D4) ────────────────────────
+
+_UTILITY_RATINGS = {"useful", "partially_useful", "not_useful"}
+_CORRECTION_TYPES = {"category", "cause", "flaky", "release"}
+_EVIDENCE_REF_FIELDS = ("id", "evidence_id", "type", "source", "kind", "checksum_sha256", "definition_version")
+
+
+def _claim_map(report: dict) -> dict[str, dict]:
+    intelligence = report.get("decision_intelligence") or {}
+    claims = intelligence.get("claims") or []
+    return {
+        str(claim.get("claim_id")): claim
+        for claim in claims
+        if isinstance(claim, dict) and claim.get("claim_id")
+    }
+
+
+def _approved_claim_evidence(claim: dict, evidence_ids: list[str]) -> list[dict]:
+    """Return only evidence projections already signed into the claim.
+
+    The client submits IDs, never arbitrary evidence payloads. This prevents a
+    reviewer from laundering a foreign URI/excerpt into the feedback ledger.
+    """
+    available: dict[str, dict] = {}
+    for bucket in (claim.get("evidence") or [], claim.get("counter_evidence") or []):
+        for ref in bucket:
+            if not isinstance(ref, dict):
+                continue
+            ref_id = ref.get("id") or ref.get("evidence_id")
+            if ref_id:
+                available[str(ref_id)] = ref
+    approved: list[dict] = []
+    for requested in evidence_ids:
+        ref = available.get(str(requested))
+        if ref is None:
+            raise HTTPException(422, detail=f"Evidence reference is not bound to claim: {requested}")
+        projection = {
+            key: ref[key]
+            for key in _EVIDENCE_REF_FIELDS
+            if key in ref and isinstance(ref[key], (str, int, float, bool))
+        }
+        projection["id"] = str(ref.get("id") or ref.get("evidence_id"))
+        approved.append(projection)
+    return approved
+
+
+async def submit_decision_report_feedback(
+    db: AsyncSession,
+    mongo_db,
+    *,
+    run_id: uuid.UUID,
+    report_id: str,
+    body,
+    current_user,
+) -> dict:
+    """Record utility/correction feedback against an exact published report.
+
+    The SQL row is an immutable audit signal. The report itself is resolved from
+    Mongo by project, run, report ID, version and published status; caller
+    supplied hashes, claim text, and evidence payloads are never trusted.
+    """
+    run_row = (
+        await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
+    ).scalar_one_or_none()
+    if run_row is None:
+        raise HTTPException(404, detail="Test run not found")
+    project_id = str(run_row)
+    report = await mongo_db[Collections.DECISION_REPORTS].find_one(
+        {
+            "project_id": project_id,
+            "test_run_id": str(run_id),
+            "report_id": report_id,
+            "report_version": int(body.report_version),
+            "status": "published",
+        },
+        {"_id": 0},
+    )
+    if report is None:
+        raise HTTPException(404, detail="Published DecisionReport version not found")
+    report_hash = str(
+        report.get("evidence_bundle_sha256")
+        or (report.get("decision_intelligence") or {}).get("evidence_bundle_sha256")
+        or ""
+    )
+    if len(report_hash) != 64:
+        raise HTTPException(409, detail="Published report has no valid evidence fingerprint")
+
+    idempotency_key = str(body.idempotency_key or uuid.uuid4())
+    existing = (
+        await db.execute(
+            select(DecisionReportFeedback).where(
+                DecisionReportFeedback.user_id == current_user.id,
+                DecisionReportFeedback.idempotency_key == idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        if (
+            str(existing.test_run_id) != str(run_id)
+            or existing.report_id != report_id
+            or int(existing.report_version) != int(body.report_version)
+        ):
+            raise HTTPException(409, detail="Idempotency key is bound to another report")
+        return {
+            "feedback_id": str(existing.id),
+            "status": "already_recorded",
+            "report_id": report_id,
+            "report_version": int(body.report_version),
+        }
+
+    feedback_kind = str(body.feedback_kind)
+    utility_rating = getattr(body, "utility_rating", None)
+    claim_id = getattr(body, "claim_id", None)
+    correction_type = getattr(body, "correction_type", None)
+    corrected_value = getattr(body, "corrected_value", None)
+    reason = getattr(body, "reason", None)
+    evidence_ids = [str(item) for item in (getattr(body, "evidence_ids", None) or [])]
+    claim_kind = None
+    evidence_refs: list[dict] = []
+    if feedback_kind == "utility":
+        if utility_rating not in _UTILITY_RATINGS:
+            raise HTTPException(422, detail="utility_rating is required for utility feedback")
+        if claim_id or correction_type or corrected_value is not None or evidence_ids:
+            raise HTTPException(422, detail="utility feedback cannot include claim correction fields")
+    elif feedback_kind == "claim_correction":
+        if not claim_id or correction_type not in _CORRECTION_TYPES:
+            raise HTTPException(422, detail="claim_id and a valid correction_type are required")
+        if not isinstance(reason, str) or not reason.strip():
+            raise HTTPException(422, detail="A correction reason is required")
+        if not evidence_ids or len(evidence_ids) > 5:
+            raise HTTPException(422, detail="A correction must cite 1 to 5 claim evidence IDs")
+        if not isinstance(corrected_value, (str, bool)) or (isinstance(corrected_value, str) and not corrected_value.strip()):
+            raise HTTPException(422, detail="A corrected value is required")
+        claim = _claim_map(report).get(str(claim_id))
+        if claim is None:
+            raise HTTPException(422, detail="Claim is not present in the selected report")
+        claim_kind = str(claim.get("kind")) if claim.get("kind") else None
+        evidence_refs = _approved_claim_evidence(claim, evidence_ids)
+        reason = sanitize_for_persistence(reason)[:4000]
+    else:
+        raise HTTPException(422, detail="feedback_kind must be utility or claim_correction")
+
+    feedback = DecisionReportFeedback(
+        project_id=run_row,
+        test_run_id=run_id,
+        report_id=report_id,
+        report_version=int(body.report_version),
+        report_evidence_sha256=report_hash,
+        user_id=current_user.id,
+        feedback_kind=feedback_kind,
+        utility_rating=utility_rating,
+        claim_id=str(claim_id) if claim_id else None,
+        claim_kind=claim_kind,
+        correction_type=correction_type,
+        corrected_value={"value": corrected_value} if corrected_value is not None else None,
+        reason=reason,
+        evidence_refs=evidence_refs,
+        idempotency_key=idempotency_key,
+    )
+    db.add(feedback)
+    await db.flush()
+    return {
+        "feedback_id": str(feedback.id),
+        "status": "recorded",
+        "report_id": report_id,
+        "report_version": int(body.report_version),
+        "feedback_kind": feedback_kind,
     }

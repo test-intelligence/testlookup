@@ -74,19 +74,20 @@ class RegressionWatchman(BaseAgent):
         try:
             classification = await self._classify(state)
         except Exception as exc:
-            logger.error("RegressionWatchman failed", error=str(exc), exc_info=True)
+            logger.error("regression_watchman_failed", error_type=type(exc).__name__, exc_info=True)
             classification = {}
             await self.mark_stage_done(
                 pipeline_run_id,
-                error=str(exc),
+                error=f"{type(exc).__name__}",
                 error_category="classification_error",
             )
             return validate_agent_contract(
                 RegressionWatchmanAgentOutput,
                 {
                     "regression_classification": {},
+                    "status": "failed",
                     "completed_stages": ["regression_watchman"],
-                    "errors": [str(exc)],
+                    "errors": [type(exc).__name__],
                     "current_stage": "defect_commander",
                 },
                 agent_name=self.stage_name,
@@ -94,7 +95,7 @@ class RegressionWatchman(BaseAgent):
                 fallback_used=True,
                 confidence=0,
                 evidence_refs=[],
-                decision_reason=f"classification_error: {exc}",
+                decision_reason="classification_error",
             )
 
         await self.mark_stage_done(
@@ -111,6 +112,7 @@ class RegressionWatchman(BaseAgent):
             RegressionWatchmanAgentOutput,
             {
                 "regression_classification": classification,
+                "status": "complete",
                 "completed_stages": ["regression_watchman"],
                 "errors": [],
                 "current_stage": "defect_commander",
@@ -275,6 +277,9 @@ class RegressionWatchman(BaseAgent):
         cluster_lookup = {c.get("cluster_id", c.get("id", "")): c for c in all_clusters}
         cluster_subset = [cluster_lookup[cid] for cid in uncertain if cid in cluster_lookup]
 
+        if settings.AI_OFFLINE_MODE:
+            return {}
+
         prompt = redact_text(_CLASSIFY_PROMPT.format(
             clusters_json=json.dumps(cluster_subset[:10], default=str),
             history_json=json.dumps({k: history.get(k, {}) for k in uncertain}, default=str),
@@ -312,7 +317,7 @@ class RegressionWatchman(BaseAgent):
             )
             return {}
         except Exception as exc:
-            logger.warning("LLM classification failed", error=str(exc))
+            logger.warning("llm_regression_classification_failed", error_type=type(exc).__name__)
 
         return {}
 

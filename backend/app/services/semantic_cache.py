@@ -142,7 +142,14 @@ async def semantic_cache_store(
 
     try:
         collection = await _get_or_create_collection(project_id)
-        signature = _build_signature(test_name, error_message, stack_trace)
+        from app.services.evidence_sanitizer import (
+            sanitize_persistence_payload,
+            sanitize_reference_text,
+        )
+
+        signature, _, _ = sanitize_reference_text(
+            _build_signature(test_name, error_message, stack_trace), limit=6000
+        )
 
         # Build a unique ID from the signature hash
         import hashlib
@@ -151,8 +158,14 @@ async def semantic_cache_store(
         # Strip transient fields before caching
         cacheable = {
             k: v for k, v in analysis.items()
-            if k not in ("cache_hit", "semantic_cache_hit", "semantic_similarity")
+            if k not in (
+                "cache_hit", "semantic_cache_hit", "semantic_similarity",
+                "evidence_references",
+            )
         }
+        cacheable, stats = sanitize_persistence_payload(cacheable)
+        if stats.omitted_items or stats.truncated_strings:
+            return
 
         await asyncio.to_thread(
             collection.upsert,

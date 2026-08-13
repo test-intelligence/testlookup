@@ -113,10 +113,20 @@ def test_chat_copilot_react_prompt_registered():
     assert "read-only" in p.text
 
 
-def test_react_triage_is_deliberate_v2():
+def test_react_triage_is_deliberate_v3():
+    """v3 moves citation identifiers server-side: the model must return an
+    EMPTY ``evidence_references`` array, and citations are derived from the
+    tool observations that actually executed. That is an anti-fabrication
+    guarantee, so pin it — a prompt that invites the model to author its own
+    reference_ids has regressed the contract."""
     p = pr.get_prompt("react_triage")
-    assert p.version == 2
+    assert p.version == 3
     assert p.content_hash != _REACT_TRIAGE_V1_HASH
+    # v3's reason for existing
+    assert '"evidence_references": []' in p.text
+    assert "MUST be an empty array" in p.text
+    assert "never" in p.text and "invent citation identifiers" in p.text
+    # v2's memory-recall rule survived the edit
     assert "recall_similar_failures" in p.text
     assert "six investigation tools" in p.text
     # v1's structural anchors survived the edit

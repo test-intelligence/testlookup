@@ -46,6 +46,9 @@ logger = structlog.get_logger("services.feature_flags")
 # is universally provisioned in production.
 LEGACY_ENV_VAR_MAP: dict[str, str] = {
     "knowledge_rag": "KNOWLEDGE_RAG_ENABLED",
+    "contract_validation": "AIQ_CONTRACT_VALIDATION_ENABLED",
+    "change_ownership": "AIQ_CHANGE_OWNERSHIP_ENABLED",
+    "async_decision_report_supersession": "AIQ_ASYNC_DECISION_REPORT_SUPERSESSION_ENABLED",
 }
 
 _IN_PROCESS_TTL_SECONDS = 30

@@ -196,7 +196,12 @@ async def test_start_investigation_202_with_default_policy(monkeypatch):
     (row,) = db.added
     assert [h["id"] for h in row.hypotheses] == list(svc.HYPOTHESIS_IDS)
     assert row.mode == "shadow" and row.triggered_by == "manual"
-    assert row.budget == {"max_llm_calls": 30, "max_tokens": 60000, "max_seconds": 300}
+    assert row.budget == {
+        "max_llm_calls": 30,
+        "max_tokens": 60000,
+        "max_cost_usd": 5.0,
+        "max_seconds": 300,
+    }
 
 
 @pytest.mark.asyncio
@@ -366,12 +371,7 @@ async def test_policies_default_shape_when_no_row():
         "agent_id": "investigator",
         "enabled": True,
         "mode": "shadow",
-        "budgets": {
-            "max_runs_per_day": 10,
-            "max_llm_calls_per_run": 30,
-            "max_tokens_per_run": 60000,
-            "max_seconds_per_run": 300,
-        },
+        "budgets": svc.DEFAULT_BUDGETS,
         "promotion": {"shadow_runs_completed": 0, "note": None},
     }
 
