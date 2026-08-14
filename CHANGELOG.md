@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Feat: the attribution verdict reaches the UI
+
+Phase 4 shipped the verdict as an API and nothing else, so the flagship was invisible in the
+product. Run detail now leads each failing test with what the failure appears to *be* — a raw
+failure list is mostly noise, since roughly 84% of pass→fail transitions involve a flaky test.
+
+The badge is deliberately an **annotation, not a filter**: it decorates a row that is already
+displayed, and nothing is hidden, reordered or greyed out on the strength of a verdict. The page
+renders identically with attribution absent, which the existing run-detail tests now prove by
+mocking the hook to return nothing.
+
+Expanding a verdict shows **all five composed signals** — the transition, the flakiness score with
+its confidence, co-failure cluster membership with its cause, overlap with the changed files (named
+individually), and this project's measured classifier calibration. When a verdict disagrees with an
+engineer, the useful question is *which input was wrong*, and a badge alone cannot answer it.
+
+Two properties are enforced structurally rather than by convention:
+
+- **Every verdict renders, including `UNCERTAIN`.** The colour map is typed
+  `Record<AttributionVerdict, string>`, so omitting a member is a **compile error**, not a blank
+  badge — verified by deleting `UNCERTAIN` and watching `tsc` reject it. `UNCERTAIN` is a real
+  answer (the backend emits it when signals disagree) and is styled muted rather than invisible.
+- **The advisory policy is rendered, not buried in a tooltip.** A reader must not be able to take
+  `LIKELY_FLAKY` as permission to stop looking — roughly 1 in 6 newly-flaky tests reflected a real
+  production bug — and a test asserts the surface never says a failure is safe to ignore.
+
+The verdicts hook does not poll: a verdict is composed from a nightly score, a nightly cluster and
+the run's own commit range, none of which move while someone reads the page.
+
+12 component tests.
+
+
 ### 2026-08-14 — Feat: test-intelligence Phase 5 — distribution and the closed loop
 
 Phase 5 of `architecture/TEST_INTELLIGENCE_PLAN.md`, migration `0134`.

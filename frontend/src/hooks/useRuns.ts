@@ -93,3 +93,20 @@ export function useRunStepFlips(runId?: string) {
     () => runsService.getRunStepFlips(runId as string)
   )
 }
+
+
+/**
+ * Per-failure attribution verdicts for a run (roadmap Phase 4).
+ *
+ * Deliberately NOT polled. A verdict is composed from a nightly score, a
+ * nightly cluster and the run's own commit range — none of which move while
+ * someone reads the page — so re-fetching would cost queries and change
+ * nothing.
+ */
+export function useRunAttribution(runId?: string) {
+  return useSWR(
+    runId ? ['run-attribution', runId] : null,
+    ([, id]: readonly [string, string]) => runsService.attribution(id),
+    { revalidateOnFocus: false },
+  )
+}

@@ -8,6 +8,7 @@ import type {
   TestStepFlips,
   TestStepsTree,
 } from '@/types/runs'
+import type { RunAttributionResponse } from '@/types/attribution'
 import { getData, postData } from './http'
 
 export const runsService = {
@@ -24,6 +25,13 @@ export const runsService = {
 
   getTest: (runId: string, testId: string) =>
     getData<RunTestCase>(`/api/v1/runs/${runId}/tests/${testId}`),
+
+  /**
+   * Per-failure attribution verdicts for a run (roadmap Phase 4).
+   * Advisory only — the payload never authorises hiding a failure.
+   */
+  attribution: (runId: string) =>
+    getData<RunAttributionResponse>(`/api/v1/runs/${runId}/attribution`),
 
   /** Granular step/attachment tree for a test (latest-run-only snapshot).
    *  Lazy/separate from the test-case detail payload; empty arrays when no

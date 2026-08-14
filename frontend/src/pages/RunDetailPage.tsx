@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, GitCompare, ListTree, Loader2, Package, PencilLine, RotateCcw, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -8,9 +8,10 @@ import SuiteBadge from '@/components/ui/SuiteBadge'
 import SortableHeader from '@/components/ui/SortableHeader'
 import Pagination from '@/components/ui/Pagination'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { useRun, useRuns, useTestCases } from '@/hooks/useRuns'
+import { useRun, useRunAttribution, useRuns, useTestCases } from '@/hooks/useRuns'
 import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
 import type { TestRun } from '@/types/runs'
+import type { AttributionItem } from '@/types/attribution'
 import { useTableSort } from '@/hooks/useTableSort'
 import { formatDateTime, formatDuration } from '@/utils/formatters'
 import { clsx } from 'clsx'
@@ -23,6 +24,7 @@ import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { usePermissions } from '@/hooks/usePermissions'
 import { KindBadgeWithEvidence } from '@/components/failures/KindEvidence'
 import { retryAttempts } from '@/utils/retryEvidence'
+import AttributionVerdictBadge from '@/components/failures/AttributionVerdictBadge'
 
 interface TestCase {
   id: string
@@ -249,6 +251,19 @@ export default function RunDetailPage() {
   useProjectChangeRedirect('/runs', Boolean(runId))
 
   const { data: run } = useRun(runId)
+
+  // Roadmap Phase 4 verdicts, keyed by test case for O(1) lookup in the row
+  // renderer. Deliberately non-blocking: the table renders with or without
+  // this, so a slow or failed attribution fetch degrades to the previous
+  // behaviour rather than holding up the failure list.
+  const { data: attributionData } = useRunAttribution(runId)
+  const attributionByTestCase = useMemo(() => {
+    const map: Record<string, AttributionItem> = {}
+    for (const item of attributionData?.items ?? []) {
+      map[item.test_case_id] = item
+    }
+    return map
+  }, [attributionData])
 
   // Fetch a small page of recent runs for THIS run's suite so the
   // "Compare with previous run" CTA can pick the chronologically
@@ -643,6 +658,17 @@ export default function RunDetailPage() {
                     <td className="td text-[var(--color-text-muted)]">{formatDuration(tc.duration_ms)}</td>
                     <td className="td">
                       <span className="inline-flex items-center gap-2">
+                        {/* Roadmap Phase 4: lead a failure with what it appears
+                            to BE. A raw failure list is mostly noise — ~84% of
+                            pass->fail transitions involve a flaky test — and a
+                            verdict here is annotation, never suppression: the
+                            row renders identically with or without it. */}
+                        {attributionByTestCase[tc.id] && (
+                          <AttributionVerdictBadge
+                            attribution={attributionByTestCase[tc.id]}
+                            compact
+                          />
+                        )}
                         {tc.failure_category && (
                           <span className="text-xs text-[var(--color-text-muted)]">{tc.failure_category.replace('_', ' ')}</span>
                         )}

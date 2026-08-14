@@ -17,6 +17,9 @@ vi.mock('@/hooks/useRuns', () => ({
   // suite-aware run comparison strip. Mock must export it.
   useRuns: vi.fn(),
   useTestCases: vi.fn(),
+  // Phase 4 verdicts. Returns empty so these tests assert the page renders
+  // identically WITHOUT attribution — the annotation must never be load-bearing.
+  useRunAttribution: vi.fn(() => ({ data: { items: [], total: 0 } })),
 }))
 
 vi.mock('@/store/projectStore', () => ({
