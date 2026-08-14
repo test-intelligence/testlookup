@@ -8,6 +8,9 @@ from app.core.deps import get_accessible_project_ids, get_current_active_user
 from app.db.postgres import get_db
 from app.models.postgres import User
 from app.services.commit_attribution_service import get_tia_readiness
+from app.services.flaky_detection_timing_service import (
+    detection_timing as measure_detection_timing,
+)
 from app.services.flaky_readiness_service import get_flaky_readiness
 from app.services.metrics_service import get_dashboard_summary, get_trend_data
 
@@ -162,3 +165,51 @@ async def flaky_readiness(
     except (ValueError, TypeError):
         raise HTTPException(status_code=422, detail="project_id must be a UUID")
     return await get_flaky_readiness(db, pid, window_days=days)
+
+
+@router.get("/detection-timing")
+async def detection_timing(
+    project_id: str = Query(
+        ..., description="Project to measure — detection latency is never a fleet average",
+    ),
+    days: int = Query(30, ge=7, le=365),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """How long does this project wait to learn a test is flaky? (Roadmap Phase 6.)
+
+    Two-tier detection: a short-cadence screen of new and directly-modified
+    fingerprints, plus a nightly pass over the whole corpus for the
+    environment- and dependency-induced flakiness a diff cannot reach.
+
+    The cadence is expressed in **time**, not commits. A commit-count cadence
+    assumes a commit range on most runs and enough of them to count; the Phase 0
+    census measured zero of four genuine projects on the reference deployment
+    clearing that, so such a cadence would simply never fire here.
+
+    The number worth reading is ``bottleneck``. On a thin corpus, detection is
+    limited by how often tests *run*, not by how often they are screened — a
+    score needs observations before it is defensible — and this says which term
+    dominates from measured numbers rather than assuming the flattering one.
+
+    Latency is reported only over fingerprints whose first appearance was
+    actually observed; the rest are counted and excluded, not backfilled to a
+    zero that would read as instant detection.
+
+    ``project_id`` is REQUIRED: detection latency is a claim about one
+    project's own history, so a fleet average would be meaningless.
+    """
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None and not _project_in_scope(project_id, accessible):
+        # Same shape as an unmeasured project rather than a 403 that would
+        # confirm the project exists to someone who cannot see it.
+        return {
+            "project_id": project_id,
+            "available": False,
+            "insufficient_data_reason": "no test results are visible for this project",
+        }
+    try:
+        pid = uuid.UUID(project_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=422, detail="project_id must be a UUID")
+    return await measure_detection_timing(db, pid, window_days=days)

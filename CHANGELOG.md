@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Feat: detection timing (roadmap Phase 6 — the last phase)
+
+Two-tier flaky detection, and — more usefully — a measurement of what actually
+limits it.
+
+**The justification this does NOT rest on.** The plan originally leaned on "75% of
+flaky tests are already flaky at their introducing commit". That claim was **refuted
+1–2** in the evidence review and justifies nothing here. What survives is weaker and
+heavily qualified: **85/15 among order- and implementation-dependent flaky tests in
+55 Java OSS projects** — 245 flaky tests found by two detectors, skewed to order- and
+implementation-dependent flakiness with async-wait, concurrency and network flakiness
+under-sampled, and the authors state the results may not generalize. That is enough to
+justify the *shape* (look at the new and the directly-modified first) and not enough to
+justify a constant, so nothing here hard-codes 85, 15 or 150. A regression test fails if
+the refuted claim is ever cited without its refutation.
+
+**Tier 1** screens fingerprints that are new or **directly modified** — a same-subject
+filename match, not a fuzzy same-directory one, which would have quietly turned a
+screening tier into "most of the corpus". It runs on a beat rather than in
+`finalize_run`: screening buys nothing by being synchronous, because this product
+ingests results rather than executing tests, and a screening bug must not be able to
+cost an ingestion. It produces a **population and a reason, never a verdict** — a test
+observed once supports no conclusion, and saying so promptly is the deliverable.
+
+**Tier 2** is the nightly whole-corpus pass, and it never stops at what tier 1 reached.
+The 15% tail is flakiness introduced by changes elsewhere, which is precisely the
+environment- and dependency-induced kind this product sees most.
+
+**Cadence is time-based, and that is a measurement, not a preference.** A commit-count
+cadence assumes a commit range on most runs and enough of them to count; the Phase 0
+census measured **zero of four** genuine projects on the reference deployment clearing
+that. Such a cadence would simply never fire here. Screening cadence is instead derived
+per project from its own measured arrival rate; the whole-corpus sweep stays nightly
+because it is judged against the score's own 30-day window.
+
+**The finding worth reading is `bottleneck`.** On a thin corpus, detection is limited by
+how often tests *run*, not by how often they are screened: a score needs
+`MIN_OBSERVATIONS` before it is defensible, and at a run a day that is days away no
+matter how fast the beat is. The endpoint computes both terms from measured numbers and
+names which dominates — so cranking the cadence, which would look like progress and
+deliver none, is visibly the wrong lever.
+
+Latency is reported **only** over fingerprints whose first appearance was actually
+observed. Everything predating screening is counted and excluded rather than backfilled
+to a zero that would make rollout day look like instant detection forever. The payload
+also discloses that a retention purge can delete the older runs which marked a
+fingerprint as pre-existing, making latency look better than it is.
+
+Observations count **distinct runs**, not per-test rows — a retry writes several rows for
+one execution, and counting those would push a fingerprint past the evidence floor with
+no new evidence behind it.
+
+`GET /api/v1/metrics/detection-timing` (project-scoped, bounded read that says when it
+sampled). Migration `0135`. Both beats gated per project on the `flaky_detection_timing`
+flag, off until a project opts in. 51 regression tests; five guards verified by
+deliberately mutating the property each protects.
+
+
 ### 2026-08-14 — Feat: the attribution verdict reaches the UI
 
 Phase 4 shipped the verdict as an API and nothing else, so the flagship was invisible in the

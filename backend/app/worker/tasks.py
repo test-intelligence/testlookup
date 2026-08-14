@@ -4404,3 +4404,162 @@ def recompute_systemic_clusters(self, project_id: str | None = None) -> dict:
             return out
 
     return cast(dict, _run_async(_run()))
+
+
+@celery_app.task(bind=True, name="app.worker.tasks.screen_new_test_fingerprints")
+def screen_new_test_fingerprints(self, project_id: str | None = None) -> dict:
+    """Tier 1 of roadmap Phase 6: screen the new and directly-modified.
+
+    Runs on a short beat rather than in ``finalize_run``. Screening buys nothing
+    by being synchronous — TestLookup ingests results, it does not execute
+    tests, so there is no re-run to trigger the moment a suspect appears — and
+    keeping it off the ingest path means a screening bug cannot cost an
+    ingestion.
+
+    **Gated per project** on the ``flaky_detection_timing`` feature flag, which
+    is off until a project opts in. Nothing here changes a verdict, but it does
+    write state, and a project that has not asked for the tier should not
+    accumulate it.
+    """
+    async def _run():
+        from sqlalchemy import select
+
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import Project
+        from app.services.feature_flags import is_enabled
+        from app.services.flaky_detection_timing_service import record_screening
+        from app.services.flaky_screening_service import screen_project
+
+        with _beat_span("screen_new_test_fingerprints") as span:
+            screened = new_tests = modified = errors = skipped = 0
+            async with AsyncSessionLocal() as db:
+                if project_id:
+                    ids = [uuid.UUID(project_id)]
+                else:
+                    ids = list(
+                        (
+                            await db.execute(
+                                select(Project.id).where(Project.is_active.is_(True))
+                            )
+                        ).scalars().all()
+                    )
+
+                for pid in ids:
+                    try:
+                        if not await is_enabled(
+                            "flaky_detection_timing", db=db, project_id=pid
+                        ):
+                            skipped += 1
+                            continue
+                        candidates = await screen_project(db, pid)
+                        written = await record_screening(db, pid, candidates)
+                        await db.commit()
+                        screened += written
+                        new_tests += sum(
+                            1 for c in candidates if c.reason == "new_test"
+                        )
+                        modified += sum(
+                            1 for c in candidates if c.reason == "modified_test"
+                        )
+                    except Exception as exc:  # noqa: BLE001 — one project must not stop the sweep
+                        errors += 1
+                        await db.rollback()
+                        # ``logger`` in this module is the STDLIB logger; keyword
+                        # fields belong on ``_slog``.
+                        _slog.warning(
+                            "flaky_screening_failed",
+                            project_id=str(pid),
+                            error_type=type(exc).__name__,
+                        )
+
+            out = {
+                "projects": len(ids),
+                "screened": screened,
+                "new_tests": new_tests,
+                "modified_tests": modified,
+                "skipped_flag_off": skipped,
+                "errors": errors,
+            }
+            span.set_attribute("result.projects", out["projects"])
+            span.set_attribute("result.screened", screened)
+            span.set_attribute("result.errors", errors)
+            _slog.info("flaky_screening_sweep", **out)
+            return out
+
+    return cast(dict, _run_async(_run()))
+
+
+@celery_app.task(bind=True, name="app.worker.tasks.sweep_flaky_detection")
+def sweep_flaky_detection(self, project_id: str | None = None) -> dict:
+    """Tier 2 of roadmap Phase 6: the continuous whole-corpus pass.
+
+    Where tier 1 screens a diff, this reaches everything else — which is where
+    environment- and dependency-induced flakiness lives, and that is the part
+    of the corpus screening cannot see by construction.
+
+    Nightly, and deliberately not faster: it is measured against the flakiness
+    score's own 30-day window, which does not move enough inside a day to
+    justify re-reading the corpus. It runs after the score recompute so a
+    fingerprint that just cleared the evidence floor has its latency clock
+    closed on the same night it happened, not a day later.
+
+    Gated per project on the same flag as tier 1.
+    """
+    async def _run():
+        from sqlalchemy import select
+
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import Project
+        from app.services.feature_flags import is_enabled
+        from app.services.flaky_detection_timing_service import sweep_project
+
+        with _beat_span("sweep_flaky_detection") as span:
+            swept = adopted = scored = errors = skipped = 0
+            async with AsyncSessionLocal() as db:
+                if project_id:
+                    ids = [uuid.UUID(project_id)]
+                else:
+                    ids = list(
+                        (
+                            await db.execute(
+                                select(Project.id).where(Project.is_active.is_(True))
+                            )
+                        ).scalars().all()
+                    )
+
+                for pid in ids:
+                    try:
+                        if not await is_enabled(
+                            "flaky_detection_timing", db=db, project_id=pid
+                        ):
+                            skipped += 1
+                            continue
+                        result = await sweep_project(db, pid)
+                        await db.commit()
+                        swept += result["swept"]
+                        adopted += result["adopted"]
+                        scored += result["scored"]
+                    except Exception as exc:  # noqa: BLE001 — one project must not stop the sweep
+                        errors += 1
+                        await db.rollback()
+                        _slog.warning(
+                            "flaky_detection_sweep_failed",
+                            project_id=str(pid),
+                            error_type=type(exc).__name__,
+                        )
+
+            out = {
+                "projects": len(ids),
+                "swept": swept,
+                "adopted": adopted,
+                "newly_scored": scored,
+                "skipped_flag_off": skipped,
+                "errors": errors,
+            }
+            span.set_attribute("result.projects", out["projects"])
+            span.set_attribute("result.swept", swept)
+            span.set_attribute("result.errors", errors)
+            _slog.info("flaky_detection_sweep", **out)
+            return out
+
+    return cast(dict, _run_async(_run()))

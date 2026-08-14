@@ -4416,6 +4416,55 @@ class FlakyClassifierCalibration(Base):
     )
 
 
+# ── Flaky detection timing (roadmap Phase 6, migration 0135) ───────────────
+#
+# When a test entered the corpus, and when the system first had a defensible
+# thing to say about it. Both ends have to be OBSERVED — an inferred first-seen
+# would track whatever window happened to be read rather than the test's own
+# history — so the first observation is written once and never recomputed.
+#
+# ``first_seen_is_exact`` is the honesty column: true only when the
+# fingerprint's earliest surviving run falls inside the window that screened
+# it. Rows where it is false are excluded from latency statistics rather than
+# contributing a fabricated zero.
+class FlakyDetectionState(Base):
+    __tablename__ = "flaky_detection_state"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_name: Mapped[Optional[str]] = mapped_column(String(1000))
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+    first_seen_is_exact: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False,
+    )
+    screen_reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    first_screened_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # NULL means "still unscoreable" — a real state, not a missing value.
+    first_scored_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    first_scored_confidence: Mapped[Optional[str]] = mapped_column(String(20))
+    observation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_swept_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "ux_flaky_detection_state_project_fingerprint",
+            "project_id",
+            "test_fingerprint",
+            unique=True,
+        ),
+        Index("ix_flaky_detection_state_project_scored", "project_id", "first_scored_at"),
+        Index("ix_flaky_detection_state_project_swept", "project_id", "last_swept_at"),
+    )
+
+
 # ── Performance Baselines (Tier 2 item 10) ─────────────────────────────────
 #
 # Running duration statistics per (project_id, test_fingerprint). Used by

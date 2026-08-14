@@ -296,6 +296,31 @@ celery_app.conf.update(
             "task": "app.worker.tasks.recompute_systemic_clusters",
             "schedule": crontab(hour=6, minute=40),
         },
+        # Roadmap Phase 6, tier 1: screen new and directly-modified
+        # fingerprints. Off the ingest path on purpose — screening buys nothing
+        # by being synchronous, since this product ingests results rather than
+        # executing tests, and a screening bug must not be able to cost an
+        # ingestion.
+        #
+        # 30 minutes is the FLOOR of the per-project recommendation, not a
+        # borrowed constant: beat schedules are global, so the fast tier runs at
+        # the fastest interval any project could want and each project's own
+        # cadence is reported by /metrics/detection-timing. Every run is a
+        # no-op for projects with the flag off.
+        "screen-new-test-fingerprints": {
+            "task": "app.worker.tasks.screen_new_test_fingerprints",
+            "schedule": crontab(minute="*/30"),
+        },
+        # Roadmap Phase 6, tier 2: the whole-corpus pass, for the
+        # environment- and dependency-induced flakiness a diff cannot reach.
+        # After the score recompute (06:10) and cluster rebuild (06:40) so a
+        # fingerprint that just cleared the evidence floor has its latency
+        # clock closed the same night. Nightly and deliberately not faster —
+        # it is measured against the score's own 30-day window.
+        "nightly-flaky-detection-sweep": {
+            "task": "app.worker.tasks.sweep_flaky_detection",
+            "schedule": crontab(hour=6, minute=55),
+        },
         # Backfill /my-failures inbox: any FAILED/BROKEN TestCase still
         # unassigned (project had no owner config at ingest time, or a
         # finalize_run step failed in isolation) gets re-resolved here.
