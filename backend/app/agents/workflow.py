@@ -51,6 +51,7 @@ from app.services.evidence_sanitizer import (
     sanitize_persistence_payload,
     sanitize_reference_text,
 )
+from app.core.metrics import pipeline_execution_context_persist_failures_total
 
 import structlog
 
@@ -1298,6 +1299,7 @@ async def _persist_execution_context(
             pipeline.execution_metadata = metadata
             await db.commit()
     except Exception as exc:
+        pipeline_execution_context_persist_failures_total.inc()
         logger.warning(
             "execution_context_persist_failed",
             pipeline_run_id=pipeline_run_id,

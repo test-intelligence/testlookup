@@ -70,6 +70,11 @@ active_pipeline_runs = Gauge(
     ["workflow_type"],
 )
 
+pipeline_execution_context_persist_failures_total = Counter(
+    "testlookup_pipeline_execution_context_persist_failures_total",
+    "Pipeline runs whose frozen execution-context snapshot could not be persisted before graph execution",
+)
+
 # ── Pipeline Stages ───────────────────────────────────────────────────────────
 
 pipeline_stage_duration_seconds = Histogram(
