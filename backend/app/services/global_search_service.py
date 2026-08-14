@@ -252,6 +252,11 @@ async def _search_suites(
             effective_suite.label("suite_name"),
             func.count().label("test_count"),
         )
+        # The selected expression references both tables, so make TestCase
+        # the explicit FROM root before joining TestRun. Without this,
+        # SQLAlchemy can raise an ambiguous-join error at runtime and the
+        # global-search fan-out silently drops suite results.
+        .select_from(TestCase)
         .join(TestRun, TestCase.test_run_id == TestRun.id)
         .where(
             effective_suite.ilike(pattern, escape="\\"),

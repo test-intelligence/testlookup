@@ -900,7 +900,16 @@ export default function OverviewPage() {
 
   const projectLabel = project?.name ?? 'All Projects'
   const scopeLabel = selectedSuite ? `${projectLabel} · ${selectedSuite}` : projectLabel
-  const trendData: TrendPoint[] = trends?.data ?? []
+  // Older cached trend responses used ``day`` instead of ``date``.  Normalize
+  // that legacy shape at the view boundary so every downstream chart/label can
+  // safely assume a string date and a stale cache cannot crash the dashboard.
+  const trendData: TrendPoint[] = (trends?.data ?? []).map((point) => {
+    const legacyPoint = point as TrendPoint & { day?: string }
+    return {
+      ...point,
+      date: point.date || legacyPoint.day || '',
+    }
+  })
 
   const totalExecutions = metricNumber(summary?.total_executions_7d)
   const passRate = metricNumber(summary?.avg_pass_rate_7d)

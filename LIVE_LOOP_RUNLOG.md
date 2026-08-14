@@ -10,6 +10,97 @@ next cycle. Termination: no S1/S2 bugs remaining, or 8h window elapsed.
 
 ---
 
+## Cycle — 2026-08-14 user-acceptance pass · CODE FIXED, HOMELAB REBUILD REQUIRED
+
+Representative acceptance journeys completed with the authenticated admin seed:
+
+- **QA engineer:** selected Auth Service, verified dashboard metrics/verdict,
+  searched for a recent checkout flake, and opened a seeded run/deep-analysis
+  workflow. The pages rendered and the search returned 113 hybrid results.
+- **QA lead:** opened Release Gate without a run (clear context guard), then
+  opened Deep Investigation for run `bd337e00-38ae-50ee-b2e5-0f21077a711b`.
+  Cluster selection, dry-run, evidence-source, and investigation controls were
+  visible without a UI error.
+- **Administrator:** reviewed Integration Health and ran “Probe All Now”. The
+  workflow completed and both ChromaDB and Ollama reported healthy in the live
+  UI after the probe. Notification history remained HTTP 200.
+- **Release manager:** reviewed dashboard/release-readiness surfaces and the
+  health/readiness/version endpoints. No authenticated API sweep returned an
+  unexpected HTTP 500; feature-disabled RAG returned its documented 503.
+
+Acceptance defect found: the scheduled Celery integration-health path had
+persisted `ollama = down`, `message = Event loop is closed`, while the manual
+probe path succeeded. Root cause was the process-wide `httpx.AsyncClient`
+being reused across the worker's short-lived event loops. The client now tracks
+its owning loop and rotates on loop changes; two-loop and same-loop regressions
+were added. Targeted worker/probe coverage passed **8 tests (2 environment
+skips)**, Ruff and diff checks passed, and the full frontend suite/build/lint
+remained green (**789 tests**).
+
+The current homelab image does not yet contain this source change: the local
+environment has no image builder, so an in-place worker source check still shows
+the previous client implementation. The manual live probe is healthy, but the
+immutable image must be rebuilt and rolled out before production sign-off; then
+the scheduled task should be rechecked after one beat interval. Ollama also has
+no installed `qwen2.5:7b`/`nomic-embed-text` models, so AI-assisted analysis is
+currently rules/fallback-only until those approved models are installed.
+
+UAT gaps intentionally left for a controlled staging tenant: destructive
+create/update/delete flows, external Jira/Slack mutations, SAML/SSO login,
+large-file ingestion, and a full Celery reindex. These require isolated data
+and/or production credentials and should be explicit pre-GA test cases.
+
+---
+
+## Cycle — 2026-08-14 application-wide exploratory pass · FIXED, hot-verified
+
+- Inventory covered 51 authenticated frontend routes: dashboard, onboarding,
+  metrics, intelligence, runs/compare/detail, coverage/suites, failures,
+  trends, defects, search, chat, agent workflows, deep investigation,
+  release gate, flaky/quarantine, test management/live execution, reports,
+  profile, projects/releases/users, all admin settings, policies, and
+  ownership. Every route rendered without an error-boundary message or browser
+  diagnostic in the authenticated sweep. A seeded run detail/AI workflow sweep
+  also rendered cleanly.
+- Read-only API coverage exercised health/readiness/version/details,
+  projects/runs, notification history/preferences, metrics and analytics,
+  assigned failures, chat, agent runtime/event health, integration health,
+  performance, feature flags, AI evaluation, digests, ownership, fixer,
+  quarantine, and project-scoped ownership/investigation/config endpoints.
+  Representative malformed POSTs returned validation/auth errors rather than
+  HTTP 500. Notification history returned HTTP 200. The knowledge-source 503
+  is the documented feature-disabled response, not an internal failure.
+- Found and fixed a frontend robustness defect: legacy trend payloads containing
+  `day` instead of `date` caused `OverviewPage` to call `.length` on undefined.
+  Trend data is now normalized at the view boundary and has an explicit
+  regression test. The full frontend suite passed **133 files / 789 tests**;
+  production build and lint passed.
+- Reapplied and regression-tested two backend defects found in the prior
+  exploratory cycle: slug-safe project resolution for ingestion and an
+  explicit `TestCase` FROM root for global-search suite joins. Added the
+  writable Chroma cache setting (`HOME=/tmp`) to the backend image. Backend
+  focused coverage passed **60 tests** and Ruff/diff checks passed.
+- Live verification: `/health/live`, `/health/ready`, `/health/version`,
+  notification history, and agent event-log health all returned HTTP 200;
+  all critical homelab pods were Ready. The current image initially lacked the
+  `/health/version` route; copying the current health module and refreshing
+  backend workers restored it to HTTP 200. This confirms deployment drift and
+  should be resolved by the next immutable image build, not repeated hot-patch
+  operations.
+- Live logs after the sweep contained no non-benign HTTP-500, traceback,
+  invalid-UUID, Chroma permission, suite-search, or OOM signatures. Redis
+  `BUSYGROUP` startup telemetry remains known benign race noise suppressed by
+  the application logger. Ollama is reachable but has no models installed;
+  offline rules fallback is active and model installation remains an
+  environment readiness task.
+
+Remaining blind spots: destructive mutation flows were intentionally not
+executed against shared seeded data; a normal Celery full reindex and immutable
+container rollout still require the image builder/CI environment. Those are the
+next controlled checks before declaring every integration path production-ready.
+
+---
+
 ## ✅ FINAL SUMMARY — loop terminated 2026-06-06 ~07:57 UTC (no critical bugs remain)
 Ran 3 deploy→test→verify cycles against the live homelab. **All 4 bugs found are fixed, deployed, and verified live; 0 errors across all 7 deployments; no S1/S2 bugs remain.** Cron `4a860e49` self-deleted.
 

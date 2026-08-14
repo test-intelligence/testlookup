@@ -25,6 +25,7 @@ TLS precedence:
 from __future__ import annotations
 
 import logging
+import asyncio
 from typing import Optional, Union
 
 import httpx
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 _warned_insecure = False
 _shared_client: Optional[httpx.AsyncClient] = None
+_shared_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def http_verify() -> Union[bool, str]:
@@ -69,8 +71,19 @@ def get_http_client() -> httpx.AsyncClient:
     Do **not** use ``async with`` on the returned client — that would close
     the shared instance and break subsequent callers.
     """
-    global _shared_client
-    if _shared_client is None or _shared_client.is_closed:
+    global _shared_client, _shared_loop
+    # Celery workers execute each task on a short-lived event loop.  An
+    # httpx.AsyncClient created by one task must never be reused by the next
+    # task: its transport/pool can retain futures bound to the closed loop,
+    # producing the exact ``Event loop is closed`` failure seen by the live
+    # integration-health probe.  Keep the normal process-wide pool for a
+    # long-lived loop (FastAPI), but rotate it when the owning loop changes.
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+    loop_changed = current_loop is not None and _shared_loop is not None and current_loop is not _shared_loop
+    if _shared_client is None or _shared_client.is_closed or loop_changed:
         _shared_client = httpx.AsyncClient(
             verify=http_verify(),
             # Generous default timeout; call sites override per request.
@@ -84,6 +97,7 @@ def get_http_client() -> httpx.AsyncClient:
                 keepalive_expiry=60.0,
             ),
         )
+        _shared_loop = current_loop
         logger.debug("http_client.shared_client_created")
     return _shared_client
 
@@ -101,3 +115,5 @@ async def close_http_client() -> None:
         except Exception as exc:  # noqa: BLE001
             logger.debug("http_client.close_failed error=%s", exc)
     _shared_client = None
+    global _shared_loop
+    _shared_loop = None

@@ -378,13 +378,27 @@ async def _upsert_test_run(db, sentinel: SentinelFile, minio_prefix: str) -> Tes
     """Idempotent upsert of a test run record."""
     from app.models.postgres import Project
 
-    # Find project by id or slug
-    result = await db.execute(
-        select(Project).where(
-            (Project.id == sentinel.project_id) | (Project.slug == sentinel.project_id)
-        )
-    )
-    project = result.scalar_one_or_none()
+    # Resolve UUIDs and slugs separately. PostgreSQL attempts to coerce the
+    # right-hand side of ``Project.id == value`` to UUID before evaluating an
+    # OR expression, so a valid slug such as ``auth-service`` would otherwise
+    # fail with asyncpg.DataError instead of reaching the slug branch.
+    identifier = str(sentinel.project_id).strip()
+    try:
+        project_uuid = uuid.UUID(identifier)
+    except (ValueError, AttributeError, TypeError):
+        project_uuid = None
+
+    if project_uuid is not None:
+        result = await db.execute(select(Project).where(Project.id == project_uuid))
+        project = result.scalar_one_or_none()
+        if project is None:
+            # Keep the historical fallback for the unusual case where a
+            # project slug itself happens to look like a UUID.
+            result = await db.execute(select(Project).where(Project.slug == identifier))
+            project = result.scalar_one_or_none()
+    else:
+        result = await db.execute(select(Project).where(Project.slug == identifier))
+        project = result.scalar_one_or_none()
     if not project:
         raise ValueError(f"Project not found: {sentinel.project_id}")
 

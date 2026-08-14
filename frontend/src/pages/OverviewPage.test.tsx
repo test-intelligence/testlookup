@@ -198,6 +198,35 @@ describe('OverviewPage', () => {
     expect(screen.getAllByText(/\bGo\b/).length).toBeGreaterThan(0)
   })
 
+  it('normalizes legacy day-only trend points without logging a render error', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        data: [
+          { day: '2026-04-01', passed: 90, failed: 5, skipped: 2, broken: 0 },
+          { day: '2026-04-02', passed: 91, failed: 4, skipped: 1, broken: 0 },
+        ],
+      },
+      isLoading: false,
+    })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findAllByText(/Quality workflow/i)).not.toHaveLength(0)
+    expect(consoleError).not.toHaveBeenCalledWith(
+      expect.stringContaining("Cannot read properties of undefined (reading 'length')"),
+    )
+    consoleError.mockRestore()
+  })
+
   it('shows Pending readiness instead of RED when there are zero executions', async () => {
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
 

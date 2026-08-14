@@ -141,9 +141,12 @@ COPY --from=builder /app/__client_sdks_staged ./client_sdks
 ARG BUILD_REVISION=""
 ARG BUILD_DATE=""
 
+# ChromaDB's bundled ONNX embedder downloads its local model under HOME. The
+# Kubernetes runtime user has no writable /home/<user>, while /tmp is writable.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     APP_ENV=production \
+    HOME=/tmp \
     BUILD_REVISION=$BUILD_REVISION \
     BUILD_DATE=$BUILD_DATE
 

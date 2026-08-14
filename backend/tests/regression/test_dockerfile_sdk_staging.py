@@ -62,6 +62,11 @@ def test_dockerfile_production_copy_references_builder_stage():
     assert "COPY --from=builder /app/__client_sdks_staged ./client_sdks" in src
 
 
+def test_dockerfile_uses_writable_home_for_chroma_cache():
+    src = DOCKERFILE.read_text(encoding="utf-8")
+    assert "HOME=/tmp" in src
+
+
 @pytest.mark.parametrize("workflow", [
     "deploy-aks.yml",
     "deploy-gke.yml",
