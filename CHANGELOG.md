@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Fix: the continuous flakiness score was computing nothing
+
+Found by running the product on the reference deployment rather than by reading it.
+`recompute_flaky_scores` reported `errors=5` across **every project** and scored
+nothing. The cause:
+
+```
+ImportError: cannot import name 'PerformanceBaseline' from 'app.models.postgres'
+```
+
+The class is `PerfBaseline`. Phase 2's headline feature had therefore produced **zero
+scores on every project for as long as it had been deployed** — while the sweep
+reported success.
+
+Three things had to line up for that to stay invisible, and all three are ordinary
+good practice:
+
+1. The import sat **inside the function**, so nothing raised at module import — no
+   linter, no `tsc`-equivalent, no type-check pass had anything to flag.
+2. The only caller wraps each project in `except Exception`, deliberately, so one bad
+   project cannot stop a nightly sweep. That turned a hard `ImportError` into one
+   warning line in a log nobody reads.
+3. The tests exercised the pure scoring functions thoroughly and **never executed the
+   query path**, so the import statement never ran in CI.
+
+Two guards, because the defect has two shapes:
+
+- **`backend.model-imports-resolve`** (new, 23rd quality gate) — every
+  `from app.models.postgres import X` names something the module actually defines,
+  across all 359 such imports in `backend/app`. It **parses** the model module rather
+  than importing it: importing builds the SQLAlchemy engine, which needs a
+  `DATABASE_URL` the gate does not have, so an import-based check would report OK
+  because it could not look. My first version did exactly that and passed against the
+  known-broken file — a guard that fails open is worse than no guard. It also matches
+  relative imports, so a later style change cannot open a hole in it.
+- **A test that runs `score_project` against a stub session**, so the query path — and
+  every function-local import in it — executes at least once in CI. Plus one that
+  names the exact `PerfBaseline` / `PerformanceBaseline` confusion, so renaming either
+  side breaks loudly.
+
+Both guards were verified by restoring the misspelling and confirming each fails.
+
+
 ### 2026-08-14 — Feat: detection timing (roadmap Phase 6 — the last phase)
 
 Two-tier flaky detection, and — more usefully — a measurement of what actually

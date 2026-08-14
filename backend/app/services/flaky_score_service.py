@@ -300,7 +300,7 @@ async def score_project(
 
     from sqlalchemy import select
 
-    from app.models.postgres import PerformanceBaseline, TestCase, TestRun
+    from app.models.postgres import PerfBaseline, TestCase, TestRun
     from app.services.flaky_signals import compute_intermittency_signals
     from app.services.run_environment import resolve_environment
 
@@ -342,8 +342,8 @@ async def score_project(
         row.test_fingerprint: row
         for row in (
             await db.execute(
-                select(PerformanceBaseline).where(
-                    PerformanceBaseline.project_id == project_id
+                select(PerfBaseline).where(
+                    PerfBaseline.project_id == project_id
                 )
             )
         ).scalars().all()

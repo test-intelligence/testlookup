@@ -289,3 +289,72 @@ def test_score_carries_its_test_name_for_display():
     )
     assert result.test_name == "test_checkout_total"
     assert result.to_dict()["test_name"] == "test_checkout_total"
+
+
+# ── The query path must actually execute ─────────────────────────────────────
+#
+# Added after a live defect: ``score_project`` imported ``PerformanceBaseline``
+# from ``app.models.postgres``, where the class is called ``PerfBaseline``. The
+# import sat inside the function, its only caller wrapped every project in
+# ``except Exception`` so one bad project cannot stop a nightly sweep, and the
+# tests above only exercised the pure scoring functions. So the statement never
+# ran in CI, and in production the whole feature computed nothing on every
+# project while the sweep reported success.
+#
+# ``scripts/quality_gate.py::backend.model-imports-resolve`` catches the static
+# shape. This catches the dynamic one: the query path is executed at least once.
+
+class _FakeResult:
+    def __init__(self, rows=()):
+        self._rows = list(rows)
+
+    def all(self):
+        return self._rows
+
+    def scalars(self):
+        return self
+
+    def scalar(self):
+        return 0
+
+    def scalar_one_or_none(self):
+        return None
+
+
+class _FakeSession:
+    """Minimal AsyncSession stand-in — enough to run the query path."""
+
+    def __init__(self):
+        self.executed = 0
+
+    async def execute(self, *_args, **_kwargs):
+        self.executed += 1
+        return _FakeResult()
+
+    async def flush(self):
+        return None
+
+
+async def test_score_project_query_path_executes_its_imports():
+    """Runs the real ``score_project`` far enough to execute every
+    function-local import. A misspelled model name fails here."""
+    import uuid
+
+    from app.services.flaky_score_service import score_project
+
+    db = _FakeSession()
+    result = await score_project(db, uuid.uuid4())
+    # No rows in, no scores out — the assertion that matters is that we got
+    # here at all rather than raising ImportError.
+    assert result == []
+    assert db.executed >= 1
+
+
+def test_the_perf_baseline_model_is_named_what_the_scorer_imports():
+    """Names the exact confusion that caused the outage, so a future rename of
+    either side breaks loudly instead of silently."""
+    from app.models import postgres as models
+
+    assert hasattr(models, "PerfBaseline")
+    assert not hasattr(models, "PerformanceBaseline")
+    assert models.PerfBaseline.__tablename__ == "perf_baselines"

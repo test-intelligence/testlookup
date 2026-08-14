@@ -1167,6 +1167,102 @@ def _database_single_alembic_head() -> list[Violation]:
 _MIGRATION_DOWN_RE = re.compile(r"^def\s+downgrade\s*\(", re.MULTILINE)
 
 
+_MODEL_MODULE = "app.models.postgres"
+
+
+def _model_module_exported_names() -> set[str]:
+    """Top-level names ``app.models.postgres`` provides, parsed not imported.
+
+    Importing it would build the SQLAlchemy engine (``app/db/postgres.py`` does
+    that at import time), which needs ``DATABASE_URL`` — absent when the gate
+    runs. An import-based check therefore **fails open**, reporting OK because
+    it could not look rather than because nothing was wrong. That is worse than
+    no guard, so this reads the file instead.
+    """
+    import ast
+
+    path = REPO_ROOT / "backend" / "app" / "models" / "postgres.py"
+    if not path.exists():
+        return set()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return set()
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            # Re-exports are legitimately importable from this module.
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+    return names
+
+
+def _backend_model_imports_resolve() -> list[Violation]:
+    """Every ``from app.models.postgres import X`` names something real.
+
+    This exists because of a defect that reached a live deployment and stayed
+    invisible there. ``flaky_score_service.score_project`` imported
+    ``PerformanceBaseline``; the class is called ``PerfBaseline``. Three things
+    conspired to hide it:
+
+    1. The import sat **inside the function**, so nothing raised at module
+       import and no linter or type-check pass flagged the module.
+    2. Its only caller wrapped each project in ``except Exception`` — by design,
+       so one bad project cannot stop a nightly sweep — which turned a hard
+       ``ImportError`` into a single warning line.
+    3. The unit tests exercised the pure scoring functions, not the query path,
+       so the import statement never executed in CI.
+
+    The result was a headline feature computing nothing, on every project, for
+    as long as it had been deployed, while reporting success.
+    """
+    import ast
+
+    exported = _model_module_exported_names()
+    if not exported:
+        # Could not read the model module at all. Say nothing rather than
+        # accuse every import in the tree of being wrong.
+        return []
+
+    violations: list[Violation] = []
+    root = REPO_ROOT / "backend" / "app"
+    for path in iter_files(root, (".py",)):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            # Absolute (``app.models.postgres``) or relative
+            # (``from ..models.postgres import``). The codebase uses absolute
+            # today; matching both means a later style change cannot silently
+            # open a hole in this guard.
+            module = node.module or ""
+            if not (module == _MODEL_MODULE
+                    or (node.level and module.endswith("models.postgres"))):
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                if alias.name not in exported:
+                    violations.append(Violation(
+                        path,
+                        node.lineno,
+                        f"imports {alias.name!r} from {_MODEL_MODULE}, "
+                        "which does not define it",
+                    ))
+    return violations
+
+
 def _database_downgrade_implemented() -> list[Violation]:
     """Every migration must implement ``downgrade()``. Empty stubs
     block rollback in incident response."""
@@ -1754,6 +1850,20 @@ GUARDS: list[Guard] = [
         description="Single Alembic head — no merge conflicts in down_revision chain.",
         check=_database_single_alembic_head,
         fix_hint="Re-base your migration's down_revision onto the current head (see feedback_alembic_head_conflicts memory).",
+    ),
+    Guard(
+        name="backend.model-imports-resolve",
+        description=(
+            "Every 'from app.models.postgres import X' names a real class — a "
+            "function-local import of a misspelled model is invisible until it "
+            "runs, and a broad except turns it into a warning."
+        ),
+        check=_backend_model_imports_resolve,
+        fix_hint=(
+            "Correct the class name (check app/models/postgres.py — e.g. the "
+            "perf_baselines table's class is PerfBaseline, not "
+            "PerformanceBaseline)."
+        ),
     ),
     Guard(
         name="database.downgrade-implemented",
