@@ -4274,3 +4274,68 @@ def calibrate_flaky_classifiers(self, project_id: str | None = None) -> dict:
             return out
 
     return cast(dict, _run_async(_run()))
+
+
+@celery_app.task(bind=True, name="app.worker.tasks.recompute_flaky_scores")
+def recompute_flaky_scores(self, project_id: str | None = None) -> dict:
+    """Recompute the continuous flakiness score per project (roadmap Phase 2).
+
+    Reads a 30-day window per project, so it runs off-peak on a beat rather
+    than on any request path. Per-project try/except keeps one bad project from
+    stopping the sweep, matching the retention-purge and calibration sweeps.
+
+    Fingerprints below the evidence floor are skipped rather than stored as
+    0.0 — a stored zero would read as "measured, and clean".
+    """
+    async def _run():
+        from sqlalchemy import select
+
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import Project
+        from app.services.flaky_score_service import score_project, store_scores
+
+        with _beat_span("recompute_flaky_scores") as span:
+            scored = skipped = errors = 0
+            async with AsyncSessionLocal() as db:
+                if project_id:
+                    ids = [uuid.UUID(project_id)]
+                else:
+                    ids = list(
+                        (
+                            await db.execute(
+                                select(Project.id).where(Project.is_active.is_(True))
+                            )
+                        ).scalars().all()
+                    )
+
+                for pid in ids:
+                    try:
+                        results = await score_project(db, pid)
+                        written = await store_scores(db, pid, results, window_days=30)
+                        await db.commit()
+                        scored += written
+                        skipped += sum(1 for r in results if not r.is_scored)
+                    except Exception as exc:  # noqa: BLE001 — one project must not stop the sweep
+                        errors += 1
+                        await db.rollback()
+                        # ``logger`` in this module is the STDLIB logger; keyword
+                        # fields belong on ``_slog``.
+                        _slog.warning(
+                            "flaky_score_failed",
+                            project_id=str(pid),
+                            error_type=type(exc).__name__,
+                        )
+
+            out = {
+                "projects": len(ids),
+                "scored": scored,
+                "skipped_insufficient": skipped,
+                "errors": errors,
+            }
+            span.set_attribute("result.projects", out["projects"])
+            span.set_attribute("result.scored", scored)
+            span.set_attribute("result.errors", errors)
+            _slog.info("flaky_score_sweep", **out)
+            return out
+
+    return cast(dict, _run_async(_run()))

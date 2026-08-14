@@ -282,6 +282,13 @@ celery_app.conf.update(
             "task": "app.worker.tasks.calibrate_flaky_classifiers",
             "schedule": crontab(hour=5, minute=45),
         },
+        # Roadmap Phase 2: recompute the continuous flakiness score. Runs after
+        # calibration so a project's measured classifier quality is fresh when
+        # the score is read alongside it.
+        "nightly-flaky-score-recompute": {
+            "task": "app.worker.tasks.recompute_flaky_scores",
+            "schedule": crontab(hour=6, minute=10),
+        },
         # Backfill /my-failures inbox: any FAILED/BROKEN TestCase still
         # unassigned (project had no owner config at ingest time, or a
         # finalize_run step failed in isolation) gets re-resolved here.

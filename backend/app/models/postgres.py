@@ -4252,6 +4252,41 @@ _LIVE_QUARANTINE_STATES = (
 )
 
 
+# ── Continuous flakiness score (roadmap Phase 2, migration 0131) ───────────
+#
+# A bounded 0-1 score fused from four signals, replacing a binary label. The
+# components and weights are stored with it so the score can be decomposed and
+# recomputed — a number users cannot audit is a number they are asked to trust
+# on faith.
+#
+# ``confidence`` is separate from ``score`` on purpose: a test seen 4 times and
+# one seen 400 can both yield 0.5, and collapsing that is how a thin-history
+# guess starts looking like a measurement.
+class FlakyScore(Base):
+    __tablename__ = "flaky_score"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_name: Mapped[Optional[str]] = mapped_column(String(1000))
+    score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    components: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    weights: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    observation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    confidence: Mapped[str] = mapped_column(String(20), default="none", nullable=False)
+    window_days: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ux_flaky_score_project_fingerprint", "project_id", "test_fingerprint", unique=True),
+        Index("ix_flaky_score_project_score", "project_id", "score"),
+    )
+
+
 # ── Flaky-classifier calibration (roadmap Phase 0, migration 0130) ─────────
 #
 # Measured quality of the error-signature matching we already ship, per

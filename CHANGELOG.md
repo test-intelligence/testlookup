@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Feat: test-intelligence Phase 2 — signal quality
+
+Phase 2 of `architecture/TEST_INTELLIGENCE_PLAN.md`, migration `0131`. Two halves.
+
+**P2-B — a continuous, decomposable flakiness score, without the Bayesian layer.** A binary
+flaky/not-flaky label answers "is it?", which is the wrong question — all real tests are flaky to
+some degree, so the useful question is *how* flaky and *on what evidence*. `flaky_score` stores a
+bounded 0–1 composite fused from four signals (result volatility, retry rate, duration variance,
+environment instability) **together with every component and the weights used**, so the number can
+be decomposed and recomputed. A score nobody can audit is one users are asked to trust on faith.
+
+Three of the four signals already existed; duration variance reuses the Welford statistics
+`perf_baselines` maintains rather than becoming a second source of truth, and uses a coefficient of
+variation so a 10-second test varying by a second is not ranked alongside a 100ms test varying by
+a second.
+
+**The posterior was descoped by the Phase 0 gate, not skipped.** That census measured every genuine
+project at 12–15 fingerprints with a median of 5–12 runs, far under what a moving-window posterior
+needs — over that much data it mostly reports its prior back. The four signals degrade honestly
+instead. Below five observations **no score is emitted at all** (not a small score, not a hedged
+one), and `confidence` is a separate band derived from evidence volume alone: a test seen 5 times
+and one seen 500 can both produce 0.5, and collapsing that is how a thin-history guess starts
+looking like a measurement.
+
+**P2-A — per-project calibration decides how much authority a verdict carries.** Measured
+classifier specificity swings from 100% to no-better-than-random across projects, so
+`flaky_suppression_gate` reads the Phase 0 calibration and returns `hint` (weak *or unmeasured* —
+an unknown classifier is never defaulted to trusted) or `advisory`.
+
+**It never returns "may act".** Per decision D2, `ALLOW_SUPPRESSION` is a module constant pinned by
+a test rather than a setting, and `may_suppress` is double-guarded so flipping that constant alone
+still cannot unlock suppression. The evidence: roughly 1 in 6 newly-flaky tests reflected a real
+production bug. A wrongly-shown verdict costs a minute; a wrongly-suppressed failure ships the bug.
+
+New: `GET /api/v1/analytics/flaky-scores` (scores + components + the project's suppression
+decision) and a nightly `recompute_flaky_scores` beat at 06:10 UTC, after calibration.
+
+Three defects found by this phase's multi-pass review and fixed before merge: `score_project`
+loaded a project's whole 30-day window into memory before applying its limit (now capped at 200k
+rows, read newest-first so the cap drops the oldest, with truncation logged rather than silently
+scoring a partial window as whole); `store_scores` never persisted `window_days`, so a 90-day score
+would have sat in the table claiming the 30-day default — a provenance lie about the number beside
+it; and `test_name` was never populated.
+
+38 regression tests, each verified to fail under deliberate mutation of the property it guards.
+
+
 ### 2026-08-14 — Docs: Phase 0 gate reading — the Bayesian scorer is descoped
 
 Ran the Phase 0 readiness census against the live homelab database and recorded the verdict in

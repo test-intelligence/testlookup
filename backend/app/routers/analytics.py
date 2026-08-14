@@ -11,7 +11,7 @@ from app.core.deps import (
     resolve_project_scope,
 )
 from app.db.postgres import get_db
-from app.models.postgres import User, UserRole
+from app.models.postgres import FlakyClassifierCalibration, FlakyScore, User, UserRole
 from app.models.schemas import (
     ClassifyUncategorizedRequest,
     ClassifyUncategorizedResponse,
@@ -22,6 +22,7 @@ from app.models.schemas import (
 )
 from app.services import analytics_service
 from app.services.flake_load_service import get_flake_load
+from app.services.flaky_suppression_gate import decide as gate_decide
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 
@@ -85,6 +86,75 @@ async def flake_load(
         # would silently widen it to every project.
         raise HTTPException(status_code=400, detail="Invalid project ID")
     return await get_flake_load(db, scoped, window_days=days)
+
+
+@router.get("/flaky-scores")
+async def flaky_scores(
+    project_id: str = Query(..., description="Project to score — never a fleet average"),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Continuous 0–1 flakiness scores for this project, most flaky first.
+
+    Each row carries its **component breakdown and the weights used**, so the
+    number can be decomposed and recomputed — a score nobody can audit is one
+    users are asked to trust on faith.
+
+    ``confidence`` is separate from ``score`` on purpose. A test seen 5 times
+    and one seen 500 can both produce 0.5; collapsing that distinction is how a
+    thin-history guess starts looking like a measurement. Fingerprints below the
+    evidence floor are not scored at all and simply do not appear here.
+
+    The response also carries this project's **suppression decision**: measured
+    classifier specificity swings from 100% to no-better-than-random across
+    projects, so how much authority a flaky verdict carries is a per-project
+    question. It is never "may act" — see the ``policy`` field.
+    """
+    scoped, _allowed = await resolve_project_scope(db, current_user, project_id)
+    if scoped is None:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+
+    rows = (
+        await db.execute(
+            select(FlakyScore)
+            .where(FlakyScore.project_id == scoped)
+            .order_by(FlakyScore.score.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    calibration = (
+        await db.execute(
+            select(FlakyClassifierCalibration).where(
+                FlakyClassifierCalibration.project_id == scoped
+            )
+        )
+    ).scalar_one_or_none()
+
+    decision = gate_decide(
+        scoped,
+        specificity=getattr(calibration, "specificity", None),
+        sample_count=getattr(calibration, "sample_count", 0) or 0,
+    )
+
+    return {
+        "items": [
+            {
+                "test_fingerprint": row.test_fingerprint,
+                "test_name": row.test_name,
+                "score": row.score,
+                "components": row.components,
+                "weights": row.weights,
+                "observation_count": row.observation_count,
+                "confidence": row.confidence,
+                "computed_at": row.computed_at,
+            }
+            for row in rows
+        ],
+        "total": len(rows),
+        "suppression": decision.to_dict(),
+    }
 
 
 # ── Failure Category Distribution ─────────────────────────────────────────
