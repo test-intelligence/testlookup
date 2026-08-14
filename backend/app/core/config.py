@@ -247,6 +247,14 @@ class Settings(BaseSettings):
     CHROMA_HOST: str = "localhost"
     CHROMA_PORT: int = 8001
     CHROMA_COLLECTION: str = "testlookup_embeddings"
+    # Where a locally-available ONNX embedding model lives. ChromaDB's default
+    # embedder is NOT bundled — on first use it fetches 79 MB from AWS S3, which
+    # ``AI_OFFLINE_MODE`` must forbid (it governs weight acquisition, not just
+    # inference — see ``services/local_embedder_guard.py``). Point this at a
+    # side-loaded model to keep semantic features working in a sealed install;
+    # empty means "wherever ChromaDB would put it", which a baked-in image
+    # satisfies.
+    CHROMA_ONNX_MODEL_DIR: str = ""
 
     # ── AI Agent ─────────────────────────────────────────────
     AI_OFFLINE_MODE: bool = True

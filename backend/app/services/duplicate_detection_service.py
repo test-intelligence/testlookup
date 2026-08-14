@@ -580,10 +580,14 @@ async def _semantic_neighbours(
     installed / unreachable, embedder missing) returns ``{}`` so the run is
     structural-only — never raises, never reaches a cloud API.
 
-    Gate: uses ChromaDB's bundled LOCAL ONNX MiniLM (no ``embedding_function``
-    passed). We never construct a cloud embedder, so the ``AI_OFFLINE_MODE``
-    default stays satisfied. We still hard-skip if the build doesn't ship a
-    local embedder.
+    Gate: uses ChromaDB's default local ONNX MiniLM (no ``embedding_function``
+    passed), so there is no cloud *inference* here. That is NOT the same as no
+    egress: the model is not bundled, and ChromaDB fetches 79 MB from AWS S3 on
+    first use — which was observed happening with ``AI_OFFLINE_MODE=true``.
+    ``AI_OFFLINE_MODE`` now covers weight acquisition too, enforced at
+    ChromaDB's download chokepoint (``services/local_embedder_guard.py``); when
+    it blocks, the ``except`` below returns ``{}`` and the run is
+    structural-only, which is the intended degradation.
     """
     if not views:
         return {}

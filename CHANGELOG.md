@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Fix: `AI_OFFLINE_MODE` now covers model weights, not just inference
+
+`AI_OFFLINE_MODE` is documented as a hard egress ceiling. It was not one.
+
+Observed live on the reference deployment, with `AI_OFFLINE_MODE=true` set inside the
+container:
+
+```
+HTTP Request: GET https://chroma-onnx-models.s3.amazonaws.com/
+  all-MiniLM-L6-v2/onnx.tar.gz "HTTP/1.1 200 OK"
+```
+
+A successful 79.3 MB egress — not a blocked attempt. In those pods `HOME` is `/tmp`, so
+the cache did not survive a restart and the fetch recurred every time; the download plus
+ONNX load, across several concurrent Celery forks, exceeded the worker's 1 GiB limit and
+**OOM-killed it in a restart loop — 56 restarts in 18 hours**.
+
+**The reasoning error.** Two modules argued, in comments, that because they pass no
+`embedding_function` ChromaDB uses its *"bundled LOCAL"* model, never a cloud API, and
+therefore **no `AI_OFFLINE_MODE` gate is required**. The first half is true — there is no
+cloud *inference* on that path. The second half does not follow: the model is not
+bundled, and its **weights** are fetched on first use. An offline ceiling that covers
+inference but not acquisition is not a ceiling, and a comment asserting otherwise is
+worse than no comment. All three occurrences are corrected — a test finds them, which is
+how the third one surfaced.
+
+**One chokepoint, not nine call sites.** Nine modules create ChromaDB collections and
+every one would trigger the same download; gating each is nine chances to miss the tenth.
+ChromaDB funnels them all through `_download_model_if_not_exists`, so the ceiling lives
+there. Every one of those call sites already wraps ChromaDB in `try/except` and degrades,
+so a clear typed error at the chokepoint produces the right fallback everywhere at once —
+confirmed: both indexing paths return `0`, and `reindex_search` reports
+`indexed_count: 0` rather than retrying.
+
+The guard is installed in the API lifespan **and in every Celery prefork child** — the
+child running `reindex_search` is the process that actually downloaded, so installing
+only in the parent would have missed it entirely.
+
+**This does not disable semantic features.** A model already present — baked into an
+image, or side-loaded into the new `CHROMA_ONNX_MODEL_DIR` — is never blocked. Sealing a
+deployment must not mean disabling what it can already serve.
+
+Two questions from the finding, now answered with evidence rather than left open:
+
+- **Does the air-gapped path degrade or hard-fail?** It degrades. `index_test_cases` and
+  `index_incremental` both catch and return `0`, and `max_retries=2` bounds the worst
+  case regardless.
+- **What was the crashloop losing?** Nothing. `task_acks_late=True` means an OOM-killed
+  task is redelivered — but that is also *why* the loop sustained itself: the poison task
+  came straight back and killed the worker again.
+
+22 regression tests. Seven guards verified by mutation, including one that catches the
+guard silently never installing on a wrong ChromaDB module path — the same fail-open
+shape as a check that cannot look and reports OK.
+
+
 ### 2026-08-14 — Fix: the continuous flakiness score was computing nothing
 
 Found by running the product on the reference deployment rather than by reading it.

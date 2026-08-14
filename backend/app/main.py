@@ -59,6 +59,16 @@ async def lifespan(app: FastAPI):
         env=settings.APP_ENV,
     )
 
+    # AI_OFFLINE_MODE must cover model WEIGHTS, not just inference. ChromaDB's
+    # default embedder fetches 79 MB from AWS S3 on first use; installed here so
+    # a sealed deployment degrades instead of dialling out.
+    try:
+        from app.services.local_embedder_guard import install_offline_embedder_guard
+
+        install_offline_embedder_guard()
+    except Exception as exc:  # noqa: BLE001 — never block startup on the guard
+        logger.warning("embedder_guard_install_failed", error_type=type(exc).__name__)
+
     # Validate production secrets — fail fast on misconfig (production AND staging)
     secret_warnings = settings.validate_production_secrets()
     for warning in secret_warnings:

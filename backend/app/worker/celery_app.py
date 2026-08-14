@@ -437,6 +437,18 @@ def _reset_db_pool_after_fork(**_kwargs: object) -> None:
     get_engine.cache_clear()
     get_session_factory.cache_clear()
 
+    # Each prefork child is a separate process, so the offline embedder guard
+    # has to be installed in every one of them. Without this the child that
+    # happens to run reindex_search would download the weights that
+    # AI_OFFLINE_MODE is supposed to forbid — which is exactly how the
+    # 1 GiB worker got OOM-killed in a restart loop.
+    try:
+        from app.services.local_embedder_guard import install_offline_embedder_guard
+
+        install_offline_embedder_guard()
+    except Exception:  # noqa: BLE001 — never block a worker child on the guard
+        pass
+
 
 # ── Prometheus: worker-side metrics ───────────────────────────────────────────
 #

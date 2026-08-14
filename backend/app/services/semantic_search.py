@@ -21,15 +21,26 @@ Phase 3 / code-reviewer gate (c) — ACCEPTED DEVIATIONS (documented, not silent
   cross-project full-reindex batching in ``_upsert_rows_to_collection`` and the
   multi-project ``$in`` / ``allowed_project_ids`` query fan-out) is deferred and
   recorded here rather than introduced implicitly. See CHANGELOG Phase 3 note.
-* **Offline-safe by construction.** The semantic path is *opt-in*
-  (``search_type=semantic``/``hybrid``; the router defaults to keyword) and
-  *fails back to keyword* on any ChromaDB error. ``_get_or_create_collection``
-  passes NO explicit ``embedding_function``, so ChromaDB uses its bundled LOCAL
-  ONNX all-MiniLM model — never a cloud API — which is why no ``AI_OFFLINE_MODE``
-  early-return is required to keep the ``AI_OFFLINE_MODE=True`` default from
-  reaching out. This relies on the default embedder staying local; if a cloud
-  ``embedding_function`` is ever wired in, it MUST be gated on
-  ``settings.AI_OFFLINE_MODE`` + a local-embedder check here.
+* **Offline-safe, but not "by construction" — by a guard.** The semantic path
+  is *opt-in* (``search_type=semantic``/``hybrid``; the router defaults to
+  keyword) and *fails back to keyword* on any ChromaDB error.
+  ``_get_or_create_collection`` passes NO explicit ``embedding_function``, so
+  ChromaDB uses its default local ONNX all-MiniLM model and there is no cloud
+  *inference* on this path.
+
+  This comment previously concluded from that "and therefore no
+  ``AI_OFFLINE_MODE`` early-return is required". **That was wrong, and it was
+  wrong in production.** The model runs locally but is *not bundled*: on first
+  use ChromaDB downloads 79 MB from ``chroma-onnx-models.s3.amazonaws.com``.
+  Observed egressing with ``AI_OFFLINE_MODE=true``, and the download plus ONNX
+  load OOM-killed the Celery worker in a restart loop.
+
+  The ceiling now lives at ChromaDB's own download chokepoint — see
+  ``services/local_embedder_guard.py`` — because nine modules create
+  collections and all nine would trigger the same fetch. When offline mode is
+  on and no local model is present, that raises, and the keyword fallback below
+  handles it. If a cloud ``embedding_function`` is ever wired in it MUST be
+  gated on ``settings.AI_OFFLINE_MODE`` as well.
 """
 from __future__ import annotations
 
@@ -85,9 +96,16 @@ async def _get_or_create_collection():
     ``_COLLECTION_NAME`` for all projects; tenant isolation is the query-time
     ``project_id`` metadata filter in ``semantic_search`` (+ Postgres-layer
     re-filter), not a per-project collection. No explicit ``embedding_function``
-    is passed, so ChromaDB's bundled LOCAL ONNX MiniLM is used — the semantic
-    path stays offline-safe under the ``AI_OFFLINE_MODE=True`` default. Do NOT
-    swap in a cloud ``embedding_function`` without an ``AI_OFFLINE_MODE`` gate.
+    is passed, so ChromaDB's default local ONNX MiniLM is used — no cloud
+    *inference*.
+
+    That does NOT by itself make the path offline-safe: the model is not
+    bundled, and ChromaDB fetches 79 MB from AWS S3 the first time it is used.
+    Offline safety comes from the guard at ChromaDB's download chokepoint
+    (``services/local_embedder_guard.py``), which raises under
+    ``AI_OFFLINE_MODE`` when no local model is present; the caller then falls
+    back to keyword. Do NOT swap in a cloud ``embedding_function`` without an
+    ``AI_OFFLINE_MODE`` gate either.
     """
     client = await asyncio.to_thread(_get_chroma_client)
     return await asyncio.to_thread(
