@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -467,7 +468,8 @@ def test_git_timeout_is_not_fatal(cr, repo, monkeypatch):
 @both
 def test_unexpected_exception_is_swallowed(cr, repo, monkeypatch):
     monkeypatch.setattr(
-        cr, "_rev_parse", lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("boom"))
+        cr, "_rev_parse_result",
+        lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     assert cr.collect_commit_range(env={}, repo_path=str(repo)) is None
 
@@ -475,6 +477,149 @@ def test_unexpected_exception_is_swallowed(cr, repo, monkeypatch):
 @both
 def test_option_shaped_repo_path_is_refused(cr):
     assert cr._git(["rev-parse", "HEAD"], repo_path="--exec-path=/evil") is None
+
+
+# ── "git said no" is not "git never answered" ─────────────────────────────────
+#
+# This whole section exists because of a real CI flake: the collector returned
+# a bare None for a repo it had built itself, and there was no way to tell
+# afterwards whether git had answered "no such ref" or had failed to answer at
+# all. Both arrived as None, both took the do-not-guess branch, and the cause
+# was gone. Every assertion below pins the distinction that was missing.
+
+
+@both
+def test_a_transient_git_failure_is_not_blamed_on_the_users_base(cr, repo, monkeypatch):
+    """The bug this section exists for.
+
+    git resolves HEAD, then stops answering while we look up the base the user
+    named. That tells us NOTHING about whether their base exists, so it must
+    not be reported as ``user_base_unresolvable`` — the ref is fine, we are
+    not.
+    """
+    base = _git(["rev-parse", "HEAD^"], repo)   # a real, resolvable base
+    real_run = cr.subprocess.run
+    calls = {"n": 0}
+
+    def _fails_after_head(argv, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:            # let the HEAD probe through
+            return real_run(argv, **kwargs)
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=1.0)
+
+    monkeypatch.setattr(cr.subprocess, "run", _fails_after_head)
+    outcome = cr.diagnose_commit_range(
+        explicit_base=base, env={}, repo_path=str(repo),
+    )
+    assert outcome.commit_range is None
+    assert outcome.reason == cr.REASON_GIT_FAILED, outcome.detail
+    assert "timed out" in outcome.detail
+
+
+@both
+def test_a_genuinely_absent_user_base_is_still_reported_as_such(cr, branch_repo):
+    """The other half of the distinction: when git DOES answer "no such ref",
+    we must say so rather than crying outage."""
+    outcome = cr.diagnose_commit_range(
+        explicit_base="9" * 40, env={}, repo_path=str(branch_repo),
+    )
+    assert outcome.commit_range is None
+    assert outcome.reason == cr.REASON_USER_BASE_UNRESOLVABLE, outcome.detail
+
+
+@both
+def test_a_git_process_killed_by_a_signal_counts_as_unavailable(cr, repo, monkeypatch):
+    """A negative returncode means git was killed before it could answer —
+    the OOM-killer case. Treating that as "the ref does not exist" would turn
+    machine pressure into a false statement about the repository."""
+    class _Killed:
+        returncode = -9
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(cr.subprocess, "run", lambda *_a, **_kw: _Killed())
+    result = cr._run_git(["rev-parse", "HEAD"], repo_path=str(repo))
+    assert result.status == cr.GIT_UNAVAILABLE
+    assert "signal 9" in result.detail
+
+
+@both
+def test_a_fatal_exit_counts_as_unavailable_not_as_a_no(cr, repo, monkeypatch):
+    """Exit 1 is git's conventional "no". Anything above it is a ``fatal:``
+    git could not complete — an unreadable object, a torn index — which is a
+    failure to answer, not an answer."""
+    class _Fatal:
+        returncode = 128
+        stdout = ""
+        stderr = "fatal: unable to read tree deadbeef\n"
+
+    monkeypatch.setattr(cr.subprocess, "run", lambda *_a, **_kw: _Fatal())
+    result = cr._run_git(["rev-parse", "HEAD"], repo_path=str(repo))
+    assert result.status == cr.GIT_UNAVAILABLE
+    assert "unable to read tree" in result.detail
+
+
+@both
+def test_every_none_carries_a_reason(cr, repo, tmp_path):
+    """No caller should ever have to guess again."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    cases = {
+        cr.REASON_DISABLED: dict(enabled=False, repo_path=str(repo)),
+        cr.REASON_NO_CHECKOUT: dict(repo_path=str(plain)),
+        cr.REASON_USER_BASE_UNRESOLVABLE: dict(
+            explicit_base="9" * 40, repo_path=str(repo)
+        ),
+    }
+    for expected, kwargs in cases.items():
+        outcome = cr.diagnose_commit_range(env={}, **kwargs)
+        assert outcome.commit_range is None
+        assert outcome.reason == expected, outcome.detail
+        assert outcome.detail, f"{expected} produced no detail"
+
+
+@both
+def test_a_successful_collection_says_so(cr, branch_repo):
+    outcome = cr.diagnose_commit_range(env={}, repo_path=str(branch_repo))
+    assert outcome.reason == cr.REASON_OK
+    assert outcome.commit_range == cr.collect_commit_range(
+        env={}, repo_path=str(branch_repo)
+    )
+
+
+@both
+def test_a_shallow_degrade_is_reported_as_degraded(cr, shallow_clone):
+    outcome = cr.diagnose_commit_range(env={}, repo_path=str(shallow_clone))
+    assert outcome.reason == cr.REASON_DEGRADED
+    assert outcome.commit_range["degraded"] is True
+
+
+@both
+def test_git_outages_are_logged_loudly_normal_empties_are_not(cr, repo, monkeypatch, caplog):
+    """A client SDK must not shout about a run with nothing to report — but a
+    git that worked and then stopped answering is an anomaly, and burying it
+    at DEBUG is what made the original flake unexplainable."""
+    caplog.set_level(logging.DEBUG, logger=cr.logger.name)
+
+    cr.collect_commit_range(enabled=False, env={}, repo_path=str(repo))
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    caplog.clear()
+    base = _git(["rev-parse", "HEAD^"], repo)   # before the patch bites
+    real_run = cr.subprocess.run
+    calls = {"n": 0}
+
+    def _fails_after_head(argv, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_run(argv, **kwargs)
+        raise OSError("Cannot allocate memory")
+
+    monkeypatch.setattr(cr.subprocess, "run", _fails_after_head)
+    cr.collect_commit_range(explicit_base=base, env={}, repo_path=str(repo))
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "a git outage mid-collection must not be silent"
+    assert "Cannot allocate memory" in warnings[0].getMessage()
 
 
 # ── argv discipline ───────────────────────────────────────────────────────────
@@ -524,12 +669,42 @@ def test_hostile_base_ref_never_reaches_git_as_an_option(cr, repo, monkeypatch):
 
 @pytest.fixture(scope="module")
 def many_commit_repo(tmp_path_factory) -> tuple[Path, str]:
-    """105 commits past a known base. Module-scoped: building it costs ~100
-    git invocations and both module copies exercise the same repo."""
+    """105 commits past a known base, built by a single ``git fast-import``.
+
+    The obvious version of this fixture — a Python loop calling ``git commit
+    --allow-empty`` 105 times — spawned 211 git processes and accounted for
+    most of this module's runtime. That is a lot of environment to be exposed
+    to for a fixture that only needs a history longer than ``MAX_COMMITS``,
+    and every one of those spawns is a chance for a loaded CI runner to fail
+    one. One ``fast-import`` builds the same real history in one process.
+
+    Timestamps are fixed and strictly increasing rather than "whatever the
+    clock said", which also removes a latent hazard: ``git log`` walks a
+    date-ordered queue, so a test asserting the exact identity of the newest
+    100 commits should not depend on 106 commits landing in a readable order
+    within the same second.
+    """
     path = _init(tmp_path_factory.mktemp("many"))
-    base = _commit(path, "base", {"a.txt": "a\n"})
-    for i in range(105):
-        _commit(path, f"change {i:03d}")
+    stream = ["blob", "mark :1", "data 2", "a"]
+    for i, message in enumerate(["base"] + [f"change {i:03d}" for i in range(105)]):
+        stream += [
+            "commit refs/heads/main",
+            f"committer Dev Example <dev@example.com> {1_700_000_000 + i} +0000",
+            f"data {len(message.encode('utf-8'))}",
+            message,
+        ]
+        if i == 0:
+            stream.append("M 100644 :1 a.txt")   # the rest carry the same tree
+    # bytes, not text=True: fast-import counts the bytes a ``data`` header
+    # promises, and Python's text mode would translate every \n to \r\n on
+    # Windows and desynchronise the stream.
+    subprocess.run(
+        ["git", "fast-import", "--quiet"], cwd=str(path), check=True,
+        input=("\n".join(stream) + "\n").encode("utf-8"),
+        capture_output=True,
+    )
+    _git(["reset", "--hard", "main"], path)
+    base = _git(["rev-list", "--max-parents=0", "HEAD"], path)
     return path, base
 
 
@@ -537,8 +712,14 @@ def many_commit_repo(tmp_path_factory) -> tuple[Path, str]:
 def test_commit_cap_keeps_newest_hundred_oldest_first(cr, many_commit_repo):
     path, base = many_commit_repo
 
-    rng = cr.collect_commit_range(explicit_base=base, env={}, repo_path=str(path))
-    assert rng is not None
+    # diagnose_* rather than collect_*: when this assertion failed in CI it
+    # said only "assert None is not None", which cost a manual re-run to
+    # learn nothing. The reason now travels with the failure.
+    outcome = cr.diagnose_commit_range(
+        explicit_base=base, env={}, repo_path=str(path),
+    )
+    rng = outcome.commit_range
+    assert rng is not None, f"{outcome.reason}: {outcome.detail}"
     commits = rng["commits"]
     assert len(commits) == cr.MAX_COMMITS == 100
     assert rng["truncated"] is True

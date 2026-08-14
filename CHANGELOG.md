@@ -102,6 +102,41 @@ it; and `test_name` was never populated.
 
 38 regression tests, each verified to fail under deliberate mutation of the property it guards.
 
+### 2026-08-14 — Fix: the commit-range collector now says why it collected nothing
+
+A flaky test in the product built to detect flaky tests. `test_commit_cap_keeps_newest_hundred_
+oldest_first` failed on PR #583 for both the `[sdk]` and `[cli]` parametrisations with
+`assert None is not None`, then passed on a plain re-run of the same job with no code change —
+costing a manual CI re-run on an unrelated PR and yielding no information when it did.
+
+It yielded no information because the collector could not produce any. Every git invocation in
+`commit_range.py` funnelled into a bare `Optional[str]`, so **"git says that ref does not exist"
+and "git never answered" arrived at the caller identically**. `_resolve_ref` then reported a
+transient git failure as *the user's base is unresolvable*, `collect_commit_range` took the
+deliberate do-not-guess branch, and the cause was gone. Three distinct states were being collapsed
+into one silent `None`.
+
+The fix separates them. `_run_git` now returns `GIT_OK` / `GIT_REFUSED` / `GIT_UNAVAILABLE` with
+git's own exit code and stderr tail attached — where exit 1 is git's conventional "no", a higher
+code is a `fatal:` it could not complete, and a negative code is a process killed before it could
+answer (the OOM-killer case). A new `diagnose_commit_range()` returns the range **and** why it is
+what it is; `collect_commit_range()` is now a one-line wrapper over it and is unchanged for callers.
+A git invocation that stops answering *after* git has demonstrably worked is logged at WARNING
+rather than DEBUG — that combination is an anomaly, not a normal empty result — while genuinely
+empty runs stay quiet, because a client SDK must not shout about a run with nothing to report.
+
+Not a retry, and not a proven root cause: 300 full runs of the CI command and 400 collector
+iterations under 4× CPU oversubscription on Linux failed to reproduce the original failure, so the
+specific git call that broke on that runner is still unknown. What is fixed is that it can no
+longer break *invisibly* — the next occurrence names itself in the assertion message.
+
+The fixture that feeds the test was also rebuilt. It span 211 git processes (`git commit
+--allow-empty` × 105, each followed by a `rev-parse`) to produce a history longer than
+`MAX_COMMITS`, which was most of the module's runtime and a lot of environment exposure for one cap
+assertion; a single `git fast-import` builds the identical 106-commit history 65× faster in two
+processes. Its timestamps are now fixed and strictly increasing, which also retires a latent
+hazard: `git log` walks a date-ordered queue, and a test asserting the exact identity of the newest
+100 commits should not depend on 106 commits landing in a readable order inside the same second.
 
 ### 2026-08-14 — Docs: Phase 0 gate reading — the Bayesian scorer is descoped
 

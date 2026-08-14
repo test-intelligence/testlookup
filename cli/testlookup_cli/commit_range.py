@@ -35,8 +35,23 @@ a head-only range (the one commit we can prove is in history) rather than
 fabricating one. Never a synthesised base.
 
 Collection is best-effort by construction: every git invocation is wrapped,
-any failure is logged at DEBUG and the range is simply omitted. Nothing in
-this module can fail a test run.
+any failure omits the range rather than raising. Nothing in this module can
+fail a test run.
+
+Best-effort is not the same as silent, though. Every git invocation lands in
+one of three states that must NOT be collapsed together:
+
+  * ``GIT_OK``          — git ran and answered
+  * ``GIT_REFUSED``     — git ran and answered "no" (the ref does not exist)
+  * ``GIT_UNAVAILABLE`` — git never answered (missing binary, timeout, signal)
+
+Collapsing the last two into a bare ``None`` is what once made a transient
+git failure in CI indistinguishable from "the base you named does not exist":
+both arrived as ``None``, the collector took the do-not-guess branch, and the
+absent range had no recorded cause. :func:`diagnose_commit_range` returns the
+range *and* why it is what it is, and a git invocation that stops answering
+*after* git has demonstrably worked is logged at WARNING rather than DEBUG —
+that combination is an anomaly, not a normal empty result.
 
 Security: git is invoked with argv LISTS only — never a shell, never string
 interpolation of untrusted values into a command line. Ref values sourced
@@ -53,15 +68,17 @@ import logging
 import os
 import re
 import subprocess
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, NamedTuple, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "collect_commit_range",
+    "diagnose_commit_range",
     "resolve_commit_range",
     "detect_ci_base_ref",
     "is_collection_enabled",
+    "CommitRangeOutcome",
 ]
 
 # ── Caps ──────────────────────────────────────────────────────────────────────
@@ -173,27 +190,52 @@ def _candidate_refs(ref: str) -> list[str]:
 
 # ── git invocation (argv lists only — never a shell) ──────────────────────────
 
-def _git(
+# The three states a git invocation can end in. Keeping REFUSED and
+# UNAVAILABLE apart is the whole point: "git says that ref does not exist" is
+# a fact we can act on, "git never answered" is an outage we must not dress up
+# as a fact about the user's repository.
+GIT_OK = "ok"
+GIT_REFUSED = "refused"
+GIT_UNAVAILABLE = "unavailable"
+
+
+class _GitResult(NamedTuple):
+    """One git invocation's outcome, with enough detail to explain itself."""
+
+    status: str
+    out: str
+    detail: str
+
+    @property
+    def ok(self) -> bool:
+        return self.status == GIT_OK
+
+
+def _run_git(
     args: Sequence[str],
     *,
     repo_path: Optional[str] = None,
     timeout: float = _TIMEOUT_QUICK,
-) -> Optional[str]:
-    """Run one git command as an argv LIST and return stripped stdout.
+) -> _GitResult:
+    """Run one git command as an argv LIST and classify the outcome.
 
-    Returns ``None`` on any non-zero exit, timeout, missing git binary, or
-    OS error — callers treat that as "unknown", never as an error to raise.
+    Never raises. ``args`` is appended to a fixed prefix; no element is ever
+    built by interpolating a value into a larger command string, and
+    ``shell=True`` is never used. This mirrors the argv discipline in the
+    Fixer's ``backend/app/agents/fixer/runners.py``.
 
-    ``args`` is appended to a fixed prefix; no element is ever built by
-    interpolating a value into a larger command string, and ``shell=True`` is
-    never used. This mirrors the argv discipline in the Fixer's
-    ``backend/app/agents/fixer/runners.py``.
+    Exit-code classification: 1 is git's conventional "no" and is REFUSED;
+    anything higher is a ``fatal:`` git could not complete, and a negative
+    code means the process was killed by a signal — neither is an answer
+    about the repository, so both are UNAVAILABLE.
     """
+    label = " ".join(str(a) for a in list(args)[:2])
+
     argv: list[str] = ["git"]
     if repo_path:
         # A caller-controlled path, but still refuse an option-shaped one.
         if str(repo_path).startswith("-"):
-            return None
+            return _GitResult(GIT_REFUSED, "", f"option-shaped repo path {repo_path!r}")
         argv += ["-C", str(repo_path)]
     # quotePath=false keeps UTF-8 paths literal; git still C-quotes any path
     # containing a control character, so a path can never span output lines.
@@ -215,25 +257,73 @@ def _git(
             env=env,
             check=False,
         )
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        logger.debug("commit_range: git %s failed (%s)", list(args)[:2], exc)
-        return None
-
-    if proc.returncode != 0:
-        logger.debug(
-            "commit_range: git %s exited %s", list(args)[:2], proc.returncode
+    except subprocess.TimeoutExpired:
+        return _GitResult(
+            GIT_UNAVAILABLE, "", f"git {label} timed out after {timeout}s"
         )
-        return None
-    return (proc.stdout or "").strip("\n").strip()
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        # OSError covers the interesting transients too: a missing binary, and
+        # EAGAIN/ENOMEM from fork() on a machine that has run out of headroom.
+        return _GitResult(
+            GIT_UNAVAILABLE, "", f"git {label} could not be run ({exc!r})"
+        )
+
+    stderr_lines = (proc.stderr or "").strip().splitlines()
+    tail = stderr_lines[-1][:200] if stderr_lines else ""
+
+    if proc.returncode == 0:
+        return _GitResult(
+            GIT_OK, (proc.stdout or "").strip("\n").strip(), f"git {label} ok"
+        )
+    if proc.returncode < 0:
+        return _GitResult(
+            GIT_UNAVAILABLE, "",
+            f"git {label} killed by signal {-proc.returncode}: {tail}",
+        )
+    if proc.returncode == 1:
+        return _GitResult(GIT_REFUSED, "", f"git {label} exited 1: {tail}")
+    return _GitResult(
+        GIT_UNAVAILABLE, "", f"git {label} exited {proc.returncode}: {tail}"
+    )
+
+
+def _git(
+    args: Sequence[str],
+    *,
+    repo_path: Optional[str] = None,
+    timeout: float = _TIMEOUT_QUICK,
+) -> Optional[str]:
+    """:func:`_run_git` for callers that only need "did I get a value".
+
+    Used by the *inferred* base tiers (default branch, merge-base), where a
+    refusal and an outage both correctly mean "fall through to the next tier".
+    Anywhere the difference changes what we report, call ``_run_git``.
+    """
+    result = _run_git(args, repo_path=repo_path, timeout=timeout)
+    return result.out if result.ok else None
+
+
+def _rev_parse_result(ref: str, *, repo_path: Optional[str]) -> _GitResult:
+    """Resolve a ref to a full commit sha, keeping the outcome's three states.
+
+    ``--verify --quiet`` exits 1 for a ref that does not exist, so a REFUSED
+    result here really does mean "no such commit". An empty stdout on a zero
+    exit is not something git does, but it would be indistinguishable from a
+    resolved sha downstream, so it is normalised to REFUSED.
+    """
+    result = _run_git(
+        ["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        repo_path=repo_path,
+    )
+    if result.ok and not result.out:
+        return _GitResult(GIT_REFUSED, "", f"rev-parse {ref}: empty output")
+    return result
 
 
 def _rev_parse(ref: str, *, repo_path: Optional[str]) -> Optional[str]:
     """Resolve a ref to a full commit sha, or ``None`` when it doesn't exist."""
-    out = _git(
-        ["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-        repo_path=repo_path,
-    )
-    return out or None
+    result = _rev_parse_result(ref, repo_path=repo_path)
+    return result.out if result.ok else None
 
 
 def _is_shallow(repo_path: Optional[str]) -> bool:
@@ -241,15 +331,26 @@ def _is_shallow(repo_path: Optional[str]) -> bool:
     return _git(["rev-parse", "--is-shallow-repository"], repo_path=repo_path) == "true"
 
 
-def _resolve_ref(ref: Optional[str], *, repo_path: Optional[str]) -> Optional[str]:
-    """Resolve a raw CI/user ref through its candidate forms."""
+def _resolve_ref(ref: Optional[str], *, repo_path: Optional[str]) -> _GitResult:
+    """Resolve a raw CI/user ref through its candidate forms.
+
+    REFUSED only when git answered "no" for every candidate. If any candidate
+    probe went UNAVAILABLE we do not know whether the ref exists — reporting
+    that as "unresolvable" would blame the user's ref for our own outage, and
+    is exactly the conflation this module used to make.
+    """
     if not ref:
-        return None
+        return _GitResult(GIT_REFUSED, "", "no ref to resolve")
+    unavailable: Optional[_GitResult] = None
     for cand in _candidate_refs(ref):
-        sha = _rev_parse(cand, repo_path=repo_path)
-        if sha:
-            return sha
-    return None
+        result = _rev_parse_result(cand, repo_path=repo_path)
+        if result.ok:
+            return result
+        if result.status == GIT_UNAVAILABLE and unavailable is None:
+            unavailable = result
+    if unavailable is not None:
+        return unavailable
+    return _GitResult(GIT_REFUSED, "", f"{ref!r} matched no known ref form")
 
 
 def _default_branch_ref(repo_path: Optional[str]) -> Optional[str]:
@@ -468,17 +569,28 @@ def _parse_log(out: str) -> list[dict[str, Any]]:
     return commits
 
 
+class _LogResult(NamedTuple):
+    """``git log`` outcome: the commits plus why there might not be any."""
+
+    status: str
+    detail: str
+    commits: list[dict[str, Any]]
+    truncated: bool
+
+
 def _log_commits(
     revs: Sequence[str], *, repo_path: Optional[str], limit: int
-) -> Optional[tuple[list[dict[str, Any]], bool]]:
+) -> _LogResult:
     """Collect commits for a rev spec, oldest→newest, with per-commit files.
 
-    Returns ``(commits, truncated)`` or ``None`` when git failed. Asks for
-    ``limit + 1`` so truncation is detectable, keeps the NEWEST ``limit``
-    (the likeliest culprits) and returns them oldest→newest to match the
-    server's normalizer.
+    Asks for ``limit + 1`` so truncation is detectable, keeps the NEWEST
+    ``limit`` (the likeliest culprits) and returns them oldest→newest to match
+    the server's normalizer.
+
+    A non-OK status means the list is empty because git did not deliver, which
+    the caller must not confuse with a genuinely empty range.
     """
-    out = _git(
+    result = _run_git(
         [
             "log",
             f"--max-count={limit + 1}",
@@ -490,16 +602,187 @@ def _log_commits(
         repo_path=repo_path,
         timeout=_TIMEOUT_LOG,
     )
-    if out is None:
-        return None
-    commits = _parse_log(out)          # newest-first
+    if not result.ok:
+        return _LogResult(result.status, result.detail, [], False)
+    commits = _parse_log(result.out)   # newest-first
     truncated = len(commits) > limit
     commits = commits[:limit]
     commits.reverse()                  # oldest→newest
-    return commits, truncated
+    return _LogResult(GIT_OK, result.detail, commits, truncated)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
+# Why a collection ended the way it did. Stable slugs: they are what a CI
+# failure message quotes, so they are part of the contract.
+REASON_OK = "ok"
+REASON_DEGRADED = "degraded_head_only"
+REASON_DISABLED = "disabled"
+REASON_NO_CHECKOUT = "not_a_git_checkout"
+REASON_GIT_FAILED = "git_failed"
+REASON_USER_BASE_UNRESOLVABLE = "user_base_unresolvable"
+REASON_NO_BASE = "no_base_commit"
+REASON_EMPTY_RANGE = "empty_range"
+REASON_LOG_FAILED = "log_failed"
+REASON_ERROR = "unexpected_error"
+
+# Reasons that mean something went wrong rather than "there was nothing to
+# send". Only these are worth interrupting a user's log with — everything
+# else is a normal, expected empty result on somebody's machine.
+_LOUD_REASONS = frozenset({REASON_GIT_FAILED, REASON_ERROR})
+
+
+class CommitRangeOutcome(NamedTuple):
+    """A collected range (or ``None``) together with why it is what it is.
+
+    ``reason`` is one of the ``REASON_*`` slugs; ``detail`` is human text
+    carrying git's own exit code and stderr tail when git is involved.
+    """
+
+    commit_range: Optional[dict[str, Any]]
+    reason: str
+    detail: str
+
+
+def _outcome(
+    commit_range: Optional[dict[str, Any]], reason: str, detail: str
+) -> CommitRangeOutcome:
+    """Log the outcome at a level that matches how surprising it is."""
+    if reason in _LOUD_REASONS:
+        logger.warning("commit_range: %s — %s", reason, detail)
+    else:
+        logger.debug("commit_range: %s — %s", reason, detail)
+    return CommitRangeOutcome(commit_range, reason, detail)
+
+
+def diagnose_commit_range(
+    *,
+    explicit_base: Optional[str] = None,
+    overrides: Optional[Mapping[str, Any]] = None,
+    env: Optional[Mapping[str, str]] = None,
+    repo_path: Optional[str] = None,
+    enabled: Optional[bool] = None,
+) -> CommitRangeOutcome:
+    """:func:`collect_commit_range`, but it tells you why it produced nothing.
+
+    Identical behaviour and the same never-raises contract; the difference is
+    that the cause survives the call instead of vanishing into a DEBUG log
+    nobody has enabled. Prefer this in tests and anywhere an empty range would
+    otherwise be a mystery.
+    """
+    e: Mapping[str, str] = os.environ if env is None else env
+
+    if not is_collection_enabled(e, overrides=overrides, explicit=enabled):
+        return _outcome(None, REASON_DISABLED, "collection disabled")
+
+    try:
+        head = _rev_parse_result("HEAD", repo_path=repo_path)
+        if not head.ok:
+            # Nothing has proven git usable here yet: a missing binary, a
+            # plain directory and a broken checkout all land here, and none of
+            # them deserves more than DEBUG on a client that must not intrude.
+            # The detail carries git's own words for whoever does look.
+            return _outcome(None, REASON_NO_CHECKOUT, head.detail)
+        head_sha = head.out
+
+        shallow = _is_shallow(repo_path)
+
+        def head_only(reason: str, detail: str) -> CommitRangeOutcome:
+            """Degraded mode: emit only the commit we can prove is present."""
+            if not shallow:
+                return _outcome(None, reason, detail)
+            log = _log_commits([head_sha], repo_path=repo_path, limit=1)
+            if not log.commits:
+                return _outcome(
+                    None,
+                    REASON_GIT_FAILED if log.status == GIT_UNAVAILABLE
+                    else REASON_LOG_FAILED,
+                    f"head-only log produced nothing: {log.detail}",
+                )
+            return _outcome(
+                {
+                    "base_commit": None,
+                    "head_commit": head_sha,
+                    "commits": log.commits,
+                    "base_source": "head_only",
+                    "degraded": True,
+                    "truncated": False,
+                },
+                REASON_DEGRADED,
+                f"shallow clone: {detail}",
+            )
+
+        base_source = "user"
+        base_ref = _user_base(explicit_base, overrides, e)
+        base_sha: Optional[str] = None
+
+        if base_ref:
+            resolved = _resolve_ref(base_ref, repo_path=repo_path)
+            if resolved.status == GIT_UNAVAILABLE:
+                # git worked a moment ago and has now stopped answering. We do
+                # NOT know that the user's base is bad, so we must not say so.
+                return _outcome(
+                    None, REASON_GIT_FAILED,
+                    f"resolving user base {base_ref!r}: {resolved.detail}",
+                )
+            base_sha = resolved.out or None
+            if not base_sha:
+                # A user told us the base and git says it does not exist.
+                # Substituting a guess would silently report a different range
+                # than they asked for, so degrade (shallow) or stay silent.
+                return head_only(
+                    REASON_USER_BASE_UNRESOLVABLE,
+                    f"user base {base_ref!r} does not resolve: {resolved.detail}",
+                )
+        else:
+            ci_ref = detect_ci_base_ref(e)
+            if ci_ref:
+                # Inferred tier: a refusal and an outage both mean "fall
+                # through", so the distinction genuinely does not matter here.
+                base_sha = _resolve_ref(ci_ref, repo_path=repo_path).out or None
+            base_source = "ci"
+            if base_sha == head_sha:
+                base_sha = None       # e.g. default-branch pipeline
+            if not base_sha:
+                base_sha = _fallback_base(head_sha, repo_path=repo_path)
+                base_source = "git_fallback"
+
+        if not base_sha or base_sha == head_sha:
+            return head_only(REASON_NO_BASE, "no base commit could be determined")
+
+        log = _log_commits(
+            [f"{base_sha}..{head_sha}"], repo_path=repo_path, limit=MAX_COMMITS
+        )
+        if log.status != GIT_OK:
+            # A refusal is routine in a shallow clone, where base isn't in the
+            # grafted history. An outage is not, and is reported as one.
+            return head_only(
+                REASON_GIT_FAILED if log.status == GIT_UNAVAILABLE
+                else REASON_LOG_FAILED,
+                f"git log {base_sha[:8]}..{head_sha[:8]}: {log.detail}",
+            )
+        if not log.commits:
+            return _outcome(
+                None, REASON_EMPTY_RANGE,
+                f"empty range {base_sha[:8]}..{head_sha[:8]}",
+            )
+
+        return _outcome(
+            {
+                "base_commit": base_sha,
+                "head_commit": head_sha,
+                "commits": log.commits,
+                "base_source": base_source,
+                "degraded": False,
+                "truncated": log.truncated,
+            },
+            REASON_OK,
+            f"{len(log.commits)} commits via {base_source}"
+            f"{' (truncated)' if log.truncated else ''}",
+        )
+    except Exception as exc:  # noqa: BLE001 — must never fail the test run
+        return _outcome(None, REASON_ERROR, f"collection failed ({exc!r})")
+
 
 def collect_commit_range(
     *,
@@ -519,86 +802,16 @@ def collect_commit_range(
     ``base_source`` is one of ``user`` / ``ci`` / ``git_fallback`` /
     ``head_only``; ``degraded`` is True for the shallow-clone head-only case.
 
-    Never raises. Every failure path logs at DEBUG and yields ``None``.
+    Never raises. Call :func:`diagnose_commit_range` when you need to know
+    which of those ``None``\\ s you got.
     """
-    e: Mapping[str, str] = os.environ if env is None else env
-
-    if not is_collection_enabled(e, overrides=overrides, explicit=enabled):
-        logger.debug("commit_range: collection disabled")
-        return None
-
-    try:
-        head_sha = _rev_parse("HEAD", repo_path=repo_path)
-        if not head_sha:
-            logger.debug("commit_range: no resolvable HEAD — not a git checkout")
-            return None
-
-        shallow = _is_shallow(repo_path)
-
-        def head_only(reason: str) -> Optional[dict[str, Any]]:
-            """Degraded mode: emit only the commit we can prove is present."""
-            if not shallow:
-                logger.debug("commit_range: no base resolved (%s) — omitting", reason)
-                return None
-            result = _log_commits([head_sha], repo_path=repo_path, limit=1)
-            if not result or not result[0]:
-                return None
-            logger.debug("commit_range: shallow clone (%s) — head-only range", reason)
-            return {
-                "base_commit": None,
-                "head_commit": head_sha,
-                "commits": result[0],
-                "base_source": "head_only",
-                "degraded": True,
-                "truncated": False,
-            }
-
-        base_source = "user"
-        base_ref = _user_base(explicit_base, overrides, e)
-        base_sha = _resolve_ref(base_ref, repo_path=repo_path) if base_ref else None
-
-        if base_ref and not base_sha:
-            # A user told us the base and we cannot resolve it. Substituting a
-            # guess would silently report a different range than they asked
-            # for, so degrade (shallow) or stay silent.
-            return head_only(f"user base {base_ref!r} unresolvable")
-
-        if not base_ref:
-            ci_ref = detect_ci_base_ref(e)
-            base_sha = _resolve_ref(ci_ref, repo_path=repo_path) if ci_ref else None
-            base_source = "ci"
-            if base_sha == head_sha:
-                base_sha = None       # e.g. default-branch pipeline
-            if not base_sha:
-                base_sha = _fallback_base(head_sha, repo_path=repo_path)
-                base_source = "git_fallback"
-
-        if not base_sha or base_sha == head_sha:
-            return head_only("no base commit")
-
-        result = _log_commits(
-            [f"{base_sha}..{head_sha}"], repo_path=repo_path, limit=MAX_COMMITS
-        )
-        if result is None:
-            # Typical in a shallow clone where base isn't in the grafted history.
-            return head_only("git log failed for base..head")
-
-        commits, truncated = result
-        if not commits:
-            logger.debug("commit_range: empty range %s..%s", base_sha[:8], head_sha[:8])
-            return None
-
-        return {
-            "base_commit": base_sha,
-            "head_commit": head_sha,
-            "commits": commits,
-            "base_source": base_source,
-            "degraded": False,
-            "truncated": truncated,
-        }
-    except Exception as exc:  # noqa: BLE001 — must never fail the test run
-        logger.debug("commit_range: collection failed (%s)", exc)
-        return None
+    return diagnose_commit_range(
+        explicit_base=explicit_base,
+        overrides=overrides,
+        env=env,
+        repo_path=repo_path,
+        enabled=enabled,
+    ).commit_range
 
 
 def resolve_commit_range(

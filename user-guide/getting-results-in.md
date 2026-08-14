@@ -129,7 +129,9 @@ If none of these resolve, **nothing is sent**. An absent range is honest; a wron
 - `testlookup.commit_range: false` in `testlookup.yaml`
 - `TestLookupReporter(…, collect_commit_range=False)` / `LiveStream(…, collect_commit_range=False)`
 
-Collection **can never fail your test run**. Any git problem — no git binary, not a repo, timeout, unreadable history — is logged at debug level and the range is simply omitted. It also never writes to stdout, so `testlookup upload … --output json | jq` stays clean.
+Collection **can never fail your test run**. Any git problem — no git binary, not a repo, timeout, unreadable history — omits the range rather than raising. It also never writes to stdout, so `testlookup upload … --output json | jq` stays clean.
+
+**Working out why nothing was sent.** The everyday cases (no git here, nothing to diff against, you turned it off) are logged at debug level, because a run with nothing to report shouldn't clutter your output. The exception is a git that answered a moment ago and then stopped — a timeout, a `fatal:`, a process killed by the OOM killer — which is logged at **warning** level with git's own exit code and message, because that is a problem with your machine rather than an empty result. If you want the full picture, `commit_range.diagnose_commit_range(…)` returns the range alongside a `reason` and a `detail` explaining it.
 
 Collection currently ships in the **CLI** and the **Python SDK**. The JS, Java, and Go SDKs still send CI context but not the commit range; set `TESTLOOKUP_COMMIT_RANGE_BASE` there if you need it, or upload via the CLI.
 
