@@ -215,6 +215,49 @@ async def list_test_cases(
     return {"items": items, "total": total, "page": page, "size": size, "pages": pages}
 
 
+@router.get("/{run_id}/attribution")
+async def run_attribution(
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
+):
+    """Per-failure verdicts for this run: yours, flaky, infrastructure, or unknown.
+
+    At Google roughly **84% of pass→fail transitions involve a flaky test**, so a
+    raw "new failure" list is mostly noise and trains engineers to dismiss the
+    real ones. This composes five signals — the transition against the previous
+    run, the flakiness score, systemic co-failure cluster membership, overlap
+    with the commit range's changed files, and this project's measured
+    classifier calibration — into one verdict per failing test.
+
+    Every verdict carries **all five inputs and the votes behind it**, because
+    when a verdict disagrees with an engineer the useful question is *which
+    input was wrong*, and that is unanswerable from a bare label.
+
+    ``UNCERTAIN`` is a first-class answer, returned whenever the signals
+    disagree or are too thin — not a failure to decide.
+
+    **Advisory only.** Nothing here suppresses, hides or auto-closes a failure:
+    a newly-flaky test reflects a real bug often enough that suppression is the
+    one irreversible mistake available.
+    """
+    from app.services.failure_attribution_service import attribute_run
+
+    results = await attribute_run(db, run_id)
+    return {
+        "items": [
+            {
+                "test_case_id": str(case.id),
+                "test_name": case.test_name,
+                "suite_name": case.suite_name,
+                **attribution.to_dict(),
+            }
+            for case, attribution in results
+        ],
+        "total": len(results),
+    }
+
+
 @router.get("/{run_id}/tests/{test_id}")
 async def get_test_case(
     run_id: uuid.UUID,

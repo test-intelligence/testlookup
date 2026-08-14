@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Feat: test-intelligence Phase 4 — the attribution verdict
+
+Phase 4 of `architecture/TEST_INTELLIGENCE_PLAN.md`, migration `0133`. The flagship, and the item
+the rest of the roadmap existed to reach.
+
+At Google roughly **84% of pass→fail transitions involve a flaky test**. A raw transition is
+therefore weak evidence of a real regression, and a product that presents every new red as "new
+failure" produces a false-positive flood that trains engineers to dismiss the real ones. Everything
+needed to do better already existed here and had never been composed: flaky scores (Phase 2),
+systemic co-failure clusters (Phase 3), commit-range attribution, a last-green baseline, and
+measured per-project classifier calibration (Phase 0).
+
+`GET /api/v1/runs/{run_id}/attribution` now returns one verdict per failing test —
+`LIKELY_YOUR_CHANGE`, `LIKELY_FLAKY`, `LIKELY_INFRA` or `UNCERTAIN` — with **all five inputs and the
+votes behind them**. When a verdict disagrees with an engineer the useful question is *which input
+was wrong*, and that is unanswerable from a bare label.
+
+The composition is a vote count, not a cascade of conditionals: exactly one supported verdict wins,
+two or more means `UNCERTAIN`, none means `UNCERTAIN`. **Disagreement cannot be resolved to whichever
+signal scored highest** — that would manufacture precisely the false confidence the verdict exists to
+remove. Calibration *caps* rather than hides: where a project's classifier measures weak, or was
+never measured, the verdict degrades to `UNCERTAIN` while still reporting every input.
+
+Rationales name the specific evidence — the changed files, the cluster and its cause, the score and
+its confidence — because practitioners reject generic factor-level explanations.
+
+**Nothing suppresses anything.** Roughly 1 in 6 newly-flaky tests reflected a real production bug,
+so `LIKELY_FLAKY` never reads as "safe to ignore"; the schema has no suppression column, the service
+offers no such field, and tests assert both. Confidence exists to rank what a human sees, never to
+hide it.
+
+One defect found by this phase's multi-pass review and fixed before merge: the `LIKELY_YOUR_CHANGE`
+signal read `run.changed_files`, a column `TestRun` does not have — the changed files live in
+`run_commit_ranges.commits[].files`. `getattr` with a default swallowed it, so the overlap signal
+would never have voted and that verdict could never have been emitted, silently. **This is the
+second instance of this class in the roadmap** (Phase 0 read `oc_namespace` where the column is
+`ocp_namespace`), so a new test now asserts every ORM attribute the composer reads exists on the
+real model — guarding the class rather than the instance.
+
+26 regression tests, with the three load-bearing properties verified by deliberate mutation.
+
+
 ### 2026-08-14 — Fix: the denominators behind the headline numbers (F-080, F-067)
 
 Two long-standing findings, resolved together because they share one question: *what population is

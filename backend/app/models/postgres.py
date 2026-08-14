@@ -4252,6 +4252,48 @@ _LIVE_QUARANTINE_STATES = (
 )
 
 
+# ── Failure attribution verdict (roadmap Phase 4, migration 0133) ──────────
+#
+# One composed verdict per failure, with the five signals it was composed from
+# stored beside it. The snapshot is not decoration: when a verdict disagrees
+# with an engineer the useful question is WHICH INPUT was wrong, and that is
+# unanswerable from a bare label. Signals also move (scores recompute nightly,
+# clusters rebuild on a window), so without the snapshot yesterday's verdict
+# cannot be explained with today's data.
+#
+# There is deliberately no "suppressed" column. Roughly 1 in 6 newly-flaky
+# tests reflected a real production bug, so the schema does not offer the
+# option of silencing a failure.
+class FailureAttribution(Base):
+    __tablename__ = "failure_attribution"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    test_case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_cases.id", ondelete="CASCADE"), nullable=False,
+    )
+    test_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False,
+    )
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    verdict: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Ranks what a human sees. Never used to hide anything.
+    confidence: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    rationale: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    inputs: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ux_failure_attribution_test_case", "test_case_id", unique=True),
+        Index("ix_failure_attribution_run", "test_run_id"),
+        Index("ix_failure_attribution_project_verdict", "project_id", "verdict"),
+    )
+
+
 # ── Systemic flake clusters (roadmap Phase 3, migration 0132) ──────────────
 #
 # Tests that fail TOGETHER across runs. Deliberately NOT ``FailureCluster``:
