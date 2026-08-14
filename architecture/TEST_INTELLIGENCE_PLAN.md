@@ -180,6 +180,42 @@ posterior, **Phase 2's scorer is descoped to the signals that work at low volume
 (volatility + retry + duration variance) and the Bayesian layer is deferred. That
 decision gets recorded here rather than discovered late.
 
+#### GATE READING — measured 2026-08-14 on the homelab
+
+Run against the live database (90-day window, distinct runs per fingerprint —
+the same logic `flaky_readiness_service` uses). **Synthetic projects excluded**:
+58 projects exist, but 51 are `ZZ …` load-test and probe artefacts created by
+this project's own benchmarks, whose run counts are bulk-ingest artefacts rather
+than CI cadence. Including them would answer a question nobody asked.
+
+The four genuine projects:
+
+| project | fingerprints | qualifying (≥20 runs) | median runs | max runs |
+|---|---|---|---|---|
+| Auth Service | 15 | **0** | 12 | 12 |
+| Inventory Service | 15 | **0** | 12 | 12 |
+| Payment Service | 15 | **0** | 12 | 12 |
+| Checkout Service | 12 | **0** | 5 | 5 |
+
+**Verdict: the Bayesian layer is NOT viable on this data, and Phase 2 is
+descoped accordingly.** Not one project clears the bar, and not narrowly — the
+thresholds want ≥25 fingerprints with ≥20 runs each, while these projects have
+12–15 fingerprints *in total* and a median of 5–12 runs. A moving-window
+posterior here would be dominated by its prior: a number that looks like a
+measurement and is mostly an assumption.
+
+This is research open question #4 — *do hyperscale magnitudes hold for small
+self-hosted teams?* — answered with data instead of assumption, which is the
+entire reason Phase 0 came first.
+
+**Honest limits of this reading.** It is one deployment, and a developer's
+homelab rather than a production tenant, so it is evidence about the plausible
+low end, not proof about every user. It does not say a Bayesian scorer is
+worthless — it says building one *now*, tuned against data like this, would be
+tuning against noise. Re-run the census when a real high-cadence corpus exists
+(`GET /api/v1/metrics/flaky-readiness?project_id=…`); the gate is a measurement,
+not a permanent ruling.
+
 **Risk**: backtest is retrospective and can be slow on large corpora — run it as
 an off-peak Celery beat job, not inline.
 
@@ -234,6 +270,17 @@ by whether failures carry distinctive exception types. Therefore:
 Flag: `flaky.calibration_gate`.
 
 **P2-B — Continuous 0–1 flakiness score** (roadmap #5, §2.4 3–0)
+
+> **DESCOPED BY THE PHASE 0 GATE (measured 2026-08-14).** No project on the
+> measured deployment has the history to support a windowed posterior — see the
+> gate reading in Phase 0. **Build the four signals and a bounded composite
+> score; do NOT build the Bayesian posterior layer yet.** The three signals we
+> already compute plus duration variance work at low volume and degrade
+> honestly; a posterior does not, because with 5–12 observations it mostly
+> reports its prior back. Every score must still carry a confidence band derived
+> from observation count, so a thin-history test is visibly thin rather than
+> confidently wrong. Revisit when the census clears on a real corpus.
+
 Bayesian posterior over a moving window, fusing four signals — three of which we
 already compute:
 

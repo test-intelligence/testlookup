@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Docs: Phase 0 gate reading — the Bayesian scorer is descoped
+
+Ran the Phase 0 readiness census against the live homelab database and recorded the verdict in
+`architecture/TEST_INTELLIGENCE_PLAN.md`. **No project has the history to support a windowed
+posterior, so Phase 2's Bayesian layer is deferred** and the scorer descopes to the signals that
+work at low volume (result volatility, retry rate, duration variance, environment consistency).
+
+Synthetic projects were excluded: 58 projects exist but 51 are `ZZ …` load-test and probe artefacts
+whose run counts are bulk-ingest artefacts rather than CI cadence. Of the four genuine projects,
+**none** clears the bar, and not narrowly — the thresholds want ≥25 fingerprints with ≥20 runs each,
+while these have 12–15 fingerprints in total and a median of 5–12 runs per fingerprint. A posterior
+computed there would be dominated by its prior: a number that looks like a measurement and is
+mostly an assumption.
+
+This answers the research's open question #4 — *do hyperscale magnitudes hold for small self-hosted
+teams?* — with data rather than assumption, which is the whole reason Phase 0 ran first. The
+limits are recorded with it: one deployment, and a developer's homelab rather than a production
+tenant, so it is evidence about the plausible low end and not proof about every user. The gate is a
+measurement, not a permanent ruling — re-running the census on a real high-cadence corpus can
+reopen it.
+
+
 ### 2026-08-14 — Feat: test-intelligence Phase 1 — surfaces that show evidence instead of erasing it
 
 Phase 1 of `architecture/TEST_INTELLIGENCE_PLAN.md`. No migration; three surfaces that depend on
