@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import LaunchStatus, Project, TestCase, TestRun
+from app.services.run_environment import normalize_environment
 from app.services.ingestion import (
     _update_run_aggregates,
     _upsert_test_case,
@@ -67,6 +68,9 @@ async def create_run_from_payload(
     pr_number: Optional[int] = None,
     ci_actor: Optional[str] = None,
     ci_run_url: Optional[str] = None,
+    # Optional (migration 0129). Absent means "not recorded", NOT "default" —
+    # see services/run_environment.py for why that distinction is load-bearing.
+    environment: Optional[str] = None,
     # Either supplied wire shape: a bare commit list, or the boundary-carrying
     # ``{base, head, commits}`` object (``SuppliedCommitRangeInput``).
     commit_range: Optional[Any] = None,
@@ -185,6 +189,7 @@ async def create_run_from_payload(
         pr_number=pr_number,
         ci_actor=ci_actor,
         ci_run_url=ci_run_url,
+        environment=normalize_environment(environment),
         status=LaunchStatus.IN_PROGRESS,
         total_tests=0,
         passed_tests=0,

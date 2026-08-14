@@ -704,6 +704,7 @@ def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
                     pr_number=payload.get("pr_number"),
                     ci_actor=payload.get("ci_actor"),
                     ci_run_url=payload.get("ci_run_url"),
+                    environment=payload.get("environment"),
                     commit_range=payload.get("commit_range"),
                 )
                 count = await ingest_test_results(db, run, payload["results"])
@@ -760,6 +761,7 @@ def ingest_uploaded_file(
     pr_number: int = None,
     ci_actor: str = None,
     ci_run_url: str = None,
+    environment: str = None,
     commit_range=None,  # bare list OR {base, head, commits}; both JSON-safe
 ):
     """
@@ -866,6 +868,7 @@ def ingest_uploaded_file(
                     pr_number=pr_number,
                     ci_actor=ci_actor,
                     ci_run_url=ci_run_url,
+                    environment=environment,
                     commit_range=commit_range,
                 )
                 if archive_prefix:
@@ -4186,6 +4189,78 @@ def run_retention_purges(self, project_id: str | None = None) -> dict:
                 "[Task %s] retention purge sweep: projects=%d errors=%d",
                 self.request.id, out.get("projects", 0), out.get("errors", 0),
             )
+            return out
+
+    return cast(dict, _run_async(_run()))
+
+
+@celery_app.task(bind=True, name="app.worker.tasks.calibrate_flaky_classifiers")
+def calibrate_flaky_classifiers(self, project_id: str | None = None) -> dict:
+    """Measure how well the flaky classifier actually works, per project.
+
+    Roadmap Phase 0 (P0-2). The backtest is retrospective and reads a 90-day
+    window of failures per project, so it runs off-peak on a beat rather than
+    inline on any request path.
+
+    Nothing consumes the result yet — Phase 0 measures, a later phase gates on
+    it. A per-project try/except keeps one bad project from stopping the sweep,
+    matching the retention-purge sweep's shape.
+    """
+    async def _run():
+        # Imported inside the task, matching this module's convention: a
+        # module-level ``AsyncSessionLocal`` binding would pin the engine that
+        # ``_run_async`` disposes between tasks (see F-027).
+        from sqlalchemy import select
+
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import Project
+        from app.services.flaky_classifier_calibration import (
+            calibrate_project,
+            store_calibration,
+        )
+
+        with _beat_span("calibrate_flaky_classifiers") as span:
+            measured = insufficient = errors = 0
+            async with AsyncSessionLocal() as db:
+                if project_id:
+                    ids = [uuid.UUID(project_id)]
+                else:
+                    ids = [
+                        row for row in (
+                            await db.execute(select(Project.id).where(Project.is_active.is_(True)))
+                        ).scalars().all()
+                    ]
+
+                for pid in ids:
+                    try:
+                        result = await calibrate_project(db, pid)
+                        await store_calibration(db, result)
+                        await db.commit()
+                        if result.is_measured:
+                            measured += 1
+                        else:
+                            insufficient += 1
+                    except Exception as exc:  # noqa: BLE001 — one project must not stop the sweep
+                        errors += 1
+                        await db.rollback()
+                        logger.warning(
+                            "flaky_calibration_failed",
+                            project_id=str(pid),
+                            error_type=type(exc).__name__,
+                        )
+
+            out = {
+                "projects": len(ids),
+                "measured": measured,
+                "insufficient": insufficient,
+                "errors": errors,
+            }
+            span.set_attribute("result.projects", out["projects"])
+            span.set_attribute("result.measured", measured)
+            span.set_attribute("result.errors", errors)
+            # kwargs, not stdlib positional %s: this module binds a structlog
+            # logger, whose BoundLogger.info is (event, **kw).
+            logger.info("flaky_calibration_sweep", **out)
             return out
 
     return cast(dict, _run_async(_run()))

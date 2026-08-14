@@ -274,6 +274,14 @@ celery_app.conf.update(
             "task": "app.worker.tasks.reconcile_canonical_deletions",
             "schedule": crontab(hour=5, minute=30),
         },
+        # Roadmap Phase 0: measure per-project flaky-classifier specificity.
+        # Retrospective 90-day backtest per project, so it runs off-peak and
+        # well after the nightly ingestion tail. Read-only as far as the
+        # product is concerned — nothing consumes the result yet.
+        "nightly-flaky-classifier-calibration": {
+            "task": "app.worker.tasks.calibrate_flaky_classifiers",
+            "schedule": crontab(hour=5, minute=45),
+        },
         # Backfill /my-failures inbox: any FAILED/BROKEN TestCase still
         # unassigned (project had no owner config at ingest time, or a
         # finalize_run step failed in isolation) gets re-resolved here.

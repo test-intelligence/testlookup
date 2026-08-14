@@ -296,6 +296,13 @@ class TestRun(Base):
     ci_actor: Mapped[Optional[str]] = mapped_column(String(120))
     ci_run_url: Mapped[Optional[str]] = mapped_column(String(1000))
 
+    # Environment this run executed against (migration 0129, roadmap Phase 0).
+    # Optional on the wire — pre-0129 runs and callers that never send it keep
+    # NULL, and readers derive a fallback key rather than pretending every old
+    # run shared one environment. Consumed by the per-test history timeline and
+    # as the "environment consistency" signal in the flakiness score.
+    environment: Mapped[Optional[str]] = mapped_column(String(100))
+
     # Aggregated counts
     total_tests: Mapped[int] = mapped_column(Integer, default=0)
     passed_tests: Mapped[int] = mapped_column(Integer, default=0)
@@ -4243,6 +4250,40 @@ _LIVE_QUARANTINE_STATES = (
     FlakyQuarantineStatus.RECHECK_SCHEDULED.value,
     FlakyQuarantineStatus.RE_QUARANTINED.value,
 )
+
+
+# ── Flaky-classifier calibration (roadmap Phase 0, migration 0130) ─────────
+#
+# Measured quality of the error-signature matching we already ship, per
+# project. Published measurement of that technique found specificity swinging
+# from 100% to no-better-than-random ACROSS projects, so "does our classifier
+# work here?" is a per-project empirical question, not a global assumption.
+#
+# Written by a scheduled backtest; read by nobody in Phase 0 — measuring is the
+# whole deliverable. A later phase gates suppression on these numbers.
+class FlakyClassifierCalibration(Base):
+    __tablename__ = "flaky_classifier_calibration"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    method: Mapped[str] = mapped_column(String(50), nullable=False)
+    # NULL means "not enough data to answer" — never coerce this to 0.0, which
+    # would read as "measured, and terrible" instead of "unmeasured".
+    specificity: Mapped[Optional[float]] = mapped_column(Float)
+    sample_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    true_negatives: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    false_positives: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    insufficient_reason: Mapped[Optional[str]] = mapped_column(String(200))
+    window_days: Mapped[int] = mapped_column(Integer, default=90, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ux_flaky_calibration_project_method", "project_id", "method", unique=True),
+    )
 
 
 # ── Performance Baselines (Tier 2 item 10) ─────────────────────────────────

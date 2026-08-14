@@ -2456,6 +2456,12 @@ class IngestPayload(BaseModel):
     pr_number: Optional[int] = Field(None, ge=1)
     ci_actor: Optional[str] = Field(None, max_length=120)
     ci_run_url: Optional[str] = Field(None, max_length=1000)
+    # Environment this run executed against (roadmap Phase 0, migration 0129).
+    # Optional: omitting it means "not recorded", and readers derive a
+    # best-effort key rather than assuming every silent run shared one
+    # environment. Free text so a team's own vocabulary (staging, ci-linux,
+    # pixel-7) survives; normalized on the way in.
+    environment: Optional[str] = Field(None, max_length=100)
     # Commit attribution (US-8.1, air-gapped path) — optional pushed commit
     # list ([{sha, author, message, files}]) so callers can supply the range
     # since the last green run and get suspect ranking with no VCS call.

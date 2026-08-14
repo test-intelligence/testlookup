@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Feat: test-intelligence Phase 0 — measure before building
+
+Phase 0 of `architecture/TEST_INTELLIGENCE_PLAN.md`. **No user-visible behaviour changes**: this
+phase exists to answer, on real data, whether the later phases are worth building — and to close
+the one prerequisite gap they all depend on. Migrations `0129` and `0130`.
+
+**P0-1 — the environment dimension.** `test_runs` recorded branch, commit, CI provider and the
+OpenShift fields but nothing answering "which environment did this run execute against?". Two
+downstream items need it: the per-test history timeline (the practitioner ask is explicitly a
+history annotated with environment metadata) and the flakiness score, which fuses *environment
+consistency* as one of four signals. Added as an optional field on both ingest paths — omitting it
+records "not known".
+
+The load-bearing decision is in `services/run_environment.py`: an unrecorded environment resolves
+to `None`, **never** to a shared literal like `"default"`. Coalescing would put thousands of
+unrelated historical runs in one synthetic group, and the environment-consistency signal would then
+read "perfectly consistent" for a corpus that simply never recorded it — a fabricated consistency,
+the same class of mistake as a fabricated confidence. Where nothing was recorded we derive a
+best-effort key from the platform fields and *mark it derived* so consumers can weight it down.
+Feature branches collapse to one `topic` class rather than one group per branch, which would
+otherwise manufacture thousands of trivially "inconsistent" environments.
+
+**P0-2 — classifier calibration.** The product already classifies failures partly by matching error
+signatures. Published measurement of that exact technique (ICST 2024, 230,439 failures, 22 projects)
+found specificity ranging from 100% to no better than random *across projects*, driven by whether
+failures carry distinctive exception types. So `flaky_classifier_calibration` backtests our own
+classifier per project and stores the measured specificity. Below a 30-sample floor it stores
+`NULL` plus a reason — never a number. Runs on a nightly beat (05:45 UTC), since the backtest is
+retrospective and must not sit on a request path. Nothing consumes the result yet; Phase 0 measures,
+a later phase gates on it.
+
+**P0-3 — readiness census.** `GET /api/v1/metrics/flaky-readiness` answers whether a project has the
+history to support a windowed posterior at all. The evidence behind probabilistic scoring comes from
+hyperscale monorepos; a self-hosted team's corpus may be an order of magnitude thinner, and a
+fingerprint seen three times can only produce a number that is mostly prior. Reports
+`available: false` with a concrete reason below threshold, mirroring `/metrics/tia-readiness`, and
+publishes the thresholds it judged against so the verdict can be argued with.
+
+Three defects found by the multi-pass review of this phase and fixed before merge:
+
+- The OpenShift derivation read `oc_namespace`, but the column is **`ocp_namespace`**. `getattr`
+  with a default swallowed the typo, so the branch was dead code that failed silently on every
+  OpenShift run.
+- `environment` was accepted by the pipeline but **no caller passed it** — the column would have
+  shipped and stayed NULL forever. Now threaded through the wire schema and every ingestion hop,
+  with a test that walks the whole seam.
+- The readiness census counted test-case **rows**, not distinct runs, so a parameterised or retried
+  test inflated the count and a shallow project could clear a gate named "runs per fingerprint" —
+  fabricated readiness inside the gate built to prevent it.
+
+28 regression tests pin the honesty properties rather than happy paths, and each was verified to
+fail under deliberate mutation of the property it guards.
+
 ### 2026-08-14 — Docs: phased implementation plan for the test-intelligence roadmap
 
 `architecture/TEST_INTELLIGENCE_PLAN.md` turns the verified findings in

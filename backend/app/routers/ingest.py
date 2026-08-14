@@ -151,6 +151,9 @@ async def ingest_file(
     pr_number: int = Form(None, ge=1),
     ci_actor: str = Form(None, max_length=120),
     ci_run_url: str = Form(None, max_length=1000),
+    # Environment this run executed against (roadmap Phase 0). Optional —
+    # omitting it records "not known" rather than a synthetic default.
+    environment: str = Form(None, max_length=100),
     # Commit attribution (US-8.1, air-gapped path) — an optional JSON-encoded
     # list of ``{sha, author, message, files}`` the CLI can supply so suspect
     # ranking needs no outbound VCS call. Parsed + bounded below.
@@ -296,6 +299,7 @@ async def ingest_file(
         pr_number=pr_number,
         ci_actor=ci_actor,
         ci_run_url=ci_run_url,
+        environment=environment,
         commit_range=commit_range_arg,
     )
 

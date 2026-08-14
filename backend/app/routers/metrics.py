@@ -8,6 +8,7 @@ from app.core.deps import get_accessible_project_ids, get_current_active_user
 from app.db.postgres import get_db
 from app.models.postgres import User
 from app.services.commit_attribution_service import get_tia_readiness
+from app.services.flaky_readiness_service import get_flaky_readiness
 from app.services.metrics_service import get_dashboard_summary, get_trend_data
 
 router = APIRouter(prefix="/api/v1/metrics", tags=["Metrics"])
@@ -118,3 +119,46 @@ async def tia_readiness(
     except (ValueError, TypeError):
         raise HTTPException(status_code=422, detail="project_id must be a UUID")
     return await get_tia_readiness(db, pid, days=days)
+
+
+@router.get("/flaky-readiness")
+async def flaky_readiness(
+    project_id: str = Query(
+        ..., description="Project to measure — readiness is never a fleet average",
+    ),
+    days: int = Query(90, ge=7, le=365),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Does this project have enough history to score flakiness at all?
+    (Roadmap Phase 0 gate on the continuous-score work.)
+
+    The published evidence for probabilistic flakiness scoring comes from
+    hyperscale monorepos; academic open-source corpora report per-test flake
+    rates about an order of magnitude lower. A moving-window posterior needs
+    runs *per fingerprint* to update a prior with — a test seen three times can
+    only produce a number that is mostly prior, which is fabricated confidence
+    wearing a decimal point.
+
+    So this reports how many fingerprints clear the per-fingerprint run
+    threshold, the median runs per test, and a plain ``available`` verdict with
+    ``insufficient_data_reason`` when the corpus is too thin — the same honesty
+    contract as ``/metrics/tia-readiness``.
+
+    ``project_id`` is REQUIRED: corpus depth is a claim about one project's own
+    history, so a fleet average would be meaningless.
+    """
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None and not _project_in_scope(project_id, accessible):
+        # Same shape as an empty project rather than a 403 that would confirm
+        # the project exists to someone who cannot see it.
+        return {
+            "project_id": project_id,
+            "available": False,
+            "insufficient_data_reason": "no test results are visible for this project",
+        }
+    try:
+        pid = uuid.UUID(project_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=422, detail="project_id must be a UUID")
+    return await get_flaky_readiness(db, pid, window_days=days)
