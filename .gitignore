@@ -153,6 +153,12 @@ mypy_errors.txt
 *.tmp
 Thumbs.db
 
+# Local agent/operator toolbox — vendored binaries (a ~56MB kubectl.exe), live
+# UI backups, and one-off drill scripts. Machine-specific and sometimes huge, so
+# it must never be committed; a `git add -A` swept it into a commit once and it
+# had to be stripped back out before pushing.
+.codex-tools/
+
 # Large binary/design assets — use GitHub Releases or Git LFS instead
 *.zip
 *.tar.gz
