@@ -151,6 +151,10 @@ pipeline database model.
 - Resume is intentionally non-retrying at the Celery layer. A failed claim,
   malformed plan, missing authority, or already-running/terminal pipeline fails
   closed and does not issue another model call.
+- Failures while persisting the frozen execution-context snapshot increment
+  `testlookup_pipeline_execution_context_persist_failures_total`; operators can
+  alert on this counter because the pipeline remains fail-closed rather than
+  silently changing its routing authority.
 ## Child investigation resume and reconciliation
 
 - A failed or cancelled failure-cluster child can be requeued with the stable investigation UUID through `resume_agent_child_investigation` or `resume_investigation`. The operation locks the investigation and its child pipeline before changing state.
