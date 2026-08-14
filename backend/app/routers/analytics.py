@@ -11,7 +11,14 @@ from app.core.deps import (
     resolve_project_scope,
 )
 from app.db.postgres import get_db
-from app.models.postgres import FlakyClassifierCalibration, FlakyScore, User, UserRole
+from app.models.postgres import (
+    FlakyClassifierCalibration,
+    FlakyScore,
+    SystemicFlakeCluster,
+    SystemicFlakeClusterMember,
+    User,
+    UserRole,
+)
 from app.models.schemas import (
     ClassifyUncategorizedRequest,
     ClassifyUncategorizedResponse,
@@ -154,6 +161,86 @@ async def flaky_scores(
         ],
         "total": len(rows),
         "suppression": decision.to_dict(),
+    }
+
+
+@router.get("/systemic-clusters")
+async def systemic_clusters(
+    project_id: str = Query(..., description="Project to read — clusters are per project"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Tests that fail TOGETHER across runs, with the shared cause named.
+
+    Most flaky failures are systemic rather than independent, so the useful
+    triage unit is the cluster: "these 14 tests flip together and it smells
+    like an external dependency" is one investigation where 14 individual
+    flags are 14.
+
+    **An empty list is a normal, frequent answer.** In the source study only 10
+    of 22 projects containing flaky tests contained any cluster at all. Callers
+    must render "no clusters" as a real result — never lower the bar until
+    something appears, and never present a weak grouping as a cluster, which
+    would send someone hunting a pattern that is not there.
+
+    ``cause_family`` may be ``unknown``: a cluster is still actionable without
+    a named cause, and inventing one would be worse than admitting we cannot
+    tell from the failure text.
+    """
+    scoped, _allowed = await resolve_project_scope(db, current_user, project_id)
+    if scoped is None:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+
+    clusters = list(
+        (
+            await db.execute(
+                select(SystemicFlakeCluster)
+                .where(SystemicFlakeCluster.project_id == scoped)
+                .order_by(SystemicFlakeCluster.size.desc())
+            )
+        ).scalars().all()
+    )
+    members_by_cluster: dict = {}
+    if clusters:
+        rows = (
+            await db.execute(
+                select(SystemicFlakeClusterMember).where(
+                    SystemicFlakeClusterMember.cluster_id.in_([c.id for c in clusters])
+                )
+            )
+        ).scalars().all()
+        for member in rows:
+            members_by_cluster.setdefault(member.cluster_id, []).append(member)
+
+    return {
+        "items": [
+            {
+                "cluster_key": cluster.cluster_key,
+                "label": cluster.label,
+                "cause_family": cluster.cause_family,
+                "size": cluster.size,
+                "cohesion": cluster.cohesion,
+                "co_failure_runs": cluster.co_failure_runs,
+                "window_days": cluster.window_days,
+                "computed_at": cluster.computed_at,
+                "members": [
+                    {
+                        "test_fingerprint": m.test_fingerprint,
+                        "test_name": m.test_name,
+                        "failure_runs": m.failure_runs,
+                    }
+                    for m in members_by_cluster.get(cluster.id, [])
+                ],
+            }
+            for cluster in clusters
+        ],
+        "total": len(clusters),
+        # Stated so an empty list is not read as a bug or a missing feature.
+        "empty_is_normal": (
+            "Most projects have no systemic clusters. An empty list means no "
+            "group of tests met the co-failure cohesion bar, not that "
+            "clustering failed."
+        ),
     }
 
 

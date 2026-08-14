@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Feat: test-intelligence Phase 3 — systemic co-failure clusters
+
+Phase 3 of `architecture/TEST_INTELLIGENCE_PLAN.md`, migration `0132`. Finds tests that fail
+**together across runs** and names the shared cause.
+
+Roughly 75% of flaky tests fail in co-occurring clusters rather than in isolation, with root causes
+skewing to networking and unstable external dependencies. That makes per-test triage a mismatch for
+the dominant failure mode: *"these 14 tests flip together and it smells like an external
+dependency"* is one investigation where 14 individual flaky flags are 14. It also reframes what an
+automated verdict can honestly claim — a cluster-level environmental cause is checkable, where a
+per-test code-defect explanation usually is not.
+
+**This is deliberately not `failure_clusters`.** That table is keyed `test_run_id` (a grouping
+inside one run, which dies with it) and built by semantic embedding of error *messages*. Systemic
+flakiness is neither: it groups **across runs** by **literal co-failure**. Two tests can co-fail on
+every network blip while emitting completely different errors, so message similarity would never
+join them, and a single run's grouping cannot express a pattern that only exists over time. New
+entities `systemic_flake_cluster` + `systemic_flake_cluster_member`; a regression test guards the
+boundary so the two cannot later be collapsed.
+
+Method is the published one rather than something invented here: each test is the set of run IDs it
+failed in, distance is Jaccard over those sets, agglomerative average linkage merges while the
+closest pair is under the ceiling, and a cluster is reported only at mean silhouette ≥ 0.6.
+Everything else is discarded — a weak grouping shown as a cluster sends an engineer hunting a
+pattern that is not there, which is strictly worse than saying nothing. Implemented in plain Python
+(no scipy/sklearn in this dependency set), so the metric, linkage, silhouette and cause
+classification are exhaustively testable without a database.
+
+**An empty result is the common correct answer.** In the source study only 10 of 22 projects
+containing flaky tests contained any cluster at all, so the endpoint states that explicitly rather
+than letting an empty list read as a bug, and `cause_family` may legitimately be `unknown` — a
+cluster is still actionable without a named cause, and inventing one would be worse than admitting
+we cannot tell.
+
+New: `GET /api/v1/analytics/systemic-clusters` and a nightly `recompute_systemic_clusters` beat at
+06:40 UTC, sequenced after scoring so a cluster and its members' scores describe the same window.
+
+One defect found by this phase's multi-pass review and fixed before merge: `build_clusters` was
+unbounded, and its worst case is exactly the scenario the feature targets. Average linkage
+recomputes every pairwise cluster distance per merge, so cost grows roughly cubically once merges
+are admissible — measured at 0.37s for 200 co-failing fingerprints, 6.35s for 400 and **85s for
+800**. A wide outage makes hundreds of tests co-fail, every pair becomes mergeable, and the nightly
+sweep would have stalled on the project that most needed the answer. Now capped at 400, keeping the
+most-failing tests, with truncation logged rather than silently clustering a subset as whole; 3000
+fingerprints now completes in about six seconds.
+
+27 regression tests, with the two anti-fabrication properties verified by deliberate mutation.
+
+
 ### 2026-08-14 — Feat: test-intelligence Phase 2 — signal quality
 
 Phase 2 of `architecture/TEST_INTELLIGENCE_PLAN.md`, migration `0131`. Two halves.

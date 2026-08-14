@@ -289,6 +289,13 @@ celery_app.conf.update(
             "task": "app.worker.tasks.recompute_flaky_scores",
             "schedule": crontab(hour=6, minute=10),
         },
+        # Roadmap Phase 3: rebuild systemic co-failure clusters. After
+        # scoring so a cluster and its members' scores describe the same
+        # window.
+        "nightly-systemic-cluster-recompute": {
+            "task": "app.worker.tasks.recompute_systemic_clusters",
+            "schedule": crontab(hour=6, minute=40),
+        },
         # Backfill /my-failures inbox: any FAILED/BROKEN TestCase still
         # unassigned (project had no owner config at ingest time, or a
         # finalize_run step failed in isolation) gets re-resolved here.

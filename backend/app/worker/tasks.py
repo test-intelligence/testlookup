@@ -4339,3 +4339,68 @@ def recompute_flaky_scores(self, project_id: str | None = None) -> dict:
             return out
 
     return cast(dict, _run_async(_run()))
+
+
+@celery_app.task(bind=True, name="app.worker.tasks.recompute_systemic_clusters")
+def recompute_systemic_clusters(self, project_id: str | None = None) -> dict:
+    """Rebuild systemic co-failure clusters per project (roadmap Phase 3).
+
+    Reads a 60-day window of failures per project, so it runs off-peak on a
+    beat. Per-project try/except keeps one bad project from stopping the sweep.
+
+    Most projects legitimately produce ZERO clusters — reported as
+    ``projects_without_clusters`` rather than treated as a failure.
+    """
+    async def _run():
+        from sqlalchemy import select
+
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import Project
+        from app.services.systemic_cluster_service import cluster_project, store_clusters
+
+        with _beat_span("recompute_systemic_clusters") as span:
+            clusters_written = without = errors = 0
+            async with AsyncSessionLocal() as db:
+                if project_id:
+                    ids = [uuid.UUID(project_id)]
+                else:
+                    ids = list(
+                        (
+                            await db.execute(
+                                select(Project.id).where(Project.is_active.is_(True))
+                            )
+                        ).scalars().all()
+                    )
+
+                for pid in ids:
+                    try:
+                        found = await cluster_project(db, pid)
+                        written = await store_clusters(db, pid, found)
+                        await db.commit()
+                        clusters_written += written
+                        if not written:
+                            without += 1
+                    except Exception as exc:  # noqa: BLE001 — one project must not stop the sweep
+                        errors += 1
+                        await db.rollback()
+                        # ``logger`` here is the STDLIB logger; keyword fields
+                        # belong on ``_slog``.
+                        _slog.warning(
+                            "systemic_cluster_failed",
+                            project_id=str(pid),
+                            error_type=type(exc).__name__,
+                        )
+
+            out = {
+                "projects": len(ids),
+                "clusters": clusters_written,
+                "projects_without_clusters": without,
+                "errors": errors,
+            }
+            span.set_attribute("result.projects", out["projects"])
+            span.set_attribute("result.clusters", clusters_written)
+            span.set_attribute("result.errors", errors)
+            _slog.info("systemic_cluster_sweep", **out)
+            return out
+
+    return cast(dict, _run_async(_run()))

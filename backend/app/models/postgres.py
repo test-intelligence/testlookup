@@ -4252,6 +4252,59 @@ _LIVE_QUARANTINE_STATES = (
 )
 
 
+# ── Systemic flake clusters (roadmap Phase 3, migration 0132) ──────────────
+#
+# Tests that fail TOGETHER across runs. Deliberately NOT ``FailureCluster``:
+# that one is keyed test_run_id (within a single run) and built by semantic
+# embedding of error messages, whereas this is across runs and built from
+# literal co-failure. Two tests can co-fail on every network blip while
+# reporting entirely different errors — message similarity would never join
+# them.
+class SystemicFlakeCluster(Base):
+    __tablename__ = "systemic_flake_cluster"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    cluster_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    label: Mapped[str] = mapped_column(String(500), nullable=False)
+    # NULL / "unknown" is a legitimate answer. Naming a cause we cannot
+    # evidence would be exactly the fabrication this roadmap exists to avoid.
+    cause_family: Mapped[Optional[str]] = mapped_column(String(40))
+    size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cohesion: Mapped[Optional[float]] = mapped_column(Float)
+    co_failure_runs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    window_days: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ux_systemic_cluster_project_key", "project_id", "cluster_key", unique=True),
+    )
+
+
+class SystemicFlakeClusterMember(Base):
+    __tablename__ = "systemic_flake_cluster_member"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cluster_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("systemic_flake_cluster.id", ondelete="CASCADE"), nullable=False,
+    )
+    # Fingerprint, not test_case_id: membership is about the TEST across runs.
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_name: Mapped[Optional[str]] = mapped_column(String(1000))
+    failure_runs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ux_systemic_member_cluster_fingerprint",
+            "cluster_id", "test_fingerprint", unique=True,
+        ),
+    )
+
+
 # ── Continuous flakiness score (roadmap Phase 2, migration 0131) ───────────
 #
 # A bounded 0-1 score fused from four signals, replacing a binary label. The
