@@ -101,6 +101,42 @@ next controlled checks before declaring every integration path production-ready.
 
 ---
 
+## Cycle — 2026-08-13 exploratory quality pass · FIXED, hot-patch verified
+
+- Seeded the homelab with the repository's comprehensive deterministic dataset
+  (3 projects, historical runs, defects, AI summaries, release decisions, and
+  three live ingestion jobs).
+- Exercised authenticated browser routes for Overview, Runs, Intelligence,
+  Summary Report, Failures, Flaky Coach, Releases, Defects, Trends, Value
+  Metrics, Settings, and Notification History. The in-app browser reported no
+  console errors or page errors; the authenticated notification history API
+  returned HTTP 200. Backend health/details and the current pod set were
+  healthy; the recent log scan found no ERROR/Traceback/500 signatures.
+- Found a UI trust/copy defect on the seeded Payment Service dashboard: the
+  release card reported **No-Go · ship blocked** for unresolved failures while
+  the adjacent blockers panel said **Nothing is blocking release** because no
+  failures were created in the last 24 hours. This conflated “no new failures”
+  with “no unresolved blockers.”
+- Fixed `OverviewPage` to pass the computed verdict into the blockers panel,
+  show an amber/red state for CONDITIONAL/NO_GO, and explain that existing
+  failures still require resolution or an approved override. Added a regression
+  test for the zero-new-failures + NO_GO combination. Also hardened the trend
+  chart against legacy `day` response entries so a cached legacy metric cannot
+  crash the page.
+- Verification before deploy: 40 focused frontend tests passed, production
+  TypeScript/Vite build passed, and ESLint reported 0 errors (17 pre-existing
+  warnings). Docker/Podman is unavailable on this workstation, so the new
+  frontend `dist/` was copied into the running homelab frontend pod after a
+  full backup of its static directory. This is a controlled, non-persistent
+  hot patch for live verification; the immutable image deployment remains the
+  follow-up gate when a container engine is available.
+- Post-patch verification: Overview now says “Release remains blocked by
+  unresolved failures” with the 24-hour qualifier, and the critical seeded
+  routes (Overview, Runs, Intelligence, Summary, Failures, Defects, Trends,
+  Notification Settings) rendered without browser console errors. All 18
+  homelab pods remained Ready and the backend log scan found no new ERROR,
+  Traceback, or HTTP-500 signatures.
+
 ## ✅ FINAL SUMMARY — loop terminated 2026-06-06 ~07:57 UTC (no critical bugs remain)
 Ran 3 deploy→test→verify cycles against the live homelab. **All 4 bugs found are fixed, deployed, and verified live; 0 errors across all 7 deployments; no S1/S2 bugs remain.** Cron `4a860e49` self-deleted.
 

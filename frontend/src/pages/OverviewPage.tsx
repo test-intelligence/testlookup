@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  ArrowRight, CheckCircle, Clock, HelpCircle, LayoutGrid, TrendingUp,
+  AlertTriangle, ArrowRight, CheckCircle, Clock, HelpCircle, LayoutGrid, TrendingUp,
 } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -615,7 +615,11 @@ function ExecutionTrendChart({ trends, days }: { trends: TrendPoint[]; days: num
         // legacy ``"May 16"`` format (length 6) is no longer produced;
         // the ``length >= 10`` guard keeps any stray short value usable
         // rather than crashing if a caller injects one.
-        date: p.date.length >= 10 ? p.date.slice(5, 10) : p.date,
+        // ``day`` was emitted by an older metrics response. Keep the chart
+        // honest (and crash-free) if that legacy shape is still in cache.
+        date: (p.date ?? (p as TrendPoint & { day?: string }).day ?? '').length >= 10
+          ? (p.date ?? (p as TrendPoint & { day?: string }).day ?? '').slice(5, 10)
+          : (p.date ?? (p as TrendPoint & { day?: string }).day ?? ''),
         passed: p.passed,
         failed: p.failed,
         skipped: p.skipped,
@@ -714,7 +718,15 @@ function FootStat({ k, v, small, smallTone }: { k: string; v: string; small: str
  * run" — the second naming a regression-since-green baseline that is not part
  * of the computation at all.
  */
-function BlockersPanel({ newFailures, hasData }: { newFailures: number; hasData: boolean }) {
+function BlockersPanel({
+  newFailures,
+  hasData,
+  verdict,
+}: {
+  newFailures: number
+  hasData: boolean
+  verdict: Verdict
+}) {
   return (
     <div className="card overflow-hidden">
       <div
@@ -734,12 +746,30 @@ function BlockersPanel({ newFailures, hasData }: { newFailures: number; hasData:
 
       {!hasData || newFailures <= 0 ? (
         <div className="px-4 py-8 flex flex-col items-center text-center">
-          <CheckCircle className="h-8 w-8 mb-2 text-[var(--status-passed)]" />
+          {verdict === 'NO_GO' ? (
+            <AlertTriangle className="h-8 w-8 mb-2 text-[var(--status-failed)]" />
+          ) : verdict === 'CONDITIONAL' ? (
+            <AlertTriangle className="h-8 w-8 mb-2 text-[var(--status-broken)]" />
+          ) : (
+            <CheckCircle className="h-8 w-8 mb-2 text-[var(--status-passed)]" />
+          )}
           <p className="text-[13px] text-[var(--color-text-secondary)] m-0">
-            {hasData ? 'Nothing is blocking release.' : 'No data yet — blockers will appear once failures land.'}
+            {!hasData
+              ? 'No data yet — blockers will appear once failures land.'
+              : verdict === 'NO_GO'
+                ? 'Release remains blocked by unresolved failures.'
+                : verdict === 'CONDITIONAL'
+                  ? 'Release needs review before shipping.'
+                  : 'Nothing is blocking release.'}
           </p>
           <p className="text-[12px] text-[var(--color-text-muted)] mt-1 m-0">
-            {hasData ? 'No failing tests in the last 24 h.' : 'Run a workflow to populate this panel.'}
+            {!hasData
+              ? 'Run a workflow to populate this panel.'
+              : verdict === 'NO_GO'
+                ? 'No new failures in the last 24 h; existing failures still require resolution or an approved override.'
+                : verdict === 'CONDITIONAL'
+                  ? 'No new failures in the last 24 h; review the warning evidence before merging.'
+                  : 'No failing tests in the last 24 h.'}
           </p>
         </div>
       ) : (
@@ -1246,7 +1276,7 @@ export default function OverviewPage() {
         </SectionErrorBoundary>
 
         <SectionErrorBoundary message="Failed to load blockers">
-          <BlockersPanel newFailures={newFailures} hasData={totalExecutions > 0} />
+          <BlockersPanel newFailures={newFailures} hasData={totalExecutions > 0} verdict={verdict} />
         </SectionErrorBoundary>
       </div>
 

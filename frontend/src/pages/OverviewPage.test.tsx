@@ -378,4 +378,36 @@ describe('OverviewPage — blockers panel describes its own metric', () => {
     const body = document.body.textContent ?? ''
     expect(body).toMatch(/24\s*h/i)
   })
+
+  it('does not call an unresolved-failure release No-Go clear', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'RED',
+        total_executions_7d: { value: 12 },
+        avg_pass_rate_7d: { value: 75 },
+        active_defects: { value: 2 },
+        flaky_test_count: { value: 1 },
+        new_failures_24h: { value: 0 },
+        avg_duration_ms: { value: 120000 },
+      },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [] },
+      isLoading: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Release remains blocked by unresolved failures.')).toBeInTheDocument()
+    expect(screen.queryByText('Nothing is blocking release.')).toBeNull()
+    expect(screen.getByText(/No new failures in the last 24 h; existing failures/i)).toBeInTheDocument()
+  })
 })
