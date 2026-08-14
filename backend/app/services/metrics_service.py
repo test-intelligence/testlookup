@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -250,6 +250,18 @@ async def get_dashboard_summary(
             "value": round(pass_rate, 1),
             "trend": pass_trend,
             "trend_direction": direction(pass_trend),
+            # F-067. This dashboard and the Summary Report legitimately compute
+            # different pass rates — 81.0% here vs 83.3% there on the same
+            # window — because they measure different populations. Both are
+            # correct; the defect was that neither said so, leaving a user to
+            # conclude one screen was lying.
+            #
+            # Neither was deleted: the unique-test basis is what makes the
+            # Summary Report's counts agree with Coverage. So each surface now
+            # declares its own basis, and the numbers stop looking like a
+            # contradiction.
+            "basis": PASS_RATE_BASIS_EXECUTIONS,
+            "basis_label": PASS_RATE_BASIS_LABELS[PASS_RATE_BASIS_EXECUTIONS],
         },
         "active_defects": {
             "value": active_defects,
@@ -400,6 +412,28 @@ async def get_trend_data(
     ]
 
 
+# ── Pass-rate bases (F-067) ─────────────────────────────────────────────────
+#
+# Two surfaces compute a pass rate over different populations, and both are
+# right for what they answer:
+#
+#   executions   — every test EXECUTION in the window. A test run 25 times
+#                  contributes 25. This is what "how did CI behave?" means.
+#   unique_tests — each distinct test once, carrying its latest status. This is
+#                  what "how much of my suite is healthy?" means, and it is
+#                  what makes the Summary Report agree with Coverage.
+#
+# Measured live on one project over 30 days: 47/58 executions = 81.0% against
+# 10/12 unique tests = 83.3%. Neither is wrong. Shipping both UNLABELLED was.
+PASS_RATE_BASIS_EXECUTIONS = "executions"
+PASS_RATE_BASIS_UNIQUE_TESTS = "unique_tests"
+
+PASS_RATE_BASIS_LABELS = {
+    PASS_RATE_BASIS_EXECUTIONS: "per test execution",
+    PASS_RATE_BASIS_UNIQUE_TESTS: "per unique test",
+}
+
+
 async def _period_stats(
     db: AsyncSession,
     project_id: str | None,
@@ -434,6 +468,25 @@ async def _period_stats(
         # columns which are always populated.
         suite_lower = suite_name  # already lowercased by _normalize_suite_name
         from sqlalchemy import exists, select as _select
+
+        # ── F-080 ────────────────────────────────────────────────────────────
+        # This branch used to select runs that TOUCH the suite and then sum
+        # run-level aggregate columns (TestRun.passed_tests, .total_tests, …).
+        # Those columns are whole-run totals and cannot be suite-scoped, so a
+        # run containing three suites reported all three suites' tests under
+        # every one of them: measured 60/60/60 executions where the truth was
+        # 25/20/15, with an identical pass rate for each. The selector looked
+        # like it worked and silently answered a different question.
+        #
+        # It was not a careless bug — the previous implementation INNER-JOINed
+        # test_cases, and live-stream runs persist run aggregates BEFORE their
+        # per-test rows, so a populated suite briefly returned 0 and blanked
+        # the dashboard. That fix traded a wrong-zero for a wrong-total.
+        #
+        # Both are avoidable. Count per-test rows by EFFECTIVE suite (accurate
+        # whenever rows exist), and fall back to run-level aggregates ONLY for
+        # runs that have no per-test rows at all — which is exactly the
+        # mid-ingest live-stream case the 2026-05-15 fix was protecting.
         tc_match = exists().where(
             TestCase.test_run_id == TestRun.id,
         ).where(
@@ -445,33 +498,83 @@ async def _period_stats(
                 tc_match,
             )
         )
-        result = await db.execute(
-            _select(
-                func.count(TestRun.id).label("total_runs"),
-                func.coalesce(func.sum(TestRun.passed_tests), 0).label("sum_passed"),
-                func.coalesce(func.sum(TestRun.failed_tests), 0).label("sum_failed"),
-                func.coalesce(func.sum(TestRun.broken_tests), 0).label("sum_broken"),
-                func.coalesce(func.sum(TestRun.total_tests), 0).label("sum_total"),
-                func.avg(TestRun.duration_ms).label("avg_duration_ms"),
-            ).where(*conditions)
+
+        # (a) Per-test rows, bucketed by effective suite. The effective-suite
+        #     rule (run label wins for live_stream, per-case label otherwise)
+        #     is the house pattern — see analytics_service._effective_suite_sql.
+        effective_suite = func.coalesce(
+            case(
+                (
+                    TestRun.trigger_source == "live_stream",
+                    func.nullif(func.trim(TestRun.primary_suite_name), ""),
+                ),
+                else_=None,
+            ),
+            func.nullif(func.trim(TestCase.suite_name), ""),
         )
-        row = result.one()
-        sum_passed = int(row.sum_passed or 0)
-        sum_failed = int(row.sum_failed or 0)
-        sum_broken = int(row.sum_broken or 0)
+        case_row = (
+            await db.execute(
+                _select(
+                    func.count(TestCase.id).label("total"),
+                    func.coalesce(
+                        func.sum(case((TestCase.status == "PASSED", 1), else_=0)), 0
+                    ).label("passed"),
+                    func.coalesce(
+                        func.sum(case((TestCase.status == "FAILED", 1), else_=0)), 0
+                    ).label("failed"),
+                    func.coalesce(
+                        func.sum(case((TestCase.status == "BROKEN", 1), else_=0)), 0
+                    ).label("broken"),
+                )
+                .select_from(TestCase)
+                .join(TestRun, TestRun.id == TestCase.test_run_id)
+                .where(*conditions, func.lower(effective_suite) == suite_lower)
+            )
+        ).one()
+
+        # (b) Runs matching the suite that have NO per-test rows yet. Their
+        #     run-level aggregates are the only evidence available, and
+        #     excluding them is what blanked the dashboard before.
+        no_rows = ~exists().where(TestCase.test_run_id == TestRun.id)
+        pending_row = (
+            await db.execute(
+                _select(
+                    func.coalesce(func.sum(TestRun.passed_tests), 0).label("passed"),
+                    func.coalesce(func.sum(TestRun.failed_tests), 0).label("failed"),
+                    func.coalesce(func.sum(TestRun.broken_tests), 0).label("broken"),
+                    func.coalesce(func.sum(TestRun.total_tests), 0).label("total"),
+                ).where(*conditions, no_rows)
+            )
+        ).one()
+
+        # Run count and duration remain run-level facts — a run either is or is
+        # not part of this suite's window; there is nothing to apportion.
+        run_row = (
+            await db.execute(
+                _select(
+                    func.count(TestRun.id).label("total_runs"),
+                    func.avg(TestRun.duration_ms).label("avg_duration_ms"),
+                ).where(*conditions)
+            )
+        ).one()
+
+        sum_passed = int(case_row.passed or 0) + int(pending_row.passed or 0)
+        sum_failed = int(case_row.failed or 0) + int(pending_row.failed or 0)
+        sum_broken = int(case_row.broken or 0) + int(pending_row.broken or 0)
+        sum_total = int(case_row.total or 0) + int(pending_row.total or 0)
         denom = _evaluated(sum_passed, sum_failed, sum_broken)
         pass_rate = (sum_passed / denom * 100.0) if denom else 0.0
         return {
-            "total_runs": row.total_runs or 0,
+            "total_runs": run_row.total_runs or 0,
             # MUST mirror the unscoped return below, key for key: the caller
             # reads ``cur["total_executions"]`` unconditionally. #492 added
             # that key to the unscoped branch and to the caller but not here,
             # so from 2026-08-08 every suite-filtered dashboard request raised
             # KeyError -> HTTP 500. Picking a suite on Overview took the whole
             # dashboard down.
-            "total_executions": int(getattr(row, "sum_total", 0) or 0),
+            "total_executions": sum_total,
             "pass_rate": pass_rate,
-            "avg_duration_ms": int(row.avg_duration_ms or 0),
+            "avg_duration_ms": int(run_row.avg_duration_ms or 0),
         }
     # Weighted pass-rate across the period: sum of passed tests over the sum of
     # EVALUATED tests across every TestRun in the window. Weighted (not

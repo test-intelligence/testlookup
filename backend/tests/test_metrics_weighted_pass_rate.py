@@ -153,23 +153,30 @@ async def test_period_stats_handles_null_sum_columns():
 
 
 @pytest.mark.asyncio
-async def test_period_stats_suite_filtered_reads_aggregates_from_test_runs():
-    """Suite branch reads ``sum_passed / (sum_passed + sum_failed)`` from
-    ``test_runs`` columns. Prior to 2026-05-15 it INNER-JOINed
-    ``test_cases`` and read counts from there, which silently returned
-    zero whenever live-stream runs had aggregates on the run row but no
-    per-case rows persisted yet. Pin the new contract."""
+async def test_period_stats_suite_filtered_counts_per_test_rows():
+    """F-080: suite numbers come from per-test rows bucketed by EFFECTIVE
+    suite, not from whole-run aggregate columns.
+
+    The old contract summed ``TestRun.passed_tests``/``total_tests`` for every
+    run that *touched* the suite. Those columns are whole-run totals and cannot
+    be suite-scoped, so a run containing three suites reported all three suites'
+    tests under each of them — measured 60/60/60 where the truth was 25/20/15,
+    with an identical pass rate for every suite. The selector looked like it
+    worked and answered a different question.
+
+    Three queries now: per-test counts, the no-rows-yet fallback, and the
+    run-level count/duration.
+    """
     from app.services.metrics_service import _period_stats
 
-    row = SimpleNamespace(
-        total_runs=3,
-        sum_passed=120,
-        sum_broken=0, sum_failed=30,
-        sum_total=150,
-        avg_duration_ms=750,
-    )
+    cases = SimpleNamespace(total=25, passed=20, failed=5, broken=0)
+    pending = SimpleNamespace(passed=0, failed=0, broken=0, total=0)
+    runs = SimpleNamespace(total_runs=3, avg_duration_ms=750)
+
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=_one_result(row))
+    db.execute = AsyncMock(side_effect=[
+        _one_result(cases), _one_result(pending), _one_result(runs),
+    ])
 
     result = await _period_stats(
         db, project_id=None,
@@ -177,7 +184,38 @@ async def test_period_stats_suite_filtered_reads_aggregates_from_test_runs():
         end=datetime(2026, 5, 14, tzinfo=timezone.utc),
         suite_name="smoke",
     )
-    # 120 / (120 + 30) = 80.0% — weighted across test_runs aggregates,
-    # NOT joined to test_cases (which may be empty for live-stream runs).
+    # 20 / (20 + 5) = 80.0%, over the SUITE's 25 executions — not the run's.
     assert result["pass_rate"] == pytest.approx(80.0, rel=1e-4)
+    assert result["total_executions"] == 25
     assert result["total_runs"] == 3
+
+
+@pytest.mark.asyncio
+async def test_period_stats_suite_filter_still_counts_runs_without_per_test_rows():
+    """The property the OLD implementation existed to protect, kept.
+
+    Live-stream runs persist run aggregates before their per-test rows. An
+    implementation that only counted ``test_cases`` returned 0 for a populated
+    suite and blanked the dashboard — which is why the 2026-05-15 change moved
+    to run aggregates in the first place. The fix must not reintroduce that: a
+    run with NO per-test rows still contributes its run-level totals.
+    """
+    from app.services.metrics_service import _period_stats
+
+    cases = SimpleNamespace(total=0, passed=0, failed=0, broken=0)
+    pending = SimpleNamespace(passed=40, failed=10, broken=0, total=50)
+    runs = SimpleNamespace(total_runs=1, avg_duration_ms=1200)
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        _one_result(cases), _one_result(pending), _one_result(runs),
+    ])
+
+    result = await _period_stats(
+        db, project_id=None,
+        start=datetime(2026, 5, 1, tzinfo=timezone.utc),
+        end=datetime(2026, 5, 14, tzinfo=timezone.utc),
+        suite_name="smoke",
+    )
+    assert result["total_executions"] == 50, "mid-ingest live-stream run vanished"
+    assert result["pass_rate"] == pytest.approx(80.0, rel=1e-4)

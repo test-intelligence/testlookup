@@ -95,7 +95,20 @@ def test_total_executions_is_the_key_that_was_missing():
 
 
 def test_suite_branch_sources_executions_from_summed_totals():
-    """It must be the summed ``total_tests``, not ``total_runs`` — the very
-    conflation #492 existed to fix (the KPI read 5 where Coverage said 60)."""
+    """``total_executions`` must be executions, never a run count — the
+    conflation #492 existed to fix (the KPI read 5 where Coverage said 60).
+
+    Updated for F-080: the suite branch no longer sums whole-run aggregate
+    columns, because those cannot be suite-scoped. It now sums per-test rows
+    for the suite plus the run-level totals of runs that have no per-test rows
+    yet. Both branches must still publish an EXECUTION count.
+    """
     src = inspect.getsource(metrics_service._period_stats)
-    assert src.count('"total_executions": int(getattr(row, "sum_total", 0) or 0)') == 2
+    # Unscoped branch: still reads the summed run-level total.
+    assert '"total_executions": int(getattr(row, "sum_total", 0) or 0)' in src
+    # Suite branch: the composed per-test + pending total.
+    assert '"total_executions": sum_total' in src
+    assert "sum_total = int(case_row.total or 0) + int(pending_row.total or 0)" in src
+    # And it must never regress to a run count.
+    assert '"total_executions": row.total_runs' not in src
+    assert '"total_executions": run_row.total_runs' not in src

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Fix: the denominators behind the headline numbers (F-080, F-067)
+
+Two long-standing findings, resolved together because they share one question: *what population is
+this percentage over?* Both were recorded as decisions rather than bugs; the roadmap's attribution
+verdict is built on these numbers, and a verdict resting on figures users already distrust inherits
+that distrust.
+
+**F-080 — the dashboard's suite selector was inert.** `/metrics/summary` and `/metrics/trends`
+returned identical numbers for every suite, equal to the unscoped figure: 60 executions for `api`,
+`regression` and `smoke` alike where the truth was 25/20/15, with the same pass rate for each. The
+selector looked like it worked — the API documented the parameter and returned 200 — while
+answering a different question than the one asked.
+
+The cause was that the suite branch selected runs which *touch* the suite and then summed
+**whole-run aggregate columns** (`TestRun.passed_tests`, `total_tests`, …). Those are run totals and
+cannot be suite-scoped, so a run containing three suites reported all three under each of them.
+
+It was not careless: the prior implementation INNER-JOINed `test_cases`, and live-stream runs
+persist run aggregates *before* their per-test rows, so a populated suite briefly returned 0 and
+blanked the dashboard. That fix traded a wrong-zero for a wrong-total. Both are avoidable — the
+suite branch now counts per-test rows bucketed by **effective suite** (the house rule: run label
+wins for live-stream, per-case label otherwise) and falls back to run-level aggregates **only for
+runs with no per-test rows at all**, which is exactly the mid-ingest case the earlier fix was
+protecting. Run count and duration stay run-level facts; there is nothing to apportion there.
+
+**F-067 — two different pass rates, neither labelled.** The dashboard reported 81.0% while the
+Summary Report reported 83.3% for the same window. Both were correct: the first counts every test
+**execution**, the second counts each **unique test** once. Neither said so, leaving a user to
+conclude one screen was lying.
+
+Neither number was deleted, and neither basis was forced on the other. The unique-test basis is
+what makes the Summary Report's counts agree with Coverage; the execution basis is what "how did CI
+behave in this window" means. What was wrong was shipping them unlabelled — so both surfaces now
+publish `basis` plus a human `basis_label`, drawn from one shared vocabulary in `metrics_service`
+so the two cannot drift into differently-worded descriptions of the same thing.
+
+Three existing tests were retargeted rather than deleted, because they pinned the *old* contract:
+two asserted the suite branch reads whole-run aggregates (the F-080 bug itself), and one probed for
+a `sum_total` label the rewrite no longer emits. Each now pins the guarantee instead of the
+mechanism — including the property the old implementation existed to protect, that a mid-ingest
+live-stream run must not vanish from a suite's numbers.
+
+10 new regression tests, each verified to fail under deliberate mutation.
+
+
 ### 2026-08-14 — Feat: test-intelligence Phase 3 — systemic co-failure clusters
 
 Phase 3 of `architecture/TEST_INTELLIGENCE_PLAN.md`, migration `0132`. Finds tests that fail

@@ -95,14 +95,26 @@ class TestPeriodStatsExposesBoth:
         )
 
     def test_both_select_branches_provide_the_executions_sum(self):
-        """The unfiltered branch was missing ``sum_total`` while the
+        """The unfiltered branch was missing an executions total while the
         suite-filtered branch had it — the asymmetry that made the run count
-        an available substitute."""
+        an available substitute.
+
+        The suite branch no longer selects a ``sum_total`` label: F-080 changed
+        it to count per-test rows (whole-run aggregates cannot be suite-scoped)
+        and compose the total from those plus the runs that have no per-test
+        rows yet. The GUARANTEE is unchanged and is what this asserts — both
+        branches publish an execution count, and neither may fall back to a
+        run count.
+        """
         src = _period_stats_source()
-        assert src.count('label("sum_total")') >= 2, (
-            "only one branch of _period_stats selects sum_total, so the "
-            "suite-filtered and unfiltered paths disagree on what is available"
-        )
+        # Unfiltered branch: still the summed run-level total.
+        assert 'label("sum_total")' in src
+        # Suite branch: composed from per-test rows + the no-rows-yet fallback.
+        assert "sum_total = int(case_row.total or 0) + int(pending_row.total or 0)" in src
+        # Both publish it, and neither substitutes a run count.
+        assert src.count('"total_executions"') >= 2
+        assert '"total_executions": row.total_runs' not in src
+        assert '"total_executions": run_row.total_runs' not in src
 
 
 class TestReadinessSemanticsAreUntouched:

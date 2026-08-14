@@ -40,11 +40,16 @@ from app.models.postgres import (
     TestStep,
 )
 from app.services.analytics_service import _effective_suite_sql
-from app.services.metrics_service import _count_flaky_tests
+from app.services.metrics_service import (  # F-067: one vocabulary, two surfaces
+    PASS_RATE_BASIS_LABELS,
+    PASS_RATE_BASIS_UNIQUE_TESTS,
+    _count_flaky_tests,
+)
 
 
 SummaryMode = Literal["window", "latest"]
 ALLOWED_MODES: tuple[SummaryMode, ...] = ("window", "latest")
+
 
 
 @dataclass(frozen=True)
@@ -155,6 +160,13 @@ async def build_summary_report(
             "broken": totals.broken,
             "evaluated": totals.evaluated,
             "pass_rate_pct": totals.pct(totals.passed),
+            # F-067: declare the population. This report counts each distinct
+            # test once (which is what makes its counts agree with Coverage),
+            # while the dashboard counts every execution — 83.3% here vs 81.0%
+            # there on the same window. Both are correct; publishing the basis
+            # is what stops them reading as a contradiction.
+            "pass_rate_basis": PASS_RATE_BASIS_UNIQUE_TESTS,
+            "pass_rate_basis_label": PASS_RATE_BASIS_LABELS[PASS_RATE_BASIS_UNIQUE_TESTS],
             "fail_rate_pct": totals.pct(totals.failed),
             "skip_rate_pct": totals.pct(totals.skipped),
             "broken_rate_pct": totals.pct(totals.broken),
@@ -228,6 +240,8 @@ def _empty_envelope(*, days: int, mode: SummaryMode) -> dict:
             "broken": 0,
             "evaluated": 0,
             "pass_rate_pct": 0.0,
+            "pass_rate_basis": PASS_RATE_BASIS_UNIQUE_TESTS,
+            "pass_rate_basis_label": PASS_RATE_BASIS_LABELS[PASS_RATE_BASIS_UNIQUE_TESTS],
             "fail_rate_pct": 0.0,
             "skip_rate_pct": 0.0,
             "broken_rate_pct": 0.0,
