@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Docs: phased implementation plan for the test-intelligence roadmap
+
+`architecture/TEST_INTELLIGENCE_PLAN.md` turns the verified findings in
+`research/TEST_INTELLIGENCE_RESEARCH.md` into a dependency-ordered, seven-phase plan. Plan only —
+no behaviour, schema or code is changed by this commit.
+
+Two structural findings from auditing the current tree shape it:
+
+- **`FailureCluster` cannot carry systemic clustering.** It is keyed `test_run_id` and built by
+  semantic embedding of error messages, whereas the research's systemic-flakiness finding clusters
+  *across* runs by *literal co-failure*. Different scope and different mechanism, so the plan adds
+  a new entity rather than overloading it. This also sharpens the calibration work: today's
+  clustering keys on error-message semantics, precisely the mechanism whose specificity was
+  measured swinging from 100% to no-better-than-random across projects.
+- **There is no environment dimension** on `test_runs`, but environment consistency is load-bearing
+  for both the flakiness score and the per-test timeline — so it becomes a Phase 0 prerequisite.
+
+The inventory also found two things already built that the research assumed missing: `perf_baselines`
+already maintains Welford duration statistics per (project, fingerprint) — the duration-variance
+signal is free reuse — and the quarantine policy already carries `sla_days`, `auto_create_defect`
+and `auto_promote`, narrowing that item to ownership routing, a cap, and the unmasking safeguard.
+
+Phase 0 is measurement that gates the rest: it censuses whether projects at this scale have the
+history for a windowed posterior at all, rather than assuming hyperscale magnitudes transfer.
+Six decisions are recorded as open and assigned to the phase that needs them — most consequentially
+whether a flaky verdict may ever auto-suppress a failure (recommended: never, since ~1 in 6
+newly-flaky tests reflected a real bug).
+
+The plan also carries the research's corrections forward as explicit non-goals: do not design to the
+81% detection figure, and do not cite the refuted 75%-at-birth claim.
+
 ### 2026-08-14 — Feat(cli): `testlookup doctor` self-host setup diagnosis
 
 Added a `testlookup doctor` command that gives a fresh self-hoster a single, ordered verdict on
