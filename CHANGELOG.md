@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Feat: test-intelligence Phase 1 — surfaces that show evidence instead of erasing it
+
+Phase 1 of `architecture/TEST_INTELLIGENCE_PLAN.md`. No migration; three surfaces that depend on
+nothing above them in the roadmap.
+
+**P1-A — per-test history timeline.** `CanonicalDetailPage` had a paginated table of run rows; a
+table of ticks is not the "bigger picture" practitioners asked for. The page now leads with a
+timeline: one cell per run, oldest to newest, annotated with build, branch, environment, duration
+and retry evidence, plus flip/outcome/environment counts. The table stays below for per-run detail
+a strip cannot carry. The API reversal lives in the component — newest-first is right for every
+other consumer, but a flip pattern is only legible if time runs one way.
+
+The endpoint had to grow the run context to make this possible: `list_runs_for_canonical` already
+joined `TestRun` purely to order by its timestamp and then discarded it, so environment/branch/build
+were one query away and never exposed. Environment is *resolved*, not read raw — a run that never
+recorded one reports `null` with `environment_source: "unknown"` rather than being folded into a
+synthetic default group.
+
+**P1-B — retry transparency.** `retry_count` and `is_flaky_run` have been persisted at ingest and
+shown nowhere, so a test that only went green on its third attempt rendered identically to one that
+passed first time. Run detail now marks those rows "attempt N". A retry is evidence about
+stability, not a way to make the build green. The attempt calculation lives in
+`utils/retryEvidence.ts` so every surface agrees what "attempt" means, and it floors at 2 when a
+producer sets only the flaky flag without a count.
+
+**P1-C — flake load, explicitly not a burndown.** New `GET /api/v1/analytics/flake-load`: the share
+of recent runs carrying at least one retried test. Flaky-test insertion rate tracks the fix rate
+even under sustained investment, so a "debt remaining" chart trending to zero is a promise that
+cannot be kept — it sits near a floor forever and teaches users the tool is broken rather than that
+the target was wrong. A load has no implied zero and is read against a budget the team picks. The
+payload states that framing, and a test forbids "remaining"/"burndown"/"backlog" wording in it.
+Below 10 runs it reports `null` plus a reason instead of a share computed from three runs.
+
+The audit half of P1-C found **nothing to correct**: the existing weekly flaky-debt review is
+already a worklist (quarantined / stale / ready-to-promote / newly-flaky), not a count trending to
+zero.
+
+Two issues found by this phase's multi-pass review and fixed before merge: the timeline strip was
+unbounded (now capped at 120 cells, keeping the newest, and it *says* "last 120 of 200 runs" rather
+than truncating silently), and a `scoped is None` guard raised an unreachable 422 whose message
+described a case that lands elsewhere (kept — dropping it would let `None` reach a project-scoped
+query and widen it to every project — but corrected and documented).
+
+26 regression tests across backend and frontend, each verified to fail under deliberate mutation of
+the property it guards.
+
+
 ### 2026-08-14 — Feat: test-intelligence Phase 0 — measure before building
 
 Phase 0 of `architecture/TEST_INTELLIGENCE_PLAN.md`. **No user-visible behaviour changes**: this

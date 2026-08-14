@@ -4,6 +4,7 @@ import { clsx } from 'clsx'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import TestHistoryTimeline from '@/components/suites/TestHistoryTimeline'
 import { useCanonicalCase, useCanonicalRuns, useSuite } from '@/hooks/useSuites'
 import { formatDateTime, formatDuration, fromNow } from '@/utils/formatters'
 
@@ -154,6 +155,12 @@ export default function CanonicalDetailPage() {
           </div>
         </div>
       </section>
+
+      {/* History timeline — the hero view (roadmap Phase 1). Answers "has
+          this test been unstable, on which environments, and how long has it
+          taken?" at a glance; the exhaustive table below stays for the
+          per-run detail that a strip cannot carry. */}
+      {!runsLoading && runs.length > 0 ? <TestHistoryTimeline items={runs} /> : null}
 
       {/* Run history — newest first. The backend already orders by
           ``TestRun.created_at DESC`` (see

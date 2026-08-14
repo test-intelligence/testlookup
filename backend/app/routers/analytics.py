@@ -21,6 +21,7 @@ from app.models.schemas import (
     NotifyTestOwnerResponse,
 )
 from app.services import analytics_service
+from app.services.flake_load_service import get_flake_load
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 
@@ -52,6 +53,38 @@ async def flaky_tests(
         suite_name=suite_name,
         allowed_project_ids=allowed,
     )
+
+
+@router.get("/flake-load")
+async def flake_load(
+    project_id: str = Query(
+        ..., description="Project to measure — load is never a fleet average",
+    ),
+    days: int = Query(30, ge=7, le=365),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """What share of recent runs carried at least one retried test?
+
+    This is deliberately a **load**, not a debt burndown. Flaky-test insertion
+    rate tracks the fix rate even under sustained investment, so a "remaining"
+    count trending to zero is a promise that will never be kept — it will sit
+    near a floor forever and teach users the tool is broken rather than that
+    the target was wrong. A load has no implied zero: it is read against a
+    budget the team chooses, like an error budget.
+
+    Returns ``flake_load: null`` with a reason below the minimum run count,
+    since a share computed from three runs is noise wearing a percentage sign.
+    """
+    scoped, _allowed = await resolve_project_scope(db, current_user, project_id)
+    if scoped is None:
+        # Unreachable in practice: with a required project_id,
+        # resolve_project_scope either returns the parsed UUID, 400s on a
+        # malformed one, or 403s on a project the caller cannot see. Kept
+        # because the alternative — passing None into a project-scoped query —
+        # would silently widen it to every project.
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+    return await get_flake_load(db, scoped, window_days=days)
 
 
 # ── Failure Category Distribution ─────────────────────────────────────────

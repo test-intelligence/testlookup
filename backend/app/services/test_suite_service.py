@@ -1106,14 +1106,24 @@ async def reconcile_canonical_deletions(
 async def list_runs_for_canonical(
     db: AsyncSession,
     canonical: CanonicalTestCase,
-) -> list[TestCase]:
-    """All per-run TestCase rows linked to a canonical, newest run first."""
+) -> list[tuple[TestCase, "TestRun"]]:
+    """Per-run rows for a canonical, newest run first, WITH their run.
+
+    Returns ``(TestCase, TestRun)`` pairs rather than bare test cases: the
+    per-test history timeline (roadmap Phase 1) has to answer "unstable *where*
+    and *on what*", which needs the run's environment, branch and build — and
+    the practitioner ask this view is built from is explicitly a history
+    annotated with environment metadata, not a bare list of outcomes.
+
+    The join was already here to order by run time; this just stops discarding
+    the joined row.
+    """
     from app.models.postgres import TestRun  # local import to avoid cycle
 
     stmt = (
-        select(TestCase)
+        select(TestCase, TestRun)
         .join(TestRun, TestRun.id == TestCase.test_run_id)
         .where(TestCase.canonical_test_case_id == canonical.id)
         .order_by(TestRun.created_at.desc())
     )
-    return list((await db.execute(stmt)).scalars().all())
+    return [(row[0], row[1]) for row in (await db.execute(stmt)).all()]

@@ -45,6 +45,7 @@ from app.models.schemas import (
     TestSuiteUpdate,
 )
 from app.services import test_suite_service as svc
+from app.services.run_environment import resolve_environment
 
 router = APIRouter(tags=["Test Suites"])
 
@@ -428,21 +429,39 @@ async def list_canonical_run_history(
 ):
     """Every per-run ``TestCase`` row currently linked to this canonical.
     Newest run first. Returned as bare dicts (no full RunTestCase schema —
-    that lives in ``runs`` router and would create a cycle here)."""
+    that lives in ``runs`` router and would create a cycle here).
+
+    Carries the run's environment/branch/build and the per-run retry evidence
+    so one screen can answer "has this test been unstable, on which
+    environments, and how long has it taken?" — the question the per-test
+    history timeline exists to answer (roadmap Phase 1).
+
+    ``environment`` is resolved, not raw: a run that never recorded one yields
+    ``None`` with ``environment_source: "unknown"`` rather than being folded
+    into a synthetic default group.
+    """
     canonical = await svc.get_canonical_or_404(db, canonical_id)
     await _enforce_project_access(db, current_user, canonical.project_id)
     rows = await svc.list_runs_for_canonical(db, canonical)
     return {
         "items": [
             {
-                "test_case_id": r.id,
-                "test_run_id": r.test_run_id,
-                "status": r.status,
-                "duration_ms": r.duration_ms,
-                "suite_name": r.suite_name,
-                "created_at": r.created_at,
+                "test_case_id": case.id,
+                "test_run_id": case.test_run_id,
+                "status": case.status,
+                "duration_ms": case.duration_ms,
+                "suite_name": case.suite_name,
+                "created_at": case.created_at,
+                # Run context — what makes this a timeline rather than a list.
+                "build_number": run.build_number,
+                "branch": run.branch,
+                **resolve_environment(run).to_dict(),
+                # Retry evidence. A retry is evidence, not a way to make the
+                # build green, so it is reported rather than absorbed.
+                "retry_count": case.retry_count,
+                "is_flaky_run": case.is_flaky_run,
             }
-            for r in rows
+            for case, run in rows
         ],
         "total": len(rows),
     }

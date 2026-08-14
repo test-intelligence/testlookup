@@ -71,6 +71,21 @@ export interface CanonicalRunHistoryItem {
   duration_ms: number | null
   suite_name: string | null
   created_at: string
+  // Run context — what makes the history a timeline rather than a list.
+  build_number: string | null
+  branch: string | null
+  /**
+   * Resolved environment, or null when the run never recorded one and nothing
+   * could be derived. Null means UNKNOWN, not "default" — do not group nulls
+   * together, or a corpus that simply never recorded an environment will look
+   * perfectly environment-consistent.
+   */
+  environment: string | null
+  /** 'explicit' | 'derived' | 'unknown' — how much to trust `environment`. */
+  environment_source: string
+  // Retry evidence: a retry is evidence, not a way to make the build green.
+  retry_count: number | null
+  is_flaky_run: boolean | null
 }
 
 export interface CanonicalRunHistoryResponse {

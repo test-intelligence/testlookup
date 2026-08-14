@@ -22,6 +22,7 @@ import { api } from '@/services/api'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { usePermissions } from '@/hooks/usePermissions'
 import { KindBadgeWithEvidence } from '@/components/failures/KindEvidence'
+import { retryAttempts } from '@/utils/retryEvidence'
 
 interface TestCase {
   id: string
@@ -39,6 +40,10 @@ interface TestCase {
   // latest-run snapshot. null when no parser emitted a step tree for this
   // producer; 0 when the parser ran but the test had no steps.
   step_count?: number | null
+  // Retry evidence, persisted at ingest and previously never surfaced.
+  // ``retry_count`` is the number of RETRIES, so attempts = retries + 1.
+  retry_count?: number | null
+  is_flaky_run?: boolean | null
 }
 
 const STATUSES = ['', 'FAILED', 'BROKEN', 'PASSED', 'SKIPPED']
@@ -618,7 +623,23 @@ export default function RunDetailPage() {
                       {tc.class_name && <p className="truncate text-xs text-[var(--color-text-muted)] font-mono mt-0.5">{tc.class_name}</p>}
                     </td>
                     <td className="td text-[var(--color-text-muted)] text-sm truncate max-w-[160px]">{tc.suite_name ?? '—'}</td>
-                    <td className="td"><StatusBadge status={tc.status} /></td>
+                    <td className="td">
+                      <span className="inline-flex items-center gap-1.5">
+                        <StatusBadge status={tc.status} />
+                        {/* A retry is evidence, not a way to make the build
+                            green. A bare tick on a test that only passed on
+                            attempt 3 erases the one fact that mattered. */}
+                        {retryAttempts(tc) > 1 && (
+                          <span
+                            title={`Passed on attempt ${retryAttempts(tc)} — this test needed ${retryAttempts(tc) - 1} retry${retryAttempts(tc) === 2 ? '' : 'ies'} to reach its final status`}
+                            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums flex-shrink-0 bg-[var(--color-bg-secondary)] text-[var(--status-flaky)]"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            attempt {retryAttempts(tc)}
+                          </span>
+                        )}
+                      </span>
+                    </td>
                     <td className="td text-[var(--color-text-muted)]">{formatDuration(tc.duration_ms)}</td>
                     <td className="td">
                       <span className="inline-flex items-center gap-2">
