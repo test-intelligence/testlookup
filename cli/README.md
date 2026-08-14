@@ -17,8 +17,14 @@ testlookup --help
 
 ```bash
 testlookup auth login      # stores a profile (URL + API key)
+testlookup doctor          # one-shot verdict: profile + reachability + auth
 testlookup health          # confirm the server is reachable
 ```
+
+`doctor` is the fastest way to debug a fresh install: it checks that a server
+URL is resolved, that the server is reachable (and reports its build), and that
+your credentials are accepted — exiting non-zero only on a hard failure, so it
+works as a CI preflight too.
 
 Configuration resolves in this order — later wins:
 
@@ -48,8 +54,9 @@ clean — diagnostics go to stderr — so `| jq` works without filtering.
 
 ## Command groups
 
-`auth` · `health` · `projects` · `runs` · `tests` · `search` · `intelligence` ·
-`deep` · `reports` · `keys` · `upload`, plus the top-level `ci-verdict`.
+`auth` · `doctor` · `health` · `projects` · `runs` · `tests` · `search` ·
+`intelligence` · `deep` · `reports` · `keys` · `upload`, plus the top-level
+`ci-verdict`.
 
 Run `testlookup <group> --help` for details on any of them.
 

@@ -5,6 +5,7 @@ import typer
 
 from testlookup_cli import __version__
 from testlookup_cli.commands.auth import auth_app
+from testlookup_cli.commands.doctor import doctor_app
 from testlookup_cli.commands.health import health_app
 from testlookup_cli.commands.projects import projects_app
 from testlookup_cli.commands.runs import runs_app
@@ -53,6 +54,7 @@ def main(
 
 # Register command groups
 app.add_typer(auth_app, name="auth")
+app.add_typer(doctor_app, name="doctor")
 app.add_typer(health_app, name="health")
 app.add_typer(projects_app, name="projects")
 app.add_typer(runs_app, name="runs")

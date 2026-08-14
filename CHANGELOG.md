@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Feat(cli): `testlookup doctor` self-host setup diagnosis
+
+Added a `testlookup doctor` command that gives a fresh self-hoster a single, ordered verdict on
+their local setup instead of discovering each failure one command at a time. It runs three checks
+in order — **profile** (is a server URL resolved from the saved profile or `TESTLOOKUP_URL`?),
+**server** (is that URL reachable, and which build is it? via probe-free `GET /health/version`),
+and **auth** (are this profile's credentials accepted? via an authenticated `GET /api/v1/projects`
+probe) — short-circuiting downstream checks once an earlier one makes them moot. The command exits
+non-zero only on a hard failure (no URL, unreachable server, or rejected credentials), so it
+doubles as a CI preflight; a reachable-but-not-yet-authenticated profile is a `warn` and exits 0.
+Supports `--output json` for machine consumption. Reuses the existing `client.request` transport
+and the friendly `map_connection_error` hints. Regression tests cover the full check ladder and the
+exit-code contract.
+
 ### 2026-08-13 — Feat: Phase 3 multi-agent test intelligence
 
 Governed multi-agent workflow and capability planning; evidence-authority snapshots with
