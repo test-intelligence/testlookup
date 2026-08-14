@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Fix: semantic indexing degrades where the embedder actually runs
+
+**A correction to the previous entry.** It claimed the air-gapped path "degrades cleanly",
+on the strength of `index_test_cases` and `index_incremental` both wrapping
+`_get_or_create_collection()` in `try/except`. Running it on the deployment showed that
+was wrong:
+
+```
+File ".../chromadb/utils/embedding_functions/onnx_mini_lm_l6_v2.py", line 199, in __call__
+  self._download_model_if_not_exists()
+...
+OfflineModelUnavailable: AI_OFFLINE_MODE is on and no local embedding model is present … in upsert.
+```
+
+ChromaDB computes embeddings at **`upsert`**, not at collection creation. The offline
+ceiling therefore raises from `collection.upsert` — *outside* the guarded block — and the
+whole `reindex_search` task failed and retried instead of degrading. The ceiling worked;
+the fallback around it did not.
+
+Both indexing paths now wrap the upsert too, and return `0`.
+
+**The cursor is deliberately not advanced on that path.** Degrading to zero while moving
+the cursor forward would mean those rows are never re-examined — the corpus would end up
+permanently missing exactly the records that were pending when the model went away.
+Leaving the cursor put means they are indexed on a later run, once embeddings are
+available again.
+
+Six regression tests, parameterised over both indexing functions: it degrades, the cursor
+does not move on failure, and the cursor *does* still move on success. Verified by
+mutation — re-raising instead of degrading, and advancing the cursor on failure, are both
+caught.
+
+
 ### 2026-08-14 — Fix: `AI_OFFLINE_MODE` now covers model weights, not just inference
 
 `AI_OFFLINE_MODE` is documented as a hard egress ceiling. It was not one.

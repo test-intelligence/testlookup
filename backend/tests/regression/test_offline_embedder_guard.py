@@ -290,3 +290,86 @@ def test_structlog_calls_use_keyword_fields():
         stripped = line.strip()
         if stripped.startswith("logger.") and "%s" in stripped:
             pytest.fail(f"positional structlog arg: {stripped}")
+
+
+# ── Indexing must degrade where the embedder actually runs ───────────────────
+#
+# Corrects a claim I made and got wrong. Reading the code, only
+# ``_get_or_create_collection()`` was wrapped, so I reported that the
+# air-gapped path "degrades cleanly". Running it on the deployment proved
+# otherwise: ChromaDB computes embeddings at **upsert**, so the offline ceiling
+# raises from ``collection.upsert`` — outside that try — and the whole task
+# failed instead of degrading.
+#
+# The guard here is the class: the fallback must wrap wherever the embedder is
+# exercised, not merely where the collection is opened.
+
+async def _run_index(monkeypatch, func_name, *, blow_up_at_upsert=True):
+    import app.services.semantic_search as search
+
+    class _Row:
+        id = "11111111-1111-1111-1111-111111111111"
+        test_name = "t"
+        suite_name = "s"
+        error_message = None
+        status = "FAILED"
+        test_run_id = "22222222-2222-2222-2222-222222222222"
+        project_id = "33333333-3333-3333-3333-333333333333"
+        created_at = None
+        step_text = None
+
+    class _Result:
+        def all(self):
+            return [_Row()]
+
+    class _DB:
+        async def execute(self, *_a, **_k):
+            return _Result()
+
+    async def _fake_collection():
+        return object()
+
+    async def _boom(*_a, **_k):
+        raise guard.OfflineModelUnavailable("offline: no local model")
+
+    cursor_calls = []
+    monkeypatch.setattr(search, "_get_or_create_collection", _fake_collection)
+    monkeypatch.setattr(search, "_update_cursor", lambda rows: cursor_calls.append(rows))
+    if blow_up_at_upsert:
+        monkeypatch.setattr(search, "_upsert_rows_to_collection", _boom)
+    else:
+        async def _ok(*_a, **_k):
+            return 1
+
+        monkeypatch.setattr(search, "_upsert_rows_to_collection", _ok)
+
+    result = await getattr(search, func_name)(_DB())
+    return result, cursor_calls
+
+
+@pytest.mark.parametrize("func_name", ["index_test_cases", "index_incremental"])
+async def test_indexing_degrades_when_the_embedder_is_unavailable(
+    monkeypatch, func_name
+):
+    """An unavailable embedder must cost the index, not the task."""
+    result, _ = await _run_index(monkeypatch, func_name)
+    assert result == 0
+
+
+@pytest.mark.parametrize("func_name", ["index_test_cases", "index_incremental"])
+async def test_a_failed_index_does_not_advance_the_cursor(monkeypatch, func_name):
+    """The subtle half. Degrading to zero while advancing the cursor would skip
+    those rows forever, so the corpus would be permanently missing exactly the
+    records that were pending when the model went away."""
+    _, cursor_calls = await _run_index(monkeypatch, func_name)
+    assert cursor_calls == [], "cursor must not move when nothing was indexed"
+
+
+@pytest.mark.parametrize("func_name", ["index_test_cases", "index_incremental"])
+async def test_a_successful_index_still_advances_the_cursor(monkeypatch, func_name):
+    """The fallback must not break the happy path."""
+    result, cursor_calls = await _run_index(
+        monkeypatch, func_name, blow_up_at_upsert=False
+    )
+    assert result == 1
+    assert len(cursor_calls) == 1

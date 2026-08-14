@@ -183,7 +183,20 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
     if not rows:
         return 0
 
-    count = await _upsert_rows_to_collection(collection, rows)
+    try:
+        count = await _upsert_rows_to_collection(collection, rows)
+    except Exception as exc:
+        # Embeddings are computed at UPSERT, not at collection creation, so an
+        # unavailable embedder surfaces here — outside the guard above. Verified
+        # live: with AI_OFFLINE_MODE on and no local model, the offline ceiling
+        # raises from ``collection.upsert``, and without this the whole task
+        # failed instead of degrading.
+        #
+        # The cursor is deliberately NOT advanced: skipping it means these rows
+        # are re-indexed once embeddings are available again, rather than being
+        # silently passed over forever.
+        logger.warning("Semantic indexing skipped — embeddings unavailable: %s", exc)
+        return 0
 
     # Update cursor to the latest ID so incremental picks up from here
     _update_cursor(rows)
@@ -248,7 +261,13 @@ async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) 
         logger.debug("No new test cases to index (cursor up to date)")
         return 0
 
-    count = await _upsert_rows_to_collection(collection, rows)
+    try:
+        count = await _upsert_rows_to_collection(collection, rows)
+    except Exception as exc:
+        # Same as the full index: the embedder is exercised at upsert. Degrade
+        # to zero and leave the cursor where it is, so nothing is skipped.
+        logger.warning("Incremental indexing skipped — embeddings unavailable: %s", exc)
+        return 0
     _update_cursor(rows)
 
     logger.info("Incrementally indexed %d new test cases", count)
