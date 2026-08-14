@@ -297,9 +297,18 @@ def _backend_pii_log_redaction() -> list[Violation]:
 # every call because ``run_compare_agent.py:82`` had this pattern and
 # Ollama was unreachable (so the except handler fired). See
 # ``memory/feedback_structlog_positional_args.md``.
+# Cheap pre-filter: does this module bind a structlog logger under ANY name?
+# Previously this required the name to be literally ``logger``, which skipped
+# every module binding e.g. ``_slog = structlog.get_logger(...)`` — including
+# worker/tasks.py, so those call sites were never checked at all. The AST pass
+# below resolves the actual binding names; this is only here to skip files
+# cheaply.
 _STRUCTLOG_LOGGER_RE = re.compile(
-    r"\blogger\s*=\s*structlog\.get_logger",
+    r"structlog(?:\.stdlib)?\.get_logger",
 )
+# Format specifiers that mean "this string expects positional interpolation".
+_STRUCTLOG_FORMAT_SPEC_RE = re.compile(r"%[-#0-9.]*[sdrfi!]")
+
 _STRUCTLOG_POSITIONAL_RE = re.compile(
     # ``logger.<level>("…%X…", arg)`` — format-string + positional arg.
     # Allows ``%s``, ``%d``, ``%r``, ``%f``, ``%!s``.
@@ -311,15 +320,34 @@ _STRUCTLOG_POSITIONAL_RE = re.compile(
 def _backend_structlog_positional_args() -> list[Violation]:
     """structlog BoundLogger doesn't accept stdlib-style positional args.
 
-    Walk modules that bind a structlog logger and flag every call site
-    using ``%s``-format + positional arguments. The baseline tolerates
-    the 44 pre-existing call sites; new ones fail CI loudly.
+    ``BoundLogger.<level>`` is ``(event, **kw)``, so a stdlib-style
+    ``logger.info("x %s", val)`` raises ``TypeError`` at call time. Inside a
+    ``try``/``except`` that silently disables the feature around it — this is
+    exactly how checkpoint restore died (PR #573): the log call raised, the
+    blanket except swallowed it, and every restore returned None.
 
-    Fix at the call site: replace
-    ``logger.warning("X failed: %s", exc)`` with
-    ``logger.warning("X_failed", error=str(exc))``.
+    **AST-based, not line-based.** The previous regex only matched calls
+    written on a single line, so a call split across lines was invisible to it.
+    That blind spot hid the checkpoint bug. Walking the AST catches a call
+    however it is formatted, and also catches the
+    ``logger.error("x: %s", exc, exc_info=True)`` shape, where positional args
+    sit alongside a legitimate keyword.
+
+    **Binding-aware, not file-aware.** A module may bind BOTH loggers —
+    ``worker/tasks.py`` has ``logger = logging.getLogger(__name__)`` next to
+    ``_slog = structlog.get_logger(...)``. Treating every ``logger.*`` call in
+    any file that merely mentions structlog would flag ~140 stdlib calls that
+    are perfectly correct, and "fixing" those to kwargs breaks them with the
+    mirror-image ``TypeError`` (stdlib ``Logger._log()`` rejects arbitrary
+    keywords). So resolve, per module, which NAMES are bound to
+    ``structlog.get_logger`` and only judge calls on those.
+
+    Fix at the call site: replace ``logger.warning("X failed: %s", exc)`` with
+    ``logger.warning("x_failed", error=str(exc))`` — but only if that name is a
+    structlog logger. On a stdlib logger, positional args are correct.
     """
     violations: list[Violation] = []
+    levels = {"warning", "info", "error", "debug", "exception", "critical"}
     for path in iter_files(REPO_ROOT / "backend" / "app", (".py",)):
         try:
             text = path.read_text(encoding="utf-8")
@@ -329,12 +357,52 @@ def _backend_structlog_positional_args() -> list[Violation]:
             # Module uses stdlib logging (or no logger at all) — the
             # positional-arg pattern is fine there. Skip.
             continue
-        for ln, line in grep_lines(path, _STRUCTLOG_POSITIONAL_RE):
-            stripped = line.strip()
-            if stripped.startswith("#"):
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+
+        # Names assigned from structlog.get_logger(...) anywhere in the module.
+        structlog_names: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+                continue
+            call = node.value
+            func = call.func
+            dotted = ""
+            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                dotted = f"{func.value.id}.{func.attr}"
+            elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Attribute):
+                inner = func.value
+                if isinstance(inner.value, ast.Name):
+                    dotted = f"{inner.value.id}.{inner.attr}.{func.attr}"
+            if dotted not in {"structlog.get_logger", "structlog.stdlib.get_logger"}:
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    structlog_names.add(target.id)
+        if not structlog_names:
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute) or func.attr not in levels:
+                continue
+            # Only names actually bound to a structlog logger in this module.
+            if not (isinstance(func.value, ast.Name) and func.value.id in structlog_names):
+                continue
+            # A single string argument is the correct kwargs-style call.
+            if len(node.args) < 2:
+                continue
+            first = node.args[0]
+            if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+                continue
+            if not _STRUCTLOG_FORMAT_SPEC_RE.search(first.value):
                 continue
             violations.append(Violation(
-                path, ln,
+                path, node.lineno,
                 "structlog logger called with positional %s args — use "
                 "kwargs (logger.warning(\"event_name\", error=str(exc)))",
             ))

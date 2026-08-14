@@ -47,7 +47,7 @@ async def retrieve_chunks(
     try:
         collection = await _get_or_create_knowledge_collection()
     except Exception as exc:
-        logger.warning("ChromaDB unavailable for retrieval: %s", exc)
+        logger.warning("chromadb_unavailable_for_retrieval", error=exc)
         return []
 
     # Build ChromaDB where clause

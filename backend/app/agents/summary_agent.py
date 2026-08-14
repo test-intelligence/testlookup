@@ -144,8 +144,8 @@ class SummaryAgent(BaseAgent):
             except Exception as exc:
                 fallback_reason = str(exc)
                 logger.warning(
-                    "Summary LLM unavailable; generating deterministic fallback summary instead: %s",
-                    exc,
+                    "summary_llm_unavailable_generating_deterministic_fallback_su",
+                    error=exc,
                 )
                 structured = self._build_fallback_structured_report(
                     run_data=run_data,
@@ -633,14 +633,12 @@ class SummaryAgent(BaseAgent):
             return items
         except asyncio.TimeoutError:
             logger.debug(
-                "Similar failures retrieval timed out after %ss",
-                _SIMILAR_FAILURES_TIMEOUT_SECONDS,
+                "similar_failures_retrieval_timed_out",
+                timeout_seconds=_SIMILAR_FAILURES_TIMEOUT_SECONDS,
             )
             return []
         except Exception as exc:
-            logger.debug(
-                "Similar failures retrieval failed (non-blocking): %s", exc
-            )
+            logger.debug("similar_failures_retrieval_failed_non_blocking", error=exc)
             return []
 
     @staticmethod

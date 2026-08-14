@@ -1585,8 +1585,9 @@ async def run_offline_pipeline(
         initial_state.update(checkpoint)  # type: ignore[typeddict-item]
         initial_state["_checkpoint_stages"] = checkpoint_stages  # type: ignore[typeddict-unknown-key]
         logger.info(
-            "Pipeline %s resuming with checkpoint: stages=%s",
-            pipeline_run_id, checkpoint_stages,
+            "pipeline_resuming_with_checkpoint_stages",
+            pipeline_run_id=pipeline_run_id,
+            checkpoint_stages=checkpoint_stages,
         )
 
     if workflow_type == "deep":
@@ -1598,8 +1599,11 @@ async def run_offline_pipeline(
 
     try:
         logger.info(
-            "Starting %s pipeline %s for run %s (build=%s)",
-            workflow_type, pipeline_run_id, test_run_id, build_number,
+            "starting_pipeline_for_run_build",
+            workflow_type=workflow_type,
+            pipeline_run_id=pipeline_run_id,
+            test_run_id=test_run_id,
+            build_number=build_number,
         )
         final_state = await cast(Any, app).ainvoke(initial_state)
         final_state = attach_workflow_plan_and_verification(
@@ -1628,11 +1632,11 @@ async def run_offline_pipeline(
             "error_count": len(final_state.get("errors", [])),
         })
         logger.info(
-            "Pipeline %s complete. stages=%s errors=%d skipped=%s",
-            pipeline_run_id,
-            final_state.get("completed_stages"),
-            len(final_state.get("errors", [])),
-            final_state.get("skipped_stages", []),
+            "pipeline_complete",
+            pipeline_run_id=pipeline_run_id,
+            completed_stages=final_state.get("completed_stages"),
+            error_count=len(final_state.get("errors", [])),
+            skipped_stages=final_state.get("skipped_stages", []),
         )
         # Persist unified memory entries for historical recall (P3)
         await _persist_memory(project_id, test_run_id, pipeline_run_id, final_state)
@@ -1771,14 +1775,17 @@ async def run_deep_pipeline(
         initial_state.update(checkpoint)  # type: ignore[typeddict-item]
         initial_state["_checkpoint_stages"] = checkpoint_stages  # type: ignore[typeddict-unknown-key]
         logger.info(
-            "Deep pipeline %s resuming with checkpoint: stages=%s",
-            pipeline_run_id, checkpoint_stages,
+            "deep_pipeline_resuming_with_checkpoint_stages",
+            pipeline_run_id=pipeline_run_id,
+            checkpoint_stages=checkpoint_stages,
         )
 
     try:
         logger.info(
-            "Starting deep pipeline %s for run %s (build=%s)",
-            pipeline_run_id, test_run_id, build_number,
+            "starting_deep_pipeline_for_run_build",
+            pipeline_run_id=pipeline_run_id,
+            test_run_id=test_run_id,
+            build_number=build_number,
         )
         final_state = await cast(Any, _deep_app).ainvoke(initial_state)
         final_state = attach_workflow_plan_and_verification(
@@ -1806,11 +1813,11 @@ async def run_deep_pipeline(
             "error_count": len(final_state.get("errors", [])),
         })
         logger.info(
-            "Deep pipeline %s complete. stages=%s errors=%d skipped=%s",
-            pipeline_run_id,
-            final_state.get("completed_stages"),
-            len(final_state.get("errors", [])),
-            final_state.get("skipped_stages", []),
+            "deep_pipeline_complete",
+            pipeline_run_id=pipeline_run_id,
+            completed_stages=final_state.get("completed_stages"),
+            error_count=len(final_state.get("errors", [])),
+            skipped_stages=final_state.get("skipped_stages", []),
         )
         # Persist unified memory entries for historical recall (P3)
         await _persist_memory(project_id, test_run_id, pipeline_run_id, final_state)

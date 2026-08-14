@@ -207,7 +207,12 @@ async def create_source(
     )
     db.add(source)
     await db.flush()  # materialize source.id for the log line and handler refresh
-    logger.info("Knowledge source created: %s (project=%s, type=%s)", source.id, project_id, source_type)
+    logger.info(
+        "knowledge_source_created_project_type",
+        id=source.id,
+        project_id=project_id,
+        source_type=source_type,
+    )
     return source
 
 
@@ -238,7 +243,7 @@ async def update_source(
             if field == "classification" and value not in VALID_CLASSIFICATIONS:
                 raise HTTPException(status_code=422, detail=f"Invalid classification: {value}")
             setattr(source, field, value)
-    logger.info("Knowledge source updated: %s", source_id)
+    logger.info("knowledge_source_updated", source_id=source_id)
     return source
 
 
@@ -250,7 +255,7 @@ async def delete_source(
     """Stage deletion of a knowledge source. Handler commits."""
     source = await get_source_or_404(db, source_id, user)
     await db.delete(source)
-    logger.info("Knowledge source deleted: %s", source_id)
+    logger.info("knowledge_source_deleted", source_id=source_id)
 
 
 async def trigger_sync(
@@ -291,7 +296,7 @@ async def trigger_sync(
         source.sync_status = KnowledgeSyncStatus.FAILED.value
         source.sync_error = "Task queue unavailable"
 
-    logger.info("Knowledge source sync triggered: %s (task=%s)", source_id, task_id)
+    logger.info("knowledge_source_sync_triggered_task", source_id=source_id, task_id=task_id)
     return {"source_id": source.id, "task_id": task_id, "sync_status": source.sync_status}
 
 
@@ -322,7 +327,7 @@ async def set_domain_allowlist(db: AsyncSession, domains: list[str]) -> list[str
         setting.value = json.dumps(cleaned)
     else:
         db.add(AppSetting(key=ALLOWLIST_SETTINGS_KEY, value=json.dumps(cleaned)))
-    logger.info("Domain allowlist updated: %d domains", len(cleaned))
+    logger.info("domain_allowlist_updated_domains", cleaned_count=len(cleaned))
     return cleaned
 
 

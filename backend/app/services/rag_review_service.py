@@ -100,7 +100,7 @@ async def accept_case(
     case.status = "draft"
     batch.cases_accepted = (batch.cases_accepted or 0) + 1
 
-    logger.info("Case accepted: %s (batch=%s)", case_id, batch_id)
+    logger.info("case_accepted_batch", case_id=case_id, batch_id=batch_id)
     return case
 
 
@@ -129,7 +129,7 @@ async def reject_case(
         case.description = f"[Rejected: {reason}]\n\n{case.description or ''}"
     batch.cases_rejected = (batch.cases_rejected or 0) + 1
 
-    logger.info("Case rejected: %s (batch=%s, reason=%s)", case_id, batch_id, reason)
+    logger.info("case_rejected_batch_reason", case_id=case_id, batch_id=batch_id, reason=reason)
 
 
 async def bulk_accept(

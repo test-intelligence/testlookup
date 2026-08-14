@@ -3007,7 +3007,15 @@ def dispatch_scheduled_digests(self):
                         except Exception as e:
                             status = "failed"
                             error_detail = str(e)
-                            logger.warning("Digest email failed for %s: %s", user.email, e)
+                            # The address is PII — redact before it reaches
+                            # a log sink. Stays stdlib-positional because
+                            # ``logger`` here is logging.getLogger, not structlog.
+                            from app.services.privacy_service import sanitize_for_logging
+
+                            logger.warning(
+                                "Digest email failed for %s: %s",
+                                sanitize_for_logging(user.email or ""), e,
+                            )
                     elif channel in ("slack", "teams"):
                         # Resolve the user's webhook for this channel
                         # (project-scoped preference first, then global,
@@ -4243,7 +4251,11 @@ def calibrate_flaky_classifiers(self, project_id: str | None = None) -> dict:
                     except Exception as exc:  # noqa: BLE001 — one project must not stop the sweep
                         errors += 1
                         await db.rollback()
-                        logger.warning(
+                        # ``logger`` in this module is the STDLIB logger
+                        # (line 13); ``_slog`` is the structlog one.
+                        # Keyword fields belong on _slog — passing them
+                        # to stdlib raises TypeError inside the except.
+                        _slog.warning(
                             "flaky_calibration_failed",
                             project_id=str(pid),
                             error_type=type(exc).__name__,
@@ -4258,9 +4270,7 @@ def calibrate_flaky_classifiers(self, project_id: str | None = None) -> dict:
             span.set_attribute("result.projects", out["projects"])
             span.set_attribute("result.measured", measured)
             span.set_attribute("result.errors", errors)
-            # kwargs, not stdlib positional %s: this module binds a structlog
-            # logger, whose BoundLogger.info is (event, **kw).
-            logger.info("flaky_calibration_sweep", **out)
+            _slog.info("flaky_calibration_sweep", **out)
             return out
 
     return cast(dict, _run_async(_run()))

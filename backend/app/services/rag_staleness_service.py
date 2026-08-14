@@ -64,7 +64,7 @@ async def mark_cases_stale_for_source(
         )
 
     await db.flush()
-    logger.info("Marked %d cases stale for source %s", len(case_ids), source_id)
+    logger.info("marked_cases_stale_for_source", case_ids_count=len(case_ids), source_id=source_id)
     return len(case_ids)
 
 
