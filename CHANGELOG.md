@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Feat: first-run guide links to the in-app setup checklist
+
+The empty-dashboard `FirstRunGuide` now offers a **Setup checklist** action that routes to the
+in-app `/getting-started` onboarding flow (the progress-tracked activation checklist:
+create project → upload run → connect Jira/telemetry → view intelligence). Previously the only
+"help me set up" link pointed at the external `GETTING_STARTED.md` on GitHub — dead for
+air-gapped self-hosters and pinned to the upstream repo — leaving no in-app path from the
+first-run guide to the guided checklist that already lives in the sidebar. Presentational,
+additive change; covered by a `FirstRunGuide` regression test asserting the internal route.
 ### 2026-08-14 — Feat: test-intelligence Phase 4 — the attribution verdict
 
 Phase 4 of `architecture/TEST_INTELLIGENCE_PLAN.md`, migration `0133`. The flagship, and the item

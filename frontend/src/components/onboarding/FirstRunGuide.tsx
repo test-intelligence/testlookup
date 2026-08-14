@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Rocket, Copy, Check, ArrowRight, X } from 'lucide-react'
+import { Rocket, Copy, Check, ArrowRight, ListChecks, X } from 'lucide-react'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { buildSteps } from './firstRunSteps'
 
@@ -100,6 +100,9 @@ export default function FirstRunGuide({
         </Link>
         <Link to="/releases" className="btn-ghost text-sm inline-flex items-center gap-1.5">
           Release gate <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+        <Link to="/getting-started" className="btn-ghost text-sm inline-flex items-center gap-1.5">
+          <ListChecks className="h-3.5 w-3.5" /> Setup checklist
         </Link>
         <a
           href="https://github.com/anandtopu/testlookup/blob/main/GETTING_STARTED.md"

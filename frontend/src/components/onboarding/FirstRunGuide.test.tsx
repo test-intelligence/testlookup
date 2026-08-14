@@ -37,6 +37,17 @@ describe('FirstRunGuide', () => {
     expect(screen.getByRole('link', { name: /release gate/i })).toHaveAttribute('href', '/releases')
   })
 
+  it('offers an in-app path to the guided setup checklist', () => {
+    // The empty-dashboard guide should hand off to the progress-tracked
+    // /getting-started onboarding flow — an internal, offline-safe route,
+    // not only the external GETTING_STARTED.md docs link.
+    renderGuide()
+    expect(screen.getByRole('link', { name: /setup checklist/i })).toHaveAttribute(
+      'href',
+      '/getting-started',
+    )
+  })
+
   it('shows the project name when provided', () => {
     renderGuide({ projectName: 'Checkout API' })
     expect(screen.getByText(/Checkout API/)).toBeInTheDocument()
