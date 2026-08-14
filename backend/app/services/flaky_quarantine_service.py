@@ -90,6 +90,8 @@ _RECHECK_RELEASE_THRESHOLD = 0.10
 # A project without a quarantine_lifecycle_policies row resolves to these.
 _DEFAULT_SLA_DAYS = 14
 _DEFAULT_PROMOTE_AFTER_PASSES = 20
+# Fowler's rule of thumb, per-project configurable (migration 0134).
+_DEFAULT_MAX_ACTIVE_QUARANTINED = 8
 _DEFAULT_DETECTION_FLIP_RATE = 0.20
 _DEFAULT_DETECTION_MIN_RUNS = 10
 
@@ -103,6 +105,10 @@ class EffectiveLifecyclePolicy:
     promote_after_passes: int = _DEFAULT_PROMOTE_AFTER_PASSES
     detection_flip_rate_threshold: float = _DEFAULT_DETECTION_FLIP_RATE
     detection_min_runs: int = _DEFAULT_DETECTION_MIN_RUNS
+    # Phase 5 (P5-B). How many tests may sit in quarantine before the UI warns.
+    # 0 = unlimited. Warns, never blocks: refusing to quarantine a genuinely
+    # broken test would push the noise back into the build.
+    max_active_quarantined: int = _DEFAULT_MAX_ACTIVE_QUARANTINED
 
 
 async def get_lifecycle_policy_row(
@@ -132,6 +138,11 @@ async def get_lifecycle_policy(
         auto_promote=bool(row.auto_promote),
         promote_after_passes=int(
             row.promote_after_passes or _DEFAULT_PROMOTE_AFTER_PASSES
+        ),
+        max_active_quarantined=int(
+            row.max_active_quarantined
+            if getattr(row, "max_active_quarantined", None) is not None
+            else _DEFAULT_MAX_ACTIVE_QUARANTINED
         ),
         detection_flip_rate_threshold=float(
             row.detection_flip_rate_threshold

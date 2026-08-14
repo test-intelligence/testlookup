@@ -289,6 +289,7 @@ def _build_comment_body(
     project_name: Optional[str],
     part: _Partition,
     baseline: Optional[Any],
+    attribution_summary: Optional[str] = None,
 ) -> str:
     """Render the sticky comment markdown. First line is ALWAYS the
     hidden marker — it is the upsert key."""
@@ -317,6 +318,17 @@ def _build_comment_body(
     if deep_link:
         counts_line += f" · [Open run in TestLookup]({deep_link})"
     lines.extend([counts_line, ""])
+
+    # Phase 5 (P5-A). A bare failure count is mostly noise — roughly 84% of
+    # pass->fail transitions involve a flaky test — and the surveyed adoption
+    # gap says the verdict has to arrive before a human is paged rather than in
+    # a dashboard they must remember to open. So the counts are followed by
+    # what the failures actually appear to BE.
+    #
+    # Additive only: nothing is hidden, reordered, or marked green because the
+    # failures looked flaky. The full list still follows.
+    if attribution_summary:
+        lines.extend([f"**Attribution:** {attribution_summary}", ""])
 
     if not part.has_baseline and (part.newly_failed or part.known_flaky):
         lines.extend([
@@ -559,9 +571,27 @@ async def _gather_context(run_id: uuid.UUID) -> Optional[_PRCommentContext]:
             right_tests, left_tests, flaky_fps, has_baseline=has_baseline,
             kind_labels=kind_labels,
         )
+        # Phase 5 (P5-A): compose the per-failure verdicts into one line.
+        # Best-effort — a comment that says less is far better than a comment
+        # that never posts, so any failure here degrades to the old body.
+        attribution_summary = None
+        try:
+            from app.services.attribution_summary import summarize
+            from app.services.failure_attribution_service import attribute_run
+
+            attributions = [a for _case, a in await attribute_run(db, run.id)]
+            attribution_summary = summarize(attributions) or None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "pr_comment_attribution_failed",
+                run_id=str(run.id),
+                error_type=type(exc).__name__,
+            )
+
         body = _build_comment_body(
             run, run.project_id, project_name, part,
             baseline if has_baseline else None,
+            attribution_summary=attribution_summary,
         )
 
         has_failures = (int(run.failed_tests or 0) + int(run.broken_tests or 0)) > 0

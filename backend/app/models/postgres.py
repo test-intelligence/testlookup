@@ -4929,6 +4929,13 @@ class QuarantineLifecyclePolicy(Base):
     # False the row is only flagged ready_to_promote for human release.
     auto_promote: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     promote_after_passes: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    # Migration 0134. How many tests may sit in quarantine at once before the
+    # UI warns. Crossing it warns, never blocks — refusing to quarantine a
+    # genuinely broken test would just push the noise back into the build.
+    # 0 means unlimited. Fowler's <=8 is a rule of thumb, so it is per-project.
+    max_active_quarantined: Mapped[int] = mapped_column(
+        Integer, default=8, server_default="8", nullable=False,
+    )
     # US-5.6 — auto-quarantine proposal thresholds consumed by the flaky
     # sentinel agent (flips-in-window floor).
     detection_flip_rate_threshold: Mapped[float] = mapped_column(Float, default=0.20, nullable=False)

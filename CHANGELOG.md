@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-14 — Feat: test-intelligence Phase 5 — distribution and the closed loop
+
+Phase 5 of `architecture/TEST_INTELLIGENCE_PLAN.md`, migration `0134`.
+
+**P5-A — the verdict arrives where people already are.** The PR-comment plumbing existed; what it
+delivered was a raw count (*"Failed: 7"*), which is the signal that makes people stop reading —
+roughly 84% of pass→fail transitions involve a flaky test, and the surveyed adoption gap says the
+verdict has to reach a reviewer *before* they are paged, not in a dashboard they must remember to
+open. The sticky comment now carries one line saying what the failures appear to be:
+
+> **Attribution:** 7 failures: 2 attributable to this change, 4 likely infrastructure (cluster
+> sfc_001 — networking), 1 uncertain
+
+The infrastructure clause names the cluster and its cause, because a reviewer can go look at one
+shared dependency but cannot check the word "infra". It is **additive only** — nothing is hidden,
+reordered, or marked green because the failures looked flaky, and the full failure list still
+follows. If attribution fails for any reason the comment posts without the line: a comment that says
+less beats one that never posts.
+
+**P5-B — quarantine stays a loop rather than becoming a landfill.** The lifecycle already had an
+SLA, auto-created defects, auto-promotion and continued execution of quarantined tests. What it
+lacked was anything that stops the pile growing quietly, which is how quarantine becomes "delay with
+documentation" and the tests are eventually deleted along with the feature they covered:
+
+- **A cap with a visible warning** (`max_active_quarantined`, default 8 and per-project
+  configurable — Fowler's number is a rule of thumb, not a law). It **warns and never blocks**:
+  refusing to quarantine a genuinely broken test would just push the noise back into the build.
+  `0` means unlimited, for teams who want the lifecycle without the ceiling.
+- **An unmasking safeguard.** Quarantine can mask a real race condition, and nobody watches
+  quarantined tests by construction — so a quarantined test whose failure *signature* changes is
+  flagged. Compared on the normalised signature rather than the raw message, so a shifted line
+  number is not mistaken for a new fault, and missing data reports "no change" rather than crying
+  wolf.
+- **A visible population and SLA breach count**, so growth is a number someone sees rather than
+  something discovered a year later.
+
+Nothing in either half suppresses, releases or blocks anything — both services only describe.
+
+23 regression tests, with three properties verified by deliberate mutation: dropping a verdict
+clause so failures vanish from the summary, reading a `0` cap as "none allowed" rather than
+unlimited, and discarding an unrecognised verdict instead of counting it.
+
+
 ### 2026-08-14 — Feat: first-run guide links to the in-app setup checklist
 
 The empty-dashboard `FirstRunGuide` now offers a **Setup checklist** action that routes to the
