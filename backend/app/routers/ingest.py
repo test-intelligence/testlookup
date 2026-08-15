@@ -16,6 +16,7 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_api_key_context, get_db, resolve_project_scope
@@ -101,7 +102,7 @@ async def ingest_batch(
 
     from app.worker.tasks import ingest_uploaded_results
 
-    run_id = str(uuid.uuid4())
+    run_id = await _resolve_run_id(db, target_project_id, payload.build_number)
     task = ingest_uploaded_results.delay(
         run_id=run_id,
         payload=payload.model_dump(),
@@ -121,6 +122,42 @@ async def ingest_batch(
         task_id=task.id,
         total_results=len(payload.results),
     )
+
+
+async def _resolve_run_id(db, project_id, build_number: str | None) -> str:
+    """The run id this ingest will actually land on.
+
+    Ingest is asynchronous — 202 plus a Celery task — so the router used to
+    mint a fresh ``uuid4()``, hand it to the worker and return it. But the
+    pipeline dedupes on ``(project_id, build_number)`` and **reuses** the
+    existing run, discarding the minted id. On a duplicate build number the
+    caller therefore received a 202 and an id that was never persisted:
+    ``GET /runs/{that_id}`` answered 404 and the row did not exist at all.
+
+    That is precisely the CI-retry case — re-running a failed job reuses its
+    build number — so the callers most likely to hit it are the automated ones
+    that POST results and then poll or link the run.
+
+    Returning the existing id makes the response truthful. A narrow race
+    remains: two concurrent ingests of the same *new* build number can both
+    find nothing here and mint different ids, and the pipeline will then keep
+    one. That is rarer and self-correcting, and it is not worth a lock on the
+    ingest hot path — but it is real, so it is written down rather than
+    claimed away.
+    """
+    if not build_number:
+        return str(uuid.uuid4())
+    from app.models.postgres import TestRun
+
+    existing = (
+        await db.execute(
+            select(TestRun.id).where(
+                TestRun.project_id == project_id,
+                TestRun.build_number == build_number,
+            )
+        )
+    ).scalar_one_or_none()
+    return str(existing) if existing else str(uuid.uuid4())
 
 
 _SUPPORTED_FORMATS = {
@@ -253,7 +290,10 @@ async def ingest_file(
     else:
         file_content_arg = content.decode("utf-8", errors="replace")
 
-    run_id = str(uuid.uuid4())
+    # Same contract as the JSON path: a re-upload under an existing build
+    # number must return the id it will actually land on, not a fresh one the
+    # pipeline is about to discard.
+    run_id = await _resolve_run_id(db, target_project_id, build_number)
 
     # US-8.1 — parse the optional supplied commit range (JSON string on the
     # multipart form). Malformed JSON is ignored rather than 400'd: attribution

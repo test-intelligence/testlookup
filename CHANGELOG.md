@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: ingest returned a run_id that did not exist
+
+Found by exploratory testing: ingesting a controlled payload, then re-ingesting the same
+build number and following the id the API handed back.
+
+```
+POST /api/v1/ingest  ->  202 {"run_id": "3168f853-…", "total_results": 10}
+GET  /api/v1/runs/3168f853-…  ->  404 {"detail":"Test run not found"}
+select count(*) from test_runs where id='3168f853-…'  ->  0
+```
+
+The row never existed. Ingest is asynchronous — 202 plus a Celery task — so the router
+minted a fresh `uuid4()`, handed it to the worker and returned it. The pipeline then
+deduped on `(project_id, build_number)`, **reused** the existing run, and discarded the
+minted id.
+
+**The deduplication itself is correct and stays.** Re-ingesting did not double a single
+count and the project still held exactly one run — verified field by field. Only the
+response was wrong.
+
+It matters because of *when* duplicate build numbers occur: **CI retries**. The callers
+most likely to hit this are the automated ones that POST results and then poll or link
+`/runs/{run_id}` — and they were handed a dead id behind an HTTP 202 saying everything
+had succeeded.
+
+Both ingest paths — JSON batch and file upload — now resolve the id they will actually
+land on before returning it. One indexed lookup, skipped entirely when no build number is
+supplied, and scoped to the project because `build-1` exists in plenty of them and
+matching across tenants would be far worse than a 404.
+
+A narrow race remains and is written into the code rather than claimed away: two
+concurrent ingests of the same *new* build number can both find nothing and mint
+different ids, and the pipeline keeps one. That is rarer, self-correcting, and not worth
+a lock on the ingest hot path.
+
+Ten regression tests; four mutations verified — reverting either path to a blind
+`uuid4()`, making the resolver ignore the existing run, and dropping the project scope
+are each caught.
+
+#### What else the controlled ingest checked out clean
+
+A payload of 10 tests across two suites (4 passed / 1 failed / 1 skipped in Alpha;
+2 passed / 1 failed / 1 broken in Beta) reported **every** derived number correctly:
+totals, per-status counts, suite attribution and dominant suite, run status, per-test
+rows, and `pass_rate` **66.67 = 6/9** — the denominator correctly excluding the skipped
+test, which is the number this codebase has had wrong before. Zero errors across the
+backend and all three worker pods during processing.
+
+
 ### 2026-08-15 — Fix: run pickers read "Unknown suite" for runs whose tests name a suite
 
 The agents page's two run pickers labelled every option `Unknown suite · Run #12`.
