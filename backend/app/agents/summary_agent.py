@@ -91,6 +91,30 @@ def _hash_json(value: object) -> str:
     return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
 
 
+class SummaryLLMUnavailable(RuntimeError):
+    """The configured LLM could not produce any part of the structured report.
+
+    Raised so the caller falls through to ``_build_fallback_structured_report``,
+    which assembles all four layers from stored pipeline evidence. Without this
+    signal the per-layer error handlers below absorb every failure individually
+    and the agent emits an executive summary that points the reader at a
+    "detailed breakdown" consisting of three empty objects.
+    """
+
+
+def _layer_has_content(layer: object) -> bool:
+    """True when an LLM layer carries something a reader could act on.
+
+    A failed :meth:`SummaryAgent._call_json_layer` returns a bare ``{}``; a
+    successful one always carries parsed or schema-defaulted keys. Judging on
+    content rather than on a caught exception also catches the case where the
+    model answered but said nothing, which is equally useless downstream.
+    """
+    if not isinstance(layer, dict):
+        return bool(layer)
+    return any(value for value in layer.values())
+
+
 class SummaryAgent(BaseAgent):
     stage_name = "summary"
 
@@ -412,6 +436,7 @@ class SummaryAgent(BaseAgent):
 
         # Layer 1: executive summary (plain text) with timeout
         safe_context = truncate_to_token_budget(context, _MAX_CONTEXT_TOKENS)
+        layer1_error: str | None = None
         try:
             exec_resp = await asyncio.wait_for(
                 llm.ainvoke(
@@ -422,10 +447,15 @@ class SummaryAgent(BaseAgent):
             layer1 = _extract_text(exec_resp)
         except asyncio.TimeoutError:
             logger.warning("Executive summary LLM call timed out", timeout=_LAYER_TIMEOUT_SECONDS)
+            layer1_error = f"executive summary timed out after {_LAYER_TIMEOUT_SECONDS}s"
             layer1 = "Executive summary generation timed out. Please refer to the detailed breakdown below."
         except Exception as exc:
+            # An invoke-level failure — model not pulled, provider unreachable,
+            # bad credentials — will fail identically for layers 2-4. Bail out
+            # now rather than burning three more doomed calls and emitting a
+            # report whose "detailed breakdown below" is empty.
             logger.warning("Executive summary LLM call failed", error=str(exc))
-            layer1 = "Executive summary generation failed. Please refer to the detailed breakdown below."
+            raise SummaryLLMUnavailable(str(exc)) from exc
 
         # Layers 2, 3, 4: JSON responses (run in sequence to respect LLM rate limits)
         layer2 = await self._call_json_layer(
@@ -446,6 +476,15 @@ class SummaryAgent(BaseAgent):
             layer_name="action_plan",
             pipeline_run_id=pipeline_run_id,
         )
+
+        # A timeout on layer 1 does not on its own prove the model is unusable,
+        # so the layers above still get their turn. But if nothing survived, the
+        # report has no content to show and the deterministic fallback — built
+        # from stored pipeline evidence — is strictly better than four blanks.
+        if layer1_error and not any(
+            _layer_has_content(layer) for layer in (layer2, layer3, layer4)
+        ):
+            raise SummaryLLMUnavailable(layer1_error)
 
         # Post-processing: attach similar_failures to layer3 and extract citations
         if isinstance(layer3, dict):

@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: the deterministic summary fallback could never run when the LLM was down
+
+Reported from the homelab: on `/runs/{id}/intelligence`, "the data will not be present for
+many of the fields". The stored summary for that run read:
+
+```
+layer1_executive_summary: "Executive summary generation failed.
+                           Please refer to the detailed breakdown below."
+layer2_incident_view:     {}
+layer3_evidence_pack:     {"citations": []}
+layer4_action_plan:       {}
+```
+
+The report directs the reader to a detailed breakdown that is three empty objects.
+
+The operational cause was local: `ollama list` returned zero models while the deployment
+was configured for `qwen2.5:7b`, so every `ainvoke` raised `model "qwen2.5:7b" not found
+(404)`. (That host cannot reach `registry.ollama.ai` — the pull fails with `connection
+refused` — so the model cannot be fetched there at all.)
+
+**But the product already had the right answer for this, and could not reach it.**
+`_build_fallback_structured_report` assembles all four layers from stored pipeline
+evidence — pass rate, dominant failure category, real stack traces, an action plan — and
+names the remedy. It has exactly one caller: the `except Exception` around
+`_generate_structured_report`.
+
+And `_generate_structured_report` could not raise. Layer 1 caught `Exception` and
+substituted the placeholder above; layers 2–4 went through `_call_json_layer`, documented
+as *"Returns parsed dict or error stub"*, which returns `{}`. Every failure was absorbed
+one layer at a time, so **the branch written for exactly this scenario was dead in exactly
+this scenario** — the repo's dead-branch class (cf. `PerformanceBaseline`/`PerfBaseline`,
+`oc_namespace`/`ocp_namespace`), here as a working feature that could never execute.
+
+Fixed by giving the generator a way to say the LLM produced nothing:
+
+- an invoke-level failure on layer 1 (model missing, provider unreachable, bad credentials)
+  now raises `SummaryLLMUnavailable` **immediately** — it will fail identically for layers
+  2–4, so the run no longer burns three more doomed calls, each up to the layer timeout;
+- a layer-1 *timeout* still lets layers 2–4 try, but if none of them produced content the
+  same signal is raised rather than shipping four blank layers.
+
+Either way the existing degraded path now runs, and the run gets a summary stating its real
+measured numbers plus why it is degraded. The surrounding machinery was already correct and
+already wired — `fallback_used=true`, confidence 70, decision reason
+`deterministic_summary_fallback`, and the progress message "Summary generated in fallback
+mode because the configured LLM was unavailable". None of it had ever been reachable.
+
+Guarded by `backend/tests/regression/test_summary_fallback_is_reachable.py`, whose class is
+**a degraded-mode path must be reachable from the failure it degrades for**, plus the rule
+that no summary may defer to a breakdown it left empty. Each guard was mutation-verified.
+
+Note: runs summarised before this fix keep their stored placeholder; re-running analysis on
+a run regenerates it.
+
 ### 2026-08-15 — Fix: infrastructure failures went unclassified when named by exception class
 
 Found by ingesting five failures with distinguishable causes and reading what the analysis
