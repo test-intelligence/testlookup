@@ -16,6 +16,12 @@ logger = logging.getLogger("training.tasks")
 
 
 def _run_async(coro):
+    # Same loop-bound client caches as worker/tasks.py — this wrapper used to
+    # reset none of them, so a training task inherited whatever loop the last
+    # task left behind.
+    from app.db.loop_bound import reset_loop_bound_clients
+    reset_loop_bound_clients()
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:

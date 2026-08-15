@@ -38,9 +38,8 @@ def _run_async(coro):
     closes its connections on the loop that owns them) and clear the lazy-build
     cache so the next task rebuilds a fresh engine on its own loop.
     """
-    import app.db.redis_client as _redis_mod
-    _redis_mod._pool = None
-    _redis_mod._client = None
+    from app.db.loop_bound import reset_loop_bound_clients
+    reset_loop_bound_clients()
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: a cached Mongo client outlived its event loop, so every task after the first failed
+
+Found by scanning the homelab's worker pods for `Traceback|ERROR/|CRITICAL/|"level":"error"`.
+Two hits in a three-hour window, both the same cause:
+
+```
+worker-ai       RuntimeError: Event loop is closed
+                  at app/agents/summary_agent.py:892 in _store_summary
+worker-default  [AI Email] Failed for run 704cca9a…: Event loop is closed
+```
+
+`worker/tasks.py::_run_async` builds a **fresh event loop for every task** and closes it
+afterwards. `AsyncIOMotorClient` binds to the loop that is running when it is constructed,
+and `app/db/mongo.py` caches it in a module global. So task #1 built the client on its own
+loop, that loop closed, and every task after it on the same worker child got a client wired
+to a dead loop.
+
+The wrapper already understood this failure mode — it reset Redis for exactly this reason,
+and disposed the Postgres engine *on the loop that owns it*, both with comments explaining
+why. **Mongo was simply never added to the list.** And the second wrapper,
+`worker/training_tasks.py::_run_async`, reset nothing at all.
+
+This was not only a log line. When `_store_summary` raises, the summary agent's outer handler
+returns `structured_summary=None` — so the run's intelligence page renders empty, the *same*
+user-visible symptom as the LLM-unavailable bug fixed above, arriving by a completely
+different route.
+
+Fixed with a single `reset_loop_bound_clients()` in `app/db/loop_bound.py` that **both**
+wrappers call. Two independently maintained lists drifting apart is what caused this, so
+there is now one list. Postgres stays deliberately exempt and records why: its pool holds
+live asyncpg connections, so it is disposed on its owning loop rather than dropped.
+
+Guarded by `backend/tests/regression/test_loop_bound_clients_reset.py`: a real
+two-sequential-task reproduction, both wrappers pinned, and a ratchet that fails when a new
+cached client is added under `app/db/` without being wired into the reset or explicitly
+exempted. The ratchet carries its own test proving it can fail — a grep-based check that
+always returned true would have been vacuous. Each guard was mutation-verified.
+
 ### 2026-08-15 — Fix: the deterministic summary fallback could never run when the LLM was down
 
 Reported from the homelab: on `/runs/{id}/intelligence`, "the data will not be present for

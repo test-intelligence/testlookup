@@ -27,6 +27,29 @@ def get_mongo_db() -> AsyncIOMotorDatabase:
     return get_mongo_client()[settings.MONGO_DB]
 
 
+def reset_mongo_client() -> None:
+    """Drop the cached Motor client so the next caller builds one on its loop.
+
+    ``AsyncIOMotorClient`` binds to the event loop that is running when it is
+    created. A Celery task that builds its own loop, uses Mongo, then closes
+    that loop leaves this cache holding a client whose loop is gone — and the
+    *next* task on the same worker child gets ``RuntimeError: Event loop is
+    closed`` on its first Mongo call.
+
+    Synchronous on purpose: it runs before a task's loop exists. Motor's
+    ``close()`` is itself synchronous, and is best-effort here because a client
+    whose loop has already closed can raise while shutting down — a noisy
+    teardown must not fail the task that is about to start.
+    """
+    global _client
+    if _client is not None:
+        try:
+            _client.close()
+        except Exception:  # noqa: BLE001 — teardown of an already-dead loop
+            pass
+        _client = None
+
+
 async def close_mongo() -> None:
     global _client
     if _client is not None:
