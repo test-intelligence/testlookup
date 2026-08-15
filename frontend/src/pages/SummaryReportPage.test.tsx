@@ -297,14 +297,20 @@ describe('SummaryReportPage', () => {
     await waitFor(() => expect(mockGet).toHaveBeenCalled())
     const initialCalls = mockGet.mock.calls.length
 
-    fireEvent.click(screen.getByText('30d'))
+    // Pick a window that is NOT the shared default — clicking the default is
+    // a no-op, so it would assert nothing. Derived from the constant rather
+    // than hard-coded: this previously clicked '30d' as "a different window",
+    // and became vacuous the day 30d BECAME the default.
+    const windowOptions = [1, 7, 30, 90]
+    const nonDefault = windowOptions.find(d => d !== DEFAULT_TIME_WINDOW_DAYS) as number
+    // The page labels 1 as "24h", not "1d" — mirror its own rule.
+    fireEvent.click(screen.getByText(nonDefault === 1 ? '24h' : `${nonDefault}d`))
 
     await waitFor(() => {
-      // Default mode is now ``latest`` (post-2026-05-18 bug fix); we
-      // assert window-change preserves whatever mode is currently
-      // active rather than re-asserting on the default.
+      // Default mode is ``latest``; a window change must preserve whatever
+      // mode is currently active rather than resetting it.
       expect(mockGet).toHaveBeenCalledWith(
-        expect.objectContaining({ days: 30, mode: 'latest' as SummaryReportMode }),
+        expect.objectContaining({ days: nonDefault, mode: 'latest' as SummaryReportMode }),
       )
       expect(mockGet.mock.calls.length).toBeGreaterThan(initialCalls)
     })

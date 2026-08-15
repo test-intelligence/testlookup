@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Default look-back window raised to 30 days
+
+Two reports, one cause:
+
+* *"the entire AI intelligence page is broken — no records for all or most projects"*
+* *"the pipeline runs drop down and test suite & build drop down have no options"*
+
+Four projects' most recent runs were 8–10 days old. The **runs endpoints defaulted to six
+days** and the UI store to seven, so every caller that omitted `days` got an empty list —
+including the agents page's suite+build picker, which then had no run to select, which
+left the pipeline dropdown beneath it empty too. Nothing had failed. The window was just
+shorter than the gap since the last run, and a product that empties out after a quiet week
+reads as an outage.
+
+The exact call that page makes, before and after:
+
+```
+GET /api/v1/runs?project_id=…&page=1&size=25            -> 0 items
+GET /api/v1/runs?project_id=…&page=1&size=25&days=30    -> 11 items
+```
+
+Raised in all four places the number lives, because they have to agree:
+
+| | was | now |
+|---|---|---|
+| `GET /api/v1/runs` | 6 | **30** |
+| `GET /api/v1/runs/failed-ids` | 6 | **30** |
+| `DEFAULT_TIME_WINDOW_DAYS` (store) | 7 | **30** |
+| `/intelligence` URL-param default | 7d | **30d** |
+
+30 is present in every page's allowed option set (`[1,7,14,30,90]`, `[1,7,14,30]`,
+`[1,7,30]`), so `snapToAllowed` returns it exactly rather than rounding to a neighbour and
+leaving one page on a different window from the rest.
+
+**Existing sessions move with it.** Raising the constant alone would have fixed nothing
+for anyone who had already used the app — their `7` is in localStorage. The persist
+version goes to 3 and re-seeds any value equal to a *superseded default*, now kept as data
+(`[7, 1]`) so a future change cannot forget the one it replaces. Honest limitation,
+recorded in the code: a stored `7` from someone who deliberately chose 7 is
+byte-identical to one nobody touched, so this moves both — the store records a number, not
+an intent. Re-seeding is the lesser harm; the cost of moving a deliberate choice is one
+click, the cost of a stale implicit default is a product that looks empty.
+
+`0` (all time) and the 365-day ceiling are unchanged, and tests pin both — a default is
+not a licence to scan forever, and someone auditing an old release still needs the escape
+hatch.
+
+Eight backend tests and eleven frontend tests, four mutations verified: reverting the API
+default, reverting the store, dropping `7` from the superseded list, and letting the
+intelligence page drift from the store are each caught.
+
+One existing test needed updating and is worth noting: `MyFailuresPage` clicked `30d` as
+"a window different from the default" — that assertion **became vacuous** the moment 30d
+became the default. It now derives a non-default option from the constant, so the next
+change to the default cannot quietly hollow it out again.
+
+
 ### 2026-08-15 — Fix: an empty window was reported as "All clear"
 
 Reported as *"the entire AI intelligence page is broken — no records for all or most

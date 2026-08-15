@@ -22,12 +22,29 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-/** Default time window — 7 days. Updated 2026-05-18 from 24h based on
- *  user feedback that "7d is the more useful starting view for trends,
- *  coverage, and the inbox; 24h is too noisy for a first impression."
- *  Pages with a different intrinsic default (e.g. Live, which is always
- *  current) snap via ``snapToAllowed`` to the closest in-range option. */
-export const DEFAULT_TIME_WINDOW_DAYS = 7
+/** Default time window — 30 days.
+ *
+ *  History: 24h → 7d (2026-05-18, "24h is too noisy for a first
+ *  impression") → 30d (2026-08-15).
+ *
+ *  The 7-day default assumed a project ships runs most days. When one does
+ *  not, every windowed surface empties out and the product looks broken —
+ *  which is exactly what was reported: four projects whose most recent runs
+ *  were 8–10 days old rendered as "no records", and the intelligence page
+ *  went as far as calling that "All clear". 30 days is long enough that a
+ *  quiet fortnight does not read as an outage, and it is present in every
+ *  page's allowed option set, so ``snapToAllowed`` returns it exactly rather
+ *  than rounding to a neighbour.
+ *
+ *  Pages with a different intrinsic range (e.g. Live, which is always
+ *  current) still snap via ``snapToAllowed``. */
+export const DEFAULT_TIME_WINDOW_DAYS = 30
+
+/** Defaults this store has shipped, newest first. A stored value equal to a
+ *  PREVIOUS default is indistinguishable from "never chose", which is what
+ *  the migration below re-seeds. Kept as data so adding a future default
+ *  cannot forget to list the one it replaces. */
+const SUPERSEDED_DEFAULTS = [7, 1] as const
 
 interface TimeWindowStore {
   /** Current global window in days. ``1`` = last 24 hours. */
@@ -49,13 +66,23 @@ export const useTimeWindowStore = create<TimeWindowStore>()(
       // implicit-default 24h pick up the new default on their next visit
       // (users who explicitly picked 24h still see 24h — the migrate
       // step below preserves any non-default value).
-      version: 2,
+      version: 3,
       migrate: (persistedState, fromVersion) => {
-        // v1 → v2: only re-seed if the user was on the OLD default (1).
-        // Any other explicit selection is preserved. ``persistedState``
-        // shape from v1 is ``{ days: number }``.
+        // Re-seed anyone sitting on a SUPERSEDED default, and leave every
+        // other value alone.
+        //
+        // Honest limitation: a stored 7 from someone who deliberately chose
+        // 7 is byte-identical to a 7 nobody ever touched, so this moves both.
+        // The store records a number, not an intent. Preferring to re-seed is
+        // the lesser harm — the cost of moving a deliberate choice is one
+        // click, and the cost of leaving a stale implicit default is a
+        // product that looks empty.
         const state = (persistedState as { days?: number } | undefined) ?? {}
-        if (fromVersion < 2 && state.days === 1) {
+        if (
+          fromVersion < 3 &&
+          typeof state.days === 'number' &&
+          (SUPERSEDED_DEFAULTS as readonly number[]).includes(state.days)
+        ) {
           return { ...state, days: DEFAULT_TIME_WINDOW_DAYS }
         }
         return state as unknown

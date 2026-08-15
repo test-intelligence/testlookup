@@ -1,3 +1,7 @@
+// Fallback windows default to 30 to agree with
+// ``DEFAULT_TIME_WINDOW_DAYS``. Every page passes an explicit value from
+// the store, so these only apply to a caller that omits it — but a
+// fallback that disagrees with the store is a trap for the next one.
 import useSWR, { mutate } from 'swr'
 import { metricsService } from '@/services/metricsService'
 import { analyticsService } from '@/services/analyticsService'
@@ -9,7 +13,7 @@ export function refreshDefects() {
   return mutate((key: unknown) => Array.isArray(key) && key[0] === 'analytics-defects')
 }
 
-export function useDashboardSummary(days = 7, suiteName?: string | null) {
+export function useDashboardSummary(days = 30, suiteName?: string | null) {
   return useProjectScopedSWR(
     'metrics-summary',
     (projectId) => metricsService.getSummary(projectId, days, suiteName),
@@ -18,7 +22,7 @@ export function useDashboardSummary(days = 7, suiteName?: string | null) {
   )
 }
 
-export function useTrendData(days = 7, suiteName?: string | null) {
+export function useTrendData(days = 30, suiteName?: string | null) {
   return useProjectScopedSWR(
     'metrics-trends',
     (projectId) => metricsService.getTrends(projectId, days, suiteName),

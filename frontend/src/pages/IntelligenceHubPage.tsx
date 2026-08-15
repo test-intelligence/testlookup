@@ -173,10 +173,13 @@ export default function IntelligenceHubPage() {
   const projectId = useProjectStore(s => s.activeProjectId)
   const isAll = projectId === ALL_PROJECTS_ID
 
-  // Default range is 7d (was 24h prior to 2026-05-15). Most CI workloads
-  // don't ship a fresh run every day; the 24h default left first-time users
-  // staring at "0 runs". The URL param still overrides for deep-links.
-  const range  = (params.get('range') ?? '7d') as RangeId
+  // Default range is 30d (24h → 7d 2026-05-15 → 30d 2026-08-15). Most CI
+  // workloads don't ship a fresh run every day, and 7d still left projects
+  // that had been quiet for a week staring at "0 runs" — reported as the
+  // whole page being broken. Matches DEFAULT_TIME_WINDOW_DAYS in
+  // timeWindowStore; this page keeps its own URL-param default so deep-links
+  // stay shareable, which is why the two have to be changed together.
+  const range  = (params.get('range') ?? '30d') as RangeId
   const branch = params.get('branch') ?? ''
   const status = params.get('status') ?? 'all'
   const query  = params.get('q') ?? ''

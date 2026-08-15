@@ -46,7 +46,13 @@ async def list_runs(
     size: int = Query(20, ge=1, le=500),
     status: str | None = None,
     release_id: str | None = None,
-    days: int | None = Query(6, ge=0, le=365, description="Show runs from last N days (0 = all time)"),
+    # 30, not 6. A six-day default assumed a project ships runs most days;
+    # when one does not, every caller that omits ``days`` — including the
+    # agents page's suite+build picker — renders an empty list and the product
+    # looks broken. Reported live against four projects whose most recent runs
+    # were 8-10 days old. Matches DEFAULT_TIME_WINDOW_DAYS in the frontend
+    # store; the two are meant to agree.
+    days: int | None = Query(30, ge=0, le=365, description="Show runs from last N days (0 = all time)"),
     suite_name: str | None = Query(None, min_length=1, description="Filter runs by suite name, case-insensitive"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -91,7 +97,8 @@ async def list_runs(
 @router.get("/failed-ids")
 async def list_failed_run_ids(
     project_id: str | None = None,
-    days: int | None = Query(6, ge=0, le=365, description="Look back window in days (0 = all time)"),
+    # 30 — same reasoning as ``list_runs`` above; the two must not diverge.
+    days: int | None = Query(30, ge=0, le=365, description="Look back window in days (0 = all time)"),
     limit: int = Query(1000, ge=1, le=5000, description="Hard cap to prevent runaway fan-outs"),
     only_pending: bool = Query(
         False,

@@ -205,15 +205,20 @@ describe('MyFailuresPage', () => {
     await waitFor(() => expect(mockList).toHaveBeenCalled())
     const initialCalls = mockList.mock.calls.length
 
-    // Click a window DIFFERENT from the default (now 7d) so the change
-    // actually re-runs the fetch. Clicking 7d would be a no-op since 7d
-    // is the shared default the page already mounted with.
-    fireEvent.click(screen.getByText('30d'))
+    // Pick a window that is NOT the shared default — clicking the default is
+    // a no-op, so it would assert nothing. Derived from the constant rather
+    // than hard-coded: this test previously clicked '30d' as "not the
+    // default", and silently became vacuous the day 30d BECAME the default.
+    const options = [1, 7, 30]
+    const nonDefault = options.find(d => d !== DEFAULT_TIME_WINDOW_DAYS)
+    expect(nonDefault).toBeDefined()
+    // The page labels 1 as "24h", not "1d" — mirror its own rule.
+    const label = nonDefault === 1 ? '24h' : `${nonDefault}d`
+    fireEvent.click(screen.getByText(label))
 
     await waitFor(() => {
-      // The hook should re-run with days=30.
       expect(mockList).toHaveBeenCalledWith(
-        expect.objectContaining({ days: 30, page: 1, size: 25 }),
+        expect.objectContaining({ days: nonDefault, page: 1, size: 25 }),
       )
       expect(mockList.mock.calls.length).toBeGreaterThan(initialCalls)
     })
