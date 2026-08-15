@@ -124,6 +124,21 @@ class AnalysisLookupResponse(BaseModel):
 
 # ── Feedback endpoints ────────────────────────────────────────────────────────
 
+# Declared BEFORE ``/feedback/{analysis_id}``: FastAPI matches routes in
+# declaration order, so a literal segment placed after a same-shape parameter
+# route is unreachable — the parameter route wins and "jira-webhook" is parsed
+# as a UUID. This endpoint returned 422 to every Jira delivery until it was
+# moved up. Guarded by tests/test_architectural_route_shadowing.py.
+@router.post("/feedback/jira-webhook", status_code=200)
+async def jira_resolution_webhook(
+    payload: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await feedback_service.jira_resolution_webhook(db, payload)
+    await db.commit()
+    return result
+
+
 @router.post("/feedback/{analysis_id}", status_code=201)
 async def submit_feedback(
     analysis_id: uuid.UUID,
@@ -263,16 +278,6 @@ async def get_training_status(
     _=Depends(get_current_active_user),
 ):
     return await feedback_service.get_training_status(db, settings)
-
-
-@router.post("/feedback/jira-webhook", status_code=200)
-async def jira_resolution_webhook(
-    payload: dict = Body(...),
-    db: AsyncSession = Depends(get_db),
-):
-    result = await feedback_service.jira_resolution_webhook(db, payload)
-    await db.commit()
-    return result
 
 
 def settings_provider() -> str:

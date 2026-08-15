@@ -136,6 +136,13 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     scoring.router,
     onboarding.router,
     test_health.router,
+    # BEFORE test_management: rag_generation owns the literal
+    # ``/test-management/cases/stale``, and test_management_cases owns
+    # ``/cases/{case_id}``. FastAPI matches in registration order, so with
+    # test_management first the literal was unreachable — "stale" was parsed as
+    # a UUID and every call 422'd. Guarded by
+    # tests/test_architectural_route_shadowing.py.
+    rag_generation.router,             # RAG grounded generation (RAG-7 through RAG-14)
     test_management.router,
     users.router,
     users.projects_router,
@@ -157,7 +164,6 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     seed.router,                      # Dev-only seed data management
     ingest.router,                     # Unified test data ingestion (JSON batch + file upload)
     knowledge_sources.router,          # Knowledge source registry (RAG-1/2/3)
-    rag_generation.router,             # RAG grounded generation (RAG-7 through RAG-14)
     feature_flags_router.router,       # Tier 0A: generic feature flag store (ADMIN)
     decision_trail.router,             # Tier 0B: AI decision audit trail per run
     llm_cost_budget_router.router,     # Tier 1 item 2: LLM cost budget + usage meter

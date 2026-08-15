@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: two endpoints were unreachable, one of them a webhook
+
+Found by sweeping every parameterless GET on the reference deployment and reading the
+failures. FastAPI matches routes in **registration order**, so a literal path segment
+declared after a same-shape parameter route is dead — the parameter route wins, the
+literal is handed to the parameter's validator, and the caller gets a 422 naming a field
+they never sent.
+
+Both confirmed by calling them:
+
+```
+POST /api/v1/feedback/jira-webhook
+  {"loc":["path","analysis_id"],"msg":"Input should be a valid UUID,
+   invalid character: found `j` at 1","input":"jira-webhook"}
+
+GET /api/v1/test-management/cases/stale
+  {"loc":["path","case_id"],"msg":"Input should be a valid UUID,
+   invalid character: found `s` at 1","input":"stale"}
+```
+
+The first is a **webhook an external system posts to**. Jira had been receiving a 422 for
+every delivery, and nothing in the product would ever have reported it — from the
+application's point of view, nothing failed.
+
+They arose two different ways, which is why the guard is structural rather than a
+convention about one file. `jira-webhook` was shadowed **within a single router**
+(declared at line 268, below its parameter route at line 127). `cases/stale` was shadowed
+**across routers**, by registration order in `bootstrap.py` — `rag_generation` owns the
+literal, `test_management_cases` owns `/cases/{case_id}`. A reviewer reading either file
+alone would see nothing wrong.
+
+`tests/test_architectural_route_shadowing.py` walks the **assembled application's own
+routing table**, so it asks what FastAPI will actually match rather than what the source
+looks like. It also confirmed the `bootstrap.py` reorder introduced no new shadow, which
+was the real risk in moving a whole router.
+
+Eleven tests: the regression itself, the two endpoints by name, eight parameterised cases
+proving the detector is not vacuous, and one asserting the route table is populated at all
+— because a check that silently matches nothing is exactly how the original bug survived.
+Both fixes mutation-verified by reverting each and watching the test fail.
+
+
 ### 2026-08-14 — Fix: semantic indexing degrades where the embedder actually runs
 
 **A correction to the previous entry.** It claimed the air-gapped path "degrades cleanly",
