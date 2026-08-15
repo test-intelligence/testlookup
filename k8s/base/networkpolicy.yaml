@@ -74,10 +74,17 @@ spec:
           port: 8000
 
 ---
-# Backend API: ingress from ingress-nginx + frontend + workers (for internal
-# service-to-service calls). Egress is allowed to anywhere in-cluster — the
-# backend talks to Ollama, MCP, and data stores; tightening this further needs
-# explicit per-service labels which vary by environment.
+# Backend API: ingress from ingress-nginx + frontend + workers + the MCP
+# server (for internal service-to-service calls). Egress is allowed to anywhere
+# in-cluster — the backend talks to Ollama, MCP, and data stores; tightening
+# this further needs explicit per-service labels which vary by environment.
+#
+# ``testlookup-mcp`` was missing here until 2026-08-15 while ``allow-mcp``
+# already granted MCP *egress* to this service. NetworkPolicy needs both
+# halves, so every MCP tool call died with "All connection attempts failed"
+# while the pod stayed Ready — its probes are tcpSocket on its own port, and
+# the SSE handshake and ``tools/list`` are served without touching the API.
+# Same class as the beat/scheduler omission recorded below.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -101,6 +108,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: worker
+        - podSelector:
+            matchLabels:
+              app: testlookup-mcp
       ports:
         - protocol: TCP
           port: 8000

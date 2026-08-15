@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: the MCP server could not reach the backend, so every tool call failed
+
+An entire advertised surface — the README and CLAUDE.md list UI, REST API, CLI and **MCP
+server** — was non-functional on any NetworkPolicy-enforcing cluster.
+
+The full MCP handshake over SSE worked and `tools/list` returned ~45 tools. Every
+`tools/call` then failed:
+
+```
+Error executing tool list_projects: All connection attempts failed
+```
+
+From inside the MCP pod, DNS resolved but the backend refused on the service IP *and* both
+pod IPs, while the service itself was configured correctly (selector matching, two healthy
+endpoints on :8000).
+
+Under `default-deny-all` a connection needs **both** halves, and the two disagreed:
+`allow-mcp` granted MCP egress to `app=testlookup-backend:8000`, but `allow-backend`'s
+ingress permitted only the `ingress-nginx` namespace, `app=testlookup-frontend` and
+`app.kubernetes.io/component=worker`. The MCP pod carries `app: testlookup-mcp` and no
+`component` label, so it matched none of them.
+
+Proven rather than inferred, with two throwaway pods from the same image differing only by
+one label: unlabelled → connection refused; `component=worker` → 200. That also ruled out
+"NetworkPolicy isn't enforced here", which the Traefik-vs-`ingress-nginx` selector mismatch
+had made a genuine alternative explanation.
+
+Nothing caught it because the MCP probes are `tcpSocket` on its own port — the right choice
+for an SSE server, since an HTTP GET on `/sse` would hang — and because the handshake and
+`tools/list` are both served without ever calling the backend. The pod looked healthy and
+the tool catalogue looked complete while every tool was dead.
+
+`allow-workers` in the same file already records this exact class: before 2026-05-15 only
+`worker` was matched, so the beat pod's `wait-for-redis` initContainer hung forever and
+`close_stale_live_sessions` silently stopped running. Two omissions, same shape, four months
+apart — so this lands with a ratchet rather than a third comment.
+
+Guarded by `backend/tests/regression/test_networkpolicy_halves_agree.py`: **every egress rule
+naming a pod selector must have a matching ingress grant at the destination.** A rule
+permitting traffic the other end drops is not a tighter policy, it is a broken one. The check
+carries positive and negative self-tests so a parse change cannot make it vacuously green.
+
+
 ### 2026-08-15 — Fix: the AI-degradation flag `fallback_used` was permanently False
 
 Found on the homelab immediately after the deterministic summary fallback was made
