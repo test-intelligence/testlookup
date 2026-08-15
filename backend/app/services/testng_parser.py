@@ -1,4 +1,11 @@
-"""TestNG / surefire XML report parser.
+"""TestNG report parser — BOTH the native and the surefire document shapes.
+
+TestNG emits two different files. Maven surefire writes JUnit-shaped
+``TEST-*.xml`` (``<testsuite>/<testcase>``); TestNG itself writes
+``testng-results.xml`` (``<suite>/<test>/<class>/<test-method>``). This
+module handled only the first for a long time while ``_detect_format``
+routed both here, so a native report parsed to zero results behind an
+HTTP 202 that reported success.
 
 TestNG XML has **no native step hierarchy** — a ``<testcase>`` is the finest
 granularity it reports. To still feed the Phase 1 granular snapshot pipeline we
@@ -136,6 +143,108 @@ def _build_steps(testcase, status: str) -> List[dict]:
     return steps
 
 
+# ── Native testng-results.xml ────────────────────────────────────────────────
+#
+# TestNG emits TWO different files and this module has only ever understood one
+# of them. Under Maven, surefire writes JUnit-shaped
+# ``TEST-*.xml`` (``<testsuite>/<testcase>``) — handled below. TestNG *itself*
+# writes ``testng-results.xml``, whose shape is entirely different:
+#
+#     <testng-results total="6" passed="3" failed="2" skipped="1">
+#       <suite name="…"><test name="…"><class name="…">
+#         <test-method status="PASS|FAIL|SKIP" name="…" duration-ms="…">
+#           <exception class="…"><message/><full-stacktrace/></exception>
+#
+# ``_detect_format`` explicitly routes ``<testng-results`` here, so the product
+# *claimed* to support it — but ``root.findall("testsuite")`` matches nothing in
+# that document, so a valid six-test report parsed to ZERO results and the
+# upload still answered ``202 {"total_results": 0}``. Silent, and on one of the
+# eight formats the product advertises.
+_TESTNG_STATUS = {
+    "PASS": "passed",
+    "FAIL": "failed",
+    "SKIP": "skipped",
+    # TestNG's own vocabulary for a method skipped because a dependency failed.
+    # It did not run, so it is not a failure.
+    "SKIPPED": "skipped",
+}
+
+# Configuration methods (@BeforeMethod/@AfterSuite/…) are reported as
+# <test-method is-config="true">. They are setup, not tests: counting them
+# would inflate every total and make a suite of 6 tests report 14.
+def _is_config_method(node) -> bool:
+    return str(node.get("is-config") or "").lower() == "true"
+
+
+def _testng_exception(method):
+    """(message, stack) from a <test-method>'s exception, if any."""
+    exc = method.find("exception")
+    if exc is None:
+        return None, None
+    message = _clean(exc.findtext("message"))
+    if not message:
+        # Some writers put the text on the element itself.
+        message = _clean(exc.get("class"))
+    stack = _clean(exc.findtext("full-stacktrace"))
+    return (
+        (message[:_MAX_MESSAGE_CHARS] or None),
+        (stack[:_MAX_TRACE_CHARS] or None),
+    )
+
+
+def _parse_testng_results(root, test_run_id: str) -> List[dict]:
+    """Parse a native ``testng-results.xml`` document."""
+    results: List[dict] = []
+    for suite in root.findall("suite"):
+        suite_name = suite.get("name") or "Unknown Suite"
+        for test in suite.findall("test"):
+            for klass in test.findall("class"):
+                class_name = klass.get("name") or ""
+                for method in klass.findall("test-method"):
+                    if _is_config_method(method):
+                        continue
+                    raw_status = str(method.get("status") or "").upper()
+                    # An unrecognised status becomes UNKNOWN rather than
+                    # silently PASSED — a status this parser does not know is
+                    # not evidence that the test passed.
+                    status = _TESTNG_STATUS.get(raw_status, "unknown")
+                    name = method.get("name") or "Unknown"
+                    try:
+                        duration_ms = int(float(method.get("duration-ms") or 0))
+                    except (TypeError, ValueError):
+                        duration_ms = None
+                    message, stack = _testng_exception(method)
+                    results.append({
+                        "test_run_id": test_run_id,
+                        "test_name": name,
+                        "full_name": f"{class_name}.{name}" if class_name else name,
+                        "suite_name": suite_name,
+                        "class_name": class_name,
+                        "package_name": (
+                            class_name.rsplit(".", 1)[0] if "." in class_name else None
+                        ),
+                        "status": status,
+                        "duration_ms": duration_ms,
+                        "error_message": message,
+                        "stack_trace": stack,
+                        "attachments": [],
+                        # One coarse outcome pseudo-step, same cross-framework
+                        # shape the surefire path emits.
+                        "steps": [{
+                            "name": "outcome",
+                            "keyword": "outcome",
+                            "status": status.upper(),
+                            "start_ms": None,
+                            "duration_ms": duration_ms,
+                            "assertion_message": message,
+                            "assertion_trace": stack,
+                            "expected": None,
+                            "actual": None,
+                        }],
+                    })
+    return results
+
+
 def parse_testng_xml(xml_content: str, test_run_id: str) -> List[dict]:
     """Parse a TestNG surefire XML report into a list of normalised test case dicts."""
     results: List[dict] = []
@@ -145,7 +254,12 @@ def parse_testng_xml(xml_content: str, test_run_id: str) -> List[dict]:
         logger.warning(f"Failed to parse TestNG XML: {e}")
         return results
 
-    # Handle both <testsuite> and <testsuites> root elements
+    # Native testng-results.xml — a completely different document shape from
+    # surefire's. Checked FIRST because its root tag is unambiguous.
+    if root.tag == "testng-results":
+        return _parse_testng_results(root, test_run_id)
+
+    # Handle both <testsuite> and <testsuites> root elements (surefire/JUnit).
     suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
 
     for suite in suites:

@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: native TestNG reports parsed to zero tests, silently
+
+Found by uploading one representative file per advertised ingestion format to the live
+deployment and checking the counts against hand-computed ground truth. **Nine of ten
+matched exactly.** TestNG produced no run at all — and the upload still answered:
+
+```
+HTTP 202  {"status": "accepted", "run_id": "…", "total_results": 0}
+```
+
+TestNG emits **two** different files. Under Maven, surefire writes JUnit-shaped
+`TEST-*.xml` (`<testsuite>/<testcase>`) — which the parser handled. TestNG itself writes
+`testng-results.xml`, a completely different document:
+
+```xml
+<testng-results><suite><test><class>
+  <test-method status="PASS|FAIL|SKIP" name="…" duration-ms="…">
+    <exception class="…"><message/><full-stacktrace/></exception>
+```
+
+`_detect_format` explicitly matches `<testng-results` and routes it to that parser, so the
+product **claimed** the format — but `root.findall("testsuite")` matches nothing in such a
+document, so a valid six-test report became zero results. No error, no warning: a
+silent data-loss path on one of the eight formats the product advertises, and the
+uploader was told it worked.
+
+Native `testng-results.xml` is now parsed properly — status, suite, class, package,
+duration, exception message and full stack trace. Two details that are easy to get wrong
+and are pinned by tests:
+
+- **Configuration methods are not tests.** `@BeforeMethod`/`@AfterSuite` arrive as
+  `<test-method is-config="true">`; counting them would inflate every total a TestNG user
+  sees.
+- **An unrecognised status is `unknown`, not `passed`.** A status the parser does not
+  know is not evidence a test passed — that would turn a parser gap into a green build.
+
+The guard is the **class**, not TestNG: every format the detector can return must parse a
+representative file to a non-zero result, *and* each fixture must be detected as the
+format whose parser handles it. Detection and parsing agreeing separately is not enough —
+they have to agree with each other.
+
+28 tests, four mutations verified. Surefire parsing is separately pinned, since both
+shapes now share one entry point and adding the native branch could have shadowed the path
+that already worked.
+
+#### The other nine formats
+
+JUnit, pytest, Robot, NUnit, TRX, xUnit, Cypress, Playwright and Cucumber each parsed a
+6-test fixture (3 passed / 1 failed / 1 error / 1 skipped) to exactly the expected counts.
+JUnit, pytest, NUnit and Playwright additionally preserved the FAILED-vs-BROKEN
+distinction their formats carry; Robot, TRX, xUnit, Cypress and Cucumber map both to
+FAILED, which is a limitation of those formats rather than of the parsers.
+
+
 ### 2026-08-15 — Fix: ingest returned a run_id that did not exist
 
 Found by exploratory testing: ingesting a controlled payload, then re-ingesting the same
