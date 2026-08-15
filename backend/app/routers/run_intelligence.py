@@ -236,12 +236,19 @@ async def refresh_intelligence(
     # Recompute live
     try:
         result = await get_run_intelligence(run_id, db, mongo)
-        # Save new snapshot
+        # Save new snapshot in a DEDICATED write session, exactly as the GET
+        # handler does. Catching the error is not enough on the request
+        # session: a failed flush leaves it in a rolled-back state, so the
+        # next use raises PendingRollbackError and the handler 500s — which
+        # is how a JSON-serialisation failure in the payload turned a
+        # best-effort cache write into a hard failure of this endpoint.
         try:
             fallback = result.get("provenance", {}).get("fallback_used", False) if isinstance(result.get("provenance"), dict) else False
-            await save_snapshot(db, run_id, result, fallback_used=fallback)
-        except Exception:
-            pass
+            from app.db.postgres import AsyncSessionLocal as _AsyncSessionLocal
+            async with _AsyncSessionLocal() as write_db:
+                await save_snapshot(write_db, run_id, result, fallback_used=fallback)
+        except Exception as cache_err:
+            logger.warning("Failed to save intelligence snapshot on refresh: %s", cache_err)
         if isinstance(result, dict):
             result["_snapshot"] = {"cached": False, "stale": False, "just_refreshed": True}
         return result

@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: `/intelligence/refresh` returned 500, and no run with an AI summary could cache
+
+Found while re-verifying the summary fix on the homelab.
+`POST /api/v1/runs/{run_id}/intelligence/refresh` returned **500**:
+
+```
+TypeError: Object of type datetime is not JSON serializable
+  [SQL: INSERT INTO run_intelligence_snapshots (..., payload, ...)]
+...then...
+sqlalchemy.exc.PendingRollbackError: This Session's transaction has been rolled back
+  due to a previous exception during flush.
+```
+
+Two defects stacked, and the second is what turned the first into an outage:
+
+1. **The payload was not JSON-safe.** `run_intelligence_snapshots.payload` is a JSON column,
+   but the intelligence payload is assembled partly from MongoDB, which returns BSON dates as
+   real `datetime` objects. Walking a live payload found exactly two —
+   `structured_summary.generated_at` and `provenance.generated_at`.
+
+2. **The failure was not contained.** The refresh handler wrapped the cache write in
+   `except Exception: pass` on the **injected request session**. Catching the exception does
+   not undo the failed flush: the session is left rolled back, so the next use of it raises
+   `PendingRollbackError` and the endpoint 500s. A best-effort write on a shared session
+   cannot be made best-effort by catching it — only by not sharing the session. The GET
+   handler already used a dedicated write session and carried a comment explaining exactly
+   this; refresh had drifted from it.
+
+Measured blast radius: **all 56 stored run summaries carried `generated_at`**, so every run
+with an AI summary both failed to cache its snapshot — silently recomputing the whole
+payload on every read, with the failure visible only as a `logger.warning` — and returned
+500 on refresh. The reported run had zero rows in `run_intelligence_snapshots`.
+
+Fixed by encoding the payload with `jsonable_encoder` at the persistence boundary (covering
+every field that reaches the column, including ones added later) and giving the refresh
+handler its own write session.
+
+Guarded by `backend/tests/regression/test_intelligence_snapshot_json_safe.py`, including a
+test that the encoding reaches arbitrarily deep — a fix that special-cased the two known keys
+would otherwise pass and break on the next Mongo-sourced field. Each guard was
+mutation-verified.
+
 ### 2026-08-15 — Fix: a cached Mongo client outlived its event loop, so every task after the first failed
 
 Found by scanning the homelab's worker pods for `Traceback|ERROR/|CRITICAL/|"level":"error"`.

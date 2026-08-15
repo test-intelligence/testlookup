@@ -28,6 +28,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -187,7 +188,16 @@ async def save_snapshot(
     payload: dict,
     fallback_used: bool = False,
 ) -> None:
-    """Save or update a snapshot for a run."""
+    """Save or update a snapshot for a run.
+
+    The payload is coerced to JSON-native types first. ``payload`` is a JSON
+    column, but the intelligence payload is assembled partly from MongoDB,
+    which hands back BSON dates as real ``datetime`` objects — and asyncpg
+    cannot serialise those, so the flush died with ``Object of type datetime
+    is not JSON serializable``. Encoding at this boundary covers every field
+    that reaches the column, including ones added later.
+    """
+    payload = jsonable_encoder(payload)
     result = await db.execute(
         select(RunIntelligenceSnapshot).where(
             RunIntelligenceSnapshot.run_id == run_id,
