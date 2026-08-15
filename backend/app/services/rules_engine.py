@@ -39,7 +39,14 @@ _PATTERNS: list[tuple[str, list[str], str, str]] = [
     ),
     (
         "pattern.connection_refused",
-        ["connection refused", "connection reset", "econnrefused", "econnreset", "broken pipe"],
+        [
+            "connection refused", "connection reset", "econnrefused",
+            "econnreset", "broken pipe",
+            # Class names: a bare java.net.ConnectException or a Python
+            # requests ConnectionError carries no prose to match on.
+            "connectexception", "connectionreseterror", "connectionrefusederror",
+            "connectionerror", "max retries exceeded",
+        ],
         "INFRASTRUCTURE",
         "Network connectivity issue: connection refused or reset. Check upstream service health.",
     ),
@@ -57,7 +64,18 @@ _PATTERNS: list[tuple[str, list[str], str, str]] = [
     ),
     (
         "pattern.dns",
-        ["dns resolution", "name resolution", "unknown host", "getaddrinfo", "eai_again"],
+        [
+            "dns resolution", "name resolution", "unknown host", "getaddrinfo",
+            "eai_again",
+            # Exception class names / platform phrasings for the SAME failure.
+            # "unknown host" (with a space) never matched
+            # java.net.UnknownHostException, which is how the JVM reports it.
+            "unknownhostexception", "unknownhost",
+            "no such host is known",              # .NET SocketException
+            "nodename nor servname",              # macOS getaddrinfo
+            "temporary failure in name resolution",  # glibc
+            "name or service not known",          # Python socket.gaierror
+        ],
         "INFRASTRUCTURE",
         "DNS resolution failure. Check DNS configuration and network connectivity.",
     ),
@@ -71,7 +89,11 @@ _PATTERNS: list[tuple[str, list[str], str, str]] = [
     ),
     (
         "pattern.network_unreachable",
-        ["network is unreachable", "host unreachable", "ehostunreach", "enetunreach", "no route to host"],
+        [
+            "network is unreachable", "host unreachable", "ehostunreach",
+            "enetunreach", "no route to host",
+            "noroutetohostexception",
+        ],
         "INFRASTRUCTURE",
         "Network/host unreachable. Check routing, firewall rules, and VPN/proxy configuration.",
     ),

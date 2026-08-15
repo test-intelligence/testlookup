@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: infrastructure failures went unclassified when named by exception class
+
+Found by ingesting five failures with distinguishable causes and reading what the analysis
+pipeline made of them. Four were right. One was not:
+
+```
+test_infra_dns  |  java.net.UnknownHostException: payments.internal
+  -> failure_category = UNKNOWN, confidence 30
+  -> "Could not determine failure cause from available data"
+```
+
+…for a failure whose cause is fully determined by its first line. Its sibling,
+`java.net.ConnectException: Connection refused`, classified correctly — but only because
+that message happens to *also* contain the prose "connection refused".
+
+**The rules matched human prose but not exception class names.** `"unknown host"` (with a
+space) never matches `UnknownHostException`. Class names are how these failures actually
+appear in a Java, Python or .NET stack trace — which is this product's entire corpus:
+JUnit, TestNG, pytest, NUnit, TRX.
+
+Probing eight common signatures found **six** falling through to UNKNOWN:
+
+| signature | before | after |
+|---|---|---|
+| `java.net.UnknownHostException` | UNKNOWN | INFRASTRUCTURE (75) |
+| `java.net.ConnectException` | UNKNOWN | INFRASTRUCTURE (70) |
+| `java.net.NoRouteToHostException` | UNKNOWN | INFRASTRUCTURE (75) |
+| `requests.exceptions.ConnectionError` | UNKNOWN | INFRASTRUCTURE (70) |
+| `socket.gaierror: Name or service not known` | UNKNOWN | INFRASTRUCTURE (75) |
+| `.NET SocketException: No such host is known` | UNKNOWN | INFRASTRUCTURE (75) |
+
+This is not a tuning question. An unclassified infrastructure failure loses its cause, its
+confidence drops to the "could not determine" floor, and it stops feeding the co-failure
+clustering that would otherwise group an outage into a single finding. That the codebase
+already knew better elsewhere — `systemic_cluster_service` lists `"unknownhost"` in its
+cause-family matcher — is what makes this an oversight rather than a scope decision.
+
+**The other direction is guarded too.** Widening keywords is exactly how a classifier
+starts calling everything infrastructure, so assertions, NPEs and locator failures are
+pinned as *not* infrastructure — including a test named `test_connection_pool_sizing`
+failing an assertion, which must stay a product bug. Matching the bare word "connection"
+would have been the lazy fix and is now a failing test.
+
+27 tests across three runtimes; five mutations verified in both directions.
+
+One of those tests was wrong first time: the routing signature ended in "no route to
+host", so the prose rule matched and the class-name path it claimed to test was never
+exercised — it passed with the class name deleted. The signature now carries no prose
+keyword.
+
+
 ### 2026-08-15 — Onboarding: first-run guide shows the raw ingest-API curl for CI
 
 The empty-dashboard first-run guide's second step reads "Point your CI at the
