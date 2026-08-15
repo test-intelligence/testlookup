@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 import FirstRunGuide, { FIRST_RUN_DISMISS_KEY } from './FirstRunGuide'
-import { uploadCommand } from './firstRunSteps'
+import { uploadCommand, ingestApiCommand } from './firstRunSteps'
 
 const copyMock = vi.fn(async (_value: string) => true)
 vi.mock('@/utils/clipboard', () => ({
@@ -81,6 +81,37 @@ describe('FirstRunGuide', () => {
     ).toBeInTheDocument()
   })
 
+  it('offers a raw ingest-API curl for CI runners that skip the CLI', () => {
+    // Step 2 names the ingest API but historically only showed the CLI; CI
+    // runners that curl the endpoint now get a copy-paste example too.
+    renderGuide()
+    expect(screen.getByText(/POST straight to the ingest API/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(content => content.includes('/api/v1/ingest/file')),
+    ).toBeInTheDocument()
+  })
+
+  it('splices the real project id into the ingest-API curl when scoped', () => {
+    const id = '6783f331-9f51-4b0b-a27a-acc31e117b21'
+    renderGuide({ projectId: id })
+    expect(
+      screen.getByText(content => content.includes(`project_id=${id}`)),
+    ).toBeInTheDocument()
+    // The build label stays a placeholder — it is per-run and caller-only.
+    expect(
+      screen.getByText(content => content.includes('build_number=<build>')),
+    ).toBeInTheDocument()
+  })
+
+  it('copies the ingest-API curl verbatim', async () => {
+    const id = '6783f331-9f51-4b0b-a27a-acc31e117b21'
+    renderGuide({ projectId: id })
+    fireEvent.click(screen.getByRole('button', { name: /copy command: curl -x post/i }))
+    await waitFor(() =>
+      expect(copyMock).toHaveBeenCalledWith(ingestApiCommand(id)),
+    )
+  })
+
   describe('uploadCommand', () => {
     it('uses the placeholder for undefined, empty, and whitespace-only ids', () => {
       const placeholder = 'testlookup upload file results.xml -p <project-id> -b <build>'
@@ -92,6 +123,25 @@ describe('FirstRunGuide', () => {
     it('splices a concrete id in', () => {
       expect(uploadCommand('abc-123')).toBe(
         'testlookup upload file results.xml -p abc-123 -b <build>',
+      )
+    })
+  })
+
+  describe('ingestApiCommand', () => {
+    const base =
+      'curl -X POST http://localhost:8000/api/v1/ingest/file ' +
+      '-H "Authorization: Bearer $TL_TOKEN" -F file=@results.xml -F project_id='
+
+    it('uses the placeholder for undefined, empty, and whitespace-only ids', () => {
+      const placeholder = `${base}<project-id> -F build_number=<build> -F format=auto`
+      expect(ingestApiCommand()).toBe(placeholder)
+      expect(ingestApiCommand('')).toBe(placeholder)
+      expect(ingestApiCommand('   ')).toBe(placeholder)
+    })
+
+    it('splices a concrete id in while keeping token and build placeholders', () => {
+      expect(ingestApiCommand('abc-123')).toBe(
+        `${base}abc-123 -F build_number=<build> -F format=auto`,
       )
     })
   })

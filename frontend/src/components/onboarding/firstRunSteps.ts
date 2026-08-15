@@ -6,6 +6,11 @@ export interface Step {
   title: string
   body: ReactNode
   command?: string
+  /**
+   * An optional second copy-paste command showing the raw ingest API, for CI
+   * runners that `curl` the endpoint directly rather than installing the CLI.
+   */
+  apiCommand?: string
 }
 
 /**
@@ -19,6 +24,25 @@ export interface Step {
 export function uploadCommand(projectId?: string): string {
   const p = projectId && projectId.trim() ? projectId : '<project-id>'
   return `testlookup upload file results.xml -p ${p} -b <build>`
+}
+
+/**
+ * The raw ingest-API equivalent of {@link uploadCommand}, for CI runners that
+ * `curl` the endpoint instead of installing the CLI. Mirrors the documented
+ * `POST /api/v1/ingest/file` multipart contract (see `GETTING_STARTED.md` and
+ * `backend/app/routers/ingest.py`): `file`, the required `project_id` and
+ * `build_number`, and `format`. `$TL_TOKEN` and `<build>` stay placeholders —
+ * the bearer token and per-run build label are only known to the caller. The
+ * project id is spliced in when the guide is scoped to a concrete project,
+ * matching {@link uploadCommand}.
+ */
+export function ingestApiCommand(projectId?: string): string {
+  const p = projectId && projectId.trim() ? projectId : '<project-id>'
+  return (
+    `curl -X POST http://localhost:8000/api/v1/ingest/file ` +
+    `-H "Authorization: Bearer $TL_TOKEN" ` +
+    `-F file=@results.xml -F project_id=${p} -F build_number=<build> -F format=auto`
+  )
 }
 
 /** Build the three first-run steps, scoping the upload command to `projectId`. */
@@ -35,6 +59,7 @@ export function buildSteps(projectId?: string): Step[] {
       title: 'Or ingest your own test results',
       body: 'Point your CI at the ingest API (JUnit / TestNG / Allure / Cypress / Playwright / pytest), or upload a file from the CLI.',
       command: uploadCommand(projectId),
+      apiCommand: ingestApiCommand(projectId),
     },
     {
       n: 3,

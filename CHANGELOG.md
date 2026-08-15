@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Onboarding: first-run guide shows the raw ingest-API curl for CI
+
+The empty-dashboard first-run guide's second step reads "Point your CI at the
+ingest API … or upload a file from the CLI", but it only ever showed the CLI
+command. CI runners that `curl` the endpoint directly — rather than installing
+the CLI — had nothing to copy and had to leave the app to find the request
+shape.
+
+The step now carries a second copy-paste command: the `POST /api/v1/ingest/file`
+multipart curl, mirroring the documented contract (`file`, the required
+`project_id` and `build_number`, `format=auto`). The project id is spliced in
+when the guide is scoped to a concrete project — exactly like the CLI command —
+while `$TL_TOKEN` and the `<build>` label stay placeholders (bearer token and
+per-run build label are caller-only).
+
+Frontend-only, presentational. Regression tests cover the new row rendering,
+the id splicing, the retained placeholders, verbatim clipboard copy, and the
+`ingestApiCommand` helper across undefined/empty/whitespace/concrete ids.
 ### 2026-08-15 — Ingest: reject an empty file upload with a clear 400
 
 `POST /api/v1/ingest/file` accepted a zero-byte upload with a 202: an empty
