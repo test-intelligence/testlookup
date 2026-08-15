@@ -55,6 +55,22 @@ async def _read_upload_bounded(file: UploadFile, max_size: int) -> bytes:
     return b"".join(chunks)
 
 
+def _require_nonempty_upload(content: bytes) -> None:
+    """Reject an empty upload up-front (400 otherwise).
+
+    A zero-byte file auto-detects to ``junit`` (the ``_detect_format`` default)
+    and would otherwise be accepted with a 202, then silently parse to zero
+    results in the worker. A self-hoster curling the endpoint with a wrong or
+    empty path (e.g. ``-F file=@results.xml`` where ``results.xml`` is empty)
+    would see success and never learn nothing was ingested. Fail fast instead.
+    """
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty",
+        )
+
+
 def _parse_project_uuid(raw: str) -> uuid.UUID:
     """Validate a user-supplied project_id string as a UUID (400 otherwise)."""
     try:
@@ -237,6 +253,7 @@ async def ingest_file(
     # Stream-read the upload with a hard cap so an attacker cannot OOM the
     # server by POSTing a multi-gigabyte file.
     content = await _read_upload_bounded(file, MAX_FILE_SIZE)
+    _require_nonempty_upload(content)
 
     # A ZIP is binary — detect it by magic bytes / extension BEFORE the utf-8
     # decode below (which would corrupt it), and route it to the archive parser

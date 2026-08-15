@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Ingest: reject an empty file upload with a clear 400
+
+`POST /api/v1/ingest/file` accepted a zero-byte upload with a 202: an empty
+file auto-detects to `junit` (the format-sniffer's default) and then silently
+parses to zero results in the worker. A self-hoster curling the endpoint with a
+wrong or empty path (`-F file=@results.xml` where `results.xml` is empty) saw
+success and never learned nothing had been ingested.
+
+The endpoint now fails fast with `400 Uploaded file is empty` immediately after
+reading the upload, before any format detection or task enqueue — mirroring the
+existing `project_id` and `format` up-front guards. Non-empty uploads are
+unaffected.
+
+Regression tests cover the new `_require_nonempty_upload` guard rejecting empty
+content and passing non-empty content through.
 ### 2026-08-15 — Fix: native TestNG reports parsed to zero tests, silently
 
 Found by uploading one representative file per advertised ingestion format to the live

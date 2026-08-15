@@ -84,6 +84,32 @@ async def test_read_upload_bounded_empty_file_ok():
     assert content == b""
 
 
+# ── _require_nonempty_upload ─────────────────────────────────────────────────
+
+
+def test_require_nonempty_upload_rejects_empty():
+    """A zero-byte upload must 400 up-front, not be accepted with a 202.
+
+    An empty file auto-detects to ``junit`` and would otherwise silently parse
+    to zero results in the worker — a self-hoster curling the endpoint with a
+    wrong/empty path would see success and never learn nothing was ingested.
+    """
+    from app.routers.ingest import _require_nonempty_upload
+
+    with pytest.raises(HTTPException) as exc_info:
+        _require_nonempty_upload(b"")
+    assert exc_info.value.status_code == 400
+    assert "empty" in exc_info.value.detail.lower()
+
+
+def test_require_nonempty_upload_accepts_nonempty():
+    """A file with any content passes through untouched (no exception)."""
+    from app.routers.ingest import _require_nonempty_upload
+
+    # Returns None and does not raise.
+    assert _require_nonempty_upload(b"<testsuite/>") is None
+
+
 # ── _parse_project_uuid ─────────────────────────────────────────────────────
 
 
