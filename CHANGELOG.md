@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: the verdict's evidence was unreachable in the only place it shipped
+
+Found by opening the running app and looking at a run.
+
+Phase 4's verdict badge renders in run detail's test table — a dense table cell, which is
+the `compact` path. `compact` meant *"badge only, no disclosure"*. So on the live
+deployment the five composed signals and the advisory-policy line — the parts this
+component exists to argue for — **could not be reached at all**. Only a hover tooltip
+carrying the rationale survived.
+
+Every claim made for that panel was true of code nobody could get to:
+
+> *"When a verdict disagrees with an engineer, the useful question is which input was
+> wrong. A badge alone cannot answer that, so the five signals are one click away."*
+
+They were not one click away. They were zero clicks and unreachable.
+
+**Nothing caught it, and the reason is familiar.** The component tests exercised the
+expanded panel directly; the page test only asserted a badge appeared. Both passed. The
+integration — *is the evidence reachable from the page as shipped?* — was never asserted.
+That is the same shape as the flaky-score defect earlier in this cycle, where thorough
+tests of the pure functions never executed the query path.
+
+`compact` now means what it means for the sibling `KindBadgeWithEvidence` sitting beside
+it in the same cell: **a denser badge whose evidence opens in a popover**. Same
+information in both modes, different chrome. The popover stops click propagation, because
+the row navigates on click and without that the evidence is unreadable exactly where it
+ships.
+
+Two guards, both mutation-verified:
+
+- **Component**: the five signals and the policy line are asserted **in compact mode**,
+  parameterised per signal, plus one proving the popover does not navigate its row.
+  Reverting `compact` to badge-only fails 8 tests.
+- **Page**: run detail renders a failing test with an attribution, clicks the badge, and
+  asserts all five signals and the policy are on screen — reachable *from the page*, not
+  from the component in isolation. Wiring a bare label instead of the badge fails it.
+
+
 ### 2026-08-15 — Fix: two endpoints were unreachable, one of them a webhook
 
 Found by sweeping every parameterless GET on the reference deployment and reading the

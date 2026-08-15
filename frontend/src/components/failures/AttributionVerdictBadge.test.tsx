@@ -7,7 +7,7 @@
  * cannot interrogate just relocates the trust problem.
  */
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import AttributionVerdictBadge from './AttributionVerdictBadge'
 import {
@@ -131,8 +131,55 @@ describe('AttributionVerdictBadge', () => {
     }
   })
 
-  it('compact mode renders only the badge, for dense rows', () => {
+  // ── compact is where this actually ships ──────────────────────────────────
+  //
+  // Run detail renders the badge inside a dense table cell, which is the
+  // compact path. `compact` used to mean "badge only, no disclosure", so on
+  // the live deployment the five signals and the advisory-policy line were
+  // UNREACHABLE — the parts most worth arguing over. Nothing caught it: these
+  // tests exercised the expanded panel directly, and the page tests only
+  // asserted the badge appeared. Verified by looking at the running app.
+
+  it('compact still reaches the evidence, via a popover', () => {
     render(<AttributionVerdictBadge attribution={item('LIKELY_INFRA')} compact />)
-    expect(screen.queryByRole('button', { name: /why/i })).not.toBeInTheDocument()
+    const trigger = screen.getByRole('button', { name: /why this verdict/i })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    fireEvent.click(trigger)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it.each([
+    ['New failure'],
+    ['Flakiness'],
+    ['Co-failure cluster'],
+    ['Change overlap'],
+    ['Classifier calibration'],
+  ])('compact popover shows the %s signal', (label) => {
+    // The guard that matters: the same five signals in BOTH modes. A future
+    // "let's slim down the table" change cannot silently drop them again.
+    render(<AttributionVerdictBadge attribution={item('LIKELY_FLAKY')} compact />)
+    fireEvent.click(screen.getByRole('button', { name: /why this verdict/i }))
+    expect(screen.getByText(label)).toBeInTheDocument()
+  })
+
+  it('compact popover renders the advisory policy', () => {
+    render(<AttributionVerdictBadge attribution={item('LIKELY_FLAKY')} compact />)
+    fireEvent.click(screen.getByRole('button', { name: /why this verdict/i }))
+    expect(screen.getByText(/no verdict suppresses/i)).toBeInTheDocument()
+  })
+
+  it('compact popover does not navigate the row it sits in', () => {
+    // The badge lives in a table row that navigates on click. Without
+    // stopPropagation the evidence is unreadable exactly where it ships.
+    const onRowClick = vi.fn()
+    render(
+      <div onClick={onRowClick}>
+        <AttributionVerdictBadge attribution={item('LIKELY_INFRA')} compact />
+      </div>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /why this verdict/i }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(onRowClick).not.toHaveBeenCalled()
   })
 })
