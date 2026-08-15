@@ -922,11 +922,16 @@ class SummaryAgent(BaseAgent):
         # Extract citations from layer3 if present
         layer3 = structured.get("layer3_evidence_pack") or {}
         citations = layer3.get("citations", []) if isinstance(layer3, dict) else []
-        fallback_used = structured.get("_fallback_used", False)
         data_sources = (
             layer3.get("data_sources_used", []) if isinstance(layer3, dict) else []
         )
         summary_provenance = structured.get("_provenance") or {}
+        # Read the flag from the provenance block, which is where ``run()``
+        # actually records it. This previously read ``structured["_fallback_
+        # _used"]`` — a key nothing in the codebase ever wrote, so the stored
+        # value was False for every summary ever generated, including ones
+        # whose own text said the LLM had been unavailable.
+        fallback_used = bool(summary_provenance.get("fallback_used", False))
 
         await db[Collections.RUN_SUMMARIES].update_one(
             {"test_run_id": test_run_id},

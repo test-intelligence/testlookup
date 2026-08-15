@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: the AI-degradation flag `fallback_used` was permanently False
+
+Found on the homelab immediately after the deterministic summary fallback was made
+reachable. The very first run to use it stored:
+
+```
+summary_provenance.fallback_used = True      <- the truth
+fallback_used                    = False     <- what the API reports
+executive_summary = "…This summary was generated from stored pipeline evidence
+                     because the configured LLM was unavailable."
+```
+
+`SummaryAgent._store_summary` read:
+
+```python
+fallback_used = structured.get("_fallback_used", False)
+```
+
+**`_fallback_used` is written nowhere.** Grepping `backend/app` and `backend/tests` returned
+that single line as the only occurrence in the codebase; the value `run()` actually records
+is `structured["_provenance"]["fallback_used"]`. The expression was a constant `False`
+dressed up as a lookup — the wrong-name/dead-branch class again, the fourth instance found
+this session.
+
+Across all 57 stored summaries at the time, `fallback_used == True` appeared **zero** times,
+while `summary_provenance.fallback_used == True` appeared once — the single summary generated
+since the fallback became reachable at all.
+
+Not a cosmetic boolean: `fallback_used` is the flag a consumer checks to learn that AI output
+is degraded. It propagates to `provenance.fallback_used` on the run-intelligence contract and
+to the `run_intelligence_snapshots.fallback_used` column. A summary whose own prose says the
+LLM was unavailable, reporting itself as undegraded, is precisely the failure the AI-trust
+work exists to prevent.
+
+Guarded by `backend/tests/regression/test_fallback_used_flag_is_honest.py`: the flag must
+agree with the provenance it ships beside, a summary may not say it was degraded while
+reporting otherwise, and a ratchet pins the dead key out of the tree. The ratchet matches the
+exact key literal rather than the bare substring — the first version also flagged a log event
+name and an f-string template, and a ratchet that cries wolf gets deleted. It carries its own
+test proving it still fires on the real pattern. Both mutations verified in both directions.
 ### 2026-08-15 — Fix: `/intelligence/refresh` returned 500, and no run with an AI summary could cache
 
 Found while re-verifying the summary fix on the homelab.
