@@ -6,6 +6,7 @@ import IntelligenceHubPage from './IntelligenceHubPage'
 
 vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(),
+  useMostRecentRun: vi.fn(() => ({ data: undefined })),
 }))
 
 vi.mock('@/store/projectStore', () => {
@@ -83,5 +84,81 @@ describe('IntelligenceHubPage', () => {
     expect(screen.getByRole('columnheader', { name: /Pass rate/i })).toBeInTheDocument()
     // The run with no pass_rate shows an em dash, not a fabricated figure.
     expect(screen.queryByText('55%')).not.toBeInTheDocument()
+  })
+
+  // ── An empty window must never read as a verdict ──────────────────────────
+  //
+  // Reported as "the entire AI intelligence page is broken". The runs were 8-10
+  // days old and the default window is 7 days, so the window was empty — but
+  // the page did not say that. `failed` was 0, so the verdict fell through to
+  // "All clear - nothing needs investigation right now" for a project whose
+  // most recent run had three failing tests, and composite health rendered
+  // 0/100 as though it had been measured.
+  //
+  // An empty window is a statement about the WINDOW, never about the code.
+
+  async function renderEmptyWindow(mostRecent?: unknown) {
+    const { useRuns, useMostRecentRun } = await import('@/hooks/useRuns')
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [] },
+      isLoading: false,
+    })
+    ;(useMostRecentRun as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: mostRecent ? { items: [mostRecent] } : undefined,
+    })
+    render(
+      <MemoryRouter initialEntries={['/intelligence']}>
+        <Routes>
+          <Route path="/intelligence" element={<IntelligenceHubPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('never claims "All clear" when nothing was analysed', async () => {
+    await renderEmptyWindow()
+    expect(screen.queryByText(/all clear/i)).not.toBeInTheDocument()
+    expect(await screen.findByText(/nothing analysed in this window/i)).toBeInTheDocument()
+  })
+
+  it('says the emptiness is about the window, not the code', async () => {
+    await renderEmptyWindow()
+    expect(
+      await screen.findByText(/statement about the time window, not about the code/i),
+    ).toBeInTheDocument()
+  })
+
+  it('does not render a composite health score it never measured', async () => {
+    // 0/100 from an empty window is a fabricated measurement, and it reads as
+    // "measured, and terrible" rather than "not measured".
+    await renderEmptyWindow()
+    expect(await screen.findByText('—')).toBeInTheDocument()
+    expect(screen.queryByText('/100')).not.toBeInTheDocument()
+  })
+
+  it('tells the reader how far back the data actually is', async () => {
+    await renderEmptyWindow({
+      id: 'old-1',
+      build_number: '9',
+      status: 'FAILED',
+      created_at: '2026-08-05T10:00:00Z',
+      failed_tests: 3,
+      passed_tests: 12,
+      broken_tests: 0,
+      skipped_tests: 0,
+      total_tests: 15,
+      pass_rate: 80,
+      branch: 'main',
+      project_name: 'Auth Service',
+      duration_ms: 1000,
+    })
+    expect(await screen.findByText(/the most recent one is/i)).toBeInTheDocument()
+    expect(screen.getByText(/just outside the selected range/i)).toBeInTheDocument()
+  })
+
+  it('falls back to the generic message when there is no history at all', async () => {
+    // A brand-new project genuinely has nothing — do not imply otherwise.
+    await renderEmptyWindow()
+    expect(await screen.findByText('No runs in this window')).toBeInTheDocument()
   })
 })

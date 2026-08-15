@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: an empty window was reported as "All clear"
+
+Reported as *"the entire AI intelligence page is broken — no records for all or most
+projects."* The page was empty, and the reason it was empty was not the worst part.
+
+**What was happening.** `/intelligence` lists runs through the global time window, which
+defaults to 7 days. The four real projects' most recent runs are 8–10 days old, so the
+window genuinely contained nothing:
+
+```
+days=7  -> 0 runs   (all four projects)
+days=30 -> 11 / 5 / 11 / 11
+```
+
+Only the throwaway probe project, whose runs are 4–5 days old, still fell inside the
+window — which is exactly the "all or **most** projects" in the report.
+
+**The serious part.** With zero runs the verdict state machine had no member for "nothing
+analysed", so it fell through to its initial value:
+
+```ts
+let state: VerdictState = 'all-clear'
+if (failed > 0) state = 'at-risk'          // failed === 0 when total === 0
+```
+
+A project whose most recent run had **three failing tests** was therefore told *"All clear
+— nothing needs investigation right now"*, beside a composite health score of **0/100**
+rendered as though it had been measured. One reassures falsely; the other fabricates a
+measurement. Both from an empty window, which says nothing about the code at all.
+
+Three fixes:
+
+- **`no-data` is now a first-class verdict state**, checked before the others, so an empty
+  window can never fall through to a reassuring one. The style map is
+  `Record<VerdictState, …>`, so the new member could not be added without deciding how it
+  reads — the same vocabulary-subset guard used for attribution verdicts.
+- **`composite` is `number | null`** and renders `—` with no `/100` when nothing was
+  analysed. "Not measured" and "measured, and terrible" are different claims.
+- **The empty state names the gap**: *"No runs in this window — the most recent one is 10
+  days ago … There is history here, just outside the selected range."* It fetches the
+  most recent run **only when the window is empty**, through a hook gated on that
+  condition, so the normal path costs nothing.
+
+Five regression tests; three mutations verified — restoring the fall-through, restoring
+the fabricated `0`, and dropping the how-old message are each caught.
+
+**Not a code regression.** The runs list, the time-window store and the page were
+untouched by the recent work; the only edits to `useRuns.ts` / `runsService.ts` were
+additive (a new attribution hook and service method). The four projects crossed the 7-day
+boundary on 2026-08-12 and 2026-08-14 as the calendar moved. What the recent work *did*
+do is make the failure visible, and the false all-clear is a real defect that had been
+latent for as long as the state machine has existed.
+
+
 ### 2026-08-15 — Fix: the verdict's evidence was unreachable in the only place it shipped
 
 Found by opening the running app and looking at a run.

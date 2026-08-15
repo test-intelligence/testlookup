@@ -1,6 +1,7 @@
 import useSWR from 'swr'
 import { runsService } from '@/services/runsService'
-import { useProjectScopedSWR } from './useProjectScopedSWR'
+import { useActiveProjectId, useProjectScopedSWR } from './useProjectScopedSWR'
+import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function useRuns(params?: Record<string, unknown>) {
@@ -107,6 +108,24 @@ export function useRunAttribution(runId?: string) {
   return useSWR(
     runId ? ['run-attribution', runId] : null,
     ([, id]: readonly [string, string]) => runsService.attribution(id),
+    { revalidateOnFocus: false },
+  )
+}
+
+/**
+ * The single most recent run regardless of the selected window.
+ *
+ * Only fetched when ``enabled`` — a page asks for this to explain an EMPTY
+ * window ("your most recent run was 10 days ago"), so on the normal path it
+ * must cost nothing. ``useProjectScopedSWR`` has no enabled gate, hence the
+ * explicit null key here.
+ */
+export function useMostRecentRun(enabled: boolean) {
+  const projectId = useActiveProjectId()
+  const fetcherProjectId = projectId === ALL_PROJECTS_ID ? null : projectId
+  return useSWR(
+    enabled && projectId !== null ? ['runs-most-recent', projectId] : null,
+    () => runsService.list(fetcherProjectId, { page: 1, size: 1, days: 365 }),
     { revalidateOnFocus: false },
   )
 }

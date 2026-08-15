@@ -50,7 +50,7 @@ import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { useProjectQuota, useProjectUsage } from '@/hooks/useLlmBudget'
-import { useRuns } from '@/hooks/useRuns'
+import { useMostRecentRun, useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { fromNow } from '@/utils/formatters'
@@ -58,11 +58,21 @@ import type { TestRun } from '@/types/runs'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-type VerdictState = 'all-clear' | 'attention' | 'at-risk'
+/**
+ * ``no-data`` is a first-class state, not the absence of one.
+ *
+ * It used to be missing, and the consequence was a false all-clear: with zero
+ * runs in the window ``failed`` is 0, so the state fell through to
+ * ``all-clear`` and a project whose most recent run had three failing tests
+ * was told "All clear — nothing needs investigation right now." An empty
+ * window is a statement about the WINDOW, never about the code.
+ */
+type VerdictState = 'no-data' | 'all-clear' | 'attention' | 'at-risk'
 
 interface HealthSummary {
   state: VerdictState
-  composite: number          // 0..100
+  /** ``null`` when nothing was analysed — a 0 here would read as "measured, and terrible". */
+  composite: number | null
   delta: number              // pts vs prior half-window
   counts: { passed: number; flaky: number; failed: number; broken: number; total: number }
   rangeLabel: string
@@ -91,7 +101,10 @@ function computeHealth(runs: TestRun[], rangeLabel: string): HealthSummary {
 
   // Composite = average pass_rate across the window, fall back to count-based
   // when pass_rate is missing.
-  let composite = 0
+  // NULL, not 0, when there is nothing to average. A 0/100 rendered from an
+  // empty window is a fabricated measurement — the same defect class this
+  // codebase guards everywhere else.
+  let composite: number | null = null
   if (total > 0) {
     const rates = runs.map(r => (r.pass_rate ?? (isPassed(r) ? 100 : 0)))
     composite = Math.round(rates.reduce((a, b) => a + b, 0) / rates.length)
@@ -109,8 +122,11 @@ function computeHealth(runs: TestRun[], rangeLabel: string): HealthSummary {
     ? Math.round((meanRate(recent) - meanRate(prior)) * 10) / 10
     : 0
 
+  // Order matters: an empty window says nothing about the code, so it can
+  // never fall through to a reassuring verdict.
   let state: VerdictState = 'all-clear'
-  if (failed > 0) state = 'at-risk'
+  if (total === 0) state = 'no-data'
+  else if (failed > 0) state = 'at-risk'
   else if (flaky >= 2 || broken > 0) state = 'attention'
 
   return {
@@ -173,6 +189,14 @@ export default function IntelligenceHubPage() {
   const { options: suiteOptions } = useSuiteOptions(days)
   const { data, isLoading } = useRuns({ page: 1, size: 50, days, ...(suite && { suite_name: suite }) })
   const allRuns = useMemo(() => data?.items ?? [], [data?.items])
+
+  // When the window is empty, "no runs" is not the useful answer — "your most
+  // recent run was 10 days ago" is. This looks further back ONLY in that case,
+  // so the normal path costs nothing, and it turns a dead page into a
+  // one-click recovery instead of leaving the reader to guess the range.
+  const windowIsEmpty = !isLoading && allRuns.length === 0
+  const { data: beyondWindow } = useMostRecentRun(windowIsEmpty)
+  const mostRecentBeyond = windowIsEmpty ? (beyondWindow?.items?.[0] ?? null) : null
 
   const visibleRuns = useMemo(() => {
     let xs = allRuns
@@ -305,6 +329,7 @@ export default function IntelligenceHubPage() {
             setDatetimeSortDir(d => d === 'desc' ? 'asc' : 'desc')
             setTablePage(1)
           }}
+          mostRecentBeyondWindow={mostRecentBeyond}
         />
 
         <div className="space-y-3.5">
@@ -352,6 +377,17 @@ const VERDICT_STYLE: Record<VerdictState, {
   lede: (counts: HealthSummary['counts'], range: string) => string;
   glow: string;
 }> = {
+  'no-data': {
+    border: 'color-mix(in srgb, var(--color-border) 60%, transparent)',
+    bar:    'var(--color-border)',
+    pulse:  'var(--color-text-muted)',
+    eyebrow:'var(--color-text-muted)',
+    headlineWord: 'var(--color-text-muted)',
+    headline: () => 'nothing analysed in this window.',
+    lede: (_c, r) =>
+      `No runs ${r.toLowerCase()}, so there is nothing to judge — this is a statement about the time window, not about the code. Widen the range to reach older runs.`,
+    glow:   'none',
+  },
   'all-clear': {
     border: 'color-mix(in srgb, var(--status-passed) 32%, transparent)',
     bar:    'var(--gate-go)',
@@ -485,9 +521,11 @@ function HealthSummaryPanel({ health, headlineColor }: { health: HealthSummary; 
           </div>
           <div className="mt-1 leading-none">
             <span className="font-bold tabular-nums" style={{ fontSize: '38px', color: headlineColor }}>
-              {composite}
+              {composite ?? '—'}
             </span>
-            <small className="text-[18px] text-[var(--color-text-muted)] font-medium ml-1">/100</small>
+            {composite !== null && (
+              <small className="text-[18px] text-[var(--color-text-muted)] font-medium ml-1">/100</small>
+            )}
           </div>
         </div>
         <div className="text-right shrink-0">
@@ -630,8 +668,11 @@ function Select({
 
 function RunsTable({
   runs, isAll, onOpen, page, pages, total, onPageChange,
-  datetimeSortDir, onToggleDatetimeSort,
+  datetimeSortDir, onToggleDatetimeSort, mostRecentBeyondWindow,
 }: {
+  /** Most recent run OUTSIDE the selected window, when the window is empty.
+   *  "No runs" is not the useful answer; "your last run was 10 days ago" is. */
+  mostRecentBeyondWindow?: TestRun | null
   runs: TestRun[]
   isAll: boolean
   onOpen: (id: string) => void
@@ -654,8 +695,16 @@ function RunsTable({
 
       {total === 0 ? (
         <EmptyState
-          title="No runs in this window"
-          description="Broaden the date filter or trigger a build."
+          title={
+            mostRecentBeyondWindow
+              ? `No runs in this window — the most recent one is ${fromNow(mostRecentBeyondWindow.created_at)}`
+              : 'No runs in this window'
+          }
+          description={
+            mostRecentBeyondWindow
+              ? 'There is history here, just outside the selected range. Widen it to reach those runs.'
+              : 'Broaden the date filter or trigger a build.'
+          }
         />
       ) : (
         <>
