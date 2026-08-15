@@ -261,6 +261,13 @@ async def test_list_project_runs_enriches_paginated_runs():
         runs_service,
         "fetch_run_seq_map",
         AsyncMock(return_value={str(run_id): 1}),
+    ), patch.object(
+        # Same reasoning as ``fetch_run_seq_map``: the suite fallback issues
+        # its own grouped query over test_cases. Its behaviour is covered by
+        # tests/regression/test_run_suite_fallback.py.
+        runs_service,
+        "fetch_run_suites_map",
+        AsyncMock(return_value={}),
     ):
         items, total, pages = await runs_service.list_project_runs(db, "project-1", 1, 20, "FAILED", None)
 

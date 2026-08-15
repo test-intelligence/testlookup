@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: run pickers read "Unknown suite" for runs whose tests name a suite
+
+The agents page's two run pickers labelled every option `Unknown suite · Run #12`.
+
+`TestRun.primary_suite_name` / `suite_names` are a **denormalisation** of
+`test_cases.suite_name`, maintained by `_update_run_aggregates`. Runs that never went
+through that path — seeded and legacy rows — carried NULL while their test cases named
+suites perfectly well. Measured on the reference deployment:
+
+```
+1241 runs   both columns populated       (the ingest path works)
+ 297 runs   neither populated
+   4 runs   list but no primary
+ 298 runs   NULL primary WHILE their own test cases name a suite
+```
+
+The data was there. Only the copy was missing — one run's tests named
+`AuthenticationSuite`, `AuthorizationSuite` and `PasswordSuite` between them while the run
+itself claimed none.
+
+This is the **read half of the effective-suite rule** the repo already states: any query
+reading a suite must consider *both* `tc.suite_name` and `tr.primary_suite_name`. The
+write half already works, so deriving at read time fixes all 298 existing rows with no
+migration and no backfill sweep.
+
+`fetch_run_suites_map` groups distinct suites for a whole page in **one** query — a picker
+showing 25 runs must not fire 25 — and empty input fires none. Both read paths use it, the
+list and the single-run fetch, because they feed different pages and fixing one would have
+left the other reading "Unknown suite".
+
+**A recorded label always wins.** It is the user's chosen run name — the testng.xml
+`<suite name>` value — and overwriting it with a dominant test-class name is a bug this
+repo has already had once. The fallback only fills what is missing, and a run whose tests
+genuinely carry no suite still reports none, because "Unknown suite" is honest there.
+
+Twelve tests. Four mutations verified: overwriting a recorded name, losing the sort that
+makes the derived label deterministic, letting blank suite names through, and querying on
+an empty page are each caught.
+
+One of those tests was wrong first time and is worth recording: the determinism check ran
+through the enrichment helper, which only takes `derived[0]` and therefore **could not
+observe the sort at all** — it passed with the sort deleted. It now asserts against
+`fetch_run_suites_map`, where the ordering is actually decided.
+
+Three existing tests needed the new helper patched alongside the ones they already stub;
+they mock `db.execute` with a fixed-length `side_effect`, so an added query exhausted it.
+
+
 ### 2026-08-15 — Default look-back window raised to 30 days
 
 Two reports, one cause:

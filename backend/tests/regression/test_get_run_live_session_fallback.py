@@ -85,7 +85,9 @@ async def test_get_run_falls_back_to_live_session_when_test_run_missing():
          patch("app.services.runs_service.fetch_project_name_map",
                AsyncMock(return_value={str(project_id): "GoogleSearch"})), \
          patch("app.services.runs_service.fetch_run_seq_map",
-               AsyncMock(return_value={str(run_id): 7})):
+               AsyncMock(return_value={str(run_id): 7})), \
+         patch("app.services.runs_service.fetch_run_suites_map",
+               AsyncMock(return_value={})):
         result = await get_run_with_release(db, run_id)
 
     assert result is not None, "live-session fallback must produce a payload"
@@ -135,6 +137,8 @@ async def test_get_run_prefers_real_test_run_over_live_session():
          patch("app.services.runs_service.fetch_project_name_map",
                AsyncMock(return_value={})), \
          patch("app.services.runs_service.fetch_run_seq_map",
+               AsyncMock(return_value={})), \
+         patch("app.services.runs_service.fetch_run_suites_map",
                AsyncMock(return_value={})):
         result = await get_run_with_release(db, run_id)
 

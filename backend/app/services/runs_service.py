@@ -43,6 +43,7 @@ def enrich_runs_with_release(
     release_map: dict[str, dict[str, str | None]],
     project_map: dict[str, str] | None = None,
     run_seq_map: dict[str, int] | None = None,
+    suite_map: dict[str, list[str]] | None = None,
 ) -> list[dict]:
     enriched = []
     for run in runs:
@@ -54,8 +55,62 @@ def enrich_runs_with_release(
             item["project_name"] = project_map.get(str(run.project_id)) if run.project_id else None
         if run_seq_map is not None:
             item["run_seq"] = run_seq_map.get(str(run.id))
+        if suite_map is not None:
+            # Read-side half of the effective-suite rule: the run-level
+            # columns are a denormalisation of ``test_cases.suite_name``, and
+            # only the live-stream path ever wrote them. Batch-ingested runs
+            # therefore carried NULL despite every one of their test cases
+            # naming a suite, and the UI rendered "Unknown suite".
+            #
+            # Fill only what is missing — a recorded label is a user-visible
+            # choice and must never be overwritten by a derived one.
+            derived = suite_map.get(str(run.id)) or []
+            if not item.get("suite_names") and derived:
+                item["suite_names"] = derived
+            if not item.get("primary_suite_name") and derived:
+                item["primary_suite_name"] = derived[0]
         enriched.append(item)
     return enriched
+
+
+async def fetch_run_suites_map(
+    db: AsyncSession, run_ids: list[uuid.UUID],
+) -> dict[str, list[str]]:
+    """Distinct suite names per run, read from the test cases themselves.
+
+    ``TestRun.primary_suite_name`` / ``suite_names`` are a denormalisation
+    maintained by the live-stream drain path. Nothing populated them for
+    batch-ingested runs, so twelve runs whose test cases named three suites
+    between them all reported no suite at all, and every picker built from
+    that list read "Unknown suite".
+
+    One grouped query for the whole page — never per run. Empty input fires
+    no query.
+    """
+    if not run_ids:
+        return {}
+    from app.models.postgres import TestCase
+
+    rows = (
+        await db.execute(
+            select(TestCase.test_run_id, TestCase.suite_name)
+            .where(
+                TestCase.test_run_id.in_(run_ids),
+                TestCase.suite_name.isnot(None),
+                func.trim(TestCase.suite_name) != "",
+            )
+            .distinct()
+        )
+    ).all()
+
+    grouped: dict[str, list[str]] = {}
+    for run_id, suite in rows:
+        grouped.setdefault(str(run_id), []).append(suite)
+    # Sorted so the "primary" pick is deterministic rather than
+    # whatever order the database happened to return.
+    for suites in grouped.values():
+        suites.sort()
+    return grouped
 
 
 # Suite normalisation expression used by ``fetch_run_seq_map``. NULL +
@@ -279,9 +334,13 @@ async def list_project_runs(
     run_ids = [run.id for run in runs]
     release_map = await fetch_release_map(db, run_ids)
     run_seq_map = await fetch_run_seq_map(db, run_ids)
+    suite_map = await fetch_run_suites_map(db, run_ids)
     pages = -(-total // size)
     return (
-        enrich_runs_with_release(runs, release_map, project_map, run_seq_map=run_seq_map),
+        enrich_runs_with_release(
+            runs, release_map, project_map,
+            run_seq_map=run_seq_map, suite_map=suite_map,
+        ),
         total,
         pages,
     )
@@ -314,8 +373,10 @@ async def get_run_with_release(db: AsyncSession, run_id: uuid.UUID):
     project_ids = [run.project_id] if run.project_id else []
     project_map = await fetch_project_name_map(db, project_ids)
     run_seq_map = await fetch_run_seq_map(db, [run_id])
+    suite_map = await fetch_run_suites_map(db, [run_id])
     return enrich_runs_with_release(
-        [run], release_map, project_map, run_seq_map=run_seq_map,
+        [run], release_map, project_map,
+        run_seq_map=run_seq_map, suite_map=suite_map,
     )[0]
 
 
