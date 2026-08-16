@@ -86,15 +86,26 @@ def test_deep_graph_contains_new_nodes_and_chain():
     assert "decision_report_critic" in nodes
 
     # Core AIQ-P4 chain.
-    assert ("triage", "contract_validation") in edges
+    #
+    # Clustering now sits between triage and contract_validation. It used to
+    # fan out from ingestion and rejoin at summary, three hops against the
+    # analysis branches' one, which made summary — and this entire chain —
+    # execute twice (AI-010; see test_pipeline_stages_run_once.py). Sequencing
+    # it here keeps every node on a single path. The AIQ-P4 chain itself is
+    # unchanged from contract_validation onwards.
+    assert ("triage", "failure_clustering") in edges
+    assert ("failure_clustering", "cluster_investigation_dispatch") in edges
+    assert ("cluster_investigation_dispatch", "cluster_investigation_join") in edges
+    assert ("cluster_investigation_join", "contract_validation") in edges
     assert ("contract_validation", "log_intelligence") in edges
     assert ("log_intelligence", "regression_watchman") in edges
     assert ("regression_watchman", "change_ownership") in edges
     assert ("change_ownership", "gap_detection") in edges
     assert ("gap_detection", "report_refinement") in edges
     assert ("report_refinement", "flaky_sentinel") in edges
-    # No-triage deep route still feeds gap_detection.
-    assert ("summary", "gap_detection") in edges or ("summary", "contract_validation") in edges
+    # No-triage deep route still reaches the specialist chain — now via the
+    # clustering sequence rather than jumping straight to contract_validation.
+    assert ("summary", "failure_clustering") in edges
     assert ("release_risk", "decision_report") in edges
     assert ("decision_report", "decision_report_critic") in edges
     assert ("decision_report_critic", "__end__") in edges

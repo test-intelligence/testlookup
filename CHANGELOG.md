@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: the deep pipeline ran every stage after `summary` twice
+
+The deep pipeline fanned three branches into `summary` at unequal path lengths:
+
+```
+anomaly_detection                          -> summary    1 hop from ingestion
+root_cause_analysis                        -> summary    1 hop
+failure_clustering -> dispatch -> join     -> summary    3 hops
+```
+
+LangGraph runs a node once per superstep in which *any* predecessor completed. Two
+branches landed in the first superstep and clustering in a later one, so `summary`
+fired twice — and took the entire specialist chain with it.
+
+Measured in a single live run:
+
+- `route_after_summary_deep` (summary's own outgoing edge) logged **twice**;
+- every skipped specialist stage recorded **twice** — 12 entries for 6 stages;
+- `decision_report_verification` logged **both `passed` and `failed`**, 464 ms apart.
+  The failing pass won, so the report was withheld after an earlier execution said it
+  passed independent checks. Either an unverified report would have shipped, or a good
+  one was suppressed.
+
+It stayed invisible because `completed_stages` uses a de-duplicating reducer while
+`skipped_stages` does not — the repetition was hidden on the list people read and
+visible only on the one they don't.
+
+Clustering is now sequenced after `summary` instead of fanning in. Nothing is lost:
+`SummaryAgent` never read the cluster output — it passes a literal `cluster_count=0` —
+and every stage that *does* consume clusters runs later in the chain. The cost is that
+clustering no longer overlaps analysis, which is worth paying to run each stage once.
+
+The same defect had a second, unobserved instance: on an **all-green** run the
+conditional routed `ingestion -> summary` directly while `root_cause_analysis -> summary`
+fires unconditionally, so `summary` would run twice there too. Green runs now route
+through `root_cause_analysis`, which early-returns when there is nothing to analyse.
+
+Guarded by a **topology** test rather than a behavioural one: nothing about the graph
+fails, every stage completes, and a test asserting "the pipeline succeeds" passes
+happily while every node runs twice. The guard asserts that no node is reachable at two
+different path lengths within a fixed set of conditional choices, plus that every deep
+stage stays reachable — a graph with no duplicate depths is otherwise trivially
+achievable by deleting edges.
+
+Four mutations verified, the decisive one being a restoration of the exact original
+edges. The guard's first version was itself wrong in the opposite direction — it treated
+mutually-exclusive conditional branches as simultaneously active and failed on the
+*fixed* graph.
+
+
 ### 2026-08-16 — Fix: the chat table made the model derive the pass-rate denominator
 
 After the reconciliation fix, the chat agent answered a question with known ground

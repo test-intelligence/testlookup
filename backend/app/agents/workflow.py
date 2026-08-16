@@ -853,7 +853,15 @@ def _build_offline_graph() -> StateGraph:
         _route_after_ingestion,
         {
             "anomaly_detection": "anomaly_detection",
-            "summary":           "summary",
+            # The all-green branch routes through root_cause_analysis rather
+            # than jumping straight to summary. `add_edge` below fires
+            # unconditionally, so a direct ingestion→summary edge would reach
+            # summary one hop earlier than the analysis branch and trigger it in
+            # a SECOND superstep — running summary (and everything after it)
+            # twice on green runs. analysis_node early-returns when there are no
+            # failures, so this costs nothing and keeps every predecessor of
+            # summary at the same depth.
+            "summary":           "root_cause_analysis",
         },
     )
 
@@ -928,21 +936,39 @@ def _build_deep_graph() -> StateGraph:
         _route_after_ingestion,
         {
             "anomaly_detection": "anomaly_detection",
-            "summary":           "summary",
+            # Green runs route via root_cause_analysis, not straight to summary —
+            # same reason as the offline graph: a direct edge arrives one
+            # superstep ahead of the analysis branch and makes summary run twice.
+            "summary":           "root_cause_analysis",
         },
     )
 
     # Parallel fan-out from ingestion (unconditional — see note in _build_offline_graph).
     # Both nodes carry fast-path guards: they return immediately when failed_test_ids is empty.
     graph.add_edge("ingestion", "root_cause_analysis")
-    graph.add_edge("ingestion", "failure_clustering")
 
-    # Fan-in: all three parallel branches → summary
+    # Fan-in: the two analysis branches → summary. BOTH are one hop from
+    # ingestion, so LangGraph schedules them in the same superstep and `summary`
+    # runs exactly once.
+    #
+    # The clustering branch used to fan in here too, via
+    #   ingestion → failure_clustering → dispatch → join → summary
+    # which is THREE hops against the other branches' one. LangGraph triggers a
+    # node once per superstep in which any predecessor completed, so `summary`
+    # ran twice — and took the whole specialist chain with it. Observed on the
+    # homelab 2026-08-16: `route_after_summary_deep` fired twice in a single
+    # pipeline, every skipped specialist stage was recorded twice, and
+    # `decision_report_verification` logged BOTH "passed" and "failed" 464 ms
+    # apart, with the failing pass winning.
+    #
+    # Clustering is therefore sequenced after summary instead. Nothing is lost:
+    # `SummaryAgent` never read the cluster output — it passes a literal
+    # `cluster_count=0` — while the stages that DO consume clusters
+    # (decision_report and its critic, via deep_findings) all run later in the
+    # chain. The cost is that clustering no longer overlaps analysis; the
+    # correctness of running each stage once is worth more than that overlap.
     graph.add_edge("anomaly_detection",   "summary")
     graph.add_edge("root_cause_analysis", "summary")
-    graph.add_edge("failure_clustering", "cluster_investigation_dispatch")
-    graph.add_edge("cluster_investigation_dispatch", "cluster_investigation_join")
-    graph.add_edge("cluster_investigation_join", "summary")
 
     # After summary: triage if triageable, else jump to gap_detection
     # (specialist stages always run in the deep pipeline). AIQ-P4 inserts
@@ -954,12 +980,17 @@ def _build_deep_graph() -> StateGraph:
         _route_after_summary_deep,
         {
             "triage":         "triage",
-            "flaky_sentinel": "contract_validation",
+            "flaky_sentinel": "failure_clustering",
         },
     )
 
-    # Specialist stages run sequentially after triage (or directly after summary)
-    graph.add_edge("triage",            "contract_validation")
+    # Clustering, sequenced here rather than fanned out from ingestion — see the
+    # note on the summary fan-in above. Single-predecessor edges throughout, so
+    # each of these runs exactly once.
+    graph.add_edge("triage",            "failure_clustering")
+    graph.add_edge("failure_clustering", "cluster_investigation_dispatch")
+    graph.add_edge("cluster_investigation_dispatch", "cluster_investigation_join")
+    graph.add_edge("cluster_investigation_join", "contract_validation")
     graph.add_edge("contract_validation", "log_intelligence")
     graph.add_edge("log_intelligence", "regression_watchman")
     graph.add_edge("regression_watchman", "change_ownership")
