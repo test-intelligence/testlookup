@@ -220,3 +220,101 @@ describe('ReleaseGatePage', () => {
     expect(await screen.findByText(/No run selected/i)).toBeInTheDocument()
   })
 })
+
+// ── The gauge vs the dimension breakdown ───────────────────────────────────
+//
+// Measured live 2026-08-16 on build ui-6 (pass rate 44.4%):
+//
+//     RiskGauge              60
+//     Risk Dimension Breakdown   17/100   (weighted contributions sum to 16.67)
+//
+// Both styled as a risk out of 100, on one page, with nothing connecting them.
+// The verdict is right — a pass-rate hard floor raises the composite to 60
+// without touching any dimension — but the page never said so. The backend has
+// published `input_snapshot.verdict_driver = "pass_rate_floor"` all along and
+// no code read it: the value-nothing-consumes pattern this repo keeps finding.
+
+function flooredDecision(
+  overrides: Partial<ReleaseCouncilDecision> = {},
+): ReleaseCouncilDecision {
+  return {
+    run_id: 'run-1',
+    recommendation: 'NO_GO',
+    // Floored: not the weighted total of the dimensions below.
+    risk_score: 60,
+    composite_risk: 60,
+    dimension_scores: [
+      { name: 'reproducibility', label: 'Reproducibility', score: 55.6, weight: 0.15, contribution: 8.34 },
+      { name: 'blast_radius', label: 'Blast Radius', score: 22.2, weight: 0.15, contribution: 3.33 },
+      { name: 'diagnosis_confidence', label: 'Diagnosis Confidence', score: 100, weight: 0.05, contribution: 5.0 },
+    ],
+    blocking_issues: [],
+    conditions_for_go: [],
+    reasoning: 'Quick-look decision derived from this run aggregates',
+    score_model_version: 1,
+    input_snapshot: { verdict_driver: 'pass_rate_floor', no_go_floor_pct: 63.0 },
+    cluster_insights: [],
+    baseline_diff: null,
+    open_defects_by_component: [],
+    human_override: null,
+    overridden_by: null,
+    original_recommendation: null,
+    original_risk_score: null,
+    override_audit: [],
+    pass_rate: 44.4,
+    build_number: 'ui-6',
+    policy_id: null,
+    policy_version: null,
+    policy_level: 'hardcoded',
+    rule_evaluations: [],
+    ...overrides,
+  } as ReleaseCouncilDecision
+}
+
+async function renderGate(decision: ReleaseCouncilDecision) {
+  const { useReleaseCouncil } = await import('@/hooks/useReleaseCouncil')
+  const { useRuns } = await import('@/hooks/useRuns')
+  ;(useReleaseCouncil as ReturnType<typeof vi.fn>).mockReturnValue({
+    council: decision, isLoading: false, isError: false, refresh: vi.fn(),
+  })
+  ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
+  render(
+    <MemoryRouter initialEntries={['/release-gate/run-1']}>
+      <Routes>
+        <Route path="/release-gate/:runId" element={<ReleaseGatePage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+describe('ReleaseGatePage — the risk score explains itself', () => {
+  it('discloses that the score came from the pass-rate floor', async () => {
+    await renderGate(flooredDecision())
+    expect(await screen.findByText(/raised to the NO-GO floor/i)).toBeInTheDocument()
+  })
+
+  it('states the floor percentage it actually applied', async () => {
+    await renderGate(flooredDecision())
+    expect(await screen.findByText(/63%/)).toBeInTheDocument()
+  })
+
+  it('stays silent when the score really is the dimension total', async () => {
+    // The disclosure must not become permanent furniture — a reader who sees it
+    // on every verdict stops reading it.
+    await renderGate(flooredDecision({
+      input_snapshot: { verdict_driver: 'composite_risk' },
+      risk_score: 17,
+      composite_risk: 17,
+      recommendation: 'GO',
+      pass_rate: 96.0,
+    }))
+    expect(await screen.findByText(/ui-6/)).toBeInTheDocument()
+    expect(screen.queryByText(/raised to the NO-GO floor/i)).not.toBeInTheDocument()
+  })
+
+  it('does not present the dimension total as the verdict risk score', async () => {
+    await renderGate(flooredDecision())
+    // The breakdown header used to read a bare "17/100" beside a gauge of 60.
+    expect(await screen.findByText(/17\/100 weighted/)).toBeInTheDocument()
+  })
+})

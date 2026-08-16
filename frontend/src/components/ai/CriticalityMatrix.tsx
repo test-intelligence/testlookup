@@ -56,8 +56,16 @@ export default function CriticalityMatrix({
       >
         <p className="text-sm font-medium text-[var(--color-text-secondary)]">{title}</p>
         <div className="flex items-center gap-2">
-          <span className={clsx('text-sm font-bold', scoreTextColour(composite))}>
-            {composite.toFixed(0)}/100
+          {/* This is the WEIGHTED SUM OF THE DIMENSIONS BELOW, which is not
+              always the verdict's risk score: a pass-rate hard floor can raise
+              that score without touching any dimension. Rendered as a bare
+              "17/100" beside a gauge reading 60, it read as the same number
+              disagreeing with itself. Naming it says which of the two it is. */}
+          <span
+            className={clsx('text-sm font-bold', scoreTextColour(composite))}
+            title="Weighted sum of the dimensions below. The verdict's risk score can differ when a floor is applied."
+          >
+            {composite.toFixed(0)}/100 weighted
           </span>
           {expanded
             ? <ChevronUp className="h-4 w-4 text-[var(--color-text-muted)]" />
@@ -118,7 +126,10 @@ export default function CriticalityMatrix({
 
           {/* Composite footer */}
           <div className="flex items-center justify-between pt-2 border-t border-[var(--color-border)]">
-            <span className="text-xs text-[var(--color-text-muted)]">Composite risk score</span>
+            {/* "Composite risk score" claimed to BE the verdict's score. It is
+                the weighted sum of these dimensions, which a pass-rate floor
+                can override upward. */}
+            <span className="text-xs text-[var(--color-text-muted)]">Weighted dimension total</span>
             <span className={clsx('text-sm font-bold', scoreTextColour(composite))}>
               {composite.toFixed(0)}/100
             </span>

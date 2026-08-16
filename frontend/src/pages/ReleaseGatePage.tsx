@@ -234,6 +234,13 @@ export default function ReleaseGatePage() {
     decision.pass_rate != null ||
     (decision.dimension_scores?.length ?? 0) > 0 ||
     (decision.rule_evaluations?.length ?? 0) > 0
+
+  // The backend records WHICH input decided the verdict; "pass_rate_floor"
+  // means the composite was floored rather than computed from the dimensions.
+  const snapshot = (decision.input_snapshot ?? {}) as Record<string, unknown>
+  const floorApplied = snapshot.verdict_driver === 'pass_rate_floor'
+  const floorPct =
+    typeof snapshot.no_go_floor_pct === 'number' ? snapshot.no_go_floor_pct : null
   const cfg = hasEvidence
     ? (REC_CONFIG[decision.recommendation as Recommendation] ?? REC_CONFIG.CONDITIONAL_GO)
     : REC_CONFIG.PENDING
@@ -367,6 +374,20 @@ export default function ReleaseGatePage() {
         </div>
         {hasEvidence && <RiskGauge score={decision.risk_score} />}
       </div>
+
+      {/* Why the gauge can disagree with the dimension breakdown below.
+          A run under `no_go_floor_pct` has its composite raised to the NO_GO
+          floor without any dimension changing, so the page showed "60" beside a
+          weighted total of 17 with nothing connecting them. The backend has
+          published `verdict_driver` in `input_snapshot` all along and no code
+          read it — the value-nothing-consumes pattern. */}
+      {hasEvidence && floorApplied && (
+        <p className="text-xs text-[var(--status-broken)] -mt-2">
+          Risk score raised to the NO-GO floor because the pass rate is below{' '}
+          {floorPct != null ? `${floorPct}%` : 'the floor'} — not derived from the
+          dimension breakdown below.
+        </p>
+      )}
 
       {/* Policy badge (ENT-02) */}
       {decision.policy_level && (
