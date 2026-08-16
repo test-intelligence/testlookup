@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: deleted projects were still voting in the dashboard verdict
+
+Found during the UI sweep of the live homelab, against a hand-computed fixture.
+
+`DELETE /api/v1/projects/{id}` is a **soft** delete — it flips `is_active` and leaves every
+run, test case and history row in place. Two unscoped dashboard aggregates never excluded
+them:
+
+```
+new_failures_24h   reported 301   truth 23    (93 soft-deleted projects supplied the rest)
+flaky_test_count   reported  27   truth 24
+```
+
+`new_failures_24h` is not decorative: it feeds the `max_new_failures_24h` hard cap, so the
+dashboard read **No-Go — ship blocked** on the strength of failures belonging to projects
+the user had already deleted, and no amount of fixing live tests could clear it.
+
+This is the third instance of the class in one file. `_period_stats` was fixed earlier and
+its comment records the same shape (44,315 executions where only 192 belonged to live
+projects) plus the reason the filter is unconditional: putting it behind `if project_id:`
+guards only the branch that cannot over-count. Both new filters follow that rule.
+
+### 2026-08-16 — Fix: the Overview called test executions "runs"
+
+`total_executions_7d` counts **test executions**. The Overview page rendered it as a run
+count in five places, including the release verdict's stated sample size:
+
+```
+SAMPLE SIZE  702 runs / 30 days     <- 104 runs actually existed
+SAMPLE SIZE   60 runs / 30 days     <- a 6-run project with 60 executions
+```
+
+A reader weighing a No-Go verdict was told the evidence base was ~7x larger than it was.
+The coverage micro-strip compounded it by printing the **relative** trend as an absolute:
+`702 runs · +680 this period`, where +680 means the count grew by 680%. That is the same
+defect `deltaFromMetric` already carries a comment about ("▲ +400" beside a value of 150);
+the strip was a fourth site that pass missed.
+
+Labels now say "test executions" and the strip renders `+680%`.
+
+Regression: `backend/tests/regression/test_deleted_projects_do_not_vote.py` (5 tests) and
+three new cases in `frontend/src/pages/OverviewPage.test.tsx`; **6/6 mutations killed**.
+Two pre-existing Overview assertions were scoped (`findByText` → `findAllByText`, and the
+sample-size guard bound to its own card) because the fix made a second element carry the
+same text — the singular queries were failing for the opposite of the reason they exist.
+
+
 ### 2026-08-16 — Fix: the same failure no longer has two different confidences
 
 Found while measuring AI accuracy on the homelab. One test case, one body of evidence,

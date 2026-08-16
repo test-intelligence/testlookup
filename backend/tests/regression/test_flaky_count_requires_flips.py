@@ -59,6 +59,14 @@ DDL = [
            id TEXT PRIMARY KEY,
            suite_name TEXT
        )""",
+    # Every run belongs to a project, and DELETE /projects/{id} is a SOFT
+    # delete. The counter excludes inactive projects (2026-08-16: it reported
+    # 27 flaky against a truth of 24 because deleted projects still voted), so
+    # a schema without this table does not represent the query's real world.
+    """CREATE TABLE projects (
+           id TEXT PRIMARY KEY,
+           is_active BOOLEAN
+       )""",
     """CREATE TABLE test_case_history (
            id INTEGER PRIMARY KEY AUTOINCREMENT,
            test_case_id TEXT,
@@ -86,8 +94,21 @@ SEEDED = {
 TRULY_FLAKY = {"test_payment_timeout", "test_currency_rounding"}
 
 
-async def _seed(session, project_id: str, histories: dict[str, str], suite: str = "regression"):
+async def _seed(
+    session,
+    project_id: str,
+    histories: dict[str, str],
+    suite: str = "regression",
+    *,
+    project_active: bool = True,
+):
     base = datetime(2026, 8, 7, 9, 0, tzinfo=timezone.utc)
+    await session.execute(
+        text(
+            "INSERT OR REPLACE INTO projects (id, is_active) VALUES (:i, :a)"
+        ),
+        {"i": project_id, "a": project_active},
+    )
     for name, pattern in histories.items():
         case_id = str(uuid.uuid4())
         await session.execute(
@@ -213,6 +234,40 @@ class TestPreexistingBehaviourPreserved:
         """
         await _seed(session, PROJECT, {"t": "pfpfpfpfpf" + "p" * 10})
         assert await _count_flaky_tests(session, PROJECT) == 0
+
+
+class TestDeletedProjectsDoNotVote:
+    """DELETE /projects/{id} flips is_active and leaves the history in place.
+
+    Measured on the live homelab 2026-08-16: the unscoped count reported 27
+    against a truth of 24, the extra three coming from projects the user had
+    already deleted. Same class as the 24h failure counter beside it and as
+    _period_stats before them both.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_deleted_projects_flaky_tests_are_not_counted(self, session):
+        await _seed(session, PROJECT, {"a": "pfpfp"})
+        await _seed(session, OTHER_PROJECT, {"b": "pfpfp"}, project_active=False)
+        assert await _count_flaky_tests(session, None) == 1, (
+            "the unscoped count included a soft-deleted project's flaky test"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_live_projects_flaky_tests_are_still_counted(self, session):
+        """The filter must not become a blanket exclusion."""
+        await _seed(session, PROJECT, {"a": "pfpfp"})
+        await _seed(session, OTHER_PROJECT, {"b": "pfpfp"})
+        assert await _count_flaky_tests(session, None) == 2
+
+    @pytest.mark.asyncio
+    async def test_the_filter_holds_on_the_suite_branch_too(self, session):
+        """The suite-filtered SQL is a different string and used to emit its own
+        WHERE — exercise the deleted-project rule through it as well."""
+        await _seed(session, PROJECT, {"a": "pfpfp"}, suite="regression")
+        await _seed(session, OTHER_PROJECT, {"b": "pfpfp"}, suite="regression",
+                    project_active=False)
+        assert await _count_flaky_tests(session, None, "regression") == 1
 
 
 def test_the_flip_threshold_is_at_least_two():

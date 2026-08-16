@@ -140,7 +140,10 @@ describe('OverviewPage', () => {
     )
 
     // The +400 must carry its unit; without it this reads as 400 executions.
-    expect(await screen.findByText(/\+400%/)).toBeInTheDocument()
+    // findAllByText, not findByText: the coverage micro-strip renders the same
+    // trend with the same unit, so a singular query throws on two matches —
+    // which would fail this test for the OPPOSITE of the reason it exists.
+    expect((await screen.findAllByText(/\+400%/)).length).toBeGreaterThan(0)
     expect(screen.queryByText(/▲ \+400$/)).not.toBeInTheDocument()
     // Downward trends too — the sign is already in the number.
     expect(screen.getByText(/-2\.2%/)).toBeInTheDocument()
@@ -208,8 +211,12 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    const badge = await screen.findByText(/\+400%/)
-    expect(badge).toHaveAttribute('title', expect.stringMatching(/previous period/i))
+    // The KPI badge is the one carrying the explanatory title; the micro-strip
+    // renders the same percentage without one.
+    const badges = await screen.findAllByText(/\+400%/)
+    const titled = badges.filter((el) => el.getAttribute('title'))
+    expect(titled.length).toBeGreaterThan(0)
+    expect(titled[0]).toHaveAttribute('title', expect.stringMatching(/previous period/i))
   })
 
   it('renders the Eng-hours saved KPI card only when the hours-saved model is available', async () => {
@@ -454,6 +461,83 @@ describe('OverviewPage', () => {
  * Fixed by making the copy match the metric — the badge and the KPI label
  * both already said 24 h, so the metric's intent was never in doubt.
  */
+describe('OverviewPage — executions are not runs', () => {
+  // Regression (homelab, 2026-08-16): `total_executions_7d` counts TEST
+  // EXECUTIONS, but the page called them "runs" in five places, including the
+  // release verdict's stated sample size. Measured live:
+  //
+  //     SAMPLE SIZE  702 runs / 30 days      <- 104 runs actually existed
+  //     SAMPLE SIZE   60 runs / 30 days      <- a 6-run project, 60 executions
+  //
+  // A reader weighing a No-Go verdict was told the evidence base was ~7x
+  // larger than it was. The MicroStrip compounded it by printing the relative
+  // trend as an absolute: "702 runs · +680 this period" for +680%.
+
+  beforeEach(() => {
+    valueKpiState.metrics = undefined
+    analyticsViewState.widgetIds = []
+  })
+
+  async function renderWithExecutions(value: number, trend: number | null = null) {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value, trend, trend_direction: trend == null ? 'flat' : 'up' },
+        avg_pass_rate_7d: { value: 100, trend: null, trend_direction: 'flat' },
+        active_defects: { value: 0 },
+        flaky_test_count: { value: 0 },
+        new_failures_24h: { value: 0 },
+        avg_duration_ms: { value: 1000 },
+      },
+      isLoading: false,
+    })
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  /** The verdict's "Sample size" card, as a single string. */
+  function sampleSizeCardText(): string {
+    const label = screen.getByText('Sample size')
+    const card = label.parentElement
+    if (!card) throw new Error('Sample size card has no container')
+    return card.textContent ?? ''
+  }
+
+  it('does not describe the execution count as a run count', async () => {
+    await renderWithExecutions(60)
+    // Scoped to the card on purpose: a page-wide queryByText(/60 runs/) passes
+    // whatever the card says, because the value and its unit are separate
+    // elements. That version of this guard survived mutation.
+    //
+    // A plain substring check, not a regex: two successive attempts to write
+    // /runs?/ landed a literal backspace and then a literal backslash in
+    // the pattern. Both could never match, so `.not.toMatch` passed
+    // unconditionally and the sibling assertion below was doing all the work.
+    expect(sampleSizeCardText().toLowerCase()).not.toContain('run')
+  })
+
+  it('names the unit it is actually counting', async () => {
+    await renderWithExecutions(60)
+    const text = sampleSizeCardText()
+    expect(text).toMatch(/60/)
+    expect(text).toMatch(/execution/i)
+  })
+
+  it('renders the coverage trend as a percentage, not a count of runs', async () => {
+    await renderWithExecutions(702, 680)
+    // "+680 this period" reads as 680 more runs; it means the count grew 680%.
+    expect(screen.queryByText(/\+680 this period/)).not.toBeInTheDocument()
+    expect(screen.getByText(/\+680% this period/)).toBeInTheDocument()
+  })
+})
+
 describe('OverviewPage — blockers panel describes its own metric', () => {
   async function renderWithFailures() {
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')

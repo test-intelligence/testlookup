@@ -295,7 +295,7 @@ function VerdictCard({
   ) : verdict === 'CONDITIONAL' ? (
     <>Some quality criteria need attention. Verify the warning evidence before merging to <code className="font-mono text-[12px]">release</code>.</>
   ) : (
-    <>All quality gates passed across {totalExecutions} run{totalExecutions === 1 ? '' : 's'} in the last {windowDays} days. Safe to merge to <code className="font-mono text-[12px]">release</code>.</>
+    <>All quality gates passed across {totalExecutions} test execution{totalExecutions === 1 ? '' : 's'} in the last {windowDays} days. Safe to merge to <code className="font-mono text-[12px]">release</code>.</>
   )
 
   const reason1Tone: SparkTone = newFailures24h > 0 ? 'bad' : 'neutral'
@@ -314,7 +314,10 @@ function VerdictCard({
   const reason2Value = verdict === 'PENDING' ? '—' : `${passRatePct}%`
   const reason2Sub = verdict === 'PENDING' ? '(awaiting runs)' : `weighted · ${windowDays}d`
   const reason3Value = `${totalExecutions}`
-  const reason3Sub = `runs / ${windowDays} days`
+  // `total_executions_7d` counts TEST EXECUTIONS, not runs. Calling it runs
+  // overstated the sample by the average tests-per-run: measured live at
+  // "702 runs" against 104 real runs, and "60 runs" for a 6-run project.
+  const reason3Sub = `test executions / ${windowDays} days`
 
   return (
     <div
@@ -465,8 +468,8 @@ function buildRibbonStages(
     {
       name: 'Quality Snapshot',
       state: 'done',
-      desc: `Capture current state — ${totalExecutions} run${totalExecutions === 1 ? '' : 's'} / ${defects} active defect${defects === 1 ? '' : 's'}`,
-      pillText: `${totalExecutions} run${totalExecutions === 1 ? '' : 's'}`,
+      desc: `Capture current state — ${totalExecutions} test execution${totalExecutions === 1 ? '' : 's'} / ${defects} active defect${defects === 1 ? '' : 's'}`,
+      pillText: `${totalExecutions} execution${totalExecutions === 1 ? '' : 's'}`,
       pillTone: 'accent',
       linkTo: '/runs',
     },
@@ -482,8 +485,10 @@ function buildRibbonStages(
       name: 'Trend Analysis',
       state: 'done',
       desc: totalExecutions < 3
-        ? `Sparse data — ${totalExecutions} day${totalExecutions === 1 ? '' : 's'} vs ${days}-day baseline`
-        : `${totalExecutions} runs vs ${days}-day baseline`,
+        // The sparse branch called executions "days", the other called them
+        // "runs". They are neither.
+        ? `Sparse data — ${totalExecutions} test execution${totalExecutions === 1 ? '' : 's'} vs ${days}-day baseline`
+        : `${totalExecutions} test executions vs ${days}-day baseline`,
       pillText: `${days}d baseline`,
       pillTone: 'accent',
       linkTo: '/trends',
@@ -805,8 +810,15 @@ function MicroStrip({ summary, days }: { summary: DashboardSummary | undefined; 
   const lastGreen = total > 0 && newFailures === 0 ? '< 24h ago' : '—'
 
   const cards: Array<{ k: string; v: string; small: string }> = [
+    // Two units were wrong here at once, both already fixed elsewhere on this
+    // page and both missed in this strip:
+    //   * `total_executions_7d` counts TEST EXECUTIONS, not runs — "702 runs"
+    //     against 104 real runs on the live dashboard.
+    //   * `trend` is a RELATIVE PERCENTAGE, so "+680 this period" read as 680
+    //     more runs when it meant the count grew by 680%. Same defect
+    //     `deltaFromMetric` carries a comment about ("▲ +400" next to "150").
     { k: 'Automation coverage', v: `${total}`,
-      small: `runs · ${typeof totalDelta === 'number' && totalDelta > 0 ? `+${totalDelta}` : (totalDelta ?? 0)} this period` },
+      small: `test executions · ${typeof totalDelta === 'number' ? `${totalDelta > 0 ? '+' : ''}${totalDelta}%` : '0%'} this period` },
     { k: 'Last green run',      v: lastGreen,  small: total > 0 ? `over last ${days}d` : 'awaiting runs' },
     { k: 'Mean time to fix',    v: '—',        small: 'needs ≥ 3 fixes to compute' },
     { k: 'Avg run duration',    v: avgDuration ? formatDuration(avgDuration) : '—',

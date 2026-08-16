@@ -190,10 +190,24 @@ async def get_dashboard_summary(
     # The trend query at ~line 328 carries a comment describing this exact bug
     # being fixed there ("a day whose only failures were BROKEN charted as a
     # flat 100%"); this is the same defect, one metric over.
+    #
+    # Second holdout, same shape, found 2026-08-16: this counter had no
+    # active-project filter either, so DELETED projects kept voting. Measured
+    # live on the unscoped dashboard: 301 reported against a truth of 23, with
+    # 93 soft-deleted projects supplying the other 278. That is not a cosmetic
+    # over-count — ``new_failures_24h`` feeds the ``max_new_failures_24h`` hard
+    # cap below, so the headline verdict read **No-Go** on the strength of
+    # failures belonging to projects the user had already deleted.
+    #
+    # ``_period_stats`` learned this in the same file ("44,315 executions where
+    # only 192 belonged to live projects") and its comment says the filter is
+    # unconditional on purpose. Same reasoning here: putting it behind
+    # ``if project_id`` would guard only the branch that cannot over-count.
     yesterday = now - timedelta(hours=24)
     fail_conditions = [
         TestCase.status.in_(_FAILED_STATUSES),
         TestCase.created_at >= yesterday,
+        TestRun.project_id.in_(select(Project.id).where(Project.is_active.is_(True))),
     ]
     if project_id:
         fail_conditions.append(TestRun.project_id == project_id)
@@ -653,16 +667,27 @@ async def _count_flaky_tests(
     the count was order-blind and a permanently-broken test was reported as
     flaky, which points a QA lead away from a real bug (and inflates the
     "known flaky" figure on the summary report)."""
-    project_filter = "WHERE tr.project_id = :project_id" if project_id else ""
+    # Third holdout of the soft-delete class (2026-08-16). DELETE /projects/{id}
+    # only flips ``is_active``, so without this the flaky headline counted
+    # fingerprints whose entire history belongs to deleted projects: measured
+    # live at 27 against a truth of 24. Unconditional, like its siblings — the
+    # scoped branch cannot over-count, so guarding only that one guards nothing.
+    active_filter = (
+        "tr.project_id IN (SELECT id FROM projects WHERE is_active)"
+    )
+    project_filter = (
+        f"WHERE {active_filter} AND tr.project_id = :project_id"
+        if project_id
+        else f"WHERE {active_filter}"
+    )
     suite_join = "JOIN test_cases tc ON tc.id = tch.test_case_id" if suite_name else ""
     suite_match_sql = "(LOWER(TRIM(tc.suite_name)) = :suite_name OR LOWER(TRIM(tr.primary_suite_name)) = :suite_name)"
-    suite_filter = (
-        f"AND {suite_match_sql}"
-        if suite_name and project_filter
-        else f"WHERE {suite_match_sql}"
-        if suite_name
-        else ""
-    )
+    # ``project_filter`` now always emits a WHERE (the active-project clause is
+    # unconditional), so the suite clause is always a conjunct. The old
+    # "WHERE if there is no project filter" branch is gone rather than left
+    # unreachable — a dead branch here would silently drop the active-project
+    # clause the day someone made the project filter conditional again.
+    suite_filter = f"AND {suite_match_sql}" if suite_name else ""
     # Rank each fingerprint's history newest-first, keep only the last N, then
     # apply the flaky ratio over that bounded window. Without the window the
     # HAVING scanned all history, so a fingerprint's flaky flag could only ever
