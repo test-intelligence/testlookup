@@ -550,6 +550,18 @@ export default function AIConfigPage() {
                 onChange={e => upd('google_api_key', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
             </div>
+            <div>
+              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Anthropic API Key {config.anthropic_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+              <input type="password" placeholder={config.anthropic_key_set ? '••••••••' : 'sk-ant-...'} disabled={!isAdmin}
+                onChange={e => upd('anthropic_api_key', e.target.value || undefined)}
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+            </div>
+            <div>
+              <label className="block text-xs text-[var(--color-text-muted)] mb-1">OpenRouter API Key {config.openrouter_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+              <input type="password" placeholder={config.openrouter_key_set ? '••••••••' : 'sk-or-v1-...'} disabled={!isAdmin}
+                onChange={e => upd('openrouter_api_key', e.target.value || undefined)}
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+            </div>
           </div>
           <p className="text-xs text-[var(--color-text-muted)]">API keys are stored securely and never returned in responses.</p>
         </div>

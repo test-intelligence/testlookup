@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: the AI settings page had no API-key field for Anthropic or OpenRouter
+
+Selecting a provider you cannot give a key to is a dead end. The settings page offered inputs
+for OpenAI and Google only, while the backend accepted keys for Anthropic — and now
+OpenRouter — so those providers could only be configured by writing to the database by hand.
+
+Worse, `anthropic_key_set` was **declared on the read schema with nothing assigning it**. It
+defaulted to `False` and stayed there, so the "(set)" indicator beside the field could never
+light up even with a key configured. That is the third instance this session of a value
+published to consumers that no code path produces — after the summary agent's
+`_fallback_used` and live-stream's `events_received`.
+
+Wired end-to-end: the secret registry (so keys land in encrypted `secret_refs` rather than
+plain `app_settings`), the update and read schemas, **both** router response sites, the
+frontend types, and the inputs themselves.
+
+The vocabulary guard grew to cover secret plumbing: every provider whose policy profile says
+it `requires_secret` must have a registered secret field, an update-schema field, a
+`*_key_set` flag, and a UI input. Two corrections were needed while writing it, both mine:
+
+- the key field is **not** uniformly `<provider>_api_key` — `gemini` is configured with
+  `google_api_key`, named for the vendor. The mapping is now explicit, with its own test that
+  the map still matches the schema, rather than a guessed convention;
+- the first version only required each `*_key_set` to be assigned *somewhere*. The router
+  builds that response at two sites, so a mutation removing one still passed — leaving one
+  endpoint reporting a permanent `False`. It now requires assignment at **every** construction
+  site. Five mutations verified against the final version.
+
+
 ### 2026-08-16 — Feature: OpenRouter as an LLM provider
 
 Requested by the owner (backlog B-4). A deployment that cannot host a model had no way to

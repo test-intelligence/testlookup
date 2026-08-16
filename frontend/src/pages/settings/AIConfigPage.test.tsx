@@ -77,6 +77,8 @@ function baseConfig(overrides: Partial<AIConfigRead> = {}): AIConfigRead {
     finetune_enabled: false,
     openai_key_set: false,
     google_key_set: false,
+  anthropic_key_set: false,
+  openrouter_key_set: false,
     analysis_mode: 'auto',
     ml_model_available: false,
     ml_model_accuracy: null,

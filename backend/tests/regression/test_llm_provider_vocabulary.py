@@ -200,3 +200,124 @@ def test_the_settings_page_offers_nothing_the_backend_rejects():
     missing one, because the user gets a failure with no explanation."""
     extra = sorted(_ui_providers() - _declared_providers())
     assert not extra, f"AI settings page offers {extra}, which the backend rejects"
+
+
+# ── Secret plumbing: a provider that needs a key must have a way to set it ──
+#
+# The AI settings page shipped API-key inputs for OpenAI and Google only, while
+# the backend accepted keys for Anthropic too — and `anthropic_key_set` was
+# declared on the read schema with nothing populating it, so it was permanently
+# False. Selecting a provider you cannot give a key to is a dead end, and a
+# "(set)" indicator that can never light up is worse than none.
+
+
+# The key field is NOT uniformly "<provider>_api_key": `gemini` is configured
+# with `google_api_key`, named for the vendor rather than the provider id.
+# Encoded explicitly — an earlier version of these tests assumed the convention
+# and reported gemini as broken when it is simply named differently.
+_KEY_FIELD = {"gemini": "google_api_key"}
+
+
+def _key_field(provider: str) -> str:
+    return _KEY_FIELD.get(provider, f"{provider}_api_key")
+
+
+def _requires_secret() -> set[str]:
+    from app.services.llm_policy_service import provider_profile
+
+    out = set()
+    for provider in _declared_providers():
+        try:
+            if provider_profile(provider).requires_secret:
+                out.add(provider)
+        except Exception:  # noqa: BLE001 — absence is covered by another test
+            continue
+    return out
+
+
+def test_the_key_field_map_matches_reality():
+    """If a provider is renamed or its key field changes, the map must follow —
+    otherwise every check below silently inspects a field that does not exist."""
+    from app.models.schemas import AIConfigUpdate
+
+    fields = set(AIConfigUpdate.model_fields)
+    for provider in _requires_secret():
+        assert _key_field(provider) in fields, (
+            f"_KEY_FIELD maps {provider} to {_key_field(provider)!r}, which is not "
+            "a field on AIConfigUpdate"
+        )
+
+
+def test_every_secret_requiring_provider_has_a_secret_field():
+    """Without a SECRET_FIELDS entry the key is stored in plain app_settings
+    instead of the encrypted secret_refs table — or silently dropped."""
+    from app.services.secret_service import SECRET_FIELDS
+
+    fields = SECRET_FIELDS.get("ai_config", set())
+    missing = sorted(
+        p for p in _requires_secret() if _key_field(p) not in fields
+    )
+    assert not missing, f"providers whose API key is not a registered secret: {missing}"
+
+
+def test_every_secret_requiring_provider_can_be_given_a_key_via_the_api():
+    """The update schema is the only way in. A provider missing here can only be
+    configured by editing the database."""
+    from app.models.schemas import AIConfigUpdate
+
+    fields = set(AIConfigUpdate.model_fields)
+    missing = sorted(p for p in _requires_secret() if _key_field(p) not in fields)
+    assert not missing, f"AIConfigUpdate accepts no API key for: {missing}"
+
+
+def test_every_secret_requiring_provider_reports_whether_its_key_is_set():
+    """The read schema drives the UI's "(set)" indicator."""
+    from app.models.schemas import AIConfigRead
+
+    fields = set(AIConfigRead.model_fields)
+    missing = sorted(
+        p for p in _requires_secret()
+        if _key_field(p).replace("_api_key", "_key_set") not in fields
+    )
+    assert not missing, f"AIConfigRead exposes no key_set flag for: {missing}"
+
+
+def test_the_router_populates_every_key_set_flag_at_every_site():
+    """`anthropic_key_set` existed on the schema with a False default and no
+    code assigning it, so it read False even with a key configured — a declared
+    field nothing produces, the same class as `_fallback_used`.
+
+    Every construction site must set it, not merely one. The router builds
+    AIConfigRead twice (the GET and the PUT response); an earlier version of
+    this test only required the assignment to appear *somewhere*, and survived a
+    mutation that removed it from one site — leaving that endpoint reporting a
+    permanent False while the other was correct.
+    """
+    src = (BACKEND / "app" / "routers" / "app_settings.py").read_text(encoding="utf-8")
+    from app.models.schemas import AIConfigRead
+
+    sites = src.count("AIConfigRead(")
+    assert sites >= 2, f"expected multiple AIConfigRead construction sites, found {sites}"
+
+    short = []
+    for field in sorted(AIConfigRead.model_fields):
+        if not field.endswith("_key_set"):
+            continue
+        assigned = src.count(f"{field}=")
+        if assigned < sites:
+            short.append(f"{field} assigned at {assigned}/{sites} sites")
+    assert not short, "key_set flags not populated at every response site: " + "; ".join(short)
+
+
+@pytest.mark.skipif(not AI_CONFIG_PAGE.exists(), reason="frontend not in this checkout")
+def test_the_settings_page_has_an_input_for_every_provider_key():
+    """The user-facing half: a provider you can select but cannot give a key to
+    is unusable from the UI."""
+    src = AI_CONFIG_PAGE.read_text(encoding="utf-8")
+    missing = sorted(
+        p for p in _requires_secret() if f"'{_key_field(p)}'" not in src
+    )
+    assert not missing, (
+        f"AI settings page has no API-key input for: {missing} — selectable but "
+        "not configurable"
+    )

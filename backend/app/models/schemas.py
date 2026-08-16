@@ -2604,6 +2604,7 @@ class AIConfigRead(BaseModel):
     openai_key_set: bool
     google_key_set: bool
     anthropic_key_set: bool = False                   # LP-3: Anthropic/Claude support
+    openrouter_key_set: bool = False                  # B-4: OpenRouter support
     base_url: Optional[str] = None                    # LP-3: provider endpoint override
     # Analysis mode — LLM-free operation
     analysis_mode: str                               # "llm" | "ml" | "rules" | "auto"
@@ -2634,6 +2635,7 @@ class AIConfigUpdate(BaseModel):
     openai_api_key: Optional[str] = Field(None, max_length=500)
     google_api_key: Optional[str] = Field(None, max_length=500)
     anthropic_api_key: Optional[str] = Field(None, max_length=500)  # LP-3
+    openrouter_api_key: Optional[str] = Field(None, max_length=500)  # B-4
     base_url: Optional[str] = Field(None, max_length=500)           # LP-3: endpoint override
     analysis_mode: Optional[str] = Field(None, pattern=r"^(llm|ml|rules|auto)$")
     knowledge_rag_enabled: Optional[bool] = None

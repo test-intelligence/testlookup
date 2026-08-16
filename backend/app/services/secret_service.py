@@ -135,7 +135,10 @@ def decrypt_value(ciphertext: str) -> Optional[str]:
 
 SECRET_FIELDS: dict[str, set[str]] = {
     "smtp_config": {"password"},
-    "ai_config": {"openai_api_key", "google_api_key", "anthropic_api_key"},
+    "ai_config": {
+        "openai_api_key", "google_api_key",
+        "anthropic_api_key", "openrouter_api_key",
+    },
     "integrations_config": {
         "jira_api_token", "splunk_api_token", "ocp_sa_token",
         "slack_bot_token", "github_token",

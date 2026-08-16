@@ -54,6 +54,8 @@ export interface AIConfigRead {
   finetune_enabled: boolean
   openai_key_set: boolean
   google_key_set: boolean
+  anthropic_key_set: boolean
+  openrouter_key_set: boolean
   // Analysis mode — LLM-free operation
   analysis_mode: AnalysisMode
   ml_model_available: boolean
@@ -81,6 +83,8 @@ export interface AIConfigUpdate {
   finetune_enabled?: boolean
   openai_api_key?: string
   google_api_key?: string
+  anthropic_api_key?: string
+  openrouter_api_key?: string
   analysis_mode?: AnalysisMode
   knowledge_rag_enabled?: boolean
 }
