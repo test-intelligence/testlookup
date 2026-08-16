@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: `events_received` was published to API clients and never counted
+
+Found by driving a controlled live-stream session against the homelab — eight `test_result`
+events plus `run_start` and `run_complete`, all accepted:
+
+```
+POST /api/v1/stream/events/batch   -> 202  {"accepted": 10, ...}
+GET  /api/v1/stream/sessions/{id}  -> {"events_received": 0, ...}
+psql: select events_received from live_sessions -> 0
+```
+
+`events_received` exists in migration 0008, on the ORM model, in
+`architecture/DATABASE_SCHEMA.md`, in the API response and in
+`frontend/src/types/live-stream.ts`. **Nothing in the product ever incremented it.**
+
+What kept it hidden: `seed_dev_data.py` wrote a fabricated `sum(tests) * 3`, so seeded
+sessions were the only ones with a non-zero value. The field looked alive in every demo while
+every real session reported 0 — invisible in the data you demo with, wrong in the data you
+run with.
+
+Same class as the summary agent's `_fallback_used`: a value reported to consumers that no
+code path produces.
+
+The counter now lives on the Redis state hash the ingest path already writes, so it costs one
+extra pipeline op rather than a database round trip per batch. `get_session` prefers the live
+value, because the column is only written at close and reading it alone reports 0 for the
+entire duration of the run it describes — precisely when a client watching ingest progress
+would ask. `close_session` copies it onto the row so it outlives the hash's 1-hour
+post-completion TTL. Seed data now uses `sum(tests) + 2` — one result per test plus
+`run_start`/`run_complete`, which is what the real path counts.
+
+Keepalives are excluded. `live_heartbeat` exists only to bump `last_event_at` for the idle
+reaper, and a standing test pins that a heartbeat-only batch touches no counter at all. The
+first cut of this fix incremented on every accepted event and broke that contract — the full
+suite caught it — which would also have inflated the figure with idle noise on any run with
+long gaps between tests.
+
+Guarded by `backend/tests/regression/test_events_received_is_counted.py`: five mechanics
+tests, each mutation-verified, plus a class ratchet requiring every field in the live-session
+response to be written by something in `app/` — with a self-test proving the parser still
+sees the response, and a guard stopping seed data from re-inventing the value.
+
+
 ### 2026-08-15 — Fix: the MCP server could not reach the backend, so every tool call failed
 
 An entire advertised surface — the README and CLAUDE.md list UI, REST API, CLI and **MCP

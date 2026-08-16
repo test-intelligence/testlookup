@@ -326,7 +326,12 @@ async def get_session(
         "branch": session.branch,
         "status": session.status,
         "total_tests": session.total_tests,
-        "events_received": session.events_received,
+        # Prefer the live counter while the run is in flight — the column is
+        # only written when the session closes, so reading it alone reports 0
+        # for the entire duration of the run it is describing.
+        "events_received": int(
+            live_stats.get("events_received") or session.events_received or 0
+        ),
         "started_at": session.started_at.isoformat(),
         "completed_at": session.completed_at.isoformat() if session.completed_at else None,
         "live_stats": live_stats,
@@ -375,6 +380,9 @@ async def close_session(
     session.completed_at = now
     if state:
         session.extra_metadata = {**(session.extra_metadata or {}), "final_state": state}
+        # Persist the live counter before the Redis hash expires, so the column
+        # still means something once the run is only readable from Postgres.
+        session.events_received = int(state.get("events_received") or 0)
 
     await upsert_test_run(db, session, state or {})
 
@@ -562,8 +570,15 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
 
     pipe = redis.pipeline()
     test_event_count = 0
+    countable_events = 0
     for event in events:
         event_dict: dict = event.model_dump() if hasattr(event, "model_dump") else dict(event)
+        # ``live_heartbeat`` is a keepalive that only exists to bump
+        # last_event_at for the idle reaper. Counting it would inflate
+        # events_received with idle noise, and a heartbeat-only batch must
+        # touch no counter at all — see test_live_heartbeat_ingest.
+        if event_dict.get("event_type") != "live_heartbeat":
+            countable_events += 1
         if event_dict.get("event_type") == "test_result":
             test_event_count += 1
             entry = json.dumps({
@@ -609,6 +624,16 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
         await await_if_needed(pipe.hset(state_key, mapping={"last_event_at": now, "current_test": last_test_name}))
     else:
         await await_if_needed(pipe.hset(state_key, "last_event_at", now))
+    # ``live_sessions.events_received`` is returned by GET /stream/sessions/{id}
+    # and is in the published schema, but nothing ever incremented it — it read
+    # 0 for every real session while seed_dev_data wrote a plausible non-zero,
+    # which is what kept it looking populated. Count it here, on the hash the
+    # hot path already writes, so the field costs one extra pipeline op rather
+    # than a database round trip per batch.
+    if countable_events:
+        await await_if_needed(
+            pipe.hincrby(state_key, "events_received", countable_events)
+        )
     await await_if_needed(pipe.expire(state_key, 86_400))
     await pipe.execute()
 

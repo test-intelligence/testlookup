@@ -228,7 +228,10 @@ class RedisLiveRunState:
     @staticmethod
     def _deserialise(raw: dict[str, Any]) -> dict[str, Any]:
         """Convert Redis string values back to typed Python values."""
-        int_fields = {"total", "passed", "failed", "skipped", "broken", "unknown"}
+        int_fields = {
+            "total", "passed", "failed", "skipped", "broken", "unknown",
+            "events_received",
+        }
         result: dict[str, Any] = {}
         for k, v in raw.items():
             if k in int_fields:

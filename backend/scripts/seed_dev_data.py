@@ -1022,7 +1022,12 @@ async def _seed_live_sessions(
         status="completed",
         release_name="v1.0.0",
         total_tests=sum(s["tests"] for s in SUITES),
-        events_received=sum(s["tests"] for s in SUITES) * 3,
+        # One test_result per test, plus run_start and run_complete — what the
+        # real ingest path would have counted. The previous ``* 3`` was an
+        # invented figure, and because seeded sessions were the only ones with a
+        # non-zero value it disguised the fact that nothing incremented this
+        # field at all.
+        events_received=sum(s["tests"] for s in SUITES) + 2,
         started_at=started,
         last_event_at=completed - timedelta(seconds=5),
         completed_at=completed,
