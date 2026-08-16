@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: five more places published figures that could not all be true
+
+The run summary's non-reconciling figures turned out to be one instance of a class,
+not a one-off. The same shape was live in five places, each publishing a `total`, a
+`failed` and a `pass_rate` while omitting the skipped and broken buckets. Pass rate is
+`passed / executed`, so a reader combining the printed numbers gets a different answer
+than the printed rate.
+
+Found by asking the chat agent a question with known ground truth (4 passed / 4 failed
+/ 1 broken / 1 skipped). It replied:
+
+> "In the most recent run (s2-6), 4 tests failed out of 10, resulting in a 44.4% pass rate."
+
+Faithful to its input and wrong to a reader — 10 − 4 = 6 passed reads as 60%. The chat
+context table was feeding it `| 10 | 4 | 44.4% |`. That is a product defect, not a model
+one: the same table would mislead a person.
+
+Fixed:
+
+- **chat run-context table** — now selects and shows every bucket, and states that the
+  rate excludes skipped tests.
+- **`chat_service` run stubs** — derived `passed = total - failed`, counting broken and
+  skipped tests as passes; for the run above it produced **6** where the stored count is
+  **4**, contradicting both the real value and the rate beside it. Now reads the stored
+  count, shows the fraction over executed tests, and counts a broken test as a failure
+  (it previously called such a run "completed with no failures").
+- **GitHub check-run title** — `4/10 passed (44.4%)` invited 40%. Now over executed
+  tests, matching the rate's own denominator. The body already broke out every bucket.
+- **GitLab commit-status description** — same shape, same fix.
+- **summary agent** — already fixed; now guarded across bucket mixes rather than only
+  the one reported shape.
+
+Nine mutations verified across all five surfaces. The rule this class keeps violating:
+**never derive a count by subtraction, and never print a rate without the terms it was
+computed from.**
+
+
 ### 2026-08-16 — Fix: `/analyze` could never classify anything
 
 The user-facing "Analyze" action returned the same thing for every test, always:

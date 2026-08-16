@@ -77,8 +77,23 @@ async def get_run_summaries(
         pass_rate = run.pass_rate or 0.0
         total = run.total_tests or 0
         failed = run.failed_tests or 0
-        passed = total - failed
-        status_word = "completed with no failures" if failed == 0 else f"completed — {failed} test{'s' if failed != 1 else ''} failed"
+        # Read the stored count; never derive it. `total - failed` counted
+        # broken and skipped tests as passing — for a run of 4 passed / 4
+        # failed / 1 broken / 1 skipped it produced "6", which contradicted
+        # both the real passed count and the pass rate printed beside it.
+        passed = run.passed_tests or 0
+        skipped = run.skipped_tests or 0
+        broken = run.broken_tests or 0
+        # A broken test is a failure for this purpose; "no failures" while a
+        # test errored out is not something to tell a user.
+        failures = failed + broken
+        status_word = (
+            "completed with no failures" if failures == 0
+            else f"completed — {failures} test{'s' if failures != 1 else ''} failed"
+        )
+        # The rate's denominator is executed tests, so show the fraction over
+        # the same denominator rather than over the total.
+        executed = max(total - skipped, 0)
         stubs.append(
             {
                 "test_run_id": str(run.id),
@@ -86,8 +101,10 @@ async def get_run_summaries(
                 "build_number": run.build_number or "",
                 "executive_summary": (
                     f"Build **{run.build_number or str(run.id)[:8]}** {status_word}. "
-                    f"Pass rate: {pass_rate:.1f}% ({passed}/{total} tests). "
-                    f"AI analysis is being generated and will appear shortly."
+                    f"Pass rate: {pass_rate:.1f}% ({passed}/{executed} executed"
+                    + (f", {skipped} skipped" if skipped else "")
+                    + "). "
+                    + "AI analysis is being generated and will appear shortly."
                 ),
                 "markdown_report": None,
                 "anomaly_count": 0,

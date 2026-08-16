@@ -1381,7 +1381,10 @@ async def test_chat_service_get_run_summaries_merges_ai_summaries_and_stubs():
         project_id=uuid.uuid4(),
         build_number="build-22",
         total_tests=10,
+        passed_tests=8,
         failed_tests=2,
+        skipped_tests=0,
+        broken_tests=0,
         pass_rate=80.0,
         start_time=datetime(2026, 1, 2, tzinfo=timezone.utc),
     )

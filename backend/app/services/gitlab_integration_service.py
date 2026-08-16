@@ -717,7 +717,12 @@ def _commit_status_payload(
     """Build the ``POST /statuses/:sha`` payload."""
     total = int(run.total_tests or 0)
     passed = int(run.passed_tests or 0)
+    skipped = int(run.skipped_tests or 0)
     pass_rate = float(run.pass_rate or 0)
+    # Over EXECUTED tests, matching the rate's own denominator — `passed/total`
+    # beside the rate contradicts itself whenever anything was skipped
+    # ("4/10 passed (44.4%)" invites 4/10 = 40%). Mirrors github_checks_service.
+    executed = max(total - skipped, 0)
     proj_label = project_name or "TestLookup"
 
     base_url = (getattr(settings, "PUBLIC_BASE_URL", "") or "").rstrip("/")
@@ -727,7 +732,7 @@ def _commit_status_payload(
     payload: dict[str, Any] = {
         "state": _commit_status_state(run),
         "name": f"TestLookup · {proj_label}",
-        "description": f"{passed}/{total} passed ({pass_rate:.1f}%)",
+        "description": f"{passed}/{executed} passed ({pass_rate:.1f}%)",
     }
     if deep_link:
         payload["target_url"] = deep_link

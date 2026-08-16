@@ -585,7 +585,8 @@ class ConversationAgent:
                 q = (
                     select(
                         TestRun.id, TestRun.build_number, TestRun.branch, TestRun.status,
-                        TestRun.total_tests, TestRun.failed_tests, TestRun.pass_rate,
+                        TestRun.total_tests, TestRun.passed_tests, TestRun.failed_tests,
+                        TestRun.skipped_tests, TestRun.broken_tests, TestRun.pass_rate,
                         TestRun.start_time,
                     )
                     .order_by(TestRun.start_time.desc())
@@ -598,19 +599,42 @@ class ConversationAgent:
                 if not rows:
                     return "", []
 
-                header = "| Build | Branch | Status | Tests | Failures | Pass Rate | Date |\n|---|---|---|---|---|---|---|"
+                # Every bucket, and the basis of the rate.
+                #
+                # This used to be Tests | Failures | Pass Rate — 10 | 4 | 44.4%
+                # for a run of 4 passed / 4 failed / 1 broken / 1 skipped. Those
+                # three numbers cannot all be true of the same run as a reader
+                # (or a model) would combine them: 10 - 4 = 6 passed is 60%, not
+                # 44.4%. The rate is passed/executed and the missing terms were
+                # never shown. The model then reproduced the contradiction
+                # verbatim — "4 tests failed out of 10, resulting in a 44.4%
+                # pass rate" (homelab, 2026-08-16).
+                #
+                # Same defect the run summary had. Handing a model figures that
+                # do not reconcile is handing it a reason to invent one that
+                # does.
+                header = (
+                    "| Build | Branch | Status | Tests | Passed | Failed | Skipped "
+                    "| Broken | Pass Rate | Date |\n"
+                    "|---|---|---|---|---|---|---|---|---|---|"
+                )
                 lines = []
                 src = []
                 for r in rows:
                     ts = r.start_time.strftime("%Y-%m-%d %H:%M") if r.start_time else "?"
                     lines.append(
                         f"| {r.build_number} | {r.branch or '?'} | {r.status} "
-                        f"| {r.total_tests} | {r.failed_tests} "
+                        f"| {r.total_tests} | {r.passed_tests} | {r.failed_tests} "
+                        f"| {r.skipped_tests} | {r.broken_tests or 0} "
                         f"| **{r.pass_rate:.1f}%** | {ts} |"
                     )
                     src.append({"type": "test_run", "id": str(r.id), "build": r.build_number})
 
-                result_text = header + "\n" + "\n".join(lines)
+                result_text = (
+                    header + "\n" + "\n".join(lines)
+                    + "\n\nPass rate is passed / executed; skipped tests are "
+                      "excluded from the denominator."
+                )
                 _RUN_CONTEXT_CACHE[cache_key] = (time.monotonic(), result_text, src)
                 return result_text, src
         except Exception as exc:

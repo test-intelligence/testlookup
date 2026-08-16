@@ -700,7 +700,15 @@ def _format_check_summary(
         noun = "failure" if failures == 1 else "failures"
         title = f"{title_icon} {proj_label} — {failures} {noun} — all known-flaky/quarantined"
     else:
-        title = f"{title_icon} {proj_label} — {passed}/{total} passed ({pass_rate:.1f}%)"
+        # Over EXECUTED tests, matching the rate's own denominator. `passed/total`
+        # beside the rate read as a contradiction whenever anything was skipped:
+        # "4/10 passed (44.4%)" invites 4/10 = 40%. The summary body below still
+        # breaks out every bucket including the skipped ones.
+        executed = max(total - skipped, 0)
+        title = (
+            f"{title_icon} {proj_label} — {passed}/{executed} passed "
+            f"({pass_rate:.1f}%)"
+        )
 
     summary_lines = [
         f"**Build:** {run.build_number or run.id}",
