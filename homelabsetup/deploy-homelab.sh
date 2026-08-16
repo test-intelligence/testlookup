@@ -853,8 +853,13 @@ if [ "$SKIP_BUILD" = false ]; then
   log "Waiting for rollouts to complete (timeout 240s each)..."
   for dep in "${APP_DEPLOYMENTS[@]}"; do
     if kubectl -n "$NAMESPACE" get deployment "$dep" >/dev/null 2>&1; then
-      kubectl -n "$NAMESPACE" rollout status deployment/"$dep" --timeout=240s \
-        || warn "$dep did not become ready in time — check 'kubectl -n $NAMESPACE describe deployment $dep'"
+      if ! kubectl -n "$NAMESPACE" rollout status deployment/"$dep" --timeout=240s; then
+        warn "$dep did not become ready in time — check 'kubectl -n $NAMESPACE describe deployment $dep'"
+        # Remembered so the run cannot end with an unqualified success banner.
+        # A stalled rollout means the PREVIOUS ReplicaSet is still serving, and
+        # the ingress health check below will happily pass against it.
+        DEPLOY_DEGRADED=true
+      fi
     fi
   done
   log "App deployments rolled to image ${BUILD_TAG}."
@@ -903,6 +908,53 @@ if [ "$INFRA_OK" = true ]; then
   log "All infrastructure pods are ready."
 else
   warn "Some infrastructure pods are not ready. Continuing — they may still be starting."
+fi
+
+# ── Converge the Postgres role password to the secret ──────────────────────
+# Step 4 regenerates every credential whenever testlookup-secrets is absent,
+# but Postgres keeps a persistent PVC and the role password it was FIRST
+# initialised with. POSTGRES_PASSWORD in the secret then describes a password
+# the database does not have, and every new backend/worker pod dies with
+#   asyncpg.exceptions.InvalidPasswordError: password authentication failed
+# while the previous ReplicaSet keeps serving — so the deploy looks fine.
+# Observed on 2026-08-15: backend CrashLoopBackOff x7, 30 worker failures.
+#
+# The secret is the source of truth, so make the database agree with it. This
+# is idempotent: ALTER USER to the value it already has is a no-op.
+#
+# NB: pg_hba in this image is `trust` for local/127.0.0.1 and scram-sha-256
+# only for remote hosts, so a psql check from inside the pod accepts ANY
+# password and proves nothing. Do not "verify" the credential that way.
+if kubectl -n "$NAMESPACE" get pod -l app=testlookup-postgres \
+     --field-selector=status.phase=Running -o name 2>/dev/null | grep -q . ; then
+  PG_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-postgres \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  SECRET_PG_PW=$(kubectl -n "$NAMESPACE" get secret testlookup-secrets \
+    -o jsonpath='{.data.POSTGRES_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+  PG_ROLE=$(kubectl -n "$NAMESPACE" get secret testlookup-secrets \
+    -o jsonpath='{.data.DATABASE_URL}' 2>/dev/null | base64 -d 2>/dev/null \
+    | sed -E 's|.*://([^:]+):.*|\1|' || echo "testlookup_user")
+  if [ -n "$PG_POD" ] && [ -n "$SECRET_PG_PW" ] && [ -n "$PG_ROLE" ]; then
+    case "$SECRET_PG_PW" in
+      *[!A-Za-z0-9]*)
+        warn "POSTGRES_PASSWORD contains characters needing SQL quoting — skipping"
+        warn "role convergence. If backend pods report InvalidPasswordError, run"
+        warn "ALTER USER by hand."
+        ;;
+      *)
+        log "Converging Postgres role '$PG_ROLE' password to the secret..."
+        if kubectl -n "$NAMESPACE" exec -i "$PG_POD" -- \
+             env NEWPW="$SECRET_PG_PW" ROLE="$PG_ROLE" sh -c \
+             'psql -U "$ROLE" -d "${POSTGRES_DB:-testlookup}" -c "ALTER USER \"$ROLE\" WITH PASSWORD '"'"'"$NEWPW"'"'"';"' \
+             >/dev/null 2>&1; then
+          log "Postgres role password matches the secret."
+        else
+          warn "Could not converge the Postgres role password. New backend pods may"
+          warn "fail with InvalidPasswordError while the old ReplicaSet keeps serving."
+        fi
+        ;;
+    esac
+  fi
 fi
 
 # Wait a bit more for the backend (depends on DB migrations)
@@ -1156,14 +1208,33 @@ MCP_SVC_ROLE="${MCP_SERVICE_ROLE:-QA_LEAD}"
 if [ -z "$MCP_SVC_USER" ] || [ -z "$MCP_SVC_PASS" ]; then
   warn "MCP credentials not found in testlookup-secrets — skipping."
   warn "The MCP server will return 401 on every authenticated tool until this runs."
-elif [ -z "${BACKEND_POD:-}" ]; then
-  warn "No backend pod available — run this once the backend is healthy:"
+else
+  # Resolve the pod here rather than inheriting $BACKEND_POD from Step 10:
+  # that variable is only assigned inside Step 10's success branch, so when
+  # the admin step was skipped (backend not ready yet) this step reported
+  # "no backend pod" and silently did nothing — leaving every MCP tool 401ing.
+  # Observed on 2026-08-15.
+  MCP_BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend \
+    --field-selector=status.phase=Running \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  if [ -z "$MCP_BACKEND_POD" ]; then
+    wait_for_pods "app=testlookup-backend" 120 >/dev/null 2>&1 || true
+    MCP_BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend \
+      --field-selector=status.phase=Running \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  fi
+fi
+
+if [ -n "${MCP_SVC_USER:-}" ] && [ -n "${MCP_SVC_PASS:-}" ] && [ -z "${MCP_BACKEND_POD:-}" ]; then
+  DEPLOY_DEGRADED=true
+  warn "No backend pod available — the MCP service account was NOT provisioned."
+  warn "Every authenticated MCP tool will return 401 until this runs:"
   warn "  kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\"
   warn "    env SERVICE_USERNAME=\"\$MCP_USERNAME\" SERVICE_PASSWORD=\"\$MCP_PASSWORD\" \\"
   warn "        SERVICE_ROLE=$MCP_SVC_ROLE python < scripts/createServiceAccount.py"
-else
+elif [ -n "${MCP_BACKEND_POD:-}" ]; then
   log "Converging service account '$MCP_SVC_USER' (role $MCP_SVC_ROLE)..."
-  if MCP_SVC_OUTPUT=$(kubectl -n "$NAMESPACE" exec -i "$BACKEND_POD" -- \
+  if MCP_SVC_OUTPUT=$(kubectl -n "$NAMESPACE" exec -i "$MCP_BACKEND_POD" -- \
       env \
         SERVICE_USERNAME="$MCP_SVC_USER" \
         SERVICE_PASSWORD="$MCP_SVC_PASS" \
@@ -1171,6 +1242,7 @@ else
         python < "$REPO_ROOT/scripts/createServiceAccount.py" 2>&1); then
     echo "$MCP_SVC_OUTPUT"
   else
+    DEPLOY_DEGRADED=true
     warn "createServiceAccount.py failed inside the backend pod. Output:"
     echo "$MCP_SVC_OUTPUT"
     warn "MCP tools will return 401 until this succeeds."
@@ -1200,20 +1272,57 @@ echo ""
 kubectl -n "$NAMESPACE" get pvc 2>/dev/null || true
 echo ""
 
+# ── Pod-level check FIRST ──────────────────────────────────────────────────
+# The ingress health check below is answered by whichever backend pod is
+# Ready — including one from the ReplicaSet this deploy was replacing. On
+# 2026-08-15 the new image crash-looped on a bad DB credential for its whole
+# life and the deploy still printed "Health check passed" and exited 0.
+# So ask the cluster which pods are actually broken before trusting HTTP.
+NOT_READY=$(kubectl -n "$NAMESPACE" get pods --no-headers 2>/dev/null \
+  | awk '$3 != "Running" && $3 != "Completed" { print "  " $1 "  " $3 "  restarts=" $4 }' || echo "")
+if [ -n "$NOT_READY" ]; then
+  DEPLOY_DEGRADED=true
+  warn "Pods not in a healthy state:"
+  echo "$NOT_READY"
+  warn "A CrashLoopBackOff here usually means the NEW image failed to start while"
+  warn "the previous ReplicaSet keeps serving traffic. Check the exact new pod:"
+  warn "  kubectl -n $NAMESPACE logs <pod-name> --tail=40"
+fi
+
 # Health check
 TRAEFIK_IP=$(kubectl -n kube-system get svc traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
 if [ -n "$TRAEFIK_IP" ]; then
   log "Testing health endpoint via Traefik IP (HTTP, ingress is plain-text)..."
   HEALTH=$(curl -sf --max-time 5 -H "Host: testlookup.local" "http://${TRAEFIK_IP}/health/live" 2>/dev/null || echo "")
   if [ -n "$HEALTH" ]; then
-    log "Health check passed: $HEALTH"
+    if [ "${DEPLOY_DEGRADED:-false}" = true ]; then
+      warn "Ingress answered ($HEALTH) — but see the unhealthy pods above. This"
+      warn "response may be coming from the ReplicaSet being replaced."
+    else
+      log "Health check passed: $HEALTH"
+    fi
   else
+    DEPLOY_DEGRADED=true
     warn "Health check did not respond. Backend may still be starting (running migrations)."
     warn "Check with: kubectl -n testlookup logs deployment/testlookup-backend --tail=30"
   fi
 fi
 
 # ── Summary ─────────────────────────────────────────────────
+if [ "${DEPLOY_DEGRADED:-false}" = true ]; then
+  header "Deployment DEGRADED"
+  echo -e "${RED}The deploy finished but the cluster is NOT in the expected state.${NC}"
+  echo -e "${RED}Traffic may still be served by the previous ReplicaSet.${NC}"
+  echo ""
+  echo "  kubectl -n $NAMESPACE get pods"
+  echo "  kubectl -n $NAMESPACE logs <failing-pod> --tail=40"
+  echo ""
+  # Exit non-zero: a caller (or a human skimming the tail) must not read this
+  # run as a success. Reporting 0 while the new image never started is how a
+  # broken deploy went unnoticed on 2026-08-15.
+  exit 1
+fi
+
 header "Deployment Complete"
 
 echo -e "${GREEN}TestLookup has been deployed to your K3s homelab cluster.${NC}"

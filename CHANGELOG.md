@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: the deploy could break the cluster and still report success
+
+A homelab deploy printed **"Health check passed"** and **"Deployment Complete"** and exited
+**0**, while the backend it had just built was in CrashLoopBackOff for its entire life:
+
+```
+testlookup-backend-5c49cc97b9-mgztv   0/1   CrashLoopBackOff   7
+testlookup-backend-6fd7db796c-zxjfl   1/1   Running            (previous ReplicaSet)
+
+asyncpg.exceptions.InvalidPasswordError:
+  password authentication failed for user "testlookup_user"     (+30 in worker-default)
+```
+
+Three weaknesses combined, and the script caused the failure it then failed to notice:
+
+1. **Step 4 regenerates every credential whenever `testlookup-secrets` is absent** — but
+   Postgres keeps a persistent PVC and the role password it was *first* initialised with. So
+   `POSTGRES_PASSWORD` described a password the database did not have, and every new backend
+   and worker pod died on it. Now reconciled: once Postgres is ready the deploy runs an
+   idempotent `ALTER USER` to make the database agree with the secret.
+2. **A stalled rollout only warned.** `rollout status … || warn` let the run continue to the
+   success banner. It now marks the deploy degraded.
+3. **The health check is answered by whichever backend pod is Ready** — including one from the
+   ReplicaSet being replaced. A check the old pod can satisfy says nothing about the new one.
+   Pod state is now inspected first, and a passing HTTP response is explicitly *not* reported
+   as success while pods are unhealthy.
+
+A degraded run now prints a red banner naming the likely cause and **exits 1**. Reporting 0
+while the new image never started is exactly how this went unnoticed.
+
+Fixed in the same pass: the MCP provisioning step read `$BACKEND_POD`, a variable assigned
+only inside the *admin* step's success branch. The admin step had been skipped (backend
+unhealthy), so provisioning silently did nothing and left every authenticated MCP tool
+returning 401. It now resolves — and waits for — a backend pod of its own, and marks the
+deploy degraded if it cannot.
+
+A trap worth recording for whoever debugs this next: `pg_hba.conf` in that image is `trust`
+for `local` and `127.0.0.1/32`, and `scram-sha-256` only for remote hosts. A `psql` check run
+from inside the pod therefore **accepts any password** — it accepted
+`definitely-not-the-password-xyz`. The mismatch was only visible over the remote path the
+application actually uses.
+
+Guarded by `backend/tests/regression/test_deploy_reports_failure_honestly.py`, whose classes
+are: a degraded outcome must reach the exit code; pod state must be consulted, not only an
+HTTP endpoint anything can answer; credentials the script regenerates must be reconciled with
+the stateful service that already holds them; and no step may depend on a variable another
+step may never have set. Five mutations verified — **two guards were vacuous on the first
+pass** because they asserted on a phrase that also appears in a comment or in failure-help
+text (`get pods --no-headers`, `ALTER USER`), and both now match the executable construct.
+
+
 ### 2026-08-15 — Fix: the MCP service account was never created, so every authenticated tool 401'd
 
 Found immediately after the NetworkPolicy fix let the MCP server reach the backend at all.
