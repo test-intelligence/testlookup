@@ -1138,6 +1138,45 @@ CREDS
   fi
 fi
 
+# ── Step 10b: Provision the MCP service account ────────────────────────────
+# Step 4 wrote MCP_USERNAME / MCP_PASSWORD into testlookup-secrets and the
+# banner above presents them as working credentials — but nothing ever created
+# the account, so every authenticated MCP tool answered 401. Read the values
+# back from the secret rather than from $MCP_PASS: on a re-run Step 4 is
+# skipped entirely and that variable is unset, which is exactly when this step
+# still needs to converge the account.
+header "Step 10b — Provision MCP Service Account"
+
+MCP_SVC_USER=$(kubectl -n "$NAMESPACE" get secret testlookup-secrets \
+  -o jsonpath='{.data.MCP_USERNAME}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+MCP_SVC_PASS=$(kubectl -n "$NAMESPACE" get secret testlookup-secrets \
+  -o jsonpath='{.data.MCP_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+MCP_SVC_ROLE="${MCP_SERVICE_ROLE:-QA_LEAD}"
+
+if [ -z "$MCP_SVC_USER" ] || [ -z "$MCP_SVC_PASS" ]; then
+  warn "MCP credentials not found in testlookup-secrets — skipping."
+  warn "The MCP server will return 401 on every authenticated tool until this runs."
+elif [ -z "${BACKEND_POD:-}" ]; then
+  warn "No backend pod available — run this once the backend is healthy:"
+  warn "  kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\"
+  warn "    env SERVICE_USERNAME=\"\$MCP_USERNAME\" SERVICE_PASSWORD=\"\$MCP_PASSWORD\" \\"
+  warn "        SERVICE_ROLE=$MCP_SVC_ROLE python < scripts/createServiceAccount.py"
+else
+  log "Converging service account '$MCP_SVC_USER' (role $MCP_SVC_ROLE)..."
+  if MCP_SVC_OUTPUT=$(kubectl -n "$NAMESPACE" exec -i "$BACKEND_POD" -- \
+      env \
+        SERVICE_USERNAME="$MCP_SVC_USER" \
+        SERVICE_PASSWORD="$MCP_SVC_PASS" \
+        SERVICE_ROLE="$MCP_SVC_ROLE" \
+        python < "$REPO_ROOT/scripts/createServiceAccount.py" 2>&1); then
+    echo "$MCP_SVC_OUTPUT"
+  else
+    warn "createServiceAccount.py failed inside the backend pod. Output:"
+    echo "$MCP_SVC_OUTPUT"
+    warn "MCP tools will return 401 until this succeeds."
+  fi
+fi
+
 # ── Step 11: Final Verification ────────────────────────────
 header "Step 11 — Verification"
 

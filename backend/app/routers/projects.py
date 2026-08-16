@@ -84,14 +84,24 @@ async def create_project(
         await db.flush()
         await ensure_default_qa_lead(db, project)
 
+    # Machine accounts (the MCP server) see projects through the same
+    # membership mechanism as everyone else, so a project created after they
+    # were provisioned would otherwise be invisible to them forever.
+    from app.services.service_account_service import enroll_service_accounts_in_project
+    enrolled_service_accounts = await enroll_service_accounts_in_project(db, project.id)
+
     await db.commit()
     await db.refresh(project)
 
     # Invalidate the creator's cached membership set so the new project
     # shows up in their accessible-project queries immediately instead of
-    # after the 5-minute Redis TTL.
+    # after the 5-minute Redis TTL. Service accounts need the same treatment
+    # for the same reason — a stale "no projects" cache is indistinguishable
+    # from never having been enrolled.
     from app.core.deps import invalidate_membership_cache
     await invalidate_membership_cache(current_user.id)
+    for account_id in enrolled_service_accounts:
+        await invalidate_membership_cache(account_id)
 
     return project
 

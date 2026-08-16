@@ -150,6 +150,13 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(String(20), default=UserRole.VIEWER.value)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Machine account (migration 0136) — e.g. the MCP server's ``mcp_service``.
+    # Non-admin users only see projects they belong to, so service accounts are
+    # enrolled in every project at creation time; without the flag the backend
+    # has no way to tell one apart from a human.
+    is_service_account: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=text("false")
+    )
     # True for self-registered users until they complete their first-time password reset
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     # Avatar colour slug chosen by the user (e.g. "blue", "emerald"); null = default slate

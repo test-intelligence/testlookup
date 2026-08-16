@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Fix: the MCP service account was never created, so every authenticated tool 401'd
+
+Found immediately after the NetworkPolicy fix let the MCP server reach the backend at all.
+With connectivity restored, tool calls failed differently:
+
+```
+tools/call health_check -> "Backend unreachable at http://testlookup-backend:8000:
+                            Client error '401 Unauthorized' for .../auth/login"
+
+MCP pod env: TESTLOOKUP_USERNAME=mcp_service   (secretKeyRef MCP_USERNAME)
+psql: select count(*) from users where username='mcp_service'  ->  0
+```
+
+`deploy-homelab.sh` generates `MCP_PASS`, writes `MCP_USERNAME`/`MCP_PASSWORD` into
+`testlookup-secrets`, prints them under a **"SAVE THESE CREDENTIALS — SHOWN ONLY ONCE"**
+banner and saves them to `.homelab-credentials` — but never created the account. The deploy
+handed the operator working-looking credentials for a user that did not exist.
+`scripts/deploy-k8s.sh` and the OpenShift installer had the same gap.
+
+**Creating it was not sufficient.** Non-admin users only see projects they are a member of, so
+a fresh QA_LEAD service account authenticated and then answered "No active projects found."
+for every listing tool while five projects existed, and `get_quarantine_stats` reported all
+zeros. And enrolling it once is not enough either — any project created afterwards would be
+invisible to it for the life of the deployment.
+
+Fixed in four parts:
+
+- **migration 0136** adds `users.is_service_account` (with a partial index), so the backend
+  can identify machine accounts without hardcoding a username or being handed MCP credentials;
+- **`scripts/createServiceAccount.py`** converges the account from the secret — creates it if
+  missing, and re-syncs password, role and flag if present, because for a machine account the
+  secret is the source of truth. A human admin's password is deliberately never overwritten
+  that way. It refuses to run without an explicit password: a defaulted one on an account that
+  can quarantine tests and trigger analysis is worse than no account;
+- **deploy Step 10b** reads the credentials back out of the secret rather than from
+  `$MCP_PASS`. Step 4 is skipped whenever the secret already exists, so that variable is unset
+  on every re-run — precisely when the account still needs converging;
+- **project creation enrols every active service account**, staged in the same transaction as
+  the project itself, with each account's membership cache invalidated after the commit. A
+  stale "no projects" cache is indistinguishable from never having been enrolled.
+
+The role is the operator's choice (`MCP_SERVICE_ROLE`, default `QA_LEAD`). Service accounts
+deliberately do **not** get ADMIN: they see projects through the same membership mechanism as
+everyone else, so per-project authorisation still applies to the one account that talks to
+every project.
+
+Guarded by `backend/tests/regression/test_service_account_provisioning.py`, whose classes are
+**a credential a deploy publishes must correspond to an account that deploy creates** and
+**a service account must be able to see projects created after it**. Five mutations verified —
+two of the first-cut guards were vacuous and were tightened: one asserted the deploy merely
+*contained* the script's filename, which still passed with the invocation replaced by `true`
+because the name also appears in the failure-help text; the other used `x or y` and matched
+the converge branch while the create branch's flag was deleted.
 ### 2026-08-15 — Fix: `events_received` was published to API clients and never counted
 
 Found by driving a controlled live-stream session against the homelab — eight `test_result`
