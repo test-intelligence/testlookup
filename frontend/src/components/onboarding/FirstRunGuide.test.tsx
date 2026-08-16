@@ -3,7 +3,8 @@ import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 import FirstRunGuide, { FIRST_RUN_DISMISS_KEY } from './FirstRunGuide'
-import { uploadCommand, ingestApiCommand } from './firstRunSteps'
+import { uploadCommand, ingestApiCommand, DEFAULT_INGEST_URL } from './firstRunSteps'
+import { backendUrl } from '@/services/api'
 
 const copyMock = vi.fn(async (_value: string) => true)
 vi.mock('@/utils/clipboard', () => ({
@@ -108,8 +109,27 @@ describe('FirstRunGuide', () => {
     renderGuide({ projectId: id })
     fireEvent.click(screen.getByRole('button', { name: /copy command: curl -x post/i }))
     await waitFor(() =>
-      expect(copyMock).toHaveBeenCalledWith(ingestApiCommand(id)),
+      // The rendered curl targets the deployment's own backend origin (resolved
+      // the same way the axios client resolves requests), not the hardcoded
+      // localhost:8000 default.
+      expect(copyMock).toHaveBeenCalledWith(
+        ingestApiCommand(id, backendUrl('/api/v1/ingest/file')),
+      ),
     )
+  })
+
+  it('resolves the ingest curl through backendUrl, not a hardcoded host', () => {
+    // Regression: the app is deploy-target-agnostic (services/api.ts resolves
+    // the backend from VITE_API_BASE_URL, else same-origin behind an ingress).
+    // The guide must render whatever THAT resolves to — proving it delegates to
+    // backendUrl rather than embedding a fixed dev-only localhost:8000. What
+    // backendUrl resolves to is exercised env-by-env in api.backendUrl.test.ts;
+    // here we only assert the guide uses it.
+    renderGuide()
+    const resolved = backendUrl('/api/v1/ingest/file')
+    expect(
+      screen.getByText(content => content.includes(`curl -X POST ${resolved} `)),
+    ).toBeInTheDocument()
   })
 
   describe('uploadCommand', () => {
@@ -143,6 +163,21 @@ describe('FirstRunGuide', () => {
       expect(ingestApiCommand('abc-123')).toBe(
         `${base}abc-123 -F build_number=<build> -F format=auto`,
       )
+    })
+
+    it('defaults to the dev localhost endpoint when no ingest URL is given', () => {
+      expect(DEFAULT_INGEST_URL).toBe('http://localhost:8000/api/v1/ingest/file')
+      expect(ingestApiCommand('abc-123')).toContain(DEFAULT_INGEST_URL)
+    })
+
+    it('targets an explicit deployment ingest URL when provided', () => {
+      const url = 'https://tl.example.com/api/v1/ingest/file'
+      const cmd = ingestApiCommand('abc-123', url)
+      expect(cmd).toBe(
+        `curl -X POST ${url} -H "Authorization: Bearer $TL_TOKEN" ` +
+          `-F file=@results.xml -F project_id=abc-123 -F build_number=<build> -F format=auto`,
+      )
+      expect(cmd).not.toContain('localhost:8000')
     })
   })
 

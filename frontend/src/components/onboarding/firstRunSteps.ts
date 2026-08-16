@@ -27,6 +27,13 @@ export function uploadCommand(projectId?: string): string {
 }
 
 /**
+ * The default ingest endpoint used when no deployment origin is resolved (e.g.
+ * pure `ingestApiCommand()` calls in tests). Real renders pass the running
+ * deployment's URL via {@link buildSteps}, so this only surfaces in local dev.
+ */
+export const DEFAULT_INGEST_URL = 'http://localhost:8000/api/v1/ingest/file'
+
+/**
  * The raw ingest-API equivalent of {@link uploadCommand}, for CI runners that
  * `curl` the endpoint instead of installing the CLI. Mirrors the documented
  * `POST /api/v1/ingest/file` multipart contract (see `GETTING_STARTED.md` and
@@ -35,18 +42,27 @@ export function uploadCommand(projectId?: string): string {
  * the bearer token and per-run build label are only known to the caller. The
  * project id is spliced in when the guide is scoped to a concrete project,
  * matching {@link uploadCommand}.
+ *
+ * `ingestUrl` is the absolute endpoint the running UI already reaches its
+ * backend at (see {@link backendUrl} in `services/api.ts`). Passing it makes the
+ * copy-paste command work on any self-host served behind an ingress, instead of
+ * the hardcoded `localhost:8000` that is unreachable off the dev machine.
  */
-export function ingestApiCommand(projectId?: string): string {
+export function ingestApiCommand(projectId?: string, ingestUrl: string = DEFAULT_INGEST_URL): string {
   const p = projectId && projectId.trim() ? projectId : '<project-id>'
   return (
-    `curl -X POST http://localhost:8000/api/v1/ingest/file ` +
+    `curl -X POST ${ingestUrl} ` +
     `-H "Authorization: Bearer $TL_TOKEN" ` +
     `-F file=@results.xml -F project_id=${p} -F build_number=<build> -F format=auto`
   )
 }
 
-/** Build the three first-run steps, scoping the upload command to `projectId`. */
-export function buildSteps(projectId?: string): Step[] {
+/**
+ * Build the three first-run steps, scoping the upload command to `projectId` and
+ * the ingest `curl` to the deployment's own `ingestUrl` (defaulting to
+ * {@link DEFAULT_INGEST_URL} when the caller does not resolve one).
+ */
+export function buildSteps(projectId?: string, ingestUrl: string = DEFAULT_INGEST_URL): Step[] {
   return [
     {
       n: 1,
@@ -59,7 +75,7 @@ export function buildSteps(projectId?: string): Step[] {
       title: 'Or ingest your own test results',
       body: 'Point your CI at the ingest API (JUnit / TestNG / Allure / Cypress / Playwright / pytest), or upload a file from the CLI.',
       command: uploadCommand(projectId),
-      apiCommand: ingestApiCommand(projectId),
+      apiCommand: ingestApiCommand(projectId, ingestUrl),
     },
     {
       n: 3,

@@ -17,6 +17,23 @@ const BACKEND_ORIGIN: string = (() => {
   try { return new URL(BASE_URL, window.location.origin).origin } catch { return window.location.origin }
 })()
 
+/**
+ * Absolute URL for a backend path, resolved exactly the way the axios client
+ * resolves its requests: `VITE_API_BASE_URL` when set, otherwise same-origin as
+ * the page. Copy-paste command snippets (e.g. the first-run guide's ingest
+ * `curl`) use this so they target the same backend the running UI already
+ * reaches — not a hardcoded `localhost:8000` that only works in local dev and
+ * is unreachable on any self-host served behind an ingress.
+ */
+export function backendUrl(path: string): string {
+  const p = path.startsWith('/') ? path : `/${path}`
+  try {
+    return new URL(`${BASE_URL}${p}`, window.location.origin).href
+  } catch {
+    return `${window.location.origin}${p}`
+  }
+}
+
 function isSameOriginRequest(config: InternalAxiosRequestConfig): boolean {
   const url = config.url ?? ''
   // Relative path → always same-origin with BASE_URL

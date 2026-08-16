@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Rocket, Copy, Check, ArrowRight, ListChecks, X } from 'lucide-react'
 import { copyTextToClipboard } from '@/utils/clipboard'
+import { backendUrl } from '@/services/api'
 import { buildSteps } from './firstRunSteps'
 
 /** localStorage key — once dismissed the guide stays hidden for this browser. */
@@ -45,7 +46,10 @@ export default function FirstRunGuide({
   projectId?: string
   onDismiss?: () => void
 }) {
-  const steps = buildSteps(projectId)
+  // Resolve the ingest curl to the deployment's own backend origin (same-origin
+  // behind an ingress, or VITE_API_BASE_URL) so the copy-paste command works on
+  // any self-host — not just the local dev machine.
+  const steps = buildSteps(projectId, backendUrl('/api/v1/ingest/file'))
   return (
     <section
       aria-label="Getting started"

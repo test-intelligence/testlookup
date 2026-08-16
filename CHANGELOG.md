@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: first-run guide's ingest `curl` pointed at `localhost:8000` on every self-host
+
+The empty-dashboard first-run guide shows a copy-paste `curl` for CI runners that ingest
+straight to the API. It hardcoded `http://localhost:8000/api/v1/ingest/file` — but the whole
+bundle is deliberately deploy-target-agnostic: `services/api.ts` talks to the backend
+same-origin (the k8s ingress routes both `/api/` and `/` to the same host), so an operator
+viewing the dashboard at `https://testlookup.example.com` was handed a command aimed at a
+backend that only exists on the maintainer's laptop — unreachable, wrong scheme, wrong host.
+
+The guide now resolves the ingest endpoint through a new `backendUrl(path)` helper in
+`services/api.ts` that mirrors the axios client's own resolution (`VITE_API_BASE_URL` when
+set, otherwise same-origin as the page). The copy-paste command therefore targets exactly the
+backend the running UI already reaches. `localhost:8000` remains only as the pure-function
+default for local dev, where it is correct. Same class as the earlier ingest-command work: a
+snippet must be runnable in the environment it is shown in.
+
 ### 2026-08-15 — Change: /my-failures opens on the team inbox for leads
 
 Requested by the owner (backlog B-3). `/my-failures` defaulted to the "Mine" scope, which
