@@ -213,9 +213,24 @@ patches:
       data:
         APP_ENV: "production"
         LOG_LEVEL: "INFO"
-        AI_OFFLINE_MODE: "true"
-        AI_LLM_PROVIDER_ALLOWLIST: "ollama"
-        AI_LLM_ALLOWED_BASE_URLS: "http://testlookup-ollama:11434"
+        # This deployment cannot host a model — its Ollama has no models and
+        # the host cannot reach registry.ollama.ai — so the AI paths are
+        # exercised through OpenRouter instead. Enabling a hosted provider is a
+        # deliberate posture change for THIS deployment; base/configmap.yaml
+        # keeps AI_OFFLINE_MODE=true so every other install stays offline by
+        # default.
+        #
+        # These belong in the overlay, not a live `kubectl patch`: the deploy
+        # re-applies this manifest every run, so a patched value silently
+        # reverts on the next deploy and the integration stops working with no
+        # error to point at. (Observed 2026-08-16.)
+        AI_OFFLINE_MODE: "false"
+        LLM_PROVIDER: "openrouter"
+        LLM_MODEL: "mistralai/mistral-nemo"
+        # ollama stays permitted so the local path remains available and
+        # reverting is a single LLM_PROVIDER change, not another allowlist edit.
+        AI_LLM_PROVIDER_ALLOWLIST: "ollama,openrouter"
+        AI_LLM_ALLOWED_BASE_URLS: "http://testlookup-ollama:11434,https://openrouter.ai"
         CORS_ORIGINS: "http://testlookup.local"
         PUBLIC_BASE_URL: "http://testlookup.local"
         STORAGE_BACKEND: "minio"

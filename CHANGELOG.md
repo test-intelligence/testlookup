@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: the homelab's OpenRouter settings did not survive a deploy
+
+OpenRouter was enabled with a live `kubectl patch` on `testlookup-config`, verified end to
+end, and then **turned itself back off** at the next deploy. The deploy re-applies the overlay
+manifest on every run, and that manifest still pinned `AI_OFFLINE_MODE: "true"` — so the
+patched values silently reverted and the integration stopped working with no error to point
+at. `ai_offline_mode` simply read `true` again.
+
+The settings now live in `k8s/overlays/homelab/kustomization.yaml`, which is the file the
+deploy actually applies. `k8s/base/configmap.yaml` still defaults to `AI_OFFLINE_MODE: "true"`
+so every other install stays offline unless it opts out — enabling egress remains a
+deliberate, per-deployment decision.
+
+`ollama` is deliberately kept in both the provider allowlist and the allowed base URLs, so
+reverting to on-box inference is a one-line `LLM_PROVIDER` change rather than another
+allowlist edit made under pressure.
+
+Guarded by `backend/tests/regression/test_llm_config_is_self_consistent.py`. Enabling a hosted
+provider takes five settings that must agree, and two of them are easy to forget precisely
+because the other three are the obvious ones:
+
+- a configured `LLM_PROVIDER` must appear in `AI_LLM_PROVIDER_ALLOWLIST`, and a hosted one
+  must have its origin in `AI_LLM_ALLOWED_BASE_URLS` — miss either and every call raises
+  `LLMPolicyViolation`, which reads like a broken integration rather than a deliberate
+  refusal;
+- `AI_OFFLINE_MODE: "false"` alone only opens the ceiling: without a provider and model pinned
+  beside it the deployment inherits the base's local provider, which is the one it cannot run;
+- the shipped default must stay offline;
+- the local provider must stay permitted.
+
+Five mutations verified, each reproducing one of those misconfigurations.
+
+
 ### 2026-08-16 — Feature: in-app user documentation
 
 Requested by the owner (backlog B-2): "how to use the application for a new project, how to
