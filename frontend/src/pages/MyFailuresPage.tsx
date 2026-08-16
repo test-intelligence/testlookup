@@ -92,9 +92,20 @@ export default function MyFailuresPage() {
   // nothing because the synthetic QA-Lead user owns the bulk. The
   // toggle gives leads/admins a one-click view of the whole project's
   // open inbox without reassigning rows.
-  const [scope, setScope] = useState<'mine' | 'team'>('mine')
+  //
+  // Team is the DEFAULT for anyone allowed to see it: the synthetic QA-Lead
+  // owns the bulk of auto-assignments, so "Mine" opened almost empty for a
+  // real lead or admin and looked like the page was broken.
+  //
+  // `null` means "hasn't chosen yet" rather than defaulting the state itself.
+  // `isQaLead` reads from the auth store, which reports VIEWER until `user`
+  // hydrates — a useState initialiser would latch that early `false` and strand
+  // a lead on "Mine" depending on load timing. Deriving the scope on every
+  // render instead means the default follows the permission as soon as it
+  // arrives, while still respecting an explicit click.
+  const [scopeChoice, setScopeChoice] = useState<'mine' | 'team' | null>(null)
   const canSeeTeam = isQaLead
-  const effectiveScope: 'mine' | 'team' = canSeeTeam ? scope : 'mine'
+  const effectiveScope: 'mine' | 'team' = canSeeTeam ? (scopeChoice ?? 'team') : 'mine'
 
   const { data, isLoading, error } = useMyFailures({ days, page, size, scope: effectiveScope })
 
@@ -106,7 +117,11 @@ export default function MyFailuresPage() {
         title="My Failures"
         subtitle={
           user
-            ? `Auto-assigned failures across ${scopeLabel}. Updated every 30 seconds.`
+            ? effectiveScope === 'team'
+              // The page is titled "My Failures" but opens on the team inbox for
+              // leads, so the subtitle has to say whose failures these are.
+              ? `Every unresolved failure across ${scopeLabel}. Updated every 30 seconds.`
+              : `Failures assigned to you across ${scopeLabel}. Updated every 30 seconds.`
             : 'Sign in to see your assigned failures.'
         }
       />
@@ -159,7 +174,7 @@ export default function MyFailuresPage() {
                     type="button"
                     role="radio"
                     aria-checked={active}
-                    onClick={() => { setScope(opt); setPage(1) }}
+                    onClick={() => { setScopeChoice(opt); setPage(1) }}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors capitalize"
                     style={{
                       background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',

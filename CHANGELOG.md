@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-15 — Change: /my-failures opens on the team inbox for leads
+
+Requested by the owner (backlog B-3). `/my-failures` defaulted to the "Mine" scope, which
+opened almost empty for a real lead or admin: auto-assignment routes failures to the synthetic
+per-project QA-Lead user, so the human viewing the page owns very few of them. The page looked
+broken, and the fix was a toggle most people never found.
+
+Team is now the default **for anyone allowed to see it**. Lower roles are unaffected — they
+never see the toggle, and the client no longer even asks for `scope=team` on their behalf.
+
+The default is derived on every render from an explicit "hasn't chosen yet" state rather than
+seeded into `useState`. `isQaLead` reads from the auth store, which reports `VIEWER` until
+`user` hydrates, so a `useState` initialiser would latch that early `false` and strand a lead
+on "Mine" depending on load timing — an intermittent bug that would have been miserable to
+diagnose. Deriving it means the default follows the permission as soon as it arrives, while an
+explicit click still sticks.
+
+The subtitle now says whose failures are on screen ("Every unresolved failure across …" vs
+"Failures assigned to you across …"). The page is titled *My Failures* while opening on the
+team inbox, and it should not claim the rows belong to the viewer.
+
+The existing scope tests were **updated, not deleted** — they previously pinned `scope=mine`
+as the default. Added alongside them: a non-lead is still forced to `mine`, the default
+follows a permission that arrives after the first render, and the subtitle names the scope.
+All four mutations verified, including one that reintroduces the `useState` latch and is
+caught by the late-hydration test.
+
+
 ### 2026-08-15 — Fix: the deploy could break the cluster and still report success
 
 A homelab deploy printed **"Health check passed"** and **"Deployment Complete"** and exited

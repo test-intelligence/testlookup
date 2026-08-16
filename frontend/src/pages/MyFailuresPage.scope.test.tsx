@@ -107,19 +107,75 @@ describe('MyFailuresPage — scope toggle (regression)', () => {
     expect(screen.getByText('team')).toBeInTheDocument()
   })
 
-  it('default scope is "mine" — the SWR list call includes scope=mine', async () => {
+  // ── Default scope (changed 2026-08-15) ──────────────────────────────────
+  //
+  // Team is now the default for anyone allowed to see it. "Mine" opened
+  // almost empty for a real lead or admin, because auto-assignment routes
+  // failures to the synthetic default-QA-Lead — the page looked broken.
+  // These assertions were UPDATED rather than deleted: they previously
+  // pinned scope=mine as the default.
+
+  it('default scope is "team" for a lead — the SWR list call includes scope=team', async () => {
     mockIsQaLead.mockReturnValue(true)
     mockList.mockResolvedValue(makeResponse([]))
     renderPage()
 
     await waitFor(() => {
       expect(mockList).toHaveBeenCalledWith(
-        expect.objectContaining({ scope: 'mine' }),
+        expect.objectContaining({ scope: 'team' }),
+      )
+    })
+    expect(mockList).not.toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'mine' }),
+    )
+  })
+
+  it('a non-lead is still forced to scope=mine', async () => {
+    // The toggle is hidden for them, and the server downgrades ?scope=team
+    // anyway — but the client must not ASK for team either.
+    mockIsQaLead.mockReturnValue(false)
+    mockList.mockResolvedValue(makeResponse([]))
+    renderPage()
+
+    await waitFor(() => expect(mockList).toHaveBeenCalled())
+    expect(mockList).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'mine' }),
+    )
+    expect(mockList).not.toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'team' }),
+    )
+  })
+
+  it('the default follows a permission that arrives AFTER the first render', async () => {
+    // `isQaLead` reads from the auth store, which reports VIEWER until `user`
+    // hydrates. A useState initialiser would latch that early `false` and
+    // strand a lead on "Mine" depending on load timing — the exact bug this
+    // shape avoids by deriving the scope on every render.
+    mockIsQaLead.mockReturnValue(false)
+    mockList.mockResolvedValue(makeResponse([]))
+    const { rerender } = renderPage()
+
+    await waitFor(() => expect(mockList).toHaveBeenCalled())
+
+    mockIsQaLead.mockReturnValue(true)
+    rerender(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter initialEntries={['/my-failures']}>
+          <Routes>
+            <Route path="/my-failures" element={<MyFailuresPage />} />
+          </Routes>
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+
+    await waitFor(() => {
+      expect(mockList).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'team' }),
       )
     })
   })
 
-  it('clicking Team re-fetches with scope=team', async () => {
+  it('clicking Mine re-fetches with scope=mine, and Team returns to team', async () => {
     mockIsQaLead.mockReturnValue(true)
     mockList.mockResolvedValue(makeResponse([]))
     renderPage()
@@ -127,13 +183,21 @@ describe('MyFailuresPage — scope toggle (regression)', () => {
     await waitFor(() => expect(mockList).toHaveBeenCalled())
     const initialCalls = mockList.mock.calls.length
 
-    fireEvent.click(screen.getByText('team'))
+    fireEvent.click(screen.getByText('mine'))
 
+    await waitFor(() => {
+      expect(mockList).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'mine' }),
+      )
+      expect(mockList.mock.calls.length).toBeGreaterThan(initialCalls)
+    })
+
+    // An explicit choice must stick, and switching back must work.
+    fireEvent.click(screen.getByText('team'))
     await waitFor(() => {
       expect(mockList).toHaveBeenCalledWith(
         expect.objectContaining({ scope: 'team' }),
       )
-      expect(mockList.mock.calls.length).toBeGreaterThan(initialCalls)
     })
   })
 
@@ -142,14 +206,29 @@ describe('MyFailuresPage — scope toggle (regression)', () => {
     mockList.mockResolvedValue(makeResponse([]))
     renderPage()
 
+    // team is the default now — "No open team failures"
+    expect(await screen.findByText(/No open team failures/i)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('mine'))
+
     // mine — "You're caught up"
-    expect(await screen.findByText(/You.?re caught up/i)).toBeInTheDocument()
-
-    fireEvent.click(screen.getByText('team'))
-
-    // team — "No open team failures"
     await waitFor(() => {
-      expect(screen.getByText(/No open team failures/i)).toBeInTheDocument()
+      expect(screen.getByText(/You.?re caught up/i)).toBeInTheDocument()
+    })
+  })
+
+  it('the subtitle says whose failures are shown', async () => {
+    // The page is titled "My Failures" while opening on the team inbox, so
+    // the subtitle must not claim the rows are the viewer's own.
+    mockIsQaLead.mockReturnValue(true)
+    mockList.mockResolvedValue(makeResponse([]))
+    renderPage()
+
+    expect(await screen.findByText(/Every unresolved failure across/i)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('mine'))
+    await waitFor(() => {
+      expect(screen.getByText(/Failures assigned to you across/i)).toBeInTheDocument()
     })
   })
 })
