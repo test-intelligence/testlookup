@@ -28,9 +28,13 @@ const valueKpiState: { metrics: ValueMetrics | undefined } = { metrics: undefine
 vi.mock('@/hooks/useValueMetrics', () => ({
   useValueMetricsKpi: () => valueKpiState,
 }))
+// KPI cards render only for widget ids in the active view, so tests that
+// assert on a card must opt it in. Mutable so each test can choose.
+const analyticsViewState: { widgetIds: string[] } = { widgetIds: [] }
 vi.mock('@/hooks/useAnalyticsView', () => ({
   useAnalyticsView: () => ({
-    instances: [], widgetIds: [], addInstance: vi.fn(), removeInstance: vi.fn(),
+    instances: [], widgetIds: analyticsViewState.widgetIds,
+    addInstance: vi.fn(), removeInstance: vi.fn(),
     save: vi.fn(), reset: vi.fn(), isDirty: false, savedViews: [],
     activeViewId: null, setActiveView: vi.fn(), deleteView: vi.fn(),
     updateInstance: vi.fn(), moveInstance: vi.fn(),
@@ -96,6 +100,116 @@ function mockDashboardData(useDashboardSummary: unknown, useTrendData: unknown) 
 describe('OverviewPage', () => {
   beforeEach(() => {
     valueKpiState.metrics = undefined
+    analyticsViewState.widgetIds = []
+  })
+
+  // ── KPI trend units ──────────────────────────────────────────────────────
+  //
+  // Regression (homelab, 2026-08-16): `MetricCard.trend` is a RELATIVE
+  // PERCENTAGE change vs the previous period — ((cur - prev) / prev) * 100 in
+  // metrics_service — but the KPI rendered it bare. The live dashboard showed
+  //     TOTAL EXECUTIONS  150   ▲ +400
+  // where +400 means "quadrupled", not "four hundred more runs". A figure whose
+  // unit is not shown is a figure the reader assigns the wrong unit to — the
+  // same class as the run summary that stated counts which could not all be
+  // true at once.
+
+  it('renders a KPI trend as a percentage, not a bare count', async () => {
+    analyticsViewState.widgetIds = ['total_executions_kpi', 'avg_pass_rate_kpi']
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value: 150, trend: 400, trend_direction: 'up' },
+        avg_pass_rate_7d: { value: 84.7, trend: -2.2, trend_direction: 'down' },
+        active_defects: { value: 4 },
+        flaky_test_count: { value: 2 },
+        new_failures_24h: { value: 3 },
+        avg_duration_ms: { value: 180000 },
+      },
+      isLoading: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    // The +400 must carry its unit; without it this reads as 400 executions.
+    expect(await screen.findByText(/\+400%/)).toBeInTheDocument()
+    expect(screen.queryByText(/▲ \+400$/)).not.toBeInTheDocument()
+    // Downward trends too — the sign is already in the number.
+    expect(screen.getByText(/-2\.2%/)).toBeInTheDocument()
+  })
+
+  it('keeps the unit on a flat trend too', async () => {
+    // Found by mutation: changing the flat branch from '0%' back to '0' passed
+    // every other test here. An unchanged metric is still a percentage, and a
+    // bare "0" beside a count reads as "zero runs", not "no change".
+    analyticsViewState.widgetIds = ['total_executions_kpi']
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value: 150, trend: null, trend_direction: 'flat' },
+        avg_pass_rate_7d: { value: 84.7 },
+        active_defects: { value: 4 },
+        flaky_test_count: { value: 2 },
+        new_failures_24h: { value: 3 },
+        avg_duration_ms: { value: 180000 },
+      },
+      isLoading: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Total executions')
+    const badges = Array.from(document.querySelectorAll('span'))
+      .map((e) => e.textContent?.trim() ?? '')
+      .filter((t) => t.startsWith('▬'))
+    expect(badges.length).toBeGreaterThan(0)
+    for (const b of badges) expect(b).toMatch(/%/)
+  })
+
+  it('states what the trend is measured against', async () => {
+    // A percentage with no baseline is still ambiguous: 400% of what, since when?
+    analyticsViewState.widgetIds = ['total_executions_kpi']
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value: 150, trend: 400, trend_direction: 'up' },
+        avg_pass_rate_7d: { value: 84.7 },
+        active_defects: { value: 4 },
+        flaky_test_count: { value: 2 },
+        new_failures_24h: { value: 3 },
+        avg_duration_ms: { value: 180000 },
+      },
+      isLoading: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const badge = await screen.findByText(/\+400%/)
+    expect(badge).toHaveAttribute('title', expect.stringMatching(/previous period/i))
   })
 
   it('renders the Eng-hours saved KPI card only when the hours-saved model is available', async () => {

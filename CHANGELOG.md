@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: `/analyze` could never classify anything
+
+The user-facing "Analyze" action returned the same thing for every test, always:
+
+```
+failure_category   UNKNOWN
+confidence_score   30
+root_cause_summary "Could not determine failure cause from available data."
+```
+
+The failure text was stored correctly, and the engine classifies it without
+difficulty — checked directly in the running backend:
+
+```
+RulesEngine.classify_test('AssertionError: expected total 100 but was 97')
+    -> PRODUCT_BUG, confidence 55
+RulesEngine.classify_test('java.net.ConnectException: Connection refused: ...')
+    -> INFRASTRUCTURE, confidence 70
+```
+
+`routers/analyze.py` built its `test_case` payload from ids, names, a timestamp and
+pod metadata, and never included `error_message` or `stack_trace` — the two keys
+`analysis_router.classify_test` reads, and which its own docstring names.
+`worker.tasks.run_live_test_analysis` had the same omission, so live-stream analysis
+was permanently UNKNOWN as well. `agents/analysis_agent.py` *did* pass the text,
+which is why the feature worked in the offline pipeline and the endpoint was never
+suspected.
+
+It stayed invisible because `classify_test` degrades to UNKNOWN rather than failing.
+"Could not determine failure cause from available data" was true in a useless sense:
+there was no data, because the caller never sent any. No exception, no log, no red
+test — three callers silently disagreeing about one contract.
+
+Guarded structurally rather than behaviourally: an AST check requires every call site
+that builds a literal `test_case` to name the failure text. A behavioural test would
+only have covered whichever caller it exercised, and the whole defect was callers
+diverging from each other.
+
+Four mutations verified. The most important is the fourth: reverting a payload to a
+`**splat` turns the contract check into a *skip*, disabling the guard with nothing
+going red. An explicit anti-vacuity floor now pins which callers must stay enforced —
+the first version of this fix used a splat and was caught by exactly that.
+
+### 2026-08-16 — Fix: the dashboard trend badge was a percentage with no percent sign
+
+The Overview KPI read:
+
+```
+TOTAL EXECUTIONS   150   ▲ +400
+```
+
+`MetricCard.trend` is a **relative percentage change vs the previous period** —
+`((cur - prev) / prev) * 100` in `metrics_service` — for every metric on that row.
+So `+400` meant the count quadrupled, not that four hundred more runs happened. Next
+to a value of `150`, the absolute reading is the natural one, and it is wrong by a
+factor of nothing in particular.
+
+The badge now renders `+400%` / `-2.2%` / `0%` and carries the comparison basis in a
+title, because a percentage with no baseline is still ambiguous — 400% of what, since
+when?
+
+Same class as the run summary that stated figures which could not all be true at once:
+**a published number whose unit is not stated is one the reader assigns the wrong unit
+to.** Four mutations verified. The fourth — a flat trend losing its unit — survived the
+first three guards and exposed a real hole in them, which is the entire point of
+mutating rather than trusting a green suite.
+
 ### 2026-08-16 — Fix: a working OpenRouter deployment reported itself as broken
 
 Three surfaces told the operator the AI stack was down while it was demonstrably serving

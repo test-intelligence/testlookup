@@ -270,6 +270,18 @@ async def analyze_test_case(
             "test_case_id": str(tc.id),
             "test_name": tc.test_name,
             "suite_name": tc.suite_name,
+            # The failure text IS the input to classification — without it
+            # every tier has nothing to reason about and the router can only
+            # return UNKNOWN. Omitted here until 2026-08-16, which made this
+            # endpoint structurally incapable of ever classifying anything:
+            # `AssertionError: expected total 100 but was 97` came back as
+            # "Could not determine failure cause from available data" while
+            # RulesEngine.classify_test called directly on the same string
+            # returned PRODUCT_BUG at confidence 55.
+            "error_message": tc.error_message,
+            "stack_trace": tc.stack_trace,
+            "duration_ms": tc.duration_ms,
+            "severity": tc.severity,
             "timestamp": (test_run.end_time or test_run.start_time).isoformat()
             if (test_run.end_time or test_run.start_time) else None,
             "ocp_pod_name": test_run.ocp_pod_name,

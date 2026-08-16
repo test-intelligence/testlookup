@@ -235,6 +235,7 @@ function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId, li
         {delta && (
           <span
             className="text-[11px] font-semibold tabular-nums"
+            title="Relative change vs the previous period of the same length"
             style={{
               color: delta.tone === 'good' ? 'var(--status-passed)'
                 : delta.tone === 'bad' ? 'var(--status-failed)'
@@ -853,14 +854,21 @@ function deltaFromMetric(m: DashboardMetricValue | undefined, badIfDown = false)
   if (!m) return undefined
   const t = m.trend
   const dir = m.trend_direction ?? 'flat'
-  if (t == null && dir === 'flat') return { glyph: '▬', text: '0', tone: 'neutral' }
+  // `trend` is a RELATIVE PERCENTAGE change vs the previous period —
+  // ((cur - prev) / prev) * 100 in metrics_service — for every metric that
+  // flows through here. Rendering it bare put "▲ +400" next to a value of
+  // "150" on the dashboard, which reads as four hundred more executions when
+  // it means the count quadrupled. A number whose unit is not shown is a
+  // number the reader will assign the wrong unit to.
+  const pct = (v: number) => `${v > 0 ? '+' : ''}${v}%`
+  if (t == null && dir === 'flat') return { glyph: '▬', text: '0%', tone: 'neutral' }
   if (dir === 'up') {
-    return { glyph: '▲', text: t != null ? `+${Math.abs(t)}` : 'up', tone: badIfDown ? 'good' : 'bad' }
+    return { glyph: '▲', text: t != null ? pct(Math.abs(t)) : 'up', tone: badIfDown ? 'good' : 'bad' }
   }
   if (dir === 'down') {
-    return { glyph: '▼', text: t != null ? `${t}` : 'down', tone: badIfDown ? 'bad' : 'good' }
+    return { glyph: '▼', text: t != null ? pct(t) : 'down', tone: badIfDown ? 'bad' : 'good' }
   }
-  return { glyph: '▬', text: '0', tone: 'neutral' }
+  return { glyph: '▬', text: '0%', tone: 'neutral' }
 }
 
 function collectSuiteOptions(runs: TestRun[]): string[] {

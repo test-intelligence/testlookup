@@ -1187,12 +1187,54 @@ def run_live_test_analysis(
             return None
 
         try:
+            # Load the failure text. This task is handed only ids, but the
+            # failure text IS the input to classification — passing just a name
+            # left every tier with nothing to reason about, so live analysis
+            # returned UNKNOWN for every test no matter how obvious the error.
+            # Best-effort: a failed read degrades to the old id-only payload
+            # rather than dropping the analysis entirely.
+            failure: dict[str, Any] = {}
+            try:
+                from sqlalchemy import select as _select  # noqa: PLC0415
+
+                from app.db.postgres import AsyncSessionLocal  # noqa: PLC0415
+                from app.models.postgres import TestCase  # noqa: PLC0415
+
+                async with AsyncSessionLocal() as _db:
+                    row = (
+                        await _db.execute(
+                            _select(TestCase).where(TestCase.id == uuid.UUID(test_case_id))
+                        )
+                    ).scalar_one_or_none()
+                    if row is not None:
+                        failure = {
+                            "error_message": row.error_message,
+                            "stack_trace": row.stack_trace,
+                            "suite_name": row.suite_name,
+                            "duration_ms": row.duration_ms,
+                            "severity": row.severity,
+                        }
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[Task %s] could not load failure text for %s: %s",
+                    self.request.id, test_case_id, exc,
+                )
+
+            # Spelled out rather than splatted in: the regression guard checks
+            # that each call site's literal payload names the failure text, and
+            # a `**failure` splat would hide the contract from it — leaving the
+            # very call this fix repaired unprotected.
             result = await classify_test(
                 test_case={
                     "test_case_id": test_case_id,
                     "test_name": test_name,
                     "run_id": run_id,
                     "project_id": project_id,
+                    "error_message": failure.get("error_message"),
+                    "stack_trace": failure.get("stack_trace"),
+                    "suite_name": failure.get("suite_name"),
+                    "duration_ms": failure.get("duration_ms"),
+                    "severity": failure.get("severity"),
                 },
                 run_context={"run_id": run_id, "project_id": project_id},
             )
