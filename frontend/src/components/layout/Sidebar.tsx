@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList, FileText,
   FolderTree, Gauge, GitBranch, HeartPulse, Inbox, Layers, LayoutDashboard,
-  MessageSquare, Network, Package, Radio, Rocket, Search, Settings, Shield,
+  BookOpen, MessageSquare, Network, Package, Radio, Rocket, Search, Settings, Shield,
   ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, Upload, UsersRound, UserCircle2,
 } from 'lucide-react'
 import { clsx } from 'clsx'
@@ -41,9 +41,10 @@ const GROUPS: NavGroup[] = [
     label: 'Dashboard',
     icon: LayoutDashboard,
     to: '/overview',
-    activePrefixes: ['/overview', '/getting-started', '/value-metrics', '/reports/'],
+    activePrefixes: ['/overview', '/getting-started', '/docs', '/value-metrics', '/reports/'],
     children: [
       { to: '/getting-started',  icon: Rocket,    label: 'Getting Started' },
+      { to: '/docs',             icon: BookOpen,  label: 'Documentation'   },
       { to: '/value-metrics',    icon: BarChart3, label: 'Value Metrics'   },
       { to: '/reports/summary',  icon: FileText,  label: 'Summary Report'  },
     ],

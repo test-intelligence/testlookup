@@ -100,6 +100,7 @@ const UserManagementPage = lazy(() => import('@/pages/UserManagementPage'))
 const FlakyCoachPage = lazy(() => import('@/pages/FlakyCoachPage'))
 const IntelligenceHubPage = lazy(() => import('@/pages/IntelligenceHubPage'))
 const OnboardingPage = lazy(() => import('@/pages/OnboardingPage'))
+const DocsPage = lazy(() => import('@/pages/DocsPage'))
 const ValueMetricsPage = lazy(() => import('@/pages/ValueMetricsPage'))
 const PolicyEditorPage = lazy(() => import('@/pages/PolicyEditorPage'))
 const OwnershipEditorPage = lazy(() => import('@/pages/OwnershipEditorPage'))
@@ -130,6 +131,7 @@ type AppRoute = {
 const appRoutes: AppRoute[] = [
   { path: 'overview', component: OverviewPage },
   { path: 'getting-started', component: OnboardingPage },
+  { path: 'docs', component: DocsPage },
   { path: 'value-metrics', component: ValueMetricsPage },
   { path: 'intelligence', component: IntelligenceHubPage },
   { path: 'runs', component: RunsPage },

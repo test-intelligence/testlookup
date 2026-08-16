@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Feature: in-app user documentation
+
+Requested by the owner (backlog B-2): "how to use the application for a new project, how to
+use AI reports, explain how the AI agents work, explain how flaky tests are determined,
+explain how the go / no go decision is made… the user should understand core features using
+the documentation."
+
+A new **Documentation** page under Dashboard (`/docs`) covers exactly those five topics.
+
+**Every number in it was read out of the implementation**, and the page is guarded from both
+sides so it cannot drift:
+
+- `frontend/src/pages/DocsPage.test.tsx` pins that the page renders the constants;
+- `backend/tests/regression/test_docs_match_the_engine.py` pins that those constants still
+  match Python. Change a flakiness weight, the observation floor, the hard-floor factor or
+  add a risk dimension, and the suite fails until the documentation is updated too. All four
+  mutations verified.
+
+What it documents, faithfully rather than aspirationally:
+
+- **Flakiness** — the four weighted signals (0.45 result volatility, 0.25 retry rate, 0.20
+  environment instability, 0.10 duration variance), the five-observation floor, and the
+  confidence bands. It states plainly that below five observations there is *no* score, not a
+  zero, because reporting 0.0 would read as evidence of stability nobody measured.
+- **GO / NO-GO** — the seven risk dimensions, and the five decision rules **in the order the
+  engine evaluates them**, including that the two NO-GO rules come first so nothing below can
+  soften them. It works the 70%-of-bar hard floor through with a concrete example, and states
+  that pass-rate bands can only tighten a verdict, never unblock one.
+- **AI reports and agents** — the four summary layers, the rules/ML/LLM routing with
+  fallback, the per-stage decision trail, and prompt redaction.
+
+It also documents what the product does **not** claim: AI output is advisory rather than
+authoritative and carries confidence and provenance; and a summary may be deterministic
+rather than model-written, in which case it says so and `fallback_used` is true.
+
+That last part is the point. Documentation that overstates the product is the same defect
+class this codebase keeps producing — a value published to a reader that nothing in the
+system actually produces. Prose is harder to notice, not less wrong.
 ### 2026-08-16 — Fix: the AI settings page had no API-key field for Anthropic or OpenRouter
 
 Selecting a provider you cannot give a key to is a dead end. The settings page offered inputs
