@@ -55,28 +55,49 @@ class _Row:
             setattr(self, k, v)
 
 
-def _render() -> str:
-    """Render the chat run-context table for RUN, without touching a DB."""
+async def _render_async() -> str:
+    """Render the chat run-context table by calling the REAL builder.
+
+    The previous version rebuilt the row-formatting expression here and
+    asserted on its own copy. Two mutations survived because of that: dropping
+    the Executed column and computing it without excluding skips both left this
+    mirror untouched. A guard that reimplements the thing it guards tests
+    nothing.
+    """
+    from unittest.mock import patch
+
     from app.agents import conversation as conv
 
     row = _Row(**RUN)
-    header = (
-        "| Build | Branch | Status | Tests | Passed | Failed | Skipped "
-        "| Broken | Pass Rate | Date |"
-    )
-    # Re-render using the module's own formatting expression so the test breaks
-    # if the columns change meaning; the DB round-trip is what we skip, not the
-    # formatting.
-    line = (
-        f"| {row.build_number} | {row.branch or '?'} | {row.status} "
-        f"| {row.total_tests} | {row.passed_tests} | {row.failed_tests} "
-        f"| {row.skipped_tests} | {row.broken_tests or 0} "
-        f"| **{row.pass_rate:.1f}%** |  |"
-    )
-    assert hasattr(conv.ConversationAgent, "_fetch_run_context"), (
-        "the chat run-context builder moved; this guard is pointed at nothing"
-    )
-    return header + "\n" + line
+
+    class _Result:
+        def all(self):
+            return [row]
+
+    class _DB:
+        async def execute(self, *_a, **_kw):
+            return _Result()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+    conv._RUN_CONTEXT_CACHE.clear()
+    with patch.object(conv, "AsyncSessionLocal", lambda: _DB()):
+        text, _sources = await conv.ConversationAgent._fetch_run_context(
+            conv.ConversationAgent(), project_id=None, limit=5,
+        )
+    conv._RUN_CONTEXT_CACHE.clear()
+    assert text, "the real run-context builder returned nothing"
+    return text
+
+
+def _render() -> str:
+    import asyncio
+
+    return asyncio.get_event_loop().run_until_complete(_render_async())
 
 
 # ── The chat table ──────────────────────────────────────────────────────────
@@ -98,6 +119,23 @@ def test_the_chat_table_selects_every_bucket():
         )
 
 
+@pytest.mark.asyncio
+async def test_the_chat_table_states_the_executed_count():
+    """The denominator must be a COLUMN, not something the reader computes.
+
+    With only total and skipped, the model answered "4 tests failed out of 10
+    executed" — executed is 9. The figures reconciled; the term it had to derive
+    did not. `_render()` above mirrors the formatting, so this checks the real
+    module rather than my copy of it.
+    """
+    text = await _render_async()
+    assert "Executed" in text.splitlines()[0], (
+        "the chat run-context table no longer states an Executed column, so the "
+        "model must derive the pass-rate denominator from total - skipped — it "
+        "got that wrong the last time it had to"
+    )
+
+
 def test_the_chat_table_states_the_basis_of_the_rate():
     import inspect
 
@@ -111,24 +149,30 @@ def test_the_chat_table_states_the_basis_of_the_rate():
     )
 
 
-def test_the_rendered_counts_sum_to_the_total():
-    text = _render()
+@pytest.mark.asyncio
+async def test_the_rendered_counts_sum_to_the_total():
+    text = await _render_async()
     nums = [int(x) for x in re.findall(r"\|\s*(\d+)\s*(?=\|)", text)]
-    # total, passed, failed, skipped, broken — in column order.
-    total, passed, failed, skipped, broken = nums[:5]
+    # total, executed, passed, failed, skipped, broken — in column order.
+    total, _executed, passed, failed, skipped, broken = nums[:6]
     assert passed + failed + skipped + broken == total, (
         f"rendered buckets do not sum to the total: {nums[:5]} in {text!r}"
     )
 
 
-def test_the_rendered_rate_is_derivable_from_the_rendered_counts():
+@pytest.mark.asyncio
+async def test_the_rendered_rate_is_derivable_from_the_rendered_counts():
     """The exact inconsistency that made the model fabricate."""
-    text = _render()
+    text = await _render_async()
     nums = [int(x) for x in re.findall(r"\|\s*(\d+)\s*(?=\|)", text)]
-    total, passed, _failed, skipped, _broken = nums[:5]
+    total, executed, passed, _failed, skipped, _broken = nums[:6]
     rate = float(re.search(r"\*\*([\d.]+)%\*\*", text).group(1))
 
-    executed = total - skipped
+    # The denominator is STATED, not derived — that is the point of the column.
+    assert executed == total - skipped, (
+        f"stated Executed ({executed}) disagrees with total - skipped "
+        f"({total - skipped}) — the column exists so nobody has to compute it"
+    )
     assert abs(passed / executed * 100 - rate) < 0.15, (
         f"pass rate {rate}% is not passed/executed for the counts shown "
         f"({passed}/{executed}) — a reader combining these gets a different "

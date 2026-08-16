@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: the chat table made the model derive the pass-rate denominator
+
+After the reconciliation fix, the chat agent answered a question with known ground
+truth (4 passed / 4 failed / 1 broken / 1 skipped of 10) as:
+
+> "4 tests failed out of **10 executed**, resulting in a 44.4% pass rate."
+
+The figures now reconciled, and the failure count and rate were both right — but
+*executed* is 9, not 10. The table stated a total and a skipped count and left the
+model to subtract. It didn't.
+
+`Executed` is now its own column. Publishing a rate means publishing its denominator,
+not the ingredients for computing one.
+
+**The guards for this were initially worthless, and mutation testing is what said so.**
+Two mutations survived: dropping the `Executed` column, and computing it without
+excluding skips. Both survived for the same reason — the test rebuilt the row-formatting
+expression itself and asserted on its own copy, so changes to the real builder never
+reached it. A third failure mode compounded it: the source-level check
+`assert "Executed" in src` matched the *comment* explaining the column.
+
+The guards now call `ConversationAgent._fetch_run_context` directly against a fake
+session and parse what it actually renders. 11/11 mutations killed.
+
+
 ### 2026-08-16 — Fix: the faithfulness evaluator label named a code path, not the judge
 
 Scored cases recorded `faithfulness_evaluator = "ollama"`, and the refusal message read

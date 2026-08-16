@@ -613,18 +613,25 @@ class ConversationAgent:
                 # Same defect the run summary had. Handing a model figures that
                 # do not reconcile is handing it a reason to invent one that
                 # does.
+                # `Executed` is stated, not left to be derived. With only a
+                # total and a skipped count, the model answered "4 tests failed
+                # out of 10 executed" — executed is 9. The figures reconciled;
+                # the term it had to compute did not. Publishing a rate always
+                # means publishing its denominator.
                 header = (
-                    "| Build | Branch | Status | Tests | Passed | Failed | Skipped "
-                    "| Broken | Pass Rate | Date |\n"
-                    "|---|---|---|---|---|---|---|---|---|---|"
+                    "| Build | Branch | Status | Tests | Executed | Passed | Failed "
+                    "| Skipped | Broken | Pass Rate | Date |\n"
+                    "|---|---|---|---|---|---|---|---|---|---|---|"
                 )
                 lines = []
                 src = []
                 for r in rows:
                     ts = r.start_time.strftime("%Y-%m-%d %H:%M") if r.start_time else "?"
+                    executed = max((r.total_tests or 0) - (r.skipped_tests or 0), 0)
                     lines.append(
                         f"| {r.build_number} | {r.branch or '?'} | {r.status} "
-                        f"| {r.total_tests} | {r.passed_tests} | {r.failed_tests} "
+                        f"| {r.total_tests} | {executed} "
+                        f"| {r.passed_tests} | {r.failed_tests} "
                         f"| {r.skipped_tests} | {r.broken_tests or 0} "
                         f"| **{r.pass_rate:.1f}%** | {ts} |"
                     )
