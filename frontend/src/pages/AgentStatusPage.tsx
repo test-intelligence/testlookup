@@ -546,6 +546,12 @@ export default function AgentStatusPage() {
     () => mapPipelineToComputeGraph(stages as AgentStageResult[]),
     [stages],
   )
+  // True when the compute canvas can actually place this pipeline's stages.
+  // An empty stage list is "nothing to draw yet", not "wrong topology", so it
+  // keeps the canvas — only a pipeline whose stages ALL failed to map is a
+  // different pipeline type.
+  const canvasDescribesPipeline =
+    stages.length === 0 || computeGraph.recognised > 0
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>('debug')
   // Default canvas selection: the first running stage (or first failed) so
   // the rail isn't empty on first paint.
@@ -788,7 +794,32 @@ export default function AgentStatusPage() {
                   the other ModeTabs swap in their own bodies. */}
               <div className="rounded-2xl border border-[var(--color-border)] overflow-hidden">
                 <ModeTabs mode={workflowMode} onChange={setWorkflowMode} liveActive={liveRuns.length > 0} />
-                {workflowMode === 'debug' ? (
+                {workflowMode === 'debug' && !canvasDescribesPipeline ? (
+                  /* This canvas has fixed nodes for the offline/deep pipeline.
+                     For an investigation pipeline it recognised none of the
+                     stages and used to render nine placeholders as `pending`
+                     beside a COMPLETED header — a picture of a pipeline that
+                     never ran, hiding the one that did. Show the real stages
+                     instead of a graph that does not describe them. */
+                  <div className="px-6 py-5 space-y-3">
+                    <p className="text-sm text-[var(--color-text-secondary)]">
+                      This pipeline&apos;s stages are not on the offline compute graph.
+                      Showing the {stages.length} stage{stages.length === 1 ? '' : 's'} it
+                      actually ran:
+                    </p>
+                    <ul className="space-y-1">
+                      {stages.map((s) => (
+                        <li
+                          key={s.stage_name}
+                          className="flex items-center justify-between text-sm border-b border-[var(--color-border)] py-1.5"
+                        >
+                          <span className="font-mono text-[13px]">{s.stage_name}</span>
+                          <span className="text-[var(--color-text-muted)]">{s.status}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : workflowMode === 'debug' ? (
                   <div className="flex" style={{ height: 600 }}>
                     <ComputeCanvas
                       stages={computeGraph.stages}

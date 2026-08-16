@@ -766,3 +766,77 @@ describe('AgentStatusPage', () => {
     expect(screen.getByText(/Select a pipeline run to see agent stages/i)).toBeInTheDocument()
   })
 })
+
+// ── The canvas must not draw a pipeline that never ran ─────────────────────
+//
+// Owner report 2026-08-16: an investigation pipeline showed COMPLETED in the
+// header while the workflow canvas showed every stage pending. The canvas has
+// fixed nodes for the offline pipeline; it recognised none of the seven
+// investigation stages, dropped them all via `continue`, and left its nine
+// pre-seeded placeholders on screen.
+
+describe('AgentStatusPage — a foreign pipeline is not drawn as the offline one', () => {
+  const INVESTIGATION_STAGES = [
+    'investigator_plan',
+    'hypothesis_commit',
+    'hypothesis_known_flaky',
+    'hypothesis_regression',
+    'hypothesis_environment',
+    'hypothesis_infra',
+    'investigator_synthesis',
+  ].map(stage_name => ({
+    stage_name,
+    status: 'completed',
+    started_at: '2026-08-16T22:43:15Z',
+    completed_at: '2026-08-16T22:43:17Z',
+    result_data: { status: 'inconclusive' },
+    error: null,
+  }))
+
+  async function renderInvestigation() {
+    const { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } =
+      await import('@/hooks/useAgentRuns')
+    ;(useActiveLiveRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: [] })
+    ;(usePipelines as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: [{
+        id: 'pipe-inv', test_run_id: 'run-1', workflow_type: 'investigation',
+        status: 'completed', started_at: '2026-08-16T22:43:15Z',
+        completed_at: '2026-08-16T22:43:17Z', error: null,
+        created_at: '2026-08-16T22:43:15Z',
+      }],
+      isLoading: false,
+    })
+    ;(usePipelineStages as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: INVESTIGATION_STAGES, isLoading: false,
+    })
+    ;(usePipelineTimeline as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false })
+    ;(useRunSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: undefined, isLoading: false, error: undefined,
+    })
+    render(
+      <MemoryRouter initialEntries={['/agents']}>
+        <Routes>
+          <Route path="/agents" element={<AgentStatusPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    // The stage panel renders only once a pipeline is selected — without this
+    // the page shows "Select a pipeline run to see agent stages" and both
+    // assertions below would pass for the wrong reason.
+    fireEvent.click(screen.getByRole('button', { name: /investigation pipeline/i }))
+  }
+
+  it('names the stages that actually ran', async () => {
+    await renderInvestigation()
+    expect(await screen.findByText('hypothesis_infra')).toBeInTheDocument()
+    expect(screen.getByText('investigator_synthesis')).toBeInTheDocument()
+  })
+
+  it('does not show offline stages that never ran', async () => {
+    await renderInvestigation()
+    // These are the placeholders the canvas used to render as pending.
+    expect(screen.queryByText('Anomaly Detection')).not.toBeInTheDocument()
+    expect(screen.queryByText('Flaky Sentinel')).not.toBeInTheDocument()
+    expect(screen.queryByText('Release Risk')).not.toBeInTheDocument()
+  })
+})

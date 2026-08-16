@@ -137,14 +137,42 @@ function mergeStage(base: ComputeStage, src: AgentStageResult): ComputeStage {
  */
 export function mapPipelineToComputeGraph(
   stages: AgentStageResult[],
-): { stages: ComputeStage[]; decision: ComputeDecision | null; edges: ComputeEdge[] } {
+): {
+  stages: ComputeStage[]
+  decision: ComputeDecision | null
+  edges: ComputeEdge[]
+  /** Stage names this canvas has no node for. Non-empty means the pipeline
+   *  does not belong to this topology. */
+  unmapped: string[]
+  /** How many of the supplied stages this canvas could actually place. */
+  recognised: number
+} {
   const byId: Map<ComputeStageId, ComputeStage> = new Map(
     (Object.keys(NAME) as ComputeStageId[]).map(id => [id, defaultStage(id)]),
   )
 
+  // Owner-reported 2026-08-16: an *investigation* pipeline reported COMPLETED
+  // while this canvas showed every stage pending. Its stages are named
+  // investigator_plan / hypothesis_* / investigator_synthesis — none of which
+  // are in STAGE_ID_MAP, which only knows the offline/deep vocabulary. The old
+  // `if (!id) continue` dropped all seven silently, leaving the nine
+  // pre-seeded offline placeholders on screen: a canvas of stages that never
+  // ran, hiding the ones that did.
+  //
+  // Dropping an unknown name is still right for THIS canvas — it has fixed
+  // node positions and cannot draw an arbitrary topology — but it must not be
+  // silent. Callers get the count and the names so they can decline to render
+  // a pipeline this graph does not describe.
+  const unmapped: string[] = []
+  let recognised = 0
+
   for (const src of stages) {
     const id = STAGE_ID_MAP[src.stage_name]
-    if (!id) continue
+    if (!id) {
+      unmapped.push(src.stage_name)
+      continue
+    }
+    recognised += 1
     const base = byId.get(id) ?? defaultStage(id)
     byId.set(id, mergeStage(base, src))
   }
@@ -209,5 +237,7 @@ export function mapPipelineToComputeGraph(
     stages: Array.from(byId.values()),
     decision,
     edges,
+    unmapped,
+    recognised,
   }
 }
