@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Feature: the RAG faithfulness gate is now reachable
+
+`rag_faithfulness_service` implemented a complete feature — `evaluate`, `gate_accept`,
+`persist_evaluation`, `list_needs_review`, an Ollama and a RAGAS backend, a feature flag,
+a score parser, four columns and migration 0069 — and **nothing in `app/` called any of
+it**. The only reference outside the module was a comment. Its own tests passed, because
+they called it directly: a green suite proved the code worked, not that anything ran it.
+
+Wired at the three points its docstrings already named:
+
+- **generation** (`rag_generation_service._persist_cases`) scores each generated case
+  against the chunks it was grounded in — the only place holding both;
+- **accept** (`rag_review_service.accept_case`) consults the gate before flipping a case
+  to draft, and refuses with **409** when the score is below threshold, leaving the case
+  untouched with the reason attached;
+- **`GET /api/v1/test-management/cases/needs-review`** exposes the held-back queue,
+  lowest score first.
+
+**BEHAVIOUR CHANGE, opt-in only.** The `rag_faithfulness_gate` flag defaults **off** (a
+missing flag row resolves to `False`), so every existing deployment sees no extra LLM
+calls and no new refusals until someone turns it on. With it on, accepting a
+low-faithfulness case now fails where it previously succeeded — that is the point of the
+feature, and it is stated here because it is the kind of change that should never be a
+surprise.
+
+Two traps handled rather than discovered later:
+
+- `persist_evaluation` and `gate_accept` open their **own** session and commit. Called
+  from inside a request they would violate the staging discipline, and worse, generation
+  has only `flush()`ed the case — a second session cannot see it, so the evaluator would
+  silently score nothing while looking wired up. Added `apply_evaluation` and
+  `check_accept` as the in-request forms; the session-owning pair now delegate to them,
+  so the threshold wording lives in one place.
+- `/cases/needs-review` is a literal path segment competing with `/cases/{case_id}`.
+  `bootstrap.py` already registers `rag_generation.router` first for exactly this reason
+  (the comment there cites `/cases/stale`), and a test now pins that ordering.
+
+The primary guard is **reachability**, not behaviour: every public entry point must have
+a caller in `app/` that is not the module itself. A unit test cannot catch "nothing calls
+this" by construction, which is precisely why this survived.
+
+Seven mutations verified — including reverting to the unreachable state, swapping the
+in-request call for the own-session one, and flipping the router registration order.
+
+
 ### 2026-08-16 — Fix: five more places published figures that could not all be true
 
 The run summary's non-reconciling figures turned out to be one instance of a class,

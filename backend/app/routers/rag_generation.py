@@ -156,6 +156,49 @@ async def get_batch(
     return preview["batch"]
 
 
+@router.get("/cases/needs-review")
+async def cases_needing_review(
+    project_id: str = Query(..., description="Project to list — never a fleet view"),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Generated cases held back for human review, lowest faithfulness first.
+
+    Populated by the faithfulness gate (Tier 2 item 9). When the
+    ``rag_faithfulness_gate`` flag is off nothing sets ``needs_review_reason``,
+    so this returns an empty list rather than an error — "nothing is queued"
+    and "the gate is not running" look the same here on purpose, because the
+    queue itself cannot tell them apart. `/settings/ai` is where the flag state
+    is reported.
+    """
+    scoped, _allowed = await resolve_project_scope(db, current_user, project_id)
+    if scoped is None:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+
+    from app.services.rag_faithfulness_service import list_needs_review
+
+    rows = await list_needs_review(db, scoped, limit=limit)
+    return [
+        {
+            "id": str(r.id),
+            "title": r.title,
+            "status": r.status,
+            "faithfulness_score": r.faithfulness_score,
+            "faithfulness_evaluator": r.faithfulness_evaluator,
+            "faithfulness_evaluated_at": (
+                r.faithfulness_evaluated_at.isoformat()
+                if r.faithfulness_evaluated_at else None
+            ),
+            "needs_review_reason": r.needs_review_reason,
+            "generation_batch_id": (
+                str(r.generation_batch_id) if r.generation_batch_id else None
+            ),
+        }
+        for r in rows
+    ]
+
+
 @router.post(
     "/batches/{batch_id}/accept",
     dependencies=[

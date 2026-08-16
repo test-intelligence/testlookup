@@ -91,6 +91,37 @@ async def accept_case(
     if not case:
         raise HTTPException(status_code=404, detail="Generated case not found in this batch")
 
+    # Faithfulness gate (Tier 2 item 9). Checked BEFORE edits are applied and
+    # before the status flips, so a blocked case is left exactly as it was with
+    # a reason attached rather than half-accepted.
+    #
+    # `check_accept` returns allow=True when the `rag_faithfulness_gate` flag is
+    # off (the default), when the case predates the evaluator, or when it meets
+    # the threshold — so this is a no-op for deployments that have not opted in.
+    from app.services.rag_faithfulness_service import check_accept  # noqa: PLC0415
+
+    decision = await check_accept(case, db=db)
+    if not decision.get("allow"):
+        logger.info(
+            "case_accept_blocked_by_faithfulness",
+            case_id=str(case_id),
+            batch_id=str(batch_id),
+            score=decision.get("score"),
+            threshold=decision.get("threshold"),
+        )
+        # 409, not 403: the caller is permitted to do this, the case is not
+        # ready. The reason is staged on the row and returned so the UI can
+        # show why without a second request.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "faithfulness_below_threshold",
+                "message": decision.get("reason"),
+                "score": decision.get("score"),
+                "threshold": decision.get("threshold"),
+            },
+        )
+
     # Apply edits
     if edits:
         for field, value in edits.items():

@@ -247,6 +247,66 @@ async def evaluate(
     return {"score": score, "evaluator": backend, "reason": reason}
 
 
+def apply_evaluation(case: ManagedTestCase, evaluation: dict[str, Any]) -> None:
+    """Stage an evaluation onto an already-loaded case. Owns no transaction.
+
+    This is the in-request form. ``persist_evaluation`` below is the
+    background form that opens its own session and delegates here, so the
+    threshold/reason wording lives in exactly one place.
+
+    Separate entry points are necessary, not tidiness: a service that opens
+    its own session cannot be called from inside a request that has only
+    ``flush()``ed the row — the second session would not see it and would
+    silently do nothing. That is how a "wired up" gate can score zero cases
+    and still look healthy.
+    """
+    case.faithfulness_score = float(evaluation.get("score") or 0.0)
+    case.faithfulness_evaluator = str(evaluation.get("evaluator") or "unknown")[:30]
+    case.faithfulness_evaluated_at = datetime.now(timezone.utc)
+    if case.faithfulness_score < DEFAULT_THRESHOLD:
+        case.needs_review_reason = (
+            f"Faithfulness {case.faithfulness_score:.2f} "
+            f"< threshold {DEFAULT_THRESHOLD:.2f}: "
+            f"{evaluation.get('reason') or ''}"
+        )[:500]
+
+
+async def check_accept(
+    case: ManagedTestCase,
+    *,
+    threshold: float = DEFAULT_THRESHOLD,
+    db: Optional[AsyncSession] = None,
+) -> dict[str, Any]:
+    """Decide whether an already-loaded case may be accepted. Stages only.
+
+    In-request counterpart to :func:`gate_accept`. Mutates
+    ``needs_review_reason`` on the passed row when it blocks, and leaves the
+    commit to the router handler that owns the transaction.
+    """
+    if not await _feature_enabled(db):
+        return {"allow": True, "reason": "faithfulness gate disabled"}
+
+    if case.faithfulness_score is None:
+        # Generated before the flag was turned on. Let it through and say so
+        # rather than blocking work on evidence that was never collected.
+        return {"allow": True, "reason": "case predates faithfulness evaluator"}
+
+    score = float(case.faithfulness_score)
+    if score >= threshold:
+        return {"allow": True, "reason": f"score {score:.2f} >= threshold {threshold:.2f}"}
+
+    case.needs_review_reason = (
+        f"Faithfulness score {score:.2f} below threshold {threshold:.2f} "
+        f"(evaluator: {case.faithfulness_evaluator or 'unknown'})"
+    )[:500]
+    return {
+        "allow": False,
+        "reason": case.needs_review_reason,
+        "score": score,
+        "threshold": threshold,
+    }
+
+
 async def gate_accept(
     case_id: uuid.UUID,
     *,
@@ -271,31 +331,12 @@ async def gate_accept(
         if row is None:
             return {"allow": True, "reason": "case not found (letting caller 404)"}
 
-        if row.faithfulness_score is None:
-            # Case was never evaluated — the flag was toggled on after
-            # the case was generated. Let it through but log; a
-            # background task can backfill evaluations later.
-            return {
-                "allow": True,
-                "reason": "case predates faithfulness evaluator",
-            }
-
-        score = float(row.faithfulness_score)
-        if score >= threshold:
-            return {"allow": True, "reason": f"score {score:.2f} >= threshold {threshold:.2f}"}
-
-        # Blocked — record the reason on the row so the UI surfaces it.
-        row.needs_review_reason = (
-            f"Faithfulness score {score:.2f} below threshold {threshold:.2f} "
-            f"(evaluator: {row.faithfulness_evaluator or 'unknown'})"
-        )
-        await db.commit()
-        return {
-            "allow": False,
-            "reason": row.needs_review_reason,
-            "score": score,
-            "threshold": threshold,
-        }
+        decision = await check_accept(row, threshold=threshold, db=db)
+        if not decision.get("allow"):
+            # This entry point owns its session, so it commits the staged
+            # reason. The in-request path leaves that to the router.
+            await db.commit()
+        return decision
 
 
 async def persist_evaluation(
@@ -315,15 +356,7 @@ async def persist_evaluation(
         row = result.scalar_one_or_none()
         if row is None:
             return
-        row.faithfulness_score = float(evaluation.get("score") or 0.0)
-        row.faithfulness_evaluator = str(evaluation.get("evaluator") or "unknown")[:30]
-        row.faithfulness_evaluated_at = datetime.now(timezone.utc)
-        if row.faithfulness_score < DEFAULT_THRESHOLD:
-            row.needs_review_reason = (
-                f"Faithfulness {row.faithfulness_score:.2f} "
-                f"< threshold {DEFAULT_THRESHOLD:.2f}: "
-                f"{evaluation.get('reason') or ''}"
-            )[:500]
+        apply_evaluation(row, evaluation)
         await db.commit()
 
 

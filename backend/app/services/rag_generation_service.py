@@ -278,6 +278,25 @@ def _build_citations(cases: list[dict], chunks: list[RetrievedChunk]) -> list[di
     return citations
 
 
+def _case_text_for_faithfulness(case_data: dict) -> str:
+    """The generated case as one string for the evaluator to judge.
+
+    Title, description and steps together — judging the title alone would
+    pass almost anything, since a plausible title is the easiest part of a
+    hallucinated case to get right.
+    """
+    parts = [str(case_data.get("title") or ""), str(case_data.get("description") or "")]
+    steps = case_data.get("steps")
+    if isinstance(steps, list):
+        parts.extend(
+            str(s.get("action") or s.get("description") or s) if isinstance(s, dict) else str(s)
+            for s in steps
+        )
+    elif steps:
+        parts.append(str(steps))
+    return "\n".join(p for p in parts if p.strip())
+
+
 async def _persist_cases(
     db: AsyncSession,
     batch: GenerationBatch,
@@ -318,6 +337,43 @@ async def _persist_cases(
         db.add(case)
         await db.flush()
         created_ids.append(str(case.id))
+
+        # Faithfulness evaluation (Tier 2 item 9).
+        #
+        # Scored here because this is the only place that holds both the
+        # generated content and the chunks it was grounded in. `evaluate`
+        # returns None when the `rag_faithfulness_gate` flag is off, which is
+        # the default — so an existing deployment sees no extra LLM calls and
+        # no behaviour change until someone turns it on.
+        #
+        # Staged on THIS session via apply_evaluation rather than calling
+        # persist_evaluation: the row has only been flushed, so a second
+        # session would not see it and would silently score nothing.
+        try:
+            from app.services.rag_faithfulness_service import (  # noqa: PLC0415
+                apply_evaluation,
+                evaluate,
+            )
+
+            citation_texts = [
+                c.chunk_text_preview or ""
+                for c in chunks[:MAX_CITATIONS_PER_CASE]
+                if c.chunk_text_preview
+            ]
+            evaluation = await evaluate(
+                _case_text_for_faithfulness(case_data), citation_texts, db=db,
+            )
+            if evaluation is not None:
+                apply_evaluation(case, evaluation)
+        except Exception as exc:  # noqa: BLE001
+            # Never fail generation because the evaluator had a bad day — the
+            # cases are still reviewable by a human, which is the fallback the
+            # gate exists to route them to anyway.
+            logger.warning(
+                "faithfulness_evaluation_skipped",
+                case_id=str(case.id),
+                error=str(exc)[:200],
+            )
 
         # Create citation links
         for chunk in chunks[:MAX_CITATIONS_PER_CASE]:
