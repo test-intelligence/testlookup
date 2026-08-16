@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: the faithfulness evaluator label named a code path, not the judge
+
+Scored cases recorded `faithfulness_evaluator = "ollama"`, and the refusal message read
+`(evaluator: ollama)`. But `"ollama"` is the name of a *strategy* — a single-prompt
+yes/no check — and that strategy calls `get_llm()`, which resolves to whatever provider
+the deployment has configured. On a deployment running OpenRouter, a case judged by
+mistral-nemo was recorded, and shown to the user, as judged by Ollama.
+
+Same class as the settings badge that reported a missing API key as "Model Missing": a
+label naming the wrong thing. It matters more here because it is provenance on a
+**gating decision** — "which model refused my test case" is the first question an
+operator asks.
+
+The label now names what actually judged: the resolved provider for the LLM strategy,
+`ragas` for the Ragas strategy.
+
+A second honesty problem surfaced while fixing it. `_evaluate_via_ollama` short-circuits
+when there are no citations and returns 0.0 **without calling any model** — but that
+result was still labelled with a backend, implying a model had rejected the case. That
+decision is a rule, not a judgement, so it moved up into `evaluate()` where it belongs
+and is labelled `no-citations`. Replacing one misleading label with a different
+misleading label would not have been a fix.
+
+Four mutations verified for this change specifically, including reverting the label to
+the strategy name and making the rule-based refusal claim a model judged it. A fifth
+initially SURVIVED because it mutated a redundant truncation rather than the line that
+owns the column-width invariant — retargeted at `apply_evaluation`, where the guarantee
+actually lives.
+
+
 ### 2026-08-16 — Feature: the RAG faithfulness gate is now reachable
 
 `rag_faithfulness_service` implemented a complete feature — `evaluate`, `gate_accept`,

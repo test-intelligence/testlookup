@@ -234,3 +234,102 @@ def test_generation_stages_on_the_caller_session_not_its_own():
         "cannot see the flushed-but-uncommitted case — it would score nothing "
         "and leave no trace of having failed"
     )
+
+
+# ── The evaluator label must name what actually judged (AI-009) ─────────────
+#
+# Rows recorded `faithfulness_evaluator = "ollama"` and the refusal said
+# "(evaluator: ollama)" — but that branch calls get_llm(), which on this
+# deployment resolves to OpenRouter/mistral-nemo. A case judged by a hosted
+# model was recorded as judged by Ollama.
+#
+# Same class as the badge that said "Model Missing" for a missing API key: a
+# label naming the wrong thing. It matters more here because it is provenance
+# on a gating decision.
+
+
+@pytest.mark.asyncio
+async def test_the_label_names_the_provider_that_judged_not_the_strategy():
+    from app.services import rag_faithfulness_service as svc
+
+    with patch.object(svc, "_feature_enabled", AsyncMock(return_value=True)), \
+         patch.object(svc, "_resolve_backend", AsyncMock(return_value="ollama")), \
+         patch.object(svc, "_active_llm_provider", AsyncMock(return_value="openrouter")), \
+         patch.object(svc, "_evaluate_via_ollama",
+                      AsyncMock(return_value=(0.9, "grounded"))):
+        result = await svc.evaluate("a case", ["a citation"])
+
+    assert result["evaluator"] == "openrouter", (
+        f"evaluator recorded as {result['evaluator']!r}; the strategy is named "
+        f"'ollama' but the provider that actually judged is OpenRouter. "
+        f"Provenance on a gating decision must name the decider."
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_rule_based_refusal_does_not_claim_a_model_judged_it():
+    """No citations means no model is consulted. Labelling that with a provider
+    would be a new lie in place of the old one."""
+    from app.services import rag_faithfulness_service as svc
+
+    called = AsyncMock(return_value=(0.5, "should not run"))
+    with patch.object(svc, "_feature_enabled", AsyncMock(return_value=True)), \
+         patch.object(svc, "_evaluate_via_ollama", called):
+        result = await svc.evaluate("a case", [])
+
+    assert result["score"] == 0.0
+    assert result["evaluator"] == "no-citations", (
+        f"a deterministic no-citations refusal is labelled "
+        f"{result['evaluator']!r}, which implies a model rejected the case"
+    )
+    called.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_ragas_strategy_is_still_named_ragas():
+    """Ragas is genuinely its own evaluator, not a provider passthrough."""
+    from app.services import rag_faithfulness_service as svc
+
+    with patch.object(svc, "_feature_enabled", AsyncMock(return_value=True)), \
+         patch.object(svc, "_resolve_backend", AsyncMock(return_value="ragas")), \
+         patch.object(svc, "_evaluate_via_ragas",
+                      AsyncMock(return_value=(0.8, "ok"))):
+        result = await svc.evaluate("a case", ["a citation"])
+
+    assert result["evaluator"] == "ragas"
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_evaluator_still_names_the_provider():
+    """The crash path used to report the strategy name too."""
+    from app.services import rag_faithfulness_service as svc
+
+    with patch.object(svc, "_feature_enabled", AsyncMock(return_value=True)), \
+         patch.object(svc, "_resolve_backend", AsyncMock(return_value="ollama")), \
+         patch.object(svc, "_active_llm_provider", AsyncMock(return_value="openrouter")), \
+         patch.object(svc, "_evaluate_via_ollama",
+                      AsyncMock(side_effect=RuntimeError("boom"))):
+        result = await svc.evaluate("a case", ["a citation"])
+
+    assert result["evaluator"] == "openrouter"
+    assert "boom" in result["reason"]
+
+
+@pytest.mark.asyncio
+async def test_the_label_fits_the_column():
+    """`faithfulness_evaluator` is String(30); a longer label would be silently
+    truncated into something that names nothing."""
+    from app.services import rag_faithfulness_service as svc
+
+    with patch.object(svc, "_feature_enabled", AsyncMock(return_value=True)), \
+         patch.object(svc, "_resolve_backend", AsyncMock(return_value="ollama")), \
+         patch.object(svc, "_active_llm_provider",
+                      AsyncMock(return_value="x" * 60)), \
+         patch.object(svc, "_evaluate_via_ollama",
+                      AsyncMock(return_value=(0.9, "ok"))):
+        result = await svc.evaluate("a case", ["a citation"])
+
+    case = _case()
+    from app.services.rag_faithfulness_service import apply_evaluation
+    apply_evaluation(case, result)
+    assert len(case.faithfulness_evaluator) <= 30

@@ -94,6 +94,30 @@ async def _resolve_backend() -> str:
     return "ollama"
 
 
+async def _active_llm_provider() -> str:
+    """The provider that will actually judge — for the stored label.
+
+    The ``ollama`` strategy name describes a code path, not a vendor: it calls
+    ``get_llm()``, which resolves to whatever provider the deployment has
+    configured. On a deployment running OpenRouter, a case judged by
+    mistral-nemo was being recorded, and shown to the user, as judged by
+    "ollama" (homelab, 2026-08-16). Provenance on a gating decision has to name
+    the thing that made it — "which model refused my test case" is the first
+    question an operator asks.
+
+    Kept to the column width (String(30)); the model id goes in the reason.
+    """
+    provider = ""
+    try:
+        from app.services.ai_config_resolver import resolve_ai_config  # noqa: PLC0415
+        cfg = await resolve_ai_config()
+        provider = str(cfg.get("llm_provider") or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("provider resolve failed for evaluator label", error=str(exc))
+    provider = (provider or str(getattr(settings, "LLM_PROVIDER", "") or "")).strip().lower()
+    return (provider or "unknown")[:30]
+
+
 async def _evaluate_via_ollama(
     generated_content: str,
     citations: list[str],
@@ -231,7 +255,21 @@ async def evaluate(
     safe_content = redact_prompt(generated_content or "")[0]
     safe_citations = [redact_prompt(c or "")[0] for c in (citations or [])]
 
+    # No citations means no model is consulted at all — the score is a rule,
+    # not a judgement. Decided here rather than inside a backend so the stored
+    # label cannot claim a model rejected something it never saw.
+    if not safe_citations:
+        return {
+            "score": 0.0,
+            "evaluator": "no-citations",
+            "reason": "no citations attached to the generated case",
+        }
+
     backend = await _resolve_backend()
+    # `backend` is the STRATEGY (ollama-style single-prompt, or ragas). The
+    # label records what actually judged: the ragas strategy is its own thing,
+    # the other one is whatever provider get_llm() resolves to.
+    evaluator = "ragas" if backend == "ragas" else await _active_llm_provider()
     try:
         if backend == "ragas":
             score, reason = await _evaluate_via_ragas(safe_content, safe_citations)
@@ -241,10 +279,10 @@ async def evaluate(
         logger.warning("faithfulness evaluator crashed", error=str(exc))
         return {
             "score": 0.0,
-            "evaluator": backend,
+            "evaluator": evaluator,
             "reason": f"evaluator crashed: {exc}",
         }
-    return {"score": score, "evaluator": backend, "reason": reason}
+    return {"score": score, "evaluator": evaluator, "reason": reason}
 
 
 def apply_evaluation(case: ManagedTestCase, evaluation: dict[str, Any]) -> None:
