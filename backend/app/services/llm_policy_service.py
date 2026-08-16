@@ -18,7 +18,7 @@ from app.core.config import settings
 logger = logging.getLogger("services.llm_policy")
 
 LOCAL_PROVIDERS = frozenset({"ollama", "lmstudio", "localai", "vllm"})
-REMOTE_PROVIDERS = frozenset({"openai", "gemini", "anthropic"})
+REMOTE_PROVIDERS = frozenset({"openai", "gemini", "anthropic", "openrouter"})
 KNOWN_PROVIDERS = LOCAL_PROVIDERS | REMOTE_PROVIDERS
 
 

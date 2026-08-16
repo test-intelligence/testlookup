@@ -176,6 +176,7 @@ async def _load_from_db_and_env() -> dict[str, Any]:
         "openai_api_key": settings.OPENAI_API_KEY,
         "google_api_key": settings.GOOGLE_API_KEY,
         "anthropic_api_key": getattr(settings, "ANTHROPIC_API_KEY", None),
+        "openrouter_api_key": getattr(settings, "OPENROUTER_API_KEY", None),
     }
 
     try:
@@ -207,7 +208,10 @@ async def _load_from_db_and_env() -> dict[str, Any]:
                     config["confidence_threshold_source"] = CONFIDENCE_SOURCE_AI_CONFIG
 
             # Load secrets from secret_refs (override env-only keys)
-            for key_name in ("openai_api_key", "google_api_key", "anthropic_api_key"):
+            for key_name in (
+                "openai_api_key", "google_api_key",
+                "anthropic_api_key", "openrouter_api_key",
+            ):
                 secret = await read_secret(db, "ai_config", key_name)
                 if secret:
                     config[key_name] = secret

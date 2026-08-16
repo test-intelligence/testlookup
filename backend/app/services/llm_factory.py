@@ -249,9 +249,35 @@ async def get_llm(
             max_tokens=_max_tokens,
         ), provider=_provider, model_name=_model)
 
+    elif _provider == "openrouter":
+        if _offline:
+            raise ValueError("AI_OFFLINE_MODE=true but LLM_PROVIDER=openrouter — refusing to call external API")
+        _api_key = _effective.get("openrouter_api_key") or settings.OPENROUTER_API_KEY
+        if not _api_key:
+            raise ValueError(
+                "OpenRouter API key not configured. Set OPENROUTER_API_KEY "
+                "(or configure it in Settings > AI Configuration)."
+            )
+        # OpenRouter is OpenAI-wire-compatible, so ChatOpenAI drives it with a
+        # different base URL. The two extra headers are how OpenRouter
+        # attributes spend on its dashboard.
+        from langchain_openai import ChatOpenAI
+        return _budgeted(ChatOpenAI(  # type: ignore
+            model=_model,
+            api_key=_api_key,  # type: ignore
+            base_url=_base_url or settings.OPENROUTER_BASE_URL,
+            temperature=_temperature,
+            max_tokens=_max_tokens,
+            default_headers={
+                "HTTP-Referer": settings.OPENROUTER_SITE_URL,
+                "X-Title": settings.OPENROUTER_APP_NAME,
+            },
+        ), provider=_provider, model_name=_model)
+
     else:
         raise ValueError(f"Unknown LLM provider: '{_provider}'. "
-                         f"Supported: ollama, lmstudio, localai, vllm, openai, gemini, anthropic")
+                         f"Supported: ollama, lmstudio, localai, vllm, openai, "
+                         f"gemini, anthropic, openrouter")
 
 
 def get_embedding_model():

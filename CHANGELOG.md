@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Feature: OpenRouter as an LLM provider
+
+Requested by the owner (backlog B-4). A deployment that cannot host a model had no way to
+exercise the AI paths at all: the homelab's Ollama has zero models and cannot reach
+`registry.ollama.ai`, so every agent ran on its deterministic fallback. OpenRouter fronts
+~400 hosted models behind one OpenAI-compatible endpoint and one key, which makes it the
+cheapest way to put real LLM calls through the pipeline.
+
+- `openrouter` joins the `LLM_PROVIDER` vocabulary, classified **remote** — so
+  `AI_OFFLINE_MODE` refuses it exactly like the other hosted providers. That flag remains the
+  non-bypassable egress ceiling; enabling OpenRouter is a deliberate posture change on the
+  deployments that want it, not a default.
+- The factory drives it through `ChatOpenAI` against `https://openrouter.ai/api/v1`, sending
+  the `HTTP-Referer` / `X-Title` attribution headers so spend is traceable to this app rather
+  than arriving as one anonymous lump.
+- The key resolves from `OPENROUTER_API_KEY` or an encrypted secret ref, the same path the
+  other providers use. A missing key raises a named error instead of calling with `None`.
+
+**Pricing entries are mandatory, not decorative.** An unpriced remote provider meters $0.00,
+which does not read as a missing number in a report — it makes the per-project USD cap
+untrippable, the exact state the backend was in before `llm_pricing.py` existed. Rates for
+the models this product defaults to were taken from the live
+`https://openrouter.ai/api/v1/models` feed on 2026-08-16, and a catch-all row covers the rest
+at a **deliberately un-cheap** $3/$15 per Mtok: an unrecognised OpenRouter model is more
+likely a frontier model than a budget one, and over-estimating a bill is recoverable where
+under-estimating it is not. Override per deployment with `LLM_PRICE_OVERRIDES`.
+
+Default model suggestion is `inclusionai/ling-2.6-flash` — $0.01/$0.03 per Mtok, 262k context,
+and it advertises structured-output support, which matters because the summary agent needs
+three JSON layers. `mistralai/mistral-nemo` at $0.019/$0.03 is the sturdier alternative and a
+one-variable switch.
+
+**Fixed in passing: the AI settings page had been missing `anthropic`.** It hardcoded six
+providers while the backend accepted seven, so anthropic could only be selected by editing
+the database by hand — this repo's vocabulary-subset defect, where a producer grows a value
+and a consumer keeps rendering the old set. Adding OpenRouter without noticing would have
+made it eight versus six.
+
+Guarded by `backend/tests/regression/test_llm_provider_vocabulary.py`, which enumerates the
+vocabulary from `config.py` — its single source — and asserts every consumer covers it: a
+policy profile exists for each (a remote provider wrongly classed local would slip past the
+offline ceiling), no remote provider reports a *confident* $0.00, and the settings page offers
+exactly what the backend accepts, in both directions. Five mutations verified, including one
+that reclassifies OpenRouter as local and is caught as the egress bypass it would be.
+
+To enable on a deployment:
+
+```bash
+kubectl -n testlookup patch secret testlookup-secrets   -p '{"stringData":{"OPENROUTER_API_KEY":"sk-or-v1-..."}}'
+# then set on backend AND workers:
+#   AI_OFFLINE_MODE=false, LLM_PROVIDER=openrouter, LLM_MODEL=inclusionai/ling-2.6-flash
+```
+
+
 ### 2026-08-16 — Fix: first-run guide's ingest `curl` pointed at `localhost:8000` on every self-host
 
 The empty-dashboard first-run guide shows a copy-paste `curl` for CI runners that ingest

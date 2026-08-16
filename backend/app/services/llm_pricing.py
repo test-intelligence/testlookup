@@ -109,6 +109,26 @@ PRICE_TABLE: list[tuple[str, str, ModelPrice]] = [
     # ── Google ───────────────────────────────────────────────────────────────
     ("gemini",    r"flash", ModelPrice(0.075, 0.30)),
     ("gemini",    r"pro",   ModelPrice(1.25,  5.00)),
+    # ── OpenRouter ───────────────────────────────────────────────────────────
+    # OpenRouter proxies ~400 models, so this table cannot enumerate them. These
+    # cover the models this product defaults to; the catch-all keeps any other
+    # choice from metering $0.00. An unpriced remote provider silently
+    # understates the bill and makes the per-project USD cap untrippable, which
+    # is the exact failure llm_pricing.py exists to prevent.
+    #
+    # Rates verified against https://openrouter.ai/api/v1/models on 2026-08-16.
+    # First match wins, so specific ids must precede the catch-all.
+    ("openrouter", r"ling-2\.6-flash", ModelPrice(0.01,  0.03)),
+    ("openrouter", r"ling-3\.0-flash", ModelPrice(0.021, 0.063)),
+    ("openrouter", r"mistral-nemo",    ModelPrice(0.019, 0.03)),
+    ("openrouter", r"llama-3\.1-8b",   ModelPrice(0.05,  0.08)),
+    ("openrouter", r"mistral-small",   ModelPrice(0.05,  0.08)),
+    ("openrouter", r"gemma-3-4b",      ModelPrice(0.05,  0.10)),
+    # Catch-all, deliberately NOT cheap: an unrecognised OpenRouter model is
+    # more likely a frontier model than a budget one, and over-estimating a
+    # bill is recoverable where under-estimating it is not. Override per
+    # deployment with LLM_PRICE_OVERRIDES once the real rate is known.
+    ("openrouter", r".*",              ModelPrice(3.00,  15.00)),
 ]
 
 CostSource = Literal["priced", "self_hosted", "unpriced", "no_tokens"]

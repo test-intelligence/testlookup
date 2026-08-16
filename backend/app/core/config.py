@@ -221,7 +221,10 @@ class Settings(BaseSettings):
     CANONICAL_DELETION_WINDOW_RUNS: int = 5
 
     # ── LLM Provider ─────────────────────────────────────────
-    LLM_PROVIDER: Literal["ollama", "lmstudio", "localai", "vllm", "openai", "gemini", "anthropic"] = "ollama"
+    LLM_PROVIDER: Literal[
+        "ollama", "lmstudio", "localai", "vllm",
+        "openai", "gemini", "anthropic", "openrouter",
+    ] = "ollama"
     LLM_MODEL: str = "qwen2.5:7b"
     LLM_TEMPERATURE: float = 0.1
     LLM_MAX_TOKENS: int = 4096
@@ -232,6 +235,17 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
+    # OpenRouter fronts many vendors behind one OpenAI-compatible endpoint and
+    # one key, which makes it the cheapest way to exercise the AI paths on a
+    # deployment that cannot host a model. Gated by AI_OFFLINE_MODE like every
+    # other remote provider.
+    OPENROUTER_API_KEY: Optional[str] = None
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    # OpenRouter attributes traffic by these two headers and shows them on its
+    # dashboard. Optional to the API, but without them the bill is one
+    # anonymous lump with no way to tell which app produced it.
+    OPENROUTER_SITE_URL: str = "https://github.com/anandtopu/testlookup"
+    OPENROUTER_APP_NAME: str = "TestLookup"
 
     # Per-deployment token rates, overriding the built-in table in
     # ``services/llm_pricing.py``. List prices rarely match what an

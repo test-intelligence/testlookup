@@ -14,7 +14,15 @@ import {
 import { usePermissions } from '@/hooks/usePermissions'
 import { activeTier, useAIModelStatus } from '@/hooks/useAIConfig'
 
-const LLM_PROVIDERS = ['ollama', 'openai', 'gemini', 'lmstudio', 'localai', 'vllm']
+// MUST stay in step with the LLM_PROVIDER Literal in backend/app/core/config.py.
+// A provider the backend accepts but this list omits is unreachable from the UI:
+// `anthropic` was supported by the backend and missing here, so it could only be
+// selected by editing the database by hand. Guarded by
+// backend/tests/regression/test_llm_provider_vocabulary.py.
+const LLM_PROVIDERS = [
+  'ollama', 'lmstudio', 'localai', 'vllm',
+  'openai', 'gemini', 'anthropic', 'openrouter',
+]
 
 // Descriptions state what each engine *is*. Availability is never asserted
 // here — it comes from the live fallback chain below (US-13.2). The old
