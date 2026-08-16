@@ -127,7 +127,7 @@ function missingModelStatus(): AIModelStatusRead {
     ],
     fallback_chain: [
       { mode: 'ml', available: false, reason: 'No trained ML classifier on disk — auto mode falls through to the next tier.' },
-      { mode: 'llm', available: false, reason: PULL_REMEDY },
+      { mode: 'llm', available: false, reason: PULL_REMEDY, reason_code: 'model_missing' },
       { mode: 'rules', available: true, reason: null },
     ],
   })
@@ -149,6 +149,7 @@ function unreachableStatus(): AIModelStatusRead {
         available: false,
         reason:
           'Ollama is unreachable at http://ollama:11434 (All connection attempts failed) — this is a connectivity problem, not a missing model.',
+        reason_code: 'unreachable',
       },
       { mode: 'rules', available: true, reason: null },
     ],
@@ -250,6 +251,71 @@ describe('AIConfigPage — live model status', () => {
 
     // Rules still shown as the terminal fallback.
     expect(chainRow('rules')).toHaveTextContent('available')
+  })
+
+  it('reports a missing cloud API key as a key problem, not a missing model', async () => {
+    // Regression (homelab, 2026-08-16): the badge was derived from
+    // `ollama_reachable`, so every non-Ollama failure read "Model Missing".
+    // An operator with an unset OpenRouter key was told to install a model.
+    mockGetModelStatus.mockResolvedValue(
+      healthyStatus({
+        llm_provider: 'openrouter',
+        offline_mode: false,
+        fallback_chain: [
+          { mode: 'ml', available: false, reason: 'No trained ML classifier on disk.' },
+          {
+            mode: 'llm',
+            available: false,
+            reason: "No API key configured for provider 'openrouter'.",
+            reason_code: 'no_api_key',
+          },
+          { mode: 'rules', available: true, reason: null },
+        ],
+      }),
+    )
+    await renderPage()
+
+    await waitFor(() => expect(screen.getByText('No API Key')).toBeInTheDocument())
+    expect(screen.queryByText('Model Missing')).not.toBeInTheDocument()
+    expect(screen.queryByText('Unreachable')).not.toBeInTheDocument()
+  })
+
+  it('shows the LLM tier Ready when a cloud provider is configured', async () => {
+    // The user-visible goal of the OpenRouter work: a configured hosted
+    // provider must read as usable, not as a broken local install.
+    mockGetModelStatus.mockResolvedValue(
+      healthyStatus({
+        llm_provider: 'openrouter',
+        offline_mode: false,
+        fallback_chain: [
+          { mode: 'ml', available: false, reason: 'No trained ML classifier on disk.' },
+          { mode: 'llm', available: true, reason: null, reason_code: 'ok' },
+          { mode: 'rules', available: true, reason: null },
+        ],
+      }),
+    )
+    await renderPage()
+
+    await waitFor(() => expect(screen.getByText('Ready')).toBeInTheDocument())
+    expect(screen.queryByText('Model Missing')).not.toBeInTheDocument()
+    expect(chainRow('llm')).toHaveTextContent('available')
+  })
+
+  it('falls back to a neutral label for an unrecognised reason code', async () => {
+    // Never invent a specific claim we cannot support.
+    mockGetModelStatus.mockResolvedValue(
+      healthyStatus({
+        fallback_chain: [
+          { mode: 'ml', available: false, reason: 'No trained ML classifier on disk.' },
+          { mode: 'llm', available: false, reason: 'Something new.', reason_code: 'brand_new_code' },
+          { mode: 'rules', available: true, reason: null },
+        ],
+      }),
+    )
+    await renderPage()
+
+    await waitFor(() => expect(screen.getByText('Unavailable')).toBeInTheDocument())
+    expect(screen.queryByText('Model Missing')).not.toBeInTheDocument()
   })
 
   it('says only that the CHECK failed when model status cannot be fetched', async () => {

@@ -53,6 +53,17 @@ logger = logging.getLogger("streams.live_consumer")
 _CONSUMER_NAME = f"{socket.gethostname()}:{os.getpid()}"
 
 
+def _group_name(group: Any) -> str:
+    """Name out of an XINFO GROUPS entry.
+
+    The project configures ``decode_responses=True`` so this is already a str,
+    but a bytes name would silently never match and put us straight back to
+    creating a group that already exists.
+    """
+    name = group.get("name") if isinstance(group, dict) else None
+    return name.decode() if isinstance(name, bytes) else str(name)
+
+
 class LiveEventStreamConsumer:
     """
     Async consumer for the live events Redis Stream.
@@ -240,9 +251,32 @@ class LiveEventStreamConsumer:
         return 1
 
     async def _ensure_group(self) -> None:
-        """Create the consumer group if it doesn't exist."""
+        """Create the consumer group if it doesn't exist.
+
+        Deliberately *checks* before creating rather than calling XGROUP CREATE
+        and catching BUSYGROUP. The group lives in Redis and survives pod
+        restarts, so the catch-it path fired on every boot of every uvicorn
+        worker — and the OpenTelemetry Redis instrumentation records the
+        exception on the span BEFORE this code swallows it. A condition the
+        application treats as entirely normal therefore reached operators as
+        four ERROR-level stacktraces per backend pod per deploy.
+
+        That is worth avoiding for its own sake: error logs that are routinely
+        wrong train people to stop reading them, and these ones actively cost
+        us — a log scan of a completely healthy deployment reported errors.
+
+        BUSYGROUP is still handled below, but now as the genuine race it
+        describes (two workers creating concurrently) rather than the expected
+        case.
+        """
         redis = get_redis()
         try:
+            # EXISTS never raises on a missing key; XINFO GROUPS does, so it is
+            # only reached once the stream is known to exist.
+            if await redis.exists(LIVE_EVENTS_STREAM):
+                groups = await redis.xinfo_groups(LIVE_EVENTS_STREAM)
+                if any(_group_name(g) == LIVE_GROUP for g in groups):
+                    return
             await redis.xgroup_create(
                 LIVE_EVENTS_STREAM, LIVE_GROUP, id="0", mkstream=True
             )

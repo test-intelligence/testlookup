@@ -375,6 +375,12 @@ class FallbackChainEntry(BaseModel):
     # Why it is unavailable — or, on an available tier, a caveat (e.g. a
     # self-hosted provider whose model presence TestLookup cannot verify).
     reason: Optional[str] = None
+    # The same distinction, machine-readable, so UI badges branch on this
+    # instead of re-deriving the cause from unrelated fields. The settings page
+    # used to guess from `ollama_reachable` and so labelled a missing OpenRouter
+    # API key "Model Missing". One of: ok | unreachable | model_missing |
+    # no_api_key | offline_blocked | unverifiable | unknown_provider | not_trained.
+    reason_code: Optional[str] = None
 
 
 class AIModelStatusRead(BaseModel):

@@ -171,7 +171,9 @@ async def test_all_required_models_present_and_llm_tier_live(monkeypatch):
         ("llm", "qwen2.5:7b", True, None),
         ("embedding", "nomic-embed-text", True, None),
     }
-    assert _entry(status, "llm") == {"mode": "llm", "available": True, "reason": None}
+    assert _entry(status, "llm") == {
+        "mode": "llm", "available": True, "reason": None, "reason_code": "ok",
+    }
     assert _entry(status, "rules")["available"] is True
     assert status["offline_mode"] is True
     assert status["analysis_mode"] == "auto"
@@ -196,7 +198,9 @@ async def test_trained_ml_model_marks_ml_tier_available(monkeypatch):
 
     status = await svc.build_model_status(_BASE_CFG)
 
-    assert _entry(status, "ml") == {"mode": "ml", "available": True, "reason": None}
+    assert _entry(status, "ml") == {
+        "mode": "ml", "available": True, "reason": None, "reason_code": "ok",
+    }
 
 
 @pytest.mark.asyncio
@@ -232,10 +236,15 @@ async def test_unreachable_ollama_still_returns_chain_with_rules(monkeypatch):
     # An unreachable daemon must NOT be reported as a missing model, and
     # must not hand out a pull recipe that cannot possibly work yet.
     assert "ollama pull" not in llm["reason"].lower()
+    # The same distinction, machine-readable — this is what the settings-page
+    # badge branches on, so prose alone leaving it right is not enough.
+    assert llm["reason_code"] == "unreachable"
     assert all(r["remedy"] is None for r in status["required"])
 
     # Rules is the terminal fallback and is available no matter what.
-    assert _entry(status, "rules") == {"mode": "rules", "available": True, "reason": None}
+    assert _entry(status, "rules") == {
+        "mode": "rules", "available": True, "reason": None, "reason_code": "ok",
+    }
 
 
 @pytest.mark.asyncio

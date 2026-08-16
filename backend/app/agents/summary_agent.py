@@ -115,6 +115,42 @@ def _layer_has_content(layer: object) -> bool:
     return any(value for value in layer.values())
 
 
+def _format_results_line(run_data: dict[str, Any]) -> str:
+    """One results line whose numbers actually reconcile.
+
+    This used to read ``6 tests, 2 failures, 60.0% pass rate``, which does not
+    add up: 6 - 2 = 4 passed would be 66.7%. The missing term is the skipped
+    test, because pass rate is ``passed / executed`` and the line never
+    mentioned skips or said what the rate was over.
+
+    Both consumers of that line were harmed by it. Handed figures that do not
+    reconcile, the LLM invented a count to make the arithmetic work ("Pass rate
+    was 60.0% with 1 failure out of 6 tests" — observed on the homelab
+    2026-08-16), and the deterministic fallback printed the same contradiction
+    straight at the user with no model involved at all.
+
+    Counts are stated only when the run actually carries them and are never
+    derived by subtraction — inferring "passed" from the others would invent a
+    number nobody measured, which is the failure mode this line already had.
+    """
+    total = int(run_data.get("total_tests") or 0)
+    failed = int(run_data.get("failed_tests") or 0)
+    pass_rate = float(run_data.get("pass_rate") or 0.0)
+    passed = run_data.get("passed_tests")
+    skipped = run_data.get("skipped_tests")
+
+    breakdown = [f"{failed} failed"]
+    if passed is not None:
+        breakdown.insert(0, f"{int(passed)} passed")
+    if skipped is not None:
+        breakdown.append(f"{int(skipped)} skipped")
+
+    return (
+        f"Results: {total} tests — {', '.join(breakdown)}. "
+        f"Pass rate {pass_rate:.1f}% (passed / executed; skipped excluded)."
+    )
+
+
 class SummaryAgent(BaseAgent):
     stage_name = "summary"
 
@@ -299,9 +335,6 @@ class SummaryAgent(BaseAgent):
         stage_quality: str = "normal",
         stage_errors: dict[str, list[str]] | None = None,
     ) -> str:
-        pass_rate = run_data.get("pass_rate", 0)
-        total = run_data.get("total_tests", 0)
-        failed = run_data.get("failed_tests", 0)
         build = run_data.get("build_number", "?")
         branch = run_data.get("branch", "?")
 
@@ -344,7 +377,7 @@ class SummaryAgent(BaseAgent):
 
         raw_context = (
             f"Build: {build} | Branch: {branch}\n"
-            f"Results: {total} tests, {failed} failures, {pass_rate:.1f}% pass rate\n"
+            f"{_format_results_line(run_data)}\n"
             + quality_note
             + f"\nAnomalies ({len(anomalies)} detected):\n{anomaly_summary or 'None detected.'}\n\n"
             f"Top failure root causes ({len(analysis_bullets)} above threshold):\n"
@@ -718,7 +751,6 @@ class SummaryAgent(BaseAgent):
         error_message: str | None = None,
         similar_failures: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        total = int(run_data.get("total_tests") or 0)
         failed = int(run_data.get("failed_tests") or 0)
         pass_rate = float(run_data.get("pass_rate") or 0.0)
         build = run_data.get("build_number") or "unknown"
@@ -769,7 +801,7 @@ class SummaryAgent(BaseAgent):
             criticality = "CRITICAL"
 
         summary_sentence = (
-            f"Build {build} on branch {branch} completed with {failed} failing tests out of {total} and a {pass_rate:.1f}% pass rate. "
+            f"Build {build} on branch {branch} — {_format_results_line(run_data)} "
             f"The dominant failure category was {top_category.replace('_', ' ').lower()}, and the current release signal is {release_impact.replace('_', ' ')}. "
             "This summary was generated from stored pipeline evidence because the configured LLM was unavailable."
         )

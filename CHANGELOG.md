@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: a working OpenRouter deployment reported itself as broken
+
+Three surfaces told the operator the AI stack was down while it was demonstrably serving
+traffic — the LLM-generated summaries were verified against OpenRouter's own billing counter
+at the same time the UI was reporting failure.
+
+- **The global banner read "Degraded: ollama unreachable" permanently.** `/health/details`
+  reports `ollama: {"status": "skipped"}` when `AI_OFFLINE_MODE=false`, because a cloud-LLM
+  deployment has no local Ollama worth probing — and returns an overall `"status": "healthy"`
+  in the same payload. `useSystemHealth` counted every check whose status was not exactly
+  `ok` as unavailable, so a deliberate non-check rendered as a failure and the SPA
+  contradicted the backend's own verdict.
+- **The AI settings page reported `Unknown LLM provider 'openrouter'`** and marked the LLM
+  tier unavailable. `model_status_service` kept its own hand-maintained `_CLOUD_PROVIDERS`
+  tuple; #616 taught `llm_factory` and `llm_policy_service` about OpenRouter and this second
+  copy was never updated. It now derives from `llm_policy_service`, the single source of
+  truth, and an unmapped API key reports honestly instead of raising `KeyError` and 500ing
+  the page.
+
+- **The analysis-mode badge called every cloud failure "Model Missing".** It derived the label
+  from `ollama_reachable`, re-deriving a cause the backend had already determined — so an
+  unset OpenRouter API key told the operator to go install a model. The fallback-chain entry
+  now carries a machine-readable `reason_code` (`no_api_key`, `offline_blocked`,
+  `unreachable`, `model_missing`, `unknown_provider`, `unverifiable`) and the badge branches
+  on it. An unrecognised code renders a neutral "Unavailable" rather than inventing a specific
+  claim, and a backend too old to send one still gets the previous behaviour.
+
+All three are the same class this codebase keeps producing — **a consumer rendering from an
+older copy of a producer's vocabulary, or re-deriving something the producer already knew** —
+following the settings page that hardcoded six of seven providers (#617). The guards are therefore cross-language and generic rather than spot-checks
+for the string `openrouter`: no provider the policy service permits may be described as
+unknown, every remote provider must have a key source, and every status the health probes can
+emit must be explicitly classified as benign or failing on the frontend. An unrecognised
+status still counts as a problem — a false alarm is safer than silence for a health banner —
+but a new one on either side now fails a test instead of silently defaulting. The same shape
+guards the badge: every `reason_code` the service can emit must have a UI label.
+
+Fifteen mutations verified, including reverting each original bug.
+
+### 2026-08-16 — Fix: the run summary stated figures that did not add up
+
+The summary described a run as `6 tests, 2 failures, 60.0% pass rate`, which cannot be read
+consistently: 6 − 2 = 4 passed would be 66.7%. The missing term was the skipped test — pass
+rate is `passed / executed`, and the line neither mentioned skips nor said what the rate was
+over.
+
+Both consumers of that line were harmed by it. Handed figures that do not reconcile, the LLM
+invented a count to make the arithmetic work — a live run produced *"Pass rate was 60.0% with
+1 failure out of 6 tests"* against ground truth of 3 passed / 1 failure / 1 error / 1 skipped.
+The deterministic fallback narrative built the same contradiction from the same fields and
+showed it to the user with no model involved at all.
+
+One formatter now serves both call sites. Counts are stated only when the run actually carries
+them and are never derived by subtraction — inferring `passed` from the others would publish a
+number nobody measured, which is the failure mode the line already had. The basis of the rate
+is stated explicitly rather than left to be inferred.
+
+The guard parses the numbers back out of the rendered line and checks that they sum to the
+total and that the stated rate is recoverable from them, so it pins the property that broke
+rather than a fixed sentence. Both call sites are covered, because fixing only the prompt
+would have left the fallback — the path that runs precisely when the LLM is unavailable —
+still printing the contradiction.
+
+### 2026-08-16 — Fix: a routine startup condition was logged as four errors per pod
+
+`LiveEventStreamConsumer._ensure_group` called `XGROUP CREATE` unconditionally and swallowed
+the resulting `BUSYGROUP`. The consumer group lives in Redis and survives pod restarts, so on
+every deploy after the first this fired once per uvicorn worker.
+
+The application handled it correctly, but the OpenTelemetry Redis instrumentation records the
+exception on the span *before* this code catches it, so each one was exported as an
+ERROR-level record with a full stack trace. A condition the code considers entirely normal
+therefore reached operators as errors: a log scan of a completely healthy deployment reported
+four failures per backend pod. Error logs that are routinely wrong train people to stop
+reading them.
+
+The expected path no longer raises at all — `EXISTS` then `XINFO GROUPS`, creating only when
+the group is genuinely absent. `BUSYGROUP` is still tolerated, because check-then-create is
+not atomic and two workers starting at once is a real race, but it is now the exceptional
+case rather than the guaranteed one. A genuine creation failure is still reported.
+
+The guard asserts on the Redis calls actually issued rather than on log output: the exception
+never reached our logger even when the bug was live, so a test watching `caplog` would have
+passed throughout. Eight mutations verified across this and the summary fix.
+
 ### 2026-08-16 — Fix: the homelab's OpenRouter settings did not survive a deploy
 
 OpenRouter was enabled with a live `kubectl patch` on `testlookup-config`, verified end to

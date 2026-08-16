@@ -52,6 +52,7 @@ from typing import Any
 import structlog
 
 from app.core.config import settings
+from app.services.llm_policy_service import LOCAL_PROVIDERS, REMOTE_PROVIDERS
 
 logger = structlog.get_logger("services.model_status")
 
@@ -60,10 +61,26 @@ logger = structlog.get_logger("services.model_status")
 # rather than hold the request open.
 PROBE_TIMEOUT_SECONDS = 3.0
 
-_CLOUD_PROVIDERS = ("openai", "gemini", "anthropic")
+# Derived from llm_policy_service rather than duplicated here. A second,
+# hand-maintained provider list is what made a fully working OpenRouter
+# deployment report "Unknown LLM provider 'openrouter'" on the AI settings
+# page (homelab, 2026-08-16): #616 taught llm_factory and llm_policy_service
+# the new provider, this module was never updated, and the readiness page then
+# declared the LLM tier unavailable while it was demonstrably serving traffic.
+_CLOUD_PROVIDERS = tuple(sorted(REMOTE_PROVIDERS))
 # Local, OpenAI-compatible servers. They speak a different discovery API
 # than Ollama, so TestLookup does not claim to verify model presence there.
-_SELF_HOSTED_PROVIDERS = ("lmstudio", "localai", "vllm")
+_SELF_HOSTED_PROVIDERS = tuple(sorted(LOCAL_PROVIDERS - {"ollama"}))
+
+# Where each cloud provider's API key comes from: (settings-loader key, env attr).
+# The settings loader only surfaces some of them, so the env attribute is the
+# fallback — otherwise a configured key reads as "no key configured".
+_CLOUD_KEY_SOURCES: dict[str, tuple[str, str]] = {
+    "openai": ("openai_api_key", "OPENAI_API_KEY"),
+    "gemini": ("google_api_key", "GOOGLE_API_KEY"),
+    "anthropic": ("anthropic_api_key", "ANTHROPIC_API_KEY"),
+    "openrouter": ("openrouter_api_key", "OPENROUTER_API_KEY"),
+}
 
 
 async def probe_ollama(
@@ -158,10 +175,18 @@ def _llm_chain_entry(
 ) -> dict[str, Any]:
     """Honest availability for the LLM tier.
 
-    Note the three distinct unavailable states — unreachable daemon,
-    reachable daemon without the model, and a cloud provider blocked by
-    offline mode. Collapsing them into one "LLM unavailable" is what sends
-    operators down the wrong debugging path.
+    Note the distinct unavailable states — unreachable daemon, reachable daemon
+    without the model, a cloud provider blocked by offline mode, and a cloud
+    provider with no key. Collapsing them into one "LLM unavailable" is what
+    sends operators down the wrong debugging path.
+
+    ``reason_code`` carries that distinction in machine-readable form. The prose
+    ``reason`` is for a human to read; the code is what UI badges branch on. The
+    settings page previously re-derived the cause from ``ollama_reachable`` and
+    so labelled *any* non-Ollama failure "Model Missing" — telling an operator
+    with an unset OpenRouter key to go install a model (homelab, 2026-08-16).
+    A consumer that re-derives a cause the producer already determined will get
+    it wrong the moment a new cause appears.
     """
     if provider == "ollama":
         if not probe.get("reachable"):
@@ -173,20 +198,33 @@ def _llm_chain_entry(
                     + (f" ({probe.get('error')})" if probe.get("error") else "")
                     + " — this is a connectivity problem, not a missing model."
                 ),
+                "reason_code": "unreachable",
             }
         if not model_present(llm_model, probe.get("models") or []):
-            return {"mode": "llm", "available": False, "reason": _missing_model_reason(llm_model)}
-        return {"mode": "llm", "available": True, "reason": None}
+            return {
+                "mode": "llm",
+                "available": False,
+                "reason": _missing_model_reason(llm_model),
+                "reason_code": "model_missing",
+            }
+        return {"mode": "llm", "available": True, "reason": None, "reason_code": "ok"}
 
     if provider in _CLOUD_PROVIDERS:
-        # The settings loader only surfaces the OpenAI/Google keys, so fall
-        # back to env for the rest — otherwise a configured Anthropic key
-        # reads as "no key configured", which is a false alarm.
-        cfg_key, env_attr = {
-            "openai": ("openai_api_key", "OPENAI_API_KEY"),
-            "gemini": ("google_api_key", "GOOGLE_API_KEY"),
-            "anthropic": ("anthropic_api_key", "ANTHROPIC_API_KEY"),
-        }[provider]
+        key_source = _CLOUD_KEY_SOURCES.get(provider)
+        if key_source is None:
+            # A provider the policy service permits but whose key location this
+            # module doesn't know. Say exactly that instead of raising KeyError
+            # (which 500s the settings page) or implying the provider is bogus.
+            return {
+                "mode": "llm",
+                "available": False,
+                "reason": (
+                    f"Provider '{provider}' is permitted but this build does not know "
+                    "where to read its API key, so its readiness cannot be verified."
+                ),
+                "reason_code": "unverifiable",
+            }
+        cfg_key, env_attr = key_source
         key_set = bool(cfg.get(cfg_key) or getattr(settings, env_attr, None))
         if offline_mode:
             return {
@@ -196,14 +234,16 @@ def _llm_chain_entry(
                     f"AI offline mode is on, so the cloud provider '{provider}' is blocked. "
                     "Switch the provider to Ollama and install a local model."
                 ),
+                "reason_code": "offline_blocked",
             }
         if not key_set:
             return {
                 "mode": "llm",
                 "available": False,
                 "reason": f"No API key configured for provider '{provider}'.",
+                "reason_code": "no_api_key",
             }
-        return {"mode": "llm", "available": True, "reason": None}
+        return {"mode": "llm", "available": True, "reason": None, "reason_code": "ok"}
 
     if provider in _SELF_HOSTED_PROVIDERS:
         return {
@@ -213,12 +253,14 @@ def _llm_chain_entry(
                 f"Provider '{provider}' is a self-hosted OpenAI-compatible endpoint — "
                 "TestLookup cannot verify model presence for it, so this is unverified."
             ),
+            "reason_code": "unverifiable",
         }
 
     return {
         "mode": "llm",
         "available": False,
         "reason": f"Unknown LLM provider '{provider or 'none'}'.",
+        "reason_code": "unknown_provider",
     }
 
 
@@ -283,6 +325,7 @@ async def build_model_status(cfg: dict[str, Any] | None = None) -> dict[str, Any
             "reason": None if ml_ok else (
                 "No trained ML classifier on disk — auto mode falls through to the next tier."
             ),
+            "reason_code": "ok" if ml_ok else "not_trained",
         },
         _llm_chain_entry(
             provider=provider,
@@ -292,7 +335,7 @@ async def build_model_status(cfg: dict[str, Any] | None = None) -> dict[str, Any
             probe=probe,
             cfg=cfg,
         ),
-        {"mode": "rules", "available": True, "reason": None},
+        {"mode": "rules", "available": True, "reason": None, "reason_code": "ok"},
     ]
 
     return {

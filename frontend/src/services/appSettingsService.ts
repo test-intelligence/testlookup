@@ -109,8 +109,18 @@ export interface RequiredModel {
 export interface FallbackChainEntry {
   mode: AnalysisMode | string
   available: boolean
-  /** Why it can't run — or a caveat on an available tier. */
+  /** Why it can't run — or a caveat on an available tier. Human-readable. */
   reason: string | null
+  /**
+   * The same distinction, machine-readable. Branch badges on this rather than
+   * re-deriving the cause from unrelated fields: the settings page used to
+   * guess from `ollama_reachable`, so a missing OpenRouter API key rendered as
+   * "Model Missing" and sent the operator to install a model.
+   *
+   * Optional because an older backend won't send it — callers must handle
+   * `null` rather than assume a code is present.
+   */
+  reason_code?: string | null
 }
 
 /**

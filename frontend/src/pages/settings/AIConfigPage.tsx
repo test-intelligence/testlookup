@@ -56,6 +56,37 @@ const OK_CLS = 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border-
 const BAD_CLS = 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border-[var(--status-failed-bd)]'
 const WARN_CLS = 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border-[var(--status-broken-bd)]'
 
+/**
+ * Short badge for an unavailable LLM tier.
+ *
+ * Reads the backend's `reason_code` — which is the component that actually
+ * determined the cause — instead of re-deriving it here. This badge used to
+ * show 'Unreachable' when Ollama was down and 'Model Missing' otherwise, so
+ * every cloud-provider failure was reported as a missing model: an unset
+ * OpenRouter API key told the operator to go install one (homelab 2026-08-16).
+ *
+ * Falls back to the old Ollama-derived guess only when talking to a backend too
+ * old to send a code, and to a neutral 'Unavailable' for a code this build does
+ * not recognise — never to a specific claim we cannot support.
+ */
+const LLM_TIER_BADGES: Record<string, string> = {
+  unreachable: 'Unreachable',
+  model_missing: 'Model Missing',
+  no_api_key: 'No API Key',
+  offline_blocked: 'Blocked Offline',
+  unknown_provider: 'Unknown Provider',
+  unverifiable: 'Unverified',
+}
+
+export function llmTierBadge(
+  tier: FallbackChainEntry,
+  status: AIModelStatusRead | undefined,
+): string {
+  const code = tier.reason_code
+  if (!code) return status?.ollama_reachable === false ? 'Unreachable' : 'Model Missing'
+  return LLM_TIER_BADGES[code] ?? 'Unavailable'
+}
+
 function StatusChip({ ok, children }: { ok: boolean; children: React.ReactNode }) {
   return (
     <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${ok ? OK_CLS : BAD_CLS}`}>
@@ -325,8 +356,11 @@ export default function AIConfigPage() {
                   {/* Live LLM-tier state, straight from the probe — the page
                       used to assert "requires running LLM" and never look. */}
                   {mode.value === 'llm' && llmTier && !llmTier.available && (
-                    <span className={`ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded border ${BAD_CLS}`}>
-                      {modelStatus?.ollama_reachable === false ? 'Unreachable' : 'Model Missing'}
+                    <span
+                      className={`ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded border ${BAD_CLS}`}
+                      title={llmTier.reason ?? undefined}
+                    >
+                      {llmTierBadge(llmTier, modelStatus)}
                     </span>
                   )}
                   {mode.value === 'llm' && llmTier?.available && (

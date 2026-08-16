@@ -41,9 +41,25 @@ async function fetchSystemHealth(): Promise<HealthDetails | null> {
   }
 }
 
+// Statuses the backend emits that do NOT mean something is wrong.
+//
+// `skipped` is a deliberate non-check, not a failure: the Ollama probe reports
+// it when AI_OFFLINE_MODE=false, because a cloud-LLM deployment has no local
+// Ollama worth probing. Treating anything !== 'ok' as broken made a healthy
+// OpenRouter deployment show "Degraded: ollama unreachable" permanently
+// (homelab, 2026-08-16) — the backend's own top-level status said "healthy"
+// at the same moment.
+//
+// Unknown statuses still count as unavailable, deliberately: a false alarm is
+// safer than silence for a health banner. `backend/tests/regression/
+// test_health_status_vocabulary_is_shared.py` pins this set against the
+// statuses the backend actually emits, so a new one forces a decision here
+// rather than silently landing in either bucket.
+const BENIGN_STATUSES: ReadonlySet<string> = new Set(['ok', 'skipped'])
+
 export interface SystemHealth {
   data: HealthDetails | null
-  unavailable: string[]   // names of checks whose status !== "ok"
+  unavailable: string[]   // names of checks reporting a genuine problem
   isDegraded: boolean
 }
 
@@ -57,7 +73,7 @@ export function useSystemHealth(): SystemHealth {
 
   const unavailable = data?.checks
     ? Object.entries(data.checks)
-        .filter(([, c]) => c?.status !== 'ok')
+        .filter(([, c]) => !BENIGN_STATUSES.has(c?.status))
         .map(([name]) => name)
     : []
 
