@@ -338,15 +338,51 @@ class SummaryAgent(BaseAgent):
         build = run_data.get("build_number", "?")
         branch = run_data.get("branch", "?")
 
+        # FR-001: name the test and its suite.
+        #
+        # These bullets used to read `[CATEGORY] conf=N%: <summary>` — the test
+        # id was bound to `_tc_id` and discarded, so the model had no test name
+        # to report and no suite to attribute the run to. That is why generated
+        # reports described failure counts and categories but never said which
+        # tests failed: the information never reached the prompt.
+        #
+        # `meta` is threaded through from the analysis stage and carries the
+        # name/suite; when it is missing the bullet says so rather than leaving
+        # a blank that reads like an unnamed test.
         analysis_bullets = []
         sorted_analyses = self._sorted_analyses(analyses)
-        for _tc_id, analysis in sorted_analyses[:15]:
+        kept, dropped = 0, 0
+        for tc_id, analysis in sorted_analyses[:15]:
             if analysis.get("confidence_score", 0) >= 50:
                 cat = analysis.get("failure_category", "UNKNOWN")
                 conf = analysis.get("confidence_score", 0)
                 summary = analysis.get("root_cause_summary", "")[:200]
                 is_flaky = " [FLAKY]" if analysis.get("is_flaky") else ""
-                analysis_bullets.append(f"- [{cat}]{is_flaky} conf={conf}%: {summary}")
+                name = (
+                    analysis.get("test_name")
+                    or (analysis.get("meta") or {}).get("test_name")
+                    or f"test {str(tc_id)[:8]}"
+                )
+                suite = (
+                    analysis.get("suite_name")
+                    or (analysis.get("meta") or {}).get("suite_name")
+                )
+                where = f" [suite: {suite}]" if suite else ""
+                analysis_bullets.append(
+                    f"- {name}{where} [{cat}]{is_flaky} conf={conf}%: {summary}"
+                )
+                kept += 1
+            else:
+                dropped += 1
+        # A confidence floor that silently removes everything turns a run with
+        # only low-confidence analyses into "No analyses available" — which
+        # reads as "nothing was analysed" rather than "nothing was confident".
+        if dropped:
+            analysis_bullets.append(
+                f"- ({dropped} further analysed failure(s) omitted here for "
+                f"scoring below the 50% confidence floor — they were analysed, "
+                f"not absent)"
+            )
 
         evidence_excerpts = []
         for _tc_id, analysis in sorted_analyses[:5]:

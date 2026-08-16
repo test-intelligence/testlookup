@@ -642,6 +642,40 @@ class ConversationAgent:
                     + "\n\nPass rate is passed / executed; skipped tests are "
                       "excluded from the denominator."
                 )
+
+                # FR-002: which tests failed, in which suite, and why.
+                #
+                # Until now this context was run-level aggregates only, so the
+                # model was asked to describe failures it had never been shown.
+                # It could not name a test, name a suite, or give a reason — the
+                # owner's report that the summary "lack[s] credible details" was
+                # a fair description of its input, not of the model.
+                #
+                # Detail is fetched for the MOST RECENT run only: it is the one
+                # people ask about, and quoting every failure of every listed run
+                # would crowd the prompt without being read.
+                from app.services.failure_detail_service import (  # noqa: PLC0415
+                    failure_detail,
+                    format_for_prompt,
+                )
+
+                detail = await failure_detail(db, rows[0].id)
+                if detail.get("failures"):
+                    result_text += (
+                        f"\n\n### Failing tests in the most recent run "
+                        f"({rows[0].build_number})\n"
+                        + format_for_prompt(detail)
+                        + "\n\nName these tests and their suites when asked what "
+                        "failed. Do not invent test names or reasons beyond the "
+                        "list above; if something is not listed, say it was not "
+                        "recorded."
+                    )
+                    src.append({
+                        "type": "failure_detail",
+                        "id": str(rows[0].id),
+                        "build": rows[0].build_number,
+                    })
+
                 _RUN_CONTEXT_CACHE[cache_key] = (time.monotonic(), result_text, src)
                 return result_text, src
         except Exception as exc:

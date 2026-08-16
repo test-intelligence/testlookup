@@ -259,6 +259,19 @@ class AnalysisAgent(BaseAgent):
                 analyses[tc_id] = {"error": safe_msg, "confidence_score": 0}
             else:
                 analyses[tc_id] = result
+
+            # FR-001: carry the test's identity alongside its classification.
+            #
+            # `test_meta` already holds the name and suite — they are used to
+            # prioritise and to build the classifier payload — but only the
+            # classifier's own result was stored here. Every downstream reader
+            # (the summary prompt above all) therefore had a category and a
+            # confidence with no way to say WHICH test they belonged to, which
+            # is why generated reports counted failures without ever naming one.
+            meta = test_meta.get(tc_id) or {}
+            if isinstance(analyses.get(tc_id), dict):
+                analyses[tc_id].setdefault("test_name", meta.get("test_name"))
+                analyses[tc_id].setdefault("suite_name", meta.get("suite_name"))
                 if result.get("timed_out"):
                     timed_out += 1
                     error_count += 1

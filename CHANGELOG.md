@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Feature: AI output now names the suite, the tests, and the reasons (FR-001, FR-002)
+
+Reported by the owner from `/agents` and `/chat`: a suite is assigned to the pipeline but
+appears nowhere in the LLM output or the generated reports, and summaries give failure and
+skip *counts* while never saying which tests failed or why — "text ... which lack credible
+details".
+
+That was an accurate description of the model's **input**, not of the model:
+
+- `ConversationAgent._fetch_run_context` selected run-level aggregates only — build, branch,
+  status, counts, pass rate. **No per-test rows and no suite.** The model was being asked to
+  describe failures it had never been shown.
+- `SummaryAgent._build_context` built its bullets as `[CATEGORY] conf=N%: <summary>`, binding
+  the test id to `_tc_id` and **discarding it**.
+- `AnalysisAgent` already had the name and suite in `test_meta`, used them to prioritise and
+  to build the classifier payload, then stored only the classifier's result — so nothing
+  downstream could attribute a category to a test.
+
+New `failure_detail_service` assembles the named failures for a run and is consumed by both
+surfaces. Reports and chat answers can now state the suite, the failing test names, the
+error text, the classification and its confidence.
+
+Deliberate choices, each guarding a failure mode this codebase has already produced:
+
+- **Suite reads from both places.** Live-stream runs carry it only on the run
+  (`primary_suite_name`), newer ingests on the case — reading one leaves it blank for half
+  the corpus. Same rule as `_effective_suite_sql`.
+- **The cap is disclosed.** A 400-failure run cannot go in a prompt; the payload carries
+  `returned` / `total` / `truncated` and the rendered text says so. A silently truncated
+  list is a partial view that reads as complete.
+- **An unanalysed failure says "not analysed"** rather than `UNKNOWN` — the latter is
+  indistinguishable from a classifier that ran and could not decide.
+- **Confidence travels with the category**, because `INFRASTRUCTURE` at 95 and at 30 are
+  different claims.
+- **The 50% confidence floor now discloses what it removed.** A run whose analyses were all
+  low-confidence previously rendered "No analyses available", which reads as "nothing was
+  analysed" rather than "nothing was confident".
+- The prompt tells the model to name only what it was given and to say when something was
+  not recorded — supplying the rows is what prevents invention; an instruction alone would
+  have invited it.
+
+Seven mutations verified, including restoring the exact reported state (aggregates with no
+names, no suite, no reasons). One initially SURVIVED: a guard asserting the phrase
+"confidence floor" appeared in the source matched its own explanatory comment. It is now
+behavioural — it builds a context from two low-confidence analyses and asserts the
+disclosure is present.
+
+
 ### 2026-08-16 — Fix: the deep pipeline ran every stage after `summary` twice
 
 The deep pipeline fanned three branches into `summary` at unequal path lengths:
