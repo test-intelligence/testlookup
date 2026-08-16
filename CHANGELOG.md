@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: the same failure no longer has two different confidences
+
+Found while measuring AI accuracy on the homelab. One test case, one body of evidence,
+two numbers:
+
+```
+pipeline-stored : confidence=50  evidence=0  requires_human_review=True   gate=below_threshold
+POST /analyze   : confidence=95  evidence=0  requires_human_review=False  gate=above_threshold
+stored AFTER    : confidence=95  evidence=0  requires_human_review=False  gate=above_threshold
+```
+
+The third line is the damage. `POST /api/v1/analyze` upserts the same `AIAnalysis` row, so
+**opening a finding in the UI rewrote the persisted figure**, cleared its human-review flag
+and moved it above the confidence gate — with no new evidence and nothing that could have
+earned the higher number. `requires_human_review` is the field analytics counts as
+"needs review", so the act of looking at a finding removed it from the queue.
+
+Cause: the confidence policy — no evidence references caps at 50, an UNKNOWN category
+cannot be confident, an analysis carrying an error cannot claim confidence — lived as the
+private `AnalysisAgent._validate_confidence`, reachable only from the batch pipeline. The
+endpoint called the same `analysis_router.classify_test` and persisted the engine's raw
+self-assessment. This is the recurring class in this codebase: a validation stage that
+exists but that one of its callers cannot reach. The `confidence_validated` marker the
+pipeline had been setting since US-15.2 was read by nothing but tests.
+
+- The rules move to `services/confidence_validation.validate_confidence()`, where every
+  caller can reach them; `AnalysisAgent` delegates rather than keeping a second copy that
+  would drift.
+- `POST /api/v1/analyze` applies them before persisting or responding.
+- Validation is now idempotent — `evidence_multiplier_bonus` adds +5, so two callers
+  validating the same dict would have inflated a score nothing re-earned.
+
+**Behaviour change:** `POST /api/v1/analyze` now returns and stores the *validated*
+confidence. Findings whose engine score was high but evidence-free will read lower than
+before (50 rather than 95 in the case above) and will correctly show as needing review.
+Nothing was recomputed for existing rows — no backfill.
+
+Regression: `backend/tests/regression/test_confidence_validated_on_every_path.py`
+(9 tests, 6/6 mutations killed), including a behavioural router test asserting the row
+written for an evidence-free 95 carries 50, and that an evidenced, tool-backed claim is
+*not* capped so the fix does not become a blanket ceiling.
+
+
 ### 2026-08-16 — Feature: AI output now names the suite, the tests, and the reasons (FR-001, FR-002)
 
 Reported by the owner from `/agents` and `/chat`: a suite is assigned to the pipeline but

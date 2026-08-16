@@ -21,6 +21,7 @@ from app.models.schemas import (
     ThresholdCheck,
 )
 from app.services import analysis_router
+from app.services.confidence_validation import validate_confidence
 
 router = APIRouter(prefix="/api/v1", tags=["AI Analysis"])
 
@@ -293,6 +294,16 @@ async def analyze_test_case(
         run_context={"run_id": str(authorized.run_id), "project_id": str(authorized.project_id)},
     )
 
+    # Apply the confidence policy BEFORE anything is persisted or returned.
+    # `classify_test` hands back the engine's raw self-assessment; the caps
+    # (no evidence → 50, UNKNOWN cannot be confident, an errored analysis
+    # cannot claim confidence) are what turns that into a number the product
+    # is willing to publish. This endpoint used to skip them and upsert the
+    # raw value over the pipeline's validated one, so the same test read 50
+    # from the pipeline and 95 here, and merely opening the finding cleared
+    # its `requires_human_review` flag and moved it above the confidence gate.
+    analysis = validate_confidence(analysis)
+
     # Persist structured result to PostgreSQL
     category = analysis.get("failure_category", "UNKNOWN")
     try:
@@ -382,6 +393,8 @@ async def analyze_test_case(
         # Set explicitly below from the gate — never passed through from the
         # analysis dict, so the response cannot disagree with the gate.
         "low_confidence", "confidence_gate_status", "provenance", "confidence_gate",
+        # Internal marker set by validate_confidence — not part of the contract.
+        "confidence_validated",
     }
     return AnalysisResponse(
         test_case_id=tc.id,
