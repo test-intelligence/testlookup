@@ -539,8 +539,16 @@ async def update_ai_config(
 
     # ML model status for response
     ml = await _ml_status()
+    # The flag caches must be dropped AFTER the commit above, not just inside
+    # update_flag: that runs mid-transaction, and any reader in the window
+    # between it and the commit re-populates the caches from the old committed
+    # row — which then stands for the 30s TTL. Verified live: without this the
+    # write landed in Postgres while GET /settings/ai and the gate both kept
+    # answering the previous value.
+    from app.services.feature_flags import invalidate_flag_cache, is_enabled
+    if rag_requested is not None:
+        await invalidate_flag_cache("knowledge_rag")
     # Re-resolve rather than echo: report the flag as it now stands.
-    from app.services.feature_flags import is_enabled
     rag_enabled_after = await is_enabled("knowledge_rag", db=db)
 
     # Re-resolve rather than echo the request: the response must report what

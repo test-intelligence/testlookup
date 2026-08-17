@@ -129,3 +129,49 @@ def test_the_redis_mirror_of_the_second_store_is_gone():
     import inspect
     src = inspect.getsource(settings_router.update_ai_config)
     assert "config:knowledge_rag_enabled" not in src
+
+@pytest.mark.asyncio
+async def test_flag_caches_are_dropped_after_the_commit_not_before():
+    """Invalidating mid-transaction is the same as not invalidating.
+
+    ``update_flag`` clears the caches, but it runs inside the caller's
+    transaction and ``get_db`` commits only after the handler returns. Any
+    reader in that window re-reads the *old* committed row and re-populates
+    both caches with it, where it stands for the 30s TTL.
+
+    Caught live, not by review: right after the toggle was wired up,
+    ``PUT /settings/ai {knowledge_rag_enabled: true}`` returned 200 and the
+    flag row read ``true`` (that endpoint queries Postgres directly), while
+    ``GET /settings/ai`` and the gate — both via ``is_enabled`` — still
+    answered ``false``.
+    """
+    calls: list[str] = []
+
+    db = MagicMock()
+    db.commit = AsyncMock(side_effect=lambda: calls.append("commit"))
+    db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+    db.add = MagicMock()
+
+    async def _invalidate(key):
+        calls.append(f"invalidate:{key}")
+
+    async def _update_flag(_db, *, key, updates, actor):
+        calls.append("update_flag")
+        return MagicMock()
+
+    payload = MagicMock()
+    payload.model_dump.return_value = {"knowledge_rag_enabled": True}
+
+    with patch("app.routers.app_settings._load_ai_config", new=AsyncMock(return_value={})),          patch("app.routers.app_settings._ml_status", new=AsyncMock(return_value={})),          patch("app.routers.app_settings.extract_secrets_from_config", return_value={}),          patch("app.routers.app_settings.log_settings_change", new=AsyncMock()),          patch("app.services.ai_config_resolver.env_offline_pinned", return_value=False),          patch("app.services.ai_config_resolver.resolve_offline_mode", return_value=(True, "env")),          patch("app.services.feature_flags.get_flag", new=AsyncMock(return_value=MagicMock())),          patch("app.services.feature_flags.update_flag", new=_update_flag),          patch("app.services.feature_flags.invalidate_flag_cache", new=_invalidate),          patch("app.services.feature_flags.is_enabled", new=AsyncMock(return_value=True)),          patch("app.routers.app_settings.AIConfigRead", new=MagicMock()):
+        try:
+            await settings_router.update_ai_config(payload, current_user=MagicMock(), db=db)
+        except Exception:
+            # The response model is mocked; only the call ordering is under test.
+            pass
+
+    assert "commit" in calls, f"handler never committed: {calls}"
+    assert "invalidate:knowledge_rag" in calls, f"caches never dropped: {calls}"
+    assert calls.index("invalidate:knowledge_rag") > calls.index("commit"), (
+        f"invalidated before the commit — the stale row wins: {calls}"
+    )
+

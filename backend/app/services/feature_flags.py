@@ -236,6 +236,24 @@ async def is_enabled(
     return _evaluate(flag_dict, project_id=project_id, user=user)
 
 
+async def invalidate_flag_cache(key: str) -> None:
+    """Drop the caches for one flag — **call this after the commit lands**.
+
+    ``update_flag``/``create_flag``/``delete_flag`` invalidate too, but they run
+    inside the caller's transaction: ``get_db`` commits only after the handler
+    returns, so between their invalidate and that commit any reader re-reads the
+    *old* committed row and re-populates both caches with it. The value then
+    sticks for the 30s TTL and the write looks like it never happened.
+
+    Measured on the live deployment right after this module's own toggle was
+    wired up: ``PUT /settings/ai {knowledge_rag_enabled: true}`` returned 200,
+    the flag row read ``true`` (that endpoint queries Postgres directly), and
+    both ``GET /settings/ai`` and the gate — which go through ``is_enabled`` —
+    still answered ``false``.
+    """
+    await _invalidate(key)
+
+
 async def _invalidate(key: str) -> None:
     """Drop both in-process and Redis caches for a single key."""
     _cache.pop(key, None)

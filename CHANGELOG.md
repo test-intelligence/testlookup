@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: feature-flag caches were invalidated before the commit
+
+Caught on the live homelab while verifying #653, not by review. Flipping the Knowledge-RAG
+switch through the API returned 200 and landed in Postgres, and every cached reader kept
+serving the old value:
+
+```
+PUT /settings/ai {knowledge_rag_enabled: true}   ->  200
+GET /feature-flags/knowledge_rag/status          ->  true    (queries Postgres directly)
+GET /settings/ai                                 ->  false   (via is_enabled -> cache)
+GET /knowledge-sources/<id>/freshness            ->  503     (via is_enabled -> cache)
+```
+
+`update_flag` does invalidate, but it runs **inside the caller's transaction**, and
+`get_db` commits only after the handler returns. Between that invalidate and the commit,
+any reader re-reads the *old* committed row and re-populates the in-process and Redis
+caches with it — where it then stands for the full 30 s TTL. Invalidating mid-transaction
+is the same as not invalidating.
+
+`invalidate_flag_cache()` is now public and `PUT /settings/ai` calls it after
+`db.commit()`, before re-resolving the value it reports.
+
+Known remaining limit, not addressed here: the in-process cache is per-process and there
+are two backend replicas, so a replica that did not serve the write can still answer from
+its own cache until the 30 s TTL expires. Closing that needs a cross-process invalidation
+signal (Redis pub/sub), which is a larger change.
+
+`PATCH /api/v1/feature-flags/{key}` — the route the Feature Flags page uses — has the same
+pre-commit ordering and is left for its own PR.
+
+
 ### 2026-08-16 — Fix: Knowledge RAG had three gates and the UI toggled the wrong one
 
 Found during the UI sweep of the live homelab, where all three disagreed:
