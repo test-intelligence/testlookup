@@ -52,11 +52,32 @@ async def test_flaky_count_windows_recent_runs_per_fingerprint():
     # Per-fingerprint recency window via ROW_NUMBER — the core of the fix.
     assert "row_number() over" in sql
     assert "partition by tch.test_fingerprint" in sql
-    assert "order by tch.created_at desc" in sql
+    # Persistence time is now a tie-breaker after natural build order; it must
+    # remain present for duplicate/non-monotonic build identifiers.
+    assert "tch.created_at desc" in sql
     # Only the most-recent N executions feed the ratio.
     assert f"rn <= {svc._FLAKY_WINDOW_RUNS}" in sql
     # Minimum sample size still enforced, now over the bounded window.
     assert f"count(*) >= {svc._FLAKY_MIN_RUNS}" in sql
+
+
+@pytest.mark.asyncio
+async def test_flaky_count_orders_history_by_natural_build_number():
+    """The flip detector must follow CI run order, not async commit order."""
+    db = _CaptureDB()
+    await svc._count_flaky_tests(db, project_id=str(uuid.uuid4()))
+    sql = " ".join(db.sql.lower().split())
+
+    natural = (
+        "case when tr.build_number ~ '[0-9]' then string_to_array( "
+        "trim(regexp_replace(tr.build_number, '[^0-9]+', ' ', 'g')), ' ' "
+        ")::bigint[] else null end"
+    )
+    assert natural in sql
+    assert (
+        f"order by {natural} desc nulls first, tr.build_number desc, "
+        "tch.created_at desc, tch.id desc"
+    ) in sql
 
 
 @pytest.mark.asyncio

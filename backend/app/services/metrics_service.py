@@ -688,6 +688,34 @@ async def _count_flaky_tests(
     # unreachable — a dead branch here would silently drop the active-project
     # clause the day someone made the project filter conditional again.
     suite_filter = f"AND {suite_match_sql}" if suite_name else ""
+    # Canonical chronological order is the natural numeric chunks in the
+    # free-form build number, then the raw value and persistence timestamp.
+    # The ranking below reverses that order to retain the newest N; ``seq``
+    # reverses ``rn`` again before LAG computes adjacent flips. Persistence
+    # order alone is invalid because sharded ingestion can commit ui-10 before
+    # ui-2.
+    dialect_name = getattr(
+        getattr(getattr(db, "bind", None), "dialect", None),
+        "name",
+        "postgresql",
+    )
+    if dialect_name == "sqlite":
+        # The semantic regression harness runs the production query on SQLite,
+        # whose fixture predates build_number and which has neither PostgreSQL
+        # regex operators nor bigint arrays. Its timestamps are deliberately
+        # chronological, so retain that harness's equivalent ordering there.
+        natural_build_key = "tch.created_at"
+        build_tiebreaker = ""
+    else:
+        natural_build_key = """
+            CASE WHEN tr.build_number ~ '[0-9]'
+                 THEN string_to_array(
+                          trim(regexp_replace(tr.build_number, '[^0-9]+', ' ', 'g')),
+                          ' '
+                      )::bigint[]
+                 ELSE NULL END
+        """
+        build_tiebreaker = "tr.build_number DESC,"
     # Rank each fingerprint's history newest-first, keep only the last N, then
     # apply the flaky ratio over that bounded window. Without the window the
     # HAVING scanned all history, so a fingerprint's flaky flag could only ever
@@ -711,7 +739,10 @@ async def _count_flaky_tests(
                         CASE WHEN tch.status IN ('FAILED', 'BROKEN') THEN 1 ELSE 0 END AS is_failed,
                         ROW_NUMBER() OVER (
                             PARTITION BY tch.test_fingerprint
-                            ORDER BY tch.created_at DESC, tch.id DESC
+                            ORDER BY {natural_build_key} DESC NULLS FIRST,
+                                     {build_tiebreaker}
+                                     tch.created_at DESC,
+                                     tch.id DESC
                         ) AS rn
                     FROM test_case_history tch
                     JOIN test_runs tr ON tr.id = tch.test_run_id

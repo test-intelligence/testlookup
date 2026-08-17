@@ -11,7 +11,12 @@ from app.core.deps import get_accessible_project_ids, get_current_active_user, r
 from app.db.postgres import get_db
 from app.models.postgres import LaunchStatus, Project, TestCase, TestRun, User
 from app.models.schemas import TestCaseHistoryResponse, TestCaseListResponse
-from app.services.runs_service import get_run_with_release, list_project_runs, list_run_test_cases
+from app.services.runs_service import (
+    get_run_with_release,
+    list_project_runs,
+    list_run_test_cases,
+    natural_build_number_key,
+)
 
 router = APIRouter(prefix="/api/v1/runs", tags=["Test Runs"])
 
@@ -184,7 +189,12 @@ async def list_failed_run_ids(
             )
         )
 
-    stmt = stmt.order_by(TestRun.created_at.desc()).limit(limit + 1)
+    stmt = stmt.order_by(
+        natural_build_number_key().desc().nulls_first(),
+        TestRun.build_number.desc(),
+        TestRun.created_at.desc(),
+        TestRun.id.desc(),
+    ).limit(limit + 1)
 
     result = await db.execute(stmt)
     rows = [str(row[0]) for row in result.all()]

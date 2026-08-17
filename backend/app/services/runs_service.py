@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import ARRAY, BigInteger, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -120,6 +120,26 @@ async def fetch_run_suites_map(
 _SUITE_NORM = func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, "")))
 
 
+def natural_build_number_key(column=None):
+    """PostgreSQL natural-sort key for free-form CI build numbers.
+
+    Numeric chunks compare as a bigint array, so ``ui-2`` sorts before
+    ``ui-10``. Values without digits return NULL and are deliberately placed
+    after numbered builds by callers. The textual build number and persistence
+    timestamp remain tie-breakers because build-number schemes can collide.
+    """
+    if column is None:
+        column = TestRun.build_number
+    numeric_chunks = func.string_to_array(
+        func.trim(func.regexp_replace(column, r"[^0-9]+", " ", "g")),
+        " ",
+    )
+    return case(
+        (column.op("~")(r"[0-9]"), cast(numeric_chunks, ARRAY(BigInteger))),
+        else_=None,
+    )
+
+
 async def fetch_run_seq_map(
     db: AsyncSession, run_ids: list[uuid.UUID],
 ) -> dict[str, int]:
@@ -135,8 +155,8 @@ async def fetch_run_seq_map(
     Strategy:
       1. Look up each requested run's ``(project_id, suite_key)`` pair.
       2. Run a single window-function pass over EVERY run in those
-         partitions, with stable tie-breaker ``ORDER BY created_at ASC,
-         id ASC`` so equal-timestamp inserts don't swap numbers.
+         partitions, naturally ordered by numeric build-number chunks, then
+         the raw build number, persistence timestamp, and id.
       3. Return ``{run_id: rn}`` for the originally requested ids.
 
     Empty input → empty result, no queries fired. Used by ``/runs``,
@@ -171,7 +191,12 @@ async def fetch_run_seq_map(
             TestRun.id,
             func.row_number().over(
                 partition_by=(TestRun.project_id, _SUITE_NORM),
-                order_by=(TestRun.created_at.asc(), TestRun.id.asc()),
+                order_by=(
+                    natural_build_number_key().asc().nulls_last(),
+                    TestRun.build_number.asc(),
+                    TestRun.created_at.asc(),
+                    TestRun.id.asc(),
+                ),
             ).label("rn"),
         )
         .where(or_(*pair_filters))
@@ -319,7 +344,12 @@ async def list_project_runs(
         select(TestRun, Project.name.label("project_name"))
         .outerjoin(Project, Project.id == TestRun.project_id)
         .where(*filters)
-        .order_by(TestRun.created_at.desc())
+        .order_by(
+            natural_build_number_key().desc().nulls_first(),
+            TestRun.build_number.desc(),
+            TestRun.created_at.desc(),
+            TestRun.id.desc(),
+        )
         .offset((page - 1) * size)
         .limit(size)
     )

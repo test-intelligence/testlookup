@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: natural build ordering for runs and flake transitions
+
+Sharded ingestion can persist CI runs out of order, while lexical sorting puts
+identifiers such as `ui-10` before `ui-2`. Run listings, per-suite `Run #N`
+ordinals, and the transition sequence used by the flaky-test counter were all
+ordered primarily by persistence time, so the UI could assign misleading run
+numbers and the flake detector could count transitions in the wrong sequence.
+
+These paths now use the numeric chunks of `build_number` as a PostgreSQL
+`bigint[]` natural-sort key, followed by the raw build number, persistence time,
+and row id. Values without digits sort after numbered builds in chronological
+order (and before them when the listing is reversed). Build identifiers remain
+an imperfect cross-branch/cross-scheme clock, but this is deterministic and
+closer to CI execution order than asynchronous commit time.
+
 ### 2026-08-17 — Fix: the readiness probe deadlocked a rollout under load
 
 Found while deploying the worker memory fix. The probe ran
