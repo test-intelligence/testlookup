@@ -67,4 +67,86 @@ describe('TrendsPage', () => {
     expect(screen.getByText(/Trend capture/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Trends/i).length).toBeGreaterThan(0)
   })
+
+  // Regression: the headline pass rate used to divide by every execution,
+  // skips included — 31/60 = 51.7% — while the same payload's `pass_rate`
+  // field and /overview both said 57.4% (31 evaluated-of-54, skips excluded).
+  // Two figures for one window on two pages. The denominator is now the
+  // backend's: passed + failed + broken.
+  it('excludes skips from the headline pass rate, matching the API and /overview', async () => {
+    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+
+    // The ground-truth fixture: one day, 60 executions, 6 of them skipped.
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        data: [
+          { date: '2026-08-16', passed: 31, failed: 17, skipped: 6, broken: 6, total: 60, pass_rate: 57.4 },
+        ],
+      },
+      isLoading: false,
+    })
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: {} })
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        summary: { unique_tests: 10, suite_count: 1, total_executions: 60, avg_pass_rate: 57.4, days_with_runs: 1 },
+        // `failed` folds broken in, so passed + failed is the evaluated count.
+        suites: [{ suite_name: 'GroundTruthSuite', unique_tests: 10, passed: 31, failed: 23, skipped: 6, pass_rate: 57.4 }],
+      },
+    })
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    render(
+      <MemoryRouter initialEntries={['/trends']}>
+        <Routes>
+          <Route path="/trends" element={<TrendsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect((await screen.findAllByText('57.4%')).length).toBeGreaterThan(0)
+    // The pre-fix figure must not appear anywhere on the page.
+    expect(screen.queryAllByText('51.7%')).toHaveLength(0)
+    // The narrative rounds, so the old 51.7% surfaced there as "52%".
+    expect(screen.queryByText(/headline 52% pass rate/)).not.toBeInTheDocument()
+    expect(screen.getByText(/headline 57% pass rate/)).toBeInTheDocument()
+  })
+
+  // Regression: test executions were labelled "runs" — a 6-run window read
+  // "31 / 60 runs". Same wording defect #643 fixed on the dashboard.
+  it('calls test executions executions, not runs', async () => {
+    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        data: [
+          { date: '2026-08-16', passed: 31, failed: 17, skipped: 6, broken: 6, total: 60, pass_rate: 57.4 },
+        ],
+      },
+      isLoading: false,
+    })
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: {} })
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        summary: { unique_tests: 10, suite_count: 1, total_executions: 60, avg_pass_rate: 57.4, days_with_runs: 1 },
+        suites: [{ suite_name: 'GroundTruthSuite', unique_tests: 10, passed: 31, failed: 23, skipped: 6, pass_rate: 57.4 }],
+      },
+    })
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    render(
+      <MemoryRouter initialEntries={['/trends']}>
+        <Routes>
+          <Route path="/trends" element={<TrendsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText(/31 \/ 54 evaluated/)).toBeInTheDocument()
+    expect(screen.queryByText(/31 \/ 60 runs/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/of 60 runs/)).not.toBeInTheDocument()
+  })
 })

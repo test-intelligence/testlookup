@@ -183,9 +183,11 @@ interface DimensionScore {
 
 interface CadenceCell {
   iso: string
-  runs: number
+  /** Test executions that landed on this day — not the number of runs. */
+  executions: number
   passed: number
   failed: number
+  broken: number
   isToday: boolean
   isLastBeforeGap: boolean
 }
@@ -196,11 +198,14 @@ interface ConfidenceModel {
   daysWithRuns: number
   windowDays: number
   emptyDays: number
-  totalRuns: number
-  passedRuns: number
-  failedRuns: number
-  skippedRuns: number
-  brokenRuns: number
+  totalExecutions: number
+  passedExecutions: number
+  failedExecutions: number
+  skippedExecutions: number
+  brokenExecutions: number
+  /** passed + failed + broken — skips are never evaluated, so they are in
+   *  neither numerator nor denominator. Matches the backend definition. */
+  evaluatedExecutions: number
   passRate: number
   passRatePerDay: number[]   // only days with runs
   cadenceCells: CadenceCell[]
@@ -228,26 +233,27 @@ function buildCadenceCells(trend: TrendPoint[], days: number): CadenceCell[] {
     d.setDate(today.getDate() - i)
     const iso = d.toISOString().slice(0, 10)
     const p = byDate.get(iso)
-    const runs = p ? (p.passed + p.failed + p.skipped + (p.broken ?? 0)) : 0
+    const executions = p ? (p.passed + p.failed + p.skipped + (p.broken ?? 0)) : 0
     cells.push({
       iso,
-      runs,
+      executions,
       passed: p?.passed ?? 0,
       failed: p?.failed ?? 0,
+      broken: p?.broken ?? 0,
       isToday: i === 0,
       isLastBeforeGap: false,
     })
   }
-  // Mark the last cell with runs that has at least one empty cell *after* it.
+  // Mark the last active cell that has at least one empty cell *after* it.
   let lastWithRunsIdx = -1
   for (let i = 0; i < cells.length; i++) {
-    if (cells[i].runs > 0) lastWithRunsIdx = i
+    if (cells[i].executions > 0) lastWithRunsIdx = i
   }
   if (lastWithRunsIdx >= 0 && lastWithRunsIdx < cells.length - 1) {
     // Find the most recent active cell that is followed by a stretch of empty
     // cells before the next active cell — that's the "last green before gap".
     for (let i = cells.length - 1; i >= 0; i--) {
-      if (cells[i].runs > 0 && !cells[i].isToday) {
+      if (cells[i].executions > 0 && !cells[i].isToday) {
         cells[i].isLastBeforeGap = true
         break
       }
@@ -258,20 +264,27 @@ function buildCadenceCells(trend: TrendPoint[], days: number): CadenceCell[] {
 
 function computeConfidenceModel(trend: TrendPoint[], days: number, untaggedShare: number): ConfidenceModel {
   const cadenceCells = buildCadenceCells(trend, days)
-  const activeCells = cadenceCells.filter(c => c.runs > 0)
+  const activeCells = cadenceCells.filter(c => c.executions > 0)
   const daysWithRuns = activeCells.length
   const emptyDays = cadenceCells.length - daysWithRuns
 
-  const totalRuns = trend.reduce((s, p) => s + p.passed + p.failed + p.skipped + (p.broken ?? 0), 0)
-  const passedRuns  = trend.reduce((s, p) => s + p.passed,  0)
-  const failedRuns  = trend.reduce((s, p) => s + p.failed,  0)
-  const skippedRuns = trend.reduce((s, p) => s + p.skipped, 0)
-  const brokenRuns  = trend.reduce((s, p) => s + (p.broken ?? 0), 0)
-  const passRate = totalRuns > 0 ? (passedRuns / totalRuns) * 100 : 0
+  const totalExecutions   = trend.reduce((s, p) => s + p.passed + p.failed + p.skipped + (p.broken ?? 0), 0)
+  const passedExecutions  = trend.reduce((s, p) => s + p.passed,  0)
+  const failedExecutions  = trend.reduce((s, p) => s + p.failed,  0)
+  const skippedExecutions = trend.reduce((s, p) => s + p.skipped, 0)
+  const brokenExecutions  = trend.reduce((s, p) => s + (p.broken ?? 0), 0)
+  // Skips are excluded from both halves of the ratio — a skipped test was never
+  // evaluated. This is the definition the backend already publishes as
+  // TrendPoint.pass_rate and that /overview renders; computing a *different*
+  // one here is what made this page read 51.7% for the window /overview called
+  // 57.4%. See backend/app/services/metrics_service.py for the canonical note.
+  const evaluatedExecutions = passedExecutions + failedExecutions + brokenExecutions
+  const passRate = evaluatedExecutions > 0 ? (passedExecutions / evaluatedExecutions) * 100 : 0
 
   const passRatePerDay = activeCells.map(c => {
-    const t = c.passed + c.failed
-    return t > 0 ? (c.passed / t) * 100 : 0
+    // Same denominator as the headline — broken counts against the day.
+    const evaluated = c.passed + c.failed + c.broken
+    return evaluated > 0 ? (c.passed / evaluated) * 100 : 0
   })
 
   // Variance stability — stddev of per-day pass rate over active days.
@@ -289,7 +302,7 @@ function computeConfidenceModel(trend: TrendPoint[], days: number, untaggedShare
   }
 
   const dataCoverageScore = days > 0 ? Math.min(100, (daysWithRuns / days) * 100) : 0
-  const sampleSizeScore   = Math.min(100, (totalRuns / 100) * 100)  // 100 runs ≈ full
+  const sampleSizeScore   = Math.min(100, (totalExecutions / 100) * 100)  // 100 executions ≈ full
   const tagQualityScore   = Math.max(0, 100 - untaggedShare * 100)
 
   const dimensions: DimensionScore[] = [
@@ -315,7 +328,7 @@ function computeConfidenceModel(trend: TrendPoint[], days: number, untaggedShare
     let curGapStartIdx = -1
     let curGapLen = 0
     for (let i = 0; i < cadenceCells.length; i++) {
-      if (cadenceCells[i].runs === 0) {
+      if (cadenceCells[i].executions === 0) {
         if (curGapStartIdx === -1) curGapStartIdx = i
         curGapLen++
       } else {
@@ -340,7 +353,8 @@ function computeConfidenceModel(trend: TrendPoint[], days: number, untaggedShare
   return {
     composite, dimensions,
     daysWithRuns, windowDays: days, emptyDays,
-    totalRuns, passedRuns, failedRuns, skippedRuns, brokenRuns,
+    totalExecutions, passedExecutions, failedExecutions, skippedExecutions, brokenExecutions,
+    evaluatedExecutions,
     passRate, passRatePerDay,
     cadenceCells,
     lastRunIso, previousRunIso,
@@ -350,7 +364,7 @@ function computeConfidenceModel(trend: TrendPoint[], days: number, untaggedShare
 }
 
 function pickVerdict(model: ConfidenceModel): Verdict {
-  if (model.totalRuns === 0)              return 'PENDING'
+  if (model.totalExecutions === 0)        return 'PENDING'
   if (model.composite < 33)               return 'INSUFFICIENT'
   // We need ≥ 3 active days to compute trend direction (per README issue 2).
   if (model.daysWithRuns < 3)             return 'INSUFFICIENT'
@@ -842,7 +856,7 @@ function KpiCell({
 // ── Run cadence heatmap ───────────────────────────────────────────────────
 function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
   const cells = model.cadenceCells
-  const activeCount = cells.filter(c => c.runs > 0).length
+  const activeCount = cells.filter(c => c.executions > 0).length
   const emptyCount = cells.length - activeCount
 
   return (
@@ -858,12 +872,12 @@ function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
           style={{ gridTemplateColumns: `repeat(${cells.length}, 1fr)`, gap: 4 }}
         >
           {cells.map((c) => {
-            const hasRuns = c.runs > 0
+            const hasRuns = c.executions > 0
             const isMixed = hasRuns && c.failed > 0
             return (
               <div
                 key={c.iso}
-                title={`${c.iso} · ${c.runs} run${c.runs === 1 ? '' : 's'}${c.failed > 0 ? ` (${c.failed} failed)` : ''}`}
+                title={`${c.iso} · ${c.executions} execution${c.executions === 1 ? '' : 's'}${c.failed > 0 ? ` (${c.failed} failed)` : ''}`}
                 className="rounded-sm"
                 style={{
                   aspectRatio: '1',
@@ -1078,7 +1092,7 @@ function PassRateTrend({ model, days }: { model: ConfidenceModel; days: number }
   const points = model.cadenceCells
     .map((c, i) => {
       const t = c.passed + c.failed
-      if (c.runs === 0 || t === 0) return null
+      if (c.executions === 0 || t === 0) return null
       const pct = (c.passed / t) * 100
       const x = (i / Math.max(model.cadenceCells.length - 1, 1)) * 100
       const y = 100 - pct  // SVG y is top-down; high pass rate = low y
@@ -1113,7 +1127,7 @@ function PassRateTrend({ model, days }: { model: ConfidenceModel; days: number }
             >
               Target {target}%
             </span>
-            {model.totalRuns > 0 && (
+            {model.totalExecutions > 0 && (
               <span style={{ color: deltaToTarget < 0 ? 'var(--status-failed)' : 'var(--status-passed)' }}>
                 {deltaToTarget < 0 ? '↓' : '↑'} {Math.abs(deltaToTarget).toFixed(0)}pp {deltaToTarget < 0 ? 'below' : 'above'} target
               </span>
@@ -1266,8 +1280,11 @@ function SuitePassRates({ suites }: { suites: CoverageSuite[] }) {
 }
 
 function SuiteRow({ suite, isLast }: { suite: CoverageSuite; isLast: boolean }) {
-  const total = suite.passed + suite.failed + suite.skipped
-  const pct = total > 0 ? Math.round((suite.passed / total) * 100) : 0
+  // Take the rate the API already computed rather than deriving a second
+  // one. `suite.failed` already folds broken in, so passed + failed is the
+  // evaluated count — skips are excluded from both halves.
+  const evaluated = suite.passed + suite.failed
+  const pct = Math.round(suite.pass_rate)
   const tone = pct >= 80 ? 'good' : pct >= 50 ? 'warn' : 'bad'
   const pctColor = tone === 'good' ? 'var(--status-passed)' : tone === 'warn' ? 'var(--status-broken)' : 'var(--status-failed)'
   return (
@@ -1298,7 +1315,7 @@ function SuiteRow({ suite, isLast }: { suite: CoverageSuite; isLast: boolean }) 
       </span>
       <span className="text-right">
         <span className="text-[12.5px] font-semibold tabular-nums" style={{ color: pctColor }}>{pct}%</span>
-        <div className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums">{suite.passed} / {total} runs</div>
+        <div className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums">{suite.passed} / {evaluated} evaluated</div>
       </span>
     </div>
   )
@@ -1337,14 +1354,14 @@ function buildRecActions(model: ConfidenceModel, suites: CoverageSuite[]): RecRo
     .filter(s => (s.passed + s.failed + s.skipped) > 0 && s.failed > 0)
     .sort((a, b) => a.pass_rate - b.pass_rate)[0]
   if (failingSuite) {
-    const total = failingSuite.passed + failingSuite.failed + failingSuite.skipped
+    const evaluated = failingSuite.passed + failingSuite.failed
     recs.push({
       role: 'dev',
       Icon: BarChart3,
       label: 'Developer',
       body: (
         <>
-          <code>{failingSuite.suite_name}</code> failed {failingSuite.failed} of {total} runs — investigate before assuming the trend is just sparse data.
+          <code>{failingSuite.suite_name}</code> failed {failingSuite.failed} of {evaluated} evaluated executions — investigate before assuming the trend is just sparse data.
         </>
       ),
       cta: { label: 'Open', onClick: () => toast('Failure detail — coming in Phase 2', { icon: '🔍' }) },
@@ -1623,7 +1640,7 @@ export default function TrendsPage() {
       cta: { label: 'Resume schedule', onClick: () => toast('Schedule editor — coming in Phase 2', { icon: '⏱️' }) },
     })
   }
-  if (model.daysWithRuns < 3 && model.totalRuns > 0) {
+  if (model.daysWithRuns < 3 && model.totalExecutions > 0) {
     issues.push({
       tone: 'warn',
       Icon: TrendingUp,
@@ -1636,14 +1653,14 @@ export default function TrendsPage() {
       cta: { label: 'Widen to 90d', onClick: () => setDays(90) },
     })
   }
-  if (model.totalRuns > 0 && model.daysWithRuns >= 1) {
+  if (model.totalExecutions > 0 && model.daysWithRuns >= 1) {
     issues.push({
       tone: 'info',
       Icon: AlertCircle,
       body: (
         <>
-          Today's run had <strong>{model.totalRuns} test{model.totalRuns === 1 ? '' : 's'}</strong>: {model.passedRuns} passed, {model.failedRuns} failed
-          {model.totalRuns > 0 ? <> ({Math.round(model.passRate)}%)</> : null}.
+          The latest active day had <strong>{model.totalExecutions} test execution{model.totalExecutions === 1 ? '' : 's'}</strong>: {model.passedExecutions} passed, {model.failedExecutions} failed, {model.brokenExecutions} broken
+          {model.evaluatedExecutions > 0 ? <> ({Math.round(model.passRate)}% of {model.evaluatedExecutions} evaluated)</> : null}.
           {' '}<span className="text-[var(--color-text-muted)]">No regression vs. the prior in-window run.</span>
         </>
       ),
@@ -1792,9 +1809,9 @@ export default function TrendsPage() {
           <KpiCell
             Icon={BarChart3}
             label="Executions"
-            value={model.totalRuns}
-            meta={<>{model.passedRuns} passed · {model.failedRuns} failed · {model.skippedRuns} skipped</>}
-            spark={<SparklineSpike heightPct={Math.min(100, (model.totalRuns / 50) * 100)} />}
+            value={model.totalExecutions}
+            meta={<>{model.passedExecutions} passed · {model.failedExecutions} failed · {model.brokenExecutions} broken · {model.skippedExecutions} skipped</>}
+            spark={<SparklineSpike heightPct={Math.min(100, (model.totalExecutions / 50) * 100)} />}
           />
           <KpiCell
             Icon={Layers}

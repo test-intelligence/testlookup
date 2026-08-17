@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: /trends and /overview disagreed about the same pass rate
+
+Found during the UI sweep of the live homelab, against the hand-computed fixture
+(60 executions on one day: 31 passed, 17 failed, 6 broken, 6 skipped).
+
+```
+/overview        57%     pass rate · 14d
+GET /metrics/trends → pass_rate: 57.4
+/trends          51.7%   pass rate · 14d      <- same project, same window
+```
+
+`TrendsPage` computed its own rate as `passed / (passed + failed + skipped + broken)`.
+Skips belong in neither half of that ratio — a skipped test was never evaluated — and
+`backend/app/services/metrics_service.py` says so explicitly, having already been fixed
+for this exact class once (a trend line reading 83.9% beside an 81.0% headline).
+
+The right number was in the payload the page had already fetched: `TrendPoint.pass_rate`
+is on the contract, is typed in `types/metrics.ts`, and had **no consumer**. Same for the
+per-suite `pass_rate` from `/analytics/coverage`, which the suite rows recomputed instead
+of reading. The page now uses one denominator — passed + failed + broken — everywhere,
+and takes the API's rate where the API publishes one.
+
+A third denominator lived in the same function: `passRatePerDay` used
+`passed / (passed + failed)`, dropping broken, which fed the variance-stability score.
+
+Test executions were also labelled "runs" throughout, so a 6-run window read
+`31 / 60 runs` and `failed 23 of 60 runs` — the wording defect #643 fixed on the
+dashboard, reintroduced here. The model fields are renamed `*Executions` so the label
+and the quantity can't drift apart again.
+
 ### 2026-08-16 — Fix: deleted projects were still voting in the dashboard verdict
 
 Found during the UI sweep of the live homelab, against a hand-computed fixture.
