@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: worker-default's per-child memory budget was half of any peer
+
+Follow-up to the OOM fix earlier today, which was **half right**. Verified on the live
+homelab by reproducing the ingest that caused the crash loop:
+
+```
+cache redirect   WORKS   167M in /var/cache/testlookup/chroma-onnx (model.onnx + archive),
+                         survived two container restarts — the refetch loop is gone
+OOM              NOT FIXED   restarts 1 -> 2, OOMKilled, on a run with the weights
+                             ALREADY on disk
+```
+
+So the download was never the dominant cost. Raising 1 GiB → 2 GiB by analogy with
+`worker-ingestion` was reasoning from the wrong number; the per-child budget is what
+matters:
+
+| worker | concurrency | limit | per child |
+| --- | --- | --- | --- |
+| worker-ai | 2 | 4Gi | 2048Mi |
+| worker-children | 1 | 2Gi | 2048Mi |
+| worker-critical | 2 | 2Gi | 1024Mi |
+| worker-ingestion | 4 | 2Gi | **512Mi** |
+| worker-default | 4 | 2Gi | **512Mi** |
+
+A child holding the all-MiniLM model plus onnxruntime does not fit in 512Mi. `worker-default`
+goes to 4 GiB (1024Mi per child, matching `worker-critical`) and gains
+`--max-memory-per-child=900000`, which recycles a bloated child *between tasks* instead of
+letting the kubelet kill the container mid-task.
+
+`worker-ingestion` had the identical 512Mi ratio and runs the very ingestion path that
+drove `worker-default` into the loop — same ChromaDB indexing, same model per child. It
+had not been *seen* failing, which is not the same as having headroom, so it gets the same
+treatment: 4 GiB and `--max-memory-per-child`. No worker is now below 1024Mi per child.
+
+
 ### 2026-08-17 — Fix: worker-default OOM-killed in a loop re-downloading embedding weights
 
 Found on the live homelab while verifying an unrelated deploy: `worker-default` had **31

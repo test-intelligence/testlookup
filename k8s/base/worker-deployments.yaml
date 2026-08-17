@@ -243,6 +243,9 @@ spec:
             # shard count, update this list too.
             - ingestion,ingestion.shard.0,ingestion.shard.1,ingestion.shard.2,ingestion.shard.3,ingestion.shard.4,ingestion.shard.5,ingestion.shard.6,ingestion.shard.7
             - --max-tasks-per-child=200
+            # Recycle a child that crosses ~900Mi RSS rather than letting the
+            # cgroup limit kill the container out from under a running task.
+            - --max-memory-per-child=900000
           ports:
             - name: metrics
               containerPort: 9100
@@ -276,13 +279,19 @@ spec:
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
               mountPath: /var/cache/testlookup/chroma-onnx
+          # memory limit 2Gi -> 4Gi, i.e. 1024Mi per child at --concurrency=4.
+          # This worker shared worker-default's 512Mi-per-child budget, the
+          # joint-lowest of any worker, and runs the ingestion path that drove
+          # worker-default into an OOM loop — same ChromaDB indexing, same
+          # all-MiniLM model per child. It had not been seen failing, which is
+          # not the same as having headroom.
           resources:
             requests:
               cpu: 250m
               memory: 512Mi
             limits:
               cpu: 4000m
-              memory: 2Gi
+              memory: 4Gi
           livenessProbe:
             # Liveness only proves the process is alive — a lightweight pgrep avoids
             # the broker round-trip of `inspect ping`, which can exceed the timeout
@@ -552,6 +561,9 @@ spec:
             - -Q
             - default
             - --max-tasks-per-child=200
+            # Recycle a child that crosses ~900Mi RSS rather than letting the
+            # cgroup limit kill the container out from under a running task.
+            - --max-memory-per-child=900000
           ports:
             - name: metrics
               containerPort: 9100
@@ -580,19 +592,26 @@ spec:
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
               mountPath: /var/cache/testlookup/chroma-onnx
-          # memory limit 1Gi -> 2Gi. This was the only --concurrency=4 worker at
-          # 1Gi (worker-ingestion, also 4, has had 2Gi), and it OOM-killed in a
-          # loop: four prefork children each loading the all-MiniLM ONNX model
-          # do not fit, and the download that preceded each load made it worse.
-          # The cache volume above removes the repeated download; this makes the
-          # steady state fit.
+          # memory limit 1Gi -> 4Gi, i.e. 1024Mi per child at --concurrency=4.
+          #
+          # 2Gi was tried first, by analogy with worker-ingestion. Measured on
+          # the homelab: still OOMKilled, and still OOMKilled on a second run
+          # with the ONNX weights already cached on disk — so the download was
+          # never the dominant cost and the per-child budget was the whole
+          # problem. At 2Gi/4 that budget was 512Mi, the lowest of any worker,
+          # against ~1Gi for worker-critical and ~2Gi for worker-ai, and a child
+          # holding the all-MiniLM model plus onnxruntime does not fit in it.
+          #
+          # --max-memory-per-child recycles a child that crosses ~900Mi RSS
+          # between tasks. That is the difference between a graceful worker
+          # restart and the kubelet killing the whole container mid-task.
           resources:
             requests:
               cpu: 100m
               memory: 256Mi
             limits:
               cpu: 4000m
-              memory: 2Gi
+              memory: 4Gi
           livenessProbe:
             # Liveness only proves the process is alive — a lightweight pgrep avoids
             # the broker round-trip of `inspect ping`, which can exceed the timeout
