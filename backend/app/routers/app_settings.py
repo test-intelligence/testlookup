@@ -277,7 +277,9 @@ async def _load_ai_config(db: AsyncSession) -> dict:
         "anthropic_api_key": overrides.get("anthropic_api_key") or getattr(settings, "ANTHROPIC_API_KEY", None),
         "openrouter_api_key": overrides.get("openrouter_api_key") or getattr(settings, "OPENROUTER_API_KEY", None),
         "analysis_mode": overrides.get("analysis_mode", settings.ANALYSIS_MODE),
-        "knowledge_rag_enabled": overrides.get("knowledge_rag_enabled", settings.KNOWLEDGE_RAG_ENABLED),
+        # knowledge_rag_enabled is deliberately absent: it lives in the
+        # feature_flags row, not here. Keeping a copy in ai_config is what let
+        # this page advertise "Active" for a feature the gate had switched off.
     }
 
 
@@ -330,6 +332,10 @@ async def get_ai_config(
     cfg = await _load_ai_config(db)
 
     ml = await _ml_status()
+    # Same resolver the gate uses, so this page cannot show "Active" for a
+    # feature that answers 503.
+    from app.services.feature_flags import is_enabled
+    cfg["knowledge_rag_enabled"] = await is_enabled("knowledge_rag", db=db)
 
     return AIConfigRead(
         llm_provider=cfg["llm_provider"],
@@ -459,6 +465,38 @@ async def update_ai_config(
 
     merged = {**existing, **updates}
 
+    # The Knowledge-RAG switch on this page drives the feature_flags row that
+    # actually gates the endpoints — it does not get its own copy in ai_config.
+    # Two stores is exactly what let this page report "Active" while
+    # /knowledge-sources answered 503 and told the operator to come here.
+    #
+    # Routed through feature_flags.update_flag rather than
+    # feature_flag_service.set_flag because only the former invalidates the
+    # in-process and Redis caches that is_enabled() reads; without that, the
+    # switch appears not to work for up to 30 seconds after it is flipped.
+    rag_requested = updates.pop("knowledge_rag_enabled", None)
+    merged.pop("knowledge_rag_enabled", None)
+    if rag_requested is not None:
+        from app.services.feature_flags import create_flag, get_flag, update_flag
+        if await get_flag(db, "knowledge_rag") is None:
+            await create_flag(
+                db,
+                key="knowledge_rag",
+                description="RAG-backed knowledge grounding for test case generation.",
+                enabled_global=bool(rag_requested),
+                enabled_projects=None,
+                enabled_roles=None,
+                rollout_percent=100,
+                actor=current_user,
+            )
+        else:
+            await update_flag(
+                db,
+                key="knowledge_rag",
+                updates={"enabled_global": bool(rag_requested)},
+                actor=current_user,
+            )
+
     # Store secrets separately in secret_refs
     secrets = extract_secrets_from_config(_AI_CONFIG_KEY, updates)
     for key_name, raw_value in secrets.items():
@@ -494,8 +532,6 @@ async def update_ai_config(
         redis = get_redis()
         if "analysis_mode" in updates:
             await redis.set("config:analysis_mode", updates["analysis_mode"], ex=86400)
-        if "knowledge_rag_enabled" in updates:
-            await redis.set("config:knowledge_rag_enabled", "1" if updates["knowledge_rag_enabled"] else "0", ex=86400)
     except Exception:
         pass  # Redis cache is best-effort
 
@@ -503,6 +539,9 @@ async def update_ai_config(
 
     # ML model status for response
     ml = await _ml_status()
+    # Re-resolve rather than echo: report the flag as it now stands.
+    from app.services.feature_flags import is_enabled
+    rag_enabled_after = await is_enabled("knowledge_rag", db=db)
 
     # Re-resolve rather than echo the request: the response must report what
     # is actually in force after the ceiling, not what was asked for.
@@ -527,7 +566,7 @@ async def update_ai_config(
         anthropic_key_set=bool(merged.get("anthropic_api_key")),
         openrouter_key_set=bool(merged.get("openrouter_api_key")),
         analysis_mode=merged.get("analysis_mode", "auto"),
-        knowledge_rag_enabled=merged.get("knowledge_rag_enabled", False),
+        knowledge_rag_enabled=rag_enabled_after,
         **ml,
     )
 

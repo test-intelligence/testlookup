@@ -20,24 +20,16 @@ logger = structlog.get_logger(__name__)
 async def get_rag_status(db: AsyncSession) -> dict:
     """Return overall RAG feature status and adoption metrics.
 
-    Checks Redis cache → DB AppSetting → env-var fallback to determine
-    whether RAG is enabled (mirrors the logic in require_rag_enabled_async).
+    ``enabled`` comes from the same resolver the gate uses, so this cannot
+    report the feature on while the endpoints answer 503. The docstring here
+    used to claim it "mirrors the logic in require_rag_enabled_async"; it did
+    not — it read a Redis key and an AppSetting that the gate never consulted,
+    which is how a workspace ended up displaying "Active" for a feature that
+    was off everywhere that mattered.
     """
-    # Resolve effective enabled state: Redis → DB → env var
-    enabled: bool | None = None
-    try:
-        from app.db.redis_client import get_redis
-        redis = get_redis()
-        cached = await redis.get("config:knowledge_rag_enabled")
-        if cached is not None:
-            val = cached.decode() if isinstance(cached, bytes) else str(cached)
-            enabled = val == "1"
-    except Exception:
-        pass
+    from app.services.feature_flags import is_enabled
 
-    if enabled is None:
-        from app.services.knowledge_source_service import _is_rag_enabled_from_db
-        enabled = await _is_rag_enabled_from_db(db)
+    enabled = await is_enabled("knowledge_rag", db=db)
 
     total_sources = (await db.execute(
         select(func.count(KnowledgeSource.id)).where(KnowledgeSource.is_archived.is_(False))
@@ -53,7 +45,7 @@ async def get_rag_status(db: AsyncSession) -> dict:
 
     return {
         "enabled": enabled,
-        "feature_flag": "KNOWLEDGE_RAG_ENABLED",
+        "feature_flag": "knowledge_rag",
         "total_sources": total_sources,
         "total_batches": total_batches,
         "total_chunks": total_chunks,

@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-16 — Fix: Knowledge RAG had three gates and the UI toggled the wrong one
+
+Found during the UI sweep of the live homelab, where all three disagreed:
+
+```
+GET /feature-flags/knowledge_rag/status  ->  {"enabled": false}
+GET /settings/ai                          ->  knowledge_rag_enabled: true
+/settings/feature-flags rendered              knowledge_rag   OFF
+/settings/ai rendered                         "Enable Knowledge RAG   Active"
+GET /knowledge-sources/<id>/freshness     ->  503 "Knowledge RAG feature is not
+                                              enabled. Enable it from
+                                              Settings > AI Configuration."
+```
+
+The 503 sent the operator to the page that already said **Active**.
+
+`services/knowledge_source_service.py` held three resolvers over three stores:
+
+| resolver | store | who used it |
+| --- | --- | --- |
+| `_is_rag_enabled_from_db` | `ai_config.knowledge_rag_enabled` AppSetting — **the switch the UI wrote** | the RAG evaluator, and nothing else |
+| `require_rag_enabled_async` | `feature_flags` row | all four knowledge-source endpoints |
+| `require_rag_enabled` | env var only | **nothing — zero callers** |
+
+So flipping the switch the error message named changed whether the RAG evaluator
+ran, and nothing else.
+
+There is now one gate. `feature_flags.is_enabled` is the survivor because the flag
+service is the declared successor: `LEGACY_ENV_VAR_MAP` in `services/feature_flags.py`
+exists "during the one-release cutover from hand-rolled RAG flag to the new service" —
+the AppSetting *was* the hand-rolled flag. `PUT /settings/ai` now writes that flag row,
+`GET /settings/ai` reports it, and the `config:knowledge_rag_enabled` Redis mirror (a
+third copy of the same bit) is gone.
+
+The write goes through `feature_flags.update_flag` rather than
+`feature_flag_service.set_flag` — only the former invalidates the in-process and Redis
+caches `is_enabled` reads, so without it the switch would appear dead for 30 seconds
+after being flipped. It also earns the flag change an audit entry.
+
+`get_rag_status` claimed in its docstring to mirror the gate and did not; it read the
+Redis key and the AppSetting the gate never consulted. It calls the same resolver now,
+and reports `feature_flag: "knowledge_rag"` instead of the env var's name.
+
+**Behaviour change:** a workspace whose AppSetting said true while the flag said false —
+this homelab — now shows the switch **off**, which is what was actually in force the
+whole time. Re-enabling it there now takes effect.
+
+Three existing tests covered `require_rag_enabled`, the resolver with no callers. Passing
+tests over dead code are part of how three gates survived; they now drive the real one.
+
+
 ### 2026-08-16 — Fix: /trends and /overview disagreed about the same pass rate
 
 Found during the UI sweep of the live homelab, against the hand-computed fixture

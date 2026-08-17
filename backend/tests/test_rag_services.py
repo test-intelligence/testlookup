@@ -956,14 +956,21 @@ class TestDomainValidationEdgeCases:
 
 
 class TestFeatureFlagEdgeCases:
-    def test_require_rag_enabled_raises_503(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_gate_raises_503_with_a_pointer_to_the_switch(self, monkeypatch):
         from fastapi import HTTPException
         from app.services import knowledge_source_service as svc
-        monkeypatch.setattr(svc.settings, "KNOWLEDGE_RAG_ENABLED", False)
+
+        async def _off(key, **kwargs):
+            return False
+
+        monkeypatch.setattr("app.services.feature_flags.is_enabled", _off)
         with pytest.raises(HTTPException) as exc:
-            svc.require_rag_enabled()
+            await svc.require_rag_enabled_async(object())
         assert exc.value.status_code == 503
         assert "not enabled" in exc.value.detail
+        # The message names a page, so that page must drive this same flag.
+        assert "AI Configuration" in exc.value.detail
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

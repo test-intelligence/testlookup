@@ -236,15 +236,37 @@ class TestDomainAllowlistValidation:
 
 
 class TestFeatureFlag:
-    def test_require_rag_enabled_raises_when_disabled(self, monkeypatch):
+    """These used to exercise ``require_rag_enabled()`` — a sync, env-only gate
+    with **zero callers**. Passing tests over dead code were part of why three
+    disagreeing gates survived. They now drive the gate the endpoints use.
+    """
+
+    @pytest.mark.asyncio
+    async def test_gate_raises_503_when_the_flag_is_off(self, monkeypatch):
         from fastapi import HTTPException
         from app.services import knowledge_source_service as svc
-        monkeypatch.setattr(svc.settings, "KNOWLEDGE_RAG_ENABLED", False)
+
+        async def _off(key, **kwargs):
+            assert key == "knowledge_rag"
+            return False
+
+        monkeypatch.setattr("app.services.feature_flags.is_enabled", _off)
         with pytest.raises(HTTPException) as exc_info:
-            svc.require_rag_enabled()
+            await svc.require_rag_enabled_async(object())
         assert exc_info.value.status_code == 503
 
-    def test_require_rag_enabled_passes_when_enabled(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_gate_passes_when_the_flag_is_on(self, monkeypatch):
         from app.services import knowledge_source_service as svc
-        monkeypatch.setattr(svc.settings, "KNOWLEDGE_RAG_ENABLED", True)
-        svc.require_rag_enabled()  # should not raise
+
+        async def _on(key, **kwargs):
+            return True
+
+        monkeypatch.setattr("app.services.feature_flags.is_enabled", _on)
+        await svc.require_rag_enabled_async(object())  # must not raise
+
+    def test_the_dead_sync_gate_is_gone(self):
+        """It read the env var only, so it could never agree with the flag."""
+        from app.services import knowledge_source_service as svc
+        assert not hasattr(svc, "require_rag_enabled")
+        assert not hasattr(svc, "_is_rag_enabled_from_db")

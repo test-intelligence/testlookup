@@ -33,50 +33,46 @@ VALID_CLASSIFICATIONS = {e.value for e in KnowledgeClassification}
 
 
 # ── Feature gate ──────────────────────────────────────────────────────────────
-
-_AI_CONFIG_KEY = "ai_config"
-
-
-async def _is_rag_enabled_from_db(db: AsyncSession) -> bool:
-    """Check the DB AppSetting for knowledge_rag_enabled override."""
-    result = await db.execute(
-        select(AppSetting.value).where(AppSetting.key == _AI_CONFIG_KEY)
-    )
-    row = result.scalar_one_or_none()
-    if row and isinstance(row, dict):
-        val = row.get("knowledge_rag_enabled")
-        if val is not None:
-            return bool(val)
-    return settings.KNOWLEDGE_RAG_ENABLED
-
-
-def require_rag_enabled() -> None:
-    """Synchronous gate — checks the env-var default.
-
-    For runtime-configurable checks (DB/Redis override), use
-    ``require_rag_enabled_async(db)`` in routers/services that
-    have a DB session.
-    """
-    if not settings.KNOWLEDGE_RAG_ENABLED:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Knowledge RAG feature is not enabled. Enable it from Settings > AI Configuration.",
-        )
+#
+# ONE gate. There used to be three, reading three different stores, and on a
+# live deployment they disagreed:
+#
+#   feature_flags row 'knowledge_rag'    false   <- gated all four endpoints
+#   app_settings ai_config.knowledge_rag_enabled  true   <- what the UI toggled
+#   env KNOWLEDGE_RAG_ENABLED            false
+#
+# So /settings/ai displayed "Enable Knowledge RAG — Active" while every
+# knowledge-source endpoint answered 503 "Knowledge RAG feature is not enabled.
+# Enable it from Settings > AI Configuration" — sending the operator to the
+# switch they had already turned on. A third gate (a sync, env-only
+# ``require_rag_enabled``) had no callers at all.
+#
+# ``feature_flags.is_enabled`` is the survivor because the flag service is the
+# declared successor here: see LEGACY_ENV_VAR_MAP in services/feature_flags.py,
+# which exists "during the one-release cutover from hand-rolled RAG flag to the
+# new service". The AppSetting was the hand-rolled flag. It is gone, and
+# ``PUT /settings/ai`` now writes the flag row instead, so both settings pages
+# drive the same switch.
 
 
 async def require_rag_enabled_async(db: AsyncSession) -> None:
-    """Async gate — delegates to the generic feature flag service.
+    """The only Knowledge-RAG gate.
 
-    Uses the ``knowledge_rag`` flag in the ``feature_flags`` table (seeded
-    by migration 0062). Falls back to the legacy ``KNOWLEDGE_RAG_ENABLED``
-    env var during the cutover window via ``LEGACY_ENV_VAR_MAP``.
+    Resolves the ``knowledge_rag`` flag in the ``feature_flags`` table (seeded
+    by migration 0062), falling back to the legacy ``KNOWLEDGE_RAG_ENABLED``
+    env var via ``LEGACY_ENV_VAR_MAP``. Anything that needs to *read* the state
+    without raising should call ``is_enabled("knowledge_rag", db=db)`` directly
+    rather than growing a second resolver.
     """
     from app.services.feature_flags import is_enabled
     if await is_enabled("knowledge_rag", db=db):
         return
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Knowledge RAG feature is not enabled. Enable it from Settings > AI Configuration.",
+        detail=(
+            "Knowledge RAG feature is not enabled. Enable it from "
+            "Settings > AI Configuration."
+        ),
     )
 
 
