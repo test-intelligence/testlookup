@@ -65,9 +65,15 @@ spec:
           env:
             - name: PROMETHEUS_MULTIPROC_DIR
               value: /tmp/prometheus-multiproc
+            # Keep the embedding weights on the mounted cache below rather than
+            # in $HOME, which is /tmp here and is discarded on restart.
+            - name: CHROMA_ONNX_MODEL_DIR
+              value: /var/cache/testlookup/chroma-onnx
           volumeMounts:
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
+            - name: embedder-model-cache
+              mountPath: /var/cache/testlookup/chroma-onnx
           resources:
             requests:
               cpu: 250m
@@ -106,4 +112,9 @@ spec:
               type: RuntimeDefault
       volumes:
         - name: prometheus-multiproc
+          emptyDir: {}
+        # ChromaDB's all-MiniLM ONNX weights (79 MB) — see the note in
+        # worker-deployments.yaml. Fetched at most once per pod instead of
+        # once per container restart.
+        - name: embedder-model-cache
           emptyDir: {}

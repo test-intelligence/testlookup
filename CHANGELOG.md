@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: worker-default OOM-killed in a loop re-downloading embedding weights
+
+Found on the live homelab while verifying an unrelated deploy: `worker-default` had **31
+restarts**, exit 137, and ordinary test-report ingestion reproduced it on demand.
+
+```
+Last State: Terminated   Reason: OOMKilled   Exit Code: 137
+GET https://chroma-onnx-models.s3.amazonaws.com/all-MiniLM-L6-v2/onnx.tar.gz  200 OK
+  onnx.tar.gz: 100%|##########| 79.3M/79.3M
+```
+
+Two independent causes, both fixed here.
+
+**The archive was re-downloaded on every container restart.** ChromaDB caches the weights
+under `$HOME/.cache/chroma`, and `HOME` is `/tmp` in these pods — the container's writable
+layer, which a restart discards. So each OOM-kill came back to an empty cache, re-fetched
+79 MB, and that fetch fed the next OOM.
+
+`CHROMA_ONNX_MODEL_DIR` looked like the fix, and `local_embedder_guard`'s own error
+message recommends it as the air-gap side-load hatch. **It did neither.** The setting fed
+only that module's `_model_dir()` check while ChromaDB kept reading its own
+`DOWNLOAD_PATH`, so weights placed there made `model_present()` true, the guard stood
+aside, and ChromaDB looked elsewhere and downloaded anyway. `install_offline_embedder_guard`
+now repoints `ONNXMiniLM_L6_V2.DOWNLOAD_PATH` at the configured directory, which makes the
+documented hatch real and lets the cache live on a mounted volume.
+
+Every backend-image workload now mounts an `embedder-model-cache` emptyDir at
+`/var/cache/testlookup/chroma-onnx` with `CHROMA_ONNX_MODEL_DIR` pointing at it. An
+emptyDir outlives a *container* restart while the pod stands — which is exactly the case
+that was hurting — so the weights are fetched at most once per pod instead of once per
+crash.
+
+**The steady state did not fit either.** `worker-default` was the only `--concurrency=4`
+worker at a 1 GiB limit; `worker-ingestion`, also 4, has had 2 GiB. Four prefork children
+each loading an ONNX model do not fit in 1 GiB even with no download. Raised to 2 GiB.
+
+Note the scope of the earlier `local_embedder_guard` work: it closed the **egress** half of
+this defect (offline mode must cover weight acquisition, not just inference) and is
+unchanged in that respect. The memory half was still open, and is reachable on any
+deployment where `AI_OFFLINE_MODE=false` — which is every deployment using a cloud LLM.
+
+Baking the model into the image remains the better end state for air-gapped installs; this
+change makes that work too, since a baked-in model at the configured path is simply found.
+
+
 ### 2026-08-17 — Fix: feature-flag caches were invalidated before the commit
 
 Caught on the live homelab while verifying #653, not by review. Flipping the Knowledge-RAG

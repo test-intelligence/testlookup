@@ -38,6 +38,15 @@ spec:
           env:
             - name: APP_ENV
               value: "production"
+            # The API creates ChromaDB collections too (chat, semantic
+            # search), so it faces the same 79 MB weight download. Keep it
+            # on the mounted cache rather than $HOME, which is discarded on
+            # container restart.
+            - name: CHROMA_ONNX_MODEL_DIR
+              value: /var/cache/testlookup/chroma-onnx
+          volumeMounts:
+            - name: embedder-model-cache
+              mountPath: /var/cache/testlookup/chroma-onnx
           resources:
             requests:
               cpu: 250m
@@ -81,6 +90,11 @@ spec:
             seccompProfile:
               type: RuntimeDefault
       # Spread replicas across nodes; fall back to best-effort if topology unavailable
+      volumes:
+        # ChromaDB's all-MiniLM ONNX weights (79 MB) — see the note in
+        # worker-deployments.yaml.
+        - name: embedder-model-cache
+          emptyDir: {}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname

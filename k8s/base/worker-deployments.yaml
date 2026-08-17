@@ -92,11 +92,17 @@ spec:
             # files here and the exporter aggregates them.
             - name: PROMETHEUS_MULTIPROC_DIR
               value: /tmp/prometheus-multiproc
+            # Keep the embedding weights on the mounted cache above rather than
+            # in $HOME, which is /tmp here and is discarded on restart.
+            - name: CHROMA_ONNX_MODEL_DIR
+              value: /var/cache/testlookup/chroma-onnx
           # cpu limit 1000m -> 2000m to match --concurrency=2. Not separately
           # measured; same arithmetic as the ingestion worker below, which was.
           volumeMounts:
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
+            - name: embedder-model-cache
+              mountPath: /var/cache/testlookup/chroma-onnx
           resources:
             requests:
               cpu: 250m
@@ -155,6 +161,14 @@ spec:
         # persistent: the files describe this pod's live processes and
         # must start empty, or a restart would resurrect dead children.
         - name: prometheus-multiproc
+          emptyDir: {}
+        # ChromaDB's all-MiniLM ONNX weights (79 MB). An emptyDir outlives a
+        # *container* restart while the pod stands, which is exactly the case
+        # that was hurting: the cache used to sit in $HOME (/tmp) in the
+        # container's writable layer, so every OOM-kill came back to an empty
+        # directory and re-downloaded the archive, which then contributed to
+        # the next OOM. Now it is fetched at most once per pod.
+        - name: embedder-model-cache
           emptyDir: {}
 
 ---
@@ -244,6 +258,10 @@ spec:
             # files here and the exporter aggregates them.
             - name: PROMETHEUS_MULTIPROC_DIR
               value: /tmp/prometheus-multiproc
+            # Keep the embedding weights on the mounted cache above rather than
+            # in $HOME, which is /tmp here and is discarded on restart.
+            - name: CHROMA_ONNX_MODEL_DIR
+              value: /var/cache/testlookup/chroma-onnx
           # cpu limit raised 1000m -> 4000m (2026-08-08) on measurement.
           # --concurrency=4 under a 1-core limit is four processes that cannot
           # exceed one core between them. Under an 80-run ingest burst the
@@ -256,6 +274,8 @@ spec:
           volumeMounts:
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
+            - name: embedder-model-cache
+              mountPath: /var/cache/testlookup/chroma-onnx
           resources:
             requests:
               cpu: 250m
@@ -314,6 +334,14 @@ spec:
         # persistent: the files describe this pod's live processes and
         # must start empty, or a restart would resurrect dead children.
         - name: prometheus-multiproc
+          emptyDir: {}
+        # ChromaDB's all-MiniLM ONNX weights (79 MB). An emptyDir outlives a
+        # *container* restart while the pod stands, which is exactly the case
+        # that was hurting: the cache used to sit in $HOME (/tmp) in the
+        # container's writable layer, so every OOM-kill came back to an empty
+        # directory and re-downloaded the archive, which then contributed to
+        # the next OOM. Now it is fetched at most once per pod.
+        - name: embedder-model-cache
           emptyDir: {}
 
 ---
@@ -389,9 +417,15 @@ spec:
             # files here and the exporter aggregates them.
             - name: PROMETHEUS_MULTIPROC_DIR
               value: /tmp/prometheus-multiproc
+            # Keep the embedding weights on the mounted cache above rather than
+            # in $HOME, which is /tmp here and is discarded on restart.
+            - name: CHROMA_ONNX_MODEL_DIR
+              value: /var/cache/testlookup/chroma-onnx
           volumeMounts:
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
+            - name: embedder-model-cache
+              mountPath: /var/cache/testlookup/chroma-onnx
           resources:
             requests:
               cpu: 500m
@@ -450,6 +484,14 @@ spec:
         # persistent: the files describe this pod's live processes and
         # must start empty, or a restart would resurrect dead children.
         - name: prometheus-multiproc
+          emptyDir: {}
+        # ChromaDB's all-MiniLM ONNX weights (79 MB). An emptyDir outlives a
+        # *container* restart while the pod stands, which is exactly the case
+        # that was hurting: the cache used to sit in $HOME (/tmp) in the
+        # container's writable layer, so every OOM-kill came back to an empty
+        # directory and re-downloaded the archive, which then contributed to
+        # the next OOM. Now it is fetched at most once per pod.
+        - name: embedder-model-cache
           emptyDir: {}
 
 ---
@@ -525,6 +567,10 @@ spec:
             # files here and the exporter aggregates them.
             - name: PROMETHEUS_MULTIPROC_DIR
               value: /tmp/prometheus-multiproc
+            # Keep the embedding weights on the mounted cache above rather than
+            # in $HOME, which is /tmp here and is discarded on restart.
+            - name: CHROMA_ONNX_MODEL_DIR
+              value: /var/cache/testlookup/chroma-onnx
           # cpu limit 500m -> 4000m: --concurrency=4 under half a core was the
           # worst ratio of any worker (8 processes' worth of demand per core).
           # Not separately measured -- driving the default queue in isolation
@@ -532,13 +578,21 @@ spec:
           volumeMounts:
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
+            - name: embedder-model-cache
+              mountPath: /var/cache/testlookup/chroma-onnx
+          # memory limit 1Gi -> 2Gi. This was the only --concurrency=4 worker at
+          # 1Gi (worker-ingestion, also 4, has had 2Gi), and it OOM-killed in a
+          # loop: four prefork children each loading the all-MiniLM ONNX model
+          # do not fit, and the download that preceded each load made it worse.
+          # The cache volume above removes the repeated download; this makes the
+          # steady state fit.
           resources:
             requests:
               cpu: 100m
               memory: 256Mi
             limits:
               cpu: 4000m
-              memory: 1Gi
+              memory: 2Gi
           livenessProbe:
             # Liveness only proves the process is alive — a lightweight pgrep avoids
             # the broker round-trip of `inspect ping`, which can exceed the timeout
@@ -581,6 +635,14 @@ spec:
         # persistent: the files describe this pod's live processes and
         # must start empty, or a restart would resurrect dead children.
         - name: prometheus-multiproc
+          emptyDir: {}
+        # ChromaDB's all-MiniLM ONNX weights (79 MB). An emptyDir outlives a
+        # *container* restart while the pod stands, which is exactly the case
+        # that was hurting: the cache used to sit in $HOME (/tmp) in the
+        # container's writable layer, so every OOM-kill came back to an empty
+        # directory and re-downloaded the archive, which then contributed to
+        # the next OOM. Now it is fetched at most once per pod.
+        - name: embedder-model-cache
           emptyDir: {}
 
 ---

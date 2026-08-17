@@ -75,18 +75,25 @@ class OfflineModelUnavailable(RuntimeError):
     """
 
 
+def _configured_model_dir() -> Optional[Path]:
+    """``CHROMA_ONNX_MODEL_DIR``, or None when unset."""
+    from app.core.config import settings
+
+    configured = getattr(settings, "CHROMA_ONNX_MODEL_DIR", None)
+    return Path(str(configured)) if configured else None
+
+
 def _model_dir() -> Optional[Path]:
     """Where the local ONNX model should live.
 
     ``CHROMA_ONNX_MODEL_DIR`` wins when set — that is the side-load hatch for
-    air-gapped installs. Otherwise fall back to whatever path ChromaDB itself
-    resolved, so a baked-in image at the default location still works.
+    air-gapped installs, and the way to move the cache onto a mounted volume.
+    Otherwise fall back to whatever path ChromaDB itself resolved, so a
+    baked-in image at the default location still works.
     """
-    from app.core.config import settings
-
-    configured = getattr(settings, "CHROMA_ONNX_MODEL_DIR", None)
-    if configured:
-        return Path(str(configured))
+    configured = _configured_model_dir()
+    if configured is not None:
+        return configured
     try:
         from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import (
             ONNXMiniLM_L6_V2,
@@ -169,6 +176,25 @@ def install_offline_embedder_guard() -> bool:
         except Exception:  # noqa: BLE001 — chromadb is optional
             logger.info("embedder_guard_skipped", reason="chromadb not installed")
             return False
+
+        # Point ChromaDB at the configured directory *before* wrapping it.
+        #
+        # Without this, ``CHROMA_ONNX_MODEL_DIR`` only ever fed this module's
+        # own ``model_present()`` check while ChromaDB kept reading its
+        # hard-coded ``DOWNLOAD_PATH`` (``$HOME/.cache/chroma/...``). Two
+        # consequences, both observed:
+        #
+        #  * The side-load hatch this module's own error message recommends did
+        #    not work. Weights placed in CHROMA_ONNX_MODEL_DIR made
+        #    ``model_present()`` true, the guard stood aside, and ChromaDB then
+        #    looked somewhere else and downloaded anyway.
+        #  * The cache could not be moved onto a mounted volume. In the worker
+        #    pods ``HOME`` is ``/tmp``, which lives in the container's writable
+        #    layer, so an OOM-killed container came back with an empty cache and
+        #    re-fetched all 79 MB — every restart, forever.
+        configured = _configured_model_dir()
+        if configured is not None:
+            ONNXMiniLM_L6_V2.DOWNLOAD_PATH = str(configured)
 
         original = ONNXMiniLM_L6_V2._download_model_if_not_exists
 

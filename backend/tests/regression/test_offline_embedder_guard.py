@@ -373,3 +373,71 @@ async def test_a_successful_index_still_advances_the_cursor(monkeypatch, func_na
     )
     assert result == 1
     assert len(cursor_calls) == 1
+
+# ── The cache location is configurable, and ChromaDB must honour it ──────────
+#
+# Regression (homelab, 2026-08-17): ``worker-default`` OOM-killed in a loop.
+# ChromaDB re-downloaded the 79 MB all-MiniLM archive on **every container
+# restart**, because in the worker pods ``HOME`` is ``/tmp`` — the container's
+# writable layer, discarded on restart — and the download plus ONNX load across
+# four prefork children did not fit the 1 GiB limit.
+#
+# ``CHROMA_ONNX_MODEL_DIR`` looked like the way to move that cache onto a
+# mounted volume, and this module's own error message recommends it as the
+# air-gap side-load hatch. It did neither: it only ever fed ``_model_dir()``
+# here, while ChromaDB kept reading its own ``DOWNLOAD_PATH``. Weights placed
+# there made ``model_present()`` true, the guard stood aside, and ChromaDB
+# looked elsewhere and downloaded anyway.
+
+def test_configured_dir_repoints_chromadbs_own_download_path(monkeypatch, tmp_path):
+    """Installing the guard must move ChromaDB's path, not just ours."""
+    from app.core.config import settings
+
+    cache = tmp_path / "chroma-onnx"
+    monkeypatch.setattr(settings, "CHROMA_ONNX_MODEL_DIR", str(cache))
+
+    fake = _FakeEmbedder
+    original_path = fake.DOWNLOAD_PATH
+    monkeypatch.setattr(fake, "DOWNLOAD_PATH", original_path, raising=False)
+    monkeypatch.setattr(
+        "chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2.ONNXMiniLM_L6_V2",
+        fake,
+    )
+
+    assert guard.install_offline_embedder_guard() is True
+    assert str(fake.DOWNLOAD_PATH) == str(cache), (
+        "ChromaDB still points at its own path, so the configured directory is "
+        "cosmetic: weights side-loaded there are invisible to the downloader "
+        "and a mounted cache volume has no effect"
+    )
+
+
+def test_an_unset_dir_leaves_chromadbs_default_alone(monkeypatch):
+    """A baked-in image at the default location must keep working."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "CHROMA_ONNX_MODEL_DIR", "")
+
+    fake = _FakeEmbedder
+    default = Path("/nonexistent/chroma/onnx_models/all-MiniLM-L6-v2")
+    monkeypatch.setattr(fake, "DOWNLOAD_PATH", default, raising=False)
+    monkeypatch.setattr(
+        "chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2.ONNXMiniLM_L6_V2",
+        fake,
+    )
+
+    assert guard.install_offline_embedder_guard() is True
+    assert fake.DOWNLOAD_PATH == default
+
+
+def test_model_dir_still_prefers_the_configured_path(monkeypatch, tmp_path):
+    """The two resolvers must not drift apart again."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "CHROMA_ONNX_MODEL_DIR", str(tmp_path / "side"))
+    assert guard._model_dir() == tmp_path / "side"
+    assert guard._configured_model_dir() == tmp_path / "side"
+
+    monkeypatch.setattr(settings, "CHROMA_ONNX_MODEL_DIR", "")
+    assert guard._configured_model_dir() is None
+
