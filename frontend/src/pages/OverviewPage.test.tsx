@@ -609,3 +609,107 @@ describe('OverviewPage — blockers panel describes its own metric', () => {
     expect(screen.getByText(/No new failures in the last 24 h; existing failures/i)).toBeInTheDocument()
   })
 })
+
+describe('OverviewPage — a KPI caption must not deny its own value', () => {
+  // Regression (homelab, 2026-08-16): the caption under each KPI fills the slot
+  // the sparkline would occupy, and appears whenever the series has fewer than
+  // two points. It was worded as a claim about the metric, so a project whose
+  // runs all landed on one day read:
+  //
+  //     NEW FAILURES · 24H   23     14d · no failures recorded
+  //     TOTAL EXECUTIONS     60     14d · awaiting runs
+  //     AVG PASS RATE       57%     14d · need >= 2 runs      <- 6 runs existed
+  //
+  // The shortfall is days of history, not runs, and it explains a missing
+  // trend line, not a missing metric.
+
+  beforeEach(() => {
+    valueKpiState.metrics = undefined
+    analyticsViewState.widgetIds = [
+      'total_executions_kpi', 'avg_pass_rate_kpi', 'new_failures_kpi',
+    ]
+  })
+
+  async function renderOneDayOfData() {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'RED',
+        total_executions_7d: { value: 60 },
+        avg_pass_rate_7d: { value: 57.4 },
+        active_defects: { value: 0 },
+        flaky_test_count: { value: 1 },
+        new_failures_24h: { value: 23 },
+        avg_duration_ms: { value: 0 },
+      },
+      isLoading: false,
+    })
+    // Six runs, all on one day — one trend point, so no sparkline anywhere.
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        data: [
+          { date: '2026-08-16', passed: 31, failed: 17, skipped: 6, broken: 6, total: 60, pass_rate: 57.4 },
+        ],
+      },
+      isLoading: false,
+    })
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findAllByText(/New failures/i)
+  }
+
+  it('does not report "no failures recorded" while showing 23 of them', async () => {
+    await renderOneDayOfData()
+    expect(screen.queryByText(/no failures recorded/i)).not.toBeInTheDocument()
+  })
+
+  it('does not report "awaiting runs" while showing 60 executions', async () => {
+    await renderOneDayOfData()
+    expect(screen.queryByText(/awaiting runs/i)).not.toBeInTheDocument()
+  })
+
+  it('does not blame a run shortfall for a history shortfall', async () => {
+    await renderOneDayOfData()
+    expect(screen.queryByText(/need ≥ 2 runs/i)).not.toBeInTheDocument()
+  })
+
+  it('explains the missing trend line instead, naming the days it has', async () => {
+    await renderOneDayOfData()
+    // The window store defaults to 30d.
+    expect(screen.getAllByText(/1 of 30 days has data · no trend line/).length).toBe(3)
+    // And the execution-trend chart blamed runs for the same shortfall.
+    expect(screen.queryByText(/2 timed runs/)).not.toBeInTheDocument()
+    expect(screen.getByText(/1 of 30 days has data — a trend line needs at least 2/)).toBeInTheDocument()
+  })
+
+  it('still says so plainly when the window really is empty', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value: 0 },
+        avg_pass_rate_7d: { value: 0 },
+        active_defects: { value: 0 },
+        flaky_test_count: { value: 0 },
+        new_failures_24h: { value: 0 },
+        avg_duration_ms: { value: 0 },
+      },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect((await screen.findAllByText(/30d · no executions recorded/)).length).toBeGreaterThan(0)
+  })
+})

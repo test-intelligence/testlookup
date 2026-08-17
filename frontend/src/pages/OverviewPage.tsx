@@ -639,7 +639,9 @@ function ExecutionTrendChart({ trends, days }: { trends: TrendPoint[]; days: num
         className="flex items-center justify-center rounded-md text-[var(--color-text-faint)] text-[12px]"
         style={{ height: 240, borderTop: '1px dashed var(--color-border)' }}
       >
-        Need ≥ 2 timed runs over {days} days for a trend.
+        {data.length === 0
+          ? `No executions in the last ${days} days.`
+          : `1 of ${days} days has data — a trend line needs at least 2.`}
       </div>
     )
   }
@@ -997,6 +999,16 @@ export default function OverviewPage() {
   const isFreshInstall = !summaryLoading && totalExecutions === 0 && recentRunItems.length === 0
   const showFirstRunGuide = isFreshInstall && !guideDismissed
 
+  // The caption under a KPI fills the slot the sparkline would have used, so it
+  // has to explain the missing *trend line* — not deny the metric printed above
+  // it. It used to read "no failures recorded" beneath a 23, "awaiting runs"
+  // beneath 60 executions, and "need >= 2 runs" for a project with six of them
+  // (the shortfall is days of history, not runs).
+  const sparklineHint = (dayCount: number) =>
+    dayCount === 0
+      ? `${days}d · no executions recorded`
+      : `1 of ${days} days has data · no trend line`
+
   const totalSeries = trendData.map((p) => p.passed + p.failed + p.skipped + (p.broken ?? 0))
   const passRateSeries = trendData.map((p) => Math.round(((p.pass_rate ?? 0)) * 100) / 100)
   const failedSeries = trendData.map((p) => p.failed)
@@ -1165,7 +1177,7 @@ export default function OverviewPage() {
                 tone="neutral"
                 gradId="kpi-total"
                 series={totalSeries.length >= 2 ? totalSeries : undefined}
-                emptyMsg={`${days}d · awaiting runs`}
+                emptyMsg={sparklineHint(totalSeries.length)}
                 delta={deltaFromMetric(summary?.total_executions_7d)}
                 linkTo="/runs"
                 linkLabel="View runs"
@@ -1179,7 +1191,7 @@ export default function OverviewPage() {
                 tone={passRate >= 90 ? 'good' : passRate >= 70 ? 'warn' : 'bad'}
                 gradId="kpi-pass"
                 series={passRateSeries.length >= 2 ? passRateSeries : undefined}
-                emptyMsg={`${days}d · need ≥ 2 runs`}
+                emptyMsg={sparklineHint(passRateSeries.length)}
                 delta={deltaFromMetric(summary?.avg_pass_rate_7d, true)}
               />
             )}
@@ -1214,7 +1226,7 @@ export default function OverviewPage() {
                 tone={newFailures === 0 ? 'good' : 'bad'}
                 gradId="kpi-failures"
                 series={failedSeries.length >= 2 ? failedSeries : undefined}
-                emptyMsg={`${days}d · no failures recorded`}
+                emptyMsg={sparklineHint(failedSeries.length)}
                 delta={deltaFromMetric(summary?.new_failures_24h)}
                 linkTo="/failures"
                 linkLabel="View failures"

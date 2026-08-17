@@ -89,6 +89,26 @@ Removed rather than reworded: `Sync latency p95` (no source), `Last sync` (no cl
 `Webhook v2 · auto-link enabled` (nothing reads it), `Auto-link rule misses … in last 7d`
 (it rendered the all-time unlinked count), and the header's `synced just now`.
 "Bridge settings →" now goes to /settings/integrations.
+### 2026-08-16 — Fix: Overview KPI captions contradicted the values above them
+
+Found during the UI sweep of the live homelab, on a project whose six runs all landed on
+one day:
+
+```
+NEW FAILURES · 24H    23      14d · no failures recorded
+TOTAL EXECUTIONS      60      14d · awaiting runs
+AVG PASS RATE        57%      14d · need ≥ 2 runs        <- six runs existed
+```
+
+The caption fills the slot the sparkline would have used and appears whenever the series
+has fewer than two points. It was worded as a claim about the *metric*, so it read as a
+denial of the number printed directly above it. The shortfall is also days of history,
+not runs — six runs on one day is one point.
+
+Captions now explain the missing trend line and name what they have: "1 of 14 days has
+data · no trend line", or "14d · no executions recorded" when the window really is empty.
+The execution-trend chart said "Need ≥ 2 timed runs over 14 days" for the same reason and
+now says the same thing about days.
 
 
 ### 2026-08-16 — Fix: deleted projects were still voting in the dashboard verdict
