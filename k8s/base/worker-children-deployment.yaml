@@ -89,16 +89,18 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
+            # A file written by the worker_ready signal — see the note in
+            # worker-deployments.yaml. `inspect ping` measures responsiveness,
+            # not health, so a busy worker reads as NotReady and the rollout
+            # deadlocks. Liveness (pgrep, above) still catches a dead worker.
             exec:
               command:
-                - sh
-                - -c
-                - >-
-                  celery -A app.worker.celery_app inspect ping
-                  --destination "agent-children@$(hostname)" --timeout=10
+                - test
+                - -f
+                - /tmp/celery-worker-ready
             initialDelaySeconds: 15
             periodSeconds: 30
-            timeoutSeconds: 15
+            timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
             runAsNonRoot: true

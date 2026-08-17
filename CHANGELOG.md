@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: the readiness probe deadlocked a rollout under load
+
+Found while deploying the worker memory fix. The probe ran
+`celery -A app.worker.celery_app inspect ping --timeout=10` inside a 15 s exec — a
+control-channel round-trip, so it measures how *responsive* a worker is, not whether it is
+healthy. With four prefork children pinned at the CPU limit the reply missed the deadline:
+
+```
+Warning  Unhealthy  28s (x13 over 5m32s)  kubelet
+  Readiness probe failed: command timed out:
+  "celery -A app.worker.celery_app inspect ping --timeout=10"
+```
+
+The worker's own log showed it consuming tasks throughout, `restarts=0`, no OOM. It was
+busy, not broken.
+
+For a queue consumer with **no Service in front of it**, readiness gates only the rollout,
+so marking a busy worker NotReady is worse than useless — it stops the deploy finishing:
+
+```
+rs …-5f546fc8b7   desired=2  ready=1    <- new revision, 4Gi
+rs …-6bb47455bc   desired=1  ready=0    <- old revision, 2Gi, 6 restarts, OOM-looping
+```
+
+The Deployment could not scale the old ReplicaSet down, so the pod that was OOM-looping at
+2 GiB stayed alive serving the queue while its fixed replacement sat NotReady beside it.
+The deploy script's DEGRADED verdict was the same cause.
+
+`worker_ready` now writes `/tmp/celery-worker-ready` and `worker_shutdown` removes it; the
+probe checks for the file. That signal fires once the consumer has connected to the broker
+and started consuming — which is what readiness should mean here — and a file check costs
+nothing under load. Liveness stays on `pgrep` and remains what catches a dead worker.
+
+The manifests already carried a comment recording that `inspect ping` "can exceed the
+timeout under load and kill a worker mid-task" — that lesson had been applied to liveness
+and not to readiness.
+
+
 ### 2026-08-17 — Fix: worker-default's per-child memory budget was half of any peer
 
 Follow-up to the OOM fix earlier today, which was **half right**. Verified on the live

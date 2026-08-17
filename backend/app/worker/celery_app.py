@@ -8,6 +8,7 @@ from celery.signals import (
     worker_process_init,
     worker_process_shutdown,
     worker_ready,
+    worker_shutdown,
 )
 from celery.schedules import crontab
 from kombu import Exchange, Queue
@@ -494,6 +495,51 @@ def _record_task_runtime(task_id=None, task=None, **_kwargs: object) -> None:
             queue_name=queue or "unknown",
         ).observe(time.perf_counter() - started)
     except Exception:  # noqa: BLE001 — metrics must never break the task
+        pass
+
+
+#: Readiness sentinel. Written once the worker has booted and connected to the
+#: broker; removed on shutdown.
+READY_SENTINEL = "/tmp/celery-worker-ready"
+
+
+@worker_ready.connect
+def _mark_worker_ready(**_kwargs: object) -> None:
+    """Signal readiness with a file instead of a control-channel round-trip.
+
+    The readiness probe used to run ``celery inspect ping --timeout=10`` inside
+    a 15 s exec. That measures how *responsive* the worker is, not whether it
+    is working — and under a saturated prefork pool (four children pinned at
+    the CPU limit) the reply misses the deadline. Kubernetes then marks a
+    perfectly healthy worker NotReady.
+
+    For a queue consumer with no Service in front of it, readiness gates only
+    the rollout, so that failure mode is worse than useless: it **deadlocks the
+    deploy**. Observed on the homelab — the new ReplicaSet never reported
+    Ready, so the Deployment could not scale down the old one, and an
+    OOM-looping pod from the previous revision stayed alive serving the queue
+    while the replacement sat NotReady beside it.
+
+    ``worker_ready`` fires after the consumer has connected to the broker and
+    begun consuming, which is exactly the condition readiness should express,
+    and a file check costs nothing under load. Liveness stays on ``pgrep`` and
+    remains the thing that catches a dead worker.
+    """
+    try:
+        with open(READY_SENTINEL, "w", encoding="utf-8") as fh:
+            fh.write("ready\n")
+    except OSError:  # noqa: BLE001 — readiness must never stop a worker booting
+        pass
+
+
+@worker_shutdown.connect
+def _clear_worker_ready(**_kwargs: object) -> None:
+    """Drop the sentinel so a draining worker stops reporting Ready."""
+    import os
+
+    try:
+        os.remove(READY_SENTINEL)
+    except OSError:  # noqa: BLE001 — already gone, or never written
         pass
 
 

@@ -124,17 +124,24 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
+            # A file written by the worker_ready signal — not `inspect ping`.
+            # The ping is a control-channel round-trip, so it measures how
+            # *responsive* the worker is rather than whether it is working, and
+            # a saturated prefork pool misses the 15 s deadline. Readiness on a
+            # queue consumer with no Service gates only the rollout, so that
+            # turns a busy worker into a deadlocked deploy: observed here, where
+            # the new ReplicaSet never went Ready, the Deployment could not
+            # scale the old one down, and an OOM-looping pod from the previous
+            # revision kept serving the queue. Liveness (pgrep, above) is still
+            # what catches a dead worker.
             exec:
               command:
-                - celery
-                - -A
-                - app.worker.celery_app
-                - inspect
-                - ping
-                - --timeout=10
+                - test
+                - -f
+                - /tmp/celery-worker-ready
             initialDelaySeconds: 15
             periodSeconds: 30
-            timeoutSeconds: 15
+            timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
             runAsNonRoot: true
@@ -306,17 +313,24 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
+            # A file written by the worker_ready signal — not `inspect ping`.
+            # The ping is a control-channel round-trip, so it measures how
+            # *responsive* the worker is rather than whether it is working, and
+            # a saturated prefork pool misses the 15 s deadline. Readiness on a
+            # queue consumer with no Service gates only the rollout, so that
+            # turns a busy worker into a deadlocked deploy: observed here, where
+            # the new ReplicaSet never went Ready, the Deployment could not
+            # scale the old one down, and an OOM-looping pod from the previous
+            # revision kept serving the queue. Liveness (pgrep, above) is still
+            # what catches a dead worker.
             exec:
               command:
-                - celery
-                - -A
-                - app.worker.celery_app
-                - inspect
-                - ping
-                - --timeout=10
+                - test
+                - -f
+                - /tmp/celery-worker-ready
             initialDelaySeconds: 15
             periodSeconds: 30
-            timeoutSeconds: 15
+            timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
             runAsNonRoot: true
@@ -456,17 +470,24 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
+            # A file written by the worker_ready signal — not `inspect ping`.
+            # The ping is a control-channel round-trip, so it measures how
+            # *responsive* the worker is rather than whether it is working, and
+            # a saturated prefork pool misses the 15 s deadline. Readiness on a
+            # queue consumer with no Service gates only the rollout, so that
+            # turns a busy worker into a deadlocked deploy: observed here, where
+            # the new ReplicaSet never went Ready, the Deployment could not
+            # scale the old one down, and an OOM-looping pod from the previous
+            # revision kept serving the queue. Liveness (pgrep, above) is still
+            # what catches a dead worker.
             exec:
               command:
-                - celery
-                - -A
-                - app.worker.celery_app
-                - inspect
-                - ping
-                - --timeout=10
+                - test
+                - -f
+                - /tmp/celery-worker-ready
             initialDelaySeconds: 15
             periodSeconds: 30
-            timeoutSeconds: 15
+            timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
             runAsNonRoot: true
@@ -626,17 +647,24 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
+            # A file written by the worker_ready signal — not `inspect ping`.
+            # The ping is a control-channel round-trip, so it measures how
+            # *responsive* the worker is rather than whether it is working, and
+            # a saturated prefork pool misses the 15 s deadline. Readiness on a
+            # queue consumer with no Service gates only the rollout, so that
+            # turns a busy worker into a deadlocked deploy: observed here, where
+            # the new ReplicaSet never went Ready, the Deployment could not
+            # scale the old one down, and an OOM-looping pod from the previous
+            # revision kept serving the queue. Liveness (pgrep, above) is still
+            # what catches a dead worker.
             exec:
               command:
-                - celery
-                - -A
-                - app.worker.celery_app
-                - inspect
-                - ping
-                - --timeout=10
+                - test
+                - -f
+                - /tmp/celery-worker-ready
             initialDelaySeconds: 15
             periodSeconds: 30
-            timeoutSeconds: 15
+            timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
             runAsNonRoot: true
