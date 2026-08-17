@@ -104,7 +104,14 @@ async def get_run_summaries(
                     f"Pass rate: {pass_rate:.1f}% ({passed}/{executed} executed"
                     + (f", {skipped} skipped" if skipped else "")
                     + "). "
-                    + "AI analysis is being generated and will appear shortly."
+                    # Nothing records whether analysis was ever requested for
+                    # a run: ingestion takes a ``run_ai`` flag and, when it is
+                    # false, only logs ``agent_pipeline_skipped``. This used to
+                    # read "AI analysis is being generated and will appear
+                    # shortly" for every run without a summary -- a promise that
+                    # never came true for any run ingested with run_ai=false, or
+                    # any whose analysis had failed. State what is known.
+                    + "No AI analysis has been generated for this run."
                 ),
                 "markdown_report": None,
                 "anomaly_count": 0,

@@ -109,6 +109,26 @@ Captions now explain the missing trend line and name what they have: "1 of 14 da
 data · no trend line", or "14d · no executions recorded" when the window really is empty.
 The execution-trend chart said "Need ≥ 2 timed runs over 14 days" for the same reason and
 now says the same thing about days.
+### 2026-08-16 — Fix: chat run cards promised an AI analysis nobody had queued
+
+Found during the UI sweep of the live homelab. Six runs were ingested with `run_ai` set
+on one of them. The five others each rendered:
+
+```
+ui-5   AI PENDING   just now
+  Build ui-5 completed — 3 tests failed. Pass rate: 66.7% (6/9 executed, 1 skipped).
+  AI analysis is being generated and will appear shortly.
+```
+
+Nothing was being generated, and nothing ever would be. `finalize_run` queues the agent
+pipeline only when `run_ai` is set; otherwise it logs `agent_pipeline_skipped` and
+returns. That decision is not persisted anywhere, so the stub builder — which fires for
+every run with no summary in Mongo — cannot distinguish "queued" from "never asked for"
+from "failed permanently". It asserted the most optimistic of the three unconditionally.
+
+The card now states there is no analysis instead of predicting one, and the badge reads
+NO AI ANALYSIS without the pulsing spinner that implied work in progress. The counts
+beside it were already right and are pinned by the new test.
 
 
 ### 2026-08-16 — Fix: deleted projects were still voting in the dashboard verdict

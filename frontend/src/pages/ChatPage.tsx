@@ -147,7 +147,7 @@ function RunSummaryCard({
           {summary.is_regression
             ? <AlertTriangle className="w-4 h-4 text-[var(--status-failed)]" />
             : summary.is_stub
-              ? <Bot className="w-4 h-4 text-[var(--color-text-muted)] animate-pulse" />
+              ? <Bot className="w-4 h-4 text-[var(--color-text-muted)]" />
               : <CheckCircle2 className="w-4 h-4 text-[var(--status-passed)]" />}
         </div>
 
@@ -158,7 +158,7 @@ function RunSummaryCard({
             </span>
             {summary.is_stub && (
               <span className="text-[10px] bg-[var(--color-bg-hover)]/60 text-[var(--color-text-muted)] border border-[var(--color-border-light)]/40 px-1.5 py-0.5 rounded font-medium">
-                AI PENDING
+                NO AI ANALYSIS
               </span>
             )}
             {!summary.is_stub && summary.is_regression && (
