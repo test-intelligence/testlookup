@@ -63,6 +63,33 @@ their windows from a local clock date and stamped the cells with `toISOString()`
 now use the same helpers. That mix turns out to produce the same day sequence as staying
 in UTC — DST transitions included — so this part is consolidation, not a second fix, and
 `calendarDay.test.ts` pins the equivalence so it stays that way.
+### 2026-08-16 — Fix: /defects reported a Jira connection it had never checked
+
+Found during the UI sweep of the live homelab, whose Jira has never been configured.
+The bridge card rendered:
+
+```
+Jira bridge · jira                        Connected
+Last sync             just now
+Webhook v2 · auto-link enabled
+```
+
+`GET /api/v1/settings/integrations` on that same workspace returns
+`jira_enabled: false`, `jira_domain: null`, `jira_token_set: false`. None of the card was
+wired to anything: the green badge, the host, the sync time and the webhook line were all
+literals, and "Bridge settings →" toasted "coming in Phase 2". A user reading it would
+believe their defects were syncing somewhere.
+
+The card now reads the config and reports one of three states. **Unknown** is a state in
+its own right — that endpoint needs QA_LEAD, so a developer gets a 403 and the page has
+not been told anything; it must not fall back to either claim. "Enabled" alone is not
+"connected" either: the toggle can be on with no host and no credential.
+
+Removed rather than reworded: `Sync latency p95` (no source), `Last sync` (no clock),
+`Webhook v2 · auto-link enabled` (nothing reads it), `Auto-link rule misses … in last 7d`
+(it rendered the all-time unlinked count), and the header's `synced just now`.
+"Bridge settings →" now goes to /settings/integrations.
+
 
 ### 2026-08-16 — Fix: deleted projects were still voting in the dashboard verdict
 

@@ -59,6 +59,7 @@ import WidgetPicker from '@/components/analytics/WidgetPicker'
 import DefectIntakeModal from '@/components/defects/DefectIntakeModal'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { refreshDefects, useDefects, useFailureCategories } from '@/hooks/useMetrics'
+import { jiraBridgeState, useIntegrationsConfig, type JiraBridgeState } from '@/hooks/useIntegrationsConfig'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { isSafeExternalUrl } from '@/utils/safeUrl'
 import type { DefectItem } from '@/types/analytics'
@@ -1204,7 +1205,19 @@ function ThSort({
 }
 
 // ── Jira bridge card ─────────────────────────────────────────────────────
-function JiraBridgeCard({ model, host = 'jira' }: { model: QueueModel; host?: string }) {
+const BRIDGE_BADGE: Record<JiraBridgeState, { label: string; color: string }> = {
+  connected:      { label: 'Connected',      color: 'var(--status-passed)' },
+  not_configured: { label: 'Not configured', color: 'var(--color-text-muted)' },
+  unknown:        { label: 'Unknown',        color: 'var(--status-broken)' },
+}
+
+function JiraBridgeCard({ model }: { model: QueueModel }) {
+  const { config } = useIntegrationsConfig()
+  const state = jiraBridgeState(config)
+  const badge = BRIDGE_BADGE[state]
+  // The host is whatever the workspace is pointed at. It used to be the
+  // literal string 'jira' whether or not anything was configured.
+  const host = config?.jira_domain ?? '—'
   const linkedCount = model.total - model.unlinkedTotal
   const linkedPct = model.total > 0 ? Math.round((linkedCount / model.total) * 100) : 100
   return (
@@ -1218,33 +1231,36 @@ function JiraBridgeCard({ model, host = 'jira' }: { model: QueueModel; host?: st
       rightSlot={
         <span
           className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold"
-          style={{ background: 'color-mix(in srgb, var(--status-passed) 15%, transparent)', color: 'var(--status-passed)', border: '1px solid color-mix(in srgb, var(--status-passed) 25%, transparent)' }}
+          style={{ background: `color-mix(in srgb, ${badge.color} 15%, transparent)`, color: badge.color, border: `1px solid color-mix(in srgb, ${badge.color} 25%, transparent)` }}
         >
-          <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--status-passed)' }} />
-          Connected
+          <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: badge.color }} />
+          {badge.label}
         </span>
       }
     >
+      {state !== 'connected' && (
+        <p className="px-4 pt-3 pb-0 m-0 text-[12px] text-[var(--color-text-secondary)]">
+          {state === 'not_configured'
+            ? <>No Jira workspace is configured, so nothing here is syncing. The link columns below reflect ticket ids already stored on these defects. <Link to="/settings/integrations" style={{ color: 'var(--color-accent)' }}>Configure Jira →</Link></>
+            : <>Integration settings are readable by QA leads and admins only, so this view cannot confirm whether Jira is connected.</>}
+        </p>
+      )}
       <div className="px-4 py-3 flex flex-col gap-1.5 text-[12px]">
         <BridgeRow l="Linked defects" v={<>{linkedCount} / {model.total} <span className="text-[var(--color-text-muted)]">({linkedPct}%)</span></>} />
         <BridgeRow l="Unlinked" v={<span style={{ color: model.unlinkedTotal > 0 ? 'var(--status-broken)' : 'var(--status-passed)' }}>{model.unlinkedTotal}{model.unlinkedP0 > 0 ? ` · ${model.unlinkedP0} P0` : ''}</span>} />
-        <BridgeRow l="Auto-link rule misses" v={<span style={{ color: model.unlinkedTotal > 0 ? 'var(--status-failed)' : 'var(--status-passed)' }}>{model.unlinkedTotal} in last 7d</span>} />
-        <BridgeRow l="Sync latency p95" v="—" />
-        <BridgeRow l="Last sync" v="just now" />
       </div>
       <div
         className="flex items-center justify-between gap-2 px-4 py-2 text-[11.5px] text-[var(--color-text-muted)]"
         style={{ borderTop: '1px solid var(--color-border)' }}
       >
-        <span>Webhook v2 · auto-link enabled</span>
-        <button
-          type="button"
-          onClick={() => toast('Bridge settings — coming in Phase 2', { icon: '⚙️' })}
+        <span>{state === 'connected' ? `Project key ${config?.jira_default_project_key ?? '—'}` : 'Not syncing'}</span>
+        <Link
+          to="/settings/integrations"
           className="font-medium hover:underline"
           style={{ color: 'var(--color-accent)' }}
         >
           Bridge settings →
-        </button>
+        </Link>
       </div>
     </CardShell>
   )
@@ -1667,8 +1683,6 @@ export default function DefectsPage() {
                 <span style={{ color: 'var(--status-failed)' }}>{model.p0Count} P0 blocking release</span>
               </>
             )}
-            <span aria-hidden>·</span>
-            <span>synced just now</span>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
