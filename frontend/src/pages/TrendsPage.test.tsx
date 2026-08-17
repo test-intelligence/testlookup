@@ -149,4 +149,44 @@ describe('TrendsPage', () => {
     expect(screen.queryByText(/31 \/ 60 runs/)).not.toBeInTheDocument()
     expect(screen.queryByText(/of 60 runs/)).not.toBeInTheDocument()
   })
+
+  // Regression: the axis tick labelled "(today)" named yesterday. shortDate()
+  // ran `new Date('2026-08-16')`, which parses as UTC midnight, so every date
+  // on the page rendered a day early west of Greenwich — the heatmap, the
+  // daily-breakdown axis and the "scheduler paused since …" narrative included.
+  it('labels the window in the same calendar frame the API buckets in', async () => {
+    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    const { formatDayIso, shiftDayIso, utcDayIso } = await import('@/utils/calendarDay')
+
+    const todayIso = utcDayIso()
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [{ date: todayIso, passed: 31, failed: 17, skipped: 6, broken: 6, total: 60, pass_rate: 57.4 }] },
+      isLoading: false,
+    })
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: {} })
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        summary: { unique_tests: 10, suite_count: 1, total_executions: 60, avg_pass_rate: 57.4, days_with_runs: 1 },
+        suites: [{ suite_name: 'GroundTruthSuite', unique_tests: 10, passed: 31, failed: 23, skipped: 6, pass_rate: 57.4 }],
+      },
+    })
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    render(
+      <MemoryRouter initialEntries={['/trends']}>
+        <Routes>
+          <Route path="/trends" element={<TrendsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText(/Trends workflow/i)
+    // The tick that claims to be today must name today, not the day before.
+    expect(screen.getByText(`${formatDayIso(todayIso)} (today)`)).toBeInTheDocument()
+    expect(screen.queryByText(`${formatDayIso(shiftDayIso(todayIso, -1))} (today)`)).not.toBeInTheDocument()
+    // The 14-day window opens 13 days back, and that label must be right too.
+    expect(screen.getAllByText(formatDayIso(shiftDayIso(todayIso, -13))).length).toBeGreaterThan(0)
+  })
 })

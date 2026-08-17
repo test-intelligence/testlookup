@@ -91,6 +91,7 @@ import {
   FAILURE_KIND_DEFS, failureKindOf, kindDef, type FailureKind,
 } from '@/utils/failureKind'
 import { FailureKindBadge, KindBadgeWithEvidence } from '@/components/failures/KindEvidence'
+import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts. Mirrors
@@ -982,12 +983,10 @@ function build14CellStrip(trend: TrendPoint[]): RunCell[] {
     else if (p.passed > 0) byDate.set(iso, 'pass')
     else                   byDate.set(iso, 'notrun')
   }
-  const today = new Date()
+  const todayIso = utcDayIso()
   const cells: RunCell[] = []
   for (let i = 13; i >= 0; i--) {
-    const d = new Date(today)
-    d.setDate(today.getDate() - i)
-    const iso = d.toISOString().slice(0, 10)
+    const iso = shiftDayIso(todayIso, -i)
     cells.push({ iso, kind: byDate.get(iso) ?? 'notrun' })
   }
   return cells
@@ -1679,9 +1678,7 @@ function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number })
   const len = Math.min(days, 30)
   const cells: { iso: string; kind: 'empty' | 'pass' | 'fail'; severity: number }[] = []
   for (let i = len - 1; i >= 0; i--) {
-    const d = new Date(today)
-    d.setDate(today.getDate() - i)
-    const iso = d.toISOString().slice(0, 10)
+    const iso = shiftDayIso(utcDayIso(today), -i)
     const r = byDate.get(iso)
     if (!r || (r.passed === 0 && r.failed === 0 && r.skipped === 0)) {
       cells.push({ iso, kind: 'empty', severity: 0 })

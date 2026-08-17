@@ -67,6 +67,9 @@ import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import {
   useCoverage, useDashboardSummary, useFlakyTests, useTrendData,
 } from '@/hooks/useMetrics'
+import {
+  daysBetweenDayIso, formatDayIso, relativeDayLabel, shiftDayIso, utcDayIso,
+} from '@/utils/calendarDay'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { CoverageSuite } from '@/types/analytics'
@@ -226,12 +229,10 @@ function toneFor(score: number): 'good' | 'warn' | 'bad' {
 function buildCadenceCells(trend: TrendPoint[], days: number): CadenceCell[] {
   const byDate = new Map<string, TrendPoint>()
   for (const p of trend) byDate.set(p.date.slice(0, 10), p)
-  const today = new Date()
+  const todayIso = utcDayIso()
   const cells: CadenceCell[] = []
   for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today)
-    d.setDate(today.getDate() - i)
-    const iso = d.toISOString().slice(0, 10)
+    const iso = shiftDayIso(todayIso, -i)
     const p = byDate.get(iso)
     const executions = p ? (p.passed + p.failed + p.skipped + (p.broken ?? 0)) : 0
     cells.push({
@@ -931,9 +932,7 @@ function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
 }
 
 function shortDate(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  return formatDayIso(iso)
 }
 
 // ── Daily breakdown ───────────────────────────────────────────────────────
@@ -1499,17 +1498,7 @@ function CardShell({
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function relativeAgo(iso: string | null): string {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  const ms = Date.now() - d.getTime()
-  if (ms < 0 || Number.isNaN(ms)) return '—'
-  const m = Math.floor(ms / 60000)
-  if (m < 1)  return 'just now'
-  if (m < 60) return `${m} min ago`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
-  const days = Math.floor(h / 24)
-  return `${days}d ago`
+  return relativeDayLabel(iso)
 }
 
 function normaliseList<T>(raw: unknown): T[] {
@@ -1696,10 +1685,7 @@ export default function TrendsPage() {
   const previousRunRel = model.previousRunIso ? relativeAgo(model.previousRunIso) : null
   const previousRunGapDays = (() => {
     if (!model.lastRunIso || !model.previousRunIso) return null
-    const a = new Date(model.lastRunIso).getTime()
-    const b = new Date(model.previousRunIso).getTime()
-    if (Number.isNaN(a) || Number.isNaN(b)) return null
-    return Math.round((a - b) / (24 * 60 * 60 * 1000))
+    return daysBetweenDayIso(model.lastRunIso, model.previousRunIso)
   })()
 
   return (
@@ -1833,7 +1819,7 @@ export default function TrendsPage() {
             value={lastRunRel}
             tone={
               !model.lastRunIso ? 'neutral'
-              : model.lastRunIso === new Date().toISOString().slice(0, 10) ? 'good'
+              : model.lastRunIso === utcDayIso() ? 'good'
               : (now - new Date(model.lastRunIso).getTime()) > 7 * 86400000 ? 'bad'
               : 'warn'
             }

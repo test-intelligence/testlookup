@@ -59,6 +59,7 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { CoverageSuite, CoverageSummary } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
+import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts.
@@ -1266,12 +1267,10 @@ function CadenceHeatmap({ trend, days }: { trend: TrendPoint[]; days: number }) 
     const total = p.passed + p.failed + p.skipped + (p.broken ?? 0)
     byDate.set(p.date.slice(0, 10), total)
   }
-  const today = new Date()
+  const todayIso = utcDayIso()
   const cells: { iso: string; runs: number; level: 0 | 1 | 2 | 3 | 4; isToday: boolean }[] = []
   for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today)
-    d.setDate(today.getDate() - i)
-    const iso = d.toISOString().slice(0, 10)
+    const iso = shiftDayIso(todayIso, -i)
     const runs = byDate.get(iso) ?? 0
     const level = runs === 0 ? 0
                 : runs <= 5  ? 1

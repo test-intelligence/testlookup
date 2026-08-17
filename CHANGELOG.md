@@ -36,6 +36,33 @@ Test executions were also labelled "runs" throughout, so a 6-run window read
 `31 / 60 runs` and `failed 23 of 60 runs` — the wording defect #643 fixed on the
 dashboard, reintroduced here. The model fields are renamed `*Executions` so the label
 and the quantity can't drift apart again.
+### 2026-08-16 — Fix: every date on /trends was a day early west of Greenwich
+
+Found during the UI sweep of the live homelab, in `America/Chicago`. Six runs were
+ingested on Aug 16 and the API bucketed them as `2026-08-16`. The page rendered:
+
+```
+Aug 2   Aug 5   Aug 9   Aug 12   Aug 15 (today)      <- today was Aug 16
+13-day silence between Aug 2 and Aug 14              <- the gap was Aug 3–15
+the scheduler appears paused since Aug 2             <- nothing ran on Aug 2
+```
+
+`shortDate()` did `new Date('2026-08-16').toLocaleDateString()`. A bare `YYYY-MM-DD`
+parses as UTC **midnight**, which is the previous evening anywhere west of Greenwich, so
+every label lost a day — the run-cadence heatmap, the daily-breakdown axis, the gap
+narrative, and the axis tick that claims to be today. The endpoints bucket by
+`DATE_TRUNC('day', created_at)`, so these strings are calendar-day labels, not instants;
+they are now formatted from their own parts and never routed through a local `Date`.
+
+`relativeAgo()` had the same input and reported hours from it, so a run ingested minutes
+earlier read "23h ago". It now answers at the granularity a calendar day carries:
+today / yesterday / N days ago.
+
+New `utils/calendarDay.ts` holds the day arithmetic; `/coverage` and `/failures` built
+their windows from a local clock date and stamped the cells with `toISOString()`, and
+now use the same helpers. That mix turns out to produce the same day sequence as staying
+in UTC — DST transitions included — so this part is consolidation, not a second fix, and
+`calendarDay.test.ts` pins the equivalence so it stays that way.
 
 ### 2026-08-16 — Fix: deleted projects were still voting in the dashboard verdict
 
