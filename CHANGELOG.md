@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM pagination reports actual page size
+
+- SCIM ListResponse `itemsPerPage` now equals the number of resources returned, including zero for an empty page, rather than echoing the requested maximum count.
+
 ## 2026-08-18 — SCIM responses reconcile external identity state
 
 - Bound-directory SCIM responses now return the federated `externalId` and canonical group references across list, get, create, replace, and patch flows using batched identity lookups; unbound global responses avoid ambiguous IdP metadata.

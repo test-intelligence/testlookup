@@ -141,7 +141,7 @@ async def scim_list(
     return SCIMListResponse(
         totalResults=total,
         startIndex=startIndex,
-        itemsPerPage=count,
+        itemsPerPage=len(users),
         Resources=[
             SCIMUserResource(**user_to_scim_resource(u, base_url, identities.get(u.id)))
             for u in users
