@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SSO rejects fake certificate payloads
+
+- Fixed SSO configuration validation accepting any base64-decodable bytes as a certificate; saved IdP certificates must now parse as actual X.509 certificates.
+
 ## 2026-08-18 — SSO connection tests verify IdP reachability
 
 - Fixed SSO “Test Connection” reporting success from nonempty fields without any network request; it now performs a bounded request, reports unreachable and 5xx endpoints honestly, and blocks private-address SSRF unless an operator explicitly enables internal IdP probing.
