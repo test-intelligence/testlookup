@@ -93,3 +93,11 @@ def test_cursor_predicate_keeps_equal_timestamp_rows_after_the_exact_id():
     assert "test_cases.created_at >" in sql
     assert "test_cases.created_at =" in sql
     assert "test_cases.id >" in sql
+
+
+def test_missing_cursor_row_restarts_instead_of_filtering_everything():
+    from app.services.semantic_search import _after_incremental_cursor
+
+    sql = str(_after_incremental_cursor(uuid.uuid4())).lower()
+
+    assert "coalesce" in sql
