@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM integrity races recover as conflicts
+
+- Public SCIM mutations now roll back uniqueness and integrity races and return a safe 409 conflict instead of leaking database errors through a 500 response.
+
 ## 2026-08-18 — SCIM supports total-only discovery
 
 - SCIM list requests now accept `count=0`, returning `totalResults` with no resources and skipping the page query as required for total-only discovery.

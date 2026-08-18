@@ -5,6 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -43,6 +44,15 @@ router = APIRouter(
 
 # SCIM token management router (protected — admin only)
 token_router = APIRouter(prefix="/api/v1/scim-tokens", tags=["SCIM Tokens"])
+
+
+async def _raise_scim_integrity_conflict(db: AsyncSession, exc: IntegrityError) -> None:
+    """Recover a failed transaction and expose no database implementation detail."""
+    await db.rollback()
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="SCIM resource conflicts with existing directory data",
+    ) from exc
 
 
 def _scim_group_refs(value: object) -> list[dict[str, str]] | None:
@@ -236,6 +246,8 @@ async def scim_create(
         )
         await db.commit()
         await db.refresh(user)
+    except IntegrityError as exc:
+        await _raise_scim_integrity_conflict(db, exc)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -290,6 +302,8 @@ async def scim_replace(
         )
         await db.commit()
         await db.refresh(user)
+    except IntegrityError as exc:
+        await _raise_scim_integrity_conflict(db, exc)
     except SCIMUserNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -422,6 +436,8 @@ async def scim_patch(
         )
         await db.commit()
         await db.refresh(user)
+    except IntegrityError as exc:
+        await _raise_scim_integrity_conflict(db, exc)
     except SCIMUserNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -459,6 +475,8 @@ async def scim_delete(
             ip_address=client_ip,
         )
         await db.commit()
+    except IntegrityError as exc:
+        await _raise_scim_integrity_conflict(db, exc)
     except SCIMUserNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
