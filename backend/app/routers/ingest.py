@@ -192,9 +192,16 @@ async def ingest_file(
     file: UploadFile = File(...),
     project_id: str = Form(...),
     build_number: str = Form(...),
-    branch: str = Form(None),
-    commit_hash: str = Form(None),
-    release_name: str = Form(None),
+    # Bounded to match the JSON `IngestPayload` schema and the underlying
+    # TestRun columns (branch String(255), commit_hash String(64)) / release
+    # name String(255). Without these caps the multipart path let an over-long
+    # value past the router's validation, only for it to blow up (or silently
+    # truncate) at insert time in the worker — off the request path, so the
+    # caller saw a 202 and never learned the run failed. The JSON path already
+    # returns a clean 422 here; this makes the file path do the same.
+    branch: str = Form(None, max_length=255),
+    commit_hash: str = Form(None, max_length=64),
+    release_name: str = Form(None, max_length=255),
     format: str = Form("auto"),
     run_ai: bool = Form(True),
     # CI context (US-4.3) — optional; the CLI auto-detects these from standard

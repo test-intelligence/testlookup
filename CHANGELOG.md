@@ -343,6 +343,19 @@ and row id. Values without digits sort after numbered builds in chronological
 order (and before them when the listing is reversed). Build identifiers remain
 an imperfect cross-branch/cross-scheme clock, but this is deterministic and
 closer to CI execution order than asynchronous commit time.
+### 2026-08-17 — Fix: file-upload ingest didn't bound branch/commit/release names
+
+The multipart `POST /api/v1/ingest/file` form declared `branch`, `commit_hash`,
+and `release_name` as `Form(None)` with no length cap, even though every sibling
+CI-context field (`ci_provider`, `ci_repo`, `ci_actor`, `ci_run_url`,
+`environment`) was bounded and the JSON `IngestPayload` schema already caps the
+same three (branch 255, commit_hash 64, release_name 255) to match the backing
+`TestRun` columns. An over-long value on the file path therefore passed the
+router's validation and only failed at insert time inside the Celery worker —
+off the request path, so the caller received a `202` and never learned the run
+had failed. The form now applies the same caps, so an over-long value is
+rejected up-front with a `422`, exactly as the JSON path already does. Regression
+test pins the caps and asserts they stay in lockstep with `IngestPayload`.
 
 ### 2026-08-17 — Fix: the readiness probe deadlocked a rollout under load
 
