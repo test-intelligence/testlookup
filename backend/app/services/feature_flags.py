@@ -12,12 +12,10 @@ a generic capability-toggle store that supports:
 
 Resolution order when ``is_enabled`` is called:
 
-1. **In-process cache** — 30s TTL, avoids touching Redis on every request
-   in a tight loop.
-2. **Redis cache** — 30s TTL, shared across workers so an ops toggle
+1. **Redis cache** — 30s TTL, shared across workers so an ops toggle
    propagates within half a minute.
-3. **Postgres row** — authoritative source.
-4. **Legacy env var fallback** — consulted only for flags whose key appears
+2. **Postgres row** — authoritative source.
+3. **Legacy env var fallback** — consulted only for flags whose key appears
    in ``LEGACY_ENV_VAR_MAP``. This is a one-release compatibility shim so
    the migration of ``KNOWLEDGE_RAG_ENABLED`` doesn't need a big-bang flip.
 
@@ -28,7 +26,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -51,12 +48,8 @@ LEGACY_ENV_VAR_MAP: dict[str, str] = {
     "async_decision_report_supersession": "AIQ_ASYNC_DECISION_REPORT_SUPERSESSION_ENABLED",
 }
 
-_IN_PROCESS_TTL_SECONDS = 30
 _REDIS_KEY_PREFIX = "feature_flag:"
 _REDIS_TTL_SECONDS = 30
-
-# In-process cache: key → (expires_at_monotonic, flag_row_dict | None)
-_cache: dict[str, tuple[float, Optional[dict]]] = {}
 
 
 def _normalize_role(role: Any) -> str:
@@ -189,28 +182,18 @@ async def is_enabled(
         project_id: Current request's project scope, if any.
         user: Current user, if any.
     """
-    now = time.monotonic()
-
-    # 1. In-process cache.
-    cached = _cache.get(key)
-    if cached and cached[0] > now:
-        flag = cached[1]
-        if flag is None:
-            fallback = _legacy_env_fallback(key)
-            return bool(fallback) if fallback is not None else False
-        return _evaluate(flag, project_id=project_id, user=user)
-
-    # 2. Redis cache.
+    # Redis is deliberately the only cache tier. A process-local cache cannot
+    # be invalidated reliably across API replicas and prefork Celery workers;
+    # it allowed one process to serve an old gate for 30 seconds after another
+    # process committed and invalidated the shared Redis entry.
     redis_flag = await _load_from_redis(key)
     if redis_flag is not None:
         if redis_flag.get("__none__"):
-            _cache[key] = (now + _IN_PROCESS_TTL_SECONDS, None)
             fallback = _legacy_env_fallback(key)
             return bool(fallback) if fallback is not None else False
-        _cache[key] = (now + _IN_PROCESS_TTL_SECONDS, redis_flag)
         return _evaluate(redis_flag, project_id=project_id, user=user)
 
-    # 3. Postgres row.
+    # Postgres is authoritative on a shared-cache miss.
     if db is None:
         from app.db.postgres import AsyncSessionLocal
         async with AsyncSessionLocal() as short_db:
@@ -218,7 +201,6 @@ async def is_enabled(
     else:
         flag_dict = await _load_from_db(db, key)
 
-    _cache[key] = (now + _IN_PROCESS_TTL_SECONDS, flag_dict)
     await _store_in_redis(key, flag_dict)
 
     if flag_dict is None:
@@ -253,8 +235,7 @@ async def invalidate_flag_cache(key: str) -> None:
 
 
 async def _invalidate(key: str) -> None:
-    """Drop both in-process and Redis caches for a single key."""
-    _cache.pop(key, None)
+    """Drop the shared Redis cache for a single key."""
     try:
         from app.db.redis_client import get_redis
         redis = get_redis()
