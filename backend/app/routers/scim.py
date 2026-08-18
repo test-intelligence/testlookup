@@ -1,5 +1,6 @@
 """SCIM 2.0 provisioning router — user lifecycle management for IdP integration."""
 import logging
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -51,6 +52,14 @@ def _scim_group_names(value: object) -> list[str] | None:
         if isinstance(name, str) and name:
             names.append(name)
     return names
+
+
+def _scim_group_filter_name(path: str | None) -> str | None:
+    """Extract a group name from ``groups[value eq \"name\"]``."""
+    if not path:
+        return None
+    match = re.fullmatch(r"groups\[value\s+eq\s+(['\"])(.+?)\1\]", path)
+    return match.group(2) if match else None
 
 
 # ── SCIM Bearer Token Authentication ────────────────────────────────────────
@@ -264,6 +273,7 @@ async def scim_patch(
     display_name = None
     active = None
     groups = None
+    group_operations: list[tuple[str, list[str] | None]] = []
 
     for op in payload.Operations:
         op_type = op.op.lower()
@@ -280,7 +290,10 @@ async def scim_patch(
                         email = em.get("value")
                         break
             elif op.path == "groups":
-                groups = _scim_group_names(op.value)
+                names = _scim_group_names(op.value)
+                if names is None:
+                    raise HTTPException(status_code=400, detail="groups must be an array")
+                group_operations.append(("replace", names))
             elif op.path is None and isinstance(op.value, dict):
                 # Bulk replace
                 if "userName" in op.value:
@@ -290,7 +303,27 @@ async def scim_patch(
                 if "displayName" in op.value:
                     display_name = op.value["displayName"]
                 if "groups" in op.value:
-                    groups = _scim_group_names(op.value["groups"])
+                    names = _scim_group_names(op.value["groups"])
+                    if names is None:
+                        raise HTTPException(status_code=400, detail="groups must be an array")
+                    group_operations.append(("replace", names))
+        elif op_type == "add" and op.path == "groups":
+            names = _scim_group_names(op.value)
+            if names is None:
+                raise HTTPException(status_code=400, detail="groups must be an array")
+            group_operations.append(("add", names))
+        elif op_type == "remove":
+            filtered_name = _scim_group_filter_name(op.path)
+            if filtered_name is not None:
+                group_operations.append(("remove", [filtered_name]))
+            elif op.path == "groups":
+                if op.value is None:
+                    group_operations.append(("replace", []))
+                else:
+                    names = _scim_group_names(op.value)
+                    if names is None:
+                        raise HTTPException(status_code=400, detail="groups must be an array")
+                    group_operations.append(("remove", names))
 
     try:
         user = await scim_update_user(
@@ -301,6 +334,7 @@ async def scim_patch(
             display_name=display_name,
             active=active,
             groups=groups,
+            group_operations=group_operations or None,
             sso_config_id=scim_token.sso_config_id,
             ip_address=client_ip,
         )

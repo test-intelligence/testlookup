@@ -45,7 +45,8 @@ async def test_patch_group_replace_reaches_role_and_identity_sync(
 
     await router.scim_patch(uuid.uuid4(), payload, request, token, db)
 
-    assert update.await_args.kwargs["groups"] == expected
+    assert update.await_args.kwargs["groups"] is None
+    assert update.await_args.kwargs["group_operations"] == [("replace", expected)]
 
 
 @pytest.mark.asyncio
@@ -64,3 +65,4 @@ async def test_unrelated_patch_leaves_groups_untouched(monkeypatch):
     await router.scim_patch(uuid.uuid4(), payload, request, token, AsyncMock())
 
     assert update.await_args.kwargs["groups"] is None
+    assert update.await_args.kwargs["group_operations"] is None
