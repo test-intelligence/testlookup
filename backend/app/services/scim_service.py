@@ -181,6 +181,7 @@ async def scim_update_user(
     display_name: str | None = None,
     active: bool | None = None,
     groups: list[str] | None = None,
+    group_operations: list[tuple[str, list[str] | None]] | None = None,
     sso_config_id: uuid.UUID | None = None,
     ip_address: str | None = None,
 ) -> User:
@@ -191,6 +192,33 @@ async def scim_update_user(
     user = result.scalar_one_or_none()
     if user is None:
         raise SCIMUserNotFoundError(f"User {user_id} not found")
+
+    fed = None
+    if group_operations:
+        if sso_config_id is None:
+            raise ValueError("SCIM group add/remove operations require an IdP-bound token")
+        fed_result = await db.execute(
+            select(FederatedIdentity).where(
+                FederatedIdentity.user_id == user_id,
+                FederatedIdentity.sso_config_id == sso_config_id,
+            )
+        )
+        fed = fed_result.scalar_one_or_none()
+        if fed is None:
+            raise SCIMUserNotFoundError(f"User {user_id} not found")
+
+        patched_groups = list(fed.external_groups or [])
+        for operation, names in group_operations:
+            if operation == "replace":
+                patched_groups = list(names or [])
+            elif operation == "add":
+                for name in names or []:
+                    if name not in patched_groups:
+                        patched_groups.append(name)
+            elif operation == "remove":
+                removed = set(names or [])
+                patched_groups = [name for name in patched_groups if name not in removed]
+        groups = patched_groups
 
     changes: dict = {}
     if username is not None and username != user.username:
@@ -233,13 +261,14 @@ async def scim_update_user(
 
     # Update federated identity groups
     if sso_config_id and groups is not None:
-        fed_result = await db.execute(
-            select(FederatedIdentity).where(
-                FederatedIdentity.user_id == user_id,
-                FederatedIdentity.sso_config_id == sso_config_id,
+        if fed is None:
+            fed_result = await db.execute(
+                select(FederatedIdentity).where(
+                    FederatedIdentity.user_id == user_id,
+                    FederatedIdentity.sso_config_id == sso_config_id,
+                )
             )
-        )
-        fed = fed_result.scalar_one_or_none()
+            fed = fed_result.scalar_one_or_none()
         if fed:
             fed.external_groups = groups
             if email:

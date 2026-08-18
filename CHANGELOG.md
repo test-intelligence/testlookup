@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM group deltas are state-aware
+
+- SCIM PATCH now applies ordered group `add` and `remove` operations against stored IdP memberships, including filtered and remove-all forms, so role mappings no longer remain stale after incremental syncs.
+
 ## 2026-08-18 — SCIM PATCH applies group-based roles
 
 - SCIM group replacements, including bulk replacements, now reach role mapping and federated-identity synchronization instead of returning success while silently ignoring authorization changes.
