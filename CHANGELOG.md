@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM PATCH bounds operation count
+
+- PATCH requests are capped at 100 operations, preventing unbounded per-request parsing and mutation work while preserving ordinary multi-operation provisioning.
+
 ## 2026-08-18 — SCIM PATCH rejects empty operation lists
 
 - PATCH request validation now requires at least one operation, preventing successful no-op updates and misleading audit events.

@@ -3209,9 +3209,16 @@ class SCIMPatchOp(BaseModel):
     value: Optional[Any] = None
 
 
+SCIM_PATCH_MAX_OPERATIONS = 100
+
+
 class SCIMPatchRequest(BaseModel):
     schemas: List[str] = [SCIM_PATCH_SCHEMA]
-    Operations: List[SCIMPatchOp] = Field(..., min_length=1)
+    Operations: List[SCIMPatchOp] = Field(
+        ...,
+        min_length=1,
+        max_length=SCIM_PATCH_MAX_OPERATIONS,
+    )
 
     @field_validator("schemas")
     @classmethod
