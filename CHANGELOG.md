@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: legacy feature-flag writes enter the settings audit trail
+
+The compatibility settings endpoints changed or deleted canonical feature
+flags without recording who performed the operation. They now stage an audit
+entry in the same transaction as the flag mutation, including the canonical
+`feature_flag:{key}` setting identifier and changed fields, before committing
+and invalidating the shared cache.
+
 ### 2026-08-17 — Fix: legacy settings toggles invalidate the shared flag cache
 
 The backward-compatible `/api/v1/settings/flags/{key}` update and delete
