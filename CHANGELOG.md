@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM pagination is deterministic
+
+- SCIM user pages now order equal creation timestamps by immutable user ID, preventing duplicate or skipped rows when offset pagination crosses timestamp ties.
+
 ## 2026-08-18 — SCIM filters require complete supported predicates
 
 - SCIM user filtering now parses the entire predicate case-insensitively, preventing unsupported attribute names containing a supported substring from returning directory matches.
