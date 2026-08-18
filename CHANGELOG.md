@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — Disabled IdPs revoke bound SCIM authority
+
+- SCIM bearer tokens bound to an SSO configuration are now rejected when that configuration is missing or inactive; intentionally unbound system-wide tokens continue to work.
+
 ## 2026-08-18 — SCIM credential lifecycle is audited
 
 - SCIM bearer-token creation and revocation now write actor-attributed identity audit events with safe token metadata and client IP, without storing the raw token or its hash.
