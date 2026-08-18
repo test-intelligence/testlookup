@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SSO connection tests verify IdP reachability
+
+- Fixed SSO “Test Connection” reporting success from nonempty fields without any network request; it now performs a bounded request, reports unreachable and 5xx endpoints honestly, and blocks private-address SSRF unless an operator explicitly enables internal IdP probing.
+
 ## 2026-08-18 — Performance settings show effective database pool values
 
 - Replaced nullable `auto` PostgreSQL pool values in Performance settings with the concrete environment defaults or explicit overrides used by the SQLAlchemy engine, including the effective recycle cap.

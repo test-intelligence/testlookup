@@ -31,6 +31,30 @@ from app.models.postgres import (
 
 logger = logging.getLogger(__name__)
 
+_SSO_CONNECTION_TIMEOUT_SECONDS = 5.0
+
+
+async def probe_idp_endpoint(url: str) -> tuple[bool, str]:
+    """Perform a bounded reachability check without following redirects."""
+    from app.core.http_client import get_http_client
+    from app.services.url_safety import assert_public_url
+
+    try:
+        if not settings.SSO_ALLOW_PRIVATE_IDP_ENDPOINTS:
+            await assert_public_url(url)
+        response = await get_http_client().get(
+            url,
+            timeout=_SSO_CONNECTION_TIMEOUT_SECONDS,
+            follow_redirects=False,
+        )
+        if response.status_code < 500:
+            return True, f"IdP endpoint reachable (HTTP {response.status_code})"
+        return False, f"IdP endpoint returned HTTP {response.status_code}"
+    except ValueError as exc:
+        return False, f"IdP endpoint blocked by SSRF policy: {exc}"
+    except Exception as exc:  # noqa: BLE001 - connection failures become test results
+        return False, f"IdP endpoint unreachable: {str(exc)[:200]}"
+
 
 # ── Certificate helpers ──────────────────────────────────────────────────────
 
