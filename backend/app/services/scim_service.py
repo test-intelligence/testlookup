@@ -24,6 +24,8 @@ from app.services.sso_service import log_identity_event, resolve_role_from_group
 
 logger = logging.getLogger(__name__)
 
+SCIM_MAX_PAGE_SIZE = 200
+
 _SCIM_EQUALITY_FILTER = re.compile(
     r"^(userName|email|emails\.value|externalId) +eq +(.+)$",
     re.IGNORECASE,
@@ -36,6 +38,11 @@ class SCIMUserNotFoundError(ValueError):
 
 class SCIMInvalidFilterError(ValueError):
     """Raised when a SCIM filter is unsupported or syntactically invalid."""
+
+
+def normalize_scim_pagination(start_index: int, count: int) -> tuple[int, int]:
+    """Apply RFC 7644 pagination coercion and the provider page-size cap."""
+    return max(1, start_index), min(SCIM_MAX_PAGE_SIZE, max(0, count))
 
 
 def _canonical_scim_username(username: str) -> str:
@@ -445,6 +452,7 @@ async def scim_list_users(
     sso_config_id: uuid.UUID | None = None,
 ) -> tuple[list[User], int]:
     """List users for SCIM with optional filter. Returns (users, total_count)."""
+    start_index, count = normalize_scim_pagination(start_index, count)
     query = _scope_user_query(select(User), sso_config_id)
 
     # Basic SCIM filter support: userName eq "value" or email eq "value".

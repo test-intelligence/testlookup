@@ -1,18 +1,14 @@
-import inspect
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 
-def test_scim_count_query_parameter_accepts_zero():
-    from app.routers.scim import scim_list
+def test_scim_pagination_coerces_out_of_range_values():
+    from app.services.scim_service import normalize_scim_pagination
 
-    count_parameter = inspect.signature(scim_list).parameters["count"].default
-    ge_constraint = next(
-        constraint for constraint in count_parameter.metadata if hasattr(constraint, "ge")
-    )
-
-    assert ge_constraint.ge == 0
+    assert normalize_scim_pagination(0, -1) == (1, 0)
+    assert normalize_scim_pagination(-50, 10_000) == (1, 200)
+    assert normalize_scim_pagination(4, 25) == (4, 25)
 
 
 @pytest.mark.asyncio
@@ -53,3 +49,31 @@ async def test_count_zero_list_response_reports_no_page_resources(monkeypatch):
     assert response.itemsPerPage == 0
     assert response.Resources == []
     identity_map.assert_awaited_once_with(db, [], None)
+
+
+@pytest.mark.asyncio
+async def test_list_route_passes_and_reports_normalized_pagination(monkeypatch):
+    from app.routers import scim as router
+
+    list_users = AsyncMock(return_value=([], 37))
+    monkeypatch.setattr(router, "scim_list_users", list_users)
+    monkeypatch.setattr(router, "scim_identity_map", AsyncMock(return_value={}))
+    db = AsyncMock()
+
+    response = await router.scim_list(
+        MagicMock(base_url="https://example.test/"),
+        startIndex=-5,
+        count=10_000,
+        filter=None,
+        scim_token=MagicMock(sso_config_id=None),
+        db=db,
+    )
+
+    list_users.assert_awaited_once_with(
+        db,
+        start_index=1,
+        count=200,
+        filter_str=None,
+        sso_config_id=None,
+    )
+    assert response.startIndex == 1

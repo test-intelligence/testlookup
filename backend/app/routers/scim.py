@@ -37,6 +37,7 @@ from app.services.scim_service import (
     SCIMInvalidFilterError,
     SCIMUserNotFoundError,
     create_scim_token,
+    normalize_scim_pagination,
     scim_create_user,
     scim_get_user,
     scim_identity_map,
@@ -324,8 +325,8 @@ async def scim_schema(
 @router.get("/Users")
 async def scim_list(
     request: Request,
-    startIndex: int = Query(1, ge=1, description="1-based start index (SCIM)"),
-    count: int = Query(100, ge=0, le=200, description="Page size (bounded to protect the directory)"),
+    startIndex: int = Query(1, description="1-based start index (values below 1 become 1)"),
+    count: int = Query(100, description="Requested page size (coerced to the provider's 200-item cap)"),
     filter: str | None = None,
     scim_token: SCIMToken = Depends(verify_scim_bearer),
     db: AsyncSession = Depends(get_db),
@@ -334,11 +335,12 @@ async def scim_list(
 ):
     """SCIM 2.0: List users."""
     projection = _scim_projection_or_400(attributes, excludedAttributes)
+    start_index, page_size = normalize_scim_pagination(startIndex, count)
     try:
         users, total = await scim_list_users(
             db,
-            start_index=startIndex,
-            count=count,
+            start_index=start_index,
+            count=page_size,
             filter_str=filter,
             sso_config_id=scim_token.sso_config_id,
         )
@@ -365,13 +367,13 @@ async def scim_list(
         return {
             "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
             "totalResults": total,
-            "startIndex": startIndex,
+            "startIndex": start_index,
             "itemsPerPage": len(users),
             "Resources": resources,
         }
     return SCIMListResponse(
         totalResults=total,
-        startIndex=startIndex,
+        startIndex=start_index,
         itemsPerPage=len(users),
         Resources=resources,
     )
