@@ -76,3 +76,20 @@ def test_patch_payload_rejects_empty_operations(model_name):
 
     with pytest.raises(ValidationError, match="at least 1 item"):
         model(**kwargs)
+
+
+def test_patch_payload_caps_operation_count_at_documented_boundary():
+    from app.models.schemas import SCIM_PATCH_MAX_OPERATIONS, SCIMPatchRequestPayload
+
+    operation = {"op": "replace", "path": "active", "value": True}
+    accepted = SCIMPatchRequestPayload(
+        schemas=[PATCH_SCHEMA],
+        Operations=[operation] * SCIM_PATCH_MAX_OPERATIONS,
+    )
+
+    assert len(accepted.Operations) == SCIM_PATCH_MAX_OPERATIONS
+    with pytest.raises(ValidationError, match=f"at most {SCIM_PATCH_MAX_OPERATIONS} items"):
+        SCIMPatchRequestPayload(
+            schemas=[PATCH_SCHEMA],
+            Operations=[operation] * (SCIM_PATCH_MAX_OPERATIONS + 1),
+        )
