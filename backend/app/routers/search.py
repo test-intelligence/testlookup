@@ -418,13 +418,20 @@ async def global_search_endpoint(
 
     types: set[str] | None = None
     if entity_types:
-        types = {t.strip() for t in entity_types.split(",") if t.strip()} & ALL_ENTITY_TYPES
+        requested_types = {t.strip() for t in entity_types.split(",") if t.strip()}
+        invalid_types = requested_types - ALL_ENTITY_TYPES
+        if invalid_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported entity types: {', '.join(sorted(invalid_types))}",
+            )
+        types = requested_types or None
 
     return await global_search(
         db=db,
         q=q,
         project_id=str(scoped_project_id) if scoped_project_id else None,
-        entity_types=types or None,
+        entity_types=types,
         days=days,
         page=page,
         size=size,
