@@ -37,6 +37,15 @@ from app.services.sso_service import log_identity_event
 
 logger = logging.getLogger(__name__)
 
+_SCIM_PATCH_PATHS = {
+    "username": "userName",
+    "externalid": "externalId",
+    "active": "active",
+    "displayname": "displayName",
+    "emails": "emails",
+    "groups": "groups",
+}
+
 router = APIRouter(
     prefix="/api/v1/scim/v2",
     tags=["SCIM 2.0"],
@@ -102,8 +111,34 @@ def _scim_group_filter_name(path: str | None) -> str | None:
     """Extract a group name from ``groups[value eq \"name\"]``."""
     if not path:
         return None
-    match = re.fullmatch(r"groups\[value\s+eq\s+(['\"])(.+?)\1\]", path)
+    match = re.fullmatch(
+        r"groups\[value\s+eq\s+(['\"])(.+?)\1\]",
+        path,
+        flags=re.IGNORECASE,
+    )
     return match.group(2) if match else None
+
+
+def _canonical_scim_patch_path(path: str | None) -> str | None:
+    """Canonicalize SCIM attribute names without modifying filter values."""
+    if path is None:
+        return None
+    return _SCIM_PATCH_PATHS.get(path.casefold(), path)
+
+
+def _canonical_scim_patch_object(value: dict) -> dict:
+    """Canonicalize bulk keys and reject aliases that target one attribute twice."""
+    canonical: dict = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise ValueError("PATCH attribute names must be strings")
+        canonical_key = _canonical_scim_patch_path(key)
+        if canonical_key not in _SCIM_PATCH_PATHS.values():
+            raise ValueError(f"Unsupported PATCH attribute: {key}")
+        if canonical_key in canonical:
+            raise ValueError(f"Duplicate PATCH attribute: {canonical_key}")
+        canonical[canonical_key] = item
+    return canonical
 
 
 # ── SCIM Bearer Token Authentication ────────────────────────────────────────
@@ -360,81 +395,79 @@ async def scim_patch(
 
     for op in payload.Operations:
         op_type = op.op.lower()
+        path = _canonical_scim_patch_path(op.path)
         if op_type == "replace":
-            if op.path == "userName":
+            if path == "userName":
                 if not isinstance(op.value, str) or not op.value:
                     raise HTTPException(status_code=400, detail="userName must be a non-empty string")
                 username = op.value
-            elif op.path == "externalId":
+            elif path == "externalId":
                 if not isinstance(op.value, str) or not op.value:
                     raise HTTPException(status_code=400, detail="externalId must be a non-empty string")
                 external_id = op.value
-            elif op.path == "active":
+            elif path == "active":
                 if not isinstance(op.value, bool):
                     raise HTTPException(status_code=400, detail="active must be a boolean")
                 active = op.value
-            elif op.path == "displayName":
+            elif path == "displayName":
                 if not isinstance(op.value, str):
                     raise HTTPException(status_code=400, detail="displayName must be a string")
                 display_name = op.value
-            elif op.path == "emails":
+            elif path == "emails":
                 email = _scim_patch_email(op.value)
                 if email is None:
                     raise HTTPException(status_code=400, detail="emails must contain a valid value")
-            elif op.path == "groups":
+            elif path == "groups":
                 refs = _scim_group_refs(op.value)
                 if refs is None:
                     raise HTTPException(status_code=400, detail="groups must be an array")
                 group_operations.append(("replace", refs))
-            elif op.path is None and isinstance(op.value, dict):
+            elif path is None and isinstance(op.value, dict):
                 # Bulk replace
-                supported = {"userName", "externalId", "active", "displayName", "emails", "groups"}
-                unknown = set(op.value) - supported
-                if unknown:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Unsupported PATCH attribute: {sorted(unknown)[0]}",
-                    )
-                if "userName" in op.value:
-                    if not isinstance(op.value["userName"], str) or not op.value["userName"]:
+                try:
+                    bulk_value = _canonical_scim_patch_object(op.value)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                if "userName" in bulk_value:
+                    if not isinstance(bulk_value["userName"], str) or not bulk_value["userName"]:
                         raise HTTPException(status_code=400, detail="userName must be a non-empty string")
-                    username = op.value["userName"]
-                if "externalId" in op.value:
-                    if not isinstance(op.value["externalId"], str) or not op.value["externalId"]:
+                    username = bulk_value["userName"]
+                if "externalId" in bulk_value:
+                    if not isinstance(bulk_value["externalId"], str) or not bulk_value["externalId"]:
                         raise HTTPException(
                             status_code=400,
                             detail="externalId must be a non-empty string",
                         )
-                    external_id = op.value["externalId"]
-                if "active" in op.value:
-                    if not isinstance(op.value["active"], bool):
+                    external_id = bulk_value["externalId"]
+                if "active" in bulk_value:
+                    if not isinstance(bulk_value["active"], bool):
                         raise HTTPException(status_code=400, detail="active must be a boolean")
-                    active = op.value["active"]
-                if "displayName" in op.value:
-                    if not isinstance(op.value["displayName"], str):
+                    active = bulk_value["active"]
+                if "displayName" in bulk_value:
+                    if not isinstance(bulk_value["displayName"], str):
                         raise HTTPException(status_code=400, detail="displayName must be a string")
-                    display_name = op.value["displayName"]
-                if "emails" in op.value:
-                    email = _scim_patch_email(op.value["emails"])
+                    display_name = bulk_value["displayName"]
+                if "emails" in bulk_value:
+                    email = _scim_patch_email(bulk_value["emails"])
                     if email is None:
                         raise HTTPException(status_code=400, detail="emails must contain a valid value")
-                if "groups" in op.value:
-                    refs = _scim_group_refs(op.value["groups"])
+                if "groups" in bulk_value:
+                    refs = _scim_group_refs(bulk_value["groups"])
                     if refs is None:
                         raise HTTPException(status_code=400, detail="groups must be an array")
                     group_operations.append(("replace", refs))
             else:
                 raise HTTPException(status_code=400, detail=f"Unsupported PATCH path: {op.path}")
-        elif op_type == "add" and op.path == "groups":
+        elif op_type == "add" and path == "groups":
             refs = _scim_group_refs(op.value)
             if refs is None:
                 raise HTTPException(status_code=400, detail="groups must be an array")
             group_operations.append(("add", refs))
         elif op_type == "remove":
-            filtered_name = _scim_group_filter_name(op.path)
+            filtered_name = _scim_group_filter_name(path)
             if filtered_name is not None:
                 group_operations.append(("remove", [{"value": filtered_name}]))
-            elif op.path == "groups":
+            elif path == "groups":
                 if op.value is None:
                     group_operations.append(("replace", []))
                 else:
