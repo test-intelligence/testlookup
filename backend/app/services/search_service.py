@@ -8,7 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.models.postgres import TestCase, TestRun, TestStep
+from app.models.postgres import Project, TestCase, TestRun, TestStep
 from app.services.sql_utils import like_contains
 
 
@@ -109,7 +109,8 @@ async def search_test_cases_query(
             TestRun.project_id.label("_pid"),
         )
         .join(TestRun, TestRun.id == TestCase.test_run_id)
-        .where(*filters)
+        .join(Project, Project.id == TestRun.project_id)
+        .where(Project.is_active.is_(True), *filters)
         .distinct(*distinct_keys)
         # DISTINCT ON requires the leading ORDER BY columns to match the
         # distinct columns; recency is the tiebreaker we actually want.
@@ -187,7 +188,8 @@ async def search_test_cases_query(
     distinct_pairs = (
         select(TestRun.project_id, TestCase.test_fingerprint)
         .join(TestRun, TestRun.id == TestCase.test_run_id)
-        .where(*filters)
+        .join(Project, Project.id == TestRun.project_id)
+        .where(Project.is_active.is_(True), *filters)
         .distinct()
         .subquery()
     )
