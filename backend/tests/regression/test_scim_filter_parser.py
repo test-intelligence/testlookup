@@ -14,19 +14,20 @@ import pytest
         'externalIdentifier eq "idp-1"',
     ],
 )
-async def test_supported_attribute_substrings_do_not_execute_directory_query(filter_str):
-    from app.services.scim_service import scim_list_users
+async def test_invalid_filter_does_not_execute_directory_query(filter_str):
+    from app.services.scim_service import SCIMInvalidFilterError, scim_list_users
 
     db = AsyncMock()
 
-    assert await scim_list_users(db, filter_str=filter_str) == ([], 0)
+    with pytest.raises(SCIMInvalidFilterError):
+        await scim_list_users(db, filter_str=filter_str)
     db.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "filter_str",
-    ['USERNAME EQ "alice"', "  userName   eq   'alice'  "],
+    ['USERNAME EQ "alice"', '  userName   eq   "alice"  '],
 )
 async def test_supported_filter_is_complete_and_case_insensitive(filter_str):
     from app.services.scim_service import scim_list_users
@@ -56,3 +57,19 @@ def test_filter_parser_rejects_empty_values_and_accepts_supported_aliases():
         "alice@example.com",
     )
     assert _parse_scim_filter('externalId eq "idp-1"') == ("externalid", "idp-1")
+
+
+def test_filter_parser_uses_json_string_rules():
+    from app.services.scim_service import _parse_scim_filter
+
+    assert _parse_scim_filter(r'userName eq "alice\"admin"') == (
+        "username",
+        'alice"admin',
+    )
+    assert _parse_scim_filter(r'externalId eq "subject\\segment"') == (
+        "externalid",
+        r"subject\segment",
+    )
+    assert _parse_scim_filter("userName eq 'alice'") is None
+    assert _parse_scim_filter('userName eq "alice" and active eq true') is None
+    assert _parse_scim_filter('userName\teq\t"alice"') is None

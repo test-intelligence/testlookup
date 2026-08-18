@@ -345,7 +345,7 @@ class TestSecretReadFallback:
 
 class TestScimListFilterSafety:
     """Regression: a recognised SCIM predicate carrying an unparseable/empty
-    value must return an EMPTY result, never fall through to an unfiltered query.
+    value must fail before query execution, never fall through to an unfiltered query.
 
     e0d4fea added an ``else`` that caught wholly-unrecognised filters, but a
     recognised predicate (``userName eq``) whose value failed extraction (empty
@@ -354,31 +354,28 @@ class TestScimListFilterSafety:
     entire user directory. A ``matched`` flag now closes that path.
     """
 
-    async def test_empty_quoted_username_filter_returns_empty(self):
+    async def test_empty_quoted_username_filter_is_rejected(self):
         from app.services import scim_service
 
         db = AsyncMock()
-        users, total = await scim_service.scim_list_users(db, filter_str='userName eq ""')
-        assert users == []
-        assert total == 0
+        with pytest.raises(scim_service.SCIMInvalidFilterError):
+            await scim_service.scim_list_users(db, filter_str='userName eq ""')
         db.execute.assert_not_awaited()
 
-    async def test_unquoted_username_filter_returns_empty(self):
+    async def test_unquoted_username_filter_is_rejected(self):
         from app.services import scim_service
 
         db = AsyncMock()
-        users, total = await scim_service.scim_list_users(db, filter_str="userName eq alice")
-        assert users == []
-        assert total == 0
+        with pytest.raises(scim_service.SCIMInvalidFilterError):
+            await scim_service.scim_list_users(db, filter_str="userName eq alice")
         db.execute.assert_not_awaited()
 
-    async def test_unsupported_predicate_returns_empty(self):
+    async def test_unsupported_predicate_is_rejected(self):
         from app.services import scim_service
 
         db = AsyncMock()
-        users, total = await scim_service.scim_list_users(db, filter_str='displayName co "x"')
-        assert users == []
-        assert total == 0
+        with pytest.raises(scim_service.SCIMInvalidFilterError):
+            await scim_service.scim_list_users(db, filter_str='displayName co "x"')
         db.execute.assert_not_awaited()
 
     async def test_valid_username_filter_executes_query(self):

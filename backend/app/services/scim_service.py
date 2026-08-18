@@ -1,5 +1,6 @@
 """SCIM 2.0 provisioning service — user create/update/deactivate with bearer token auth."""
 import hashlib
+import json
 import logging
 import re
 import secrets
@@ -24,13 +25,17 @@ from app.services.sso_service import log_identity_event, resolve_role_from_group
 logger = logging.getLogger(__name__)
 
 _SCIM_EQUALITY_FILTER = re.compile(
-    r"^(userName|email|emails\.value|externalId)\s+eq\s+(?:\"([^\"]+)\"|'([^']+)')$",
+    r"^(userName|email|emails\.value|externalId) +eq +(.+)$",
     re.IGNORECASE,
 )
 
 
 class SCIMUserNotFoundError(ValueError):
     """Raised when a SCIM user does not exist within the token's directory scope."""
+
+
+class SCIMInvalidFilterError(ValueError):
+    """Raised when a SCIM filter is unsupported or syntactically invalid."""
 
 
 def _canonical_scim_username(username: str) -> str:
@@ -448,8 +453,8 @@ async def scim_list_users(
     if filter_str:
         parsed_filter = _parse_scim_filter(filter_str)
         if parsed_filter is None:
-            logger.warning("Unsupported SCIM filter, returning empty result: %s", filter_str)
-            return [], 0
+            logger.warning("Unsupported or invalid SCIM filter: %s", filter_str)
+            raise SCIMInvalidFilterError("The supplied SCIM filter is invalid or unsupported")
         attribute, value = parsed_filter
         if attribute == "username":
             query = query.where(func.lower(User.username) == value.strip().casefold())
@@ -513,7 +518,13 @@ def _parse_scim_filter(filter_str: str) -> tuple[str, str] | None:
     match = _SCIM_EQUALITY_FILTER.fullmatch(filter_str.strip())
     if match is None:
         return None
-    return match.group(1).lower(), match.group(2) or match.group(3)
+    try:
+        value = json.loads(match.group(2))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(value, str) or not value:
+        return None
+    return match.group(1).lower(), value
 
 
 def _extract_scim_filter_value(filter_str: str) -> str | None:

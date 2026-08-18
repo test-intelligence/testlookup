@@ -505,11 +505,11 @@ class TestSCIMFilterParsing:
         value = _extract_scim_filter_value('emails.value eq "john@test.com"')
         assert value == "john@test.com"
 
-    def test_extract_single_quote_filter(self):
+    def test_reject_single_quote_filter(self):
         from app.services.scim_service import _extract_scim_filter_value
 
         value = _extract_scim_filter_value("userName eq 'john'")
-        assert value == "john"
+        assert value is None
 
     def test_extract_no_match(self):
         from app.services.scim_service import _extract_scim_filter_value
