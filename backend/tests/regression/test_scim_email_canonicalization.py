@@ -134,6 +134,43 @@ async def test_bound_email_only_update_syncs_federated_identity(monkeypatch):
     assert user.email == "new@example.test"
     assert identity.external_email == "new@example.test"
     assert db.execute.await_count == 3
+    assert scim_service.log_identity_event.await_args.kwargs["detail"] == {
+        "email": {"old": "old@example.test", "new": "new@example.test"},
+        "directory_email": {
+            "old": "old@example.test",
+            "new": "new@example.test",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_stale_directory_email_sync_is_audited_when_local_email_matches(
+    monkeypatch,
+):
+    from app.services import scim_service
+
+    user = _user("current@example.test")
+    config_id = uuid.uuid4()
+    identity = SimpleNamespace(external_email="stale@example.test")
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=[_result(user), _result(identity)])
+    monkeypatch.setattr(scim_service, "log_identity_event", AsyncMock())
+
+    await scim_service.scim_update_user(
+        db,
+        user.id,
+        email=" Current@Example.Test ",
+        sso_config_id=config_id,
+    )
+
+    assert user.email == "current@example.test"
+    assert identity.external_email == "current@example.test"
+    assert scim_service.log_identity_event.await_args.kwargs["detail"] == {
+        "directory_email": {
+            "old": "stale@example.test",
+            "new": "current@example.test",
+        }
+    }
 
 
 @pytest.mark.asyncio
