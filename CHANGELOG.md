@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM preserves formatted names
+
+- User create and replace now persist `name.formatted` when `displayName` is omitted, while preserving explicit-display and component-name precedence.
+
 ## 2026-08-18 — SCIM discovery declares formatted names
 
 - The advertised User schema now includes `name.formatted`, matching the sub-attribute emitted by every User response.

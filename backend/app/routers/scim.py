@@ -169,6 +169,18 @@ def _scim_group_names(refs: list[dict[str, str]]) -> list[str]:
     return [ref.get("display") or ref["value"] for ref in refs]
 
 
+def _scim_display_name(payload: SCIMUserRequest) -> str | None:
+    """Resolve the persisted display name without discarding name.formatted."""
+    if payload.displayName:
+        return payload.displayName
+    if payload.name:
+        if payload.name.formatted:
+            return payload.name.formatted
+        parts = [payload.name.givenName, payload.name.familyName]
+        return " ".join(part for part in parts if part) or None
+    return None
+
+
 def _scim_group_filter_name(path: str | None) -> str | None:
     """Extract a group name from ``groups[value eq \"name\"]``."""
     if not path:
@@ -432,10 +444,7 @@ async def scim_create(
             detail="externalId is required for an IdP-bound SCIM token",
         )
 
-    display_name = payload.displayName
-    if not display_name and payload.name:
-        parts = [payload.name.givenName, payload.name.familyName]
-        display_name = " ".join(p for p in parts if p) or None
+    display_name = _scim_display_name(payload)
 
     group_refs = _scim_group_refs(payload.groups)
     if group_refs is None:
@@ -503,10 +512,7 @@ async def scim_replace(
             detail="emails must contain valid values and at most one primary",
         )
 
-    display_name = payload.displayName
-    if not display_name and payload.name:
-        parts = [payload.name.givenName, payload.name.familyName]
-        display_name = " ".join(p for p in parts if p) or None
+    display_name = _scim_display_name(payload)
 
     group_refs = _scim_group_refs(payload.groups)
     if group_refs is None:
