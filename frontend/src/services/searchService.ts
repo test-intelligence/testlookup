@@ -29,7 +29,11 @@ export const searchService = {
     },
   }),
 
-  getIndexStatus: () => getData<IndexStatus>('/api/v1/search/index-status'),
+  getIndexStatus: (projectId?: string) =>
+    getData<IndexStatus>(
+      '/api/v1/search/index-status',
+      { params: projectId ? { project_id: projectId } : {} },
+    ),
 
   /**
    * Project-scoped totals for the /search chip + Index Health panels.

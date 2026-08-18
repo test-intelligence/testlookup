@@ -1050,29 +1050,30 @@ export default function SearchPage() {
 
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // ── Fetch index status on mount (refresh on focus) ────────────────────
+  // ALL_PROJECTS_ID is a frontend sentinel — omit it from API requests so
+  // the backend resolves the caller's accessible project set.
+  const activeProjectId = useProjectStore(s => s.activeProjectId)
+  const scopedProjectId = activeProjectId && activeProjectId !== ALL_PROJECTS_ID
+    ? activeProjectId
+    : undefined
+
+  // ── Fetch index status on mount + on project change ──────────────────
   useEffect(() => {
     let alive = true
-    searchService.getIndexStatus()
+    searchService.getIndexStatus(scopedProjectId)
       .then(s => { if (alive) setIndexStatus(s) })
       .catch(() => { if (alive) setIndexStatus({ status: 'unknown', document_count: 0, last_indexed_at: null }) })
     return () => { alive = false }
-  }, [])
+  }, [scopedProjectId])
 
   // ── Fetch project-scoped entity totals on mount + on project change ──
-  // ALL_PROJECTS_ID is a frontend sentinel — convert to undefined so the
-  // request omits the param and the backend scopes by accessible projects.
-  const activeProjectId = useProjectStore(s => s.activeProjectId)
   useEffect(() => {
     let alive = true
-    const scoped = activeProjectId && activeProjectId !== ALL_PROJECTS_ID
-      ? activeProjectId
-      : undefined
-    searchService.getEntityCounts(scoped)
+    searchService.getEntityCounts(scopedProjectId)
       .then(c => { if (alive) setTotalCounts(c) })
       .catch(() => { if (alive) setTotalCounts(null) })
     return () => { alive = false }
-  }, [activeProjectId])
+  }, [scopedProjectId])
 
   // ── Run a search (or browse the scope when the query is empty) ───────
   // ``page`` is optional so callers that change the query/mode/scope can
