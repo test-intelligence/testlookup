@@ -195,15 +195,21 @@ async def find_similar_failures(
     test_case_id: str,
     limit: int = Query(5, ge=1, le=20),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
-    """Find historically similar failures for a given test case."""
+    """Find similar failures within the source test case's project."""
     from sqlalchemy import select
     from app.models.postgres import TestCase
     import uuid as _uuid
 
     try:
         tc_result = await db.execute(
-            select(TestCase.test_name, TestCase.error_message)
+            select(
+                TestCase.test_name,
+                TestCase.error_message,
+                TestRun.project_id,
+            )
+            .join(TestRun, TestCase.test_run_id == TestRun.id)
             .where(TestCase.id == _uuid.UUID(test_case_id))
         )
         row = tc_result.first()
@@ -217,9 +223,20 @@ async def find_similar_failures(
     if not query_text:
         return {"items": [], "total": 0, "query": test_case_id}
 
+    scoped_project_id, allowed_project_ids = await resolve_project_scope(
+        db,
+        current_user,
+        str(row.project_id),
+    )
+
     from app.services.semantic_search import semantic_search
     items, total, _ = await semantic_search(
-        db, q=query_text, page=1, size=limit + 1,
+        db,
+        q=query_text,
+        page=1,
+        size=limit + 1,
+        project_id=str(scoped_project_id),
+        allowed_project_ids=allowed_project_ids,
     )
     # Exclude the source test case itself
     items = [i for i in items if str(i.get("test_case_id", "")) != test_case_id]

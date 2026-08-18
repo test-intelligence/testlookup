@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — Similar-failure search is project isolated
+
+- Similar-failure lookup now authorizes the source test case's project and constrains semantic results to that project.
+
 ## 2026-08-18 — Search counts exclude deleted projects
 
 - Search entity totals now exclude runs, test cases, suites, defects, flaky records, and releases belonging to soft-deleted projects.
