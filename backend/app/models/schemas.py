@@ -3146,6 +3146,9 @@ class SSOLoginResponse(BaseModel):
 
 # ── SCIM 2.0 Schemas ──────────────────────────────────────────
 
+SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
+SCIM_PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+
 
 class SCIMName(BaseModel):
     givenName: Optional[str] = None
@@ -3166,7 +3169,7 @@ class SCIMGroup(BaseModel):
 
 class SCIMUserResource(BaseModel):
     """SCIM 2.0 User resource — used for both request and response."""
-    schemas: List[str] = ["urn:ietf:params:scim:schemas:core:2.0:User"]
+    schemas: List[str] = [SCIM_USER_SCHEMA]
     id: Optional[str] = None  # set on response
     externalId: Optional[str] = None
     userName: str
@@ -3176,6 +3179,19 @@ class SCIMUserResource(BaseModel):
     active: bool = True
     groups: List[SCIMGroup] = []
     meta: Optional[dict] = None
+
+    @field_validator("schemas")
+    @classmethod
+    def require_user_schema(cls, value: List[str]) -> List[str]:
+        if SCIM_USER_SCHEMA not in value:
+            raise ValueError(f"schemas must include {SCIM_USER_SCHEMA}")
+        return value
+
+
+class SCIMUserRequest(SCIMUserResource):
+    """Inbound SCIM user payload; the protocol schemas member is required."""
+
+    schemas: List[str] = Field(...)
 
 
 class SCIMListResponse(BaseModel):
@@ -3194,8 +3210,21 @@ class SCIMPatchOp(BaseModel):
 
 
 class SCIMPatchRequest(BaseModel):
-    schemas: List[str] = ["urn:ietf:params:scim:api:messages:2.0:PatchOp"]
+    schemas: List[str] = [SCIM_PATCH_SCHEMA]
     Operations: List[SCIMPatchOp]
+
+    @field_validator("schemas")
+    @classmethod
+    def require_patch_schema(cls, value: List[str]) -> List[str]:
+        if SCIM_PATCH_SCHEMA not in value:
+            raise ValueError(f"schemas must include {SCIM_PATCH_SCHEMA}")
+        return value
+
+
+class SCIMPatchRequestPayload(SCIMPatchRequest):
+    """Inbound PATCH payload; the protocol schemas member is required."""
+
+    schemas: List[str] = Field(...)
 
 
 class SCIMErrorResponse(BaseModel):

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM requests validate schema URNs
+
+- User and PATCH requests now require `schemas` and their standard SCIM core URN, while server-generated resource envelopes retain defaults and valid extension URNs remain supported.
+
 ## 2026-08-18 — SCIM integrity races recover as conflicts
 
 - Public SCIM mutations now roll back uniqueness and integrity races and return a safe 409 conflict instead of leaking database errors through a 500 response.
