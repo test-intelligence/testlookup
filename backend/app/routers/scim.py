@@ -3,12 +3,13 @@ import logging
 import re
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import require_role
+from app.core.scim_errors import SCIMJSONResponse
 from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, SCIMToken, User, UserRole
 from app.models.schemas import (
@@ -34,7 +35,11 @@ from app.services.sso_service import log_identity_event
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/scim/v2", tags=["SCIM 2.0"])
+router = APIRouter(
+    prefix="/api/v1/scim/v2",
+    tags=["SCIM 2.0"],
+    default_response_class=SCIMJSONResponse,
+)
 
 # SCIM token management router (protected — admin only)
 token_router = APIRouter(prefix="/api/v1/scim-tokens", tags=["SCIM Tokens"])
@@ -435,7 +440,7 @@ async def scim_patch(
     )
 
 
-@router.delete("/Users/{user_id}", status_code=204)
+@router.delete("/Users/{user_id}", status_code=204, response_class=Response)
 async def scim_delete(
     user_id: uuid.UUID,
     request: Request,
