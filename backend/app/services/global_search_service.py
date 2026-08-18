@@ -274,6 +274,8 @@ async def _search_suites(
         .limit(override_limit or 15)
     )
     stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
+    if period_start:
+        stmt = stmt.where(TestCase.created_at >= period_start)
 
     rows = (await db.execute(stmt)).all()
     return [
@@ -369,6 +371,8 @@ async def _search_flaky_tests(
         .limit(override_limit or 15)
     )
     stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
+    if period_start:
+        stmt = stmt.where(TestCaseHistory.created_at >= period_start)
 
     rows = (await db.execute(stmt)).all()
     results = []
@@ -410,6 +414,8 @@ async def _search_releases(
         .limit(override_limit or 10)
     )
     stmt = _apply_tenant_filter(stmt, Release.project_id, project_id, allowed_project_ids)
+    if period_start:
+        stmt = stmt.where(Release.created_at >= period_start)
 
     releases = (await db.execute(stmt)).scalars().all()
     return [
