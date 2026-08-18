@@ -96,6 +96,14 @@ def _normalize_group_refs(groups: list | None) -> list[dict[str, str]]:
     return list(refs_by_value.values())
 
 
+def _group_refs_for_audit(groups: list | None) -> list[dict[str, str]]:
+    """Return deterministic group references for comparisons and audit details."""
+    return sorted(
+        _normalize_group_refs(groups),
+        key=lambda ref: (ref["value"], ref.get("display", "")),
+    )
+
+
 def _group_role_names(refs: list[dict[str, str]]) -> list[str]:
     return [ref.get("display") or ref["value"] for ref in refs]
 
@@ -409,7 +417,17 @@ async def scim_update_user(
                 changes["external_id"] = {"old": fed.external_id, "new": external_id}
                 fed.external_id = external_id
             if groups is not None:
-                fed.external_groups = group_refs if group_refs is not None else groups
+                next_group_refs = _normalize_group_refs(
+                    group_refs if group_refs is not None else groups
+                )
+                old_group_refs = _group_refs_for_audit(fed.external_groups)
+                new_group_refs = _group_refs_for_audit(next_group_refs)
+                if new_group_refs != old_group_refs:
+                    changes["groups"] = {
+                        "old": old_group_refs,
+                        "new": new_group_refs,
+                    }
+                fed.external_groups = next_group_refs
             if email:
                 fed.external_email = email
             if clear_display_name or full_replace or display_name is not None:
