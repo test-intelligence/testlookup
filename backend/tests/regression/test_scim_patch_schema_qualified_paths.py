@@ -134,3 +134,28 @@ async def test_invalid_name_patch_rejected_before_mutation(monkeypatch):
             uuid.uuid4(), payload, MagicMock(client=None), SimpleNamespace(sso_config_id=None), AsyncMock()
         )
     update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_derived_name_overflow_rejected_before_mutation(monkeypatch):
+    from app.models.schemas import SCIMPatchOp, SCIMPatchRequestPayload
+    from app.routers import scim
+
+    update = AsyncMock()
+    monkeypatch.setattr(scim, "scim_update_user", update)
+    payload = SCIMPatchRequestPayload(
+        schemas=[PATCH_SCHEMA],
+        Operations=[
+            SCIMPatchOp(
+                op="replace",
+                path="name",
+                value={"givenName": "g" * 255, "familyName": "f" * 255},
+            )
+        ],
+    )
+
+    with pytest.raises(HTTPException, match="derived name.formatted must be at most 255"):
+        await scim.scim_patch(
+            uuid.uuid4(), payload, MagicMock(client=None), SimpleNamespace(sso_config_id=None), AsyncMock()
+        )
+    update.assert_not_awaited()

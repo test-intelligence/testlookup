@@ -2,7 +2,7 @@
 
 ## 2026-08-18 — SCIM PATCH supports formatted names
 
-- PATCH now accepts `name.formatted`, core-schema-qualified formatted-name paths, and supported `name` objects without discarding valid name updates.
+- PATCH now accepts `name.formatted`, core-schema-qualified formatted-name paths, and supported `name` objects without discarding valid name updates; derived names are bounded before persistence.
 
 ## 2026-08-18 — SCIM preserves formatted names
 

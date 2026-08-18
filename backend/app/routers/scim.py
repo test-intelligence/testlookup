@@ -205,11 +205,20 @@ def _scim_patch_name(value: object) -> str:
     }
     if normalized.get("formatted"):
         return normalized["formatted"]
-    return " ".join(
+    derived = " ".join(
         part
         for part in (normalized.get("givenName"), normalized.get("familyName"))
         if part
     )
+    if len(derived) > SCIM_DISPLAY_NAME_MAX_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"derived name.formatted must be at most "
+                f"{SCIM_DISPLAY_NAME_MAX_LENGTH} characters"
+            ),
+        )
+    return derived
 
 
 def _scim_group_filter_name(path: str | None) -> str | None:
