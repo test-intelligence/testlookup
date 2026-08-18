@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: DB-backed global webhooks drive runtime delivery
+
+Encrypted global Slack and Teams webhook settings were visible to the settings
+authority but notification delivery, scheduled digests, and health probes still
+fell back directly to environment variables. A shared resolver now applies the
+encrypted → legacy inline → environment precedence and is used by each runtime
+path, while per-user/per-project webhooks continue to take priority.
+
 ### 2026-08-17 — Security: encrypt and redact global notification webhooks
 
 Slack and Teams incoming-webhook URLs are bearer credentials, but Integration

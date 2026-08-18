@@ -3061,8 +3061,10 @@ def dispatch_scheduled_digests(self):
                         # Resolve the user's webhook for this channel
                         # (project-scoped preference first, then global,
                         # then the instance-wide settings default).
-                        from app.core.config import settings
                         from app.models.postgres import NotificationPreference
+                        from app.services.integration_config_service import (
+                            resolve_global_notification_webhooks,
+                        )
                         from app.services.digest_content_service import (
                             digest_text_with_attachment_note,
                             render_digest_text,
@@ -3094,10 +3096,8 @@ def dispatch_scheduled_digests(self):
                             if webhook_url:
                                 break
                         if not webhook_url:
-                            webhook_url = (
-                                settings.SLACK_WEBHOOK_URL if channel == "slack"
-                                else settings.TEAMS_WEBHOOK_URL
-                            )
+                            global_webhooks = await resolve_global_notification_webhooks(db)
+                            webhook_url = global_webhooks[f"{channel}_webhook_url"]
                         if not webhook_url:
                             status = "failed"
                             error_detail = f"No {channel} webhook URL configured"

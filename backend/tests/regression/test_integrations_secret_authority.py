@@ -41,7 +41,9 @@ async def test_integrations_loader_reads_encrypted_secret_refs():
         assert scope == "integrations_config"
         return secrets[key]
 
-    with patch("app.services.secret_service.read_secret", new=read_secret):
+    with patch("app.services.secret_service.read_secret", new=read_secret), patch(
+        "app.services.integration_config_service.read_secret", new=read_secret,
+    ):
         config = await router._load_integrations_config(db)
 
     for key, value in secrets.items():
