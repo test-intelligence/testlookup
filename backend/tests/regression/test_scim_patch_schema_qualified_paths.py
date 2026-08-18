@@ -159,3 +159,24 @@ async def test_derived_name_overflow_rejected_before_mutation(monkeypatch):
             uuid.uuid4(), payload, MagicMock(client=None), SimpleNamespace(sso_config_id=None), AsyncMock()
         )
     update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["displayName", "name", "name.formatted", f"{CORE_USER}:Name"])
+async def test_optional_name_removal_reaches_explicit_clear(monkeypatch, path):
+    from app.models.schemas import SCIMPatchOp, SCIMPatchRequestPayload
+    from app.routers import scim
+
+    update = AsyncMock(side_effect=RuntimeError("stop after parsing"))
+    monkeypatch.setattr(scim, "scim_update_user", update)
+    payload = SCIMPatchRequestPayload(
+        schemas=[PATCH_SCHEMA],
+        Operations=[SCIMPatchOp(op="remove", path=path)],
+    )
+
+    with pytest.raises(RuntimeError, match="stop after parsing"):
+        await scim.scim_patch(
+            uuid.uuid4(), payload, MagicMock(client=None), SimpleNamespace(sso_config_id=None), AsyncMock()
+        )
+    assert update.await_args.kwargs["display_name"] is None
+    assert update.await_args.kwargs["clear_display_name"] is True

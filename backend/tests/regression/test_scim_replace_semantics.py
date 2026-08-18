@@ -104,6 +104,33 @@ async def test_partial_update_still_preserves_omitted_display_name(monkeypatch):
     assert user.full_name == "Keep Me"
 
 
+@pytest.mark.asyncio
+async def test_explicit_name_clear_updates_user_and_bound_identity(monkeypatch):
+    from app.services import scim_service
+
+    user_id = uuid.uuid4()
+    config_id = uuid.uuid4()
+    user = SimpleNamespace(
+        id=user_id, username="alice", email="alice@example.test", full_name="Remove Me",
+        is_active=True, role="viewer",
+    )
+    identity = SimpleNamespace(external_display_name="Remove Me")
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = user
+    identity_result = MagicMock()
+    identity_result.scalar_one_or_none.return_value = identity
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[user_result, identity_result])
+    monkeypatch.setattr(scim_service, "log_identity_event", AsyncMock())
+
+    await scim_service.scim_update_user(
+        db, user_id, sso_config_id=config_id, clear_display_name=True
+    )
+
+    assert user.full_name is None
+    assert identity.external_display_name is None
+
+
 def test_replace_explicitly_selects_full_replace_semantics():
     from app.routers.scim import scim_replace
 

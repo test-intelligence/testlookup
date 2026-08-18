@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM PATCH removes optional names
+
+- PATCH remove operations now clear `displayName`, `name`, and `name.formatted` explicitly across the local user and bound directory identity instead of rejecting valid optional-field removal.
+
 ## 2026-08-18 — SCIM PATCH supports formatted names
 
 - PATCH now accepts `name.formatted`, core-schema-qualified formatted-name paths, and supported `name` objects without discarding valid name updates; derived names are bounded before persistence.
