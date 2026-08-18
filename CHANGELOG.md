@@ -67,6 +67,9 @@
 ## 2026-08-18 — SCIM discovery endpoints describe implemented capabilities
 
 - Added bearer-protected ServiceProviderConfig, ResourceTypes, and Schemas discovery resources, including individual User metadata and request-derived locations without advertising unsupported operations.
+## 2026-08-18 — CLI `upload dir` fails the command on any upload error
+
+- `testlookup upload dir` now exits non-zero when one or more files fail to upload, instead of always exiting 0. A CI ingest step reads the exit code, so the previous behavior let reports silently never land while the pipeline went green. Matches `upload file` (which already exits non-zero on failure) and the empty-directory guard.
 
 ## 2026-08-18 — SCIM invalid filters fail with protocol errors
 

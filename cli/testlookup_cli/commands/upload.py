@@ -172,7 +172,17 @@ def upload_dir(
 
     if results:
         output.render(results, output_format)
-    output.print_success(f"Uploaded {len(results)}/{len(files)} files ({errors} errors)")
+
+    summary = f"Uploaded {len(results)}/{len(files)} files ({errors} errors)"
+    if errors:
+        # Any failed upload fails the command. A CI ingest step reads the exit
+        # code, and returning 0 here let reports silently never land while the
+        # pipeline went green — the same false-success trap the empty-directory
+        # guard above avoids. Mirrors `upload file`, which exits non-zero on its
+        # single failure.
+        output.print_error(summary)
+        raise typer.Exit(1)
+    output.print_success(summary)
 
 
 def _build_form_data(
