@@ -88,7 +88,11 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # ── Helper: Generate test certificate ────────────────────────────────────────
 
-def _make_test_cert() -> str:
+def _make_test_cert(
+    *,
+    not_before: datetime | None = None,
+    not_after: datetime | None = None,
+) -> str:
     """Return a valid PEM-formatted test certificate."""
     key = ec.generate_private_key(ec.SECP256R1())
     subject = issuer = x509.Name(
@@ -100,8 +104,8 @@ def _make_test_cert() -> str:
         .issuer_name(issuer)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.now(timezone.utc) - timedelta(minutes=1))
-        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+        .not_valid_before(not_before or datetime.now(timezone.utc) - timedelta(minutes=1))
+        .not_valid_after(not_after or datetime.now(timezone.utc) + timedelta(days=1))
         .sign(key, hashes.SHA256())
     )
     return cert.public_bytes(serialization.Encoding.PEM).decode()
@@ -193,6 +197,35 @@ class TestCertificateValidation:
         valid, msg = validate_certificate_format(cert)
         assert valid is False
         assert "x.509" in msg.lower()
+
+    def test_expired_certificate_is_rejected(self):
+        from app.services.sso_service import validate_certificate_format
+
+        cert = _make_test_cert(
+            not_before=datetime.now(timezone.utc) - timedelta(days=2),
+            not_after=datetime.now(timezone.utc) - timedelta(days=1),
+        )
+        valid, msg = validate_certificate_format(cert)
+        assert valid is False
+        assert "expired" in msg.lower()
+
+    def test_not_yet_valid_certificate_is_rejected(self):
+        from app.services.sso_service import validate_certificate_format
+
+        cert = _make_test_cert(
+            not_before=datetime.now(timezone.utc) + timedelta(days=1),
+            not_after=datetime.now(timezone.utc) + timedelta(days=2),
+        )
+        valid, msg = validate_certificate_format(cert)
+        assert valid is False
+        assert "not valid until" in msg.lower()
+
+    def test_certificate_expiration_returns_x509_not_after(self):
+        from app.services.sso_service import certificate_expiration
+
+        expected = (datetime.now(timezone.utc) + timedelta(days=3)).replace(microsecond=0)
+        cert = _make_test_cert(not_after=expected)
+        assert certificate_expiration(cert) == expected
 
     def test_certificate_fingerprint(self):
         from app.services.sso_service import certificate_fingerprint

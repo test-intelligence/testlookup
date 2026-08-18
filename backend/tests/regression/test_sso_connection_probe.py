@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -120,8 +121,10 @@ async def test_sso_test_endpoint_fails_when_idp_probe_is_unreachable(monkeypatch
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     probe = AsyncMock(return_value=(False, "IdP endpoint unreachable: DNS failed"))
+    expires_at = datetime(2030, 1, 2, tzinfo=timezone.utc)
     monkeypatch.setattr(sso, "probe_idp_endpoint", probe)
     monkeypatch.setattr(sso, "validate_certificate_format", lambda _: (True, "Valid"))
+    monkeypatch.setattr(sso, "certificate_expiration", lambda _: expires_at)
     monkeypatch.setattr(sso, "log_identity_event", AsyncMock())
 
     response = await sso.test_sso_connection(
@@ -134,5 +137,6 @@ async def test_sso_test_endpoint_fails_when_idp_probe_is_unreachable(monkeypatch
     assert response.success is False
     assert config.last_test_success is False
     assert "unreachable" in config.last_test_error
+    assert response.certificate_expires_at == expires_at.isoformat()
     probe.assert_awaited_once_with("https://missing.example/sso")
     db.commit.assert_awaited_once()

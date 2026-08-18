@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SSO enforces and reports certificate validity
+
+- SSO configuration now rejects expired and not-yet-valid IdP certificates, and “Test Connection” returns the certificate expiration timestamp promised by its API contract.
+
 ## 2026-08-18 — SSO rejects fake certificate payloads
 
 - Fixed SSO configuration validation accepting any base64-decodable bytes as a certificate; saved IdP certificates must now parse as actual X.509 certificates.
