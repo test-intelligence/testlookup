@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM filters require complete supported predicates
+
+- SCIM user filtering now parses the entire predicate case-insensitively, preventing unsupported attribute names containing a supported substring from returning directory matches.
+
 ## 2026-08-18 — SCIM successes use the protocol media type
 
 - Successful public SCIM JSON responses now use `application/scim+json`; admin token APIs retain ordinary JSON and 204 deletes remain bodyless.

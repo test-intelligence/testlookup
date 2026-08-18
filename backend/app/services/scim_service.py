@@ -1,6 +1,7 @@
 """SCIM 2.0 provisioning service — user create/update/deactivate with bearer token auth."""
 import hashlib
 import logging
+import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,11 @@ from app.models.postgres import (
 from app.services.sso_service import log_identity_event, resolve_role_from_groups
 
 logger = logging.getLogger(__name__)
+
+_SCIM_EQUALITY_FILTER = re.compile(
+    r"^(userName|email|emails\.value|externalId)\s+eq\s+(?:\"([^\"]+)\"|'([^']+)')$",
+    re.IGNORECASE,
+)
 
 
 class SCIMUserNotFoundError(ValueError):
@@ -367,42 +373,30 @@ async def scim_list_users(
     # An unrecognised filter must NOT silently return the whole directory —
     # that surprises an IdP expecting a narrowed result. Return empty instead.
     if filter_str:
-        filter_str = filter_str.strip()
-        matched = False
-        if 'userName eq' in filter_str:
-            value = _extract_scim_filter_value(filter_str)
-            if value:
-                query = query.where(User.username == value)
-                matched = True
-        elif 'email eq' in filter_str or 'emails.value eq' in filter_str:
-            value = _extract_scim_filter_value(filter_str)
-            if value:
-                query = query.where(User.email == value)
-                matched = True
-        elif 'externalId eq' in filter_str:
-            value = _extract_scim_filter_value(filter_str)
-            if value:
-                fed_result = await db.execute(
-                    select(FederatedIdentity.user_id).where(
-                        FederatedIdentity.external_id == value,
-                        *(
-                            [FederatedIdentity.sso_config_id == sso_config_id]
-                            if sso_config_id is not None
-                            else []
-                        ),
-                    )
-                )
-                user_ids = [row[0] for row in fed_result.all()]
-                if not user_ids:
-                    return [], 0
-                query = query.where(User.id.in_(user_ids))
-                matched = True
-        # A recognised predicate with an unparseable/empty value leaves `matched`
-        # False; like a wholly unsupported filter it must return empty rather than
-        # fall through to an unfiltered query that would leak the whole directory.
-        if not matched:
+        parsed_filter = _parse_scim_filter(filter_str)
+        if parsed_filter is None:
             logger.warning("Unsupported SCIM filter, returning empty result: %s", filter_str)
             return [], 0
+        attribute, value = parsed_filter
+        if attribute == "username":
+            query = query.where(User.username == value)
+        elif attribute in {"email", "emails.value"}:
+            query = query.where(User.email == value)
+        else:
+            fed_result = await db.execute(
+                select(FederatedIdentity.user_id).where(
+                    FederatedIdentity.external_id == value,
+                    *(
+                        [FederatedIdentity.sso_config_id == sso_config_id]
+                        if sso_config_id is not None
+                        else []
+                    ),
+                )
+            )
+            user_ids = [row[0] for row in fed_result.all()]
+            if not user_ids:
+                return [], 0
+            query = query.where(User.id.in_(user_ids))
 
     # Total count
     count_query = select(func.count()).select_from(query.subquery())
@@ -434,17 +428,18 @@ async def scim_identity_map(
     return {identity.user_id: identity for identity in result.scalars().all()}
 
 
-def _extract_scim_filter_value(filter_str: str) -> str | None:
-    """Extract the value from a simple SCIM filter like 'attr eq \"value\"'."""
-    import re
+def _parse_scim_filter(filter_str: str) -> tuple[str, str] | None:
+    """Parse one complete supported SCIM equality predicate."""
+    match = _SCIM_EQUALITY_FILTER.fullmatch(filter_str.strip())
+    if match is None:
+        return None
+    return match.group(1).lower(), match.group(2) or match.group(3)
 
-    match = re.search(r'eq\s+"([^"]*)"', filter_str)
-    if match:
-        return match.group(1)
-    match = re.search(r"eq\s+'([^']*)'", filter_str)
-    if match:
-        return match.group(1)
-    return None
+
+def _extract_scim_filter_value(filter_str: str) -> str | None:
+    """Return a supported filter value for compatibility with existing callers."""
+    parsed_filter = _parse_scim_filter(filter_str)
+    return parsed_filter[1] if parsed_filter is not None else None
 
 
 def user_to_scim_resource(
