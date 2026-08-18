@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — Search counts exclude deleted projects
+
+- Search entity totals now exclude runs, test cases, suites, defects, flaky records, and releases belonging to soft-deleted projects.
+
 ## 2026-08-18 — Full search reindex stores a deterministic cursor
 
 - Full semantic reindexing now orders by creation time and test-case ID before persisting its final incremental cursor.
