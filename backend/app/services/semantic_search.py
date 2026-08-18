@@ -53,7 +53,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.postgres import TestCase, TestRun, TestStep
+from app.models.postgres import Project, TestCase, TestRun, TestStep
 
 logger = logging.getLogger("services.semantic_search")
 
@@ -200,7 +200,9 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
         TestRun.project_id,
         TestCase.created_at,
         _step_text_subq(),
-    ).join(TestRun, TestRun.id == TestCase.test_run_id)
+    ).join(TestRun, TestRun.id == TestCase.test_run_id).join(
+        Project, Project.id == TestRun.project_id
+    ).where(Project.is_active.is_(True))
 
     if project_id:
         q = q.where(TestRun.project_id == project_id)
@@ -270,7 +272,9 @@ async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) 
         TestRun.project_id,
         TestCase.created_at,
         _step_text_subq(),
-    ).join(TestRun, TestRun.id == TestCase.test_run_id)
+    ).join(TestRun, TestRun.id == TestCase.test_run_id).join(
+        Project, Project.id == TestRun.project_id
+    ).where(Project.is_active.is_(True))
 
     if project_id:
         q = q.where(TestRun.project_id == project_id)
@@ -491,9 +495,10 @@ async def semantic_search(
             ).label("failure_count"),
         )
         .join(TestRun, TestRun.id == TestCase.test_run_id)
+        .join(Project, Project.id == TestRun.project_id)
         .outerjoin(history_case, history_case.test_fingerprint == TestCase.test_fingerprint)
         .outerjoin(history_run, history_run.id == history_case.test_run_id)
-        .where(TestCase.id.in_(valid_uuids))
+        .where(TestCase.id.in_(valid_uuids), Project.is_active.is_(True))
         .group_by(
             TestCase.id, TestCase.test_run_id, TestCase.test_name,
             TestCase.suite_name, TestCase.status, TestCase.created_at,

@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
     Defect,
+    Project,
     Release,
     TestCase,
     TestCaseHistory,
@@ -145,6 +146,7 @@ async def _search_test_cases(
     stmt = (
         select(TestCase, TestRun.project_id)
         .join(TestRun, TestCase.test_run_id == TestRun.id)
+        .join(Project, Project.id == TestRun.project_id)
         .where(or_(
             TestCase.test_name.ilike(pattern, escape="\\"),
             TestCase.suite_name.ilike(pattern, escape="\\"),
@@ -155,7 +157,7 @@ async def _search_test_cases(
             TestRun.primary_suite_name.ilike(pattern, escape="\\"),
             TestCase.error_message.ilike(pattern, escape="\\"),
             cast(TestCase.tags, String).ilike(pattern, escape="\\"),
-        ))
+        ), Project.is_active.is_(True))
         .order_by(TestCase.created_at.desc())
         .limit(override_limit or 50)
     )
@@ -191,12 +193,13 @@ async def _search_test_runs(
     pattern = like_contains(q)
     stmt = (
         select(TestRun)
+        .join(Project, Project.id == TestRun.project_id)
         .where(or_(
             TestRun.build_number.ilike(pattern, escape="\\"),
             TestRun.branch.ilike(pattern, escape="\\"),
             TestRun.jenkins_job.ilike(pattern, escape="\\"),
             cast(TestRun.tags, String).ilike(pattern, escape="\\"),
-        ))
+        ), Project.is_active.is_(True))
         .order_by(TestRun.created_at.desc())
         .limit(override_limit or 20)
     )
@@ -258,9 +261,11 @@ async def _search_suites(
         # global-search fan-out silently drops suite results.
         .select_from(TestCase)
         .join(TestRun, TestCase.test_run_id == TestRun.id)
+        .join(Project, Project.id == TestRun.project_id)
         .where(
             effective_suite.ilike(pattern, escape="\\"),
             effective_suite.isnot(None),
+            Project.is_active.is_(True),
         )
         .group_by(effective_suite)
         .order_by(func.count().desc())
@@ -295,9 +300,10 @@ async def _search_defects(
     pattern = like_contains(q)
     stmt = (
         select(Defect)
+        .join(Project, Project.id == Defect.project_id)
         .where(or_(
             Defect.jira_ticket_id.ilike(pattern, escape="\\"),
-        ))
+        ), Project.is_active.is_(True))
         .order_by(Defect.created_at.desc())
         .limit(override_limit or 20)
     )
@@ -351,7 +357,11 @@ async def _search_flaky_tests(
         )
         .join(TestCase, TestCaseHistory.test_case_id == TestCase.id)
         .join(TestRun, TestCaseHistory.test_run_id == TestRun.id)
-        .where(TestCase.test_name.ilike(pattern, escape="\\"))
+        .join(Project, Project.id == TestRun.project_id)
+        .where(
+            TestCase.test_name.ilike(pattern, escape="\\"),
+            Project.is_active.is_(True),
+        )
         .group_by(TestCaseHistory.test_fingerprint, TestRun.project_id)
         .having(func.count() >= 5)
         .limit(override_limit or 15)
@@ -389,10 +399,11 @@ async def _search_releases(
     pattern = like_contains(q)
     stmt = (
         select(Release)
+        .join(Project, Project.id == Release.project_id)
         .where(or_(
             Release.name.ilike(pattern, escape="\\"),
             Release.version.ilike(pattern, escape="\\"),
-        ))
+        ), Project.is_active.is_(True))
         .order_by(Release.created_at.desc())
         .limit(override_limit or 10)
     )
