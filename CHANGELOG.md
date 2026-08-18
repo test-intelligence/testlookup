@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM PATCH paths are case-insensitive
+
+- PATCH now canonicalizes SCIM attribute names in simple paths, group filters, and bulk objects without changing values, and rejects duplicate bulk aliases deterministically.
+
 ## 2026-08-18 — SCIM replace no longer preserves omitted writable state
 
 - SCIM replace now requires the application's mandatory email and clears omitted optional display-name state, while PATCH retains partial-update behavior.
