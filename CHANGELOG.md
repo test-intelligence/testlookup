@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM credential lifecycle is audited
+
+- SCIM bearer-token creation and revocation now write actor-attributed identity audit events with safe token metadata and client IP, without storing the raw token or its hash.
+
 ## 2026-08-18 — SSO activation is deterministic
 
 - Activating an SSO configuration now atomically deactivates the previous configuration, while a database partial unique index prevents concurrent requests from leaving multiple active login policies.
