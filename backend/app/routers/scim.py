@@ -14,6 +14,7 @@ from app.core.scim_errors import SCIMJSONResponse
 from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, SCIMToken, User, UserRole
 from app.models.schemas import (
+    SCIM_USER_SCHEMA,
     SCIMListResponse,
     SCIMPatchRequestPayload,
     SCIMTokenCreate,
@@ -123,7 +124,11 @@ def _canonical_scim_patch_path(path: str | None) -> str | None:
     """Canonicalize SCIM attribute names without modifying filter values."""
     if path is None:
         return None
-    return _SCIM_PATCH_PATHS.get(path.casefold(), path)
+    unqualified = path
+    core_prefix = f"{SCIM_USER_SCHEMA}:"
+    if path.casefold().startswith(core_prefix.casefold()):
+        unqualified = path[len(core_prefix):]
+    return _SCIM_PATCH_PATHS.get(unqualified.casefold(), unqualified)
 
 
 def _canonical_scim_patch_object(value: dict) -> dict:
