@@ -334,11 +334,19 @@ async def _run_index(monkeypatch, func_name, *, blow_up_at_upsert=True):
 
     cursor_calls = []
     monkeypatch.setattr(search, "_get_or_create_collection", _fake_collection)
-    monkeypatch.setattr(search, "_update_cursor", lambda rows: cursor_calls.append(rows))
+    monkeypatch.setattr(
+        search,
+        "_update_cursor",
+        lambda rows, project_id=None: cursor_calls.append((rows, project_id)),
+    )
     if blow_up_at_upsert:
         monkeypatch.setattr(search, "_upsert_rows_to_collection", _boom)
     else:
-        async def _ok(*_a, **_k):
+        async def _ok(*_a, **kwargs):
+            if kwargs.get("checkpoint_cursor"):
+                search._update_cursor(
+                    [_Row()], kwargs.get("cursor_project_id")
+                )
             return 1
 
         monkeypatch.setattr(search, "_upsert_rows_to_collection", _ok)
@@ -440,4 +448,3 @@ def test_model_dir_still_prefers_the_configured_path(monkeypatch, tmp_path):
 
     monkeypatch.setattr(settings, "CHROMA_ONNX_MODEL_DIR", "")
     assert guard._configured_model_dir() is None
-
