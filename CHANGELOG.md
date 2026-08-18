@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — Performance settings show effective database pool values
+
+- Replaced nullable `auto` PostgreSQL pool values in Performance settings with the concrete environment defaults or explicit overrides used by the SQLAlchemy engine, including the effective recycle cap.
+
 ## 2026-08-18 — Chroma settings drive runtime clients and health
 
 - Wired persisted Chroma host and port settings into every vector-store client and operational probe, and the configured default collection into chat semantic search.

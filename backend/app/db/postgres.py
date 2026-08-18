@@ -61,6 +61,15 @@ def _max_overflow() -> int:
     return {"development": 10, "staging": 30, "production": 100}.get(settings.APP_ENV, 10)
 
 
+def get_effective_pool_config() -> dict[str, int]:
+    """Return the concrete pool values used to construct the SQLAlchemy engine."""
+    return {
+        "pool_size": _pool_size(),
+        "max_overflow": _max_overflow(),
+        "pool_recycle": min(settings.PG_POOL_RECYCLE, 900),
+    }
+
+
 # Phase 2.3 — minimum recommended pool sizing per process. A worker
 # whose effective pool is smaller than this should log a warning at
 # startup so the operator sees it before the system hits load. The
@@ -102,13 +111,14 @@ def get_engine() -> AsyncEngine:
     production), pool_recycle capped at 900s to stay within typical PG
     idle timeouts.
     """
+    pool = get_effective_pool_config()
     return create_async_engine(
         settings.DATABASE_URL,
         echo=settings.is_development,
         pool_pre_ping=settings.APP_ENV != "production",
-        pool_size=_pool_size(),
-        max_overflow=_max_overflow(),
-        pool_recycle=min(settings.PG_POOL_RECYCLE, 900),
+        pool_size=pool["pool_size"],
+        max_overflow=pool["max_overflow"],
+        pool_recycle=pool["pool_recycle"],
         pool_timeout=settings.PG_POOL_TIMEOUT,
     )
 

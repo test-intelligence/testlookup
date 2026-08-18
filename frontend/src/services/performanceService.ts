@@ -34,8 +34,8 @@ export interface SearchConfig {
   incremental_limit: number;
   query_timeout_ms: number;
   max_results: number;
-  pg_pool_size: number | null;
-  pg_max_overflow: number | null;
+  pg_pool_size: number;
+  pg_max_overflow: number;
   pg_pool_recycle: number;
   celery_worker_concurrency: number;
 }

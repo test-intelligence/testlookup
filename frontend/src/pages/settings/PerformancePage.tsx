@@ -73,8 +73,8 @@ export default function PerformancePage() {
               ['Incremental Limit', config.incremental_limit],
               ['Query Timeout', `${config.query_timeout_ms}ms`],
               ['Max Results', config.max_results],
-              ['PG Pool Size', config.pg_pool_size ?? 'auto'],
-              ['PG Max Overflow', config.pg_max_overflow ?? 'auto'],
+              ['PG Pool Size', config.pg_pool_size],
+              ['PG Max Overflow', config.pg_max_overflow],
               ['PG Pool Recycle', `${config.pg_pool_recycle}s`],
               ['Worker Concurrency', config.celery_worker_concurrency],
             ] as [string, string | number][]).map(([label, value]) => (
