@@ -615,6 +615,7 @@ async def scim_patch(
     username = None
     email = None
     display_name = None
+    clear_display_name = False
     external_id = None
     active = None
     groups = None
@@ -646,6 +647,7 @@ async def scim_patch(
                     SCIM_DISPLAY_NAME_MAX_LENGTH,
                     allow_empty=True,
                 )
+                clear_display_name = False
             elif path == "name.formatted":
                 display_name = _scim_patch_string(
                     op.value,
@@ -653,8 +655,10 @@ async def scim_patch(
                     SCIM_DISPLAY_NAME_MAX_LENGTH,
                     allow_empty=True,
                 )
+                clear_display_name = False
             elif path == "name":
                 display_name = _scim_patch_name(op.value)
+                clear_display_name = False
             elif path == "emails":
                 email = _scim_patch_email(op.value)
                 if email is None:
@@ -691,6 +695,7 @@ async def scim_patch(
                         SCIM_DISPLAY_NAME_MAX_LENGTH,
                         allow_empty=True,
                     )
+                    clear_display_name = False
                 if "name.formatted" in bulk_value:
                     display_name = _scim_patch_string(
                         bulk_value["name.formatted"],
@@ -698,8 +703,10 @@ async def scim_patch(
                         SCIM_DISPLAY_NAME_MAX_LENGTH,
                         allow_empty=True,
                     )
+                    clear_display_name = False
                 if "name" in bulk_value:
                     display_name = _scim_patch_name(bulk_value["name"])
+                    clear_display_name = False
                 if "emails" in bulk_value:
                     email = _scim_patch_email(bulk_value["emails"])
                     if email is None:
@@ -728,6 +735,9 @@ async def scim_patch(
                     if refs is None:
                         raise HTTPException(status_code=400, detail="groups must be an array")
                     group_operations.append(("remove", refs))
+            elif path in {"displayName", "name", "name.formatted"}:
+                display_name = None
+                clear_display_name = True
             else:
                 raise HTTPException(status_code=400, detail=f"Unsupported PATCH path: {op.path}")
         else:
@@ -746,6 +756,7 @@ async def scim_patch(
             username=username,
             email=email,
             display_name=display_name,
+            clear_display_name=clear_display_name,
             external_id=external_id,
             active=active,
             groups=groups,

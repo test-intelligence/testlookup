@@ -280,6 +280,7 @@ async def scim_update_user(
     sso_config_id: uuid.UUID | None = None,
     ip_address: str | None = None,
     full_replace: bool = False,
+    clear_display_name: bool = False,
 ) -> User:
     """Update an existing user via SCIM."""
     query = select(User).where(User.id == user_id)
@@ -358,7 +359,9 @@ async def scim_update_user(
         changes["email"] = {"old": user.email, "new": email}
         user.email = email
 
-    if full_replace or display_name is not None:
+    if clear_display_name:
+        user.full_name = None
+    elif full_replace or display_name is not None:
         user.full_name = display_name
 
     if active is not None:
@@ -382,7 +385,12 @@ async def scim_update_user(
                 user.role = new_role
 
     # Update federated identity attributes owned by this directory.
-    if sso_config_id and (groups is not None or external_id is not None):
+    if sso_config_id and (
+        groups is not None
+        or external_id is not None
+        or display_name is not None
+        or clear_display_name
+    ):
         if fed is None:
             fed_result = await db.execute(
                 select(FederatedIdentity).where(
@@ -399,7 +407,9 @@ async def scim_update_user(
                 fed.external_groups = group_refs if group_refs is not None else groups
             if email:
                 fed.external_email = email
-            if full_replace or display_name is not None:
+            if clear_display_name:
+                fed.external_display_name = None
+            elif full_replace or display_name is not None:
                 fed.external_display_name = display_name
 
     # Determine event type

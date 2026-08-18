@@ -15,7 +15,6 @@ from fastapi import HTTPException
         [{"op": "move", "path": "userName", "value": "alice"}],
         [{"op": "replace", "path": "title", "value": "Engineer"}],
         [{"op": "add", "path": "userName", "value": "alice"}],
-        [{"op": "remove", "path": "displayName"}],
         [{"op": "replace", "path": "active", "value": "false"}],
         [{"op": "replace", "path": "emails", "value": []}],
         [{"op": "replace", "path": "groups", "value": [123]}],
