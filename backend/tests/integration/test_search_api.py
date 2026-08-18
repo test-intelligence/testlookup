@@ -187,6 +187,51 @@ async def test_global_search_non_member_rejected(client, auth_as):
     assert resp.status_code == 403
 
 
+@pytest.mark.parametrize("entity_types", ["bogus", "test_case,bogus"])
+async def test_global_search_rejects_unknown_entity_types(
+    client, auth_as, entity_types,
+):
+    """An invalid explicit filter must not broaden into all adapters."""
+    auth_as(role=UserRole.ADMIN)
+    response = {
+        "items": [], "total": 0, "query": "x", "search_type": "keyword",
+        "entity_counts": {}, "page": 1, "size": 20, "pages": 0,
+    }
+    with patch(
+        "app.services.global_search_service.global_search",
+        AsyncMock(return_value=response),
+    ) as global_search:
+        resp = await client.get(
+            "/api/v1/search/global",
+            params={"q": "x", "entity_types": entity_types},
+        )
+
+    assert resp.status_code == 400
+    assert "bogus" in resp.json()["detail"]
+    global_search.assert_not_awaited()
+
+
+async def test_global_search_forwards_valid_entity_filter(client, auth_as):
+    auth_as(role=UserRole.ADMIN)
+    response = {
+        "items": [], "total": 0, "query": "x", "search_type": "keyword",
+        "entity_counts": {}, "page": 1, "size": 20, "pages": 0,
+    }
+    with patch(
+        "app.services.global_search_service.global_search",
+        AsyncMock(return_value=response),
+    ) as global_search:
+        resp = await client.get(
+            "/api/v1/search/global",
+            params={"q": "x", "entity_types": "test_case,release"},
+        )
+
+    assert resp.status_code == 200
+    assert global_search.await_args.kwargs["entity_types"] == {
+        "test_case", "release",
+    }
+
+
 async def test_global_search_empty_q_browses_not_422(client, auth_as):
     """``q`` is optional now — an empty query BROWSES the most-recent
     items in scope (the /search page chips with no query typed) rather

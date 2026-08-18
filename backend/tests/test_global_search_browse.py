@@ -97,6 +97,19 @@ async def test_global_search_empty_q_narrowed_to_one_entity_type():
     assert db.execute.await_count == 1
 
 
+@pytest.mark.asyncio
+async def test_global_search_explicit_empty_entity_set_runs_no_adapters():
+    """An explicit empty filter is not equivalent to an omitted filter."""
+    from app.services.global_search_service import global_search
+
+    db = AsyncMock()
+    result = await global_search(db=db, q="anything", entity_types=set())
+
+    assert result["items"] == []
+    assert result["total"] == 0
+    db.execute.assert_not_awaited()
+
+
 # ── Like-pattern semantics for empty q ────────────────────────────────────
 
 

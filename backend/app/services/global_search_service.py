@@ -57,7 +57,9 @@ async def global_search(
 
     Returns a dict matching GlobalSearchResponse shape.
     """
-    types = entity_types or ALL_ENTITY_TYPES
+    # ``None`` means the caller omitted the filter. An explicit empty set
+    # means "search none" and must never broaden into every adapter.
+    types = ALL_ENTITY_TYPES if entity_types is None else entity_types
     period_start = datetime.now(timezone.utc) - timedelta(days=days) if days else None
 
     # Short-circuit: non-admin with no project memberships cannot see anything.
