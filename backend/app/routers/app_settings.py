@@ -120,10 +120,17 @@ async def update_smtp_config(
 ) -> SmtpConfigRead:
     """Persist SMTP configuration to the database. Password is stored in secret_refs, not in app_settings."""
     from sqlalchemy import select
+    from app.services.secret_service import expire_secret, has_secret
 
-    # Handle password via secret_refs (never store in app_settings.value)
-    if payload.password is not None:
+    # Preserve the tri-state contract: None keeps the stored secret, an empty
+    # string clears it, and a non-empty value replaces it.
+    stored_password_set = await has_secret(db, _SMTP_KEY, _SMTP_SECRET_FIELD)
+    if payload.password == "":
+        await expire_secret(db, _SMTP_KEY, _SMTP_SECRET_FIELD)
+        stored_password_set = False
+    elif payload.password is not None:
         await store_secret(db, _SMTP_KEY, _SMTP_SECRET_FIELD, payload.password, actor_id=current_user.id)
+        stored_password_set = True
 
     # Store non-secret metadata only
     new_value = {
@@ -150,7 +157,7 @@ async def update_smtp_config(
         _SMTP_KEY,
         "updated",
         current_user,
-        changed_fields=list(new_value.keys()) + ([_SMTP_SECRET_FIELD] if payload.password else []),
+        changed_fields=list(new_value.keys()) + ([_SMTP_SECRET_FIELD] if payload.password is not None else []),
     )
     await db.commit()
 
@@ -162,7 +169,7 @@ async def update_smtp_config(
         user=payload.user or None,
         from_address=payload.from_address,
         implicit_tls=payload.implicit_tls,
-        has_secret_material=bool(payload.password),
+        has_secret_material=stored_password_set or bool(settings.SMTP_PASSWORD),
     )
 
 

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: SMTP password keep, replace, and clear semantics
+
+Saving SMTP settings without entering a new password preserved the stored
+secret but incorrectly returned `password_set: false`. Explicit clear encrypted
+an empty string as an active secret, allowing the next read to report it set
+again, and the clear was absent from changed-field auditing. The three states
+now consistently retain, replace, or expire the secret and return the effective
+post-save state.
+
 ### 2026-08-17 — Fix: feature-flag list no longer hides database outages
 
 The compatibility feature-flag list converted every database exception into a
