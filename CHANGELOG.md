@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM external IDs validate before mutation
+
+- SCIM trims case-exact external IDs, rejects empty values, detects directory-scoped collisions before user mutation, and applies the canonical value to filters.
+
 ## 2026-08-18 — SCIM username identity is case-insensitive
 
 - SCIM trims and case-folds usernames, checks create and update collisions case-insensitively, stores the canonical value, and applies the same semantics to username filters.

@@ -49,6 +49,14 @@ def _canonical_scim_email(email: str) -> str:
     return canonical
 
 
+def _canonical_scim_external_id(external_id: str) -> str:
+    """Trim a case-exact SCIM external identifier and reject empty values."""
+    canonical = external_id.strip()
+    if not canonical:
+        raise ValueError("External ID must be a non-empty value")
+    return canonical
+
+
 def _normalize_group_refs(groups: list | None) -> list[dict[str, str]]:
     """Normalize legacy string groups and canonical SCIM group references."""
     refs_by_value: dict[str, dict[str, str]] = {}
@@ -175,6 +183,17 @@ async def scim_create_user(
     """Create a new user via SCIM provisioning."""
     username = _canonical_scim_username(username)
     email = _canonical_scim_email(email)
+    if external_id is not None:
+        external_id = _canonical_scim_external_id(external_id)
+    if sso_config_id is not None and external_id is not None:
+        result = await db.execute(
+            select(FederatedIdentity).where(
+                FederatedIdentity.sso_config_id == sso_config_id,
+                FederatedIdentity.external_id == external_id,
+            )
+        )
+        if result.scalar_one_or_none():
+            raise ValueError(f"External ID '{external_id}' already exists in this directory")
     # Check for existing user by email
     result = await db.execute(select(User).where(func.lower(User.email) == email))
     existing = result.scalar_one_or_none()
@@ -256,6 +275,19 @@ async def scim_update_user(
     user = result.scalar_one_or_none()
     if user is None:
         raise SCIMUserNotFoundError(f"User {user_id} not found")
+
+    if external_id is not None:
+        external_id = _canonical_scim_external_id(external_id)
+    if sso_config_id is not None and external_id is not None:
+        duplicate_result = await db.execute(
+            select(FederatedIdentity).where(
+                FederatedIdentity.sso_config_id == sso_config_id,
+                FederatedIdentity.external_id == external_id,
+                FederatedIdentity.user_id != user_id,
+            )
+        )
+        if duplicate_result.scalar_one_or_none():
+            raise ValueError(f"External ID '{external_id}' already exists in this directory")
 
     fed = None
     if group_operations:
@@ -424,9 +456,12 @@ async def scim_list_users(
         elif attribute in {"email", "emails.value"}:
             query = query.where(func.lower(User.email) == value.casefold())
         else:
+            external_id = value.strip()
+            if not external_id:
+                return [], 0
             fed_result = await db.execute(
                 select(FederatedIdentity.user_id).where(
-                    FederatedIdentity.external_id == value,
+                    FederatedIdentity.external_id == external_id,
                     *(
                         [FederatedIdentity.sso_config_id == sso_config_id]
                         if sso_config_id is not None
