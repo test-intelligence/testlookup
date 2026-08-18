@@ -220,6 +220,7 @@ async def scim_update_user(
     group_operations: list[tuple[str, list[dict[str, str]] | None]] | None = None,
     sso_config_id: uuid.UUID | None = None,
     ip_address: str | None = None,
+    full_replace: bool = False,
 ) -> User:
     """Update an existing user via SCIM."""
     query = select(User).where(User.id == user_id)
@@ -277,7 +278,7 @@ async def scim_update_user(
         changes["email"] = {"old": user.email, "new": email}
         user.email = email
 
-    if display_name is not None:
+    if full_replace or display_name is not None:
         user.full_name = display_name
 
     if active is not None:
@@ -318,7 +319,7 @@ async def scim_update_user(
                 fed.external_groups = group_refs if group_refs is not None else groups
             if email:
                 fed.external_email = email
-            if display_name:
+            if full_replace or display_name is not None:
                 fed.external_display_name = display_name
 
     # Determine event type
