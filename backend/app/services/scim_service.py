@@ -27,6 +27,33 @@ class SCIMUserNotFoundError(ValueError):
     """Raised when a SCIM user does not exist within the token's directory scope."""
 
 
+def _normalize_group_refs(groups: list | None) -> list[dict[str, str]]:
+    """Normalize legacy string groups and canonical SCIM group references."""
+    refs: list[dict[str, str]] = []
+    for group in groups or []:
+        if isinstance(group, str) and group:
+            refs.append({"value": group})
+        elif isinstance(group, dict):
+            value = group.get("value")
+            display = group.get("display")
+            if isinstance(value, str) and value:
+                ref = {"value": value}
+                if isinstance(display, str) and display:
+                    ref["display"] = display
+                refs.append(ref)
+    return refs
+
+
+def _group_role_names(refs: list[dict[str, str]]) -> list[str]:
+    return [ref.get("display") or ref["value"] for ref in refs]
+
+
+def _group_ref_matches(candidate: dict[str, str], target: dict[str, str]) -> bool:
+    """Match removals by stable value, with display fallback for legacy callers."""
+    needles = {value for value in target.values() if value}
+    return candidate["value"] in needles or candidate.get("display") in needles
+
+
 # ── SCIM Token management ───────────────────────────────────────────────────
 
 
@@ -109,6 +136,7 @@ async def scim_create_user(
     display_name: str | None = None,
     external_id: str | None = None,
     groups: list[str] | None = None,
+    group_refs: list[dict[str, str]] | None = None,
     active: bool = True,
     sso_config_id: uuid.UUID | None = None,
     ip_address: str | None = None,
@@ -157,7 +185,7 @@ async def scim_create_user(
             external_id=external_id,
             external_email=email,
             external_display_name=display_name,
-            external_groups=groups or [],
+            external_groups=group_refs if group_refs is not None else groups or [],
         )
         db.add(fed_identity)
 
@@ -181,7 +209,8 @@ async def scim_update_user(
     display_name: str | None = None,
     active: bool | None = None,
     groups: list[str] | None = None,
-    group_operations: list[tuple[str, list[str] | None]] | None = None,
+    group_refs: list[dict[str, str]] | None = None,
+    group_operations: list[tuple[str, list[dict[str, str]] | None]] | None = None,
     sso_config_id: uuid.UUID | None = None,
     ip_address: str | None = None,
 ) -> User:
@@ -207,18 +236,23 @@ async def scim_update_user(
         if fed is None:
             raise SCIMUserNotFoundError(f"User {user_id} not found")
 
-        patched_groups = list(fed.external_groups or [])
-        for operation, names in group_operations:
+        patched_refs = _normalize_group_refs(fed.external_groups)
+        for operation, refs in group_operations:
             if operation == "replace":
-                patched_groups = list(names or [])
+                patched_refs = _normalize_group_refs(refs)
             elif operation == "add":
-                for name in names or []:
-                    if name not in patched_groups:
-                        patched_groups.append(name)
+                for ref in _normalize_group_refs(refs):
+                    if not any(existing["value"] == ref["value"] for existing in patched_refs):
+                        patched_refs.append(ref)
             elif operation == "remove":
-                removed = set(names or [])
-                patched_groups = [name for name in patched_groups if name not in removed]
-        groups = patched_groups
+                targets = _normalize_group_refs(refs)
+                patched_refs = [
+                    candidate
+                    for candidate in patched_refs
+                    if not any(_group_ref_matches(candidate, target) for target in targets)
+                ]
+        group_refs = patched_refs
+        groups = _group_role_names(patched_refs)
 
     changes: dict = {}
     if username is not None and username != user.username:
@@ -270,7 +304,7 @@ async def scim_update_user(
             )
             fed = fed_result.scalar_one_or_none()
         if fed:
-            fed.external_groups = groups
+            fed.external_groups = group_refs if group_refs is not None else groups
             if email:
                 fed.external_email = email
             if display_name:

@@ -39,19 +39,35 @@ router = APIRouter(prefix="/api/v1/scim/v2", tags=["SCIM 2.0"])
 token_router = APIRouter(prefix="/api/v1/scim-tokens", tags=["SCIM Tokens"])
 
 
-def _scim_group_names(value: object) -> list[str] | None:
-    """Normalize a SCIM groups array to the names used by role mappings."""
+def _scim_group_refs(value: object) -> list[dict[str, str]] | None:
+    """Preserve SCIM group identity and display data in a canonical form."""
     if not isinstance(value, list):
         return None
-    names: list[str] = []
+    refs: list[dict[str, str]] = []
     for item in value:
         if isinstance(item, dict):
-            name = item.get("display") or item.get("value")
+            group_value = item.get("value")
+            display = item.get("display")
+        elif hasattr(item, "value"):
+            group_value = item.value
+            display = getattr(item, "display", None)
         else:
-            name = item if isinstance(item, str) else None
-        if isinstance(name, str) and name:
-            names.append(name)
-    return names
+            group_value = item if isinstance(item, str) else None
+            display = None
+        if (not isinstance(group_value, str) or not group_value) and isinstance(display, str):
+            group_value = display
+        if not isinstance(group_value, str) or not group_value:
+            continue
+        ref = {"value": group_value}
+        if isinstance(display, str) and display:
+            ref["display"] = display
+        refs.append(ref)
+    return refs
+
+
+def _scim_group_names(refs: list[dict[str, str]]) -> list[str]:
+    """Return display-first names used by configured role mappings."""
+    return [ref.get("display") or ref["value"] for ref in refs]
 
 
 def _scim_group_filter_name(path: str | None) -> str | None:
@@ -176,7 +192,8 @@ async def scim_create(
         parts = [payload.name.givenName, payload.name.familyName]
         display_name = " ".join(p for p in parts if p) or None
 
-    groups = [g.display or g.value for g in payload.groups] if payload.groups else []
+    group_refs = _scim_group_refs(payload.groups) or []
+    groups = _scim_group_names(group_refs)
     client_ip = request.client.host if request.client else None
 
     try:
@@ -187,6 +204,7 @@ async def scim_create(
             display_name=display_name,
             external_id=payload.externalId,
             groups=groups,
+            group_refs=group_refs,
             active=payload.active,
             sso_config_id=scim_token.sso_config_id,
             ip_address=client_ip,
@@ -225,7 +243,8 @@ async def scim_replace(
         parts = [payload.name.givenName, payload.name.familyName]
         display_name = " ".join(p for p in parts if p) or None
 
-    groups = [g.display or g.value for g in payload.groups] if payload.groups else []
+    group_refs = _scim_group_refs(payload.groups) or []
+    groups = _scim_group_names(group_refs)
     client_ip = request.client.host if request.client else None
 
     try:
@@ -237,6 +256,7 @@ async def scim_replace(
             display_name=display_name,
             active=payload.active,
             groups=groups,
+            group_refs=group_refs,
             sso_config_id=scim_token.sso_config_id,
             ip_address=client_ip,
         )
@@ -273,7 +293,7 @@ async def scim_patch(
     display_name = None
     active = None
     groups = None
-    group_operations: list[tuple[str, list[str] | None]] = []
+    group_operations: list[tuple[str, list[dict[str, str]] | None]] = []
 
     for op in payload.Operations:
         op_type = op.op.lower()
@@ -290,10 +310,10 @@ async def scim_patch(
                         email = em.get("value")
                         break
             elif op.path == "groups":
-                names = _scim_group_names(op.value)
-                if names is None:
+                refs = _scim_group_refs(op.value)
+                if refs is None:
                     raise HTTPException(status_code=400, detail="groups must be an array")
-                group_operations.append(("replace", names))
+                group_operations.append(("replace", refs))
             elif op.path is None and isinstance(op.value, dict):
                 # Bulk replace
                 if "userName" in op.value:
@@ -303,27 +323,27 @@ async def scim_patch(
                 if "displayName" in op.value:
                     display_name = op.value["displayName"]
                 if "groups" in op.value:
-                    names = _scim_group_names(op.value["groups"])
-                    if names is None:
+                    refs = _scim_group_refs(op.value["groups"])
+                    if refs is None:
                         raise HTTPException(status_code=400, detail="groups must be an array")
-                    group_operations.append(("replace", names))
+                    group_operations.append(("replace", refs))
         elif op_type == "add" and op.path == "groups":
-            names = _scim_group_names(op.value)
-            if names is None:
+            refs = _scim_group_refs(op.value)
+            if refs is None:
                 raise HTTPException(status_code=400, detail="groups must be an array")
-            group_operations.append(("add", names))
+            group_operations.append(("add", refs))
         elif op_type == "remove":
             filtered_name = _scim_group_filter_name(op.path)
             if filtered_name is not None:
-                group_operations.append(("remove", [filtered_name]))
+                group_operations.append(("remove", [{"value": filtered_name}]))
             elif op.path == "groups":
                 if op.value is None:
                     group_operations.append(("replace", []))
                 else:
-                    names = _scim_group_names(op.value)
-                    if names is None:
+                    refs = _scim_group_refs(op.value)
+                    if refs is None:
                         raise HTTPException(status_code=400, detail="groups must be an array")
-                    group_operations.append(("remove", names))
+                    group_operations.append(("remove", refs))
 
     try:
         user = await scim_update_user(
