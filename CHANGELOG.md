@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM audits display-name mutations accurately
+
+- Display-name updates and removals now record old/new values in identity events instead of being mislabeled as no-change operations.
+
 ## 2026-08-18 — SCIM keeps bound identity emails synchronized
 
 - Email-only SCIM updates now synchronize canonical email values into the bound federated identity instead of leaving stale directory metadata.

@@ -359,10 +359,14 @@ async def scim_update_user(
         changes["email"] = {"old": user.email, "new": email}
         user.email = email
 
-    if clear_display_name:
-        user.full_name = None
-    elif full_replace or display_name is not None:
-        user.full_name = display_name
+    if clear_display_name or full_replace or display_name is not None:
+        next_display_name = None if clear_display_name else display_name
+        if next_display_name != user.full_name:
+            changes["display_name"] = {
+                "old": user.full_name,
+                "new": next_display_name,
+            }
+            user.full_name = next_display_name
 
     if active is not None:
         old_active = user.is_active
@@ -408,10 +412,16 @@ async def scim_update_user(
                 fed.external_groups = group_refs if group_refs is not None else groups
             if email:
                 fed.external_email = email
-            if clear_display_name:
-                fed.external_display_name = None
-            elif full_replace or display_name is not None:
-                fed.external_display_name = display_name
+            if clear_display_name or full_replace or display_name is not None:
+                next_external_display_name = (
+                    None if clear_display_name else display_name
+                )
+                if next_external_display_name != fed.external_display_name:
+                    changes["directory_display_name"] = {
+                        "old": fed.external_display_name,
+                        "new": next_external_display_name,
+                    }
+                    fed.external_display_name = next_external_display_name
 
     # Determine event type
     event_type = IdentityEventType.SCIM_USER_UPDATED
