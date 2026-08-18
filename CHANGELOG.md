@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: legacy settings toggles invalidate the shared flag cache
+
+The backward-compatible `/api/v1/settings/flags/{key}` update and delete
+routes wrote the canonical feature-flag table without invalidating its Redis
+cache. Successful admin mutations could therefore leave API and worker gates
+serving the previous value until TTL expiry. Both routes now commit first and
+then invalidate the shared cache, matching the canonical feature-flag API.
+
 ### 2026-08-17 — Fix: feature-flag toggles agree across replicas
 
 The live deployment runs multiple backend and worker processes. Each process
