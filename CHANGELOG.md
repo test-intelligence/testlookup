@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM pagination follows protocol coercion rules
+
+- User listing now interprets `startIndex` values below 1 as 1, negative `count` values as 0, and requests above the provider limit as 200 instead of rejecting otherwise valid SCIM requests.
+
 ## 2026-08-18 — SCIM responses support attribute projection
 
 - User list, retrieval, create, replace, and PATCH responses now honor bounded `attributes` and `excludedAttributes` paths, including sub-attributes and always-returned identity fields; conflicting or malformed projections fail before database access or mutation.
