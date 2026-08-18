@@ -328,6 +328,24 @@ Feature-flag mutation services now only stage database and audit writes. Their
 admin CRUD handlers explicitly commit first and invalidate second, matching the
 existing AI-settings flag path. Regression guards cover the event order for all
 three mutations and prevent services from reintroducing pre-commit invalidation.
+### 2026-08-18 — Fix: suite drill-down pass rates counted skipped tests
+
+The `/analytics/suite-detail` drill-down — reached by clicking a suite on the
+Coverage page — computed every pass rate by dividing passed executions by the
+*total* count, so SKIPPED tests diluted the number. Its sibling `coverage_stats`
+(the Coverage list itself) had already been fixed to divide by *evaluated*
+executions (`PASSED + FAILED + BROKEN`) per the 2026-08-08 product decision, so
+a suite reading `20/(20+3) = 87.0%` on Coverage opened to a detail summary of
+`20/(20+3+2) = 80.0%` — the same cross-surface gap the Coverage fix removed,
+reintroduced one function over.
+
+All of `suite_detail`'s pass rates now divide by evaluated executions: the three
+`test_cases` queries (summary, per-case, per-run), and the run-aggregate
+*fallback* path used when per-test rows are missing, which had divided
+`passed_tests` by `total_tests` (a column that folds `skipped_tests` in). The
+`skipped` counts and `total_executions` still report every execution — only the
+rate excludes skips. A source-level regression test pins every pass-rate
+denominator in the function against ever counting skips again.
 
 ### 2026-08-17 — Fix: natural build ordering for runs and flake transitions
 

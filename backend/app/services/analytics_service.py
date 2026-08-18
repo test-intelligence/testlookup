@@ -648,9 +648,15 @@ async def suite_detail(
             COUNT(*) FILTER (WHERE tc.status = 'PASSED')                     AS passed,
             COUNT(*) FILTER (WHERE tc.status IN ('FAILED', 'BROKEN'))        AS failed,
             COUNT(*) FILTER (WHERE tc.status = 'SKIPPED')                    AS skipped,
+            -- Denominator is EVALUATED = passed + failed + broken. A SKIPPED
+            -- test never ran, so it must not dilute the rate (product decision
+            -- 2026-08-08). ``coverage_stats`` already excludes skips; this
+            -- drill-down for the SAME suite view was missed, so /coverage read
+            -- 20/23=87.0 for a suite while its detail read 20/(20+3+2)=80.0.
+            -- The ``skipped`` column and ``total_executions`` still count them.
             ROUND(
                 COUNT(*) FILTER (WHERE tc.status = 'PASSED') * 100.0
-                / NULLIF(COUNT(*), 0), 1
+                / NULLIF(COUNT(*) FILTER (WHERE tc.status IN ('PASSED', 'FAILED', 'BROKEN')), 0), 1
             ) AS pass_rate,
             ROUND(AVG(tc.duration_ms)::numeric, 0)                           AS avg_duration_ms,
             MAX(tc.created_at)                                               AS last_run_at
@@ -673,7 +679,7 @@ async def suite_detail(
             COUNT(*) FILTER (WHERE tc.status = 'SKIPPED')                 AS skipped,
             ROUND(
                 COUNT(*) FILTER (WHERE tc.status = 'PASSED') * 100.0
-                / NULLIF(COUNT(*), 0), 1
+                / NULLIF(COUNT(*) FILTER (WHERE tc.status IN ('PASSED', 'FAILED', 'BROKEN')), 0), 1
             ) AS pass_rate,
             ROUND(AVG(tc.duration_ms)::numeric, 0)                       AS avg_duration_ms,
             (array_agg(tc.status ORDER BY tc.created_at DESC))[1]        AS last_status,
@@ -705,7 +711,7 @@ async def suite_detail(
             COUNT(*) FILTER (WHERE tc.status = 'SKIPPED')                 AS skipped,
             ROUND(
                 COUNT(*) FILTER (WHERE tc.status = 'PASSED') * 100.0
-                / NULLIF(COUNT(*), 0), 1
+                / NULLIF(COUNT(*) FILTER (WHERE tc.status IN ('PASSED', 'FAILED', 'BROKEN')), 0), 1
             ) AS pass_rate
         FROM test_runs tr
         JOIN test_cases tc ON tc.test_run_id = tr.id
@@ -752,11 +758,21 @@ async def suite_detail(
                 COALESCE(SUM(tr.failed_tests),  0)
                   + COALESCE(SUM(tr.broken_tests), 0) AS failed,
                 COALESCE(SUM(tr.skipped_tests), 0)  AS skipped,
+                -- Denominator is EVALUATED = passed + failed + broken, matching
+                -- the test_cases path above and the canonical rule
+                -- (ingestion._update_run_aggregates, metrics_service). Dividing
+                -- by total_tests would put SKIPPED back in the denominator and
+                -- make this fallback disagree with the primary summary.
                 CASE
-                    WHEN COALESCE(SUM(tr.total_tests), 0) = 0 THEN 0.0
+                    WHEN COALESCE(SUM(tr.passed_tests), 0)
+                       + COALESCE(SUM(tr.failed_tests), 0)
+                       + COALESCE(SUM(tr.broken_tests), 0) = 0 THEN 0.0
                     ELSE ROUND(
                         SUM(tr.passed_tests) * 100.0
-                        / NULLIF(SUM(tr.total_tests), 0), 1
+                        / NULLIF(
+                            SUM(tr.passed_tests) + SUM(tr.failed_tests)
+                              + SUM(tr.broken_tests), 0
+                          ), 1
                     )
                 END                                  AS pass_rate,
                 COALESCE(ROUND(AVG(tr.duration_ms)::numeric, 0), 0) AS avg_duration_ms,
@@ -781,11 +797,18 @@ async def suite_detail(
                 COALESCE(tr.failed_tests, 0)
                   + COALESCE(tr.broken_tests, 0)             AS failed,
                 COALESCE(tr.skipped_tests, 0)                AS skipped,
+                -- EVALUATED denominator (passed + failed + broken); see the
+                -- run_fallback summary above. total_tests would re-include skips.
                 CASE
-                    WHEN COALESCE(tr.total_tests, 0) = 0 THEN 0.0
+                    WHEN COALESCE(tr.passed_tests, 0)
+                       + COALESCE(tr.failed_tests, 0)
+                       + COALESCE(tr.broken_tests, 0) = 0 THEN 0.0
                     ELSE ROUND(
                         COALESCE(tr.passed_tests, 0) * 100.0
-                        / NULLIF(tr.total_tests, 0), 1
+                        / NULLIF(
+                            COALESCE(tr.passed_tests, 0) + COALESCE(tr.failed_tests, 0)
+                              + COALESCE(tr.broken_tests, 0), 0
+                          ), 1
                     )
                 END                                          AS pass_rate
             FROM test_runs tr
