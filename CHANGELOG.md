@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: integration health no longer hides authority outages
+
+The Integration Health settings endpoint converted all database failures into
+a successful empty array, making an unavailable health authority look like a
+workspace with no tracked providers. Failures now reach the API error boundary;
+only a successful query with no rows returns `200 []`.
+
 ### 2026-08-17 — Fix: integration settings reload encrypted token authority
 
 Integration updates encrypted Jira, Splunk, OpenShift, and GitHub tokens into
