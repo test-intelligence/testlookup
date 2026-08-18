@@ -97,6 +97,11 @@ async def test_schema_list_describes_only_attributes_the_user_api_exposes():
     assert attributes["userName"]["caseExact"] is False
     assert attributes["userName"]["uniqueness"] == "server"
     assert attributes["externalId"]["caseExact"] is True
+    assert {sub_attribute["name"] for sub_attribute in attributes["name"]["subAttributes"]} == {
+        "formatted",
+        "givenName",
+        "familyName",
+    }
     assert attributes["emails"]["multiValued"] is True
 
 
