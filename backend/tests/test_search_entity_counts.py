@@ -87,8 +87,8 @@ async def test_entity_counts_project_scoped_returns_all_six_keys(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_entity_counts_all_projects_admin_returns_unfiltered(monkeypatch):
-    """ADMIN with no project_id sees instance-wide totals (no WHERE filter)."""
+async def test_entity_counts_all_projects_admin_returns_active_totals(monkeypatch):
+    """ADMIN sees all active projects, never soft-deleted project data."""
     from app.routers.search import get_entity_counts
 
     db = _db_with_counts([100, 250, 12, 8, 4, 7])
@@ -109,6 +109,13 @@ async def test_entity_counts_all_projects_admin_returns_unfiltered(monkeypatch):
     assert result["test_case"] == 250
     assert result["test_run"] == 100
     assert result["suite"] == 12
+
+    statements = [call.args[0] for call in db.execute.await_args_list]
+    assert len(statements) == 6
+    for statement in statements:
+        sql = str(statement).lower()
+        assert "join projects" in sql
+        assert "projects.is_active is true" in sql
 
 
 @pytest.mark.asyncio

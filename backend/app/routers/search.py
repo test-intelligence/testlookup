@@ -14,6 +14,7 @@ from app.db.postgres import get_db
 from app.models.postgres import (
     Defect,
     FlakyQuarantineRequest,
+    Project,
     Release,
     TestCase,
     TestRun,
@@ -129,27 +130,45 @@ async def get_entity_counts(
         return int(result.scalar_one() or 0)
 
     test_runs_q = _apply_project_filter(
-        select(func.count(TestRun.id)), TestRun.project_id,
+        select(func.count(TestRun.id))
+        .join(Project, TestRun.project_id == Project.id)
+        .where(Project.is_active.is_(True)),
+        TestRun.project_id,
     )
     # ``test_cases`` has no project_id column; join via TestRun.
     test_cases_q = _apply_project_filter(
-        select(func.count(TestCase.id)).join(TestRun, TestCase.test_run_id == TestRun.id),
+        select(func.count(TestCase.id))
+        .join(TestRun, TestCase.test_run_id == TestRun.id)
+        .join(Project, TestRun.project_id == Project.id)
+        .where(Project.is_active.is_(True)),
         TestRun.project_id,
     )
     suites_q = _apply_project_filter(
-        select(func.count(TestSuite.id)), TestSuite.project_id,
+        select(func.count(TestSuite.id))
+        .join(Project, TestSuite.project_id == Project.id)
+        .where(Project.is_active.is_(True)),
+        TestSuite.project_id,
     )
     defects_q = _apply_project_filter(
-        select(func.count(Defect.id)), Defect.project_id,
+        select(func.count(Defect.id))
+        .join(Project, Defect.project_id == Project.id)
+        .where(Project.is_active.is_(True)),
+        Defect.project_id,
     )
     flaky_q = _apply_project_filter(
-        select(func.count(FlakyQuarantineRequest.id)).where(
+        select(func.count(FlakyQuarantineRequest.id))
+        .join(Project, FlakyQuarantineRequest.project_id == Project.id)
+        .where(
+            Project.is_active.is_(True),
             FlakyQuarantineRequest.status != "RELEASED",
         ),
         FlakyQuarantineRequest.project_id,
     )
     releases_q = _apply_project_filter(
-        select(func.count(Release.id)), Release.project_id,
+        select(func.count(Release.id))
+        .join(Project, Release.project_id == Project.id)
+        .where(Project.is_active.is_(True)),
+        Release.project_id,
     )
 
     test_run, test_case, suite, defect, flaky_test, release = await asyncio.gather(
