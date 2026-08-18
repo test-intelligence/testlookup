@@ -15,6 +15,12 @@ SCIM_PREFIX = "/api/v1/scim/v2"
 SCIM_MEDIA_TYPE = "application/scim+json"
 
 
+class SCIMJSONResponse(JSONResponse):
+    """JSON response using the media type required by SCIM 2.0."""
+
+    media_type = SCIM_MEDIA_TYPE
+
+
 def _is_scim_request(request: Request) -> bool:
     path = request.url.path
     return path == SCIM_PREFIX or path.startswith(f"{SCIM_PREFIX}/")

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM successes use the protocol media type
+
+- Successful public SCIM JSON responses now use `application/scim+json`; admin token APIs retain ordinary JSON and 204 deletes remain bodyless.
+
 ## 2026-08-18 — SCIM failures use the protocol Error schema
 
 - Public SCIM routes now return `application/scim+json` Error bodies with the standard schema URN, string status, and detail for HTTP and request-validation failures; non-SCIM APIs retain FastAPI's existing envelopes.
