@@ -119,15 +119,14 @@ def _scim_patch_email(value: object) -> str | None:
     """Return the primary/first email from a valid SCIM email array."""
     if not isinstance(value, list) or not value or len(value) > SCIM_EMAILS_MAX_ITEMS:
         return None
-    candidates = [item for item in value if isinstance(item, dict)]
-    primary = next((item for item in candidates if item.get("primary")), None)
-    chosen = primary or (candidates[0] if candidates else None)
-    if chosen is None:
-        return None
     try:
-        return str(SCIMEmail.model_validate(chosen).value)
+        candidates = [SCIMEmail.model_validate(item) for item in value]
     except ValidationError:
         return None
+    primary = [item for item in candidates if item.primary]
+    if len(primary) > 1:
+        return None
+    return str((primary[0] if primary else candidates[0]).value)
 
 
 def _scim_patch_string(
@@ -297,17 +296,16 @@ async def scim_create(
     db: AsyncSession = Depends(get_db),
 ):
     """SCIM 2.0: Create a user."""
-    email = None
-    for em in payload.emails:
-        if em.primary:
-            email = em.value
-            break
-    if not email and payload.emails:
-        email = payload.emails[0].value
-    if not email:
+    if not payload.emails:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="At least one email is required",
+        )
+    email = _scim_patch_email(payload.emails)
+    if email is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="emails must contain valid values and at most one primary",
         )
     if scim_token.sso_config_id is not None and not payload.externalId:
         raise HTTPException(
@@ -370,18 +368,16 @@ async def scim_replace(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="externalId is required for an IdP-bound SCIM token",
         )
-    email = None
-    for em in payload.emails:
-        if em.primary:
-            email = em.value
-            break
-    if not email and payload.emails:
-        email = payload.emails[0].value
-
-    if not email:
+    if not payload.emails:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="At least one email is required",
+        )
+    email = _scim_patch_email(payload.emails)
+    if email is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="emails must contain valid values and at most one primary",
         )
 
     display_name = payload.displayName
