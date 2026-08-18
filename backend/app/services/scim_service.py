@@ -417,6 +417,23 @@ async def scim_list_users(
     return users, total
 
 
+async def scim_identity_map(
+    db: AsyncSession,
+    user_ids: list[uuid.UUID],
+    sso_config_id: uuid.UUID | None,
+) -> dict[uuid.UUID, FederatedIdentity]:
+    """Batch-load response identity metadata for one bound SCIM directory."""
+    if sso_config_id is None or not user_ids:
+        return {}
+    result = await db.execute(
+        select(FederatedIdentity).where(
+            FederatedIdentity.user_id.in_(user_ids),
+            FederatedIdentity.sso_config_id == sso_config_id,
+        )
+    )
+    return {identity.user_id: identity for identity in result.scalars().all()}
+
+
 def _extract_scim_filter_value(filter_str: str) -> str | None:
     """Extract the value from a simple SCIM filter like 'attr eq \"value\"'."""
     import re
@@ -430,7 +447,11 @@ def _extract_scim_filter_value(filter_str: str) -> str | None:
     return None
 
 
-def user_to_scim_resource(user: User, base_url: str = "") -> dict:
+def user_to_scim_resource(
+    user: User,
+    base_url: str = "",
+    federated_identity: FederatedIdentity | None = None,
+) -> dict:
     """Convert a User model to a SCIM 2.0 User resource dict."""
     resource = {
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
@@ -451,4 +472,7 @@ def user_to_scim_resource(user: User, base_url: str = "") -> dict:
             "location": f"{base_url}/api/v1/scim/v2/Users/{user.id}" if base_url else f"/api/v1/scim/v2/Users/{user.id}",
         },
     }
+    if federated_identity is not None:
+        resource["externalId"] = federated_identity.external_id
+        resource["groups"] = _normalize_group_refs(federated_identity.external_groups)
     return resource

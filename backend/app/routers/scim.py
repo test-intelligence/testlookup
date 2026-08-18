@@ -24,6 +24,7 @@ from app.services.scim_service import (
     create_scim_token,
     scim_create_user,
     scim_get_user,
+    scim_identity_map,
     scim_list_users,
     scim_update_user,
     user_to_scim_resource,
@@ -130,6 +131,11 @@ async def scim_list(
         filter_str=filter,
         sso_config_id=scim_token.sso_config_id,
     )
+    identities = await scim_identity_map(
+        db,
+        [user.id for user in users],
+        scim_token.sso_config_id,
+    )
     base_url = str(request.base_url).rstrip("/")
 
     return SCIMListResponse(
@@ -137,7 +143,7 @@ async def scim_list(
         startIndex=startIndex,
         itemsPerPage=count,
         Resources=[
-            SCIMUserResource(**user_to_scim_resource(u, base_url))
+            SCIMUserResource(**user_to_scim_resource(u, base_url, identities.get(u.id)))
             for u in users
         ],
     )
@@ -157,8 +163,11 @@ async def scim_get(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
+    identities = await scim_identity_map(db, [user.id], scim_token.sso_config_id)
     base_url = str(request.base_url).rstrip("/")
-    return SCIMUserResource(**user_to_scim_resource(user, base_url))
+    return SCIMUserResource(
+        **user_to_scim_resource(user, base_url, identities.get(user.id))
+    )
 
 
 @router.post("/Users", status_code=201)
@@ -218,7 +227,10 @@ async def scim_create(
         )
 
     base_url = str(request.base_url).rstrip("/")
-    return SCIMUserResource(**user_to_scim_resource(user, base_url))
+    identities = await scim_identity_map(db, [user.id], scim_token.sso_config_id)
+    return SCIMUserResource(
+        **user_to_scim_resource(user, base_url, identities.get(user.id))
+    )
 
 
 @router.put("/Users/{user_id}")
@@ -274,7 +286,10 @@ async def scim_replace(
         )
 
     base_url = str(request.base_url).rstrip("/")
-    return SCIMUserResource(**user_to_scim_resource(user, base_url))
+    identities = await scim_identity_map(db, [user.id], scim_token.sso_config_id)
+    return SCIMUserResource(
+        **user_to_scim_resource(user, base_url, identities.get(user.id))
+    )
 
 
 @router.patch("/Users/{user_id}")
@@ -372,7 +387,10 @@ async def scim_patch(
         )
 
     base_url = str(request.base_url).rstrip("/")
-    return SCIMUserResource(**user_to_scim_resource(user, base_url))
+    identities = await scim_identity_map(db, [user.id], scim_token.sso_config_id)
+    return SCIMUserResource(
+        **user_to_scim_resource(user, base_url, identities.get(user.id))
+    )
 
 
 @router.delete("/Users/{user_id}", status_code=204)
