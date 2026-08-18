@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: feature-flag list no longer hides database outages
+
+The compatibility feature-flag list converted every database exception into a
+successful empty array, so operators could not distinguish an authority outage
+from a workspace with no configured flags. Database failures now reach the API
+error boundary while genuine empty query results remain `200 []`.
+
 ### 2026-08-17 — Fix: legacy feature-flag writes enter the settings audit trail
 
 The compatibility settings endpoints changed or deleted canonical feature

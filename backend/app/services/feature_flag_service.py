@@ -56,25 +56,26 @@ async def is_enabled(
 
 
 async def get_all_flags(db: AsyncSession) -> list[dict]:
-    """Return all feature flags for the admin UI."""
-    try:
-        result = await db.execute(
-            select(FeatureFlag).order_by(FeatureFlag.key)
-        )
-        return [
-            {
-                "flag_key": f.key,
-                "scope": "global",
-                "enabled": f.enabled_global,
-                "config": None,
-                "description": f.description,
-                "updated_at": f.updated_at.isoformat() if f.updated_at else None,
-            }
-            for f in result.scalars().all()
-        ]
-    except Exception as exc:
-        logger.warning("Failed to list flags: %s", exc)
-        return []
+    """Return all feature flags for the admin UI.
+
+    Database failures intentionally propagate to the API error boundary. An
+    empty list is a valid authority response and must never be used as an
+    outage fallback: operators would otherwise see "no flags" with HTTP 200.
+    """
+    result = await db.execute(
+        select(FeatureFlag).order_by(FeatureFlag.key)
+    )
+    return [
+        {
+            "flag_key": f.key,
+            "scope": "global",
+            "enabled": f.enabled_global,
+            "config": None,
+            "description": f.description,
+            "updated_at": f.updated_at.isoformat() if f.updated_at else None,
+        }
+        for f in result.scalars().all()
+    ]
 
 
 async def set_flag(
