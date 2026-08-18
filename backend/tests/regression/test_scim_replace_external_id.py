@@ -31,8 +31,10 @@ async def test_update_user_persists_bound_external_id_and_audits_change(monkeypa
     user_result.scalar_one_or_none.return_value = user
     identity_result = MagicMock()
     identity_result.scalar_one_or_none.return_value = identity
+    duplicate_result = MagicMock()
+    duplicate_result.scalar_one_or_none.return_value = None
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[user_result, identity_result])
+    db.execute = AsyncMock(side_effect=[user_result, duplicate_result, identity_result])
     audit = AsyncMock()
     monkeypatch.setattr(scim_service, "log_identity_event", audit)
 

@@ -61,8 +61,10 @@ async def test_full_replace_clears_omitted_display_name_in_user_and_identity(mon
     user_result.scalar_one_or_none.return_value = user
     identity_result = MagicMock()
     identity_result.scalar_one_or_none.return_value = identity
+    duplicate_result = MagicMock()
+    duplicate_result.scalar_one_or_none.return_value = None
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[user_result, identity_result])
+    db.execute = AsyncMock(side_effect=[user_result, duplicate_result, identity_result])
     monkeypatch.setattr(scim_service, "log_identity_event", AsyncMock())
 
     await scim_service.scim_update_user(
