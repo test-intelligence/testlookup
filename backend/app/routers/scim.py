@@ -68,6 +68,8 @@ _SCIM_PATCH_PATHS = {
     "externalid": "externalId",
     "active": "active",
     "displayname": "displayName",
+    "name": "name",
+    "name.formatted": "name.formatted",
     "emails": "emails",
     "groups": "groups",
 }
@@ -179,6 +181,44 @@ def _scim_display_name(payload: SCIMUserRequest) -> str | None:
         parts = [payload.name.givenName, payload.name.familyName]
         return " ".join(part for part in parts if part) or None
     return None
+
+
+def _scim_patch_name(value: object) -> str:
+    """Resolve a PATCH name object into the application's formatted name."""
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="name must be an object")
+    supported = {"formatted", "givenName", "familyName"}
+    unknown = set(value) - supported
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported name attribute: {sorted(unknown)[0]}",
+        )
+    normalized = {
+        key: _scim_patch_string(
+            item,
+            f"name.{key}",
+            SCIM_DISPLAY_NAME_MAX_LENGTH,
+            allow_empty=True,
+        )
+        for key, item in value.items()
+    }
+    if normalized.get("formatted"):
+        return normalized["formatted"]
+    derived = " ".join(
+        part
+        for part in (normalized.get("givenName"), normalized.get("familyName"))
+        if part
+    )
+    if len(derived) > SCIM_DISPLAY_NAME_MAX_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"derived name.formatted must be at most "
+                f"{SCIM_DISPLAY_NAME_MAX_LENGTH} characters"
+            ),
+        )
+    return derived
 
 
 def _scim_group_filter_name(path: str | None) -> str | None:
@@ -606,6 +646,15 @@ async def scim_patch(
                     SCIM_DISPLAY_NAME_MAX_LENGTH,
                     allow_empty=True,
                 )
+            elif path == "name.formatted":
+                display_name = _scim_patch_string(
+                    op.value,
+                    "name.formatted",
+                    SCIM_DISPLAY_NAME_MAX_LENGTH,
+                    allow_empty=True,
+                )
+            elif path == "name":
+                display_name = _scim_patch_name(op.value)
             elif path == "emails":
                 email = _scim_patch_email(op.value)
                 if email is None:
@@ -642,6 +691,15 @@ async def scim_patch(
                         SCIM_DISPLAY_NAME_MAX_LENGTH,
                         allow_empty=True,
                     )
+                if "name.formatted" in bulk_value:
+                    display_name = _scim_patch_string(
+                        bulk_value["name.formatted"],
+                        "name.formatted",
+                        SCIM_DISPLAY_NAME_MAX_LENGTH,
+                        allow_empty=True,
+                    )
+                if "name" in bulk_value:
+                    display_name = _scim_patch_name(bulk_value["name"])
                 if "emails" in bulk_value:
                     email = _scim_patch_email(bulk_value["emails"])
                     if email is None:
