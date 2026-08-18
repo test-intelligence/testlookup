@@ -91,6 +91,7 @@ async def test_router_preserves_ordered_add_remove_and_remove_all(monkeypatch):
     user = _user()
     update = AsyncMock(return_value=user)
     monkeypatch.setattr(router, "scim_update_user", update)
+    monkeypatch.setattr(router, "scim_identity_map", AsyncMock(return_value={}))
     payload = SCIMPatchRequest(
         Operations=[
             SCIMPatchOp(op="add", path="groups", value=[{"display": "Admins"}]),
@@ -146,6 +147,7 @@ async def test_create_preserves_group_value_and_display(monkeypatch):
     user = _user()
     create = AsyncMock(return_value=user)
     monkeypatch.setattr(router, "scim_create_user", create)
+    monkeypatch.setattr(router, "scim_identity_map", AsyncMock(return_value={}))
     payload = SCIMUserResource(
         userName="alice",
         externalId="external-alice",

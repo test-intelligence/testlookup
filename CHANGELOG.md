@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM responses reconcile external identity state
+
+- Bound-directory SCIM responses now return the federated `externalId` and canonical group references across list, get, create, replace, and patch flows using batched identity lookups; unbound global responses avoid ambiguous IdP metadata.
+
 ## 2026-08-18 — SCIM group identity survives synchronization
 
 - Federated SCIM groups now preserve both stable `value` identifiers and display names, while legacy string memberships remain readable; filtered removals can match either representation and role mapping continues to use display-first names.

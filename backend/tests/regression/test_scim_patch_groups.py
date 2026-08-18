@@ -44,6 +44,7 @@ async def test_patch_group_replace_reaches_role_and_identity_sync(
 
     update = AsyncMock(return_value=_user())
     monkeypatch.setattr(router, "scim_update_user", update)
+    monkeypatch.setattr(router, "scim_identity_map", AsyncMock(return_value={}))
     payload = SCIMPatchRequest(
         Operations=[SCIMPatchOp(op="replace", path=path, value=value)]
     )
@@ -64,6 +65,7 @@ async def test_unrelated_patch_leaves_groups_untouched(monkeypatch):
 
     update = AsyncMock(return_value=_user())
     monkeypatch.setattr(router, "scim_update_user", update)
+    monkeypatch.setattr(router, "scim_identity_map", AsyncMock(return_value={}))
     payload = SCIMPatchRequest(
         Operations=[SCIMPatchOp(op="replace", path="active", value=False)]
     )
