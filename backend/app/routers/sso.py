@@ -27,6 +27,7 @@ from app.models.schemas import (
     UserResponse,
 )
 from app.services.sso_service import (
+    certificate_expiration,
     certificate_fingerprint,
     enforce_saml_security,
     get_active_sso_config,
@@ -482,6 +483,11 @@ async def test_sso_connection(
         message=message,
         idp_entity_id=config.idp_entity_id,
         certificate_valid=cert_valid,
+        certificate_expires_at=(
+            expiry.isoformat()
+            if (expiry := certificate_expiration(config.idp_certificate))
+            else None
+        ),
     )
 
 

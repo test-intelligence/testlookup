@@ -3,12 +3,15 @@ import hashlib
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from xml.etree import ElementTree
 
 import defusedxml.ElementTree as SafeET
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    from cryptography.x509 import Certificate
 
 # signxml is the XML-DSig verifier. We import it lazily inside the verify
 # function so that environments without the package (e.g., minimal dev
@@ -76,19 +79,50 @@ def certificate_fingerprint(pem_cert: str) -> str:
     return hashlib.sha256(der_bytes).hexdigest()
 
 
+def _load_x509_certificate(pem_cert: str) -> "Certificate":
+    """Load a PEM certificate while keeping cryptography imports local."""
+    from cryptography import x509
+
+    return x509.load_pem_x509_certificate(pem_cert.strip().encode("utf-8"))
+
+
+def _certificate_validity(cert: "Certificate") -> tuple[datetime, datetime]:
+    """Return timezone-aware X.509 validity bounds across cryptography versions."""
+    not_before = getattr(cert, "not_valid_before_utc", None)
+    if not_before is None:
+        not_before = cert.not_valid_before.replace(tzinfo=timezone.utc)
+    not_after = getattr(cert, "not_valid_after_utc", None)
+    if not_after is None:
+        not_after = cert.not_valid_after.replace(tzinfo=timezone.utc)
+    return not_before, not_after
+
+
+def certificate_expiration(pem_cert: str) -> datetime | None:
+    """Return the certificate expiry, or None when the payload cannot be parsed."""
+    try:
+        _, not_after = _certificate_validity(_load_x509_certificate(pem_cert))
+        return not_after
+    except (TypeError, ValueError):
+        return None
+
+
 def validate_certificate_format(pem_cert: str) -> tuple[bool, str]:
-    """Validate that the provided string contains a parseable X.509 certificate."""
+    """Validate X.509 structure and its current validity window."""
     stripped = pem_cert.strip()
     if not stripped.startswith("-----BEGIN CERTIFICATE-----"):
         return False, "Certificate must start with '-----BEGIN CERTIFICATE-----'"
     if not stripped.endswith("-----END CERTIFICATE-----"):
         return False, "Certificate must end with '-----END CERTIFICATE-----'"
     try:
-        from cryptography import x509
-
-        x509.load_pem_x509_certificate(stripped.encode("utf-8"))
+        cert = _load_x509_certificate(stripped)
     except (TypeError, ValueError):
         return False, "Certificate is not a valid X.509 certificate"
+    not_before, not_after = _certificate_validity(cert)
+    now = datetime.now(timezone.utc)
+    if now < not_before:
+        return False, f"Certificate is not valid until {not_before.isoformat()}"
+    if now >= not_after:
+        return False, f"Certificate expired at {not_after.isoformat()}"
     return True, "Valid"
 
 
