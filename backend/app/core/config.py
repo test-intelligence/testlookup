@@ -391,6 +391,10 @@ class Settings(BaseSettings):
     SAML_BASE_URL: str = "http://localhost:8000"
     # Admin fallback: allow local password login for ADMIN users even when SSO is enforced
     SSO_ADMIN_FALLBACK_ENABLED: bool = True
+    # Test-connection requests reject private/link-local IdP targets by default
+    # to prevent an admin-configurable URL becoming a blind SSRF primitive.
+    # Self-hosted enterprises with an internal-only IdP can opt in explicitly.
+    SSO_ALLOW_PRIVATE_IDP_ENDPOINTS: bool = False
     # When False (default), reject SAML assertions that carry no ``InResponseTo``
     # (i.e. IdP-initiated logins). SP-initiated flow only — the ACS binds each
     # response to a single-use request id minted at /login-url. Operators who

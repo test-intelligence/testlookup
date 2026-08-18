@@ -33,6 +33,7 @@ from app.services.sso_service import (
     jit_provision_or_link,
     log_identity_event,
     parse_saml_response,
+    probe_idp_endpoint,
     remember_saml_request,
     validate_certificate_format,
     validate_saml_issuer,
@@ -446,11 +447,16 @@ async def test_sso_connection(
     # Validate certificate format
     cert_valid, cert_msg = validate_certificate_format(config.idp_certificate)
 
-    # Check URLs are reachable (basic check)
-    url_ok = bool(config.idp_sso_url and config.idp_entity_id)
+    # A non-empty URL proves only configuration presence. Probe the endpoint
+    # so DNS/TLS/connectivity failures cannot be reported as a valid connection.
+    url_ok, endpoint_message = await probe_idp_endpoint(config.idp_sso_url)
 
     success = cert_valid and url_ok
-    message = "SSO configuration is valid" if success else f"Validation failed: {cert_msg if not cert_valid else 'Missing IdP URL or entity ID'}"
+    message = (
+        f"SSO configuration is valid; {endpoint_message}"
+        if success
+        else f"Validation failed: {cert_msg if not cert_valid else endpoint_message}"
+    )
 
     config.last_test_at = now
     config.last_test_success = success
