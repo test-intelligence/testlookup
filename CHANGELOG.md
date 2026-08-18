@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM audits directory email synchronization
+
+- Bound-directory email metadata changes now record old/new values instead of producing false no-change identity events.
+
 ## 2026-08-18 — SCIM audits group mutations accurately
 
 - Directory group changes now record deterministic old/new references in identity events, while pure ordering differences remain no-change operations.

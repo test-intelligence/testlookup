@@ -428,7 +428,11 @@ async def scim_update_user(
                         "new": new_group_refs,
                     }
                 fed.external_groups = next_group_refs
-            if email:
+            if email and email != fed.external_email:
+                changes["directory_email"] = {
+                    "old": fed.external_email,
+                    "new": email,
+                }
                 fed.external_email = email
             if clear_display_name or full_replace or display_name is not None:
                 next_external_display_name = (
