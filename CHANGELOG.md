@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: global notification kill switches govern delivery
+
+Slack and Teams health probes honored their global enabled switches, but
+ordinary notification and scheduled-digest fallbacks sent through a configured
+global webhook even when the matching switch was off. Global fallback delivery
+now requires both enabled state and a webhook; explicit user/project webhooks
+remain independent and continue to take precedence.
+
 ### 2026-08-17 — Fix: DB-backed global webhooks drive runtime delivery
 
 Encrypted global Slack and Teams webhook settings were visible to the settings

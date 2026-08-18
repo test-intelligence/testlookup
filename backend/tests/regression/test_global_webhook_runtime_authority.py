@@ -53,11 +53,38 @@ async def test_dispatch_uses_db_global_webhook(channel, key, sender_name):
             "body",
             SimpleNamespace(value="run_failed"),
             {},
-            global_webhooks={key: "db-webhook"},
+            global_webhooks={key: "db-webhook", f"{channel.value}_enabled": True},
         )
 
     assert (status, error) == ("sent", None)
     assert sender.await_args.kwargs["webhook_url"] == "db-webhook"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("channel", "key", "sender_name"),
+    [
+        (manager.NotificationChannel.SLACK, "slack_webhook_url", "slack_service"),
+        (manager.NotificationChannel.TEAMS, "teams_webhook_url", "teams_service"),
+    ],
+)
+async def test_disabled_global_channel_does_not_send(channel, key, sender_name):
+    pref = SimpleNamespace(channel=channel, slack_webhook_url=None, teams_webhook_url=None)
+    sender = AsyncMock()
+    with patch.object(getattr(manager, sender_name), "send_notification", new=sender):
+        status, error = await manager._dispatch_to_channel(
+            pref,
+            None,
+            "title",
+            "body",
+            SimpleNamespace(value="run_failed"),
+            {},
+            global_webhooks={key: "https://db-webhook", f"{channel.value}_enabled": False},
+        )
+
+    assert status == "failed"
+    assert "No " in error
+    sender.assert_not_awaited()
 
 
 @pytest.mark.asyncio

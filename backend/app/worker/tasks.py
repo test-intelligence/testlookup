@@ -3097,7 +3097,8 @@ def dispatch_scheduled_digests(self):
                                 break
                         if not webhook_url:
                             global_webhooks = await resolve_global_notification_webhooks(db)
-                            webhook_url = global_webhooks[f"{channel}_webhook_url"]
+                            if global_webhooks[f"{channel}_enabled"]:
+                                webhook_url = global_webhooks[f"{channel}_webhook_url"]
                         if not webhook_url:
                             status = "failed"
                             error_detail = f"No {channel} webhook URL configured"

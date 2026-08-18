@@ -77,6 +77,14 @@ def _ai_message(
 
 # ── Core dispatch logic ───────────────────────────────────────
 
+def _enabled_global_webhook(channel: str, resolved: Optional[dict]) -> Optional[str]:
+    """Return a global webhook only when its matching kill switch is on."""
+    if resolved is not None:
+        return resolved.get(f"{channel}_webhook_url") if resolved.get(f"{channel}_enabled") else None
+    if channel == "slack":
+        return settings.SLACK_WEBHOOK_URL if settings.SLACK_ENABLED else None
+    return settings.TEAMS_WEBHOOK_URL if settings.TEAMS_ENABLED else None
+
 async def _dispatch_to_channel(
     pref: NotificationPreference,
     user_email: Optional[str],
@@ -122,7 +130,7 @@ async def _dispatch_to_channel(
             )
 
         elif pref.channel == NotificationChannel.SLACK:
-            webhook_url = pref.slack_webhook_url or (global_webhooks or {}).get("slack_webhook_url") or settings.SLACK_WEBHOOK_URL
+            webhook_url = pref.slack_webhook_url or _enabled_global_webhook("slack", global_webhooks)
             if not webhook_url:
                 return "failed", "No Slack webhook URL configured"
             await slack_service.send_notification(
@@ -134,7 +142,7 @@ async def _dispatch_to_channel(
             )
 
         elif pref.channel == NotificationChannel.TEAMS:
-            webhook_url = pref.teams_webhook_url or (global_webhooks or {}).get("teams_webhook_url") or settings.TEAMS_WEBHOOK_URL
+            webhook_url = pref.teams_webhook_url or _enabled_global_webhook("teams", global_webhooks)
             if not webhook_url:
                 return "failed", "No Teams webhook URL configured"
             await teams_service.send_notification(
