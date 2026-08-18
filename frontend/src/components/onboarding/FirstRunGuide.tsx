@@ -96,6 +96,16 @@ export default function FirstRunGuide({
                     Or POST straight to the ingest API from any CI runner:
                   </p>
                   <CommandRow command={s.apiCommand} />
+                  <p className="mt-1.5 text-[11px] text-[var(--color-text-faint)]">
+                    Generate a project key under{' '}
+                    <Link
+                      to="/settings/api-keys"
+                      className="text-[var(--color-accent)] hover:underline"
+                    >
+                      Settings → API Keys
+                    </Link>{' '}
+                    and pass it as the <code className="font-mono">X-API-Key</code> above.
+                  </p>
                 </>
               )}
             </div>

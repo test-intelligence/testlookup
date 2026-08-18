@@ -92,6 +92,17 @@ describe('FirstRunGuide', () => {
     ).toBeInTheDocument()
   })
 
+  it('points to the API Keys settings page for the credential the CI curl needs', () => {
+    // The ingest curl sends X-API-Key; a new self-hoster has no key yet. The
+    // guide must hand off to /settings/api-keys — the in-app, project-scoped
+    // key generator — so the copied command is actually runnable.
+    renderGuide()
+    expect(screen.getByRole('link', { name: /Settings → API Keys/i })).toHaveAttribute(
+      'href',
+      '/settings/api-keys',
+    )
+  })
+
   it('splices the real project id into the ingest-API curl when scoped', () => {
     const id = '6783f331-9f51-4b0b-a27a-acc31e117b21'
     renderGuide({ projectId: id })
@@ -150,7 +161,7 @@ describe('FirstRunGuide', () => {
   describe('ingestApiCommand', () => {
     const base =
       'curl -X POST http://localhost:8000/api/v1/ingest/file ' +
-      '-H "Authorization: Bearer $TL_TOKEN" -F file=@results.xml -F project_id='
+      '-H "X-API-Key: $TL_API_KEY" -F file=@results.xml -F project_id='
 
     it('uses the placeholder for undefined, empty, and whitespace-only ids', () => {
       const placeholder = `${base}<project-id> -F build_number=<build> -F format=auto`
@@ -174,10 +185,20 @@ describe('FirstRunGuide', () => {
       const url = 'https://tl.example.com/api/v1/ingest/file'
       const cmd = ingestApiCommand('abc-123', url)
       expect(cmd).toBe(
-        `curl -X POST ${url} -H "Authorization: Bearer $TL_TOKEN" ` +
+        `curl -X POST ${url} -H "X-API-Key: $TL_API_KEY" ` +
           `-F file=@results.xml -F project_id=abc-123 -F build_number=<build> -F format=auto`,
       )
       expect(cmd).not.toContain('localhost:8000')
+    })
+
+    it('authenticates the CI curl with a project API key, not a login bearer token', () => {
+      // The apiCommand targets unattended CI runners, which need a long-lived,
+      // project-scoped credential (an API key sent as X-API-Key) rather than the
+      // short-lived login-session bearer token from the quickstart. /api/v1/ingest/file
+      // accepts either (get_api_key_context), so this is the self-servable path.
+      const cmd = ingestApiCommand('abc-123')
+      expect(cmd).toContain('-H "X-API-Key: $TL_API_KEY"')
+      expect(cmd).not.toContain('Authorization: Bearer')
     })
   })
 

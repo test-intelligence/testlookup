@@ -38,10 +38,17 @@ export const DEFAULT_INGEST_URL = 'http://localhost:8000/api/v1/ingest/file'
  * `curl` the endpoint instead of installing the CLI. Mirrors the documented
  * `POST /api/v1/ingest/file` multipart contract (see `GETTING_STARTED.md` and
  * `backend/app/routers/ingest.py`): `file`, the required `project_id` and
- * `build_number`, and `format`. `$TL_TOKEN` and `<build>` stay placeholders —
- * the bearer token and per-run build label are only known to the caller. The
+ * `build_number`, and `format`. `$TL_API_KEY` and `<build>` stay placeholders —
+ * the credential and per-run build label are only known to the caller. The
  * project id is spliced in when the guide is scoped to a concrete project,
  * matching {@link uploadCommand}.
+ *
+ * Auth uses the `X-API-Key` header rather than a `Bearer` token: the ingest
+ * endpoint accepts either (see `get_api_key_context` in `backend/app/core/deps.py`),
+ * but a CI runner needs a long-lived, project-scoped credential — exactly what a
+ * project API key is — not the short-lived login-session bearer token from the
+ * quickstart. The self-host generates one under Settings → API Keys, and the UI
+ * links there right below this command.
  *
  * `ingestUrl` is the absolute endpoint the running UI already reaches its
  * backend at (see {@link backendUrl} in `services/api.ts`). Passing it makes the
@@ -52,7 +59,7 @@ export function ingestApiCommand(projectId?: string, ingestUrl: string = DEFAULT
   const p = projectId && projectId.trim() ? projectId : '<project-id>'
   return (
     `curl -X POST ${ingestUrl} ` +
-    `-H "Authorization: Bearer $TL_TOKEN" ` +
+    `-H "X-API-Key: $TL_API_KEY" ` +
     `-F file=@results.xml -F project_id=${p} -F build_number=<build> -F format=auto`
   )
 }

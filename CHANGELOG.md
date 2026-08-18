@@ -1011,6 +1011,26 @@ in-request call for the own-session one, and flipping the router registration or
 
 
 ### 2026-08-16 — Fix: five more places published figures that could not all be true
+### 2026-08-16 — Onboarding: the first-run CI curl now uses a credential you can actually create
+
+The empty-dashboard first-run guide shows a copy-paste `curl` for ingesting test
+results straight from CI — but it authenticated with `Authorization: Bearer $TL_TOKEN`,
+a login-session bearer token. That is the wrong credential for an unattended CI runner
+(it is short-lived and issued by interactive login), and the guide never said where to
+get one, so the copied command was a dead end for a new self-hoster.
+
+`POST /api/v1/ingest/file` accepts either a bearer token or an `X-API-Key` project key
+(`get_api_key_context`), and a project API key is exactly the long-lived, project-scoped
+credential CI needs. The guide now:
+
+- sends the ingest curl with `-H "X-API-Key: $TL_API_KEY"` instead of the bearer token,
+  matching the header the API Keys page's own example already uses; and
+- links directly to **Settings → API Keys** right below the command, where a self-host
+  generates that key.
+
+Regression tests pin the header change and the presence of the `/settings/api-keys` link.
+
+
 
 The run summary's non-reconciling figures turned out to be one instance of a class,
 not a one-off. The same shape was live in five places, each publishing a `total`, a
