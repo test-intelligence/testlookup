@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM fields validate persistence boundaries
+
+- Usernames, emails, display names, external IDs, email arrays, and group arrays now fail cleanly at SCIM validation boundaries instead of reaching narrower database columns or creating unbounded collection work.
+
 ## 2026-08-18 — SCIM provisioning request bodies are bounded
 
 - SCIM POST, PUT, and PATCH bodies are capped at 1 MiB before JSON parsing, including streamed requests without `Content-Length`, while unrelated upload routes remain unaffected.

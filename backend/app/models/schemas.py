@@ -11,6 +11,7 @@ from pydantic import (
     Field,
     computed_field,
     field_validator,
+    model_validator,
 )
 
 from app.models.postgres import (
@@ -3148,17 +3149,23 @@ class SSOLoginResponse(BaseModel):
 
 SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
 SCIM_PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+SCIM_USERNAME_MAX_LENGTH = 100
+SCIM_EMAIL_MAX_LENGTH = 255
+SCIM_DISPLAY_NAME_MAX_LENGTH = 255
+SCIM_EXTERNAL_ID_MAX_LENGTH = 1000
+SCIM_EMAILS_MAX_ITEMS = 100
+SCIM_GROUPS_MAX_ITEMS = 1000
 
 
 class SCIMName(BaseModel):
-    givenName: Optional[str] = None
-    familyName: Optional[str] = None
-    formatted: Optional[str] = None
+    givenName: Optional[str] = Field(None, max_length=SCIM_DISPLAY_NAME_MAX_LENGTH)
+    familyName: Optional[str] = Field(None, max_length=SCIM_DISPLAY_NAME_MAX_LENGTH)
+    formatted: Optional[str] = Field(None, max_length=SCIM_DISPLAY_NAME_MAX_LENGTH)
 
 
 class SCIMEmail(BaseModel):
-    value: str
-    type: Optional[str] = "work"
+    value: str = Field(..., min_length=1, max_length=SCIM_EMAIL_MAX_LENGTH)
+    type: Optional[str] = Field("work", max_length=100)
     primary: bool = True
 
 
@@ -3171,13 +3178,13 @@ class SCIMUserResource(BaseModel):
     """SCIM 2.0 User resource — used for both request and response."""
     schemas: List[str] = [SCIM_USER_SCHEMA]
     id: Optional[str] = None  # set on response
-    externalId: Optional[str] = None
-    userName: str
+    externalId: Optional[str] = Field(None, max_length=SCIM_EXTERNAL_ID_MAX_LENGTH)
+    userName: str = Field(..., min_length=1, max_length=SCIM_USERNAME_MAX_LENGTH)
     name: Optional[SCIMName] = None
-    emails: List[SCIMEmail] = []
-    displayName: Optional[str] = None
+    emails: List[SCIMEmail] = Field(default=[], max_length=SCIM_EMAILS_MAX_ITEMS)
+    displayName: Optional[str] = Field(None, max_length=SCIM_DISPLAY_NAME_MAX_LENGTH)
     active: bool = True
-    groups: List[SCIMGroup] = []
+    groups: List[SCIMGroup] = Field(default=[], max_length=SCIM_GROUPS_MAX_ITEMS)
     meta: Optional[dict] = None
 
     @field_validator("schemas")
@@ -3192,6 +3199,18 @@ class SCIMUserRequest(SCIMUserResource):
     """Inbound SCIM user payload; the protocol schemas member is required."""
 
     schemas: List[str] = Field(...)
+
+    @model_validator(mode="after")
+    def require_storable_derived_display_name(self):
+        if self.displayName is None and self.name is not None:
+            derived = " ".join(
+                part for part in (self.name.givenName, self.name.familyName) if part
+            )
+            if len(derived) > SCIM_DISPLAY_NAME_MAX_LENGTH:
+                raise ValueError(
+                    f"derived displayName must be at most {SCIM_DISPLAY_NAME_MAX_LENGTH} characters"
+                )
+        return self
 
 
 class SCIMListResponse(BaseModel):

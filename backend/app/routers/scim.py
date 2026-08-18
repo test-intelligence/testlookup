@@ -5,6 +5,7 @@ import re
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +16,13 @@ from app.core.scim_errors import SCIMJSONResponse
 from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, SCIMToken, User, UserRole
 from app.models.schemas import (
+    SCIM_DISPLAY_NAME_MAX_LENGTH,
+    SCIM_EMAILS_MAX_ITEMS,
+    SCIM_EXTERNAL_ID_MAX_LENGTH,
+    SCIM_GROUPS_MAX_ITEMS,
     SCIM_USER_SCHEMA,
+    SCIM_USERNAME_MAX_LENGTH,
+    SCIMEmail,
     SCIMListResponse,
     SCIMPatchRequestPayload,
     SCIMTokenCreate,
@@ -69,7 +76,7 @@ async def _raise_scim_integrity_conflict(db: AsyncSession, exc: IntegrityError) 
 
 def _scim_group_refs(value: object) -> list[dict[str, str]] | None:
     """Preserve SCIM group identity and display data in a canonical form."""
-    if not isinstance(value, list):
+    if not isinstance(value, list) or len(value) > SCIM_GROUPS_MAX_ITEMS:
         return None
     refs: list[dict[str, str]] = []
     for item in value:
@@ -95,13 +102,36 @@ def _scim_group_refs(value: object) -> list[dict[str, str]] | None:
 
 def _scim_patch_email(value: object) -> str | None:
     """Return the primary/first email from a valid SCIM email array."""
-    if not isinstance(value, list) or not value:
+    if not isinstance(value, list) or not value or len(value) > SCIM_EMAILS_MAX_ITEMS:
         return None
     candidates = [item for item in value if isinstance(item, dict)]
     primary = next((item for item in candidates if item.get("primary")), None)
     chosen = primary or (candidates[0] if candidates else None)
-    email = chosen.get("value") if chosen else None
-    return email if isinstance(email, str) and email else None
+    if chosen is None:
+        return None
+    try:
+        return str(SCIMEmail.model_validate(chosen).value)
+    except ValidationError:
+        return None
+
+
+def _scim_patch_string(
+    value: object,
+    attribute: str,
+    max_length: int,
+    *,
+    allow_empty: bool = False,
+) -> str:
+    """Validate a PATCH scalar against its persistence boundary."""
+    if not isinstance(value, str) or (not allow_empty and not value):
+        qualifier = "a string" if allow_empty else "a non-empty string"
+        raise HTTPException(status_code=400, detail=f"{attribute} must be {qualifier}")
+    if len(value) > max_length:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{attribute} must be at most {max_length} characters",
+        )
+    return value
 
 
 def _scim_group_names(refs: list[dict[str, str]]) -> list[str]:
@@ -410,21 +440,24 @@ async def scim_patch(
         path = _canonical_scim_patch_path(op.path)
         if op_type == "replace":
             if path == "userName":
-                if not isinstance(op.value, str) or not op.value:
-                    raise HTTPException(status_code=400, detail="userName must be a non-empty string")
-                username = op.value
+                username = _scim_patch_string(
+                    op.value, "userName", SCIM_USERNAME_MAX_LENGTH
+                )
             elif path == "externalId":
-                if not isinstance(op.value, str) or not op.value:
-                    raise HTTPException(status_code=400, detail="externalId must be a non-empty string")
-                external_id = op.value
+                external_id = _scim_patch_string(
+                    op.value, "externalId", SCIM_EXTERNAL_ID_MAX_LENGTH
+                )
             elif path == "active":
                 if not isinstance(op.value, bool):
                     raise HTTPException(status_code=400, detail="active must be a boolean")
                 active = op.value
             elif path == "displayName":
-                if not isinstance(op.value, str):
-                    raise HTTPException(status_code=400, detail="displayName must be a string")
-                display_name = op.value
+                display_name = _scim_patch_string(
+                    op.value,
+                    "displayName",
+                    SCIM_DISPLAY_NAME_MAX_LENGTH,
+                    allow_empty=True,
+                )
             elif path == "emails":
                 email = _scim_patch_email(op.value)
                 if email is None:
@@ -441,24 +474,26 @@ async def scim_patch(
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
                 if "userName" in bulk_value:
-                    if not isinstance(bulk_value["userName"], str) or not bulk_value["userName"]:
-                        raise HTTPException(status_code=400, detail="userName must be a non-empty string")
-                    username = bulk_value["userName"]
+                    username = _scim_patch_string(
+                        bulk_value["userName"], "userName", SCIM_USERNAME_MAX_LENGTH
+                    )
                 if "externalId" in bulk_value:
-                    if not isinstance(bulk_value["externalId"], str) or not bulk_value["externalId"]:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="externalId must be a non-empty string",
-                        )
-                    external_id = bulk_value["externalId"]
+                    external_id = _scim_patch_string(
+                        bulk_value["externalId"],
+                        "externalId",
+                        SCIM_EXTERNAL_ID_MAX_LENGTH,
+                    )
                 if "active" in bulk_value:
                     if not isinstance(bulk_value["active"], bool):
                         raise HTTPException(status_code=400, detail="active must be a boolean")
                     active = bulk_value["active"]
                 if "displayName" in bulk_value:
-                    if not isinstance(bulk_value["displayName"], str):
-                        raise HTTPException(status_code=400, detail="displayName must be a string")
-                    display_name = bulk_value["displayName"]
+                    display_name = _scim_patch_string(
+                        bulk_value["displayName"],
+                        "displayName",
+                        SCIM_DISPLAY_NAME_MAX_LENGTH,
+                        allow_empty=True,
+                    )
                 if "emails" in bulk_value:
                     email = _scim_patch_email(bulk_value["emails"])
                     if email is None:
