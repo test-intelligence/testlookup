@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-18 — Fixer selects the tests it was always meant to fix
+
+- Fixer candidate selection now filters quarantine rows by the status values the column actually stores, so an enabled Fixer considers its active quarantines instead of completing every run having selected nothing.
+- A new `backend.status-enum-vocab` quality gate fails any status filter whose literals are not values of that column's enum.
+
 ## 2026-08-18 — Similar-failure search is project isolated
 
 - Similar-failure lookup now authorizes the source test case's project and constrains semantic results to that project.

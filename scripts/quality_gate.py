@@ -1263,6 +1263,191 @@ def _backend_model_imports_resolve() -> list[Violation]:
     return violations
 
 
+# ── Status-literal vocabulary (FIX-002) ──────────────────────────────────────
+#
+# ``FlakyQuarantineRequest.status`` stores UPPERCASE ``FlakyQuarantineStatus``
+# values; the Fixer's candidate selector filtered it with lowercase literals.
+# ``status.in_(("quarantined", ...))`` matched nothing, ever — so the whole
+# feature was inert while every run logged ``status=completed error=0``. Two
+# of the three literals were not stored values in ANY casing, so the drift was
+# a vocabulary error, not only a casing one.
+#
+# The guard only inspects models that TIE their status column to an enum
+# (``default=SomeStatus.X.value``). Models whose status is a free string (most
+# of them) have no declared vocabulary to check against, and inventing one for
+# them would be guesswork that fails noisily on correct code.
+
+
+def _status_enum_vocabularies() -> tuple[dict[str, str], dict[str, set[str]]]:
+    """``(model name -> status-enum name, enum name -> its string values)``.
+
+    Parsed, never imported — importing ``app.models.postgres`` builds the
+    SQLAlchemy engine and needs ``DATABASE_URL``, so an import-based check
+    would fail open (see ``_model_module_exported_names``).
+    """
+    path = REPO_ROOT / "backend" / "app" / "models" / "postgres.py"
+    if not path.exists():
+        return {}, {}
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return {}, {}
+
+    enums: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        bases = {getattr(b, "id", getattr(b, "attr", "")) for b in node.bases}
+        if not ({"Enum", "PyEnum"} & bases):
+            continue
+        values = {
+            stmt.value.value
+            for stmt in node.body
+            if isinstance(stmt, ast.Assign)
+            and isinstance(stmt.value, ast.Constant)
+            and isinstance(stmt.value.value, str)
+        }
+        if values:
+            enums[node.name] = values
+
+    model_enum: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for stmt in node.body:
+            if not (isinstance(stmt, ast.AnnAssign)
+                    and getattr(stmt.target, "id", "") == "status"
+                    and stmt.value is not None):
+                continue
+            # ``default=FlakyQuarantineStatus.PROPOSED.value`` — walk to the
+            # root Name of any attribute chain and keep the one that names an
+            # enum we parsed.
+            for sub in ast.walk(stmt.value):
+                if not isinstance(sub, ast.Attribute):
+                    continue
+                root = sub
+                while isinstance(root, ast.Attribute):
+                    root = root.value
+                if isinstance(root, ast.Name) and root.id in enums:
+                    model_enum[node.name] = root.id
+                    break
+    return model_enum, enums
+
+
+def _module_level_string_sequences(tree: ast.Module) -> dict[str, list[tuple[str, int]]]:
+    """Module-level ``NAME = ("a", "b")`` constants, as ``(value, lineno)``.
+
+    Needed because the FIX-002 literals lived in a module constant, not inline
+    in the ``.in_()`` call — a guard that only read call arguments would have
+    walked straight past the defect it exists to catch.
+    """
+    consts: dict[str, list[tuple[str, int]]] = {}
+    for stmt in tree.body:
+        target = value = None
+        if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)):
+            target, value = stmt.targets[0].id, stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            target, value = stmt.target.id, stmt.value
+        if target is None or not isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+            continue
+        strings = [
+            (elt.value, elt.lineno)
+            for elt in value.elts
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+        ]
+        if strings:
+            consts[target] = strings
+    return consts
+
+
+def _backend_status_enum_vocab() -> list[Violation]:
+    """Status literals compared against an enum-backed ``status`` column must
+    be values of that enum.
+
+    Catches the producer/consumer vocabulary drift that made the Fixer inert:
+    a filter whose terms the column can never hold returns nothing forever,
+    and an empty result set is indistinguishable from "no matching rows".
+    Nothing errors, so nothing surfaces.
+    """
+    models_path = REPO_ROOT / "backend" / "app" / "models" / "postgres.py"
+    model_enum, enums = _status_enum_vocabularies()
+    if not model_enum:
+        # Fail LOUD rather than open. A guard that reports OK because it could
+        # not read its own reference data is the same shape as the defect it
+        # exists to catch: silence that reads as success.
+        if not models_path.exists():
+            return []
+        return [Violation(
+            models_path,
+            1,
+            "no status column could be tied to a status enum — this guard "
+            "checked nothing. Either the model module moved, or a status "
+            "column stopped declaring its enum default.",
+        )]
+
+    violations: list[Violation] = []
+    root = REPO_ROOT / "backend" / "app"
+    for path in iter_files(root, (".py",)):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        consts = _module_level_string_sequences(tree)
+
+        for node in ast.walk(tree):
+            owner: Optional[ast.AST] = None
+            literals: list[tuple[str, int]] = []
+
+            # ``Model.status.in_([...])`` / ``.in_(_SOME_CONSTANT)``
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "in_"
+                    and isinstance(node.func.value, ast.Attribute)
+                    and node.func.value.attr == "status"):
+                owner = node.func.value.value
+                for arg in node.args:
+                    if isinstance(arg, (ast.List, ast.Tuple, ast.Set)):
+                        literals += [
+                            (e.value, e.lineno) for e in arg.elts
+                            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                        ]
+                    elif isinstance(arg, ast.Name) and arg.id in consts:
+                        literals += consts[arg.id]
+
+            # ``Model.status == "..."`` / ``!=``
+            elif (isinstance(node, ast.Compare)
+                    and isinstance(node.left, ast.Attribute)
+                    and node.left.attr == "status"
+                    and len(node.ops) == 1
+                    and isinstance(node.ops[0], (ast.Eq, ast.NotEq))
+                    and isinstance(node.comparators[0], ast.Constant)
+                    and isinstance(node.comparators[0].value, str)):
+                owner = node.left.value
+                literals = [(node.comparators[0].value, node.lineno)]
+
+            model = getattr(owner, "id", None)
+            if model not in model_enum or not literals:
+                continue
+            enum_name = model_enum[model]
+            vocabulary = enums[enum_name]
+            for value, lineno in literals:
+                if value in vocabulary:
+                    continue
+                hint = ""
+                for known in vocabulary:
+                    if known.lower() == value.lower():
+                        hint = f" (did you mean {known!r}?)"
+                        break
+                violations.append(Violation(
+                    path,
+                    lineno,
+                    f"{model}.status compared to {value!r}, which is not a "
+                    f"{enum_name} value{hint} — this filter matches nothing",
+                ))
+    return violations
+
+
 def _database_downgrade_implemented() -> list[Violation]:
     """Every migration must implement ``downgrade()``. Empty stubs
     block rollback in incident response."""
@@ -1863,6 +2048,22 @@ GUARDS: list[Guard] = [
             "Correct the class name (check app/models/postgres.py — e.g. the "
             "perf_baselines table's class is PerfBaseline, not "
             "PerformanceBaseline)."
+        ),
+    ),
+    Guard(
+        name="backend.status-enum-vocab",
+        description=(
+            "Status literals filtered against an enum-backed status "
+            "column must be values of that enum — a mismatched "
+            "vocabulary makes the query match nothing, silently and "
+            "forever."
+        ),
+        check=_backend_status_enum_vocab,
+        fix_hint=(
+            "Build the filter from the enum "
+            "(``FlakyQuarantineStatus.QUARANTINED.value``), never from a "
+            "hand-written string. See FIX-002: the Fixer selected zero "
+            "candidates on every run while reporting success."
         ),
     ),
     Guard(

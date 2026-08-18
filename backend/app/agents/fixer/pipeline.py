@@ -44,13 +44,25 @@ from app.models.postgres import (
     AgentInvestigation,
     FixAttempt,
     FlakyQuarantineRequest,
+    FlakyQuarantineStatus,
 )
 
 logger = structlog.get_logger("agents.fixer.pipeline")
 
 # Active-quarantine states the candidate selector considers (mirrors
-# flaky_quarantine_service.active_quarantines_for_project).
-_ACTIVE_QUARANTINE_STATES = ("quarantined", "recheck_scheduled", "re_quarantined")
+# flaky_quarantine_service._ACTIVE_QUARANTINE_STATES).
+#
+# Built from ``FlakyQuarantineStatus`` members, NOT hand-written strings:
+# ``flaky_quarantine_requests.status`` stores the UPPERCASE enum values, so a
+# lowercase literal here matched nothing and every fixer run selected zero
+# candidates while still reporting ``status=completed error=0``. The
+# ``backend.status-enum-vocab`` quality gate now fails on any status literal
+# that is not a value of the column's enum.
+_ACTIVE_QUARANTINE_STATES = (
+    FlakyQuarantineStatus.QUARANTINED.value,
+    FlakyQuarantineStatus.RECHECK_SCHEDULED.value,
+    FlakyQuarantineStatus.RE_QUARANTINED.value,
+)
 
 # Statuses that count as a consumed attempt against max_attempts_per_test —
 # an attempt that reached generation or beyond actually spent budget.
