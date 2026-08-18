@@ -329,8 +329,12 @@ class _ManagerDB:
         return False
 
     async def execute(self, *a, **k):
+        statement = str(a[0]) if a else ""
+        if "app_settings" in statement or "secret_refs" in statement:
+            return SimpleNamespace(scalar_one_or_none=lambda: None)
+        if "notification_transition_policies" in statement:
+            return SimpleNamespace(scalar_one_or_none=lambda: self._policy)
         return SimpleNamespace(
-            scalar_one_or_none=lambda: self._policy,
             all=lambda: self._prefs,
         )
 

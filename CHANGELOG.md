@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-18 — Storage settings drive runtime object storage
+
+- Wired database-backed Storage settings into every object-storage operation through a shared Redis-cached resolver, with post-commit invalidation across API and worker replicas.
+- Restricted `storage_backend` updates to the supported MinIO, S3, and local providers instead of accepting values that fail only during later artifact operations.
+
 ## 2026-08-18 — Storage settings report real dependency status
 
 - Fixed the Data & Storage settings endpoint falsely publishing MongoDB and Redis as connected when their probes fail; status fields are now required and backed by bounded live probes.

@@ -812,6 +812,9 @@ async def update_storage_config(
 
     await log_settings_change(db, _STORAGE_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
+    from app.services.storage_config_service import invalidate_storage_config_cache
+
+    await invalidate_storage_config_cache()
     logger.info("Storage configuration updated by user_id=%s", current_user.id)
     return await _build_storage_config_read(merged)
 
