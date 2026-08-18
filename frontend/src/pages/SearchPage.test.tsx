@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -10,6 +10,9 @@ import type { GlobalSearchResponse, GlobalSearchResult, IndexStatus } from '@/ty
 const mockGlobalSearch = vi.fn()
 const mockGetIndexStatus = vi.fn()
 const mockGetEntityCounts = vi.fn()
+const { mockProjectState } = vi.hoisted(() => ({
+  mockProjectState: { activeProjectId: 'proj-1' },
+}))
 
 vi.mock('@/services/searchService', () => ({
   searchService: {
@@ -29,7 +32,7 @@ vi.mock('@/services/searchService', () => ({
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: vi.fn((selector: (state: { activeProjectId: string }) => unknown) =>
-    selector({ activeProjectId: 'proj-1' })),
+    selector(mockProjectState)),
 }))
 
 vi.mock('react-hot-toast', () => ({
@@ -75,18 +78,23 @@ function makeResponse(items: GlobalSearchResult[]): GlobalSearchResponse {
   }
 }
 
-function renderAt(url: string) {
-  return render(
+function searchTree(url: string) {
+  return (
     <MemoryRouter initialEntries={[url]}>
       <Routes>
         <Route path="/search" element={<SearchPage />} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   )
+}
+
+function renderAt(url: string) {
+  return render(searchTree(url))
 }
 
 describe('SearchPage', () => {
   beforeEach(() => {
+    mockProjectState.activeProjectId = 'proj-1'
     mockGlobalSearch.mockReset()
     mockGetIndexStatus.mockReset()
     mockGetEntityCounts.mockReset()
@@ -262,10 +270,50 @@ describe('SearchPage', () => {
     expect(mockGlobalSearch).toHaveBeenCalled()
     const callArgs = mockGlobalSearch.mock.calls[0][0] as {
       q: string
+      project_id?: string
       entity_types?: string[]
     }
     expect(callArgs.q).toBe('')
+    expect(callArgs.project_id).toBe('proj-1')
     expect(callArgs.entity_types).toBeUndefined()
+  })
+
+  it('refreshes result rows with the newly active project', async () => {
+    const view = renderAt('/search?mode=hybrid&scope=all')
+    await waitFor(() => expect(mockGlobalSearch).toHaveBeenCalledTimes(1))
+
+    mockGlobalSearch.mockClear()
+    mockProjectState.activeProjectId = 'proj-2'
+    view.rerender(searchTree('/search?mode=hybrid&scope=all'))
+
+    await waitFor(() => expect(mockGlobalSearch).toHaveBeenCalledTimes(1))
+    expect(mockGlobalSearch).toHaveBeenCalledWith(expect.objectContaining({
+      project_id: 'proj-2',
+    }))
+  })
+
+  it('does not let the previous project response overwrite refreshed rows', async () => {
+    let resolveFirst!: (response: GlobalSearchResponse) => void
+    const firstResponse = new Promise<GlobalSearchResponse>((resolve) => {
+      resolveFirst = resolve
+    })
+    mockGlobalSearch
+      .mockReturnValueOnce(firstResponse)
+      .mockResolvedValueOnce(makeResponse([makeResult({ title: 'project-two-row' })]))
+
+    const view = renderAt('/search?mode=hybrid&scope=all')
+    await waitFor(() => expect(mockGlobalSearch).toHaveBeenCalledTimes(1))
+
+    mockProjectState.activeProjectId = 'proj-2'
+    view.rerender(searchTree('/search?mode=hybrid&scope=all'))
+    expect(await screen.findByText('project-two-row')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveFirst(makeResponse([makeResult({ title: 'stale-project-one-row' })]))
+      await firstResponse
+    })
+    expect(screen.queryByText('stale-project-one-row')).not.toBeInTheDocument()
+    expect(screen.getByText('project-two-row')).toBeInTheDocument()
   })
 
   it('chip counts stay on project totals when scope is narrowed (no jumping)', async () => {

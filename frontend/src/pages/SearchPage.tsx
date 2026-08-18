@@ -1049,6 +1049,7 @@ export default function SearchPage() {
   const [saved, setSaved] = useState<SavedSearch[]>(() => readSaved())
 
   const inputRef = useRef<HTMLInputElement>(null)
+  const searchRequestIdRef = useRef(0)
 
   // ALL_PROJECTS_ID is a frontend sentinel — omit it from API requests so
   // the backend resolves the caller's accessible project set.
@@ -1080,6 +1081,7 @@ export default function SearchPage() {
   // omit it (they want page 1); the pagination control passes the new
   // page explicitly so a user clicking "page 2" doesn't reset back to 1.
   const runSearch = useCallback(async (q: string, m: RetrievalMode, s: EntityScope, page: number = 1) => {
+    const requestId = ++searchRequestIdRef.current
     const trimmed = q.trim()
     setSearchParams(prev => {
       const np = new URLSearchParams(prev)
@@ -1106,10 +1108,12 @@ export default function SearchPage() {
       // chip is informational only and feeds the provenance footer.
       const data = await searchService.globalSearch({
         q: trimmed,
+        project_id: scopedProjectId,
         entity_types: entityKey ? [entityKey] : undefined,
         page,
         size: RESULTS_PAGE_SIZE,
       })
+      if (requestId !== searchRequestIdRef.current) return
       setResponse(data)
       // Only persist real queries to history — browse views (empty q)
       // shouldn't pollute Recent searches.
@@ -1124,12 +1128,13 @@ export default function SearchPage() {
         })
       }
     } catch {
+      if (requestId !== searchRequestIdRef.current) return
       toast.error('Search failed')
       setResponse(null)
     } finally {
-      setIsSearching(false)
+      if (requestId === searchRequestIdRef.current) setIsSearching(false)
     }
-  }, [setSearchParams])
+  }, [scopedProjectId, setSearchParams])
 
   // ── Auto-run on mount ────────────────────────────────────────────────
   // Always fire on first mount — empty queries browse the most-recent
@@ -1141,6 +1146,16 @@ export default function SearchPage() {
     initialRanRef.current = true
     void runSearch(query, mode, scope)
   }, [query, mode, scope, runSearch])
+
+  // A project switch must refresh the result rows as well as the counts and
+  // index-health panels above. Keep the previous scope separately so the
+  // initial mount still issues exactly one browse/search request.
+  const previousProjectIdRef = useRef(scopedProjectId)
+  useEffect(() => {
+    if (previousProjectIdRef.current === scopedProjectId) return
+    previousProjectIdRef.current = scopedProjectId
+    void runSearch(query, mode, scope)
+  }, [scopedProjectId, query, mode, scope, runSearch])
 
   // ── ⌘K shortcut: focus input (unless user is already typing in another input) ──
   useEffect(() => {
