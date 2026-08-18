@@ -2698,9 +2698,9 @@ class StorageConfigRead(BaseModel):
     Infrastructure connection details are masked to prevent credential/topology disclosure."""
     storage_backend: str
     # Infrastructure details are masked — only admin needs these, and they're in .env
-    postgres_connected: bool = True       # replaced raw host/port/db
-    mongo_connected: bool = True          # replaced raw host/port/db
-    redis_connected: bool = True          # replaced raw url
+    postgres_connected: bool              # replaced raw host/port/db
+    mongo_connected: bool                 # replaced raw host/port/db
+    redis_connected: bool                 # replaced raw url
     # Editable storage settings (not sensitive)
     minio_endpoint: str
     minio_bucket_name: str
