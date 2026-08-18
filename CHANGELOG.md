@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-18 — Chroma settings drive runtime clients and health
+
+- Wired persisted Chroma host and port settings into every vector-store client and operational probe, and the configured default collection into chat semantic search.
+- Preserved feature- and tenant-specific collection names for search, cache, memory, knowledge, clustering, and defect deduplication instead of collapsing isolated data into the configurable default collection.
+
 ## 2026-08-18 — Storage settings drive runtime object storage
 
 - Wired database-backed Storage settings into every object-storage operation through a shared Redis-cached resolver, with post-commit invalidation across API and worker replicas.

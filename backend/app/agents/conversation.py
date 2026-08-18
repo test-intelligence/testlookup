@@ -879,13 +879,22 @@ class ConversationAgent:
 
     async def _semantic_search(self, query: str, project_id: Optional[str]) -> str:
         """ChromaDB semantic similarity search — wrapped in asyncio.to_thread to avoid blocking."""
+        from app.services.storage_config_service import get_effective_storage_config
+
+        chroma_config = await get_effective_storage_config()
+
         def _sync_search() -> str:
             try:
                 from app.db.chroma import get_chroma_client
                 from app.services.llm_factory import get_embedding_model
 
-                client = get_chroma_client()
-                collection = client.get_or_create_collection(settings.CHROMA_COLLECTION)
+                client = get_chroma_client(
+                    host=str(chroma_config["chroma_host"]),
+                    port=int(chroma_config["chroma_port"]),
+                )
+                collection = client.get_or_create_collection(
+                    str(chroma_config["chroma_collection"])
+                )
                 if collection.count() == 0:
                     return ""
                 embedder = get_embedding_model()

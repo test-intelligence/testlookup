@@ -9,8 +9,6 @@ from typing import Any, cast
 
 from langchain_core.tools import tool
 
-from app.db.chroma import get_chroma_client
-
 logger = logging.getLogger("tools.embed_and_cluster")
 
 _COLLECTION = "failure_clusters"
@@ -57,8 +55,10 @@ def _cluster_from_neighbours(
     return clusters
 
 
-def _get_chroma_client() -> Any:
-    return get_chroma_client()
+async def _get_chroma_client() -> Any:
+    from app.db.chroma import get_configured_chroma_client
+
+    return await get_configured_chroma_client()
 
 
 def _simple_cluster(texts: list[str], threshold: float = 0.75) -> list[list[int]]:
@@ -114,7 +114,7 @@ async def embed_and_cluster(error_messages_json: str) -> str:
     # Try ChromaDB-backed embedding; fall back to Jaccard clustering
     cluster_indices: list[list[int]] = []
     try:
-        client = await asyncio.to_thread(_get_chroma_client)
+        client = await _get_chroma_client()
         collection = await asyncio.to_thread(
             client.get_or_create_collection, _COLLECTION
         )

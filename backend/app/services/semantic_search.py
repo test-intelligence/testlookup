@@ -84,9 +84,9 @@ def _step_text_subq():
     return inner.label("step_text")
 
 
-def _get_chroma_client():
-    from app.db.chroma import get_chroma_client
-    return get_chroma_client()
+async def _get_chroma_client():
+    from app.db.chroma import get_configured_chroma_client
+    return await get_configured_chroma_client()
 
 
 async def _get_or_create_collection():
@@ -107,7 +107,7 @@ async def _get_or_create_collection():
     back to keyword. Do NOT swap in a cloud ``embedding_function`` without an
     ``AI_OFFLINE_MODE`` gate either.
     """
-    client = await asyncio.to_thread(_get_chroma_client)
+    client = await _get_chroma_client()
     return await asyncio.to_thread(
         client.get_or_create_collection,
         _COLLECTION_NAME,

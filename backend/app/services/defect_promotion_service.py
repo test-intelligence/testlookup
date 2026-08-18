@@ -573,6 +573,9 @@ async def _find_duplicate_semantic(
 
     # Try ChromaDB semantic similarity
     try:
+        from app.services.storage_config_service import get_effective_storage_config
+
+        chroma_config = await get_effective_storage_config()
         # Per-PROJECT collection: a single shared "open_defects" collection
         # persists across calls and accumulates every project's defects, so a
         # nearest-neighbour query would return another tenant's defect —
@@ -583,7 +586,10 @@ async def _find_duplicate_semantic(
 
         def _chroma_dedup() -> Optional[str]:
             from app.db.chroma import get_chroma_client
-            client = get_chroma_client()
+            client = get_chroma_client(
+                host=str(chroma_config["chroma_host"]),
+                port=int(chroma_config["chroma_port"]),
+            )
             coll = client.get_or_create_collection(_DEFECT_COLLECTION)
             # Upsert current open defects
             ids = [str(d.id) for d in open_defects if d.title]

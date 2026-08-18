@@ -100,10 +100,12 @@ _PROBE_TIMEOUT = httpx.Timeout(
 async def _check_minio() -> dict[str, Any]:
     try:
         from app.core.http_client import get_http_client  # noqa: PLC0415
+        from app.services.storage_config_service import get_effective_storage_config  # noqa: PLC0415
 
         # MinIO health endpoint — available without auth
-        endpoint = settings.MINIO_ENDPOINT
-        scheme = "https" if settings.MINIO_USE_SSL else "http"
+        config = await get_effective_storage_config()
+        endpoint = config["minio_endpoint"]
+        scheme = "https" if config["minio_use_ssl"] else "http"
         client = get_http_client()
         resp = await client.get(f"{scheme}://{endpoint}/minio/health/live", timeout=_PROBE_TIMEOUT)
         if resp.status_code in (200, 204):
@@ -138,9 +140,14 @@ async def _check_ollama() -> dict[str, Any]:
 async def _check_chromadb() -> dict[str, Any]:
     try:
         from app.core.http_client import get_http_client  # noqa: PLC0415
+        from app.services.storage_config_service import get_effective_storage_config  # noqa: PLC0415
 
+        config = await get_effective_storage_config()
         client = get_http_client()
-        resp = await client.get(f"{settings.chroma_host_url}/api/v2/heartbeat", timeout=_PROBE_TIMEOUT)
+        resp = await client.get(
+            f"http://{config['chroma_host']}:{config['chroma_port']}/api/v2/heartbeat",
+            timeout=_PROBE_TIMEOUT,
+        )
         if resp.status_code == 200:
             return {"status": "ok"}
         return {"status": "degraded", "detail": f"HTTP {resp.status_code}"}

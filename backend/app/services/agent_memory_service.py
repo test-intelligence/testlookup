@@ -69,13 +69,13 @@ _CLOSED_DEFECT_STATUSES = {
 # ── ChromaDB helpers ─────────────────────────────────────────────────────────
 
 
-def _get_chroma_client():
-    from app.db.chroma import get_chroma_client
-    return get_chroma_client()
+async def _get_chroma_client():
+    from app.db.chroma import get_configured_chroma_client
+    return await get_configured_chroma_client()
 
 
 async def _get_or_create_collection():
-    client = await asyncio.to_thread(_get_chroma_client)
+    client = await _get_chroma_client()
     return await asyncio.to_thread(
         client.get_or_create_collection,
         _MEMORY_COLLECTION,
