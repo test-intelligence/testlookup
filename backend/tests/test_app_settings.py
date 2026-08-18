@@ -250,11 +250,68 @@ class TestStorageConfigUpdate:
         with pytest.raises(ValidationError):
             StorageConfigUpdate(chroma_port=70000)  # max 65535
 
+    def test_provider_and_location_validation(self):
+        from app.models.schemas import StorageConfigUpdate
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            StorageConfigUpdate(storage_backend="ftp")
+        with pytest.raises(ValidationError):
+            StorageConfigUpdate(minio_endpoint="")
+        with pytest.raises(ValidationError):
+            StorageConfigUpdate(minio_bucket_name="")
+
     def test_empty_update(self):
         from app.models.schemas import StorageConfigUpdate
 
         update = StorageConfigUpdate()
         assert update.model_dump(exclude_none=True) == {}
+
+    @pytest.mark.asyncio
+    async def test_runtime_cache_is_invalidated_after_commit(self, monkeypatch: pytest.MonkeyPatch):
+        """No replica may reload the old storage row between invalidate and commit."""
+        from app.models.schemas import StorageConfigRead, StorageConfigUpdate
+        from app.routers import app_settings
+        from app.services import storage_config_service
+
+        calls: list[str] = []
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        db = MagicMock()
+        db.execute = AsyncMock(return_value=result)
+        db.commit = AsyncMock(side_effect=lambda: calls.append("commit"))
+        db.add = MagicMock()
+
+        async def record_audit(*_args, **_kwargs):
+            calls.append("audit")
+
+        async def invalidate():
+            calls.append("invalidate")
+
+        response = StorageConfigRead(
+            storage_backend="s3",
+            postgres_connected=True,
+            mongo_connected=True,
+            redis_connected=True,
+            minio_endpoint="s3.example.test",
+            minio_bucket_name="artifacts",
+            minio_use_ssl=True,
+            chroma_host="chroma",
+            chroma_port=8000,
+            chroma_collection="vectors",
+        )
+        monkeypatch.setattr(app_settings, "log_settings_change", record_audit)
+        monkeypatch.setattr(storage_config_service, "invalidate_storage_config_cache", invalidate)
+        monkeypatch.setattr(app_settings, "_build_storage_config_read", AsyncMock(return_value=response))
+
+        returned = await app_settings.update_storage_config(
+            StorageConfigUpdate(storage_backend="s3", minio_endpoint="s3.example.test"),
+            current_user=MagicMock(id=uuid.uuid4()),
+            db=db,
+        )
+
+        assert returned is response
+        assert calls == ["audit", "commit", "invalidate"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

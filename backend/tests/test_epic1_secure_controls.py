@@ -230,8 +230,9 @@ class TestSecretNeverReturned:
             jira_token_set=True, jira_default_project_key="QA",
             splunk_enabled=False, splunk_base_url=None, splunk_token_set=False,
             ocp_enabled=False, ocp_api_url=None, ocp_token_set=False, ocp_default_namespace="qa",
-            slack_enabled=False, slack_webhook_url=None, slack_default_channel="#qa",
-            teams_enabled=False, teams_webhook_url=None,
+            slack_enabled=False, slack_webhook_url=None, slack_webhook_set=False,
+            slack_default_channel="#qa",
+            teams_enabled=False, teams_webhook_url=None, teams_webhook_set=False,
             github_repo=None, github_token_set=False,
         )
         fields = set(cfg.model_fields.keys())

@@ -2712,12 +2712,12 @@ class StorageConfigRead(BaseModel):
 
 class StorageConfigUpdate(BaseModel):
     """Payload for updating storage config. None = keep existing."""
-    storage_backend: Optional[str] = None
-    chroma_host: Optional[str] = Field(None, max_length=255)
+    storage_backend: Optional[Literal["minio", "s3", "local"]] = None
+    chroma_host: Optional[str] = Field(None, min_length=1, max_length=255)
     chroma_port: Optional[int] = Field(None, ge=1, le=65535)
-    chroma_collection: Optional[str] = Field(None, max_length=255)
-    minio_endpoint: Optional[str] = Field(None, max_length=500)
-    minio_bucket_name: Optional[str] = Field(None, max_length=255)
+    chroma_collection: Optional[str] = Field(None, min_length=1, max_length=255)
+    minio_endpoint: Optional[str] = Field(None, min_length=1, max_length=500)
+    minio_bucket_name: Optional[str] = Field(None, min_length=1, max_length=255)
     minio_use_ssl: Optional[bool] = None
 
 

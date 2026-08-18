@@ -80,13 +80,21 @@ def _require_prefix(prefix: str) -> None:
 class S3StorageProvider(StorageProvider):
     """S3/MinIO compatible storage provider with connection pooling."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        endpoint: str | None = None,
+        use_ssl: bool | None = None,
+        default_bucket: str | None = None,
+    ):
         import aioboto3
         from botocore.client import Config
 
         # Single session reused across all requests — aioboto3 manages the pool internally
         self._session = aioboto3.Session()
-        self._endpoint = f"{'https' if settings.MINIO_USE_SSL else 'http'}://{settings.MINIO_ENDPOINT}"
+        effective_ssl = settings.MINIO_USE_SSL if use_ssl is None else use_ssl
+        self._endpoint = f"{'https' if effective_ssl else 'http'}://{endpoint or settings.MINIO_ENDPOINT}"
+        self._default_bucket = default_bucket or settings.MINIO_BUCKET_NAME
         self._config = Config(
             signature_version="s3v4",
             max_pool_connections=settings.S3_MAX_POOL_CONNECTIONS,
@@ -103,7 +111,7 @@ class S3StorageProvider(StorageProvider):
         )
 
     async def list_objects(self, prefix: str, bucket: str | None = None) -> list[dict]:
-        bucket = bucket or settings.MINIO_BUCKET_NAME
+        bucket = bucket or self._default_bucket
         objects = []
         try:
             async with self.get_client_context() as s3:
@@ -119,14 +127,14 @@ class S3StorageProvider(StorageProvider):
         return objects
 
     async def get_object_content(self, key: str, bucket: str | None = None) -> bytes:
-        bucket = bucket or settings.MINIO_BUCKET_NAME
+        bucket = bucket or self._default_bucket
         async with self.get_client_context() as s3:
             response = await s3.get_object(Bucket=bucket, Key=key)
             async with response["Body"] as stream:
                 return cast(bytes, await stream.read())
 
     async def stream_object(self, key: str, bucket: str | None = None) -> AsyncGenerator[bytes, None]:
-        bucket = bucket or settings.MINIO_BUCKET_NAME
+        bucket = bucket or self._default_bucket
         async with self.get_client_context() as s3:
             response = await s3.get_object(Bucket=bucket, Key=key)
             async with response["Body"] as stream:
@@ -134,7 +142,7 @@ class S3StorageProvider(StorageProvider):
                     yield chunk
 
     async def put_object(self, key: str, content: bytes, content_type: str = "application/json", bucket: str | None = None) -> None:
-        bucket = bucket or settings.MINIO_BUCKET_NAME
+        bucket = bucket or self._default_bucket
         async with self.get_client_context() as s3:
             await s3.put_object(
                 Bucket=bucket,
@@ -144,7 +152,7 @@ class S3StorageProvider(StorageProvider):
             )
 
     async def get_presigned_url(self, key: str, expiry: int = 3600, bucket: str | None = None) -> str:
-        bucket = bucket or settings.MINIO_BUCKET_NAME
+        bucket = bucket or self._default_bucket
         async with self.get_client_context() as s3:
             return cast(str, await s3.generate_presigned_url(
                 "get_object",
@@ -153,14 +161,14 @@ class S3StorageProvider(StorageProvider):
             ))
 
     async def delete_object(self, key: str, bucket: str | None = None) -> None:
-        bucket = bucket or settings.MINIO_BUCKET_NAME
+        bucket = bucket or self._default_bucket
         async with self.get_client_context() as s3:
             # S3 DeleteObject is idempotent — deleting a missing key succeeds.
             await s3.delete_object(Bucket=bucket, Key=key)
 
     async def delete_prefix(self, prefix: str, bucket: str | None = None) -> int:
         _require_prefix(prefix)
-        bucket = bucket or settings.MINIO_BUCKET_NAME
+        bucket = bucket or self._default_bucket
         deleted = 0
         try:
             async with self.get_client_context() as s3:
@@ -187,12 +195,13 @@ class S3StorageProvider(StorageProvider):
 class LocalStorageProvider(StorageProvider):
     """Local file system storage provider."""
 
-    def __init__(self):
+    def __init__(self, *, default_bucket: str | None = None):
         self.base_path = Path(settings.LOCAL_STORAGE_PATH).resolve()
+        self._default_bucket = default_bucket or settings.MINIO_BUCKET_NAME
         self.base_path.mkdir(parents=True, exist_ok=True)
 
     def _get_bucket_path(self, bucket: str | None = None) -> Path:
-        bucket = bucket or settings.MINIO_BUCKET_NAME
+        bucket = bucket or self._default_bucket
         bucket_path = (self.base_path / bucket).resolve()
         try:
             bucket_path.relative_to(self.base_path)
@@ -305,17 +314,73 @@ class LocalStorageProvider(StorageProvider):
         return deleted
 
 
+@lru_cache(maxsize=16)
+def _get_concrete_storage_provider(
+    backend_type: str,
+    endpoint: str,
+    use_ssl: bool,
+    default_bucket: str,
+) -> StorageProvider:
+    if backend_type in ("minio", "s3"):
+        return S3StorageProvider(
+            endpoint=endpoint,
+            use_ssl=use_ssl,
+            default_bucket=default_bucket,
+        )
+    if backend_type == "local":
+        return LocalStorageProvider(default_bucket=default_bucket)
+    raise ValueError(f"Unknown STORAGE_BACKEND: {backend_type}")
+
+
+class DynamicStorageProvider(StorageProvider):
+    """Resolve shared runtime configuration immediately before each operation."""
+
+    async def _provider(self) -> StorageProvider:
+        from app.services.storage_config_service import get_effective_storage_config
+
+        config = await get_effective_storage_config()
+        return _get_concrete_storage_provider(
+            str(config["storage_backend"]).lower(),
+            str(config["minio_endpoint"]),
+            bool(config["minio_use_ssl"]),
+            str(config["minio_bucket_name"]),
+        )
+
+    async def list_objects(self, prefix: str, bucket: str | None = None) -> list[dict]:
+        return await (await self._provider()).list_objects(prefix, bucket)
+
+    async def get_object_content(self, key: str, bucket: str | None = None) -> bytes:
+        return await (await self._provider()).get_object_content(key, bucket)
+
+    async def stream_object(self, key: str, bucket: str | None = None) -> AsyncGenerator[bytes, None]:
+        async for chunk in (await self._provider()).stream_object(key, bucket):
+            yield chunk
+
+    async def put_object(
+        self,
+        key: str,
+        content: bytes,
+        content_type: str = "application/json",
+        bucket: str | None = None,
+    ) -> None:
+        await (await self._provider()).put_object(key, content, content_type, bucket)
+
+    async def get_presigned_url(
+        self,
+        key: str,
+        expiry: int = 3600,
+        bucket: str | None = None,
+    ) -> str:
+        return await (await self._provider()).get_presigned_url(key, expiry, bucket)
+
+    async def delete_object(self, key: str, bucket: str | None = None) -> None:
+        await (await self._provider()).delete_object(key, bucket)
+
+    async def delete_prefix(self, prefix: str, bucket: str | None = None) -> int:
+        return await (await self._provider()).delete_prefix(prefix, bucket)
+
+
 @lru_cache(maxsize=1)
 def get_storage_provider() -> StorageProvider:
-    """Return the configured storage provider (singleton).
-
-    The provider is created once and reused for the lifetime of the process,
-    avoiding repeated S3 session creation on every call.
-    """
-    backend_type = settings.STORAGE_BACKEND.lower()
-    if backend_type in ("minio", "s3"):
-        return S3StorageProvider()
-    elif backend_type == "local":
-        return LocalStorageProvider()
-    else:
-        raise ValueError(f"Unknown STORAGE_BACKEND: {backend_type}")
+    """Return a singleton proxy backed by the shared runtime config authority."""
+    return DynamicStorageProvider()

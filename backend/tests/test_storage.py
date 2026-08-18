@@ -1,5 +1,6 @@
 from pathlib import Path
 import shutil
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
@@ -78,3 +79,47 @@ async def test_local_storage_rejects_bucket_traversal(temp_storage_path):
             key="object.txt",
             bucket="../outside-bucket",
         )
+
+
+@pytest.mark.asyncio
+async def test_dynamic_provider_consumes_changed_runtime_config(monkeypatch):
+    """Saved endpoint/backend/bucket values must reach real storage operations."""
+    from app.db import storage
+    from app.services import storage_config_service
+
+    configs = iter([
+        {
+            "storage_backend": "minio",
+            "minio_endpoint": "minio-a:9000",
+            "minio_use_ssl": False,
+            "minio_bucket_name": "bucket-a",
+        },
+        {
+            "storage_backend": "s3",
+            "minio_endpoint": "s3.example.test",
+            "minio_use_ssl": True,
+            "minio_bucket_name": "bucket-b",
+        },
+    ])
+
+    async def resolve_config():
+        return next(configs)
+
+    first = MagicMock()
+    first.put_object = AsyncMock()
+    second = MagicMock()
+    second.put_object = AsyncMock()
+    factory = MagicMock(side_effect=[first, second])
+    monkeypatch.setattr(storage_config_service, "get_effective_storage_config", resolve_config)
+    monkeypatch.setattr(storage, "_get_concrete_storage_provider", factory)
+
+    provider = storage.DynamicStorageProvider()
+    await provider.put_object("one.json", b"one")
+    await provider.put_object("two.json", b"two")
+
+    factory.assert_has_calls([
+        call("minio", "minio-a:9000", False, "bucket-a"),
+        call("s3", "s3.example.test", True, "bucket-b"),
+    ])
+    first.put_object.assert_awaited_once_with("one.json", b"one", "application/json", None)
+    second.put_object.assert_awaited_once_with("two.json", b"two", "application/json", None)
