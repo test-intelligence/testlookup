@@ -19,6 +19,7 @@ from app.models.schemas import (
     SCIMUserResource,
 )
 from app.services.scim_service import (
+    SCIMUserNotFoundError,
     create_scim_token,
     scim_create_user,
     scim_get_user,
@@ -82,7 +83,13 @@ async def scim_list(
     db: AsyncSession = Depends(get_db),
 ):
     """SCIM 2.0: List users."""
-    users, total = await scim_list_users(db, start_index=startIndex, count=count, filter_str=filter)
+    users, total = await scim_list_users(
+        db,
+        start_index=startIndex,
+        count=count,
+        filter_str=filter,
+        sso_config_id=scim_token.sso_config_id,
+    )
     base_url = str(request.base_url).rstrip("/")
 
     return SCIMListResponse(
@@ -104,7 +111,7 @@ async def scim_get(
     db: AsyncSession = Depends(get_db),
 ):
     """SCIM 2.0: Get a single user."""
-    user = await scim_get_user(db, user_id)
+    user = await scim_get_user(db, user_id, sso_config_id=scim_token.sso_config_id)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -133,6 +140,11 @@ async def scim_create(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="At least one email is required",
+        )
+    if scim_token.sso_config_id is not None and not payload.externalId:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="externalId is required for an IdP-bound SCIM token",
         )
 
     display_name = payload.displayName
@@ -206,6 +218,11 @@ async def scim_replace(
         )
         await db.commit()
         await db.refresh(user)
+    except SCIMUserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -270,6 +287,11 @@ async def scim_patch(
         )
         await db.commit()
         await db.refresh(user)
+    except SCIMUserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -299,7 +321,7 @@ async def scim_delete(
             ip_address=client_ip,
         )
         await db.commit()
-    except ValueError as exc:
+    except SCIMUserNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
