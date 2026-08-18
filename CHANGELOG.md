@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — Search reindexing resumes safely after timeouts
+
+- Incremental semantic indexing now checkpoints each completed batch, keeps project-scoped cursors separate from the global hourly cursor, and resumes safely across equal creation timestamps.
+
 ## 2026-08-18 — SCIM audits directory email synchronization
 
 - Bound-directory email metadata changes now record old/new values instead of producing false no-change identity events.

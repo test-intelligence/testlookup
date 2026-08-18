@@ -49,7 +49,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -142,10 +142,32 @@ _REDIS_CURSOR_KEY = "testlookup:search:last_indexed_id"
 _REDIS_TIMESTAMP_KEY = "testlookup:search:last_indexed_at"
 
 
+def _cursor_keys(project_id: Optional[str] = None) -> tuple[str, str]:
+    """Return an isolated cursor namespace for global or project indexing."""
+    if project_id is None:
+        return _REDIS_CURSOR_KEY, _REDIS_TIMESTAMP_KEY
+    suffix = f":project:{project_id}"
+    return f"{_REDIS_CURSOR_KEY}{suffix}", f"{_REDIS_TIMESTAMP_KEY}{suffix}"
+
+
 def _get_redis():
     """Get a Redis client for cursor management."""
     import redis as _redis
     return _redis.Redis.from_url(settings.CELERY_BROKER_URL)
+
+
+def _after_incremental_cursor(last_id):
+    """Resume after one exact row without skipping equal-timestamp siblings."""
+    cursor_created_at = (
+        select(TestCase.created_at).where(TestCase.id == last_id).scalar_subquery()
+    )
+    return or_(
+        TestCase.created_at > cursor_created_at,
+        and_(
+            TestCase.created_at == cursor_created_at,
+            TestCase.id > last_id,
+        ),
+    )
 
 
 async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -> int:
@@ -199,7 +221,7 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
         return 0
 
     # Update cursor to the latest ID so incremental picks up from here
-    _update_cursor(rows)
+    _update_cursor(rows, project_id)
 
     logger.info("Full-indexed %d test cases into ChromaDB collection '%s'", count, _COLLECTION_NAME)
     return count
@@ -225,7 +247,8 @@ async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) 
     last_id = None
     try:
         r = _get_redis()
-        raw = r.get(_REDIS_CURSOR_KEY)
+        cursor_key, _ = _cursor_keys(project_id)
+        raw = r.get(cursor_key)
         if raw:
             import uuid as _uuid
             last_id = _uuid.UUID(raw.decode() if isinstance(raw, bytes) else str(raw))
@@ -248,13 +271,9 @@ async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) 
         q = q.where(TestRun.project_id == project_id)
 
     if last_id:
-        # Only index records created after the last cursor
-        # Using ID comparison as a cursor (UUIDs are v4, so we use created_at ordering)
-        q = q.where(TestCase.created_at > (
-            select(TestCase.created_at).where(TestCase.id == last_id).scalar_subquery()
-        ))
+        q = q.where(_after_incremental_cursor(last_id))
 
-    q = q.order_by(TestCase.created_at.asc()).limit(5000)
+    q = q.order_by(TestCase.created_at.asc(), TestCase.id.asc()).limit(5000)
 
     rows = (await db.execute(q)).all()
     if not rows:
@@ -262,20 +281,30 @@ async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) 
         return 0
 
     try:
-        count = await _upsert_rows_to_collection(collection, rows)
+        count = await _upsert_rows_to_collection(
+            collection,
+            rows,
+            checkpoint_cursor=True,
+            cursor_project_id=project_id,
+        )
     except Exception as exc:
         # Same as the full index: the embedder is exercised at upsert. Degrade
-        # to zero and leave the cursor where it is, so nothing is skipped.
+        # to zero and leave the cursor at the last completed batch, so the
+        # failing batch is retried without discarding earlier progress.
         logger.warning("Incremental indexing skipped — embeddings unavailable: %s", exc)
         return 0
-    _update_cursor(rows)
-
     logger.info("Incrementally indexed %d new test cases", count)
     return count
 
 
-async def _upsert_rows_to_collection(collection, rows) -> int:
-    """Upsert rows into ChromaDB collection in batches."""
+async def _upsert_rows_to_collection(
+    collection,
+    rows,
+    *,
+    checkpoint_cursor: bool = False,
+    cursor_project_id: Optional[str] = None,
+) -> int:
+    """Upsert rows in batches, optionally checkpointing every completed batch."""
     ids: list[str] = []
     documents: list[str] = []
     metadatas: list[dict] = []
@@ -303,19 +332,22 @@ async def _upsert_rows_to_collection(collection, rows) -> int:
             documents=documents[i:i + batch_size],
             metadatas=metadatas[i:i + batch_size],
         )
+        if checkpoint_cursor:
+            _update_cursor(rows[i:i + batch_size], cursor_project_id)
 
     return len(ids)
 
 
-def _update_cursor(rows) -> None:
+def _update_cursor(rows, project_id: Optional[str] = None) -> None:
     """Update the Redis cursor to the last row's ID and timestamp."""
     if not rows:
         return
     last_row = rows[-1]
     try:
         r = _get_redis()
-        r.set(_REDIS_CURSOR_KEY, str(last_row.id))
-        r.set(_REDIS_TIMESTAMP_KEY, datetime.now(timezone.utc).isoformat())
+        cursor_key, timestamp_key = _cursor_keys(project_id)
+        r.set(cursor_key, str(last_row.id))
+        r.set(timestamp_key, datetime.now(timezone.utc).isoformat())
     except Exception:
         pass
 
