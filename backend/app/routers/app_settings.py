@@ -607,6 +607,8 @@ async def _load_integrations_config(db: AsyncSession) -> dict:
     splunk_token = await read_secret(db, _INTEGRATIONS_KEY, "splunk_api_token")
     ocp_token = await read_secret(db, _INTEGRATIONS_KEY, "ocp_sa_token")
     github_token = await read_secret(db, _INTEGRATIONS_KEY, "github_token")
+    slack_webhook = await read_secret(db, _INTEGRATIONS_KEY, "slack_webhook_url")
+    teams_webhook = await read_secret(db, _INTEGRATIONS_KEY, "teams_webhook_url")
     return {
         "jira_enabled": overrides.get("jira_enabled", settings.JIRA_ENABLED),
         "jira_domain": overrides.get("jira_domain", settings.JIRA_DOMAIN),
@@ -621,10 +623,10 @@ async def _load_integrations_config(db: AsyncSession) -> dict:
         "ocp_sa_token": ocp_token or overrides.get("ocp_sa_token") or settings.OCP_SA_TOKEN,
         "ocp_default_namespace": overrides.get("ocp_default_namespace", settings.OCP_DEFAULT_NAMESPACE),
         "slack_enabled": overrides.get("slack_enabled", settings.SLACK_ENABLED),
-        "slack_webhook_url": overrides.get("slack_webhook_url", settings.SLACK_WEBHOOK_URL),
+        "slack_webhook_url": slack_webhook or overrides.get("slack_webhook_url") or settings.SLACK_WEBHOOK_URL,
         "slack_default_channel": overrides.get("slack_default_channel", settings.SLACK_DEFAULT_CHANNEL),
         "teams_enabled": overrides.get("teams_enabled", settings.TEAMS_ENABLED),
-        "teams_webhook_url": overrides.get("teams_webhook_url", settings.TEAMS_WEBHOOK_URL),
+        "teams_webhook_url": teams_webhook or overrides.get("teams_webhook_url") or settings.TEAMS_WEBHOOK_URL,
         "github_repo": overrides.get("github_repo", settings.GITHUB_REPO),
         "github_token": github_token or overrides.get("github_token") or settings.GITHUB_TOKEN,
     }
@@ -650,10 +652,12 @@ async def get_integrations_config(
         ocp_token_set=bool(cfg.get("ocp_sa_token")),
         ocp_default_namespace=cfg["ocp_default_namespace"],
         slack_enabled=cfg["slack_enabled"],
-        slack_webhook_url=cfg["slack_webhook_url"],
+        slack_webhook_url=None,
+        slack_webhook_set=bool(cfg["slack_webhook_url"]),
         slack_default_channel=cfg["slack_default_channel"],
         teams_enabled=cfg["teams_enabled"],
-        teams_webhook_url=cfg["teams_webhook_url"],
+        teams_webhook_url=None,
+        teams_webhook_set=bool(cfg["teams_webhook_url"]),
         github_repo=cfg["github_repo"],
         github_token_set=bool(cfg.get("github_token")),
     )
@@ -702,10 +706,12 @@ async def update_integrations_config(
         ocp_token_set=bool(merged.get("ocp_sa_token")),
         ocp_default_namespace=merged["ocp_default_namespace"],
         slack_enabled=merged["slack_enabled"],
-        slack_webhook_url=merged["slack_webhook_url"],
+        slack_webhook_url=None,
+        slack_webhook_set=bool(merged["slack_webhook_url"]),
         slack_default_channel=merged["slack_default_channel"],
         teams_enabled=merged["teams_enabled"],
-        teams_webhook_url=merged["teams_webhook_url"],
+        teams_webhook_url=None,
+        teams_webhook_set=bool(merged["teams_webhook_url"]),
         github_repo=merged["github_repo"],
         github_token_set=bool(merged.get("github_token")),
     )

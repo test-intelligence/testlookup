@@ -141,7 +141,8 @@ SECRET_FIELDS: dict[str, set[str]] = {
     },
     "integrations_config": {
         "jira_api_token", "splunk_api_token", "ocp_sa_token",
-        "slack_bot_token", "github_token",
+        "slack_bot_token", "slack_webhook_url", "teams_webhook_url",
+        "github_token",
     },
 }
 

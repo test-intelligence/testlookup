@@ -2658,10 +2658,12 @@ class IntegrationsConfigRead(BaseModel):
     ocp_token_set: bool
     ocp_default_namespace: str
     slack_enabled: bool
-    slack_webhook_url: Optional[str]
+    slack_webhook_url: Optional[str] = None  # always redacted; compatibility field
+    slack_webhook_set: bool
     slack_default_channel: str
     teams_enabled: bool
-    teams_webhook_url: Optional[str]
+    teams_webhook_url: Optional[str] = None  # always redacted; compatibility field
+    teams_webhook_set: bool
     github_repo: Optional[str]
     github_token_set: bool
 
