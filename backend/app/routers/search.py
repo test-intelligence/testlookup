@@ -294,6 +294,13 @@ async def search_test_cases(
     async def _keyword():
         return await search_test_cases_query(db, **common_kwargs)
 
+    fallback_used = False
+
+    async def _keyword_fallback():
+        nonlocal fallback_used
+        fallback_used = True
+        return await _keyword()
+
     def _is_empty(result):
         # ``semantic_search`` returns (items, total, pages); fall back when
         # total is 0 — this covers both a legitimate no-match query (where
@@ -309,21 +316,17 @@ async def search_test_cases(
 
         items, total, pages = await with_fallback(
             primary=_semantic,
-            fallback=_keyword,
+            fallback=_keyword_fallback,
             name="search.semantic",
             is_empty=_is_empty,
         )
-        # Tag the metric based on whether the fallback fired.
-        used_fallback = total == 0 or (
-            # If primary succeeded and was non-empty, with_fallback returned it as-is;
-            # the only way total can be non-zero after this is success. Treat 0 as
-            # "fallback fired" since the helper would have called keyword in that case.
-            False
-        )
-        actual_type = "keyword" if used_fallback else "semantic"
+        # The final result count cannot reveal which callable produced it: a
+        # successful keyword fallback commonly returns non-zero rows. Track the
+        # fallback invocation itself so response metadata and metrics stay true.
+        actual_type = "keyword" if fallback_used else "semantic"
         semantic_search_total.labels(
             search_type="semantic",
-            status="fallback" if used_fallback else "success",
+            status="fallback" if fallback_used else "success",
         ).inc()
 
     elif search_type == "hybrid":
@@ -334,15 +337,14 @@ async def search_test_cases(
 
         items, total, pages = await with_fallback(
             primary=_hybrid,
-            fallback=_keyword,
+            fallback=_keyword_fallback,
             name="search.hybrid",
             is_empty=_is_empty,
         )
-        used_fallback = total == 0
-        actual_type = "keyword" if used_fallback else "hybrid"
+        actual_type = "keyword" if fallback_used else "hybrid"
         semantic_search_total.labels(
             search_type="hybrid",
-            status="fallback" if used_fallback else "success",
+            status="fallback" if fallback_used else "success",
         ).inc()
 
     else:

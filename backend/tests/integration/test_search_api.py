@@ -106,6 +106,39 @@ async def test_search_admin_unrestricted(client, auth_as):
     assert captured.get("allowed_project_ids") is None
 
 
+@pytest.mark.parametrize(
+    ("search_type", "primary_patch"),
+    [
+        ("semantic", "app.services.semantic_search.semantic_search"),
+        ("hybrid", "app.services.semantic_search.hybrid_search"),
+    ],
+)
+async def test_search_reports_keyword_when_semantic_mode_falls_back(
+    client, auth_as, search_type, primary_patch,
+):
+    """A non-empty fallback result must not be mislabeled as semantic."""
+    auth_as(role=UserRole.ADMIN)
+
+    primary = AsyncMock(return_value=([], 0, 0))
+    keyword = AsyncMock(
+        return_value=([{"test_case_id": str(uuid.uuid4())}], 1, 1),
+    )
+    with (
+        patch(primary_patch, primary),
+        patch("app.routers.search.search_test_cases_query", keyword),
+    ):
+        resp = await client.get(
+            "/api/v1/search",
+            params={"q": "login", "search_type": search_type},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total"] == 1
+    assert resp.json()["search_type"] == "keyword"
+    primary.assert_awaited_once()
+    keyword.assert_awaited_once()
+
+
 async def test_search_invalid_uuid_rejected(client, auth_as):
     auth_as()
     resp = await client.get(
