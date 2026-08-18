@@ -1,4 +1,5 @@
 """SCIM 2.0 provisioning router — user lifecycle management for IdP integration."""
+import json
 import logging
 import re
 import uuid
@@ -113,11 +114,17 @@ def _scim_group_filter_name(path: str | None) -> str | None:
     if not path:
         return None
     match = re.fullmatch(
-        r"groups\[value\s+eq\s+(['\"])(.+?)\1\]",
+        r'groups\[value\s+eq\s+("(?:\\.|[^"\\])*")\]',
         path,
         flags=re.IGNORECASE,
     )
-    return match.group(2) if match else None
+    if match is None:
+        return None
+    try:
+        value = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, str) and value else None
 
 
 def _canonical_scim_patch_path(path: str | None) -> str | None:
