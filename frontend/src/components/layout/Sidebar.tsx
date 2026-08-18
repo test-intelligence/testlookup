@@ -12,6 +12,7 @@ import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import { useAIConfig } from '@/hooks/useAIConfig'
 import { useMyFailuresCountUnscoped } from '@/hooks/useMyFailures'
 import AppLogo from '@/components/ui/AppLogo'
+import AppVersionBadge from '@/components/layout/AppVersionBadge'
 
 /* ─── Navigation structure: grouped with primary + sub-items ─── */
 
@@ -251,6 +252,7 @@ export default function Sidebar() {
             Settings
           </NavLink>
         )}
+        <AppVersionBadge />
       </div>
     </aside>
   )

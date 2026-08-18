@@ -690,6 +690,26 @@ its comment records the same shape (44,315 executions where only 192 belonged to
 projects) plus the reason the filter is unconditional: putting it behind `if project_id:`
 guards only the branch that cannot over-count. Both new filters follow that rule.
 
+### 2026-08-17 — Onboarding: the sidebar now shows which build you're running
+
+The backend reports its version and build provenance — git revision and build date,
+injected at image-build time — on every `/health/details` response, and the SPA already
+polls that endpoint for the degraded-services banner. But nothing surfaced the `build`
+block, so a self-host operator had no in-app way to confirm which image a container is
+running, or to match a pinned image digest back to the commit it was built from, without
+shelling into the pod.
+
+The sidebar footer now carries a compact `v{version}` line (with the short git revision
+beside it when provenance is present), and its hover title spells out the full identity —
+version, full revision, build date, and environment. It reads the health payload the app
+already fetches (no extra request) and renders nothing until a version is known, so it
+stays invisible when the backend is unreachable and prints no field the build env left as
+the literal `"unknown"`.
+
+Pure formatting helpers live in `frontend/src/components/layout/buildInfo.ts`; regression
+tests cover the unreachable/unknown/populated states, the 40→7-char SHA shortening, and
+the tooltip assembly.
+
 ### 2026-08-16 — Fix: the Overview called test executions "runs"
 
 `total_executions_7d` counts **test executions**. The Overview page rendered it as a run

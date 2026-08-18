@@ -12,9 +12,20 @@ export interface HealthCheck {
   [key: string]: unknown
 }
 
+// Self-reported build provenance for the running image, injected at
+// image-build time (BUILD_REVISION / BUILD_DATE → Dockerfile ARGs). Present on
+// every /health/details and /health/version response; both fields fall back to
+// the literal "unknown" in local/dev runs where the build env is unset, so a
+// consumer must treat "unknown" as "no provenance" rather than a real value.
+export interface BuildProvenance {
+  revision: string
+  built_at: string
+}
+
 export interface HealthDetails {
   status: 'healthy' | 'degraded'
   version: string
+  build?: BuildProvenance
   env: string
   uptime_seconds: number
   timestamp: string
