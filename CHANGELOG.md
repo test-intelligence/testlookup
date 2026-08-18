@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM mutations persist external identity changes
+
+- IdP-bound SCIM replace and PATCH now validate and update `externalId` instead of returning success while retaining the previous federated identifier; unbound tokens reject ambiguous identifier writes.
+
 ## 2026-08-18 — SCIM requests validate schema URNs
 
 - User and PATCH requests now require `schemas` and their standard SCIM core URN, while server-generated resource envelopes retain defaults and valid extension URNs remain supported.
