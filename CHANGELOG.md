@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM PATCH accepts core schema-qualified paths
+
+- PATCH now accepts attributes qualified by the standard SCIM core User schema, including filtered groups, while unsupported extension namespaces remain rejected.
+
 ## 2026-08-18 — SCIM PATCH paths are case-insensitive
 
 - PATCH now canonicalizes SCIM attribute names in simple paths, group filters, and bulk objects without changing values, and rejects duplicate bulk aliases deterministically.
