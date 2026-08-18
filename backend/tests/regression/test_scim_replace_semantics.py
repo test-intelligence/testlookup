@@ -129,6 +129,60 @@ async def test_explicit_name_clear_updates_user_and_bound_identity(monkeypatch):
 
     assert user.full_name is None
     assert identity.external_display_name is None
+    assert scim_service.log_identity_event.await_args.kwargs["detail"] == {
+        "display_name": {"old": "Remove Me", "new": None},
+        "directory_display_name": {"old": "Remove Me", "new": None},
+    }
+
+
+@pytest.mark.asyncio
+async def test_display_name_update_is_not_audited_as_no_change(monkeypatch):
+    from app.services import scim_service
+
+    user_id = uuid.uuid4()
+    user = SimpleNamespace(
+        id=user_id, username="alice", email="alice@example.test", full_name="Old Name",
+        is_active=True, role="viewer",
+    )
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = user
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=user_result)
+    monkeypatch.setattr(scim_service, "log_identity_event", AsyncMock())
+
+    await scim_service.scim_update_user(db, user_id, display_name="New Name")
+
+    assert scim_service.log_identity_event.await_args.kwargs["detail"] == {
+        "display_name": {"old": "Old Name", "new": "New Name"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_stale_directory_name_sync_is_audited_when_local_name_matches(monkeypatch):
+    from app.services import scim_service
+
+    user_id = uuid.uuid4()
+    config_id = uuid.uuid4()
+    user = SimpleNamespace(
+        id=user_id, username="alice", email="alice@example.test", full_name="Current",
+        is_active=True, role="viewer",
+    )
+    identity = SimpleNamespace(external_display_name="Stale")
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = user
+    identity_result = MagicMock()
+    identity_result.scalar_one_or_none.return_value = identity
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[user_result, identity_result])
+    monkeypatch.setattr(scim_service, "log_identity_event", AsyncMock())
+
+    await scim_service.scim_update_user(
+        db, user_id, display_name="Current", sso_config_id=config_id
+    )
+
+    assert scim_service.log_identity_event.await_args.kwargs["detail"] == {
+        "directory_display_name": {"old": "Stale", "new": "Current"}
+    }
 
 
 def test_replace_explicitly_selects_full_replace_semantics():
