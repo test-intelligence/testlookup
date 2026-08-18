@@ -27,7 +27,8 @@ logger = logging.getLogger(__name__)
 SCIM_MAX_PAGE_SIZE = 200
 
 _SCIM_EQUALITY_FILTER = re.compile(
-    r"^(userName|email|emails\.value|externalId) +eq +(.+)$",
+    r"^(?:urn:ietf:params:scim:schemas:core:2\.0:User:)?"
+    r"(userName|email|emails\.value|externalId) +eq +(.+)$",
     re.IGNORECASE,
 )
 
