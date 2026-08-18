@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM discovery endpoints describe implemented capabilities
+
+- Added bearer-protected ServiceProviderConfig, ResourceTypes, and Schemas discovery resources, including individual User metadata and request-derived locations without advertising unsupported operations.
+
 ## 2026-08-18 — SCIM invalid filters fail with protocol errors
 
 - SCIM equality filters now decode JSON string values (including escapes), reject non-JSON quoting and unsupported expressions, and return the required HTTP 400 `invalidFilter` error instead of a misleading empty directory.
