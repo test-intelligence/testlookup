@@ -45,6 +45,13 @@ from app.services.scim_service import (
     user_to_scim_resource,
     validate_scim_token,
 )
+from app.services.scim_discovery import (
+    USER_SCHEMA as DISCOVERY_USER_SCHEMA,
+    discovery_list,
+    service_provider_configuration,
+    user_resource_type,
+    user_schema,
+)
 from app.services.sso_service import log_identity_event
 
 logger = logging.getLogger(__name__)
@@ -232,6 +239,61 @@ async def verify_scim_bearer(
 
 
 # ── SCIM User Endpoints ─────────────────────────────────────────────────────
+
+
+def _scim_base_url(request: Request) -> str:
+    return f"{str(request.base_url).rstrip('/')}{router.prefix}"
+
+
+@router.get("/ServiceProviderConfig")
+async def scim_service_provider_config(
+    request: Request,
+    _scim_token: SCIMToken = Depends(verify_scim_bearer),
+):
+    """SCIM 2.0: Discover implemented protocol capabilities."""
+    return service_provider_configuration(_scim_base_url(request))
+
+
+@router.get("/ResourceTypes")
+async def scim_resource_types(
+    request: Request,
+    _scim_token: SCIMToken = Depends(verify_scim_bearer),
+):
+    """SCIM 2.0: List provisionable resource types."""
+    return discovery_list([user_resource_type(_scim_base_url(request))])
+
+
+@router.get("/ResourceTypes/{resource_type}")
+async def scim_resource_type(
+    resource_type: str,
+    request: Request,
+    _scim_token: SCIMToken = Depends(verify_scim_bearer),
+):
+    """SCIM 2.0: Retrieve one provisionable resource type."""
+    if resource_type.casefold() != "user":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource type not found")
+    return user_resource_type(_scim_base_url(request))
+
+
+@router.get("/Schemas")
+async def scim_schemas(
+    request: Request,
+    _scim_token: SCIMToken = Depends(verify_scim_bearer),
+):
+    """SCIM 2.0: List supported resource schemas."""
+    return discovery_list([user_schema(_scim_base_url(request))])
+
+
+@router.get("/Schemas/{schema_uri:path}")
+async def scim_schema(
+    schema_uri: str,
+    request: Request,
+    _scim_token: SCIMToken = Depends(verify_scim_bearer),
+):
+    """SCIM 2.0: Retrieve one supported resource schema."""
+    if schema_uri.casefold() != DISCOVERY_USER_SCHEMA.casefold():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schema not found")
+    return user_schema(_scim_base_url(request))
 
 
 @router.get("/Users")
