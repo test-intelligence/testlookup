@@ -86,3 +86,51 @@ async def test_unsupported_extension_qualified_path_is_rejected_before_mutation(
     assert raised.value.status_code == 400
     assert raised.value.detail == f"Unsupported PATCH path: {extension_path}"
     update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "value", "expected"),
+    [
+        ("name.formatted", "Formatted Name", "Formatted Name"),
+        (f"{CORE_USER}:Name.Formatted", "Qualified Name", "Qualified Name"),
+        ("name", {"formatted": "Object Name"}, "Object Name"),
+        ("name", {"givenName": "Given", "familyName": "Family"}, "Given Family"),
+    ],
+)
+async def test_name_patch_shapes_reach_display_name_update(monkeypatch, path, value, expected):
+    from app.models.schemas import SCIMPatchOp, SCIMPatchRequestPayload
+    from app.routers import scim
+
+    update = AsyncMock(side_effect=RuntimeError("stop after parsing"))
+    monkeypatch.setattr(scim, "scim_update_user", update)
+    payload = SCIMPatchRequestPayload(
+        schemas=[PATCH_SCHEMA],
+        Operations=[SCIMPatchOp(op="replace", path=path, value=value)],
+    )
+
+    with pytest.raises(RuntimeError, match="stop after parsing"):
+        await scim.scim_patch(
+            uuid.uuid4(), payload, MagicMock(client=None), SimpleNamespace(sso_config_id=None), AsyncMock()
+        )
+
+    assert update.await_args.kwargs["display_name"] == expected
+
+
+@pytest.mark.asyncio
+async def test_invalid_name_patch_rejected_before_mutation(monkeypatch):
+    from app.models.schemas import SCIMPatchOp, SCIMPatchRequestPayload
+    from app.routers import scim
+
+    update = AsyncMock()
+    monkeypatch.setattr(scim, "scim_update_user", update)
+    payload = SCIMPatchRequestPayload(
+        schemas=[PATCH_SCHEMA],
+        Operations=[SCIMPatchOp(op="replace", path="name", value={"honorificPrefix": "Dr"})],
+    )
+
+    with pytest.raises(HTTPException, match="Unsupported name attribute"):
+        await scim.scim_patch(
+            uuid.uuid4(), payload, MagicMock(client=None), SimpleNamespace(sso_config_id=None), AsyncMock()
+        )
+    update.assert_not_awaited()
