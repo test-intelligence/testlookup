@@ -14,7 +14,7 @@ import importlib.util
 import sys
 import types
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -201,12 +201,35 @@ class TestStorageConfigRead:
 
         cfg = StorageConfigRead(
             storage_backend="minio",
+            postgres_connected=True, mongo_connected=False, redis_connected=True,
             minio_endpoint="localhost:9000", minio_bucket_name="test-telemetry", minio_use_ssl=False,
             chroma_host="localhost", chroma_port=8001, chroma_collection="testlookup_embeddings",
         )
         assert cfg.storage_backend == "minio"
-        assert cfg.postgres_connected is True  # default
+        assert cfg.postgres_connected is True
+        assert cfg.mongo_connected is False
         assert cfg.chroma_collection == "testlookup_embeddings"
+
+
+@pytest.mark.asyncio
+async def test_storage_connection_status_reports_failed_probes(monkeypatch: pytest.MonkeyPatch):
+    """A dependency outage must not be published as a green status badge."""
+    from app.routers import app_settings
+
+    mongo = MagicMock()
+    mongo.command = AsyncMock(side_effect=ConnectionError("mongo unavailable"))
+    redis = MagicMock()
+    redis.ping = AsyncMock(return_value=True)
+    monkeypatch.setattr(sys.modules["app.db.mongo"], "get_mongo_db", lambda: mongo)
+    monkeypatch.setattr(sys.modules["app.db.redis_client"], "get_redis", lambda: redis)
+
+    status = await app_settings._get_storage_connection_status()
+
+    assert status == {
+        "postgres_connected": True,
+        "mongo_connected": False,
+        "redis_connected": True,
+    }
 
 
 class TestStorageConfigUpdate:

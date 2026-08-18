@@ -4,6 +4,7 @@ Security model:
   - GET endpoints: QA_LEAD or higher (secrets are never returned raw — only *_set booleans)
   - PUT endpoints: ADMIN only (audit-logged, secrets stored in secret_refs table)
 """
+import asyncio
 import logging
 from typing import Optional
 
@@ -722,6 +723,60 @@ async def update_integrations_config(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _STORAGE_KEY = "storage_config"
+_STORAGE_PROBE_TIMEOUT_SECONDS = 2.0
+
+
+async def _get_storage_connection_status() -> dict[str, bool]:
+    """Probe the infrastructure badges shown by the Storage settings page.
+
+    PostgreSQL has already answered the ``app_settings`` query before this
+    helper is called. MongoDB and Redis are optional to this request, so a
+    failed or timed-out probe must render them as disconnected without making
+    the configuration endpoint unavailable.
+    """
+    from app.db.mongo import get_mongo_db
+    from app.db.redis_client import get_redis
+
+    async def probe_mongo() -> bool:
+        try:
+            await asyncio.wait_for(
+                get_mongo_db().command("ping"),
+                timeout=_STORAGE_PROBE_TIMEOUT_SECONDS,
+            )
+            return True
+        except Exception:  # noqa: BLE001 - status probe reports failure as False
+            return False
+
+    async def probe_redis() -> bool:
+        try:
+            await asyncio.wait_for(
+                get_redis().ping(),
+                timeout=_STORAGE_PROBE_TIMEOUT_SECONDS,
+            )
+            return True
+        except Exception:  # noqa: BLE001 - status probe reports failure as False
+            return False
+
+    mongo_connected, redis_connected = await asyncio.gather(probe_mongo(), probe_redis())
+    return {
+        "postgres_connected": True,
+        "mongo_connected": mongo_connected,
+        "redis_connected": redis_connected,
+    }
+
+
+async def _build_storage_config_read(values: dict) -> StorageConfigRead:
+    status = await _get_storage_connection_status()
+    return StorageConfigRead(
+        **status,
+        storage_backend=values.get("storage_backend", settings.STORAGE_BACKEND),
+        minio_endpoint=values.get("minio_endpoint", settings.MINIO_ENDPOINT),
+        minio_bucket_name=values.get("minio_bucket_name", settings.MINIO_BUCKET_NAME),
+        minio_use_ssl=values.get("minio_use_ssl", settings.MINIO_USE_SSL),
+        chroma_host=values.get("chroma_host", settings.CHROMA_HOST),
+        chroma_port=values.get("chroma_port", settings.CHROMA_PORT),
+        chroma_collection=values.get("chroma_collection", settings.CHROMA_COLLECTION),
+    )
 
 
 @router.get("/storage", response_model=StorageConfigRead)
@@ -733,15 +788,7 @@ async def get_storage_config(
     result = await db.execute(select(AppSetting).where(AppSetting.key == _STORAGE_KEY))
     row = result.scalar_one_or_none()
     overrides = dict(row.value) if row and row.value else {}
-    return StorageConfigRead(
-        storage_backend=overrides.get("storage_backend", settings.STORAGE_BACKEND),
-        minio_endpoint=overrides.get("minio_endpoint", settings.MINIO_ENDPOINT),
-        minio_bucket_name=overrides.get("minio_bucket_name", settings.MINIO_BUCKET_NAME),
-        minio_use_ssl=overrides.get("minio_use_ssl", settings.MINIO_USE_SSL),
-        chroma_host=overrides.get("chroma_host", settings.CHROMA_HOST),
-        chroma_port=overrides.get("chroma_port", settings.CHROMA_PORT),
-        chroma_collection=overrides.get("chroma_collection", settings.CHROMA_COLLECTION),
-    )
+    return await _build_storage_config_read(overrides)
 
 
 @router.put("/storage", response_model=StorageConfigRead)
@@ -766,15 +813,7 @@ async def update_storage_config(
     await log_settings_change(db, _STORAGE_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
     logger.info("Storage configuration updated by user_id=%s", current_user.id)
-    return StorageConfigRead(
-        storage_backend=merged.get("storage_backend", settings.STORAGE_BACKEND),
-        minio_endpoint=merged.get("minio_endpoint", settings.MINIO_ENDPOINT),
-        minio_bucket_name=merged.get("minio_bucket_name", settings.MINIO_BUCKET_NAME),
-        minio_use_ssl=merged.get("minio_use_ssl", settings.MINIO_USE_SSL),
-        chroma_host=merged.get("chroma_host", settings.CHROMA_HOST),
-        chroma_port=merged.get("chroma_port", settings.CHROMA_PORT),
-        chroma_collection=merged.get("chroma_collection", settings.CHROMA_COLLECTION),
-    )
+    return await _build_storage_config_read(merged)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

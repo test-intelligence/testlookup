@@ -294,6 +294,9 @@ class TestInfraMasking:
 
         cfg = StorageConfigRead(
             storage_backend="minio",
+            postgres_connected=True,
+            mongo_connected=False,
+            redis_connected=True,
             minio_endpoint="localhost:9000",
             minio_bucket_name="test",
             minio_use_ssl=False,
@@ -302,7 +305,7 @@ class TestInfraMasking:
             chroma_collection="testlookup",
         )
         assert cfg.postgres_connected is True
-        assert cfg.mongo_connected is True
+        assert cfg.mongo_connected is False
         assert cfg.redis_connected is True
 
 

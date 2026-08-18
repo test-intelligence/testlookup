@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — Storage settings report real dependency status
+
+- Fixed the Data & Storage settings endpoint falsely publishing MongoDB and Redis as connected when their probes fail; status fields are now required and backed by bounded live probes.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
