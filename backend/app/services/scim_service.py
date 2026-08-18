@@ -23,6 +23,10 @@ from app.services.sso_service import log_identity_event, resolve_role_from_group
 logger = logging.getLogger(__name__)
 
 
+class SCIMUserNotFoundError(ValueError):
+    """Raised when a SCIM user does not exist within the token's directory scope."""
+
+
 # ── SCIM Token management ───────────────────────────────────────────────────
 
 
@@ -181,10 +185,12 @@ async def scim_update_user(
     ip_address: str | None = None,
 ) -> User:
     """Update an existing user via SCIM."""
-    result = await db.execute(select(User).where(User.id == user_id))
+    query = select(User).where(User.id == user_id)
+    query = _scope_user_query(query, sso_config_id)
+    result = await db.execute(query)
     user = result.scalar_one_or_none()
     if user is None:
-        raise ValueError(f"User {user_id} not found")
+        raise SCIMUserNotFoundError(f"User {user_id} not found")
 
     changes: dict = {}
     if username is not None and username != user.username:
@@ -260,9 +266,27 @@ async def scim_update_user(
     return user
 
 
-async def scim_get_user(db: AsyncSession, user_id: uuid.UUID) -> Optional[User]:
+def _scope_user_query(query, sso_config_id: uuid.UUID | None):
+    """Restrict a user query to identities delegated to one SSO configuration."""
+    if sso_config_id is None:
+        return query
+    return query.where(
+        User.id.in_(
+            select(FederatedIdentity.user_id).where(
+                FederatedIdentity.sso_config_id == sso_config_id
+            )
+        )
+    )
+
+
+async def scim_get_user(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    sso_config_id: uuid.UUID | None = None,
+) -> Optional[User]:
     """Get a user by ID for SCIM responses."""
-    result = await db.execute(select(User).where(User.id == user_id))
+    query = _scope_user_query(select(User).where(User.id == user_id), sso_config_id)
+    result = await db.execute(query)
     return result.scalar_one_or_none()
 
 
@@ -271,9 +295,10 @@ async def scim_list_users(
     start_index: int = 1,
     count: int = 100,
     filter_str: str | None = None,
+    sso_config_id: uuid.UUID | None = None,
 ) -> tuple[list[User], int]:
     """List users for SCIM with optional filter. Returns (users, total_count)."""
-    query = select(User)
+    query = _scope_user_query(select(User), sso_config_id)
 
     # Basic SCIM filter support: userName eq "value" or email eq "value".
     # An unrecognised filter must NOT silently return the whole directory —
@@ -296,7 +321,12 @@ async def scim_list_users(
             if value:
                 fed_result = await db.execute(
                     select(FederatedIdentity.user_id).where(
-                        FederatedIdentity.external_id == value
+                        FederatedIdentity.external_id == value,
+                        *(
+                            [FederatedIdentity.sso_config_id == sso_config_id]
+                            if sso_config_id is not None
+                            else []
+                        ),
                     )
                 )
                 user_ids = [row[0] for row in fed_result.all()]
