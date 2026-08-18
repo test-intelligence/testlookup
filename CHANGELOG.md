@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM supports total-only discovery
+
+- SCIM list requests now accept `count=0`, returning `totalResults` with no resources and skipping the page query as required for total-only discovery.
+
 ## 2026-08-18 — SCIM pagination is deterministic
 
 - SCIM user pages now order equal creation timestamps by immutable user ID, preventing duplicate or skipped rows when offset pagination crosses timestamp ties.

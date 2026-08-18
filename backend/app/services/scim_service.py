@@ -402,6 +402,10 @@ async def scim_list_users(
     count_query = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_query)).scalar() or 0
 
+    # RFC 7644 permits count=0 when a client needs only totalResults.
+    if count == 0:
+        return [], total
+
     # Paginate (SCIM uses 1-based indexing)
     offset = max(0, start_index - 1)
     query = query.order_by(User.created_at, User.id).offset(offset).limit(count)
