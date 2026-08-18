@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM provisioning request bodies are bounded
+
+- SCIM POST, PUT, and PATCH bodies are capped at 1 MiB before JSON parsing, including streamed requests without `Content-Length`, while unrelated upload routes remain unaffected.
+
 ## 2026-08-18 — SCIM PATCH bounds operation count
 
 - PATCH requests are capped at 100 operations, preventing unbounded per-request parsing and mutation work while preserving ordinary multi-operation provisioning.
