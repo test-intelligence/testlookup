@@ -73,3 +73,28 @@ def test_filter_parser_uses_json_string_rules():
     assert _parse_scim_filter("userName eq 'alice'") is None
     assert _parse_scim_filter('userName eq "alice" and active eq true') is None
     assert _parse_scim_filter('userName\teq\t"alice"') is None
+
+
+@pytest.mark.parametrize(
+    ("filter_str", "expected"),
+    [
+        (
+            'urn:ietf:params:scim:schemas:core:2.0:User:userName eq "alice"',
+            ("username", "alice"),
+        ),
+        (
+            'URN:IETF:PARAMS:SCIM:SCHEMAS:CORE:2.0:USER:emails.value EQ "a@example.com"',
+            ("emails.value", "a@example.com"),
+        ),
+    ],
+)
+def test_filter_parser_accepts_core_schema_qualified_paths(filter_str, expected):
+    from app.services.scim_service import _parse_scim_filter
+
+    assert _parse_scim_filter(filter_str) == expected
+
+
+def test_filter_parser_rejects_unknown_schema_qualified_paths():
+    from app.services.scim_service import _parse_scim_filter
+
+    assert _parse_scim_filter('urn:example:extension:userName eq "alice"') is None

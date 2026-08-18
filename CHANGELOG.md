@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM filters accept core-schema-qualified paths
+
+- Supported User equality filters now accept case-insensitive `urn:ietf:params:scim:schemas:core:2.0:User:` qualification while continuing to reject unknown schemas.
+
 ## 2026-08-18 — SCIM pagination follows protocol coercion rules
 
 - User listing now interprets `startIndex` values below 1 as 1, negative `count` values as 0, and requests above the provider limit as 200 instead of rejecting otherwise valid SCIM requests.
