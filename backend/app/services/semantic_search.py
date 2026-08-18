@@ -361,12 +361,31 @@ def _update_cursor(rows, project_id: Optional[str] = None) -> None:
         pass
 
 
-async def get_index_status() -> dict:
-    """Return ChromaDB collection health metrics."""
+async def get_index_status(
+    project_id: Optional[str] = None,
+    allowed_project_ids: Optional[set] = None,
+) -> dict:
+    """Return ChromaDB health and a scope-filtered document count."""
     status = {"status": "unknown", "document_count": 0, "last_indexed_at": None}
     try:
         collection = await _get_or_create_collection()
-        count = await asyncio.to_thread(collection.count)
+        if allowed_project_ids is None:
+            # Backward-compatible internal/global probe. The HTTP endpoint
+            # always supplies its authorized set of active projects.
+            count = await asyncio.to_thread(collection.count)
+        elif not allowed_project_ids:
+            count = 0
+        else:
+            scoped = await asyncio.to_thread(
+                collection.get,
+                where={
+                    "project_id": {
+                        "$in": [str(pid) for pid in allowed_project_ids],
+                    }
+                },
+                include=[],
+            )
+            count = len(scoped.get("ids", []))
         status["document_count"] = count
         status["status"] = "healthy"
     except Exception as exc:
@@ -377,7 +396,13 @@ async def get_index_status() -> dict:
         import redis as _redis
         from app.core.config import settings as _settings
         r = _redis.Redis.from_url(_settings.CELERY_BROKER_URL)
-        ts = r.get("testlookup:search:last_indexed_at")
+        _, timestamp_key = _cursor_keys(project_id)
+        ts = r.get(timestamp_key)
+        # Global incremental indexing also covers an explicitly selected
+        # project, so fall back to its timestamp when no project-specific
+        # manual reindex has written a namespaced cursor yet.
+        if ts is None and project_id is not None:
+            ts = r.get(_REDIS_TIMESTAMP_KEY)
         if ts:
             status["last_indexed_at"] = ts.decode() if isinstance(ts, bytes) else str(ts)
     except Exception:

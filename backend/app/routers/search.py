@@ -29,10 +29,30 @@ router = APIRouter(prefix="/api/v1/search", tags=["Search"])
 
 
 @router.get("/index-status")
-async def get_index_status():
-    """Return ChromaDB collection health: document count, last indexed timestamp."""
+async def get_index_status(
+    project_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return collection health within the caller's active project scope."""
     from app.services.semantic_search import get_index_status as _get_index_status
-    return await _get_index_status()
+
+    scoped_project_id, allowed_project_ids = await resolve_project_scope(
+        db, current_user, project_id,
+    )
+    active_projects = select(Project.id).where(Project.is_active.is_(True))
+    if scoped_project_id is not None:
+        active_projects = active_projects.where(Project.id == scoped_project_id)
+    elif allowed_project_ids is not None:
+        active_projects = active_projects.where(
+            Project.id.in_(list(allowed_project_ids)),
+        )
+
+    active_project_ids = set((await db.execute(active_projects)).scalars().all())
+    return await _get_index_status(
+        project_id=str(scoped_project_id) if scoped_project_id else None,
+        allowed_project_ids=active_project_ids,
+    )
 
 
 @router.post("/reindex")

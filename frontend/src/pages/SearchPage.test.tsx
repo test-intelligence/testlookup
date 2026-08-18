@@ -17,7 +17,7 @@ vi.mock('@/services/searchService', () => ({
     globalSearch:     (...args: unknown[]) => mockGlobalSearch(...args),
     // SearchPage calls ``getIndexStatus`` on mount to render the index health
     // pill; the mock has to expose it or the page throws "is not a function".
-    getIndexStatus:   () => mockGetIndexStatus(),
+    getIndexStatus:   (...args: unknown[]) => mockGetIndexStatus(...args),
     // Project-scoped totals — drives the chip + Index Health rows when
     // no search query is active. Must exist on the mock or mount throws.
     getEntityCounts:  (...args: unknown[]) => mockGetEntityCounts(...args),
@@ -222,6 +222,7 @@ describe('SearchPage', () => {
     // The service is called with the active project from the store
     // (proj-1 in the mock above).
     expect(mockGetEntityCounts).toHaveBeenCalledWith('proj-1')
+    expect(mockGetIndexStatus).toHaveBeenCalledWith('proj-1')
   })
 
   it('scope=all with empty query browses the API and renders results (regression: 2026-05-16)', async () => {
