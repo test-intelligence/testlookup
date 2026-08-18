@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM responses support attribute projection
+
+- User list, retrieval, create, replace, and PATCH responses now honor bounded `attributes` and `excludedAttributes` paths, including sub-attributes and always-returned identity fields; conflicting or malformed projections fail before database access or mutation.
+
 ## 2026-08-18 — SCIM discovery endpoints describe implemented capabilities
 
 - Added bearer-protected ServiceProviderConfig, ResourceTypes, and Schemas discovery resources, including individual User metadata and request-derived locations without advertising unsupported operations.

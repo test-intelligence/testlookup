@@ -52,6 +52,12 @@ from app.services.scim_discovery import (
     user_resource_type,
     user_schema,
 )
+from app.services.scim_projection import (
+    SCIMProjection,
+    SCIMProjectionError,
+    parse_scim_projection,
+    project_scim_resource,
+)
 from app.services.sso_service import log_identity_event
 
 logger = logging.getLogger(__name__)
@@ -245,6 +251,25 @@ def _scim_base_url(request: Request) -> str:
     return f"{str(request.base_url).rstrip('/')}{router.prefix}"
 
 
+def _scim_projection_or_400(
+    attributes: str | None,
+    excluded_attributes: str | None,
+) -> SCIMProjection:
+    try:
+        return parse_scim_projection(attributes, excluded_attributes)
+    except SCIMProjectionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"detail": str(exc), "scimType": "invalidValue"},
+        ) from exc
+
+
+def _scim_projected_user(document: dict, projection: SCIMProjection):
+    if projection.active:
+        return project_scim_resource(document, projection)
+    return SCIMUserResource(**document)
+
+
 @router.get("/ServiceProviderConfig")
 async def scim_service_provider_config(
     request: Request,
@@ -304,8 +329,11 @@ async def scim_list(
     filter: str | None = None,
     scim_token: SCIMToken = Depends(verify_scim_bearer),
     db: AsyncSession = Depends(get_db),
+    attributes: str | None = None,
+    excludedAttributes: str | None = None,
 ):
     """SCIM 2.0: List users."""
+    projection = _scim_projection_or_400(attributes, excludedAttributes)
     try:
         users, total = await scim_list_users(
             db,
@@ -326,14 +354,26 @@ async def scim_list(
     )
     base_url = str(request.base_url).rstrip("/")
 
+    resources = [
+        _scim_projected_user(
+            user_to_scim_resource(user, base_url, identities.get(user.id)),
+            projection,
+        )
+        for user in users
+    ]
+    if projection.active:
+        return {
+            "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+            "totalResults": total,
+            "startIndex": startIndex,
+            "itemsPerPage": len(users),
+            "Resources": resources,
+        }
     return SCIMListResponse(
         totalResults=total,
         startIndex=startIndex,
         itemsPerPage=len(users),
-        Resources=[
-            SCIMUserResource(**user_to_scim_resource(u, base_url, identities.get(u.id)))
-            for u in users
-        ],
+        Resources=resources,
     )
 
 
@@ -343,8 +383,11 @@ async def scim_get(
     request: Request,
     scim_token: SCIMToken = Depends(verify_scim_bearer),
     db: AsyncSession = Depends(get_db),
+    attributes: str | None = None,
+    excludedAttributes: str | None = None,
 ):
     """SCIM 2.0: Get a single user."""
+    projection = _scim_projection_or_400(attributes, excludedAttributes)
     user = await scim_get_user(db, user_id, sso_config_id=scim_token.sso_config_id)
     if user is None:
         raise HTTPException(
@@ -353,8 +396,9 @@ async def scim_get(
         )
     identities = await scim_identity_map(db, [user.id], scim_token.sso_config_id)
     base_url = str(request.base_url).rstrip("/")
-    return SCIMUserResource(
-        **user_to_scim_resource(user, base_url, identities.get(user.id))
+    return _scim_projected_user(
+        user_to_scim_resource(user, base_url, identities.get(user.id)),
+        projection,
     )
 
 
@@ -364,8 +408,11 @@ async def scim_create(
     request: Request,
     scim_token: SCIMToken = Depends(verify_scim_bearer),
     db: AsyncSession = Depends(get_db),
+    attributes: str | None = None,
+    excludedAttributes: str | None = None,
 ):
     """SCIM 2.0: Create a user."""
+    projection = _scim_projection_or_400(attributes, excludedAttributes)
     if not payload.emails:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -419,8 +466,9 @@ async def scim_create(
 
     base_url = str(request.base_url).rstrip("/")
     identities = await scim_identity_map(db, [user.id], scim_token.sso_config_id)
-    return SCIMUserResource(
-        **user_to_scim_resource(user, base_url, identities.get(user.id))
+    return _scim_projected_user(
+        user_to_scim_resource(user, base_url, identities.get(user.id)),
+        projection,
     )
 
 
@@ -431,8 +479,11 @@ async def scim_replace(
     request: Request,
     scim_token: SCIMToken = Depends(verify_scim_bearer),
     db: AsyncSession = Depends(get_db),
+    attributes: str | None = None,
+    excludedAttributes: str | None = None,
 ):
     """SCIM 2.0: Replace (full update) a user."""
+    projection = _scim_projection_or_400(attributes, excludedAttributes)
     if scim_token.sso_config_id is not None and not payload.externalId:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -493,8 +544,9 @@ async def scim_replace(
 
     base_url = str(request.base_url).rstrip("/")
     identities = await scim_identity_map(db, [user.id], scim_token.sso_config_id)
-    return SCIMUserResource(
-        **user_to_scim_resource(user, base_url, identities.get(user.id))
+    return _scim_projected_user(
+        user_to_scim_resource(user, base_url, identities.get(user.id)),
+        projection,
     )
 
 
@@ -505,8 +557,11 @@ async def scim_patch(
     request: Request,
     scim_token: SCIMToken = Depends(verify_scim_bearer),
     db: AsyncSession = Depends(get_db),
+    attributes: str | None = None,
+    excludedAttributes: str | None = None,
 ):
     """SCIM 2.0: Patch (partial update) a user."""
+    projection = _scim_projection_or_400(attributes, excludedAttributes)
     client_ip = request.client.host if request.client else None
 
     username = None
@@ -649,8 +704,9 @@ async def scim_patch(
 
     base_url = str(request.base_url).rstrip("/")
     identities = await scim_identity_map(db, [user.id], scim_token.sso_config_id)
-    return SCIMUserResource(
-        **user_to_scim_resource(user, base_url, identities.get(user.id))
+    return _scim_projected_user(
+        user_to_scim_resource(user, base_url, identities.get(user.id)),
+        projection,
     )
 
 
