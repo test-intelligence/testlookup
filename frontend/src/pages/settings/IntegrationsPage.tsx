@@ -51,10 +51,8 @@ export default function IntegrationsPage() {
           ocp_api_url: cfg.ocp_api_url ?? '',
           ocp_default_namespace: cfg.ocp_default_namespace,
           slack_enabled: cfg.slack_enabled,
-          slack_webhook_url: cfg.slack_webhook_url ?? '',
           slack_default_channel: cfg.slack_default_channel,
           teams_enabled: cfg.teams_enabled,
-          teams_webhook_url: cfg.teams_webhook_url ?? '',
           github_repo: cfg.github_repo ?? '',
         })
       })
@@ -150,7 +148,7 @@ export default function IntegrationsPage() {
             <Toggle label="Enabled" checked={form.slack_enabled ?? false} onChange={v => upd('slack_enabled', v)} disabled={!isAdmin} />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Webhook URL" value={form.slack_webhook_url ?? ''} onChange={v => upd('slack_webhook_url', v)} disabled={!isAdmin} placeholder="https://hooks.slack.com/services/..." />
+            <Field label={`Webhook URL${config.slack_webhook_set ? ' (set)' : ''}`} type="password" value={form.slack_webhook_url ?? ''} onChange={v => upd('slack_webhook_url', v || undefined)} disabled={!isAdmin} placeholder={config.slack_webhook_set ? '••••••••' : 'https://hooks.slack.com/services/...'} />
             <Field label="Default Channel" value={form.slack_default_channel ?? ''} onChange={v => upd('slack_default_channel', v)} disabled={!isAdmin} placeholder="#qa-alerts" />
           </div>
         </div>
@@ -161,7 +159,7 @@ export default function IntegrationsPage() {
             <h3 className="text-sm font-semibold text-[var(--color-text)]">Microsoft Teams</h3>
             <Toggle label="Enabled" checked={form.teams_enabled ?? false} onChange={v => upd('teams_enabled', v)} disabled={!isAdmin} />
           </div>
-          <Field label="Webhook URL" value={form.teams_webhook_url ?? ''} onChange={v => upd('teams_webhook_url', v)} disabled={!isAdmin} placeholder="https://outlook.office.com/webhook/..." />
+          <Field label={`Webhook URL${config.teams_webhook_set ? ' (set)' : ''}`} type="password" value={form.teams_webhook_url ?? ''} onChange={v => upd('teams_webhook_url', v || undefined)} disabled={!isAdmin} placeholder={config.teams_webhook_set ? '••••••••' : 'https://outlook.office.com/webhook/...'} />
         </div>
 
         {/* GitHub */}

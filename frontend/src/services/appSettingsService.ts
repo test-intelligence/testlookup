@@ -160,9 +160,11 @@ export interface IntegrationsConfigRead {
   ocp_default_namespace: string
   slack_enabled: boolean
   slack_webhook_url: string | null
+  slack_webhook_set: boolean
   slack_default_channel: string
   teams_enabled: boolean
   teams_webhook_url: string | null
+  teams_webhook_set: boolean
   github_repo: string | null
   github_token_set: boolean
 }

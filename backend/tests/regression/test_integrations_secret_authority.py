@@ -8,6 +8,18 @@ import pytest
 sys.modules.setdefault("aiosmtplib", MagicMock())
 
 from app.routers import app_settings as router  # noqa: E402
+from app.services.secret_service import is_secret_field, strip_secrets_from_config  # noqa: E402
+
+
+def test_notification_webhooks_are_stripped_from_plaintext_settings():
+    payload = {
+        "slack_webhook_url": "https://hooks.slack.test/secret",
+        "teams_webhook_url": "https://teams.test/secret",
+        "slack_enabled": True,
+    }
+    assert is_secret_field("integrations_config", "slack_webhook_url")
+    assert is_secret_field("integrations_config", "teams_webhook_url")
+    assert strip_secrets_from_config("integrations_config", payload) == {"slack_enabled": True}
 
 
 @pytest.mark.asyncio
@@ -20,6 +32,8 @@ async def test_integrations_loader_reads_encrypted_secret_refs():
         "splunk_api_token": "splunk-db-token",
         "ocp_sa_token": "ocp-db-token",
         "github_token": "github-db-token",
+        "slack_webhook_url": "slack-db-webhook",
+        "teams_webhook_url": "teams-db-webhook",
     }
 
     async def read_secret(db_arg, scope, key):
@@ -43,8 +57,8 @@ async def test_integrations_get_reports_database_tokens_as_set():
         "splunk_api_token": "splunk-db-token", "ocp_enabled": False,
         "ocp_api_url": None, "ocp_sa_token": "ocp-db-token",
         "ocp_default_namespace": "default", "slack_enabled": False,
-        "slack_webhook_url": None, "slack_default_channel": "",
-        "teams_enabled": False, "teams_webhook_url": None,
+        "slack_webhook_url": "slack-db-webhook", "slack_default_channel": "",
+        "teams_enabled": False, "teams_webhook_url": "teams-db-webhook",
         "github_repo": None, "github_token": "github-db-token",
     }
     with patch.object(router, "_load_integrations_config", new=AsyncMock(return_value=config)):
@@ -56,3 +70,7 @@ async def test_integrations_get_reports_database_tokens_as_set():
     assert response.splunk_token_set is True
     assert response.ocp_token_set is True
     assert response.github_token_set is True
+    assert response.slack_webhook_set is True
+    assert response.teams_webhook_set is True
+    assert response.slack_webhook_url is None
+    assert response.teams_webhook_url is None

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Security: encrypt and redact global notification webhooks
+
+Slack and Teams incoming-webhook URLs are bearer credentials, but Integration
+Settings stored and returned them as plaintext. They now use encrypted
+`secret_refs`; API responses retain null compatibility fields plus explicit
+`*_webhook_set` booleans, and the UI uses blank password inputs for replacement
+without ever rehydrating the credential into the browser.
+
 ### 2026-08-17 — Fix: integration health no longer hides authority outages
 
 The Integration Health settings endpoint converted all database failures into

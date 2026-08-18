@@ -163,14 +163,15 @@ class TestIntegrationsConfigRead:
             splunk_base_url=None, splunk_token_set=False,
             ocp_enabled=False, ocp_api_url=None, ocp_token_set=False,
             ocp_default_namespace="qa-testing", slack_enabled=True,
-            slack_webhook_url="https://hooks.slack.com/test",
+            slack_webhook_url=None, slack_webhook_set=True,
             slack_default_channel="#qa", teams_enabled=False,
-            teams_webhook_url=None, github_repo="org/repo",
+            teams_webhook_url=None, teams_webhook_set=False, github_repo="org/repo",
             github_token_set=True,
         )
         # Verify tokens are booleans, not raw values
         assert cfg.jira_token_set is True
         assert cfg.splunk_token_set is False
+        assert cfg.slack_webhook_set is True
         assert not hasattr(cfg, "jira_api_token")
 
 
