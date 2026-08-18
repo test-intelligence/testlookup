@@ -34,6 +34,7 @@ from app.models.schemas import (
     SCIMUserResource,
 )
 from app.services.scim_service import (
+    SCIMInvalidFilterError,
     SCIMUserNotFoundError,
     create_scim_token,
     scim_create_user,
@@ -243,13 +244,19 @@ async def scim_list(
     db: AsyncSession = Depends(get_db),
 ):
     """SCIM 2.0: List users."""
-    users, total = await scim_list_users(
-        db,
-        start_index=startIndex,
-        count=count,
-        filter_str=filter,
-        sso_config_id=scim_token.sso_config_id,
-    )
+    try:
+        users, total = await scim_list_users(
+            db,
+            start_index=startIndex,
+            count=count,
+            filter_str=filter,
+            sso_config_id=scim_token.sso_config_id,
+        )
+    except SCIMInvalidFilterError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"detail": str(exc), "scimType": "invalidFilter"},
+        ) from exc
     identities = await scim_identity_map(
         db,
         [user.id for user in users],

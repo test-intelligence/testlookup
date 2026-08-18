@@ -3261,6 +3261,7 @@ class SCIMErrorResponse(BaseModel):
     schemas: List[str] = ["urn:ietf:params:scim:api:messages:2.0:Error"]
     status: str
     detail: str
+    scimType: Optional[str] = None
 
 
 class SCIMTokenCreate(BaseModel):

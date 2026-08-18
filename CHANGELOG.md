@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM invalid filters fail with protocol errors
+
+- SCIM equality filters now decode JSON string values (including escapes), reject non-JSON quoting and unsupported expressions, and return the required HTTP 400 `invalidFilter` error instead of a misleading empty directory.
+
 ## 2026-08-18 — SCIM external IDs validate before mutation
 
 - SCIM trims case-exact external IDs, rejects empty values, detects directory-scoped collisions before user mutation, and applies the canonical value to filters.

@@ -26,11 +26,16 @@ def _is_scim_request(request: Request) -> bool:
     return path == SCIM_PREFIX or path.startswith(f"{SCIM_PREFIX}/")
 
 
-def _scim_error(status_code: int, detail: str, headers: dict | None = None) -> JSONResponse:
-    payload = SCIMErrorResponse(status=str(status_code), detail=detail)
+def _scim_error(
+    status_code: int,
+    detail: str,
+    headers: dict | None = None,
+    scim_type: str | None = None,
+) -> JSONResponse:
+    payload = SCIMErrorResponse(status=str(status_code), detail=detail, scimType=scim_type)
     return JSONResponse(
         status_code=status_code,
-        content=payload.model_dump(),
+        content=payload.model_dump(exclude_none=True),
         headers=headers,
         media_type=SCIM_MEDIA_TYPE,
     )
@@ -43,8 +48,15 @@ async def scim_http_exception_handler(
     """Use SCIM Error for protocol routes and FastAPI defaults elsewhere."""
     if not _is_scim_request(request):
         return await http_exception_handler(request, exc)
-    detail = exc.detail if isinstance(exc.detail, str) else "SCIM request failed"
-    return _scim_error(exc.status_code, detail, exc.headers)
+    if isinstance(exc.detail, dict):
+        detail_value = exc.detail.get("detail")
+        scim_type_value = exc.detail.get("scimType")
+        detail = detail_value if isinstance(detail_value, str) else "SCIM request failed"
+        scim_type = scim_type_value if isinstance(scim_type_value, str) else None
+    else:
+        detail = exc.detail if isinstance(exc.detail, str) else "SCIM request failed"
+        scim_type = None
+    return _scim_error(exc.status_code, detail, exc.headers, scim_type)
 
 
 async def scim_validation_exception_handler(

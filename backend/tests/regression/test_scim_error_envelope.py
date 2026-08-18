@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import Request
@@ -32,6 +34,57 @@ async def test_scim_http_failures_use_standard_error_envelope(status_code):
         "status": str(status_code),
         "detail": "Protocol failure",
     }
+
+
+@pytest.mark.asyncio
+async def test_invalid_filter_error_preserves_scim_type():
+    from app.core.scim_errors import scim_http_exception_handler
+
+    response = await scim_http_exception_handler(
+        _request("/api/v1/scim/v2/Users"),
+        HTTPException(
+            status_code=400,
+            detail={
+                "detail": "The supplied SCIM filter is invalid or unsupported",
+                "scimType": "invalidFilter",
+            },
+        ),
+    )
+    body = json.loads(response.body)
+
+    assert response.status_code == 400
+    assert response.media_type == "application/scim+json"
+    assert body == {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
+        "status": "400",
+        "detail": "The supplied SCIM filter is invalid or unsupported",
+        "scimType": "invalidFilter",
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_route_maps_invalid_filter_without_loading_identities(monkeypatch):
+    from app.services.scim_service import SCIMInvalidFilterError
+    from app.routers import scim
+
+    list_users = AsyncMock(side_effect=SCIMInvalidFilterError("invalid filter"))
+    identity_map = AsyncMock()
+    monkeypatch.setattr(scim, "scim_list_users", list_users)
+    monkeypatch.setattr(scim, "scim_identity_map", identity_map)
+
+    with pytest.raises(HTTPException) as raised:
+        await scim.scim_list(
+            _request("/api/v1/scim/v2/Users"),
+            startIndex=1,
+            count=100,
+            filter='userName eq "alice" and active eq true',
+            scim_token=SimpleNamespace(sso_config_id=None),
+            db=AsyncMock(),
+        )
+
+    assert raised.value.status_code == 400
+    assert raised.value.detail["scimType"] == "invalidFilter"
+    identity_map.assert_not_awaited()
 
 
 @pytest.mark.asyncio
