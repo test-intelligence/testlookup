@@ -802,6 +802,11 @@ async def update_feature_flag(
     from app.services.feature_flag_service import set_flag
     result = await set_flag(db, flag_key, body.enabled, body.scope, body.config, body.description)
     await db.commit()
+    # This compatibility route writes the same authority rows as the canonical
+    # feature-flag API. Invalidate only after commit so all replicas observe the
+    # new row and no concurrent reader can repopulate Redis from old data.
+    from app.services.feature_flags import invalidate_flag_cache
+    await invalidate_flag_cache(flag_key)
     return result
 
 
@@ -815,6 +820,8 @@ async def remove_feature_flag(
     from app.services.feature_flag_service import delete_flag
     await delete_flag(db, flag_key)
     await db.commit()
+    from app.services.feature_flags import invalidate_flag_cache
+    await invalidate_flag_cache(flag_key)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
