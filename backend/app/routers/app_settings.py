@@ -795,12 +795,18 @@ async def list_feature_flags(
 async def update_feature_flag(
     flag_key: str,
     body: FeatureFlagUpdate,
-    _: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """Create or update a feature flag. Requires ADMIN."""
     from app.services.feature_flag_service import set_flag
     result = await set_flag(db, flag_key, body.enabled, body.scope, body.config, body.description)
+    changed_fields = ["enabled_global"]
+    if body.description is not None:
+        changed_fields.append("description")
+    await log_settings_change(
+        db, f"feature_flag:{flag_key}", "updated", current_user, changed_fields,
+    )
     await db.commit()
     # This compatibility route writes the same authority rows as the canonical
     # feature-flag API. Invalidate only after commit so all replicas observe the
@@ -813,12 +819,16 @@ async def update_feature_flag(
 @router.delete("/flags/{flag_key}", status_code=204)
 async def remove_feature_flag(
     flag_key: str,
-    _: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a feature flag. Requires ADMIN."""
     from app.services.feature_flag_service import delete_flag
-    await delete_flag(db, flag_key)
+    deleted = await delete_flag(db, flag_key)
+    if deleted:
+        await log_settings_change(
+            db, f"feature_flag:{flag_key}", "deleted", current_user, ["enabled_global"],
+        )
     await db.commit()
     from app.services.feature_flags import invalidate_flag_cache
     await invalidate_flag_cache(flag_key)
