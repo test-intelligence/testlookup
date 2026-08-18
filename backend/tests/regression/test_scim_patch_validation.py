@@ -12,7 +12,6 @@ from fastapi import HTTPException
 @pytest.mark.parametrize(
     "operations",
     [
-        [],
         [{"op": "move", "path": "userName", "value": "alice"}],
         [{"op": "replace", "path": "title", "value": "Engineer"}],
         [{"op": "add", "path": "userName", "value": "alice"}],

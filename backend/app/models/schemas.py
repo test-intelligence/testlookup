@@ -3211,7 +3211,7 @@ class SCIMPatchOp(BaseModel):
 
 class SCIMPatchRequest(BaseModel):
     schemas: List[str] = [SCIM_PATCH_SCHEMA]
-    Operations: List[SCIMPatchOp]
+    Operations: List[SCIMPatchOp] = Field(..., min_length=1)
 
     @field_validator("schemas")
     @classmethod

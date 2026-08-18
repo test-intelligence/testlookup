@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM PATCH rejects empty operation lists
+
+- PATCH request validation now requires at least one operation, preventing successful no-op updates and misleading audit events.
+
 ## 2026-08-18 — SCIM group filters parse JSON strings safely
 
 - PATCH group-removal filters now decode escaped JSON string values and reject malformed, single-quoted, or empty filter values before mutation.
