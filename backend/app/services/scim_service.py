@@ -35,10 +35,10 @@ class SCIMUserNotFoundError(ValueError):
 
 def _normalize_group_refs(groups: list | None) -> list[dict[str, str]]:
     """Normalize legacy string groups and canonical SCIM group references."""
-    refs: list[dict[str, str]] = []
+    refs_by_value: dict[str, dict[str, str]] = {}
     for group in groups or []:
         if isinstance(group, str) and group:
-            refs.append({"value": group})
+            ref = {"value": group}
         elif isinstance(group, dict):
             value = group.get("value")
             display = group.get("display")
@@ -46,8 +46,17 @@ def _normalize_group_refs(groups: list | None) -> list[dict[str, str]]:
                 ref = {"value": value}
                 if isinstance(display, str) and display:
                     ref["display"] = display
-                refs.append(ref)
-    return refs
+            else:
+                continue
+        else:
+            continue
+        existing = refs_by_value.get(ref["value"])
+        if existing is not None:
+            if "display" not in existing and "display" in ref:
+                existing["display"] = ref["display"]
+            continue
+        refs_by_value[ref["value"]] = ref
+    return list(refs_by_value.values())
 
 
 def _group_role_names(refs: list[dict[str, str]]) -> list[str]:

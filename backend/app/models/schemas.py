@@ -3155,6 +3155,8 @@ SCIM_DISPLAY_NAME_MAX_LENGTH = 255
 SCIM_EXTERNAL_ID_MAX_LENGTH = 1000
 SCIM_EMAILS_MAX_ITEMS = 100
 SCIM_GROUPS_MAX_ITEMS = 1000
+SCIM_GROUP_VALUE_MAX_LENGTH = 1000
+SCIM_GROUP_DISPLAY_MAX_LENGTH = 500
 
 
 class SCIMName(BaseModel):
@@ -3170,8 +3172,8 @@ class SCIMEmail(BaseModel):
 
 
 class SCIMGroup(BaseModel):
-    value: str
-    display: Optional[str] = None
+    value: str = Field(..., min_length=1, max_length=SCIM_GROUP_VALUE_MAX_LENGTH)
+    display: Optional[str] = Field(None, max_length=SCIM_GROUP_DISPLAY_MAX_LENGTH)
 
 
 class SCIMUserResource(BaseModel):

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM group references normalize deterministically
+
+- Group IDs and displays are length-bounded, exact duplicate memberships collapse, and conflicting displays for one stable ID are rejected before mutation instead of depending on input order.
+
 ## 2026-08-18 — SCIM fields validate persistence boundaries
 
 - Usernames, emails, display names, external IDs, email arrays, and group arrays now fail cleanly at SCIM validation boundaries instead of reaching narrower database columns or creating unbounded collection work.
