@@ -32,6 +32,7 @@ def _string_attribute(
 
 
 _NAME_SUB_ATTRIBUTES = [
+    _string_attribute("formatted"),
     _string_attribute("givenName"),
     _string_attribute("familyName"),
 ]

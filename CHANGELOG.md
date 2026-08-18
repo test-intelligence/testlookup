@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM discovery declares formatted names
+
+- The advertised User schema now includes `name.formatted`, matching the sub-attribute emitted by every User response.
+
 ## 2026-08-18 — SCIM filters accept core-schema-qualified paths
 
 - Supported User equality filters now accept case-insensitive `urn:ietf:params:scim:schemas:core:2.0:User:` qualification while continuing to reject unknown schemas.
