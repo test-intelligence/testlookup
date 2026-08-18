@@ -24,7 +24,7 @@ from __future__ import annotations
 import importlib
 import sys
 import types
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -86,6 +86,26 @@ def test_get_chroma_client_passes_host_and_port(monkeypatch):
     assert kwargs["host"] == "chroma.example"
     assert kwargs["port"] == 1234
     assert kwargs["settings"].anonymized_telemetry is False
+
+
+@pytest.mark.asyncio
+async def test_configured_client_consumes_persisted_host_and_port(monkeypatch):
+    """The Storage settings authority, not process-start env, selects Chroma."""
+    http_client, _ = _install_fake_chromadb(monkeypatch)
+    chroma = _load_helper()
+    from app.services import storage_config_service
+
+    monkeypatch.setattr(
+        storage_config_service,
+        "get_effective_storage_config",
+        AsyncMock(return_value={"chroma_host": "saved-chroma", "chroma_port": 9123}),
+    )
+
+    await chroma.get_configured_chroma_client()
+
+    _, kwargs = http_client.call_args
+    assert kwargs["host"] == "saved-chroma"
+    assert kwargs["port"] == 9123
 
 
 def test_env_setdefault_kept_as_safeguard():

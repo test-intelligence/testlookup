@@ -55,7 +55,7 @@ async def test_semantic_cache_collection_is_project_scoped():
 
     captured = {}
 
-    def _fake_client():
+    async def _fake_client():
         client = MagicMock()
         client.get_or_create_collection = MagicMock(
             side_effect=lambda name, **kw: captured.setdefault("name", name) or MagicMock()

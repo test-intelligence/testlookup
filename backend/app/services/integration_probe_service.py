@@ -233,13 +233,16 @@ async def probe_ollama() -> ProbeResult:
 
 async def probe_chromadb() -> ProbeResult:
     """Probe ChromaDB vector store."""
-    from app.core.config import settings
-
+    from app.services.storage_config_service import get_effective_storage_config
 
     start = time.monotonic()
     try:
+        config = await get_effective_storage_config()
         client = get_http_client()
-        resp = await client.get(f"{settings.chroma_host_url}/api/v2/heartbeat", timeout=4.0)
+        resp = await client.get(
+            f"http://{config['chroma_host']}:{config['chroma_port']}/api/v2/heartbeat",
+            timeout=4.0,
+        )
         ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:
             return ProbeResult("chromadb", "healthy", ms, "ChromaDB heartbeat OK", True, True)

@@ -20,6 +20,7 @@ to every client is the authoritative fix. ``config.py`` keeps the env
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -40,7 +41,7 @@ from app.core.config import settings
 # chromadb's own import-time logger setup.
 logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
 
-__all__ = ["get_chroma_client"]
+__all__ = ["get_chroma_client", "get_configured_chroma_client"]
 
 
 def get_chroma_client(host: Optional[str] = None, port: Optional[int] = None):
@@ -54,4 +55,16 @@ def get_chroma_client(host: Optional[str] = None, port: Optional[int] = None):
         host=host or settings.CHROMA_HOST,
         port=port or settings.CHROMA_PORT,
         settings=ChromaSettings(anonymized_telemetry=False),
+    )
+
+
+async def get_configured_chroma_client():
+    """Construct a client from the shared runtime Storage configuration."""
+    from app.services.storage_config_service import get_effective_storage_config
+
+    config = await get_effective_storage_config()
+    return await asyncio.to_thread(
+        get_chroma_client,
+        host=str(config["chroma_host"]),
+        port=int(config["chroma_port"]),
     )
