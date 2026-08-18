@@ -205,6 +205,7 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
     if project_id:
         q = q.where(TestRun.project_id == project_id)
 
+    q = q.order_by(TestCase.created_at.asc(), TestCase.id.asc())
     rows = (await db.execute(q)).all()
     if not rows:
         return 0
