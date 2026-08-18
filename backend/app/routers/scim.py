@@ -284,6 +284,12 @@ async def scim_replace(
     if not email and payload.emails:
         email = payload.emails[0].value
 
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one email is required",
+        )
+
     display_name = payload.displayName
     if not display_name and payload.name:
         parts = [payload.name.givenName, payload.name.familyName]
@@ -306,6 +312,7 @@ async def scim_replace(
             group_refs=group_refs,
             sso_config_id=scim_token.sso_config_id,
             ip_address=client_ip,
+            full_replace=True,
         )
         await db.commit()
         await db.refresh(user)

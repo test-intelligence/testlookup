@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM replace no longer preserves omitted writable state
+
+- SCIM replace now requires the application's mandatory email and clears omitted optional display-name state, while PATCH retains partial-update behavior.
+
 ## 2026-08-18 — SCIM mutations persist external identity changes
 
 - IdP-bound SCIM replace and PATCH now validate and update `externalId` instead of returning success while retaining the previous federated identifier; unbound tokens reject ambiguous identifier writes.
