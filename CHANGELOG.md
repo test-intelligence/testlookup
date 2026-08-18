@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM PATCH applies group-based roles
+
+- SCIM group replacements, including bulk replacements, now reach role mapping and federated-identity synchronization instead of returning success while silently ignoring authorization changes.
+
 ## 2026-08-18 — IdP-bound SCIM tokens are directory-scoped
 
 - SCIM tokens bound to an SSO configuration can now read and mutate only users linked to that IdP; bound provisioning requires an `externalId`, while intentionally unbound tokens retain system-wide behavior.
