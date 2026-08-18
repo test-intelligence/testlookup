@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM rejects ambiguous primary emails
+
+- Email selection now defaults omitted `primary` flags to false, honors one explicit primary, falls back to the first value, and rejects multiple primary entries before mutation across create, replace, and PATCH.
+
 ## 2026-08-18 — SCIM group references normalize deterministically
 
 - Group IDs and displays are length-bounded, exact duplicate memberships collapse, and conflicting displays for one stable ID are rejected before mutation instead of depending on input order.

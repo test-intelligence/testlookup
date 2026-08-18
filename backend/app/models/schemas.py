@@ -3168,7 +3168,7 @@ class SCIMName(BaseModel):
 class SCIMEmail(BaseModel):
     value: str = Field(..., min_length=1, max_length=SCIM_EMAIL_MAX_LENGTH)
     type: Optional[str] = Field("work", max_length=100)
-    primary: bool = True
+    primary: bool = False
 
 
 class SCIMGroup(BaseModel):
@@ -3203,7 +3203,9 @@ class SCIMUserRequest(SCIMUserResource):
     schemas: List[str] = Field(...)
 
     @model_validator(mode="after")
-    def require_storable_derived_display_name(self):
+    def require_storable_user_fields(self):
+        if sum(email.primary for email in self.emails) > 1:
+            raise ValueError("emails must contain at most one primary value")
         if self.displayName is None and self.name is not None:
             derived = " ".join(
                 part for part in (self.name.givenName, self.name.familyName) if part
