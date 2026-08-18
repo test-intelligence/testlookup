@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM failures use the protocol Error schema
+
+- Public SCIM routes now return `application/scim+json` Error bodies with the standard schema URN, string status, and detail for HTTP and request-validation failures; non-SCIM APIs retain FastAPI's existing envelopes.
+
 ## 2026-08-18 — SCIM PATCH rejects invalid no-ops
 
 - Unsupported PATCH operations, attribute paths, malformed bulk values, invalid booleans/emails/groups, and empty operation lists now return HTTP 400 before any mutation instead of being acknowledged as successful no-ops.

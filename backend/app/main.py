@@ -6,15 +6,21 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.bootstrap import configure_metrics, configure_middlewares, register_routers
 from app.core.config import settings
 from app.core.http_client import close_http_client
 from app.core.logging_config import configure_logging
+from app.core.scim_errors import (
+    scim_http_exception_handler,
+    scim_validation_exception_handler,
+)
 from app.db.mongo import close_mongo, ensure_indexes as ensure_mongo_indexes
 from app.db.postgres import close_db
 from app.db.redis_client import close_redis
@@ -125,6 +131,8 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+app.add_exception_handler(StarletteHTTPException, scim_http_exception_handler)  # type: ignore[arg-type]
+app.add_exception_handler(RequestValidationError, scim_validation_exception_handler)  # type: ignore[arg-type]
 configure_middlewares(app)
 configure_metrics(app)
 register_routers(app)
