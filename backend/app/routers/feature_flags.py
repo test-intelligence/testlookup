@@ -61,6 +61,8 @@ async def create_feature_flag(
         rollout_percent=payload.rollout_percent,
         actor=current_user,
     )
+    await db.commit()
+    await ff_service.invalidate_flag_cache(payload.key)
     return flag
 
 
@@ -92,6 +94,8 @@ async def update_feature_flag(
     flag = await ff_service.update_flag(
         db, key=key, updates=updates, actor=current_user,
     )
+    await db.commit()
+    await ff_service.invalidate_flag_cache(key)
     return flag
 
 
@@ -103,6 +107,8 @@ async def delete_feature_flag(
 ):
     """Hard-delete a feature flag. ADMIN only."""
     await ff_service.delete_flag(db, key=key, actor=current_user)
+    await db.commit()
+    await ff_service.invalidate_flag_cache(key)
     return None
 
 

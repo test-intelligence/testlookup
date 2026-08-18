@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: feature-flag caches invalidate after commit
+
+Feature-flag create, update, and delete operations invalidated the in-process
+and Redis caches inside the service transaction. Because the database commit
+occurred only after the handler returned, a concurrent reader could repopulate
+both caches from the old committed row and keep serving the stale gate for the
+30-second TTL.
+
+Feature-flag mutation services now only stage database and audit writes. Their
+admin CRUD handlers explicitly commit first and invalidate second, matching the
+existing AI-settings flag path. Regression guards cover the event order for all
+three mutations and prevent services from reintroducing pre-commit invalidation.
+
 ### 2026-08-17 — Fix: natural build ordering for runs and flake transitions
 
 Sharded ingestion can persist CI runs out of order, while lexical sorting puts

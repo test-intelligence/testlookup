@@ -239,11 +239,9 @@ async def is_enabled(
 async def invalidate_flag_cache(key: str) -> None:
     """Drop the caches for one flag — **call this after the commit lands**.
 
-    ``update_flag``/``create_flag``/``delete_flag`` invalidate too, but they run
-    inside the caller's transaction: ``get_db`` commits only after the handler
-    returns, so between their invalidate and that commit any reader re-reads the
-    *old* committed row and re-populates both caches with it. The value then
-    sticks for the 30s TTL and the write looks like it never happened.
+    Mutation services only stage their database and audit writes. Their router
+    callers commit first and invalidate second: invalidating mid-transaction
+    lets a concurrent reader re-cache the old committed row for the full TTL.
 
     Measured on the live deployment right after this module's own toggle was
     wired up: ``PUT /settings/ai {knowledge_rag_enabled: true}`` returned 200,
@@ -309,7 +307,6 @@ async def create_flag(
     # below sees the fully-hydrated row. Router owns the commit.
     await db.flush()
     _write_audit_entry(db, actor, action="create", key=key, after=_serialize_flag(flag))
-    await _invalidate(key)
     return flag
 
 
@@ -345,7 +342,6 @@ async def update_flag(
     _write_audit_entry(
         db, actor, action="update", key=key, before=before, after=_serialize_flag(flag),
     )
-    await _invalidate(key)
     return flag
 
 
@@ -361,7 +357,6 @@ async def delete_flag(db: AsyncSession, *, key: str, actor: User) -> None:
     await db.delete(flag)
     await db.flush()
     _write_audit_entry(db, actor, action="delete", key=key, before=before)
-    await _invalidate(key)
 
 
 def _write_audit_entry(
