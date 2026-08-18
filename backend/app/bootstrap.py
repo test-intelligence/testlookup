@@ -197,8 +197,10 @@ def configure_middlewares(app: FastAPI) -> None:
 
     # Import locally so middleware setup stays close to other app wiring.
     from app.middleware.telemetry import TelemetryMiddleware
+    from app.middleware.scim_request_limit import SCIMRequestBodyLimitMiddleware
 
     app.add_middleware(TelemetryMiddleware)
+    app.add_middleware(SCIMRequestBodyLimitMiddleware)
 
 
 def configure_metrics(app: FastAPI) -> None:
