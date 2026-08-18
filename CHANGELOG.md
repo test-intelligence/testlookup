@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM email identity is case-insensitive
+
+- SCIM trims and case-folds selected emails, checks create and update collisions case-insensitively, stores the canonical value, and applies the same semantics to email filters.
+
 ## 2026-08-18 — SCIM rejects ambiguous primary emails
 
 - Email selection now defaults omitted `primary` flags to false, honors one explicit primary, falls back to the first value, and rejects multiple primary entries before mutation across create, replace, and PATCH.
