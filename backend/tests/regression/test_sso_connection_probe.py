@@ -121,6 +121,7 @@ async def test_sso_test_endpoint_fails_when_idp_probe_is_unreachable(monkeypatch
     db.refresh = AsyncMock()
     probe = AsyncMock(return_value=(False, "IdP endpoint unreachable: DNS failed"))
     monkeypatch.setattr(sso, "probe_idp_endpoint", probe)
+    monkeypatch.setattr(sso, "validate_certificate_format", lambda _: (True, "Valid"))
     monkeypatch.setattr(sso, "log_identity_event", AsyncMock())
 
     response = await sso.test_sso_connection(

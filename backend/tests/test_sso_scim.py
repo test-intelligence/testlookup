@@ -27,6 +27,10 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 
 
 def _make_stub(name: str, **attrs) -> types.ModuleType:
@@ -86,10 +90,21 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _make_test_cert() -> str:
     """Return a valid PEM-formatted test certificate."""
-    # This is a dummy certificate for testing — not a real X.509 cert
-    dummy_der = b"\x30" * 100  # minimal DER-like bytes
-    b64 = base64.b64encode(dummy_der).decode()
-    return f"-----BEGIN CERTIFICATE-----\n{b64}\n-----END CERTIFICATE-----"
+    key = ec.generate_private_key(ec.SECP256R1())
+    subject = issuer = x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, "idp.example.com")]
+    )
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.now(timezone.utc) - timedelta(minutes=1))
+        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
 
 
 def _make_saml_response(
@@ -169,7 +184,15 @@ class TestCertificateValidation:
         cert = "-----BEGIN CERTIFICATE-----\n!!!invalid!!!\n-----END CERTIFICATE-----"
         valid, msg = validate_certificate_format(cert)
         assert valid is False
-        assert "base64" in msg.lower()
+        assert "x.509" in msg.lower()
+
+    def test_invalid_certificate_rejects_decodable_non_x509_bytes(self):
+        from app.services.sso_service import validate_certificate_format
+
+        cert = "-----BEGIN CERTIFICATE-----\nYQ==\n-----END CERTIFICATE-----"
+        valid, msg = validate_certificate_format(cert)
+        assert valid is False
+        assert "x.509" in msg.lower()
 
     def test_certificate_fingerprint(self):
         from app.services.sso_service import certificate_fingerprint

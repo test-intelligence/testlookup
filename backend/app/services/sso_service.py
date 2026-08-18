@@ -77,23 +77,18 @@ def certificate_fingerprint(pem_cert: str) -> str:
 
 
 def validate_certificate_format(pem_cert: str) -> tuple[bool, str]:
-    """Validate that the provided string is a well-formed PEM certificate."""
+    """Validate that the provided string contains a parseable X.509 certificate."""
     stripped = pem_cert.strip()
     if not stripped.startswith("-----BEGIN CERTIFICATE-----"):
         return False, "Certificate must start with '-----BEGIN CERTIFICATE-----'"
     if not stripped.endswith("-----END CERTIFICATE-----"):
         return False, "Certificate must end with '-----END CERTIFICATE-----'"
-    import base64
-
-    lines = [
-        line.strip()
-        for line in stripped.splitlines()
-        if line.strip() and not line.strip().startswith("-----")
-    ]
     try:
-        base64.b64decode("".join(lines))
-    except Exception:
-        return False, "Certificate contains invalid base64 data"
+        from cryptography import x509
+
+        x509.load_pem_x509_certificate(stripped.encode("utf-8"))
+    except (TypeError, ValueError):
+        return False, "Certificate is not a valid X.509 certificate"
     return True, "Valid"
 
 
