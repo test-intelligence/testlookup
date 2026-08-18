@@ -388,6 +388,7 @@ async def scim_update_user(
     if sso_config_id and (
         groups is not None
         or external_id is not None
+        or email is not None
         or display_name is not None
         or clear_display_name
     ):
