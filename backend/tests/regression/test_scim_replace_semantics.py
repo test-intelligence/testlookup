@@ -108,3 +108,33 @@ def test_replace_explicitly_selects_full_replace_semantics():
     from app.routers.scim import scim_replace
 
     assert "full_replace=True" in inspect.getsource(scim_replace)
+
+
+@pytest.mark.parametrize(
+    ("display_name", "name", "expected"),
+    [
+        ("Explicit", {"formatted": "Formatted", "givenName": "Given"}, "Explicit"),
+        (None, {"formatted": "Formatted", "givenName": "Given"}, "Formatted"),
+        (None, {"givenName": "Given", "familyName": "Family"}, "Given Family"),
+        (None, None, None),
+    ],
+)
+def test_request_display_name_preserves_formatted_name(display_name, name, expected):
+    from app.models.schemas import SCIMUserRequest
+    from app.routers.scim import _scim_display_name
+
+    payload = SCIMUserRequest(
+        schemas=[USER_SCHEMA],
+        userName="alice",
+        emails=[{"value": "alice@example.test"}],
+        displayName=display_name,
+        name=name,
+    )
+    assert _scim_display_name(payload) == expected
+
+
+def test_create_and_replace_share_name_resolution():
+    from app.routers.scim import scim_create, scim_replace
+
+    assert "_scim_display_name(payload)" in inspect.getsource(scim_create)
+    assert "_scim_display_name(payload)" in inspect.getsource(scim_replace)
