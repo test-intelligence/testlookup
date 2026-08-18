@@ -46,16 +46,33 @@ def test_patch_payload_rejects_missing_patchop_schema_when_supplied(schemas):
     from app.models.schemas import SCIMPatchRequestPayload
 
     with pytest.raises(ValidationError, match="schemas must include"):
-        SCIMPatchRequestPayload(schemas=schemas, Operations=[])
+        SCIMPatchRequestPayload(
+            schemas=schemas,
+            Operations=[{"op": "replace", "path": "active", "value": True}],
+        )
 
 
 def test_patch_payload_default_and_extensions_preserve_patchop_schema():
     from app.models.schemas import SCIMPatchRequest, SCIMPatchRequestPayload
 
-    assert SCIMPatchRequest(Operations=[]).schemas == [PATCH_SCHEMA]
+    operation = {"op": "replace", "path": "active", "value": True}
+    assert SCIMPatchRequest(Operations=[operation]).schemas == [PATCH_SCHEMA]
     with pytest.raises(ValidationError, match="Field required"):
-        SCIMPatchRequestPayload(Operations=[])
+        SCIMPatchRequestPayload(Operations=[operation])
     assert SCIMPatchRequestPayload(
         schemas=[PATCH_SCHEMA, EXTENSION_SCHEMA],
-        Operations=[],
+        Operations=[operation],
     ).schemas == [PATCH_SCHEMA, EXTENSION_SCHEMA]
+
+
+@pytest.mark.parametrize("model_name", ["SCIMPatchRequest", "SCIMPatchRequestPayload"])
+def test_patch_payload_rejects_empty_operations(model_name):
+    from app import models
+
+    model = getattr(models.schemas, model_name)
+    kwargs = {"Operations": []}
+    if model_name == "SCIMPatchRequestPayload":
+        kwargs["schemas"] = [PATCH_SCHEMA]
+
+    with pytest.raises(ValidationError, match="at least 1 item"):
+        model(**kwargs)
