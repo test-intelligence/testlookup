@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM audits group mutations accurately
+
+- Directory group changes now record deterministic old/new references in identity events, while pure ordering differences remain no-change operations.
+
 ## 2026-08-18 — SCIM audits display-name mutations accurately
 
 - Display-name updates and removals now record old/new values in identity events instead of being mislabeled as no-change operations.

@@ -60,6 +60,16 @@ async def test_group_deltas_apply_in_order_and_recalculate_role(monkeypatch):
     ]
     assert user.role == "Release"
     assert db.execute.await_count == 3
+    detail = scim_service.log_identity_event.await_args.kwargs["detail"]
+    assert detail["groups"] == {
+        "old": [{"value": "QA"}, {"value": "Viewer"}],
+        "new": [
+            {"value": "Admins"},
+            {"value": "QA"},
+            {"value": "Release"},
+        ],
+    }
+    assert detail["role"] == {"old": "VIEWER", "new": "Release"}
 
 
 @pytest.mark.asyncio
@@ -137,6 +147,32 @@ async def test_filtered_removal_matches_stable_value_or_display(monkeypatch, rem
     )
 
     assert fed.external_groups == [{"value": "group-qa-id", "display": "QA"}]
+    assert "no_changes" not in scim_service.log_identity_event.await_args.kwargs["detail"]
+
+
+@pytest.mark.asyncio
+async def test_group_reordering_is_not_audited_as_a_semantic_change(monkeypatch):
+    from app.services import scim_service
+
+    config_id = uuid.uuid4()
+    user = _user()
+    fed = SimpleNamespace(external_groups=[{"value": "b"}, {"value": "a"}])
+    config = SimpleNamespace(role_mapping={}, default_role="VIEWER")
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=[_result(user), _result(config), _result(fed)])
+    monkeypatch.setattr(scim_service, "log_identity_event", AsyncMock())
+
+    await scim_service.scim_update_user(
+        db,
+        user.id,
+        sso_config_id=config_id,
+        groups=["a", "b"],
+        group_refs=[{"value": "a"}, {"value": "b"}],
+    )
+
+    assert scim_service.log_identity_event.await_args.kwargs["detail"] == {
+        "no_changes": True
+    }
 
 
 @pytest.mark.asyncio
