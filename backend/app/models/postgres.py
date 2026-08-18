@@ -3400,6 +3400,13 @@ class SSOConfiguration(Base):
     __tablename__ = "sso_configurations"
     __table_args__ = (
         Index("ix_sso_config_active", "is_active"),
+        Index(
+            "uq_sso_config_single_active",
+            "is_active",
+            unique=True,
+            postgresql_where=text("is_active IS TRUE"),
+            sqlite_where=text("is_active IS TRUE"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

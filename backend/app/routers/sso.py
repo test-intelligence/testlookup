@@ -4,7 +4,8 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -371,12 +372,41 @@ async def update_sso_config(
                     detail=f"Invalid role '{role_value}' in role_mapping for group '{group_name}'",
                 )
 
+    # There is one system-level SAML login policy. Switching the active IdP is
+    # therefore a replacement operation, not an additive toggle. The partial
+    # unique index is the final race guard for concurrent admin requests.
+    deactivated_count = 0
+    if update_data.get("is_active") is True and not config.is_active:
+        activation_result = await db.execute(
+            update(SSOConfiguration)
+            .where(
+                SSOConfiguration.id != config.id,
+                SSOConfiguration.is_active.is_(True),
+            )
+            .values(is_active=False)
+        )
+        deactivated_count = activation_result.rowcount or 0
+
     changes: dict[str, object] = {}
     for field, value in update_data.items():
         old_val = getattr(config, field, None)
         if old_val != value:
             changes[field] = {"old": str(old_val) if field != "idp_certificate" else "(masked)", "new": str(value) if field != "idp_certificate" else "(masked)"}
             setattr(config, field, value)
+    if deactivated_count:
+        changes["deactivated_other_configs"] = deactivated_count
+
+    if update_data.get("is_active") is True:
+        try:
+            # Flush the policy swap before recording its audit event so a
+            # concurrent activation conflict is identified precisely.
+            await db.flush()
+        except IntegrityError as exc:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Another SSO configuration was activated concurrently; retry",
+            ) from exc
 
     client_ip = request.client.host if request.client else None
     await log_identity_event(

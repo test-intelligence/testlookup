@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SSO activation is deterministic
+
+- Activating an SSO configuration now atomically deactivates the previous configuration, while a database partial unique index prevents concurrent requests from leaving multiple active login policies.
+
 ## 2026-08-18 — SSO enforces and reports certificate validity
 
 - SSO configuration now rejects expired and not-yet-valid IdP certificates, and “Test Connection” returns the certificate expiration timestamp promised by its API contract.
