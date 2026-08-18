@@ -21,15 +21,23 @@ def _user():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("path", "value", "expected"),
+    ("path", "value", "expected_refs"),
     [
-        ("groups", [{"value": "id-1", "display": "Admins"}, {"value": "QA"}], ["Admins", "QA"]),
-        (None, {"groups": [{"display": "Developers"}]}, ["Developers"]),
+        (
+            "groups",
+            [{"value": "id-1", "display": "Admins"}, {"value": "QA"}],
+            [{"value": "id-1", "display": "Admins"}, {"value": "QA"}],
+        ),
+        (
+            None,
+            {"groups": [{"display": "Developers"}]},
+            [{"value": "Developers", "display": "Developers"}],
+        ),
         ("groups", [], []),
     ],
 )
 async def test_patch_group_replace_reaches_role_and_identity_sync(
-    monkeypatch, path, value, expected
+    monkeypatch, path, value, expected_refs
 ):
     from app.models.schemas import SCIMPatchOp, SCIMPatchRequest
     from app.routers import scim as router
@@ -46,7 +54,7 @@ async def test_patch_group_replace_reaches_role_and_identity_sync(
     await router.scim_patch(uuid.uuid4(), payload, request, token, db)
 
     assert update.await_args.kwargs["groups"] is None
-    assert update.await_args.kwargs["group_operations"] == [("replace", expected)]
+    assert update.await_args.kwargs["group_operations"] == [("replace", expected_refs)]
 
 
 @pytest.mark.asyncio

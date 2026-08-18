@@ -53,7 +53,11 @@ async def test_group_deltas_apply_in_order_and_recalculate_role(monkeypatch):
         ],
     )
 
-    assert fed.external_groups == ["QA", "Admins", "Release"]
+    assert fed.external_groups == [
+        {"value": "QA"},
+        {"value": "Admins"},
+        {"value": "Release"},
+    ]
     assert user.role == "Release"
     assert db.execute.await_count == 3
 
@@ -100,7 +104,60 @@ async def test_router_preserves_ordered_add_remove_and_remove_all(monkeypatch):
     await router.scim_patch(uuid.uuid4(), payload, request, token, AsyncMock())
 
     assert update.await_args.kwargs["group_operations"] == [
-        ("add", ["Admins"]),
-        ("remove", ["QA"]),
+        ("add", [{"value": "Admins", "display": "Admins"}]),
+        ("remove", [{"value": "QA"}]),
         ("replace", []),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("removed", ["group-admin-id", "Administrators"])
+async def test_filtered_removal_matches_stable_value_or_display(monkeypatch, removed):
+    from app.services import scim_service
+
+    config_id = uuid.uuid4()
+    user = _user()
+    fed = SimpleNamespace(
+        external_groups=[
+            {"value": "group-admin-id", "display": "Administrators"},
+            {"value": "group-qa-id", "display": "QA"},
+        ]
+    )
+    config = SimpleNamespace(role_mapping={}, default_role="VIEWER")
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=[_result(user), _result(fed), _result(config)])
+    monkeypatch.setattr(scim_service, "log_identity_event", AsyncMock())
+
+    await scim_service.scim_update_user(
+        db,
+        user.id,
+        sso_config_id=config_id,
+        group_operations=[("remove", [{"value": removed}])],
+    )
+
+    assert fed.external_groups == [{"value": "group-qa-id", "display": "QA"}]
+
+
+@pytest.mark.asyncio
+async def test_create_preserves_group_value_and_display(monkeypatch):
+    from app.models.schemas import SCIMUserResource
+    from app.routers import scim as router
+
+    user = _user()
+    create = AsyncMock(return_value=user)
+    monkeypatch.setattr(router, "scim_create_user", create)
+    payload = SCIMUserResource(
+        userName="alice",
+        externalId="external-alice",
+        emails=[{"value": "alice@example.com", "primary": True}],
+        groups=[{"value": "group-admin-id", "display": "Administrators"}],
+    )
+    request = SimpleNamespace(client=None, base_url="https://example.test/")
+    token = SimpleNamespace(sso_config_id=uuid.uuid4())
+
+    await router.scim_create(payload, request, token, AsyncMock())
+
+    assert create.await_args.kwargs["groups"] == ["Administrators"]
+    assert create.await_args.kwargs["group_refs"] == [
+        {"value": "group-admin-id", "display": "Administrators"}
     ]

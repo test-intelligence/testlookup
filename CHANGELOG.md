@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM group identity survives synchronization
+
+- Federated SCIM groups now preserve both stable `value` identifiers and display names, while legacy string memberships remain readable; filtered removals can match either representation and role mapping continues to use display-first names.
+
 ## 2026-08-18 — SCIM group deltas are state-aware
 
 - SCIM PATCH now applies ordered group `add` and `remove` operations against stored IdP memberships, including filtered and remove-all forms, so role mappings no longer remain stale after incremental syncs.
