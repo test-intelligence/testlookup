@@ -38,6 +38,21 @@ router = APIRouter(prefix="/api/v1/scim/v2", tags=["SCIM 2.0"])
 token_router = APIRouter(prefix="/api/v1/scim-tokens", tags=["SCIM Tokens"])
 
 
+def _scim_group_names(value: object) -> list[str] | None:
+    """Normalize a SCIM groups array to the names used by role mappings."""
+    if not isinstance(value, list):
+        return None
+    names: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            name = item.get("display") or item.get("value")
+        else:
+            name = item if isinstance(item, str) else None
+        if isinstance(name, str) and name:
+            names.append(name)
+    return names
+
+
 # ── SCIM Bearer Token Authentication ────────────────────────────────────────
 
 
@@ -264,6 +279,8 @@ async def scim_patch(
                     if isinstance(em, dict) and em.get("primary"):
                         email = em.get("value")
                         break
+            elif op.path == "groups":
+                groups = _scim_group_names(op.value)
             elif op.path is None and isinstance(op.value, dict):
                 # Bulk replace
                 if "userName" in op.value:
@@ -272,6 +289,8 @@ async def scim_patch(
                     active = bool(op.value["active"])
                 if "displayName" in op.value:
                     display_name = op.value["displayName"]
+                if "groups" in op.value:
+                    groups = _scim_group_names(op.value["groups"])
 
     try:
         user = await scim_update_user(
