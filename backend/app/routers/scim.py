@@ -19,6 +19,8 @@ from app.models.schemas import (
     SCIM_DISPLAY_NAME_MAX_LENGTH,
     SCIM_EMAILS_MAX_ITEMS,
     SCIM_EXTERNAL_ID_MAX_LENGTH,
+    SCIM_GROUP_DISPLAY_MAX_LENGTH,
+    SCIM_GROUP_VALUE_MAX_LENGTH,
     SCIM_GROUPS_MAX_ITEMS,
     SCIM_USER_SCHEMA,
     SCIM_USERNAME_MAX_LENGTH,
@@ -78,7 +80,7 @@ def _scim_group_refs(value: object) -> list[dict[str, str]] | None:
     """Preserve SCIM group identity and display data in a canonical form."""
     if not isinstance(value, list) or len(value) > SCIM_GROUPS_MAX_ITEMS:
         return None
-    refs: list[dict[str, str]] = []
+    refs_by_value: dict[str, dict[str, str]] = {}
     for item in value:
         if isinstance(item, dict):
             group_value = item.get("value")
@@ -93,11 +95,24 @@ def _scim_group_refs(value: object) -> list[dict[str, str]] | None:
             group_value = display
         if not isinstance(group_value, str) or not group_value:
             return None
+        if len(group_value) > SCIM_GROUP_VALUE_MAX_LENGTH:
+            return None
+        if isinstance(display, str) and len(display) > SCIM_GROUP_DISPLAY_MAX_LENGTH:
+            return None
         ref = {"value": group_value}
         if isinstance(display, str) and display:
             ref["display"] = display
-        refs.append(ref)
-    return refs
+        existing = refs_by_value.get(group_value)
+        if existing is not None:
+            existing_display = existing.get("display")
+            new_display = ref.get("display")
+            if existing_display and new_display and existing_display != new_display:
+                return None
+            if not existing_display and new_display:
+                existing["display"] = new_display
+            continue
+        refs_by_value[group_value] = ref
+    return list(refs_by_value.values())
 
 
 def _scim_patch_email(value: object) -> str | None:
@@ -305,7 +320,9 @@ async def scim_create(
         parts = [payload.name.givenName, payload.name.familyName]
         display_name = " ".join(p for p in parts if p) or None
 
-    group_refs = _scim_group_refs(payload.groups) or []
+    group_refs = _scim_group_refs(payload.groups)
+    if group_refs is None:
+        raise HTTPException(status_code=400, detail="groups contain conflicting or invalid values")
     groups = _scim_group_names(group_refs)
     client_ip = request.client.host if request.client else None
 
@@ -372,7 +389,9 @@ async def scim_replace(
         parts = [payload.name.givenName, payload.name.familyName]
         display_name = " ".join(p for p in parts if p) or None
 
-    group_refs = _scim_group_refs(payload.groups) or []
+    group_refs = _scim_group_refs(payload.groups)
+    if group_refs is None:
+        raise HTTPException(status_code=400, detail="groups contain conflicting or invalid values")
     groups = _scim_group_names(group_refs)
     client_ip = request.client.host if request.client else None
 
