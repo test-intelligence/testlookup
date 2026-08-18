@@ -940,17 +940,14 @@ async def get_integration_health(
     """Return health status for all tracked integration providers."""
     from sqlalchemy import select as sa_select
     from app.models.postgres import IntegrationHealthCheck
-    try:
-        result = await db.execute(sa_select(IntegrationHealthCheck))
-        return [
-            {
-                "provider": h.provider,
-                "status": h.status,
-                "last_checked_at": h.last_checked_at.isoformat() if h.last_checked_at else None,
-                "message": h.message,
-                "response_ms": h.response_ms,
-            }
-            for h in result.scalars().all()
-        ]
-    except Exception:
-        return []
+    result = await db.execute(sa_select(IntegrationHealthCheck))
+    return [
+        {
+            "provider": h.provider,
+            "status": h.status,
+            "last_checked_at": h.last_checked_at.isoformat() if h.last_checked_at else None,
+            "message": h.message,
+            "response_ms": h.response_ms,
+        }
+        for h in result.scalars().all()
+    ]
