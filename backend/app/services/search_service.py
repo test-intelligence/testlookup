@@ -38,7 +38,6 @@ def build_search_filters(
         ),
     ).correlate(TestCase).exists()
     filters = [
-        Project.is_active.is_(True),
         or_(
             TestCase.test_name.ilike(pattern, escape="\\"),
             TestCase.suite_name.ilike(pattern, escape="\\"),
@@ -111,7 +110,7 @@ async def search_test_cases_query(
         )
         .join(TestRun, TestRun.id == TestCase.test_run_id)
         .join(Project, Project.id == TestRun.project_id)
-        .where(*filters)
+        .where(Project.is_active.is_(True), *filters)
         .distinct(*distinct_keys)
         # DISTINCT ON requires the leading ORDER BY columns to match the
         # distinct columns; recency is the tiebreaker we actually want.
@@ -190,7 +189,7 @@ async def search_test_cases_query(
         select(TestRun.project_id, TestCase.test_fingerprint)
         .join(TestRun, TestRun.id == TestCase.test_run_id)
         .join(Project, Project.id == TestRun.project_id)
-        .where(*filters)
+        .where(Project.is_active.is_(True), *filters)
         .distinct()
         .subquery()
     )
