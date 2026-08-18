@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: feature-flag toggles agree across replicas
+
+The live deployment runs multiple backend and worker processes. Each process
+kept its own 30-second feature-flag cache, so deleting the shared Redis entry
+after a committed toggle did not evict stale values held by other replicas.
+
+Redis is now the single shared cache tier for feature-flag decisions. Every
+gate reads the shared cache before falling back to Postgres, making committed
+invalidation immediately visible across API replicas and prefork workers.
+Regression coverage prevents a process-local feature-flag cache from returning.
+
 ### 2026-08-17 — Fix: feature-flag caches invalidate after commit
 
 Feature-flag create, update, and delete operations invalidated the in-process
