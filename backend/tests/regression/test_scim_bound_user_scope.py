@@ -91,7 +91,7 @@ async def test_bound_create_requires_external_id_before_service_call(monkeypatch
 
 @pytest.mark.asyncio
 async def test_patch_maps_scoped_user_denial_to_not_found(monkeypatch):
-    from app.models.schemas import SCIMPatchRequest
+    from app.models.schemas import SCIMPatchOp, SCIMPatchRequest
     from app.routers import scim as router
     from app.services.scim_service import SCIMUserNotFoundError
 
@@ -100,7 +100,9 @@ async def test_patch_maps_scoped_user_denial_to_not_found(monkeypatch):
         "scim_update_user",
         AsyncMock(side_effect=SCIMUserNotFoundError("User not found")),
     )
-    payload = SCIMPatchRequest(Operations=[])
+    payload = SCIMPatchRequest(
+        Operations=[SCIMPatchOp(op="replace", path="active", value=False)]
+    )
     request = SimpleNamespace(client=None)
     token = SimpleNamespace(sso_config_id=uuid.uuid4())
 

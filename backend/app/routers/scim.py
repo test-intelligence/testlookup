@@ -58,12 +58,23 @@ def _scim_group_refs(value: object) -> list[dict[str, str]] | None:
         if (not isinstance(group_value, str) or not group_value) and isinstance(display, str):
             group_value = display
         if not isinstance(group_value, str) or not group_value:
-            continue
+            return None
         ref = {"value": group_value}
         if isinstance(display, str) and display:
             ref["display"] = display
         refs.append(ref)
     return refs
+
+
+def _scim_patch_email(value: object) -> str | None:
+    """Return the primary/first email from a valid SCIM email array."""
+    if not isinstance(value, list) or not value:
+        return None
+    candidates = [item for item in value if isinstance(item, dict)]
+    primary = next((item for item in candidates if item.get("primary")), None)
+    chosen = primary or (candidates[0] if candidates else None)
+    email = chosen.get("value") if chosen else None
+    return email if isinstance(email, str) and email else None
 
 
 def _scim_group_names(refs: list[dict[str, str]]) -> list[str]:
@@ -310,20 +321,28 @@ async def scim_patch(
     groups = None
     group_operations: list[tuple[str, list[dict[str, str]] | None]] = []
 
+    if not payload.Operations:
+        raise HTTPException(status_code=400, detail="At least one PATCH operation is required")
+
     for op in payload.Operations:
         op_type = op.op.lower()
         if op_type == "replace":
-            if op.path == "userName" and isinstance(op.value, str):
+            if op.path == "userName":
+                if not isinstance(op.value, str) or not op.value:
+                    raise HTTPException(status_code=400, detail="userName must be a non-empty string")
                 username = op.value
             elif op.path == "active":
-                active = bool(op.value)
-            elif op.path == "displayName" and isinstance(op.value, str):
+                if not isinstance(op.value, bool):
+                    raise HTTPException(status_code=400, detail="active must be a boolean")
+                active = op.value
+            elif op.path == "displayName":
+                if not isinstance(op.value, str):
+                    raise HTTPException(status_code=400, detail="displayName must be a string")
                 display_name = op.value
-            elif op.path == "emails" and isinstance(op.value, list):
-                for em in op.value:
-                    if isinstance(em, dict) and em.get("primary"):
-                        email = em.get("value")
-                        break
+            elif op.path == "emails":
+                email = _scim_patch_email(op.value)
+                if email is None:
+                    raise HTTPException(status_code=400, detail="emails must contain a valid value")
             elif op.path == "groups":
                 refs = _scim_group_refs(op.value)
                 if refs is None:
@@ -331,17 +350,36 @@ async def scim_patch(
                 group_operations.append(("replace", refs))
             elif op.path is None and isinstance(op.value, dict):
                 # Bulk replace
+                supported = {"userName", "active", "displayName", "emails", "groups"}
+                unknown = set(op.value) - supported
+                if unknown:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unsupported PATCH attribute: {sorted(unknown)[0]}",
+                    )
                 if "userName" in op.value:
+                    if not isinstance(op.value["userName"], str) or not op.value["userName"]:
+                        raise HTTPException(status_code=400, detail="userName must be a non-empty string")
                     username = op.value["userName"]
                 if "active" in op.value:
-                    active = bool(op.value["active"])
+                    if not isinstance(op.value["active"], bool):
+                        raise HTTPException(status_code=400, detail="active must be a boolean")
+                    active = op.value["active"]
                 if "displayName" in op.value:
+                    if not isinstance(op.value["displayName"], str):
+                        raise HTTPException(status_code=400, detail="displayName must be a string")
                     display_name = op.value["displayName"]
+                if "emails" in op.value:
+                    email = _scim_patch_email(op.value["emails"])
+                    if email is None:
+                        raise HTTPException(status_code=400, detail="emails must contain a valid value")
                 if "groups" in op.value:
                     refs = _scim_group_refs(op.value["groups"])
                     if refs is None:
                         raise HTTPException(status_code=400, detail="groups must be an array")
                     group_operations.append(("replace", refs))
+            else:
+                raise HTTPException(status_code=400, detail=f"Unsupported PATCH path: {op.path}")
         elif op_type == "add" and op.path == "groups":
             refs = _scim_group_refs(op.value)
             if refs is None:
@@ -359,6 +397,10 @@ async def scim_patch(
                     if refs is None:
                         raise HTTPException(status_code=400, detail="groups must be an array")
                     group_operations.append(("remove", refs))
+            else:
+                raise HTTPException(status_code=400, detail=f"Unsupported PATCH path: {op.path}")
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported PATCH operation: {op.op}")
 
     try:
         user = await scim_update_user(

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM PATCH rejects invalid no-ops
+
+- Unsupported PATCH operations, attribute paths, malformed bulk values, invalid booleans/emails/groups, and empty operation lists now return HTTP 400 before any mutation instead of being acknowledged as successful no-ops.
+
 ## 2026-08-18 — SCIM pagination reports actual page size
 
 - SCIM ListResponse `itemsPerPage` now equals the number of resources returned, including zero for an empty page, rather than echoing the requested maximum count.
