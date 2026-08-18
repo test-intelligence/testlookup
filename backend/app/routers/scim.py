@@ -15,10 +15,11 @@ from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, SCIMToken, User, UserRole
 from app.models.schemas import (
     SCIMListResponse,
-    SCIMPatchRequest,
+    SCIMPatchRequestPayload,
     SCIMTokenCreate,
     SCIMTokenCreatedResponse,
     SCIMTokenResponse,
+    SCIMUserRequest,
     SCIMUserResource,
 )
 from app.services.scim_service import (
@@ -198,7 +199,7 @@ async def scim_get(
 
 @router.post("/Users", status_code=201)
 async def scim_create(
-    payload: SCIMUserResource,
+    payload: SCIMUserRequest,
     request: Request,
     scim_token: SCIMToken = Depends(verify_scim_bearer),
     db: AsyncSession = Depends(get_db),
@@ -264,7 +265,7 @@ async def scim_create(
 @router.put("/Users/{user_id}")
 async def scim_replace(
     user_id: uuid.UUID,
-    payload: SCIMUserResource,
+    payload: SCIMUserRequest,
     request: Request,
     scim_token: SCIMToken = Depends(verify_scim_bearer),
     db: AsyncSession = Depends(get_db),
@@ -325,7 +326,7 @@ async def scim_replace(
 @router.patch("/Users/{user_id}")
 async def scim_patch(
     user_id: uuid.UUID,
-    payload: SCIMPatchRequest,
+    payload: SCIMPatchRequestPayload,
     request: Request,
     scim_token: SCIMToken = Depends(verify_scim_bearer),
     db: AsyncSession = Depends(get_db),
