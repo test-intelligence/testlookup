@@ -607,8 +607,8 @@ async def _load_integrations_config(db: AsyncSession) -> dict:
     splunk_token = await read_secret(db, _INTEGRATIONS_KEY, "splunk_api_token")
     ocp_token = await read_secret(db, _INTEGRATIONS_KEY, "ocp_sa_token")
     github_token = await read_secret(db, _INTEGRATIONS_KEY, "github_token")
-    slack_webhook = await read_secret(db, _INTEGRATIONS_KEY, "slack_webhook_url")
-    teams_webhook = await read_secret(db, _INTEGRATIONS_KEY, "teams_webhook_url")
+    from app.services.integration_config_service import resolve_global_notification_webhooks
+    notification_cfg = await resolve_global_notification_webhooks(db, overrides=overrides)
     return {
         "jira_enabled": overrides.get("jira_enabled", settings.JIRA_ENABLED),
         "jira_domain": overrides.get("jira_domain", settings.JIRA_DOMAIN),
@@ -622,11 +622,11 @@ async def _load_integrations_config(db: AsyncSession) -> dict:
         "ocp_api_url": overrides.get("ocp_api_url", settings.OCP_API_URL),
         "ocp_sa_token": ocp_token or overrides.get("ocp_sa_token") or settings.OCP_SA_TOKEN,
         "ocp_default_namespace": overrides.get("ocp_default_namespace", settings.OCP_DEFAULT_NAMESPACE),
-        "slack_enabled": overrides.get("slack_enabled", settings.SLACK_ENABLED),
-        "slack_webhook_url": slack_webhook or overrides.get("slack_webhook_url") or settings.SLACK_WEBHOOK_URL,
+        "slack_enabled": notification_cfg["slack_enabled"],
+        "slack_webhook_url": notification_cfg["slack_webhook_url"],
         "slack_default_channel": overrides.get("slack_default_channel", settings.SLACK_DEFAULT_CHANNEL),
-        "teams_enabled": overrides.get("teams_enabled", settings.TEAMS_ENABLED),
-        "teams_webhook_url": teams_webhook or overrides.get("teams_webhook_url") or settings.TEAMS_WEBHOOK_URL,
+        "teams_enabled": notification_cfg["teams_enabled"],
+        "teams_webhook_url": notification_cfg["teams_webhook_url"],
         "github_repo": overrides.get("github_repo", settings.GITHUB_REPO),
         "github_token": github_token or overrides.get("github_token") or settings.GITHUB_TOKEN,
     }

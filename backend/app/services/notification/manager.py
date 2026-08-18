@@ -85,6 +85,7 @@ async def _dispatch_to_channel(
     event_type: NotificationEventType,
     metadata: dict,
     smtp_cfg: Optional[dict] = None,
+    global_webhooks: Optional[dict] = None,
 ) -> tuple[str, Optional[str]]:
     """
     Send one notification through the channel specified by `pref`.
@@ -121,7 +122,7 @@ async def _dispatch_to_channel(
             )
 
         elif pref.channel == NotificationChannel.SLACK:
-            webhook_url = pref.slack_webhook_url or settings.SLACK_WEBHOOK_URL
+            webhook_url = pref.slack_webhook_url or (global_webhooks or {}).get("slack_webhook_url") or settings.SLACK_WEBHOOK_URL
             if not webhook_url:
                 return "failed", "No Slack webhook URL configured"
             await slack_service.send_notification(
@@ -133,7 +134,7 @@ async def _dispatch_to_channel(
             )
 
         elif pref.channel == NotificationChannel.TEAMS:
-            webhook_url = pref.teams_webhook_url or settings.TEAMS_WEBHOOK_URL
+            webhook_url = pref.teams_webhook_url or (global_webhooks or {}).get("teams_webhook_url") or settings.TEAMS_WEBHOOK_URL
             if not webhook_url:
                 return "failed", "No Teams webhook URL configured"
             await teams_service.send_notification(
@@ -221,12 +222,19 @@ async def _load_and_notify(
         if any(pref.channel == NotificationChannel.EMAIL for (pref, *_rest) in plans):
             smtp_cfg = await email_service._get_smtp_cfg()
 
+        global_webhooks = None
+        if any(pref.channel in (NotificationChannel.SLACK, NotificationChannel.TEAMS) for (pref, *_rest) in plans):
+            from app.services.integration_config_service import resolve_global_notification_webhooks
+            global_webhooks = await resolve_global_notification_webhooks(db)
+
         # Phase 2 — fan out all deliveries in parallel. A slow webhook no
         # longer blocks the next recipient. No coroutine here touches a DB
         # session, so they cannot race on a shared connection.
         results = await asyncio.gather(
             *(
-                _dispatch_to_channel(pref, user_email, title, body, event, metadata, smtp_cfg)
+                _dispatch_to_channel(
+                    pref, user_email, title, body, event, metadata, smtp_cfg, global_webhooks,
+                )
                 for (pref, user_email, event, title, body) in plans
             ),
             return_exceptions=False,

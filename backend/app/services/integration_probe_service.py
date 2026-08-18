@@ -138,11 +138,13 @@ async def probe_ocp() -> ProbeResult:
         return ProbeResult("ocp", "down", 0, str(exc)[:300])
 
 
-async def probe_slack() -> ProbeResult:
+async def probe_slack(config: dict | None = None) -> ProbeResult:
     """Probe Slack: verify webhook or bot token connectivity."""
     from app.core.config import settings
 
-    if not settings.SLACK_ENABLED:
+    enabled = config.get("slack_enabled") if config is not None else settings.SLACK_ENABLED
+    webhook_url = config.get("slack_webhook_url") if config is not None else settings.SLACK_WEBHOOK_URL
+    if not enabled:
         return ProbeResult("slack", "skipped", message="SLACK_ENABLED=false")
 
 
@@ -160,18 +162,20 @@ async def probe_slack() -> ProbeResult:
             if data.get("ok"):
                 return ProbeResult("slack", "healthy", ms, f"Team: {data.get('team', 'OK')}", True, True)
             return ProbeResult("slack", "auth_error", ms, data.get("error", "unknown"), False)
-        elif settings.SLACK_WEBHOOK_URL:
+        elif webhook_url:
             return ProbeResult("slack", "healthy", 0, "Webhook URL configured (no live test for webhooks)", None, None)
         return ProbeResult("slack", "down", 0, "No bot token or webhook URL configured")
     except Exception as exc:
         return ProbeResult("slack", "down", 0, str(exc)[:300])
 
 
-async def probe_teams() -> ProbeResult:
+async def probe_teams(config: dict | None = None) -> ProbeResult:
     """Probe Microsoft Teams: verify webhook URL is configured."""
     from app.core.config import settings
 
-    if not settings.TEAMS_ENABLED or not settings.TEAMS_WEBHOOK_URL:
+    enabled = config.get("teams_enabled") if config is not None else settings.TEAMS_ENABLED
+    webhook_url = config.get("teams_webhook_url") if config is not None else settings.TEAMS_WEBHOOK_URL
+    if not enabled or not webhook_url:
         return ProbeResult("teams", "skipped", message="TEAMS_ENABLED=false or no webhook URL")
     # Teams webhooks can't be tested without sending a message; just verify config
     return ProbeResult("teams", "healthy", 0, "Webhook URL configured", None, None)
@@ -263,8 +267,18 @@ async def run_all_probes() -> list[ProbeResult]:
     """Run all integration probes concurrently."""
     import asyncio
 
+    notification_cfg = None
+    if "slack" in ALL_PROBES or "teams" in ALL_PROBES:
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.integration_config_service import resolve_global_notification_webhooks
+        async with AsyncSessionLocal() as db:
+            notification_cfg = await resolve_global_notification_webhooks(db)
+
     results = await asyncio.gather(
-        *[fn() for fn in ALL_PROBES.values()],
+        *[
+            fn(notification_cfg) if provider in ("slack", "teams") else fn()
+            for provider, fn in ALL_PROBES.items()
+        ],
         return_exceptions=True,
     )
     out: list[ProbeResult] = []
