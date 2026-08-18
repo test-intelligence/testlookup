@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.deps import require_role
 from app.db.postgres import get_db
-from app.models.postgres import SCIMToken, User, UserRole
+from app.models.postgres import IdentityEventType, SCIMToken, User, UserRole
 from app.models.schemas import (
     SCIMListResponse,
     SCIMPatchRequest,
@@ -27,6 +27,7 @@ from app.services.scim_service import (
     user_to_scim_resource,
     validate_scim_token,
 )
+from app.services.sso_service import log_identity_event
 
 logger = logging.getLogger(__name__)
 
@@ -325,6 +326,7 @@ async def list_scim_tokens(
 @token_router.post("", response_model=SCIMTokenCreatedResponse, status_code=201)
 async def create_token(
     payload: SCIMTokenCreate,
+    request: Request,
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -335,6 +337,20 @@ async def create_token(
         created_by_id=current_user.id,
         sso_config_id=payload.sso_config_id,
         expires_days=payload.expires_days,
+    )
+    await log_identity_event(
+        db,
+        IdentityEventType.SCIM_TOKEN_CREATED,
+        sso_config_id=token.sso_config_id,
+        actor_id=current_user.id,
+        actor_name=current_user.username,
+        detail={
+            "token_id": str(token.id),
+            "name": token.name,
+            "token_hint": token.token_hint,
+            "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+        },
+        ip_address=request.client.host if request.client else None,
     )
     await db.commit()
     await db.refresh(token)
@@ -355,6 +371,7 @@ async def create_token(
 @token_router.delete("/{token_id}", status_code=204)
 async def revoke_scim_token(
     token_id: uuid.UUID,
+    request: Request,
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -367,5 +384,18 @@ async def revoke_scim_token(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SCIM token not found")
 
     token.is_active = False
+    await log_identity_event(
+        db,
+        IdentityEventType.SCIM_TOKEN_REVOKED,
+        sso_config_id=token.sso_config_id,
+        actor_id=current_user.id,
+        actor_name=current_user.username,
+        detail={
+            "token_id": str(token.id),
+            "name": token.name,
+            "token_hint": token.token_hint,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
     await db.commit()
     return None
