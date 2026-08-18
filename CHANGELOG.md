@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM keeps bound identity emails synchronized
+
+- Email-only SCIM updates now synchronize canonical email values into the bound federated identity instead of leaving stale directory metadata.
+
 ## 2026-08-18 — SCIM PATCH removes optional names
 
 - PATCH remove operations now clear `displayName`, `name`, and `name.formatted` explicitly across the local user and bound directory identity instead of rejecting valid optional-field removal.

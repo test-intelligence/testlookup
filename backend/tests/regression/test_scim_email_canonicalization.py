@@ -112,6 +112,31 @@ async def test_update_rejects_case_insensitive_collision_without_mutating(monkey
 
 
 @pytest.mark.asyncio
+async def test_bound_email_only_update_syncs_federated_identity(monkeypatch):
+    from app.services import scim_service
+
+    user = _user("old@example.test")
+    config_id = uuid.uuid4()
+    identity = SimpleNamespace(external_email="old@example.test")
+    db = MagicMock()
+    db.execute = AsyncMock(
+        side_effect=[_result(user), _result(None), _result(identity)]
+    )
+    monkeypatch.setattr(scim_service, "log_identity_event", AsyncMock())
+
+    await scim_service.scim_update_user(
+        db,
+        user.id,
+        email=" New@Example.Test ",
+        sso_config_id=config_id,
+    )
+
+    assert user.email == "new@example.test"
+    assert identity.external_email == "new@example.test"
+    assert db.execute.await_count == 3
+
+
+@pytest.mark.asyncio
 async def test_email_filter_uses_case_insensitive_identity_comparison():
     from app.services.scim_service import scim_list_users
 
