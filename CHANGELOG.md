@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-17 — Fix: integration settings reload encrypted token authority
+
+Integration updates encrypted Jira, Splunk, OpenShift, and GitHub tokens into
+`secret_refs`, but the shared settings loader only checked stripped
+`app_settings` values and environment fallbacks. Saved tokens could therefore
+appear set in the update response and disappear on the next GET. The loader now
+resolves encrypted database secrets first, then legacy inline and environment
+fallbacks.
+
 ### 2026-08-17 — Fix: SMTP password keep, replace, and clear semantics
 
 Saving SMTP settings without entering a new password preserved the stored

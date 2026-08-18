@@ -595,21 +595,30 @@ _INTEGRATIONS_KEY = "integrations_config"
 
 async def _load_integrations_config(db: AsyncSession) -> dict:
     from sqlalchemy import select
+    from app.services.secret_service import read_secret
+
     result = await db.execute(select(AppSetting).where(AppSetting.key == _INTEGRATIONS_KEY))
     row = result.scalar_one_or_none()
     overrides = dict(row.value) if row and row.value else {}
+    # Updates strip these values from app_settings and persist them encrypted in
+    # secret_refs. Read that authority before falling back to legacy inline
+    # values or environment configuration.
+    jira_token = await read_secret(db, _INTEGRATIONS_KEY, "jira_api_token")
+    splunk_token = await read_secret(db, _INTEGRATIONS_KEY, "splunk_api_token")
+    ocp_token = await read_secret(db, _INTEGRATIONS_KEY, "ocp_sa_token")
+    github_token = await read_secret(db, _INTEGRATIONS_KEY, "github_token")
     return {
         "jira_enabled": overrides.get("jira_enabled", settings.JIRA_ENABLED),
         "jira_domain": overrides.get("jira_domain", settings.JIRA_DOMAIN),
         "jira_email": overrides.get("jira_email", settings.JIRA_EMAIL),
-        "jira_api_token": overrides.get("jira_api_token") or settings.JIRA_API_TOKEN,
+        "jira_api_token": jira_token or overrides.get("jira_api_token") or settings.JIRA_API_TOKEN,
         "jira_default_project_key": overrides.get("jira_default_project_key", settings.JIRA_DEFAULT_PROJECT_KEY),
         "splunk_enabled": overrides.get("splunk_enabled", settings.SPLUNK_ENABLED),
         "splunk_base_url": overrides.get("splunk_base_url", settings.SPLUNK_BASE_URL),
-        "splunk_api_token": overrides.get("splunk_api_token") or settings.SPLUNK_API_TOKEN,
+        "splunk_api_token": splunk_token or overrides.get("splunk_api_token") or settings.SPLUNK_API_TOKEN,
         "ocp_enabled": overrides.get("ocp_enabled", settings.OCP_ENABLED),
         "ocp_api_url": overrides.get("ocp_api_url", settings.OCP_API_URL),
-        "ocp_sa_token": overrides.get("ocp_sa_token") or settings.OCP_SA_TOKEN,
+        "ocp_sa_token": ocp_token or overrides.get("ocp_sa_token") or settings.OCP_SA_TOKEN,
         "ocp_default_namespace": overrides.get("ocp_default_namespace", settings.OCP_DEFAULT_NAMESPACE),
         "slack_enabled": overrides.get("slack_enabled", settings.SLACK_ENABLED),
         "slack_webhook_url": overrides.get("slack_webhook_url", settings.SLACK_WEBHOOK_URL),
@@ -617,7 +626,7 @@ async def _load_integrations_config(db: AsyncSession) -> dict:
         "teams_enabled": overrides.get("teams_enabled", settings.TEAMS_ENABLED),
         "teams_webhook_url": overrides.get("teams_webhook_url", settings.TEAMS_WEBHOOK_URL),
         "github_repo": overrides.get("github_repo", settings.GITHUB_REPO),
-        "github_token": overrides.get("github_token") or settings.GITHUB_TOKEN,
+        "github_token": github_token or overrides.get("github_token") or settings.GITHUB_TOKEN,
     }
 
 
