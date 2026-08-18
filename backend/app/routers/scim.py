@@ -126,7 +126,8 @@ def _scim_patch_email(value: object) -> str | None:
     primary = [item for item in candidates if item.primary]
     if len(primary) > 1:
         return None
-    return str((primary[0] if primary else candidates[0]).value)
+    selected = str((primary[0] if primary else candidates[0]).value).strip().casefold()
+    return selected or None
 
 
 def _scim_patch_string(

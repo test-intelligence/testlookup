@@ -33,6 +33,14 @@ class SCIMUserNotFoundError(ValueError):
     """Raised when a SCIM user does not exist within the token's directory scope."""
 
 
+def _canonical_scim_email(email: str) -> str:
+    """Canonicalize the application email identity used by SCIM."""
+    canonical = email.strip().casefold()
+    if not canonical:
+        raise ValueError("Email must be a non-empty value")
+    return canonical
+
+
 def _normalize_group_refs(groups: list | None) -> list[dict[str, str]]:
     """Normalize legacy string groups and canonical SCIM group references."""
     refs_by_value: dict[str, dict[str, str]] = {}
@@ -157,8 +165,9 @@ async def scim_create_user(
     ip_address: str | None = None,
 ) -> User:
     """Create a new user via SCIM provisioning."""
+    email = _canonical_scim_email(email)
     # Check for existing user by email
-    result = await db.execute(select(User).where(User.email == email))
+    result = await db.execute(select(User).where(func.lower(User.email) == email))
     existing = result.scalar_one_or_none()
     if existing:
         raise ValueError(f"User with email '{email}' already exists")
@@ -280,8 +289,12 @@ async def scim_update_user(
         changes["username"] = {"old": user.username, "new": username}
         user.username = username
 
+    if email is not None:
+        email = _canonical_scim_email(email)
     if email is not None and email != user.email:
-        dup = await db.execute(select(User).where(User.email == email, User.id != user_id))
+        dup = await db.execute(
+            select(User).where(func.lower(User.email) == email, User.id != user_id)
+        )
         if dup.scalar_one_or_none():
             raise ValueError(f"Email '{email}' is already taken")
         changes["email"] = {"old": user.email, "new": email}
@@ -396,7 +409,7 @@ async def scim_list_users(
         if attribute == "username":
             query = query.where(User.username == value)
         elif attribute in {"email", "emails.value"}:
-            query = query.where(User.email == value)
+            query = query.where(func.lower(User.email) == value.casefold())
         else:
             fed_result = await db.execute(
                 select(FederatedIdentity.user_id).where(
