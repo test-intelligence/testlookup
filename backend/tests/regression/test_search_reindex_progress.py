@@ -2,7 +2,7 @@
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -101,3 +101,39 @@ def test_missing_cursor_row_restarts_instead_of_filtering_everything():
     sql = str(_after_incremental_cursor(uuid.uuid4())).lower()
 
     assert "coalesce" in sql
+
+
+@pytest.mark.asyncio
+async def test_full_reindex_orders_rows_before_persisting_the_last_cursor(monkeypatch):
+    from app.services import semantic_search
+
+    rows = _rows(2)
+    captured = {}
+
+    class _Result:
+        def all(self):
+            return rows
+
+    class _DB:
+        async def execute(self, statement):
+            captured["statement"] = statement
+            return _Result()
+
+    monkeypatch.setattr(
+        semantic_search,
+        "_get_or_create_collection",
+        AsyncMock(return_value=MagicMock()),
+    )
+    monkeypatch.setattr(
+        semantic_search,
+        "_upsert_rows_to_collection",
+        AsyncMock(return_value=2),
+    )
+    update_cursor = MagicMock()
+    monkeypatch.setattr(semantic_search, "_update_cursor", update_cursor)
+
+    assert await semantic_search.index_test_cases(_DB()) == 2
+
+    sql = str(captured["statement"])
+    assert "ORDER BY test_cases.created_at ASC, test_cases.id ASC" in sql
+    update_cursor.assert_called_once_with(rows, None)
