@@ -404,7 +404,7 @@ async def scim_list_users(
 
     # Paginate (SCIM uses 1-based indexing)
     offset = max(0, start_index - 1)
-    query = query.order_by(User.created_at).offset(offset).limit(count)
+    query = query.order_by(User.created_at, User.id).offset(offset).limit(count)
     result = await db.execute(query)
     users = list(result.scalars().all())
 
