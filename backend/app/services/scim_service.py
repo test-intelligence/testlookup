@@ -77,6 +77,19 @@ async def validate_scim_token(db: AsyncSession, bearer_token: str) -> Optional[S
     if token.expires_at and token.expires_at < datetime.now(timezone.utc):
         return None
 
+    # A token bound to an IdP is delegated authority from that configuration.
+    # Replacing or disabling the IdP must therefore revoke that authority even
+    # when the token row itself has not been manually revoked. Unbound tokens
+    # remain intentionally system-wide.
+    if token.sso_config_id is not None:
+        config_result = await db.execute(
+            select(SSOConfiguration.is_active).where(
+                SSOConfiguration.id == token.sso_config_id
+            )
+        )
+        if config_result.scalar_one_or_none() is not True:
+            return None
+
     # Update last_used_at
     token.last_used_at = datetime.now(timezone.utc)
     return token
