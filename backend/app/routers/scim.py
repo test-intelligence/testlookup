@@ -271,6 +271,11 @@ async def scim_replace(
     db: AsyncSession = Depends(get_db),
 ):
     """SCIM 2.0: Replace (full update) a user."""
+    if scim_token.sso_config_id is not None and not payload.externalId:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="externalId is required for an IdP-bound SCIM token",
+        )
     email = None
     for em in payload.emails:
         if em.primary:
@@ -295,6 +300,7 @@ async def scim_replace(
             username=payload.userName,
             email=email,
             display_name=display_name,
+            external_id=payload.externalId,
             active=payload.active,
             groups=groups,
             group_refs=group_refs,
@@ -337,6 +343,7 @@ async def scim_patch(
     username = None
     email = None
     display_name = None
+    external_id = None
     active = None
     groups = None
     group_operations: list[tuple[str, list[dict[str, str]] | None]] = []
@@ -351,6 +358,10 @@ async def scim_patch(
                 if not isinstance(op.value, str) or not op.value:
                     raise HTTPException(status_code=400, detail="userName must be a non-empty string")
                 username = op.value
+            elif op.path == "externalId":
+                if not isinstance(op.value, str) or not op.value:
+                    raise HTTPException(status_code=400, detail="externalId must be a non-empty string")
+                external_id = op.value
             elif op.path == "active":
                 if not isinstance(op.value, bool):
                     raise HTTPException(status_code=400, detail="active must be a boolean")
@@ -370,7 +381,7 @@ async def scim_patch(
                 group_operations.append(("replace", refs))
             elif op.path is None and isinstance(op.value, dict):
                 # Bulk replace
-                supported = {"userName", "active", "displayName", "emails", "groups"}
+                supported = {"userName", "externalId", "active", "displayName", "emails", "groups"}
                 unknown = set(op.value) - supported
                 if unknown:
                     raise HTTPException(
@@ -381,6 +392,13 @@ async def scim_patch(
                     if not isinstance(op.value["userName"], str) or not op.value["userName"]:
                         raise HTTPException(status_code=400, detail="userName must be a non-empty string")
                     username = op.value["userName"]
+                if "externalId" in op.value:
+                    if not isinstance(op.value["externalId"], str) or not op.value["externalId"]:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="externalId must be a non-empty string",
+                        )
+                    external_id = op.value["externalId"]
                 if "active" in op.value:
                     if not isinstance(op.value["active"], bool):
                         raise HTTPException(status_code=400, detail="active must be a boolean")
@@ -422,6 +440,12 @@ async def scim_patch(
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported PATCH operation: {op.op}")
 
+    if external_id is not None and scim_token.sso_config_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="externalId updates require an IdP-bound SCIM token",
+        )
+
     try:
         user = await scim_update_user(
             db=db,
@@ -429,6 +453,7 @@ async def scim_patch(
             username=username,
             email=email,
             display_name=display_name,
+            external_id=external_id,
             active=active,
             groups=groups,
             group_operations=group_operations or None,

@@ -213,6 +213,7 @@ async def scim_update_user(
     username: str | None = None,
     email: str | None = None,
     display_name: str | None = None,
+    external_id: str | None = None,
     active: bool | None = None,
     groups: list[str] | None = None,
     group_refs: list[dict[str, str]] | None = None,
@@ -299,8 +300,8 @@ async def scim_update_user(
                 changes["role"] = {"old": str(user.role), "new": str(new_role)}
                 user.role = new_role
 
-    # Update federated identity groups
-    if sso_config_id and groups is not None:
+    # Update federated identity attributes owned by this directory.
+    if sso_config_id and (groups is not None or external_id is not None):
         if fed is None:
             fed_result = await db.execute(
                 select(FederatedIdentity).where(
@@ -310,7 +311,11 @@ async def scim_update_user(
             )
             fed = fed_result.scalar_one_or_none()
         if fed:
-            fed.external_groups = group_refs if group_refs is not None else groups
+            if external_id is not None and external_id != fed.external_id:
+                changes["external_id"] = {"old": fed.external_id, "new": external_id}
+                fed.external_id = external_id
+            if groups is not None:
+                fed.external_groups = group_refs if group_refs is not None else groups
             if email:
                 fed.external_email = email
             if display_name:
