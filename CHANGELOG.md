@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — Search indexing recovers from expired cursor rows
+
+- Incremental semantic indexing now restarts safely when retention has removed the test case referenced by its Redis cursor.
+
 ## 2026-08-18 — Search reindexing resumes safely after timeouts
 
 - Incremental semantic indexing now checkpoints each completed batch, keeps project-scoped cursors separate from the global hourly cursor, and resumes safely across equal creation timestamps.

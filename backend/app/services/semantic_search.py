@@ -49,7 +49,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -161,10 +161,14 @@ def _after_incremental_cursor(last_id):
     cursor_created_at = (
         select(TestCase.created_at).where(TestCase.id == last_id).scalar_subquery()
     )
+    resume_created_at = func.coalesce(
+        cursor_created_at,
+        datetime.min.replace(tzinfo=timezone.utc),
+    )
     return or_(
-        TestCase.created_at > cursor_created_at,
+        TestCase.created_at > resume_created_at,
         and_(
-            TestCase.created_at == cursor_created_at,
+            TestCase.created_at == resume_created_at,
             TestCase.id > last_id,
         ),
     )
