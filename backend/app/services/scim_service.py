@@ -33,6 +33,14 @@ class SCIMUserNotFoundError(ValueError):
     """Raised when a SCIM user does not exist within the token's directory scope."""
 
 
+def _canonical_scim_username(username: str) -> str:
+    """Canonicalize the application username identity used by SCIM."""
+    canonical = username.strip().casefold()
+    if not canonical:
+        raise ValueError("Username must be a non-empty value")
+    return canonical
+
+
 def _canonical_scim_email(email: str) -> str:
     """Canonicalize the application email identity used by SCIM."""
     canonical = email.strip().casefold()
@@ -165,6 +173,7 @@ async def scim_create_user(
     ip_address: str | None = None,
 ) -> User:
     """Create a new user via SCIM provisioning."""
+    username = _canonical_scim_username(username)
     email = _canonical_scim_email(email)
     # Check for existing user by email
     result = await db.execute(select(User).where(func.lower(User.email) == email))
@@ -173,7 +182,7 @@ async def scim_create_user(
         raise ValueError(f"User with email '{email}' already exists")
 
     # Check for existing username
-    result = await db.execute(select(User).where(User.username == username))
+    result = await db.execute(select(User).where(func.lower(User.username) == username))
     if result.scalar_one_or_none():
         raise ValueError(f"User with username '{username}' already exists")
 
@@ -281,9 +290,13 @@ async def scim_update_user(
         groups = _group_role_names(patched_refs)
 
     changes: dict = {}
+    if username is not None:
+        username = _canonical_scim_username(username)
     if username is not None and username != user.username:
         # Check uniqueness
-        dup = await db.execute(select(User).where(User.username == username, User.id != user_id))
+        dup = await db.execute(
+            select(User).where(func.lower(User.username) == username, User.id != user_id)
+        )
         if dup.scalar_one_or_none():
             raise ValueError(f"Username '{username}' is already taken")
         changes["username"] = {"old": user.username, "new": username}
@@ -407,7 +420,7 @@ async def scim_list_users(
             return [], 0
         attribute, value = parsed_filter
         if attribute == "username":
-            query = query.where(User.username == value)
+            query = query.where(func.lower(User.username) == value.strip().casefold())
         elif attribute in {"email", "emails.value"}:
             query = query.where(func.lower(User.email) == value.casefold())
         else:

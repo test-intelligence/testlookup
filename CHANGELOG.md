@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM username identity is case-insensitive
+
+- SCIM trims and case-folds usernames, checks create and update collisions case-insensitively, stores the canonical value, and applies the same semantics to username filters.
+
 ## 2026-08-18 — SCIM email identity is case-insensitive
 
 - SCIM trims and case-folds selected emails, checks create and update collisions case-insensitively, stores the canonical value, and applies the same semantics to email filters.
