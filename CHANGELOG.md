@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-18 — SCIM group filters parse JSON strings safely
+
+- PATCH group-removal filters now decode escaped JSON string values and reject malformed, single-quoted, or empty filter values before mutation.
+
 ## 2026-08-18 — SCIM PATCH accepts core schema-qualified paths
 
 - PATCH now accepts attributes qualified by the standard SCIM core User schema, including filtered groups, while unsupported extension namespaces remain rejected.
