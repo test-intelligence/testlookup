@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-20 — Sortable table headers are keyboard-operable and screen-reader legible
+
+- `SortableHeader` was a bare `<th onClick>`: mouse-only, so a keyboard user could not sort a table at all, and the sort direction lived only in a chevron icon that assistive tech never sees. The interactive target is now a real `<button>` (Enter/Space activate it for free), and the `<th>` carries `aria-sort` (`ascending`/`descending`/`none`) so the active sort direction is announced. Used by the Run Detail test table; the visual appearance is unchanged.
+
 ## 2026-08-19 — Worker error handlers survive being run
 
 - Four Celery error handlers passed structlog-style keyword fields to the module's stdlib logger, which raised `TypeError` inside the `except` block: the failure went unlogged, the scrubbed `RuntimeError` re-raise never ran, and the original traceback escaped unsuppressed. They now log through the module's structlog logger.
