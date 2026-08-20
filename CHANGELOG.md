@@ -9,6 +9,11 @@
 
 - Six of the seventeen workflow-timeline builders had no tests, including the ones behind the runs, search, overview, release and intelligence pages. They now cover the counts each stage reports, case-insensitive run-status matching, release phases ordering by `order_index`, and that an empty input produces a readable skipped timeline rather than a blank or broken one.
 
+## 2026-08-20 — OpenTelemetry moves as a set, and drops an unused instrumentor
+
+- The OpenTelemetry API, SDK, exporter and instrumentors are version-locked to each other, so they now move together to 1.44.0 / 0.65b0. Bumping a single instrumentor is unsatisfiable by construction, which is why the standalone Dependabot bump could never install.
+- `opentelemetry-instrumentation-celery` is removed. It was pinned and shipped but `CeleryInstrumentor` is imported nowhere and nothing runs under `opentelemetry-instrument`, so it added supply-chain surface and recurring dependency conflicts for no tracing. Tracing Celery tasks remains available by wiring the instrumentor in the worker.
+
 ## 2026-08-20 — Storage settings report why a save failed
 
 - Saving the storage configuration reported only "Failed to save storage configuration" and discarded the server's reason, so a rejected bucket name or a field-level validation error gave the operator nothing to act on. The API detail is now included, matching the seed-data page.

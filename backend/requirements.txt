@@ -71,15 +71,27 @@ aiohttp==3.13.4
 
 # ── Observability: OpenTelemetry ─────────────────────────────
 # Core SDK + OTLP HTTP exporter (ships spans to Jaeger / any OTel Collector)
-opentelemetry-api==1.42.1
-opentelemetry-sdk==1.42.1
-opentelemetry-exporter-otlp-proto-http==1.42.1
-# Auto-instrumentors — must match sdk 1.42.1 → instrumentor 0.63b1
-opentelemetry-instrumentation-fastapi==0.63b1
-opentelemetry-instrumentation-sqlalchemy==0.63b1
-opentelemetry-instrumentation-httpx==0.63b1
-opentelemetry-instrumentation-redis==0.63b1
-opentelemetry-instrumentation-celery==0.63b1
+opentelemetry-api==1.44.0
+opentelemetry-sdk==1.44.0
+opentelemetry-exporter-otlp-proto-http==1.44.0
+# Auto-instrumentors — must match sdk 1.44.0 → instrumentor 0.65b0.
+# The coupling is hard, not stylistic: sdk 1.44.0 pins
+# opentelemetry-semantic-conventions==0.65b0 and every instrumentor 0.65b0
+# pins the same, so bumping ONE instrumentor on its own is unsatisfiable
+# (pip: ResolutionImpossible). Move api/sdk/exporter and all five
+# instrumentors together or not at all.
+opentelemetry-instrumentation-fastapi==0.65b0
+opentelemetry-instrumentation-sqlalchemy==0.65b0
+opentelemetry-instrumentation-httpx==0.65b0
+opentelemetry-instrumentation-redis==0.65b0
+# opentelemetry-instrumentation-celery is deliberately ABSENT. It was
+# pinned and shipped, but CeleryInstrumentor is imported nowhere in the
+# repo and nothing launches under `opentelemetry-instrument`, so it was
+# dead weight -- while still being the package Dependabot kept trying to
+# bump on its own, which is unsatisfiable against the pinned set (#633).
+# Tracing Celery tasks is a reasonable thing to want; it needs
+# CeleryInstrumentor().instrument() wired in the worker, not just a
+# dependency line.
 
 # ── Observability: Prometheus metrics ────────────────────────
 prometheus-client==0.25.0
