@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import case, func, or_, select, text
+from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -81,10 +81,35 @@ def _suite_match_clause(suite_name: str):
     Live/SDK runs can stamp the suite on ``test_runs.primary_suite_name``
     before every test case has its own suite value, so dashboard filters need
     to honor both sources.
+
+    The run-level arm is restricted to ``live_stream`` runs — the case it was
+    written for, and the only one where "every case in this run belongs to
+    ``primary_suite_name``" is actually true. Unrestricted it over-matched: a
+    multi-``<testsuite>`` upload has an authoritative per-row ``suite_name``
+    AND a run-level ``primary_suite_name`` naming just one of those suites, so
+    filtering to that suite returned the WHOLE run.
+
+    Measured on the live homelab, project 2aefa4fa (Checkout Service), runs
+    101+102 — ``trigger_source=api``, ``primary_suite_name='api'``, 12 cases
+    each across suites api/regression/smoke. Scoped to ``api``: truth 10,
+    this clause returned 24 (both runs entire), restricted clause returns 10.
+    That fed ``active_defects`` and ``new_failures_24h``, and the latter drives
+    the ``max_new_failures_24h`` release-gate cap.
+
+    Nothing the fallback exists to serve is lost: on that deployment every
+    NULL/blank per-row ``suite_name`` belongs to a ``live_stream`` run (13 of
+    them; api and push have zero).
+
+    Same shape as ``run_compare_service`` (#559) and ``test_management_service``
+    (#560), and it mirrors ``analytics_service._effective_suite_sql()`` — the
+    run-level label wins for live_stream, per-row wins for everything else.
     """
     return or_(
         func.lower(func.trim(TestCase.suite_name)) == suite_name,
-        func.lower(func.trim(TestRun.primary_suite_name)) == suite_name,
+        and_(
+            TestRun.trigger_source == "live_stream",
+            func.lower(func.trim(TestRun.primary_suite_name)) == suite_name,
+        ),
     )
 
 

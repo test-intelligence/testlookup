@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-20 — Dashboard suite filters count only the requested suite
+
+- The dashboard's suite filter matched a run's whole set of test cases whenever the run's run-level `primary_suite_name` equalled the requested suite. That fallback exists for live-stream/SDK runs, where per-case suite names are absent; on a multi-`<testsuite>` upload the per-case names are authoritative, so scoping to one suite returned the entire run. Measured on two live runs: 24 test cases returned where 10 belong to the suite. The fallback is now restricted to `live_stream` runs, matching the same fix already applied to run comparison and test management.
+- Affects `active_defects` and `new_failures_24h`; the latter feeds the `max_new_failures_24h` release-gate cap, so an inflated count could change the release verdict.
+
 ## 2026-08-20 — Frontend tests run on Node 22, and jsdom moves to 30
 
 - jsdom 30 requires Node >= 22.19 (via undici 8). On the frontend CI job's Node 20 every vitest worker crashed at startup with `webidl.util.markAsUncloneable is not a function` — not a partial failure, the pool could not boot a single worker. The bump was therefore reverted (#740) rather than left breaking `main`, and is reinstated here together with the Node 22 upgrade that it needs. Only `Frontend — Test & Lint` changes runtime; it is the sole job that runs vitest.
