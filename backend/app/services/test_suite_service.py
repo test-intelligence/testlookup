@@ -775,6 +775,33 @@ async def list_canonical_test_cases(
     return list((await db.execute(stmt)).scalars().all())
 
 
+def legacy_suite_membership_clause(suite_key: str):
+    """Which ``test_cases`` rows belong to a suite, for the legacy fallback.
+
+    Named and module-level rather than inlined so the regression test can
+    exercise THIS predicate. Built inline, a test could only re-declare an
+    identical copy, and a copy keeps passing after the original drifts —
+    which is the failure mode this whole helper-duplication sweep exists to
+    find.
+
+    Per-row ``suite_name`` is authoritative when present. The run-level
+    ``primary_suite_name`` arm is restricted to ``live_stream`` runs: that is
+    the only case where every case in a run belongs to the run's suite (the
+    SDK stamps it once at session-create and per-event suite stays NULL).
+    Unrestricted, a multi-``<testsuite>`` upload listed its whole run under
+    whichever single suite the run-level label named.
+    """
+    from sqlalchemy import and_, or_
+
+    return or_(
+        func.lower(func.trim(TestCase.suite_name)) == suite_key,
+        and_(
+            TestRun.trigger_source == "live_stream",
+            func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, ""))) == suite_key,
+        ),
+    )
+
+
 async def list_legacy_suite_test_cases(
     db: AsyncSession,
     suite: TestSuite,
@@ -796,7 +823,18 @@ async def list_legacy_suite_test_cases(
     # stream paths only stamp the run-level value (per-row stays NULL);
     # legacy ingests only set the per-row value. The OR covers both.
     # See ``feedback_live_stream_suite_name_nulls``.
-    from sqlalchemy import or_
+    #
+    # The run-level arm is restricted to ``live_stream`` runs, because that is
+    # the only case where "every case in this run belongs to
+    # ``primary_suite_name``" is true. A multi-``<testsuite>`` upload has an
+    # authoritative per-row suite AND a run-level label naming just one of
+    # them, so an unrestricted OR listed the whole run under that one suite.
+    # Measured on project 2aefa4fa scoped to ``api``: 12 distinct tests
+    # returned where 5 belong to the suite — the other 7 are ``regression``
+    # and ``smoke`` tests presented as members of ``api``.
+    #
+    # Same shape as ``metrics_service._suite_match_clause``,
+    # ``run_compare_service`` (#559) and ``test_management_service`` (#560).
     suite_key = (suite.name or "").strip().lower()
     base = (
         select(
@@ -810,10 +848,7 @@ async def list_legacy_suite_test_cases(
         .join(TestRun, TestCase.test_run_id == TestRun.id)
         .where(
             TestRun.project_id == suite.project_id,
-            or_(
-                func.lower(func.trim(TestCase.suite_name)) == suite_key,
-                func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, ""))) == suite_key,
-            ),
+            legacy_suite_membership_clause(suite_key),
         )
     )
     base_sq = base.subquery()

@@ -6,6 +6,10 @@
 - `client/js` had an `npm run lint` script calling eslint, but eslint was in neither the dependencies nor any config file, so the script could never run. Removed rather than wired into CI.
 - `mvn package` no longer regenerates `client/java/dependency-reduced-pom.xml` on every build. The shaded jar is attached under the `all` classifier, so the main artifact keeps its real dependency tree and the reduced POM served no purpose; it was tracked, so each package run dirtied the working tree.
 
+## 2026-08-20 — A suite's test list no longer includes other suites' tests
+
+- The legacy suite listing (used when a suite has no canonical test-case rows) treated every test case in a run as a member of the suite whenever the run's `primary_suite_name` matched. For a multi-`<testsuite>` upload the per-case suite names are authoritative, so opening one suite listed the whole run: measured on a live project, the `api` suite showed 12 distinct tests where 5 belong to it, naming 7 `regression` and `smoke` tests as members. The run-level fallback is now restricted to live-stream runs, where it is the only signal available.
+
 ## 2026-08-20 — Dashboard suite filters count only the requested suite
 
 - The dashboard's suite filter matched a run's whole set of test cases whenever the run's run-level `primary_suite_name` equalled the requested suite. That fallback exists for live-stream/SDK runs, where per-case suite names are absent; on a multi-`<testsuite>` upload the per-case names are authoritative, so scoping to one suite returned the entire run. Measured on two live runs: 24 test cases returned where 10 belong to the suite. The fallback is now restricted to `live_stream` runs, matching the same fix already applied to run comparison and test management.
