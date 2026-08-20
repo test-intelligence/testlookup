@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-20 — Creating a release-gate policy works again
+
+- `/policies/new` rendered the policy *list* instead of the editor, so the "New Policy" button navigated straight back to the list it was clicked from and a policy could not be created through the UI at all. The route was registered as a static path beside `policies/:policyId`; React Router ranks static segments higher, so the page received no `policyId` and took its list branch. The static route is removed — the editor is written for `policyId === 'new'`, which only the dynamic route produces.
+- The NO_GO threshold hint read "Composite above this → NO_GO", but the gate returns NO_GO at the threshold as well, so an operator setting 55 was told 55 would not trip it. It now reads "at or above".
+- `PolicyEditorPage` had no tests; it now has coverage for both routing branches, the threshold semantics, and each save-time validation.
+
 ## 2026-08-20 — Share links say when the report is not ready yet
 
 - Creating a share link for a run with no intelligence snapshot returned a valid-looking URL and said nothing; the recipient then got a 404. The creation response now carries `snapshot_ready` and a `warning` naming the remedy. It remains a 201 rather than a refusal — the link self-heals once deep investigation runs, so blocking creation would break minting a link ahead of the run. Both fields are additive.

@@ -197,7 +197,14 @@ const managementRoutes: AppRoute[] = [
   { path: 'settings/ai-agents', component: AIAgentsPage },
   { path: 'settings/agent-activity', component: AgentActivityPage },
   { path: 'policies', component: PolicyEditorPage },
-  { path: 'policies/new', component: PolicyEditorPage },
+  // NO static 'policies/new' route. React Router ranks a static segment
+  // above a dynamic one, so registering it captured /policies/new with
+  // NO policyId param — and PolicyEditorPage derives
+  // `listMode = isNew && !policyId`, so the page rendered the LIST.
+  // "New Policy" navigated to /policies/new and landed back on the list,
+  // making policy creation unreachable through the UI. The component is
+  // written for `policyId === 'new'`, which only this dynamic route
+  // produces.
   { path: 'policies/:policyId', component: PolicyEditorPage },
   { path: 'ownership', component: OwnershipEditorPage },
 ]

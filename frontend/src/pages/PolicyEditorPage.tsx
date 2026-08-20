@@ -327,7 +327,7 @@ export default function PolicyEditorPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {([
             ['go_threshold', 'GO Threshold', 'Composite below this → GO'],
-            ['no_go_threshold', 'NO_GO Threshold', 'Composite above this → NO_GO'],
+            ['no_go_threshold', 'NO_GO Threshold', 'Composite at or above this → NO_GO'],
             ['pass_rate_minimum', 'Pass Rate Minimum', 'Target pass rate (%)'],
             ['pass_rate_hard_floor_factor', 'Hard Floor Factor', 'Factor × min pass rate → force NO_GO'],
           ] as const).map(([key, label, hint]) => (
