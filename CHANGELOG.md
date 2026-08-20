@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-20 — Share links say when the report is not ready yet
+
+- Creating a share link for a run with no intelligence snapshot returned a valid-looking URL and said nothing; the recipient then got a 404. The creation response now carries `snapshot_ready` and a `warning` naming the remedy. It remains a 201 rather than a refusal — the link self-heals once deep investigation runs, so blocking creation would break minting a link ahead of the run. Both fields are additive.
+
 ## 2026-08-20 — The Go and JavaScript client SDKs are covered by CI
 
 - `client/go` shipped a test file that no pipeline ran; it now runs `go vet` and `go test` on the Go version its `go.mod` declares. `client/js` has no tests, so its job type-checks and builds instead — the package ships compiled `dist/` output, so a type error reaches consumers directly. This closes the same gap that `java-sdk-test` closed for the Java SDK.

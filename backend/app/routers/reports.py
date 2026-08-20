@@ -142,6 +142,21 @@ class ShareLinkResponse(BaseModel):
     access_count: int = 0
     is_revoked: bool = False
     created_at: str
+    # UAT-004. A share link could be minted for a run with no intelligence
+    # snapshot: 201 with a valid-looking URL that 404s for the recipient, with
+    # nothing said at creation time.
+    #
+    # Deliberately a warning and NOT a 409. The link **self-heals** — once deep
+    # investigation runs, the same token resolves — so refusing to create it
+    # would break the legitimate "mint the link, kick off the investigation,
+    # send it when it lands" order. Both fields are additive, so existing
+    # clients are unaffected.
+    #
+    # ``None`` means NOT EVALUATED rather than "ready": the list endpoint does
+    # not run the check, and reporting True there would be inventing a value
+    # nobody measured.
+    snapshot_ready: Optional[bool] = None
+    warning: Optional[str] = None
 
 
 @router.post("/runs/{run_id}/share", response_model=ShareLinkResponse, status_code=201)
@@ -160,6 +175,21 @@ async def create_share_link_endpoint(
     project_id = run_result.scalar_one_or_none()
     if not project_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+
+    # Exactly the condition ``report_composition_service.compose_report``
+    # applies when the recipient opens the link — a snapshot row AND a
+    # non-empty payload. Checking anything narrower here would warn on links
+    # that work, or stay silent on links that do not.
+    from app.models.postgres import RunIntelligenceSnapshot
+
+    snapshot_row = (
+        await db.execute(
+            select(RunIntelligenceSnapshot.payload).where(
+                RunIntelligenceSnapshot.run_id == run_id
+            )
+        )
+    ).scalar_one_or_none()
+    snapshot_ready = bool(snapshot_row)
 
     created = await create_share_link(
         db=db,
@@ -208,6 +238,13 @@ async def create_share_link_endpoint(
         access_count=link.access_count or 0,
         is_revoked=link.is_revoked,
         created_at=link.created_at.isoformat(),
+        snapshot_ready=snapshot_ready,
+        warning=(
+            None if snapshot_ready else
+            "This run has no intelligence snapshot yet, so anyone opening the "
+            "link right now gets a 404. Trigger deep investigation for the run "
+            "— the same link starts working once it completes."
+        ),
     )
 
 
