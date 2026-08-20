@@ -15,6 +15,7 @@ from app.services.onboarding_service import (
     complete_step,
     get_onboarding_status,
     get_usage_events,
+    restore_step,
     skip_step,
     track_event,
 )
@@ -107,6 +108,25 @@ async def mark_step_skipped(
     except Exception as exc:
         logger.error("Skip step failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to skip step") from exc
+
+
+@router.post("/{project_id}/restore")
+async def mark_step_restored(
+    project_id: uuid.UUID,
+    body: StepAction,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_project_access()),
+):
+    """Un-skip an onboarding step, returning it to pending so it can be redone."""
+    try:
+        result = await restore_step(project_id, body.step_key, db)
+        await db.commit()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Restore step failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to restore step") from exc
 
 
 @router.post("/track")

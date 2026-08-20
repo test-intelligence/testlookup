@@ -30,6 +30,9 @@ export const onboardingService = {
   skipStep: (projectId: string, stepKey: string) =>
     api.post<OnboardingStatus>(`/api/v1/onboarding/${projectId}/skip`, { step_key: stepKey }).then(r => r.data),
 
+  restoreStep: (projectId: string, stepKey: string) =>
+    api.post<OnboardingStatus>(`/api/v1/onboarding/${projectId}/restore`, { step_key: stepKey }).then(r => r.data),
+
   trackEvent: (eventName: string, projectId?: string, payload?: Record<string, unknown>) =>
     api.post('/api/v1/onboarding/track', { event_name: eventName, project_id: projectId, payload }).catch(() => {}),
 }

@@ -358,3 +358,59 @@ class TestAutoDetectTelemetry:
 
         assert _status_of(result, "connect_telemetry") == "pending"
         assert _status_of(result, "connect_jira") == "pending"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Restore a skipped onboarding step (un-skip)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestRestoreStep:
+    def _row(self, step_key, status, completed_at=None):
+        from app.models.postgres import TenantOnboardingStatus
+
+        return TenantOnboardingStatus(
+            project_id=uuid.uuid4(),
+            step_key=step_key,
+            status=status,
+            completed_at=completed_at,
+        )
+
+    async def test_skipped_step_returns_to_pending(self):
+        from app.services.onboarding_service import restore_step
+
+        row = self._row("connect_jira", "skipped")
+        db = _FakeOnboardingSession(seed_rows=[row])
+        result = await restore_step(uuid.uuid4(), "connect_jira", db)
+
+        assert _status_of(result, "connect_jira") == "pending"
+        assert row.status == "pending"
+        assert row.completed_at is None
+
+    async def test_completed_step_is_left_untouched(self):
+        from datetime import datetime, timezone
+
+        from app.services.onboarding_service import restore_step
+
+        done_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+        row = self._row("upload_run", "completed", completed_at=done_at)
+        db = _FakeOnboardingSession(seed_rows=[row])
+        result = await restore_step(uuid.uuid4(), "upload_run", db)
+
+        # Restoring must never silently drop real progress.
+        assert _status_of(result, "upload_run") == "completed"
+        assert row.status == "completed"
+        assert row.completed_at == done_at
+
+    async def test_invalid_step_key_raises(self):
+        from app.services.onboarding_service import restore_step
+
+        db = _FakeOnboardingSession()
+        with pytest.raises(ValueError):
+            await restore_step(uuid.uuid4(), "not_a_step", db)
+
+    def test_router_exposes_restore_endpoint(self):
+        from app.routers.onboarding import mark_step_restored, router
+
+        assert callable(mark_step_restored)
+        paths = {r.path for r in router.routes}
+        assert "/api/v1/onboarding/{project_id}/restore" in paths

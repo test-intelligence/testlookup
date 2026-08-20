@@ -180,6 +180,45 @@ async def skip_step(
     return await get_onboarding_status(project_id, db)
 
 
+async def restore_step(
+    project_id: uuid.UUID,
+    step_key: str,
+    db: AsyncSession,
+) -> dict:
+    """Un-skip a previously skipped onboarding step, returning it to ``pending``.
+
+    A ``skip`` is a deliberate "not now", but the setup wizard offered no way
+    back: a self-hoster who skipped a step by accident was stuck with a dead
+    card at ``opacity-50`` and no control. This reopens the step so it can be
+    re-attempted (and later auto-detected or completed).
+
+    Only ``skipped`` rows are affected — a ``completed`` step keeps its
+    completion (restoring it would silently drop real progress), and a
+    ``pending`` or absent step is already open. Stage-only; the handler commits.
+    """
+    valid_keys = {s["key"] for s in ONBOARDING_STEPS}
+    if step_key not in valid_keys:
+        raise ValueError(f"Invalid step key: {step_key}")
+
+    if not await _table_exists(db):
+        return _build_default_status(project_id)
+
+    result = await db.execute(
+        select(TenantOnboardingStatus).where(
+            TenantOnboardingStatus.project_id == project_id,
+            TenantOnboardingStatus.step_key == step_key,
+        )
+    )
+    existing = result.scalar_one_or_none()
+
+    if existing and existing.status == "skipped":
+        existing.status = "pending"
+        existing.completed_at = None
+
+    await db.flush()
+    return await get_onboarding_status(project_id, db)
+
+
 async def auto_detect_progress(
     project_id: uuid.UUID,
     db: AsyncSession,

@@ -13,6 +13,9 @@
 - Four Celery error handlers passed structlog-style keyword fields to the module's stdlib logger, which raised `TypeError` inside the `except` block: the failure went unlogged, the scrubbed `RuntimeError` re-raise never ran, and the original traceback escaped unsuppressed. They now log through the module's structlog logger.
 - Two Splunk tool helpers had the same call shape on a debug-level line; they now use stdlib positional formatting, matching the rest of `app/tools`.
 - A new `backend.stdlib-logger-kwargs` quality gate fails any stdlib logger call passed keyword fields — the mirror of the existing `backend.structlog-positional-args` gate.
+## 2026-08-19 — Skipped onboarding steps can be restored
+
+- The setup wizard now shows a **Restore** control on skipped steps, returning them to `pending` so a self-hoster who skipped one by accident can reopen it. Previously a skip was a dead end — the card dimmed with no way back. A new `POST /api/v1/onboarding/{project_id}/restore` endpoint un-skips the step (completed steps are left untouched so real progress is never dropped).
 
 ## 2026-08-18 — Fixer selects the tests it was always meant to fix
 

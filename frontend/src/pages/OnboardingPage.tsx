@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import {
-  CheckCircle, Circle, FlaskConical, GitBranch, Brain, Key, Radio, SkipForward,
+  CheckCircle, Circle, FlaskConical, GitBranch, Brain, Key, Radio, SkipForward, RotateCcw,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
@@ -31,10 +31,12 @@ const STEP_LINKS: Record<string, string> = {
 function StepCard({
   step,
   onSkip,
+  onRestore,
   canSkip = true,
 }: {
   step: OnboardingStep
   onSkip: () => void
+  onRestore: () => void
   canSkip?: boolean
 }) {
   const navigate = useNavigate()
@@ -46,17 +48,17 @@ function StepCard({
     <div className={clsx(
       'card flex items-center gap-4 transition-all',
       isDone && 'border-[var(--status-passed-bd)]/40 bg-[var(--status-passed-bg)]/10',
-      isSkipped && 'opacity-50',
     )}>
       <div className={clsx(
         'p-2.5 rounded-xl shrink-0',
         isDone ? 'bg-[var(--status-passed-bg)]/20' : 'bg-[var(--color-bg-secondary)]',
+        isSkipped && 'opacity-50',
       )}>
         {isDone
           ? <CheckCircle className="h-5 w-5 text-[var(--status-passed)]" />
           : <Icon className="h-5 w-5 text-[var(--color-text-muted)]" />}
       </div>
-      <div className="flex-1 min-w-0">
+      <div className={clsx('flex-1 min-w-0', isSkipped && 'opacity-50')}>
         <p className={clsx('font-medium', isDone ? 'text-[var(--status-passed)]' : 'text-[var(--color-text)]')}>{step.label}</p>
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{step.description}</p>
         {step.completed_at && (
@@ -90,6 +92,16 @@ function StepCard({
           className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors shrink-0"
         >
           View →
+        </button>
+      )}
+      {isSkipped && canSkip && (
+        <button
+          onClick={onRestore}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors shrink-0"
+          title="Restore this skipped step"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          Restore
         </button>
       )}
     </div>
@@ -132,6 +144,16 @@ export default function OnboardingPage() {
       mutate(updated, { revalidate: false })
     } catch {
       toast.error('Failed to skip step')
+    }
+  }
+
+  async function handleRestore(stepKey: string) {
+    if (!projectId) return
+    try {
+      const updated = await onboardingService.restoreStep(projectId, stepKey)
+      mutate(updated, { revalidate: false })
+    } catch {
+      toast.error('Failed to restore step')
     }
   }
 
@@ -198,6 +220,7 @@ export default function OnboardingPage() {
             step={step}
             canSkip={!isAllProjects && !!projectId}
             onSkip={() => handleSkip(step.key)}
+            onRestore={() => handleRestore(step.key)}
           />
         ))}
       </div>

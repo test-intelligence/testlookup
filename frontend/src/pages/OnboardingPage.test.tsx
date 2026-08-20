@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -15,6 +15,7 @@ vi.mock('@/services/onboardingService', () => ({
   onboardingService: {
     detectProgress: vi.fn(),
     skipStep: vi.fn(),
+    restoreStep: vi.fn(),
   },
 }))
 
@@ -71,6 +72,66 @@ describe('OnboardingPage', () => {
     expect(screen.getAllByText(/Create Project/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/Upload Run/i).length).toBeGreaterThan(0)
     expect(screen.getByText(/Setup Progress/i)).toBeInTheDocument()
+  })
+
+  it('offers a Restore control for a skipped step and calls restoreStep', async () => {
+    // A skip used to be a dead end — the card dimmed to opacity-50 with no
+    // control. A self-hoster who skipped by accident must be able to reopen it.
+    // A distinct project id keeps this case out of SWR's per-project cache,
+    // so the skipped-step status below is what the page actually renders.
+    mockProjectState.activeProjectId = 'proj-restore'
+    mockProjectState.activeProject = { id: 'proj-restore', name: 'Restore Project' }
+
+    const { onboardingService } = await import('@/services/onboardingService')
+
+    ;(onboardingService.detectProgress as ReturnType<typeof vi.fn>).mockResolvedValue({
+      project_id: 'proj-restore',
+      steps: [
+        {
+          key: 'connect_jira',
+          label: 'Connect Jira',
+          description: 'Link Jira',
+          status: 'skipped',
+          completed_at: null,
+        },
+      ],
+      completed_count: 1,
+      total_count: 1,
+      progress_pct: 100,
+      is_complete: true,
+    })
+    const restoreStep = onboardingService.restoreStep as ReturnType<typeof vi.fn>
+    restoreStep.mockClear()
+    restoreStep.mockResolvedValue({
+      project_id: 'proj-restore',
+      steps: [
+        {
+          key: 'connect_jira',
+          label: 'Connect Jira',
+          description: 'Link Jira',
+          status: 'pending',
+          completed_at: null,
+        },
+      ],
+      completed_count: 0,
+      total_count: 1,
+      progress_pct: 0,
+      is_complete: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/getting-started']}>
+        <Routes>
+          <Route path="/getting-started" element={<OnboardingPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const restore = await screen.findByRole('button', { name: /restore/i })
+    fireEvent.click(restore)
+    await waitFor(() =>
+      expect(restoreStep).toHaveBeenCalledWith('proj-restore', 'connect_jira'),
+    )
   })
 
   it('shows workspace onboarding when All Projects is selected', async () => {
