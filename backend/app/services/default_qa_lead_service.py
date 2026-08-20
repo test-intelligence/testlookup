@@ -8,7 +8,7 @@ inbox. The auto-provisioned user:
 * gets role ``QA_LEAD``
 * is added to the project as a ``ProjectMember`` with role ``QA_LEAD``
 * is stamped as ``Project.default_qa_lead_user_id``
-* starts with a fixed default password (``DEFAULT_QA_LEAD_PASSWORD``) so
+* starts with a RANDOM, discarded password (nobody can log in as it) so
   operators can rotate it via the password-reset endpoint without first
   pulling it out of a side-channel.
 
@@ -24,6 +24,8 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import secrets
+
 from app.core.security import get_password_hash
 from app.models.postgres import Project, ProjectMember, User, UserRole
 
@@ -32,7 +34,25 @@ logger = structlog.get_logger(__name__)
 # Default password assigned at provision time. Documented so operators
 # know the starting state — production setups should rotate this via
 # the reset-password endpoint after first login.
-DEFAULT_QA_LEAD_PASSWORD = "QaLead@2026!"
+def _unguessable_password() -> str:
+    """A fresh high-entropy secret for a synthetic account.
+
+    There used to be a module constant here holding one fixed password for
+    every synthetic QA-lead account in every deployment. It was hard-coded in
+    an open-source file, the accounts are created automatically (one per
+    project — 42 on one measured deployment), they are provisioned
+    ``is_active=True``, and ``must_change_password`` does not block login (it
+    is only a prompt flag on the login response). So anyone who had read this
+    file could authenticate as QA_LEAD on any deployment that had ever created
+    a project, and enumerate users, projects and runs. Verified against a live
+    deployment before this change: HTTP 200 and a token.
+
+    These accounts exist to OWN auto-assignments, which is server-side and
+    needs no login. An operator who genuinely wants to use one resets it
+    through ``reset_default_qa_lead_password`` — which is the path the module
+    docstring already described — and gets a value nobody else shares.
+    """
+    return secrets.token_urlsafe(32)
 
 # Email domain used for the synthetic accounts. Kept distinct from real
 # user domains so directory-style listings can filter them out cheaply.
@@ -98,10 +118,14 @@ async def ensure_default_qa_lead(
             email=target_email,
             username=target_username,
             full_name=_default_full_name(project.name),
-            hashed_password=get_password_hash(DEFAULT_QA_LEAD_PASSWORD),
+            # Random and immediately discarded: nothing needs to log in as
+            # this account, so no caller ever learns the value.
+            hashed_password=get_password_hash(_unguessable_password()),
             role=UserRole.QA_LEAD.value,
             is_active=True,
-            must_change_password=False,
+            # Defence in depth. It does not block login on its own, but if an
+            # operator later resets this account the UI prompts them.
+            must_change_password=True,
         )
         db.add(found)
         await db.flush()
@@ -148,13 +172,14 @@ async def reset_default_qa_lead_password(
 ) -> tuple[User, str]:
     """Reset the project's default QA-lead user password.
 
-    Returns ``(user, password_used)``. When ``new_password`` is omitted the
-    documented default (``DEFAULT_QA_LEAD_PASSWORD``) is applied so the
-    caller can hand the operator a known starting value without leaking
-    the live hash. Caller owns commit.
+    Returns ``(user, password_used)``. When ``new_password`` is omitted a
+    fresh random secret is generated and returned, so the caller can still
+    hand the operator a known starting value without leaking the live hash —
+    the contract is unchanged, but the value is unique to this reset instead
+    of a constant shared by every deployment. Caller owns commit.
     """
     user = await ensure_default_qa_lead(db, project)
-    chosen = new_password if new_password else DEFAULT_QA_LEAD_PASSWORD
+    chosen = new_password if new_password else _unguessable_password()
     user.hashed_password = get_password_hash(chosen)
     user.must_change_password = False
     await db.flush()

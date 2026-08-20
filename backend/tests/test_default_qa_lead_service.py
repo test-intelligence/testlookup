@@ -85,9 +85,15 @@ async def test_ensure_default_qa_lead_is_idempotent_when_already_set():
 
 
 @pytest.mark.asyncio
-async def test_reset_default_qa_lead_password_returns_default_when_blank():
+async def test_reset_default_qa_lead_password_returns_a_fresh_secret_when_blank():
+    """A blank reset still returns a usable value, but never a shared one.
+
+    This used to assert the returned password equalled a module constant --
+    one hard-coded string shared by every synthetic QA-lead account in every
+    deployment. Verified live before it was removed: that credential logged in
+    as QA_LEAD and could enumerate users, projects and runs.
+    """
     from app.services.default_qa_lead_service import (
-        DEFAULT_QA_LEAD_PASSWORD,
         reset_default_qa_lead_password,
     )
 
@@ -104,8 +110,13 @@ async def test_reset_default_qa_lead_password_returns_default_when_blank():
     db.flush = AsyncMock()
 
     user, password = await reset_default_qa_lead_password(db, project)
+    _, second = await reset_default_qa_lead_password(db, project)
 
-    assert password == DEFAULT_QA_LEAD_PASSWORD
+    # Still returns something the operator can use...
+    assert password and len(password) >= 24
+    # ...but a different secret each time, so no value is shared across
+    # accounts or deployments.
+    assert password != second
     assert user is existing_user
     assert user.hashed_password != "legacy-hash"
     assert user.must_change_password is False

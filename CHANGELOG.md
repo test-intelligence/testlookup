@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-20 — Auto-provisioned QA-lead accounts no longer share a password
+
+- Every synthetic per-project QA-lead account was created with the same password, hard-coded in the source. The accounts are created automatically (one per project), are login-enabled, and the flag intended to force a rotation does not block login — so the credential authenticated as QA_LEAD on any deployment that had ever created a project. Accounts are now provisioned with a random, discarded secret, and a blank password reset generates a fresh value instead of reapplying a shared one.
+- **Existing deployments are not rotated by this change.** After upgrading, reset each project's default QA-lead password to replace the old hash.
+
 ## 2026-08-20 — Retention purges the semantic search index too
 
 - The retention purge described itself as cross-store but never visited the test-case search index. Both indexers filter on project activity at write time, so deleting a project stopped new documents being added while nothing retired the existing ones — measured on a live deployment, 49,380 indexed documents against 600 test cases in active projects. An executed purge now deletes the project's documents from that index and reports the count, separately from the AI analysis cache it was previously conflated with.
