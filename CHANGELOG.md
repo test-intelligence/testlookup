@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-20 — A quality gate for source files that `.gitignore` silently excludes
+
+- The security globs in `.gitignore` — `*credentials*`, `*secrets*`, `*api_key*`, `*apikey*` — match at every depth and do not care about file type, so they also match ordinary source. This has cost two real incidents: a regression test named `test_no_shared_default_credentials.py` was silently excluded and a security fix landed **unguarded**, and later a production module named `project_credentials_service.py` was excluded the same way — which would have put a router on `main` importing a file that is not in the repository. Both were caught by hand.
+- New `repo.no-gitignored-source` guard: `git check-ignore` is asked, for every source file under `backend/`, `frontend/src`, `cli/`, `mcp/`, `client/` and `scripts/`, whether its path matches an ignore rule. An **untracked** match is the live incident and fails immediately; a **tracked** match is a landmine that works only until someone recreates the file.
+- Eight tracked landmines exist today, all matching `*api_key*` / `*apikey*` — including `backend/app/routers/api_keys.py` and the Alembic revision `0056_api_key_project_scope.py`, where a silent loss breaks `upgrade head` for every deployment. They are baselined with the reasoning recorded, not renamed: the names are correct and `git add -f` only moves the trap to the next person. Narrowing the two globs would clear all eight and remains an owner decision, since it loosens a security control.
+
 ## 2026-08-20 — The user list filters the whole table, not the first page
 
 - User Management fetched one unpaginated page — the API defaults to `page_size=50` — and then applied the role and status selectors to *that page* in JavaScript. On a deployment with 132 users the role filter answered **2** for QA_ENGINEER against a truth of **5**, and **3** for VIEWER against **5**, with nothing on screen saying the list was partial. Filtering a truncated page answers a different question than the operator asked.

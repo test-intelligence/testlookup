@@ -510,3 +510,106 @@ def test_update_baseline_rewrites_file_to_current_keys(
     ok = qg.run_guard(guard, update_baseline=True)
     assert ok is True
     assert guard.load_baseline() == {v.key}
+
+
+# ── repo.no-gitignored-source (GIT-001) ──────────────────────────────────────
+#
+# The guard shells out to `git check-ignore`, which is the authority on
+# gitignore semantics. These tests pin the parts that are OURS: the two
+# "could not look" bailouts, and the tracked/untracked wording. The guard's
+# behaviour against real files is exercised end to end by running the gate in
+# a scratch tree with an offending filename present.
+
+
+def _fake_completed(stdout: bytes = b"", returncode: int = 1, stderr: bytes = b""):
+    class _R:
+        pass
+
+    r = _R()
+    r.stdout = stdout
+    r.stderr = stderr
+    r.returncode = returncode
+    return r
+
+
+def test_gitignored_source_bails_out_when_the_scan_finds_almost_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Zero violations must mean "clean", never "the walk broke".
+
+    Without this, moving or renaming a source root turns the guard into a
+    permanent green light — the same fail-open shape as a check that passes
+    because it could not look.
+    """
+    _redirect_repo_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(qg, "_source_candidates", lambda: ["backend/app/a.py"])
+
+    violations = qg._repo_no_gitignored_source()
+
+    assert len(violations) == 1
+    assert "cannot have looked" in violations[0].message
+
+
+def test_gitignored_source_treats_a_git_failure_as_a_violation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """check-ignore exits 0 (matched) or 1 (no match). Anything else is git
+    failing, and a failed command must not read as a pass."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(qg, "_source_candidates", lambda: [f"f{i}.py" for i in range(200)])
+    monkeypatch.setattr(
+        qg.subprocess, "run",
+        lambda *a, **k: _fake_completed(returncode=128, stderr=b"fatal: not a git repository"),
+    )
+
+    violations = qg._repo_no_gitignored_source()
+
+    assert len(violations) == 1
+    assert "could not look" in violations[0].message
+
+
+def test_gitignored_source_distinguishes_untracked_from_tracked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The two cases carry different urgency and must not share wording.
+
+    An UNTRACKED match is the live incident — the next `git add` drops it.
+    A TRACKED match is a landmine: it works until someone recreates the file.
+    """
+    _redirect_repo_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(qg, "_source_candidates", lambda: [f"f{i}.py" for i in range(200)])
+    monkeypatch.setattr(
+        qg.subprocess, "run",
+        lambda *a, **k: _fake_completed(
+            returncode=0,
+            stdout=(
+                b".gitignore:15:*credentials*\tbackend/app/services/new_credentials.py\n"
+                b".gitignore:27:*api_key*\tbackend/app/routers/api_keys.py\n"
+            ),
+        ),
+    )
+    monkeypatch.setattr(qg, "_git_tracked", lambda paths: {"backend/app/routers/api_keys.py"})
+
+    violations = qg._repo_no_gitignored_source()
+    by_path = {v.file.name: v.message for v in violations}
+
+    assert "UNTRACKED" in by_path["new_credentials.py"]
+    assert "git add` will skip it" in by_path["new_credentials.py"]
+    assert "UNTRACKED" not in by_path["api_keys.py"]
+    assert "already tracked" in by_path["api_keys.py"]
+
+
+def test_gitignored_source_roots_cover_tests_not_just_app_code() -> None:
+    """The first real incident was a TEST file.
+
+    ``test_no_shared_default_credentials.py`` was silently excluded and a
+    security fix landed unguarded. A roots tuple covering only application
+    code misses the exact case that motivated this guard — verified by
+    reproducing incident 1 against an app-only tuple, which did not trip.
+    """
+    assert "backend/tests" in qg._SOURCE_ROOTS
+    assert "backend/app" in qg._SOURCE_ROOTS
+    assert "frontend/src" in qg._SOURCE_ROOTS
+    # Migrations too: a lost revision file breaks `alembic upgrade head`
+    # for every deployment, and 0056_api_key_project_scope.py matches.
+    assert "backend/migrations" in qg._SOURCE_ROOTS

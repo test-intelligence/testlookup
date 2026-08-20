@@ -38,6 +38,7 @@ import hashlib
 import io
 import json
 import re
+import subprocess
 import sys
 import tokenize
 from dataclasses import dataclass, field
@@ -2014,6 +2015,142 @@ def _ai_prompt_manifest_sync(
 
 # ── Registry ─────────────────────────────────────────────────────────────────
 
+# ── repo.no-gitignored-source ────────────────────────────────────────────────
+#
+# `.gitignore` carries deliberately broad security globs — `*credentials*`,
+# `*secrets*`, `*api_key*`, `*apikey*` — that match at every depth and do not
+# care about file type. They also match ordinary source.
+#
+# This has cost real incidents twice:
+#
+#   1. A regression test named ``test_no_shared_default_credentials.py`` was
+#      silently excluded. ``git add`` printed a hint and committed everything
+#      else, so a security fix landed UNGUARDED.
+#   2. A production module named ``project_credentials_service.py`` — the one
+#      ``routers/projects.py`` imports — was excluded the same way. Had that
+#      commit gone through unchecked, ``main`` would have carried a router
+#      importing a file that is not in the repository.
+#
+# Both were caught by hand, by remembering to run ``git check-ignore``. This
+# guard is that habit, automated.
+#
+# ``git check-ignore`` is the authority — reimplementing gitignore matching is
+# how a guard ends up disagreeing with the thing it guards.
+
+# ``backend/tests`` and ``frontend/tests`` are NOT optional here. Incident 1
+# above was a TEST file — ``test_no_shared_default_credentials.py`` — and a
+# roots tuple covering only application code misses the exact case that
+# motivated this guard. Verified: with ``backend/tests`` absent, recreating
+# incident 1 did not trip the gate.
+_SOURCE_ROOTS = (
+    "backend/app", "backend/tests", "backend/scripts", "backend/migrations",
+    "frontend/src", "frontend/tests",
+    "cli", "mcp", "client", "scripts",
+)
+_SOURCE_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".jsx", ".java", ".go", ".sql"}
+_SOURCE_SKIP_DIRS = {
+    "__pycache__", "node_modules", ".venv", "venv", "dist", "build", "target",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache",
+}
+
+_GITIGNORED_SOURCE_HINT = (
+    "Rename the file so it no longer matches the pattern (that is what "
+    "project_credentials_service.py -> project_access_revocation_service.py "
+    "was), or narrow the glob in .gitignore if it is genuinely too broad. "
+    "Never reach for `git add -f`: the next person to add the file will not "
+    "know to."
+)
+
+
+def _source_candidates() -> list[str]:
+    """Repo-relative POSIX paths of the source files worth checking."""
+    out: list[str] = []
+    for root in _SOURCE_ROOTS:
+        base = REPO_ROOT / root
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file() or path.suffix not in _SOURCE_SUFFIXES:
+                continue
+            if _SOURCE_SKIP_DIRS & set(path.parts):
+                continue
+            out.append(path.relative_to(REPO_ROOT).as_posix())
+    return out
+
+
+def _git_tracked(paths: Iterable[str]) -> set[str]:
+    """The subset of ``paths`` git already tracks."""
+    proc = subprocess.run(
+        ["git", "ls-files", "-z", "--"],
+        cwd=REPO_ROOT, capture_output=True,
+    )
+    if proc.returncode != 0:
+        return set()
+    tracked = set(proc.stdout.decode("utf-8", "replace").split("\0"))
+    return {p for p in paths if p in tracked}
+
+
+def _repo_no_gitignored_source() -> list[Violation]:
+    candidates = _source_candidates()
+
+    # Fail-open check. If the scan finds nothing, "no violations" would mean
+    # "the walk broke", not "the tree is clean" — the same shape as a check
+    # that reports OK because it could not look.
+    if len(candidates) < 100:
+        return [Violation(
+            REPO_ROOT / ".gitignore", 0,
+            f"the source scan found only {len(candidates)} files; the guard "
+            "cannot have looked properly, so a pass here would be meaningless",
+        )]
+
+    # ``--no-index`` asks the question that matters: does the PATH match an
+    # ignore pattern? Without it, git answers "no" for anything already
+    # tracked, and CI — where every file is tracked — could never fail.
+    proc = subprocess.run(
+        ["git", "check-ignore", "--stdin", "-v", "--no-index"],
+        cwd=REPO_ROOT,
+        # BYTES, deliberately. On Windows a TEXT stdin translates "\n" into
+        # "\r\n", git takes the CR as part of the filename, and every answer
+        # comes back wrong. This cost a full round of bogus measurements.
+        input=b"\n".join(p.encode() for p in candidates),
+        capture_output=True,
+    )
+    # 0 = something matched, 1 = nothing matched. Anything else is git
+    # failing, which must not read as "clean".
+    if proc.returncode not in (0, 1):
+        return [Violation(
+            REPO_ROOT / ".gitignore", 0,
+            "git check-ignore failed "
+            f"({proc.stderr.decode('utf-8', 'replace').strip()[:200]}) — "
+            "the guard could not look, which is not the same as a pass",
+        )]
+
+    matches: list[tuple[str, str]] = []
+    for line in proc.stdout.decode("utf-8", "replace").splitlines():
+        if not line.strip():
+            continue
+        rule, sep, path = line.rpartition("\t")
+        if sep:
+            matches.append((path, rule))
+
+    tracked = _git_tracked(p for p, _ in matches)
+    violations: list[Violation] = []
+    for path, rule in sorted(matches):
+        if path in tracked:
+            message = (
+                f"source file matches the ignore rule `{rule}` — it survives "
+                "only because it is already tracked. Delete-and-recreate, or "
+                "any tool that re-adds it, loses it silently"
+            )
+        else:
+            message = (
+                f"UNTRACKED source file matches the ignore rule `{rule}` — "
+                "`git add` will skip it and your commit will land without it"
+            )
+        violations.append(Violation(REPO_ROOT / path, 0, message))
+    return violations
+
+
 GUARDS: list[Guard] = [
     Guard(
         name="backend.no-print",
@@ -2181,6 +2318,16 @@ GUARDS: list[Guard] = [
             "hand-written string. See FIX-002: the Fixer selected zero "
             "candidates on every run while reporting success."
         ),
+    ),
+    Guard(
+        name="repo.no-gitignored-source",
+        description=(
+            "No source file is matched by .gitignore — the security globs "
+            "(*credentials*, *secrets*, *api_key*) match at every depth and "
+            "have twice silently excluded real code from a commit."
+        ),
+        check=_repo_no_gitignored_source,
+        fix_hint=_GITIGNORED_SOURCE_HINT,
     ),
     Guard(
         name="database.downgrade-implemented",

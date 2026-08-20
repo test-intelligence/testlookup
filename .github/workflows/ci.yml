@@ -109,7 +109,9 @@ jobs:
   # Runs scripts/quality_gate.py which codifies the rules from
   # CLAUDE.md as a ratchet: existing violations are baselined in
   # scripts/quality-gate-baselines/, only NEW violations fail.
-  # No backend / frontend / DB deps required — pure file IO.
+  # No backend / frontend / DB deps required — file IO plus `git
+  # check-ignore` / `git ls-files` for the repo.no-gitignored-source
+  # guard, both of which work on the default shallow checkout.
   # ─────────────────────────────────────────────────────────────
   quality-gate:
     name: Quality Gates — Cross-cutting invariants
