@@ -168,11 +168,23 @@ async def update_project(
     ],
 )
 async def delete_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Soft-delete a project and revoke everything that grants access to it.
+
+    The soft delete used to be the whole handler, which meant "deleted"
+    revoked nothing: the auto-provisioned QA-lead account stayed live, and
+    any API key bound to the project kept authenticating and kept accepting
+    ingestion. See ``project_access_revocation_service`` for the measurements.
+    """
+    from app.services.project_access_revocation_service import (
+        revoke_project_credentials,
+    )
+
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     project.is_active = False
+    await revoke_project_credentials(db, project)
     await db.commit()
 
 

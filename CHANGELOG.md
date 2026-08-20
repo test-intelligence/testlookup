@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-20 — Deleting a project now revokes the credentials that reach it
+
+- `DELETE /projects/{id}` flipped `is_active` and committed. Nothing that granted access to the project was touched, so "deleted" revoked nothing: the auto-provisioned QA-lead account stayed live and login-capable, and every API key bound to the project kept authenticating — `_validate_api_key` checks the key's own status, its expiry and its owner, but never the project it is scoped to. A CI job holding such a key kept ingesting into a project the operator believed was gone.
+- Measured on a running deployment: 107 soft-deleted projects had left behind 108 live QA-lead accounts and 3 active API keys, two of them with a recorded `last_used_at`.
+- Both are now deactivated in the same transaction as the soft delete, and a beat-driven sweep revokes the ones left behind by projects deleted before this shipped. Deactivation rather than deletion keeps every foreign key and audit trail intact; because an inactive user is rejected with 403, existing sessions die with the account and need no separate revocation.
+- A QA-lead account that another *active* project still relies on is deliberately spared. Deletion is one-way through the API, so there is no restore path to mirror — a project un-deleted by a direct database edit keeps its credentials off until they are re-enabled deliberately.
+
 ## 2026-08-20 — Resetting a QA-lead password now ends that account's sessions
 
 - `POST /projects/{id}/default-qa-lead/reset-password` rotated the stored hash and nothing else. It is the documented remediation for the shared QA-lead credential, but the holder of a token minted with the old password kept full access afterwards: the access token stayed valid for its remaining lifetime (up to twelve hours), and the refresh token kept minting new ones indefinitely. Verified against a running deployment — after a reset, logging in with the old password returned 401 while the pre-reset refresh token still returned 200 and the access token it produced still read `/users`.

@@ -3808,11 +3808,16 @@ def backfill_unassigned_failures(self, max_runs_per_project: int = 200) -> dict:
     from app.services.failed_test_assignment_service import (
         backfill_unassigned_failures as _backfill,
     )
+    from app.services.project_access_revocation_service import (
+        reconcile_deleted_project_credentials,
+    )
 
     async def _sweep() -> dict:
         totals = {
             "projects_scanned": 0,
             "default_leads_provisioned": 0,
+            "credentials_revoked_accounts": 0,
+            "credentials_revoked_api_keys": 0,
             "runs": 0,
             "assigned": 0,
             "unassigned": 0,
@@ -3834,6 +3839,27 @@ def backfill_unassigned_failures(self, max_runs_per_project: int = 200) -> dict:
                 totals["errors"] += 1
                 logger.warning(
                     "default_qa_lead_backfill failed: error=%s", exc,
+                )
+
+        # Pass 1b: the mirror image. Projects deleted BEFORE the delete
+        # endpoint learned to revoke credentials left their QA-lead account
+        # and their API keys live. Own session and own try/except: this is
+        # unrelated to assignment, and a fault here must not cost pass 2.
+        async with AsyncSessionLocal() as revoke_db:
+            try:
+                revoked = await reconcile_deleted_project_credentials(revoke_db)
+                await revoke_db.commit()
+                totals["credentials_revoked_accounts"] = int(
+                    revoked.get("qa_lead_accounts", 0)
+                )
+                totals["credentials_revoked_api_keys"] = int(
+                    revoked.get("api_keys", 0)
+                )
+            except Exception as exc:
+                await revoke_db.rollback()
+                totals["errors"] += 1
+                logger.warning(
+                    "deleted_project_credential_reconcile failed: error=%s", exc,
                 )
 
         async with AsyncSessionLocal() as db:
