@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-20 — Turning on SSO enforcement asks first
+
+- Activating an `SSO_REQUIRED` configuration stops password login for everyone except admins using the fallback, and it was the only consequential action on the SSO settings page that did not confirm — deleting a configuration and revoking a SCIM token both already did. It now confirms, and only for that case: deactivating restores password login and an `OPTIONAL` configuration never removed it, so neither prompts.
+- `SSOSettingsPage` had no tests; it now covers the confirmation and its scope, error surfacing on a failed toggle, and the delete confirmation.
+
 ## 2026-08-20 — Creating a release-gate policy works again
 
 - `/policies/new` rendered the policy *list* instead of the editor, so the "New Policy" button navigated straight back to the list it was clicked from and a policy could not be created through the UI at all. The route was registered as a static path beside `policies/:policyId`; React Router ranks static segments higher, so the page received no `policyId` and took its list branch. The static route is removed — the editor is written for `policyId === 'new'`, which only the dynamic route produces.

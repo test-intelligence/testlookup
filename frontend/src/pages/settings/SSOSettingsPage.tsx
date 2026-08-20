@@ -45,6 +45,28 @@ export default function SSOSettingsPage() {
   };
 
   const handleToggleActive = async (config: SSOConfig) => {
+    // Activating an SSO_REQUIRED config stops password login for every
+    // non-admin in the workspace on their next attempt (auth.py returns 403
+    // "SSO is required for this account"). Every other consequential action on
+    // this page already confirms — deleting a config, revoking a SCIM token —
+    // and MfaPolicyPage confirms before enabling require_mfa for the same
+    // reason. This was the one lockout-capable action that did not.
+    //
+    // Scoped deliberately: only ACTIVATING, and only in SSO_REQUIRED mode.
+    // Deactivating restores password login, and an OPTIONAL config leaves it
+    // available, so neither needs a prompt. A confirm on every toggle would be
+    // friction that trains people to click through it.
+    if (
+      !config.is_active &&
+      config.enforcement_mode === 'SSO_REQUIRED' &&
+      !confirm(
+        'Activate SSO enforcement? Password login will stop working for ' +
+          'everyone except admins using the fallback. They must sign in ' +
+          'through the identity provider.',
+      )
+    ) {
+      return;
+    }
     try {
       await updateSSOConfig(config.id, { is_active: !config.is_active });
       refresh();
