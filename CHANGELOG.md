@@ -13,6 +13,10 @@
 
 - `backend/.dockerignore` excluded `.pytest_cache` but not the `--basetemp` directories the project's own test instructions tell you to create, and those are permission-locked on Windows, so the documented test command broke the documented build with a bulk-transfer error. Both `.dockerignore` and `.gitignore` now cover the suffixed variants.
 
+## 2026-08-20 — Onboarding credits integrations enabled through environment variables
+
+- The setup wizard's Connect Jira and Connect Telemetry steps auto-complete when the matching integration is enabled, but auto-detection read only the raw `integrations_config` AppSetting row and ignored the `*_ENABLED` environment defaults that the rest of the app resolves through (`_load_integrations_config`). A self-host that wires Jira / Splunk / OCP / Slack purely through environment variables never opens the integrations UI, so that row is never written — and those steps stayed pending forever even though the integration was live and working. Detection now resolves each enable flag the same way the config authority does: a stored override wins, otherwise the environment default. An explicit stored `false` (an admin turning an integration off in the UI) still wins over a stale env default.
+
 ## 2026-08-20 — Retention purges the semantic search index too
 
 - The retention purge described itself as cross-store but never visited the test-case search index. Both indexers filter on project activity at write time, so deleting a project stopped new documents being added while nothing retired the existing ones — measured on a live deployment, 49,380 indexed documents against 600 test cases in active projects. An executed purge now deletes the project's documents from that index and reports the count, separately from the AI analysis cache it was previously conflated with.

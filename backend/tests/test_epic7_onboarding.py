@@ -360,6 +360,56 @@ class TestAutoDetectTelemetry:
         assert _status_of(result, "connect_jira") == "pending"
 
 
+class TestAutoDetectEnvOnlyIntegrations:
+    """A self-host that enables integrations purely through environment
+    variables never opens the integrations UI, so no ``integrations_config``
+    AppSetting row is ever written. Onboarding must still credit the steps by
+    honouring the ``settings.*_ENABLED`` defaults — the same authority
+    ``_load_integrations_config`` reads through — instead of only the raw row.
+    """
+
+    async def test_jira_enabled_via_env_credits_step_without_a_row(self, monkeypatch):
+        from app.core.config import settings
+        from app.services.onboarding_service import auto_detect_progress
+
+        monkeypatch.setattr(settings, "JIRA_ENABLED", True)
+        db = _FakeOnboardingSession(integrations_row=None)
+        result = await auto_detect_progress(uuid.uuid4(), db)
+
+        assert _status_of(result, "connect_jira") == "completed"
+        # No telemetry provider is enabled — that step must stay pending.
+        assert _status_of(result, "connect_telemetry") == "pending"
+
+    @pytest.mark.parametrize(
+        "flag", ["SPLUNK_ENABLED", "OCP_ENABLED", "SLACK_ENABLED"]
+    )
+    async def test_telemetry_enabled_via_env_credits_step_without_a_row(
+        self, monkeypatch, flag
+    ):
+        from app.core.config import settings
+        from app.services.onboarding_service import auto_detect_progress
+
+        monkeypatch.setattr(settings, flag, True)
+        db = _FakeOnboardingSession(integrations_row=None)
+        result = await auto_detect_progress(uuid.uuid4(), db)
+
+        assert _status_of(result, "connect_telemetry") == "completed"
+        assert _status_of(result, "connect_jira") == "pending"
+
+    async def test_stored_override_still_wins_over_env(self, monkeypatch):
+        # An explicit stored ``jira_enabled=False`` (admin turned it off in the
+        # UI) must not be overridden by a stale env default — ``.get`` returns
+        # the stored value when the key is present.
+        from app.core.config import settings
+        from app.services.onboarding_service import auto_detect_progress
+
+        monkeypatch.setattr(settings, "JIRA_ENABLED", True)
+        db = _FakeOnboardingSession(integrations_row=_integrations(jira_enabled=False))
+        result = await auto_detect_progress(uuid.uuid4(), db)
+
+        assert _status_of(result, "connect_jira") == "pending"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Restore a skipped onboarding step (un-skip)
 # ═══════════════════════════════════════════════════════════════════════════════

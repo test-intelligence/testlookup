@@ -247,6 +247,7 @@ async def auto_detect_progress(
         await db.flush()
 
     # Check integration config — Jira and telemetry share one AppSetting row.
+    from app.core.config import settings
     from app.models.postgres import AppSetting
     integrations_result = await db.execute(
         select(AppSetting).where(AppSetting.key == "integrations_config")
@@ -254,7 +255,19 @@ async def auto_detect_progress(
     integrations_row = integrations_result.scalar_one_or_none()
     integrations = (integrations_row.value if integrations_row else None) or {}
 
-    if integrations.get("jira_enabled"):
+    # Resolve each enable flag exactly the way `_load_integrations_config` (the
+    # authority the rest of the app reads through) does: a stored override wins,
+    # otherwise the environment default. A self-host that wires Jira / Splunk /
+    # OCP / Slack purely through environment variables never opens the
+    # integrations UI, so no `integrations_config` row is ever written — reading
+    # the raw row value alone left those integrations invisible to onboarding and
+    # the steps stuck pending forever even though the integration was live.
+    jira_enabled = integrations.get("jira_enabled", settings.JIRA_ENABLED)
+    splunk_enabled = integrations.get("splunk_enabled", settings.SPLUNK_ENABLED)
+    ocp_enabled = integrations.get("ocp_enabled", settings.OCP_ENABLED)
+    slack_enabled = integrations.get("slack_enabled", settings.SLACK_ENABLED)
+
+    if jira_enabled:
         await _auto_complete_if_pending(db, project_id, "connect_jira")
         await db.flush()
 
@@ -262,7 +275,7 @@ async def auto_detect_progress(
     # enabled (mirrors the step description "Add Splunk, OCP, or Slack
     # integration"). Without this, a self-hoster who wires up telemetry never
     # gets credit for the step and it stays pending on the setup wizard.
-    if any(integrations.get(k) for k in ("splunk_enabled", "ocp_enabled", "slack_enabled")):
+    if splunk_enabled or ocp_enabled or slack_enabled:
         await _auto_complete_if_pending(db, project_id, "connect_telemetry")
         await db.flush()
 
