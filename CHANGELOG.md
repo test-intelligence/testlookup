@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-20 — Frontend tests run on Node 22, and jsdom moves to 30
+
+- jsdom 30 requires Node >= 22.19 (via undici 8). On the frontend CI job's Node 20 every vitest worker crashed at startup with `webidl.util.markAsUncloneable is not a function` — not a partial failure, the pool could not boot a single worker. The bump was therefore reverted (#740) rather than left breaking `main`, and is reinstated here together with the Node 22 upgrade that it needs. Only `Frontend — Test & Lint` changes runtime; it is the sole job that runs vitest.
+
 ## 2026-08-20 — Sortable table headers are keyboard-operable and screen-reader legible
 
 - `SortableHeader` was a bare `<th onClick>`: mouse-only, so a keyboard user could not sort a table at all, and the sort direction lived only in a chevron icon that assistive tech never sees. The interactive target is now a real `<button>` (Enter/Space activate it for free), and the `<th>` carries `aria-sort` (`ascending`/`descending`/`none`) so the active sort direction is announced. Used by the Run Detail test table; the visual appearance is unchanged.
