@@ -208,6 +208,28 @@ describe('FirstRunGuide', () => {
     await waitFor(() => expect(copyMock).toHaveBeenCalledWith('make quickstart'))
   })
 
+  it('surfaces a manual-copy hint when the clipboard is unavailable', async () => {
+    // Regression: a plain-HTTP self-host can block both clipboard paths (the
+    // secure-context async API and the legacy execCommand fallback). A failed
+    // copy must not be silently inert — the guide points the user at the
+    // manual copy so the command stays reachable.
+    copyMock.mockResolvedValueOnce(false)
+    renderGuide()
+    expect(screen.queryByRole('status')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /copy command: make quickstart/i }))
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent(/select the command above/i),
+    )
+  })
+
+  it('shows no failure hint on a successful copy', async () => {
+    copyMock.mockResolvedValueOnce(true)
+    renderGuide()
+    fireEvent.click(screen.getByRole('button', { name: /copy command: make quickstart/i }))
+    await waitFor(() => expect(copyMock).toHaveBeenCalled())
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
   it('calls onDismiss when dismissed', () => {
     const onDismiss = vi.fn()
     renderGuide({ onDismiss })

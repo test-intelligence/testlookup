@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Rocket, Copy, Check, ArrowRight, ListChecks, X } from 'lucide-react'
+import { Rocket, Copy, Check, AlertTriangle, ArrowRight, ListChecks, X } from 'lucide-react'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { backendUrl } from '@/services/api'
 import { buildSteps } from './firstRunSteps'
@@ -9,25 +9,37 @@ import { buildSteps } from './firstRunSteps'
 export const FIRST_RUN_DISMISS_KEY = 'tl_first_run_guide_dismissed'
 
 function CommandRow({ command }: { command: string }) {
-  const [copied, setCopied] = useState(false)
+  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
   const onCopy = async () => {
     const ok = await copyTextToClipboard(command)
-    if (ok) {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    }
+    // On a plain-HTTP self-host both clipboard paths (the secure-context async
+    // API and the legacy execCommand fallback) can be blocked; surface that
+    // instead of leaving the click silently inert, and point the user at the
+    // manual copy so the command is still reachable.
+    setStatus(ok ? 'copied' : 'failed')
+    setTimeout(() => setStatus('idle'), ok ? 1500 : 4000)
   }
   return (
-    <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
-      <code className="font-mono text-[12.5px] text-[var(--color-text-secondary)] truncate">{command}</code>
-      <button
-        type="button"
-        onClick={onCopy}
-        aria-label={`Copy command: ${command}`}
-        className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-      >
-        {copied ? <Check className="h-3.5 w-3.5 text-[var(--status-passed)]" /> : <Copy className="h-3.5 w-3.5" />}
-      </button>
+    <div className="mt-2">
+      <div className="flex items-center justify-between gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
+        <code className="font-mono text-[12.5px] text-[var(--color-text-secondary)] truncate select-all">{command}</code>
+        <button
+          type="button"
+          onClick={onCopy}
+          aria-label={`Copy command: ${command}`}
+          className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+        >
+          {status === 'copied' && <Check className="h-3.5 w-3.5 text-[var(--status-passed)]" />}
+          {status === 'failed' && <AlertTriangle className="h-3.5 w-3.5 text-[var(--status-broken)]" />}
+          {status === 'idle' && <Copy className="h-3.5 w-3.5" />}
+        </button>
+      </div>
+      {status === 'failed' && (
+        <p role="status" className="mt-1 text-[11px] text-[var(--status-broken)]">
+          Couldn't copy automatically — select the command above and press{' '}
+          <kbd className="font-mono">Ctrl/⌘-C</kbd>.
+        </p>
+      )}
     </div>
   )
 }

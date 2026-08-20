@@ -13,9 +13,14 @@
 - Four Celery error handlers passed structlog-style keyword fields to the module's stdlib logger, which raised `TypeError` inside the `except` block: the failure went unlogged, the scrubbed `RuntimeError` re-raise never ran, and the original traceback escaped unsuppressed. They now log through the module's structlog logger.
 - Two Splunk tool helpers had the same call shape on a debug-level line; they now use stdlib positional formatting, matching the rest of `app/tools`.
 - A new `backend.stdlib-logger-kwargs` quality gate fails any stdlib logger call passed keyword fields — the mirror of the existing `backend.structlog-positional-args` gate.
+
 ## 2026-08-19 — Skipped onboarding steps can be restored
 
 - The setup wizard now shows a **Restore** control on skipped steps, returning them to `pending` so a self-hoster who skipped one by accident can reopen it. Previously a skip was a dead end — the card dimmed with no way back. A new `POST /api/v1/onboarding/{project_id}/restore` endpoint un-skips the step (completed steps are left untouched so real progress is never dropped).
+
+## 2026-08-19 — First-run guide recovers when the clipboard is blocked
+
+- The onboarding guide's copy-command buttons now surface a manual-copy hint when the browser blocks the clipboard (a plain-HTTP self-host has neither the secure-context async API nor the legacy `execCommand` fallback), instead of leaving the click silently inert; the command text is also `select-all` so it can be grabbed in one gesture.
 
 ## 2026-08-18 — Fixer selects the tests it was always meant to fix
 
@@ -89,6 +94,7 @@
 ## 2026-08-18 — SCIM discovery endpoints describe implemented capabilities
 
 - Added bearer-protected ServiceProviderConfig, ResourceTypes, and Schemas discovery resources, including individual User metadata and request-derived locations without advertising unsupported operations.
+
 ## 2026-08-18 — CLI `upload dir` fails the command on any upload error
 
 - `testlookup upload dir` now exits non-zero when one or more files fail to upload, instead of always exiting 0. A CI ingest step reads the exit code, so the previous behavior let reports silently never land while the pipeline went green. Matches `upload file` (which already exits non-zero on failure) and the empty-directory guard.
