@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-20 — The AI agreement panel shows every verdict it counts
+
+- Human/AI feedback has three verdicts — correct, partially correct, incorrect — and the agreement rate counts partial verdicts at half weight. The panel rendered only correct and incorrect, so its own numbers could not add up: 60 correct, 20 partial and 20 incorrect displayed as "100 total, 60 correct, 20 incorrect" with a headline 70% that matched neither 60/100 nor 60/80. The partially-correct count is now shown, so the rate can be derived from the counts beside it.
+- `AIEvalDashboardPage` had no tests; the agreement panel is now covered by arithmetic over the rendered tiles rather than by checking a label exists.
+
 ## 2026-08-20 — Billing overview is covered by tests
 
 - `BillingPage` had no tests. It now pins the properties that would mislead if they regressed: a project with no quota renders `—` rather than `0%` utilization, the `UNLIMITED` status is rendered rather than dropped, sub-cent LLM spend is not rounded away, the workspace total reconciles with its project rows, and the soft-warn input keeps the 1–100 bounds the backend enforces. No defect was found on this page.

@@ -154,7 +154,21 @@ export default function AIEvalDashboardPage() {
               {dashboard.agreement && (
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
                   <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Human-AI Agreement (30d)</h2>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {/*
+                    Five tiles, not four. The backend returns THREE verdict
+                    buckets — correct, partially_correct, incorrect — and
+                    computes agreement_rate as
+                    (correct + partially_correct * 0.5) / total.
+
+                    Rendering only correct + incorrect left the visible numbers
+                    unable to add up: with 60 correct, 20 partial and 20
+                    incorrect the page showed "100 total, 60 correct, 20
+                    incorrect", and the headline 70% could not be derived from
+                    any of them (60/100 = 60%, 60/80 = 75%). The missing bucket
+                    was in the API response and the TypeScript type the whole
+                    time; only the tile was absent.
+                  */}
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-2xl font-bold text-[var(--status-passed)]">
                         {dashboard.agreement.agreement_rate != null ? `${(dashboard.agreement.agreement_rate * 100).toFixed(1)}%` : 'N/A'}
@@ -168,6 +182,10 @@ export default function AIEvalDashboardPage() {
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--status-passed)]">{dashboard.agreement.correct}</div>
                       <div className="text-[10px] text-[var(--color-text-muted)]">Correct</div>
+                    </div>
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--status-broken)]">{dashboard.agreement.partially_correct}</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Partially Correct</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--status-failed)]">{dashboard.agreement.incorrect}</div>
