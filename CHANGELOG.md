@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-20 — Billing overview is covered by tests
+
+- `BillingPage` had no tests. It now pins the properties that would mislead if they regressed: a project with no quota renders `—` rather than `0%` utilization, the `UNLIMITED` status is rendered rather than dropped, sub-cent LLM spend is not rounded away, the workspace total reconciles with its project rows, and the soft-warn input keeps the 1–100 bounds the backend enforces. No defect was found on this page.
+
 ## 2026-08-20 — Turning on SSO enforcement asks first
 
 - Activating an `SSO_REQUIRED` configuration stops password login for everyone except admins using the fallback, and it was the only consequential action on the SSO settings page that did not confirm — deleting a configuration and revoking a SCIM token both already did. It now confirms, and only for that case: deactivating restores password login and an `OPTIONAL` configuration never removed it, so neither prompts.
