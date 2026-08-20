@@ -39,8 +39,18 @@ export default function StoragePage() {
       const updated = await appSettingsService.updateStorageConfig(form)
       setConfig(updated)
       toast.success('Storage configuration saved')
-    } catch {
-      toast.error('Failed to save storage configuration')
+    } catch (err: unknown) {
+      // Surface the server's reason. A bare `catch {}` here reported only
+      // "Failed to save storage configuration", so a rejected bucket name or a
+      // 422 on a specific field gave the operator nothing to act on. The
+      // sibling settings pages (SeedDataPage) already read response.data.detail.
+      const detail = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail
+      toast.error(
+        detail
+          ? `Failed to save storage configuration: ${detail}`
+          : 'Failed to save storage configuration',
+      )
     } finally {
       setSaving(false)
     }

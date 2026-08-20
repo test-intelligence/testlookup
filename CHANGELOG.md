@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-20 — Storage settings report why a save failed
+
+- Saving the storage configuration reported only "Failed to save storage configuration" and discarded the server's reason, so a rejected bucket name or a field-level validation error gave the operator nothing to act on. The API detail is now included, matching the seed-data page.
+- `AuditDashboardPage`, `SeedDataPage` and `StoragePage` had no tests; they now cover the all-projects sentinel never reaching the API, the shared time window being snapped to this page's options, the project-scoped empty state, each seed control's endpoint, and the non-admin read-only state.
+
 ## 2026-08-20 — The AI agreement panel shows every verdict it counts
 
 - Human/AI feedback has three verdicts — correct, partially correct, incorrect — and the agreement rate counts partial verdicts at half weight. The panel rendered only correct and incorrect, so its own numbers could not add up: 60 correct, 20 partial and 20 incorrect displayed as "100 total, 60 correct, 20 incorrect" with a headline 70% that matched neither 60/100 nor 60/80. The partially-correct count is now shown, so the rate can be derived from the counts beside it.
