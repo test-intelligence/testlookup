@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-20 — Ownership coverage says "n/a" instead of inventing 0%
+
+- `coverage_pct` is `matched / located`, and it fell back to `0.0` whenever `located` was zero. Those two readings send a reader somewhere different: 0% says "your rules cover none of your failures, write more rules", while an empty denominator means "no failure here can be traced to a file path, so no path rule can help".
+- It was not an edge case. Java stack traces are deliberately not located, and TestLookup ingests TestNG and JUnit — so an all-Java project had every failure unlocatable and the Service Ownership Map badge showed a permanent, unfixable **Coverage 0%**, beside a tooltip that read "0/0 ... matched a path rule". Confirmed against a running deployment: 3 sampled, 0 located, `coverage_pct` 0.0.
+- `coverage_pct` is now `null` when nothing could be located, the badge renders `n/a`, and the tooltip explains why. A genuine 0% — failures located, none matched — still reports 0%, because there more rules really would help.
+
 ## 2026-08-20 — Deleting a project now revokes the credentials that reach it
 
 - `DELETE /projects/{id}` flipped `is_active` and committed. Nothing that granted access to the project was touched, so "deleted" revoked nothing: the auto-provisioned QA-lead account stayed live and login-capable, and every API key bound to the project kept authenticating — `_validate_api_key` checks the key's own status, its expiry and its owner, but never the project it is scoped to. A CI job holding such a key kept ingesting into a project the operator believed was gone.

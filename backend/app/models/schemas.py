@@ -3573,7 +3573,10 @@ class CodeownersCoverage(BaseModel):
     sampled: int = 0
     located: int = 0
     matched: int = 0
-    coverage_pct: float = 0.0
+    # ``None`` means "not measurable" — no failure in the sample could be
+    # located, so the ratio has an empty denominator. Distinct from 0.0,
+    # which means "rules exist and cover none of the located failures".
+    coverage_pct: Optional[float] = None
     lookback_days: int = 30
 
 

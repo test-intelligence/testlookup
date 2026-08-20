@@ -177,10 +177,19 @@ export default function OwnershipEditorPage() {
           {coverage && coverage.path_rules > 0 && (
             <span
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)]"
-              title={`${coverage.matched}/${coverage.located} recently-failing test paths matched a path rule (last ${coverage.lookback_days}d). ${coverage.codeowners_rules} CODEOWNERS rule(s).`}
+              title={
+                coverage.coverage_pct === null
+                  ? `Not measurable: none of the ${coverage.sampled} recently-failing test(s) could be traced to a file path (last ${coverage.lookback_days}d), so there is nothing for a path rule to cover. Java stack traces are not located. ${coverage.codeowners_rules} CODEOWNERS rule(s).`
+                  : `${coverage.matched}/${coverage.located} recently-failing test paths matched a path rule (last ${coverage.lookback_days}d). ${coverage.codeowners_rules} CODEOWNERS rule(s).`
+              }
             >
               Coverage
-              <strong className="text-[var(--color-text)] tabular-nums">{coverage.coverage_pct}%</strong>
+              {/* An empty denominator is not 0%. Rendering 0% here told a
+                  Java-only project its rules covered nothing, which no
+                  number of extra rules could ever change. */}
+              <strong className="text-[var(--color-text)] tabular-nums">
+                {coverage.coverage_pct === null ? 'n/a' : `${coverage.coverage_pct}%`}
+              </strong>
             </span>
           )}
           <button onClick={() => setShowImport(true)}

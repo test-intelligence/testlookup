@@ -611,7 +611,18 @@ async def compute_coverage(
     ``lookback_days``, derives each one's repo-relative path, and counts how
     many match some active path rule. ``coverage_pct`` is over the *locatable*
     failures (Java / non-locatable failures have no path to cover and would
-    otherwise drag the number down misleadingly)."""
+    otherwise drag the number down misleadingly).
+
+    When **nothing** is locatable, ``coverage_pct`` is ``None`` — not ``0.0``.
+    A ratio with an empty denominator is undefined, and the two readings lead
+    somewhere different: 0.0 says "your rules cover none of your failures,
+    write more rules", while ``None`` says "this metric cannot be computed for
+    this project's failures". ``locate_failure_path`` leaves Java deliberately
+    unlocated, and TestLookup ingests TestNG and JUnit, so an all-Java project
+    is a normal case rather than an edge one — it would have shown a permanent,
+    unfixable 0% no matter how many rules were added. Confirmed live before the
+    change: 3 sampled, 0 located, ``coverage_pct`` 0.0, with the UI badge
+    rendering "Coverage 0%" beside a tooltip that read "0/0 paths matched"."""
     path_rules = await load_path_rules(db, project_id)
     codeowners_rules = sum(
         1 for r in path_rules if r.service_name == CODEOWNERS_SERVICE
@@ -622,7 +633,9 @@ async def compute_coverage(
         "sampled": 0,
         "located": 0,
         "matched": 0,
-        "coverage_pct": 0.0,
+        # None, not 0.0 — nothing has been measured yet. The early return
+        # below (no path rules at all) keeps this value.
+        "coverage_pct": None,
         "lookback_days": lookback_days,
     }
     if not path_rules:
@@ -661,5 +674,7 @@ async def compute_coverage(
     summary["sampled"] = len(rows)
     summary["located"] = located
     summary["matched"] = matched
-    summary["coverage_pct"] = round((matched / located) * 100, 1) if located else 0.0
+    summary["coverage_pct"] = (
+        round((matched / located) * 100, 1) if located else None
+    )
     return summary

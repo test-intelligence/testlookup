@@ -116,7 +116,8 @@ export interface CodeownersCoverage {
   sampled: number;
   located: number;
   matched: number;
-  coverage_pct: number;
+  /** null = not measurable (nothing in the sample could be located to a path). */
+  coverage_pct: number | null;
   lookback_days: number;
 }
 

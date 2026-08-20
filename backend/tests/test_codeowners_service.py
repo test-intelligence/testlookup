@@ -450,11 +450,18 @@ async def test_compute_coverage_over_locatable():
 
 @pytest.mark.asyncio
 async def test_compute_coverage_no_rules_short_circuits():
+    """``coverage_pct`` is None here, not 0.0.
+
+    This assertion used to read ``0.0``. Nothing has been sampled on this
+    path, so a ratio has no denominator — and the two values send a reader
+    somewhere different. See
+    ``tests/regression/test_coverage_pct_empty_denominator.py``.
+    """
     db = _ScriptedDB([_scalars([])])
     cov = await cs.compute_coverage(db, uuid.uuid4())
     assert cov == {
         "path_rules": 0, "codeowners_rules": 0, "sampled": 0, "located": 0,
-        "matched": 0, "coverage_pct": 0.0, "lookback_days": 30,
+        "matched": 0, "coverage_pct": None, "lookback_days": 30,
     }
 
 
