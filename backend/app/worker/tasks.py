@@ -1649,7 +1649,7 @@ def resume_agent_child_investigation(self, investigation_id: str):
     try:
         return _run_async(resume_investigation(investigation_id))
     except Exception as exc:
-        logger.error(
+        _slog.error(
             "cluster_child_resume_failed",
             investigation_id=investigation_id,
             error_type=type(exc).__name__,
@@ -1699,7 +1699,7 @@ def process_decision_report_supersessions(self):
     try:
         return _run_async(process_pending_decision_report_supersessions())
     except Exception as exc:  # noqa: BLE001
-        logger.error(
+        _slog.error(
             "decision_report_supersession_failed",
             error_type=type(exc).__name__,
         )
@@ -1723,7 +1723,7 @@ def relay_agent_action_dispatch_outbox(self):
     try:
         return _run_async(relay_action_dispatch_outbox())
     except Exception as exc:
-        logger.error(
+        _slog.error(
             "agent_action_dispatch_relay_failed",
             error_type=type(exc).__name__,
         )
@@ -1752,7 +1752,7 @@ def execute_agent_action(self, project_id: str, action_id: str):
             )
         )
     except Exception as exc:
-        logger.error(
+        _slog.error(
             "agent_action_execution_failed",
             error_type=type(exc).__name__,
         )

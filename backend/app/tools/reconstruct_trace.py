@@ -36,7 +36,7 @@ async def _query_splunk(spl: str, earliest: str = "-10m", latest: str = "now") -
         import json
         return [json.loads(ln).get("result", {}) for ln in lines if ln]
     except Exception as exc:
-        logger.debug("splunk_query_failed", error_type=type(exc).__name__)
+        logger.debug("Splunk query failed: %s", type(exc).__name__)
         return []
 
 

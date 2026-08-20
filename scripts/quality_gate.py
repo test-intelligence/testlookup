@@ -458,6 +458,105 @@ _AUDIT_RAW_SQL_DELETE_RE = re.compile(
 )
 
 
+
+# Keywords ``logging.Logger.<level>`` actually accepts. Everything else lands in
+# ``Logger._log()`` as an unexpected keyword and raises TypeError.
+_STDLIB_LOG_KWARGS = {"exc_info", "stack_info", "stacklevel", "extra"}
+
+
+def _stdlib_logger_names(tree: ast.Module) -> set[str]:
+    """Module-level names bound to ``logging.getLogger(...)``.
+
+    The mirror of the structlog resolution in
+    ``_backend_structlog_positional_args``: a module may bind BOTH (
+    ``worker/tasks.py`` has ``logger`` stdlib next to ``_slog`` structlog), so
+    the judgement has to be per NAME, never per file.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+            continue
+        func = node.value.func
+        dotted = ""
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+            dotted = f"{func.value.id}.{func.attr}"
+        elif isinstance(func, ast.Name):
+            dotted = func.id
+        if dotted not in {"logging.getLogger", "getLogger"}:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                names.add(target.id)
+    return names
+
+
+def _backend_stdlib_logger_kwargs() -> list[Violation]:
+    """stdlib ``logging.Logger`` called with structlog-style keyword fields.
+
+    The mirror image of ``backend.structlog-positional-args``, and the half
+    that was left unguarded. ``Logger.error(msg, *args, exc_info=...,
+    stack_info=..., stacklevel=..., extra=...)`` accepts no other keyword, so
+    ``logger.error("x_failed", error_type=...)`` raises ``TypeError`` inside
+    ``Logger._log`` — **at the moment of logging, not at import**.
+
+    Why that is worse than it sounds: every instance found in the wild sat in
+    an ``except`` block. The handler meant to record the real failure and
+    re-raise a scrubbed ``RuntimeError(...) from None``; instead the log call
+    threw, so the diagnostic was never written, the scrubbed re-raise never
+    ran, and the original exception's full chained traceback escaped — which
+    is precisely what ``from None`` was there to prevent. Four such handlers
+    in ``worker/tasks.py`` were failing on the live homelab.
+
+    A previous fix had already hit this trap, left a comment naming it, and
+    still missed four sibling call sites in the same file. That is what this
+    guard is for.
+    """
+    violations: list[Violation] = []
+    levels = {
+        "debug", "info", "warning", "warn",
+        "error", "exception", "critical", "fatal", "log",
+    }
+    for path in iter_files(REPO_ROOT / "backend" / "app", (".py",)):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        if "getLogger" not in text:
+            continue
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+
+        stdlib_names = _stdlib_logger_names(tree)
+        if not stdlib_names:
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and func.attr in levels):
+                continue
+            if not (isinstance(func.value, ast.Name) and func.value.id in stdlib_names):
+                continue
+            bad = sorted(
+                k.arg for k in node.keywords
+                if k.arg is not None and k.arg not in _STDLIB_LOG_KWARGS
+            )
+            if not bad:
+                continue
+            fields = ", ".join(f"{name}=" for name in bad)
+            violations.append(Violation(
+                path,
+                node.lineno,
+                f"{func.value.id}.{func.attr}(...) is a stdlib logger but is "
+                f"passed {fields} — Logger._log() rejects it with TypeError "
+                "when the line runs",
+            ))
+    return violations
+
+
 def _audit_call_name(func: ast.AST) -> str:
     """Terminal callable name — ``update`` for both ``update(X)`` and
     ``sa.update(X)`` / ``db.query(X).update(...)``."""
@@ -1950,6 +2049,23 @@ GUARDS: list[Guard] = [
         fix_hint=(
             "Use kwargs: ``logger.warning(\"event_name\", error=str(exc))``. "
             "See memory/feedback_structlog_positional_args.md."
+        ),
+    ),
+    Guard(
+        name="backend.stdlib-logger-kwargs",
+        description=(
+            "stdlib logging.Logger called with structlog-style keyword "
+            "fields — Logger._log() raises TypeError when the line runs, "
+            "which in an except block destroys the diagnostic and skips "
+            "the scrubbed re-raise."
+        ),
+        check=_backend_stdlib_logger_kwargs,
+        fix_hint=(
+            "Use the module's structlog logger for keyword fields "
+            "(``_slog.error(\"x_failed\", error_type=...)``), or keep "
+            "stdlib and format positionally "
+            "(``logger.error(\"x failed: %s\", exc)``). This is the "
+            "mirror of backend.structlog-positional-args."
         ),
     ),
     Guard(

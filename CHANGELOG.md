@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-19 — Worker error handlers survive being run
+
+- Four Celery error handlers passed structlog-style keyword fields to the module's stdlib logger, which raised `TypeError` inside the `except` block: the failure went unlogged, the scrubbed `RuntimeError` re-raise never ran, and the original traceback escaped unsuppressed. They now log through the module's structlog logger.
+- Two Splunk tool helpers had the same call shape on a debug-level line; they now use stdlib positional formatting, matching the rest of `app/tools`.
+- A new `backend.stdlib-logger-kwargs` quality gate fails any stdlib logger call passed keyword fields — the mirror of the existing `backend.structlog-positional-args` gate.
+
 ## 2026-08-18 — Fixer selects the tests it was always meant to fix
 
 - Fixer candidate selection now filters quarantine rows by the status values the column actually stores, so an enabled Fixer considers its active quarantines instead of completing every run having selected nothing.

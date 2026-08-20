@@ -36,7 +36,7 @@ async def _count_splunk_events(service: str, level: str, start: str, end: str) -
                 result = json.loads(line).get("result", {})
                 return int(result.get("count", 0))
     except Exception as exc:
-        logger.debug("splunk_count_query_failed", error_type=type(exc).__name__)
+        logger.debug("Splunk count query failed: %s", type(exc).__name__)
     return 0
 
 
