@@ -75,19 +75,31 @@ export default function UserManagementPage() {
 // ── Users Tab ─────────────────────────────────────────────────
 
 function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmin: boolean }) {
-  const { data: users, isLoading } = useUsers()
   const [showInviteModal, setShowInviteModal] = useState(false)
   const [showAddUserModal, setShowAddUserModal] = useState(false)
   const [editUser, setEditUser] = useState<UserItem | null>(null)
   const [filterRole, setFilterRole] = useState<UserRole | ''>('')
   const [filterActive, setFilterActive] = useState<'all' | 'active' | 'inactive'>('all')
 
-  const filtered = (users ?? []).filter((u) => {
-    if (filterRole && u.role !== filterRole) return false
-    if (filterActive === 'active' && !u.is_active) return false
-    if (filterActive === 'inactive' && u.is_active) return false
-    return true
+  // Filters go to the SERVER. They used to be applied client-side over
+  // whatever the one unpaginated request happened to return -- the API
+  // defaults to page_size=50, so on a deployment with 132 users, selecting
+  // "QA_ENGINEER" answered **2** against a truth of **5**, and "VIEWER"
+  // answered 3 against 5, with nothing on screen saying the list was partial.
+  // Filtering a truncated page answers a different question than the one the
+  // operator asked.
+  const PAGE_SIZE = 200 // the API's maximum
+  const { data: users, isLoading } = useUsers({
+    page_size: PAGE_SIZE,
+    ...(filterRole ? { role: filterRole } : {}),
+    ...(filterActive === 'all' ? {} : { is_active: filterActive === 'active' }),
   })
+
+  const filtered = users ?? []
+  // Exactly PAGE_SIZE rows means the server had more to give. Say so rather
+  // than letting the table imply it is complete -- a silent cap is its own
+  // defect.
+  const isTruncated = filtered.length >= PAGE_SIZE
 
   async function handleRoleChange(userId: string, role: UserRole) {
     try {
@@ -153,6 +165,19 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
           </div>
         )}
       </div>
+
+      {/* A capped list must say so. Silently rendering the first page as if
+          it were the whole table is what made the role filter answer 2 when
+          the truth was 5. */}
+      {isTruncated && (
+        <div
+          className="rounded-lg border border-[var(--status-broken-bd)]/40 bg-[var(--status-broken-bg)]/10 px-4 py-2.5 text-xs text-[var(--status-broken)]"
+          role="status"
+        >
+          Showing the first {PAGE_SIZE} users. More match this filter than are
+          listed &mdash; narrow the role or status filter to see the rest.
+        </div>
+      )}
 
       {/* Table */}
       <div className="bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)] overflow-hidden">

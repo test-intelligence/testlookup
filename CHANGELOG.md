@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-20 — The user list filters the whole table, not the first page
+
+- User Management fetched one unpaginated page — the API defaults to `page_size=50` — and then applied the role and status selectors to *that page* in JavaScript. On a deployment with 132 users the role filter answered **2** for QA_ENGINEER against a truth of **5**, and **3** for VIEWER against **5**, with nothing on screen saying the list was partial. Filtering a truncated page answers a different question than the operator asked.
+- Both selectors are now sent to the server, which already supported them, so they apply across the whole table. The page also requests the API's maximum page size and shows an explicit notice when the result hits that cap, so the table can never imply it is complete.
+- `refreshUsers()` mutated the literal SWR key `'/api/v1/users'`. Once filters are passed the key becomes `['/api/v1/users', params]`, so a role or status change would have looked like it succeeded while the row kept its old value. It now matches both shapes.
+
 ## 2026-08-20 — A release's "Failed" count now includes broken tests
 
 - The release detail summed `failed_tests` alone, so its headline **Failed** figure excluded every infrastructure error. Measured on a ground-truth release of three runs (9 FAILED + 3 BROKEN): it reported **9** against a truth of **12**, and the payload could not add up — total 30 minus passed 15 minus failed 9 leaves 6 unaccounted where only 3 tests were skipped.

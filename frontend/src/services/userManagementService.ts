@@ -59,7 +59,15 @@ export interface AdminCreateUserResponse {
 
 export const userManagementService = {
   // Users
-  listUsers: (params?: { is_active?: boolean; role?: UserRole }) =>
+  /**
+   * List users. ``role`` and ``is_active`` are applied by the SERVER over the
+   * whole table -- filtering the fetched page client-side answers the wrong
+   * question once the table is larger than one page.
+   *
+   * ``page_size`` is capped at 200 by the API. A caller that receives exactly
+   * ``page_size`` rows must assume the list is truncated.
+   */
+  listUsers: (params?: { is_active?: boolean; role?: UserRole; page_size?: number }) =>
     api.get<UserItem[]>('/api/v1/users', { params }).then((r) => r.data),
 
   updateUserRole: (userId: string, role: UserRole) =>
