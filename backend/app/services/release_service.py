@@ -215,7 +215,15 @@ async def get_release_details(db: AsyncSession, release_id: str) -> dict:
             COUNT(tr.id) AS total_runs,
             SUM(tr.total_tests) AS total_tests,
             SUM(tr.passed_tests) AS total_passed,
-            SUM(tr.failed_tests) AS total_failed,
+            -- A failure is FAILED *or* BROKEN. This summed failed_tests
+            -- alone, so a release's headline "Failed" count excluded every
+            -- infrastructure error while avg_pass_rate -- an average of
+            -- per-run pass_rate, which DOES treat BROKEN as a non-pass --
+            -- sat beside it counting them. Measured on a ground-truth
+            -- release of 3 runs: total_failed read 9 against a truth of 12,
+            -- and total(30) - passed(15) - failed(9) left 6 unaccounted for
+            -- where only 3 tests were skipped.
+            SUM(tr.failed_tests) + SUM(tr.broken_tests) AS total_failed,
             ROUND(AVG(tr.pass_rate)::numeric, 1) AS avg_pass_rate
         FROM test_runs tr
         JOIN release_test_run_links rtr ON rtr.test_run_id = tr.id

@@ -784,7 +784,13 @@ async def list_test_suites(
             NULLIF(TRIM(tr.primary_suite_name), '') AS suite_name,
             COALESCE(SUM(tr.total_tests),  0) AS test_count,
             COALESCE(SUM(tr.passed_tests), 0) AS passed_count,
-            COALESCE(SUM(tr.failed_tests), 0) AS failed_count,
+            -- FAILED *or* BROKEN, per the canonical rule. Latent rather
+            -- than observed: this fallback only fires for runs carrying no
+            -- test_cases rows at all, and no such run on the measured
+            -- deployment had a BROKEN result. Same class as the release
+            -- metrics fixed alongside this.
+            COALESCE(SUM(tr.failed_tests), 0)
+              + COALESCE(SUM(tr.broken_tests), 0) AS failed_count,
             MAX(tr.created_at) AS last_run_at,
             (array_agg(tr.id ORDER BY tr.created_at DESC))[1] AS last_run_id
         FROM test_runs tr

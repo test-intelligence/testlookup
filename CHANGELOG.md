@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-20 — A release's "Failed" count now includes broken tests
+
+- The release detail summed `failed_tests` alone, so its headline **Failed** figure excluded every infrastructure error. Measured on a ground-truth release of three runs (9 FAILED + 3 BROKEN): it reported **9** against a truth of **12**, and the payload could not add up — total 30 minus passed 15 minus failed 9 leaves 6 unaccounted where only 3 tests were skipped.
+- The same response carried `avg_pass_rate`, an average of per-run pass rates, which *does* treat BROKEN as a non-pass. One payload, two definitions of failure.
+- A failure is FAILED *or* BROKEN. That rule is declared in `flaky_signals._FAILED_STATUSES` and applied across the codebase, but hand-rolled aggregates keep dropping BROKEN — this makes five and six. The existing guard for the class only ever read `metrics_service`, which is why two more survived elsewhere; the new guard walks every function under `app/` that aggregates `test_runs`.
+- Also fixed, **latent rather than observed**: the legacy suite-listing fallback in `test_management_exports` had the same omission. It only fires for runs carrying no per-test rows, and no such run on the measured deployment had a BROKEN result, so there is no live repro for it — it was found by the new guard.
+
 ## 2026-08-20 — Ownership coverage says "n/a" instead of inventing 0%
 
 - `coverage_pct` is `matched / located`, and it fell back to `0.0` whenever `located` was zero. Those two readings send a reader somewhere different: 0% says "your rules cover none of your failures, write more rules", while an empty denominator means "no failure here can be traced to a file path, so no path rule can help".
