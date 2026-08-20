@@ -415,8 +415,14 @@ async def test_preview_writes_nothing_and_returns_all_count_keys():
     assert set(out["candidates"]) == {
         "runs", "test_cases", "mongo_docs", "minio_objects",
         "event_archive_rows", "audit_rows", "provenance_rows",
-            "compliance_packs_expired", "evidence_artifact_rows",
-            "analysis_cache_entries", "memory_entries_expired",
+        "compliance_packs_expired", "evidence_artifact_rows",
+        "analysis_cache_entries", "memory_entries_expired",
+        # SEARCH-009. Reported separately from analysis_cache_entries on
+        # purpose: that counter is the AI ANALYSIS cache
+        # (``ai_analysis_cache_*``), this one is the test-case SEARCH index
+        # (``test_case_search``). Folding them together is how an executed
+        # purge read as complete while never visiting the second store.
+        "search_index_documents",
     }
     assert set(out["cutoffs"]) == {"raw_events", "runs", "artifacts", "audit"}
     assert out["candidates"]["runs"] == 1

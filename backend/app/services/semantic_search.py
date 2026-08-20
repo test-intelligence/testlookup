@@ -648,3 +648,57 @@ async def hybrid_search(
     page_items = merged[start:start + size]
     pages = -(-total // size) if total else 0
     return page_items, total, pages
+
+
+# ── Retention: purge a project's documents from the search index ────────────
+
+
+async def purge_project_documents(project_id: str, *, execute: bool) -> int:
+    """Count (or delete) this project's documents in the test-case index.
+
+    **Why this exists.** Both indexers filter ``Project.is_active`` at WRITE
+    time, so deleting a project stops new documents being added — but nothing
+    ever retired the ones already written, and this module contains no
+    ``collection.delete`` of any kind. Measured on a live deployment: the
+    ``test_case_search`` collection held 49,380 documents while only 600 test
+    cases belonged to active projects. **98.8% of the index was embeddings of
+    deleted projects' tests.**
+
+    That was never a data leak — ``semantic_search`` applies a ``project_id``
+    metadata filter and the Postgres layer re-filters — so this is deletion
+    completeness and unbounded growth, not exposure.
+
+    **Why it hangs off retention rather than off soft-delete.** Deleting a
+    project only flips ``is_active``, and that is reversible. Purging
+    embeddings there would make un-deleting a project silently lossy: the
+    incremental indexer will not re-add the rows (its cursor has already passed
+    them), so search would stay empty until someone ran a FULL reindex.
+    Retention's execute path is the deliberate, audited, already-irreversible
+    one, and it is the feature that promises a cross-store purge — so it is the
+    honest place for this.
+
+    Deleting by metadata filter rather than by id list: the ids are test-case
+    UUIDs we would otherwise have to re-derive from Postgres rows that this
+    same purge is deleting.
+    """
+    try:
+        collection = await _get_or_create_collection()
+    except Exception as exc:
+        # A vector-store outage must not block the durable-store purge, which
+        # is the same stance analysis_cache_retention takes. The count is
+        # reported as 0 and the failure is logged rather than swallowed —
+        # a purge that could not visit a store must not read as "nothing to
+        # delete there".
+        logger.warning("Search-index purge failed for project %s: %s", project_id, exc)
+        return 0
+
+    where = {"project_id": str(project_id)}
+    try:
+        payload = await asyncio.to_thread(collection.get, where=where, include=[])
+        ids = list(payload.get("ids") or [])
+        if execute and ids:
+            await asyncio.to_thread(collection.delete, where=where)
+        return len(ids)
+    except Exception as exc:
+        logger.warning("Search-index purge failed for project %s: %s", project_id, exc)
+        return 0

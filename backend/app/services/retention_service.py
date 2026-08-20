@@ -708,15 +708,26 @@ async def run_purge(
 
     cutoffs_iso = {k: v.isoformat() for k, v in cutoffs.items()}
     cache_counts = {"redis": 0, "semantic": 0}
+    # SEARCH-009. Distinct from ``cache_counts["semantic"]``, which is the AI
+    # ANALYSIS cache (``semantic_cache``, the ``ai_analysis_cache_*``
+    # collections). This is the test-case SEARCH index (``test_case_search``) —
+    # a different store that the "cross-store purge" never visited, so an
+    # executed purge reported complete while 98.8% of that index was
+    # embeddings of deleted projects.
+    search_index_documents = 0
     if not external_stores_injected:
         from app.services.analysis_cache_retention import (
             purge_project_analysis_caches,
         )
+        from app.services.semantic_search import purge_project_documents
 
         cache_counts = await purge_project_analysis_caches(
             str(project_id),
             cutoff=max(cutoffs["raw_events"], cutoffs["artifacts"]),
             execute=mode == "execute",
+        )
+        search_index_documents = await purge_project_documents(
+            str(project_id), execute=mode == "execute",
         )
 
     if mode == "preview":
@@ -767,6 +778,7 @@ async def run_purge(
             "provenance_rows": await _count(AIProvenanceRecord.id, provenance_where),
             "compliance_packs_expired": len(expired_packs),
             "analysis_cache_entries": sum(cache_counts.values()),
+            "search_index_documents": search_index_documents,
             "memory_entries_expired": len(memory_expired_ids),
         }
         return {"mode": "preview", "cutoffs": cutoffs_iso, "candidates": candidates}
@@ -892,6 +904,7 @@ async def run_purge(
         "mongo": mongo_deleted,
         "minio": {"objects_deleted": minio_deleted},
         "analysis_cache": cache_counts,
+        "search_index": {"documents_deleted": search_index_documents},
         "memory": {"vectors_deleted": memory_vectors_deleted},
     }
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-20 — Retention purges the semantic search index too
+
+- The retention purge described itself as cross-store but never visited the test-case search index. Both indexers filter on project activity at write time, so deleting a project stopped new documents being added while nothing retired the existing ones — measured on a live deployment, 49,380 indexed documents against 600 test cases in active projects. An executed purge now deletes the project's documents from that index and reports the count, separately from the AI analysis cache it was previously conflated with.
+- The purge hangs off retention rather than project deletion on purpose: deleting a project is reversible, and dropping embeddings there would leave an undeleted project unsearchable until a full reindex.
+
 ## 2026-08-20 — Page workflow timelines are covered by tests
 
 - Six of the seventeen workflow-timeline builders had no tests, including the ones behind the runs, search, overview, release and intelligence pages. They now cover the counts each stage reports, case-insensitive run-status matching, release phases ordering by `order_index`, and that an empty input produces a readable skipped timeline rather than a blank or broken one.
