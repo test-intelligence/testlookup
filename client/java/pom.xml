@@ -96,6 +96,17 @@
                         <configuration>
                             <shadedArtifactAttached>true</shadedArtifactAttached>
                             <shadedClassifierName>all</shadedClassifierName>
+                            <!-- The shaded jar is ATTACHED under the "all"
+                                 classifier, so the main artifact and its POM
+                                 are untouched and consumers still resolve the
+                                 real dependency tree. The dependency-reduced
+                                 POM only matters when the shaded jar REPLACES
+                                 the main artifact, which it does not here.
+                                 Left on (the plugin default), it regenerated
+                                 client/java/dependency-reduced-pom.xml on
+                                 every `mvn package` and dirtied the tree,
+                                 because that byproduct was also tracked. -->
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
                             <artifactSet>
                                 <includes>
                                     <include>com.fasterxml.jackson.core:*</include>

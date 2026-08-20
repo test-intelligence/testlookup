@@ -163,3 +163,7 @@ Thumbs.db
 *.zip
 *.tar.gz
 *.tar.bz2
+
+# maven-shade byproduct — generation is disabled in pom.xml, but keep this
+# so an older checkout or a plugin-default change cannot dirty the tree again.
+client/java/dependency-reduced-pom.xml

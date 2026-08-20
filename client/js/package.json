@@ -12,7 +12,6 @@
   "scripts": {
     "build":    "tsc",
     "build:watch": "tsc --watch",
-    "lint":     "eslint src --ext .ts",
     "type-check": "tsc --noEmit"
   },
   "files": ["dist", "src"],
