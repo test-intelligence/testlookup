@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-20 — Resetting a QA-lead password now ends that account's sessions
+
+- `POST /projects/{id}/default-qa-lead/reset-password` rotated the stored hash and nothing else. It is the documented remediation for the shared QA-lead credential, but the holder of a token minted with the old password kept full access afterwards: the access token stayed valid for its remaining lifetime (up to twelve hours), and the refresh token kept minting new ones indefinitely. Verified against a running deployment — after a reset, logging in with the old password returned 401 while the pre-reset refresh token still returned 200 and the access token it produced still read `/users`.
+- `/auth/change-password` and `/auth/first-time-reset` had always revoked both scopes; this was the third password-change path and it revoked neither. The revocations now live in the service that writes the hash, so no caller can skip them, and a regression guard walks the AST of every function that reassigns `hashed_password` rather than only the one that was broken.
+- **Operators who already rotated:** rotation alone did not evict existing sessions. Re-run the reset on this build, or revoke the affected users' refresh tokens directly.
+
 ## 2026-08-20 — Auto-provisioned QA-lead accounts no longer share a password
 
 - Every synthetic per-project QA-lead account was created with the same password, hard-coded in the source. The accounts are created automatically (one per project), are login-enabled, and the flag intended to force a rotation does not block login — so the credential authenticated as QA_LEAD on any deployment that had ever created a project. Accounts are now provisioned with a random, discarded secret, and a blank password reset generates a fresh value instead of reapplying a shared one.

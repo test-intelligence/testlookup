@@ -23,6 +23,29 @@ import pytest
 from app.models.postgres import UserRole
 
 
+@pytest.fixture(autouse=True)
+def _stub_session_revocation(monkeypatch):
+    """Keep these pure unit tests off the network.
+
+    ``reset_default_qa_lead_password`` ends the account's live sessions as
+    well as rotating the hash. The access-token half writes to Redis, which
+    is not running here — the helper swallows the failure, but only after a
+    connect timeout, which added ~4s per reset call to this file. These
+    tests are about the password value; the revocation behaviour is guarded
+    in ``tests/regression/test_password_change_ends_sessions.py``.
+    """
+    import app.services.default_qa_lead_service as svc
+
+    async def _noop_access(user_id):
+        return None
+
+    async def _noop_refresh(db, user_id, reason="revoked"):
+        return None
+
+    monkeypatch.setattr(svc, "revoke_all_user_tokens", _noop_access)
+    monkeypatch.setattr(svc, "_revoke_refresh_family", _noop_refresh)
+
+
 def _scalar(value):
     res = MagicMock()
     res.scalar_one_or_none = MagicMock(return_value=value)
