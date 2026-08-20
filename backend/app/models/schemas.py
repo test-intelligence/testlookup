@@ -5023,7 +5023,21 @@ class RetentionPolicyRead(BaseModel):
 
 
 class RetentionPreviewCandidates(BaseModel):
-    """Per-class candidate counts a purge WOULD delete right now."""
+    """Per-class candidate counts a purge WOULD delete right now.
+
+    **Every class ``run_purge`` counts must have a field here.** FastAPI
+    filters the handler's return through this model, so a class the service
+    counts but the model omits is dropped from the response *silently* — no
+    error, no warning, just a smaller object.
+
+    That happened: the service computed twelve counts and this model declared
+    eight, so ``evidence_artifact_rows``, ``analysis_cache_entries``,
+    ``memory_entries_expired`` and ``search_index_documents`` never reached
+    the operator. The preview is what an ADMIN authorises an irreversible
+    cross-store purge from, so under-reporting it is not cosmetic — four
+    categories of data were deleted by execute without ever appearing in the
+    dry run.
+    """
     runs: int
     test_cases: int
     mongo_docs: dict[str, int] = Field(default_factory=dict)
@@ -5032,6 +5046,10 @@ class RetentionPreviewCandidates(BaseModel):
     audit_rows: int
     provenance_rows: int
     compliance_packs_expired: int
+    evidence_artifact_rows: int = 0
+    analysis_cache_entries: int = 0
+    memory_entries_expired: int = 0
+    search_index_documents: int = 0
 
 
 class RetentionPreviewResponse(BaseModel):

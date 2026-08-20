@@ -16,6 +16,17 @@
 **/*.pyd
 .pytest_cache/
 **/.pytest_cache/
+# pytest --basetemp directories. The repo's own test instructions tell
+# you to pass `--basetemp=backend/.pytest_tmp` on Windows, and sessions
+# routinely use suffixed variants (.pytest_tmp_ui003_full, ...). Those
+# directories are permission-locked on Windows, so podman/docker aborts
+# the whole build reading their extended attributes:
+#   copier: get: getting extended attributes for "/.pytest_tmp_...":
+#   permission denied
+# The bare `.pytest_cache` entries above did not cover them, so the
+# documented test command broke the documented build.
+.pytest_tmp*/
+**/.pytest_tmp*/
 .mypy_cache/
 .ruff_cache/
 .tox/

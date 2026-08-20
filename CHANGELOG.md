@@ -5,6 +5,14 @@
 - Every synthetic per-project QA-lead account was created with the same password, hard-coded in the source. The accounts are created automatically (one per project), are login-enabled, and the flag intended to force a rotation does not block login — so the credential authenticated as QA_LEAD on any deployment that had ever created a project. Accounts are now provisioned with a random, discarded secret, and a blank password reset generates a fresh value instead of reapplying a shared one.
 - **Existing deployments are not rotated by this change.** After upgrading, reset each project's default QA-lead password to replace the old hash.
 
+## 2026-08-20 — The retention preview reports every class the purge deletes
+
+- The dry run returned eight candidate counts while the purge computes twelve. The four missing ones — evidence artifacts, analysis caches, agent-memory entries and search-index documents — were dropped by the response model, silently, so an administrator authorised an irreversible cross-store purge from a preview that never mentioned them.
+
+## 2026-08-20 — Test basetemp directories no longer break the image build
+
+- `backend/.dockerignore` excluded `.pytest_cache` but not the `--basetemp` directories the project's own test instructions tell you to create, and those are permission-locked on Windows, so the documented test command broke the documented build with a bulk-transfer error. Both `.dockerignore` and `.gitignore` now cover the suffixed variants.
+
 ## 2026-08-20 — Retention purges the semantic search index too
 
 - The retention purge described itself as cross-store but never visited the test-case search index. Both indexers filter on project activity at write time, so deleting a project stopped new documents being added while nothing retired the existing ones — measured on a live deployment, 49,380 indexed documents against 600 test cases in active projects. An executed purge now deletes the project's documents from that index and reports the count, separately from the AI analysis cache it was previously conflated with.

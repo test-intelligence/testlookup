@@ -33,7 +33,9 @@ __pycache__/
 *.py[cod]
 *.pyo
 .pytest_cache/
-.pytest_tmp/
+# Suffixed variants too (.pytest_tmp_ui003_full, ...) — a bare
+# `.pytest_tmp/` left every per-run basetemp dir untracked-but-visible.
+.pytest_tmp*/
 
 # Celery beat runtime state (regenerated at startup — not source)
 celerybeat-schedule
