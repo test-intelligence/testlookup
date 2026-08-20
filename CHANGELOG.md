@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-20 — Page workflow timelines are covered by tests
+
+- Six of the seventeen workflow-timeline builders had no tests, including the ones behind the runs, search, overview, release and intelligence pages. They now cover the counts each stage reports, case-insensitive run-status matching, release phases ordering by `order_index`, and that an empty input produces a readable skipped timeline rather than a blank or broken one.
+
 ## 2026-08-20 — Storage settings report why a save failed
 
 - Saving the storage configuration reported only "Failed to save storage configuration" and discarded the server's reason, so a rejected bucket name or a field-level validation error gave the operator nothing to act on. The API detail is now included, matching the seed-data page.

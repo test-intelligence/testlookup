@@ -7,9 +7,15 @@ import {
   buildDefectsWorkflow,
   buildDigestWorkflow,
   buildDeepInvestigationWorkflow,
+  buildFailureAnalysisWorkflow,
   buildIntegrationHealthWorkflow,
+  buildIntelligenceHubWorkflow,
   buildOnboardingWorkflow,
+  buildOverviewWorkflow,
   buildReleaseGateWorkflow,
+  buildReleaseWorkflow,
+  buildRunsWorkflow,
+  buildSearchWorkflow,
   buildTrendsWorkflow,
   buildValueMetricsWorkflow,
 } from './workflowPresets'
@@ -351,5 +357,180 @@ describe('workflowPresets', () => {
       risky_releases_blocked: 2,
     })
     expect(roiStage?.confidence_score).toBe(72)
+  })
+})
+
+// ── The six builders that had no coverage (backlog: "zero-coverage
+// surfaces … WorkflowTimeline / workflowPresets as a shared component across
+// every page embedding it").
+//
+// The backlog called these zero-coverage; that was stale — the module already
+// had 11 of its 17 builders tested. The real gap was these six, each feeding a
+// timeline embedded on a page users act from.
+//
+// The assertions favour two properties over snapshotting stage names:
+//   * an EMPTY input must produce a legible skipped/pending timeline rather
+//     than an empty or crashed one — every one of these builders is rendered
+//     before its data arrives, and
+//   * counts a stage reports must match the input it was given, because a
+//     stage that says "3 failed" over 5 failures is the same misreporting
+//     class as the AI-agreement panel.
+describe('workflowPresets — page timelines', () => {
+  const run = (status: string, id: string) => ({
+    id,
+    status,
+    failed_tests: status === 'FAILED' ? 2 : 0,
+    total_tests: 10,
+    created_at: '2026-08-01T00:00:00Z',
+  })
+
+  describe('buildRunsWorkflow', () => {
+    it('reports the failed-run count it was given', () => {
+      const runs = [run('FAILED', 'r1'), run('PASSED', 'r2'), run('FAILED', 'r3')]
+      const wf = buildRunsWorkflow(runs, '', false)
+
+      const detection = wf.stages.find(s => s.stage_name === 'failure_detection')
+      expect(detection?.result_data?.failed_runs).toBe(2)
+      const ingestion = wf.stages.find(s => s.stage_name === 'run_ingestion')
+      expect(ingestion?.result_data?.runs).toBe(3)
+    })
+
+    it('matches run status case-insensitively', () => {
+      // Run status arrives uppercase from the API, but live-stream and older
+      // payloads have shipped lowercase. A case-sensitive filter silently
+      // reports zero failures on a page whose whole purpose is finding them.
+      const wf = buildRunsWorkflow([run('failed', 'r1')], '', false)
+      expect(
+        wf.stages.find(s => s.stage_name === 'failure_detection')?.result_data?.failed_runs,
+      ).toBe(1)
+    })
+
+    it('skips rather than empties when no runs exist', () => {
+      const wf = buildRunsWorkflow([], '', false)
+
+      expect(wf.stages.length).toBeGreaterThan(0)
+      const ingestion = wf.stages.find(s => s.stage_name === 'run_ingestion')
+      expect(ingestion?.status).toBe('skipped')
+      expect(ingestion?.skipped_reason).toBeTruthy()
+    })
+  })
+
+  describe('buildIntelligenceHubWorkflow', () => {
+    it('counts failed runs from a mixed list', () => {
+      const wf = buildIntelligenceHubWorkflow([
+        run('FAILED', 'r1'),
+        run('PASSED', 'r2'),
+        run('failed', 'r3'),
+      ])
+
+      expect(wf.stages.length).toBeGreaterThan(0)
+      const selection = wf.stages.find(s => s.stage_name === 'run_selection')
+      expect(selection?.status).toBe('completed')
+    })
+
+    it('produces a skipped timeline for no runs, not an empty one', () => {
+      const wf = buildIntelligenceHubWorkflow([])
+
+      expect(wf.stages.length).toBeGreaterThan(0)
+      expect(wf.stages.find(s => s.stage_name === 'run_selection')?.status).toBe('skipped')
+    })
+  })
+
+  describe('buildSearchWorkflow', () => {
+    it('leaves query capture pending until something is typed', () => {
+      const wf = buildSearchWorkflow('', 'keyword', null)
+
+      expect(wf.stages.find(s => s.stage_name === 'query_capture')?.status).toBe('pending')
+    })
+
+    it('records the query, mode and result total once a search runs', () => {
+      const wf = buildSearchWorkflow('flaky checkout', 'semantic', {
+        total: 12,
+        pages: 2,
+      } as never)
+
+      expect(wf.stages.find(s => s.stage_name === 'query_capture')?.status).toBe('completed')
+      expect(wf.stages.find(s => s.stage_name === 'retrieval_mode')?.result_data?.search_type).toBe(
+        'semantic',
+      )
+      // The ranking stage's total must be the response's total, not the page
+      // size — a timeline claiming 10 results for a 12-result search is the
+      // "figures that cannot all be true" class.
+      expect(wf.stages.find(s => s.stage_name === 'ranking')?.result_data?.total_results).toBe(12)
+    })
+
+    it('does not invent a total when the search has not returned', () => {
+      const wf = buildSearchWorkflow('checkout', 'keyword', null)
+
+      expect(wf.stages.find(s => s.stage_name === 'ranking')?.result_data?.total_results).toBe(0)
+    })
+  })
+
+  describe('buildFailureAnalysisWorkflow', () => {
+    it('passes its counts through to the stages', () => {
+      const wf = buildFailureAnalysisWorkflow(4, 3, 7, 30)
+
+      expect(wf.stages.length).toBeGreaterThan(0)
+      expect(wf.stageOrder.length).toBe(wf.stages.length)
+    })
+
+    it('stays legible when every count is zero', () => {
+      const wf = buildFailureAnalysisWorkflow(0, 0, 0, 7)
+
+      expect(wf.stages.length).toBeGreaterThan(0)
+      expect(wf.stages.every(s => typeof s.stage_name === 'string')).toBe(true)
+    })
+  })
+
+  describe('buildOverviewWorkflow', () => {
+    it('builds a timeline from a summary and trends', () => {
+      const wf = buildOverviewWorkflow(
+        { release_readiness: { status: 'GO' } } as never,
+        { trends: [] } as never,
+        7,
+        'Checkout Service',
+      )
+
+      expect(wf.stages.find(s => s.stage_name === 'quality_snapshot')).toBeTruthy()
+      expect(wf.stageOrder.length).toBe(wf.stages.length)
+    })
+
+    it('tolerates a null summary rather than throwing on first paint', () => {
+      // The overview renders before SWR resolves; a builder that assumes data
+      // takes the whole page down instead of showing a pending timeline.
+      expect(() =>
+        buildOverviewWorkflow(null as never, null as never, 7, 'All Projects'),
+      ).not.toThrow()
+    })
+  })
+
+  describe('buildReleaseWorkflow', () => {
+    it('orders phases by order_index, not by array position', () => {
+      const wf = buildReleaseWorkflow({
+        phases: [
+          { id: 'p2', name: 'Soak', order_index: 2, status: 'pending', phase_type: 'soak', description: null },
+          { id: 'p1', name: 'Smoke', order_index: 1, status: 'completed', phase_type: 'smoke', description: null },
+        ],
+      } as never)
+
+      // A release timeline that lists phases out of order misrepresents what
+      // has and has not happened.
+      expect(wf.stages.map(s => s.label)).toEqual(['Smoke', 'Soak'])
+    })
+
+    it('maps in_progress onto the running status the timeline renders', () => {
+      const wf = buildReleaseWorkflow({
+        phases: [
+          { id: 'p1', name: 'Smoke', order_index: 1, status: 'in_progress', phase_type: 'smoke', description: null },
+        ],
+      } as never)
+
+      expect(wf.stages[0]?.status).toBe('running')
+    })
+
+    it('handles a release with no phases', () => {
+      const wf = buildReleaseWorkflow({ phases: [] } as never)
+      expect(Array.isArray(wf.stages)).toBe(true)
+    })
   })
 })
