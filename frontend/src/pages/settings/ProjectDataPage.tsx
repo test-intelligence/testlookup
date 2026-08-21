@@ -67,7 +67,8 @@ const MODE_SPECS: ModeSpec[] = [
       'Runs the test-runs delete and then also wipes the project’s catalog, RAG-authored data, releases, policies, and baselines. The project, its members, API keys, and AI/SSO config survive — everything else is reset.',
     deletes: [
       'Everything in “Delete test runs”',
-      'test_suites, canonical_test_cases, suite_memberships',
+      'test_suites, canonical_test_cases',
+      'suite_memberships, suite_membership_events',
       'releases, release_gate_policies, perf_baselines',
       'flaky_quarantine_requests',
       'managed_test_cases, test_plans, test_strategies',

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -80,12 +80,21 @@ async def test_release_link_uses_canonical_uuid_for_slug_run():
             "app.services.release_linker.link_run_or_default",
             new=AsyncMock(side_effect=_capture_link),
         ),
-    ):
         # The persist-enqueue and AI-pipeline blocks run AFTER release linking
-        # and are each wrapped in their own try/except in close_session, so we
-        # don't need to patch them — any failure (e.g. no Celery broker, or
-        # celery not installed locally) is swallowed and can't affect the
-        # release-link assertion, which fires earlier.
+        # and each sit in their own try/except, so it is tempting to leave
+        # them unpatched and let the failure be swallowed. That reasoning is
+        # wrong and this test used to HANG THE WHOLE SUITE because of it: with
+        # no local Redis, ``apply_async`` never raises. Celery's Redis result
+        # backend enters ``retry_over_time`` and reconnects forever, so there
+        # is no exception for the ``except`` to catch — the run blocks at zero
+        # CPU indefinitely. Patch both dispatch points, as the service-layer
+        # tests already do.
+        patch("app.worker.tasks.persist_live_session.apply_async", new=MagicMock()),
+        patch(
+            "app.services.ai_pipeline_debouncer.enqueue_pipeline_for_run",
+            new=AsyncMock(return_value="debounced"),
+        ),
+    ):
         await stream_service.close_session(db, str(session_uuid))
 
     # The slug run must have reached link_run_or_default (it never did before

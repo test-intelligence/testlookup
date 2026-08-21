@@ -41,6 +41,8 @@ from app.models.postgres import (
     Release,
     ReleaseGatePolicy,
     SettingsAuditLog,
+    SuiteMembership,
+    SuiteMembershipEvent,
     TestPlan,
     TestRun,
     TestStrategy,
@@ -55,9 +57,36 @@ logger = structlog.get_logger(__name__)
 # ai_analysis, failure_clusters, release_decisions, agent_pipeline_runs,
 # run_intelligence_snapshots, etc.). What's listed here is everything
 # project-scoped that is NOT cascaded by deleting test_runs.
+#
+# ``suite_memberships`` / ``suite_membership_events`` must be listed
+# EXPLICITLY. Neither is reachable by cascade from anything this reset
+# deletes: a membership names its suite by ``suite_name`` (a String, not a
+# FK to ``test_suites.id``), and its only CASCADE is on ``projects.id`` —
+# which a reset never deletes, because the Project row is a deliberate
+# keep. Its three ``test_runs`` pointers are all SET NULL. Leaving the rows
+# behind is not inert: ``suite_sync_service`` still writes this table on
+# every ingest (migration 0075 planned to move those writes onto
+# ``canonical_test_cases`` in a Phase 2 that has not happened), so a
+# surviving row makes the first post-reset ingest take its "already seen"
+# branch — the test is counted unchanged/restored instead of added,
+# ``first_seen_run_id`` is never assigned and stays NULL forever, and any
+# survivor absent from that first run is marked ``needs_review`` and moved
+# to the ``-deleted`` bucket. A "green-field" project would report
+# restoring and deleting tests it had never ingested.
+#
+# ORDER IS LOAD-BEARING. ``canonical_test_cases.test_suite_id`` is NOT NULL
+# with ``ON DELETE RESTRICT`` — deliberately, so a suite that still holds
+# cases cannot be dropped out from under them. It therefore has to be
+# deleted BEFORE ``test_suites``. With the two the other way round, the
+# ``full`` reset raised ForeignKeyViolation on every project that had ever
+# ingested a run (canonical rows survive the ``test_runs`` delete — their
+# run pointers are SET NULL), the transaction rolled back, and nothing at
+# all was deleted, ``test_runs`` included.
 _FULL_RESET_TABLES = [
-    ("test_suites", TestSuite),
     ("canonical_test_cases", CanonicalTestCase),
+    ("test_suites", TestSuite),
+    ("suite_memberships", SuiteMembership),
+    ("suite_membership_events", SuiteMembershipEvent),
     ("releases", Release),
     ("release_gate_policies", ReleaseGatePolicy),
     ("perf_baselines", PerfBaseline),

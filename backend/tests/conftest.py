@@ -10,6 +10,46 @@ os.environ.setdefault("TESTING", "true")
 os.environ.setdefault("OTEL_ENABLED", "false")
 
 
+def _make_celery_fail_fast_without_a_broker() -> None:
+    """A missing Redis must fail the dispatch, not retry it forever.
+
+    ``backend/CLAUDE.md`` says the local suite does not need live services,
+    and every call site that dispatches a Celery task wraps it in
+    ``try/except`` on that basis. Celery's Redis **result backend** breaks
+    the assumption: ``apply_async`` calls ``ResultConsumer.on_task_call``,
+    which enters ``kombu.utils.functional.retry_over_time`` and reconnects
+    with no retry ceiling. Nothing is ever raised, so the ``except`` never
+    runs and the test blocks at zero CPU indefinitely.
+
+    That is exactly how ``test_release_link_canonical_uuid`` hung the whole
+    suite at ~18% on a machine with no local Redis — a hang, not a failure,
+    so it produced no output to diagnose.
+
+    The hang is specifically ``ResultConsumer.consume_from`` subscribing to the
+    result pubsub channel. Nothing in the unit suite asserts on that
+    subscription, so making it a no-op costs nothing and lets ``apply_async``
+    fall through to the broker publish, which *does* raise promptly and is
+    caught by the handlers that already wrap every dispatch.
+
+    Tuning ``retry_policy`` instead does not work — verified, not assumed. With
+    the flat transport options bounded the run still hung, because celery reads
+    a *nested* ``retry_policy`` key and the result consumer holds its own
+    connection either way.
+
+    This only changes behaviour when there is no broker to talk to; with Redis
+    up, the consumer has nothing to retry and nothing here matters.
+    """
+    try:
+        from celery.backends.redis import ResultConsumer
+    except Exception:  # pragma: no cover - celery not installed locally
+        return
+
+    ResultConsumer.consume_from = lambda self, task_id: None
+
+
+_make_celery_fail_fast_without_a_broker()
+
+
 def pytest_collection_modifyitems(config, items):
     """Apply coarse-grained markers from test location/name."""
     integration_marker = pytest.mark.integration
