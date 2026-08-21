@@ -39,6 +39,45 @@ export interface LiveEvent {
 
 export type WsStatus = 'connecting' | 'open' | 'closed' | 'error'
 
+// ── Aggregate live stats ────────────────────────────────────────────────────
+
+export interface LiveStats {
+  totalTests: number
+  totalPassed: number
+  totalFailed: number
+  totalBroken: number
+  totalSkipped: number
+  overallPassRate: number
+}
+
+/**
+ * Aggregate live KPIs across a set of sessions.
+ *
+ * Pass rate is ``passed / (passed + failed + broken)`` — the canonical
+ * *evaluated* denominator with skipped excluded, matching the backend's own
+ * per-session ``pass_rate`` (``stream_service.close_session``: "passed /
+ * passed+failed+broken") and the ingestion aggregates. An earlier version
+ * divided by ``passed + failed`` alone, which dropped BROKEN and overstated
+ * the rate on any run carrying infrastructure errors (e.g. 8 passed / 2 broken
+ * read as 100%, not 80%) — the same "a failure is FAILED *or* BROKEN" rule the
+ * rest of the codebase pins. ``totalBroken`` is returned so broken tests are
+ * not silently erased from the live breakdown either.
+ */
+export function computeLiveStats(
+  sessions: Pick<LiveSessionState, 'total' | 'passed' | 'failed' | 'broken' | 'skipped'>[],
+): LiveStats {
+  const totalTests   = sessions.reduce((a, s) => a + (s.total   || 0), 0)
+  const totalPassed  = sessions.reduce((a, s) => a + (s.passed  || 0), 0)
+  const totalFailed  = sessions.reduce((a, s) => a + (s.failed  || 0), 0)
+  const totalBroken  = sessions.reduce((a, s) => a + (s.broken  || 0), 0)
+  const totalSkipped = sessions.reduce((a, s) => a + (s.skipped || 0), 0)
+  const evaluated = totalPassed + totalFailed + totalBroken
+  const overallPassRate = evaluated > 0
+    ? Math.round((totalPassed / evaluated) * 100)
+    : 0
+  return { totalTests, totalPassed, totalFailed, totalBroken, totalSkipped, overallPassRate }
+}
+
 // ── Active sessions SWR hook ───────────────────────────────────────────────
 
 export function useActiveSessions(projectId?: string, suiteName?: string | null, days?: number) {
@@ -298,20 +337,14 @@ export function useLiveExecution(projectId?: string, suiteName?: string | null, 
 
   // ── Derived stats ───────────────────────────────────────────────────────
   const runningSessions = sessions.filter(s => s.status === 'running')
-  const totalTests   = runningSessions.reduce((a, s) => a + (s.total  || 0), 0)
-  const totalPassed  = runningSessions.reduce((a, s) => a + (s.passed || 0), 0)
-  const totalFailed  = runningSessions.reduce((a, s) => a + (s.failed || 0), 0)
-  const totalSkipped = runningSessions.reduce((a, s) => a + (s.skipped || 0), 0)
-  const overallPassRate = totalTests > 0
-    ? Math.round(((totalPassed) / (totalPassed + totalFailed) || 0) * 100)
-    : 0
+  const stats = computeLiveStats(runningSessions)
 
   return {
     sessions,
     runningSessions,
     recentEvents,
     wsStatus,
-    stats: { totalTests, totalPassed, totalFailed, totalSkipped, overallPassRate },
+    stats,
     isLoading: !data && !sessions.length,
     mutate,
   }

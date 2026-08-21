@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-21 — The live pass rate now counts broken tests as failures
+
+- The /live dashboard's headline **Pass rate** and the `useLiveExecution` hook stats both computed `passed / (passed + failed)`, dropping BROKEN from the denominator — and `totalBroken` was never summed at all, so broken tests were invisible in the pass/fail breakdown too. The rest of the codebase pins "a failure is FAILED *or* BROKEN": the backend's own per-session `pass_rate` (`stream_service.close_session`) divides by `passed + failed + broken`, skipped excluded. So a live run of 8 passed / 2 broken read **100%** on the dashboard while its own final pass_rate — and the /runs page — said **80%**. Two surfaces, one run, different answers.
+- The two duplicated reductions are replaced by one exported pure helper, `computeLiveStats`, dividing by the canonical evaluated denominator (`passed + failed + broken`) and returning `totalBroken`. Both the hook and the page import it, so the live aggregate can no longer drift from the per-session value or from each other.
+- Broken is now rendered where failed and skipped already were — a `N broken` count in the status strip and a broken segment in the pass/fail bar — so a run's own arithmetic stays visible instead of silently missing its infrastructure errors.
 ## 2026-08-21 — The backend suite no longer hangs when Redis is absent
 
 - `test_release_link_canonical_uuid` called `stream_service.close_session` without patching its two Celery dispatch points, reasoning in its own comment that both sit in `try/except` so "any failure (e.g. no Celery broker) is swallowed". On a machine with no local Redis that **hung the whole backend suite at ~18%** — at zero CPU, with no output, so it looked like slowness rather than a defect.

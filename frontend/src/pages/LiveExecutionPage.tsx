@@ -46,7 +46,7 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { useLiveExecution } from '@/hooks/useLiveExecution'
+import { useLiveExecution, computeLiveStats } from '@/hooks/useLiveExecution'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import type { LiveSessionState } from '@/types/live-stream'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -662,17 +662,10 @@ export default function LiveExecutionPage() {
     return sortSessions(list, sortField, sortDir)
   }, [suiteScopedSessions, filter, search, sortField, sortDir])
 
-  // KPIs derived from the currently visible (filtered) sessions
-  const visibleStats = useMemo(() => {
-    const totalTests    = visibleSessions.reduce((a, s) => a + (s.total   || 0), 0)
-    const totalPassed   = visibleSessions.reduce((a, s) => a + (s.passed  || 0), 0)
-    const totalFailed   = visibleSessions.reduce((a, s) => a + (s.failed  || 0), 0)
-    const totalSkipped  = visibleSessions.reduce((a, s) => a + (s.skipped || 0), 0)
-    const overallPassRate = (totalPassed + totalFailed) > 0
-      ? Math.round((totalPassed / (totalPassed + totalFailed)) * 100)
-      : 0
-    return { totalTests, totalPassed, totalFailed, totalSkipped, overallPassRate }
-  }, [visibleSessions])
+  // KPIs derived from the currently visible (filtered) sessions. Pass rate uses
+  // the canonical passed / (passed + failed + broken) denominator — see
+  // computeLiveStats. (Was passed / passed+failed here, dropping BROKEN.)
+  const visibleStats = useMemo(() => computeLiveStats(visibleSessions), [visibleSessions])
 
   const workflow = useMemo(() => {
     // Only surface a confidence score for the stream when the socket state
@@ -987,6 +980,9 @@ export default function LiveExecutionPage() {
                 {visibleStats.totalFailed > 0 && (
                   <> · <span className="text-[var(--status-failed)]">{visibleStats.totalFailed} failed</span></>
                 )}
+                {visibleStats.totalBroken > 0 && (
+                  <> · <span className="text-[var(--status-broken)]">{visibleStats.totalBroken} broken</span></>
+                )}
                 {visibleStats.totalSkipped > 0 && <> · {visibleStats.totalSkipped} skipped</>}
               </span>
               <span className="font-mono">{visibleStats.totalTests} total</span>
@@ -996,6 +992,7 @@ export default function LiveExecutionPage() {
                 <>
                   <span className="bg-[var(--status-passed)] h-full" style={{ width: `${(visibleStats.totalPassed / visibleStats.totalTests) * 100}%` }} />
                   <span className="bg-[var(--status-failed)] h-full" style={{ width: `${(visibleStats.totalFailed / visibleStats.totalTests) * 100}%` }} />
+                  <span className="bg-[var(--status-broken)] h-full" style={{ width: `${(visibleStats.totalBroken / visibleStats.totalTests) * 100}%` }} />
                 </>
               ) : null}
             </div>
