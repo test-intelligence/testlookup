@@ -308,6 +308,53 @@ async def persist_probe_results(
     async with AsyncSessionLocal() as db:
         for r in results:
             if r.status == "skipped":
+                # A skip used to `continue` outright, which left the provider's
+                # PREVIOUS row completely untouched — status and
+                # ``last_checked_at`` included. So a provider that stopped
+                # being probed kept advertising its last verdict forever.
+                #
+                # Measured live: ``AI_OFFLINE_MODE`` flipped to false on
+                # 2026-08-16, from which point ollama was skipped every cycle.
+                # Five days later /integration-health/status still reported
+                # ``ollama: healthy`` with ``last_checked_at`` frozen at
+                # 2026-08-16 — for a service that had zero models installed.
+                # A health page reporting OK because it stopped looking is the
+                # worst version of a health page.
+                #
+                # The eight never-configured providers (jira, slack, smtp, ...)
+                # had no row at all, so they were invisible rather than
+                # visibly-not-monitored. The frontend already styles a
+                # ``skipped`` badge — that state was simply unreachable.
+                #
+                # NO history row: skips are not probe outcomes, and counting
+                # them would corrupt ``uptime_pct`` on the trends tab.
+                # ``consecutive_failures`` and ``last_success_at`` are left
+                # alone for the same reason — a skip is not a failure.
+                existing = await db.execute(
+                    select(IntegrationHealthCheck).where(
+                        IntegrationHealthCheck.provider == r.provider
+                    )
+                )
+                hc = existing.scalar_one_or_none()
+                if hc is None:
+                    hc = IntegrationHealthCheck(provider=r.provider)
+                    db.add(hc)
+                hc.status = "skipped"
+                hc.last_checked_at = now
+                hc.message = r.message
+                hc.response_ms = None
+
+                # Drop the Prometheus series too. The gauge is documented as
+                # 1=healthy / 0.5=degraded / 0=down and has no value meaning
+                # "not monitored", so a skipped provider previously kept its
+                # last reading forever — ollama sat pinned at 1.0 for five
+                # days. An absent series is the honest answer; 0.0 would read
+                # as "down" and 1.0 is a lie. Nothing in infra/ alerts on this
+                # gauge today, so removing the series breaks no rule.
+                try:
+                    integration_health_gauge.remove(r.provider)
+                except KeyError:
+                    pass  # never had a series in this process — nothing to drop
                 continue
 
             # Insert history record

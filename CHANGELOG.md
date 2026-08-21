@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-21 — A skipped integration no longer advertises its last health verdict
+
+- `persist_probe_results` began with `if r.status == "skipped": continue`, which left that provider's health row completely untouched — status and `last_checked_at` included. A provider that stopped being probed kept its last verdict forever.
+- Measured live: `AI_OFFLINE_MODE` flipped to false on 2026-08-16, from which point ollama was skipped every cycle. Five days later the health page still showed a green **healthy** badge for it, timestamped 2026-08-16 — for a service whose `ollama list` returned zero models. A health page that reports OK because it stopped looking is the worst version of a health page.
+- Skipped providers now record `status: "skipped"` with the reason and a current timestamp. The eight never-configured integrations (jira, splunk, github, ocp, slack, teams, smtp) previously had no row at all, so only 2 of 10 appeared on the page; they are now visibly not-monitored rather than invisible. `IntegrationHealthPage` already had a `skipped` badge style — nothing had ever been able to render it.
+- A skip is not a probe outcome and not a failure: no history row (it would corrupt `uptime_pct`), `consecutive_failures` and `last_success_at` untouched. The Prometheus series is dropped rather than left at its last reading — the gauge's scale has no value meaning "not monitored", and ollama had been pinned at 1.0 for five days.
+
 ## 2026-08-21 — The stale-snapshot path honours the schema version too
 
 - Bumping `CURRENT_SCHEMA_VERSION` was not enough. `get_cached_snapshot` compared versions and correctly refused the superseded row — and the request then fell through to `get_stale_snapshot`, which had no version filter and returned the very same payload with `stale: true`. The run-block fix stayed invisible through two deploys because of it.
