@@ -11,7 +11,25 @@ export interface Step {
    * runners that `curl` the endpoint directly rather than installing the CLI.
    */
   apiCommand?: string
+  /**
+   * An optional copy-paste command that installs the `testlookup` CLI, shown
+   * beside a step whose {@link command} invokes it. The CLI is not published to
+   * PyPI — it ships in the repo — so a fresh self-hoster who copies the upload
+   * command hits `command not found: testlookup` with no next step unless the
+   * guide points at the install.
+   */
+  cliInstall?: string
 }
+
+/**
+ * Install command for the `testlookup` CLI. The CLI ships in the repo's `cli/`
+ * package (name `testlookup-cli`, not on PyPI — see `cli/pyproject.toml`), so it
+ * is installed editable from source rather than `pip install testlookup-cli`.
+ * This mirrors the documented step in `GETTING_STARTED.md`
+ * (`pip install -e /app/cli/` inside the backend container); from a plain repo
+ * checkout the path is the repo-root-relative `cli/`.
+ */
+export const CLI_INSTALL_COMMAND = 'pip install -e cli/'
 
 /**
  * The CLI `upload` command's `-p` flag takes the project **ID** (see
@@ -82,6 +100,7 @@ export function buildSteps(projectId?: string, ingestUrl: string = DEFAULT_INGES
       title: 'Or ingest your own test results',
       body: 'Point your CI at the ingest API (JUnit / TestNG / Allure / Cypress / Playwright / pytest), or upload a file from the CLI.',
       command: uploadCommand(projectId),
+      cliInstall: CLI_INSTALL_COMMAND,
       apiCommand: ingestApiCommand(projectId, ingestUrl),
     },
     {

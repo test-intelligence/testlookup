@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 import FirstRunGuide, { FIRST_RUN_DISMISS_KEY } from './FirstRunGuide'
-import { uploadCommand, ingestApiCommand, DEFAULT_INGEST_URL } from './firstRunSteps'
+import { uploadCommand, ingestApiCommand, DEFAULT_INGEST_URL, CLI_INSTALL_COMMAND } from './firstRunSteps'
 import { backendUrl } from '@/services/api'
 
 const copyMock = vi.fn(async (_value: string) => true)
@@ -90,6 +90,25 @@ describe('FirstRunGuide', () => {
     expect(
       screen.getByText(content => content.includes('/api/v1/ingest/file')),
     ).toBeInTheDocument()
+  })
+
+  it('offers the CLI install command so the upload command is actually runnable', () => {
+    // Regression: step 2 shows `testlookup upload …`, but the CLI is not on
+    // PyPI — it ships in the repo (cli/pyproject.toml). A fresh self-hoster who
+    // copies the upload command hits `command not found: testlookup` unless the
+    // guide points at the editable install first.
+    renderGuide()
+    expect(screen.getByText(/No.*command yet\?.*install it once/i)).toBeInTheDocument()
+    expect(screen.getByText(CLI_INSTALL_COMMAND)).toBeInTheDocument()
+    expect(CLI_INSTALL_COMMAND).toBe('pip install -e cli/')
+    // It is not the (non-existent) PyPI package.
+    expect(CLI_INSTALL_COMMAND).not.toContain('install testlookup-cli')
+  })
+
+  it('copies the CLI install command verbatim', async () => {
+    renderGuide()
+    fireEvent.click(screen.getByRole('button', { name: `Copy command: ${CLI_INSTALL_COMMAND}` }))
+    await waitFor(() => expect(copyMock).toHaveBeenCalledWith(CLI_INSTALL_COMMAND))
   })
 
   it('points to the API Keys settings page for the credential the CI curl needs', () => {

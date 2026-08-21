@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-21 — The first-run guide now tells you how to get the CLI it hands you
+
+- Step 2 of the empty-dashboard guide shows `testlookup upload …`, but the CLI is **not** on PyPI — it ships in the repo (`cli/pyproject.toml`, name `testlookup-cli`). A fresh self-hoster who copied the command hit `command not found: testlookup` with nothing on screen pointing at the fix, and `pip install testlookup-cli` finds nothing.
+- The guide now shows a one-line, copy-paste editable install (`pip install -e cli/`) right beside the upload command, matching the documented step in `GETTING_STARTED.md` (`pip install -e /app/cli/` inside the backend container). Offline-safe: no external link, no PyPI round-trip.
 ## 2026-08-21 — The live pass rate now counts broken tests as failures
 
 - The /live dashboard's headline **Pass rate** and the `useLiveExecution` hook stats both computed `passed / (passed + failed)`, dropping BROKEN from the denominator — and `totalBroken` was never summed at all, so broken tests were invisible in the pass/fail breakdown too. The rest of the codebase pins "a failure is FAILED *or* BROKEN": the backend's own per-session `pass_rate` (`stream_service.close_session`) divides by `passed + failed + broken`, skipped excluded. So a live run of 8 passed / 2 broken read **100%** on the dashboard while its own final pass_rate — and the /runs page — said **80%**. Two surfaces, one run, different answers.

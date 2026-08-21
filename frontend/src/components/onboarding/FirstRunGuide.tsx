@@ -102,6 +102,15 @@ export default function FirstRunGuide({
               <p className="text-sm font-medium text-[var(--color-text)]">{s.title}</p>
               <p className="text-[13px] text-[var(--color-text-muted)]">{s.body}</p>
               {s.command && <CommandRow command={s.command} />}
+              {s.cliInstall && (
+                <>
+                  <p className="mt-2 text-[11px] text-[var(--color-text-faint)]">
+                    No <code className="font-mono">testlookup</code> command yet? The CLI ships in the
+                    repo — install it once:
+                  </p>
+                  <CommandRow command={s.cliInstall} />
+                </>
+              )}
               {s.apiCommand && (
                 <>
                   <p className="mt-2 text-[11px] text-[var(--color-text-faint)]">
