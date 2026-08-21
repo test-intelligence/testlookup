@@ -90,7 +90,7 @@ def test_manifest_shape():
     assert len(minio) == 2, "the compose/k8s MinIO skew must stay explicit in the manifest"
     # The optional LLM images are opt-in, never core.
     llm = {r.ref for r in rows if r.bundle == "llm"}
-    assert llm == {"ollama/ollama:0.5.4", "chromadb/chroma:0.5.20"}
+    assert llm == {"ollama/ollama:0.5.4", "chromadb/chroma:1.5.9"}
 
 
 # ── 2. Drift is actually detected ───────────────────────────────────────────

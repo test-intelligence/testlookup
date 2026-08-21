@@ -32,7 +32,7 @@ spec:
     spec:
       containers:
         - name: chromadb
-          image: chromadb/chroma:0.5.20
+          image: chromadb/chroma:1.5.9
           ports:
             - containerPort: 8000
           env:

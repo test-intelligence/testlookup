@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-21 — ChromaDB 0.5.20 → 1.5.9, client and server together
+
+- Dependabot's [#631](https://github.com/anandtopu/testlookup/pull/631) bumped only the Python client. The deployed **server** is pinned at `chromadb/chroma:0.5.20` in compose, the release compose, the air-gap compose, both k8s overlays and the Artifactory remap, and `db/chroma.py` reaches it over the network via `chromadb.HttpClient`. Merging the client alone would have shipped a client that cannot talk to the server it is deployed against.
+- Measured against two real servers rather than argued from release notes: a **1.5.9 client against a 0.5.20 server fails** with `{"error":"KeyError('_type')"}`, while **1.5.9 against 1.5.9 succeeds** — heartbeat, `get_or_create_collection`, `add`, `count`, and a semantic `query` that returned the expected match. Because semantic search is optional and offline-gated, the client-only break would not have failed a build; it would have surfaced later as "RAG is mysteriously broken".
+- Every pin moves together — client, `deploy/images.manifest.txt` (the single source the offline bundle is built from), three compose files, both k8s overlays, and the Artifactory `newTag`. The drift guard caught the Artifactory remap, which a hand search had missed; that surface is exactly the one whose failure only appears on a customer's air-gapped cluster.
+- The 1.5.9 Python API still exposes everything `backend/app` uses, verified against the installed package rather than assumed: `chromadb.config.Settings(anonymized_telemetry=...)`, `HttpClient(host, port, settings)`, the bundled `ONNXMiniLM_L6_V2` embedder that `local_embedder_guard` imports, and the client/collection methods the services call. `list_collections` still returns `Collection` objects.
+
+
 ## 2026-08-21 — The first-run guide now tells you how to get the CLI it hands you
 
 - Step 2 of the empty-dashboard guide shows `testlookup upload …`, but the CLI is **not** on PyPI — it ships in the repo (`cli/pyproject.toml`, name `testlookup-cli`). A fresh self-hoster who copied the command hit `command not found: testlookup` with nothing on screen pointing at the fix, and `pip install testlookup-cli` finds nothing.

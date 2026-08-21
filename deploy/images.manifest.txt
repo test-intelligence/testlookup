@@ -84,7 +84,7 @@ busybox:1.36                                 infra  k8s           core
 # an air-gapped Ollama is useless without separately transferred model blobs
 # (see user-guide/air-gapped-install.md).
 ollama/ollama:0.5.4                          infra  compose,k8s   llm
-chromadb/chroma:0.5.20                       infra  compose,k8s   llm
+chromadb/chroma:1.5.9                       infra  compose,k8s   llm
 
 # ── Tracked but never bundled ───────────────────────────────────────────────
 # Flower is the Celery monitoring UI in the source-build dev stack only

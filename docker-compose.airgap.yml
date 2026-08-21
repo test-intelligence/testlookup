@@ -61,7 +61,7 @@ services:
     image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/ollama/ollama:0.5.4
 
   chromadb:
-    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/chromadb/chroma:0.5.20
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/chromadb/chroma:1.5.9
 
   # ── Application (worker / beat / seed-init reuse the backend image) ───────
   backend:

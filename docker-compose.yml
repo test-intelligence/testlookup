@@ -201,7 +201,7 @@ services:
       - testlookup_net
 
   chromadb:
-    image: chromadb/chroma:0.5.20
+    image: chromadb/chroma:1.5.9
     container_name: testlookup_chroma
     profiles: ["local-llm"]
     restart: unless-stopped
