@@ -26,6 +26,7 @@ inherits that distrust.
 from __future__ import annotations
 
 import inspect
+import re
 
 import pytest
 
@@ -59,8 +60,24 @@ def test_suite_branch_still_counts_runs_with_no_per_test_rows():
     with no rows yet still contribute their run-level totals.
     """
     src = inspect.getsource(metrics_service._period_stats)
-    assert "~exists().where(TestCase.test_run_id == TestRun.id)" in src, (
-        "the no-rows-yet fallback is what keeps mid-ingest live-stream runs visible"
+    # Assert the PROPERTY, not one spelling of it. This used to pin the exact
+    # string ``~exists().where(TestCase.test_run_id == TestRun.id)``, which
+    # broke the moment that EXISTS had to be rewritten with an explicit FROM
+    # and ``.correlate(TestRun)`` to stop it auto-correlating itself into
+    # nothing (it was 500-ing every suite-filtered request). The fallback was
+    # entirely intact; only the spelling changed. A guard that fails on a
+    # faithful refactor trains people to edit the guard.
+    assert "no_rows" in src, (
+        "the no-rows-yet fallback is gone; mid-ingest live-stream runs, which "
+        "persist run aggregates before per-test rows, would drop out of the "
+        "suite numbers and blank the dashboard again"
+    )
+    assert re.search(r"no_rows\s*=\s*~", src), (
+        "no_rows is no longer a NEGATED exists, so it selects the wrong set "
+        "of runs"
+    )
+    assert "TestCase.test_run_id == TestRun.id" in src, (
+        "the fallback no longer correlates test_cases to the run"
     )
     assert "pending_row" in src
 

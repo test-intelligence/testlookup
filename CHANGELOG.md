@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-21 — The dashboard's suite filter stops returning HTTP 500
+
+- `/api/v1/metrics/summary?suite_name=<x>` returned **HTTP 500 for every suite** on the live deployment — reproduced on `build-20260821-175825` for `api`, `regression` and `smoke`. `_period_stats` built its EXISTS clauses as a bare `exists().where(...)`; a bare `exists()` has no FROM of its own, so SQLAlchemy auto-correlated *both* `TestCase` and `TestRun` to the enclosing query and the subquery was left with nothing to select from: `InvalidRequestError: ... returned no FROM clauses due to auto-correlation`.
+- Both clauses now select from `TestCase` explicitly and `.correlate(TestRun)`, so `TestCase` stays the subquery's FROM in the `TestCase`-rooted query and the `TestRun`-rooted ones alike.
+- **This path has now failed four ways.** Before 2026-05-15 an INNER JOIN returned 0 and blanked the dashboard for live-stream runs; from then to 2026-08-14 run-level aggregate sums reported the whole run's totals under every suite (60/60/60 where the truth was 25/20/15); a missing `total_executions` key 500'd it on 2026-08-08; and #588's F-080 fix introduced this 500 on 2026-08-14. Picking a suite on Overview has taken the dashboard down repeatedly.
+- **Nothing caught it because nothing compiled the query.** A mocked session never compiles a statement, so a SQL-construction bug is invisible to the unit suite. The new guard drives the real `_period_stats` with a session that compiles each statement instead of executing it — no database needed — and asserts every statement has a FROM clause plus the four keys the caller reads unconditionally.
+- An existing guard pinned the literal source string `~exists().where(TestCase.test_run_id == TestRun.id)` and so failed on a faithful refactor while the behaviour it protected was intact. It now asserts the property — a negated EXISTS correlating `test_cases` to the run — rather than one spelling of it.
+
+
 ## 2026-08-21 — Worker task teardown closes the shared httpx client
 
 - Every Celery task runs on its own event loop, and `get_http_client()` rotates the process-wide `httpx.AsyncClient` when it detects the owning loop changed. Rotating **replaces** the reference — the outgoing client was never closed. `close_http_client()` was called from the FastAPI lifespan and from nowhere in the worker path, so each task abandoned a client whose connection pool still held sockets bound to a loop that was about to close.

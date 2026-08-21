@@ -506,7 +506,7 @@ async def _period_stats(
         # suite label wasn't set), and read aggregates from ``test_runs``
         # columns which are always populated.
         suite_lower = suite_name  # already lowercased by _normalize_suite_name
-        from sqlalchemy import exists, select as _select
+        from sqlalchemy import select as _select
 
         # ── F-080 ────────────────────────────────────────────────────────────
         # This branch used to select runs that TOUCH the suite and then sum
@@ -526,10 +526,22 @@ async def _period_stats(
         # whenever rows exist), and fall back to run-level aggregates ONLY for
         # runs that have no per-test rows at all — which is exactly the
         # mid-ingest live-stream case the 2026-05-15 fix was protecting.
-        tc_match = exists().where(
-            TestCase.test_run_id == TestRun.id,
-        ).where(
-            func.lower(func.trim(TestCase.suite_name)) == suite_lower,
+        # A bare ``exists()`` has no FROM of its own, so SQLAlchemy
+        # auto-correlates EVERY table it mentions to the enclosing query --
+        # here both TestCase and TestRun -- and the subquery is left with no
+        # FROM at all. That raised InvalidRequestError ("returned no FROM
+        # clauses due to auto-correlation") and 500'd every suite-filtered
+        # dashboard request. Select from TestCase explicitly and correlate
+        # ONLY TestRun, so TestCase stays the subquery's FROM in both the
+        # TestCase-rooted query (a) and the TestRun-rooted queries below.
+        tc_match = (
+            _select(TestCase.id)
+            .where(
+                TestCase.test_run_id == TestRun.id,
+                func.lower(func.trim(TestCase.suite_name)) == suite_lower,
+            )
+            .correlate(TestRun)
+            .exists()
         )
         conditions.append(
             or_(
@@ -574,7 +586,12 @@ async def _period_stats(
         # (b) Runs matching the suite that have NO per-test rows yet. Their
         #     run-level aggregates are the only evidence available, and
         #     excluding them is what blanked the dashboard before.
-        no_rows = ~exists().where(TestCase.test_run_id == TestRun.id)
+        no_rows = ~(
+            _select(TestCase.id)
+            .where(TestCase.test_run_id == TestRun.id)
+            .correlate(TestRun)
+            .exists()
+        )
         pending_row = (
             await db.execute(
                 _select(
