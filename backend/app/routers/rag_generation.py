@@ -328,10 +328,20 @@ async def dismiss_stale(
 @router.get("/rag/status", response_model=RagStatusResponse)
 async def rag_status(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),
 ):
+    """RAG feature status plus adoption counts **for the caller's projects**.
+
+    The counts were previously unscoped ``COUNT(*)`` across every tenant, on an
+    endpoint with no role or project guard, so any authenticated user could
+    read the whole install's totals. ``get_accessible_project_ids`` returns
+    ``None`` for an ADMIN (sees everything) and a membership set otherwise.
+    """
+    from app.core.deps import get_accessible_project_ids
     from app.services.rag_eval_service import get_rag_status
-    return await get_rag_status(db)
+
+    scope = await get_accessible_project_ids(db, current_user)
+    return await get_rag_status(db, accessible_project_ids=scope)
 
 
 @router.get("/batches/{batch_id}/eval")

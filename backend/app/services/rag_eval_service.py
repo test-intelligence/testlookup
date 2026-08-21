@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import false as sa_false, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -17,7 +17,10 @@ from app.models.postgres import (
 logger = structlog.get_logger(__name__)
 
 
-async def get_rag_status(db: AsyncSession) -> dict:
+async def get_rag_status(
+    db: AsyncSession,
+    accessible_project_ids: set[uuid.UUID] | None = None,
+) -> dict:
     """Return overall RAG feature status and adoption metrics.
 
     ``enabled`` comes from the same resolver the gate uses, so this cannot
@@ -31,17 +34,37 @@ async def get_rag_status(db: AsyncSession) -> dict:
 
     enabled = await is_enabled("knowledge_rag", db=db)
 
-    total_sources = (await db.execute(
-        select(func.count(KnowledgeSource.id)).where(KnowledgeSource.is_archived.is_(False))
-    )).scalar() or 0
+    # The three counts used to be unscoped ``COUNT(*)`` over every tenant, so
+    # any authenticated user — the endpoint carries no role or project guard —
+    # learned how many knowledge sources, batches and chunks existed across
+    # the whole install, and every call paid for three full-table counts.
+    #
+    # ``accessible_project_ids`` follows the convention in core/deps: ``None``
+    # means ADMIN (or an unscoped internal caller) and sees everything; a set
+    # restricts to the caller's projects. An EMPTY set is not the same as
+    # ``None`` — it means "a member of nothing", which must count zero rather
+    # than silently widen back to the whole install.
+    def _scoped(stmt, model):
+        if accessible_project_ids is None:
+            return stmt
+        if not accessible_project_ids:
+            return stmt.where(sa_false())
+        return stmt.where(model.project_id.in_(accessible_project_ids))
 
-    total_batches = (await db.execute(
-        select(func.count(GenerationBatch.id))
-    )).scalar() or 0
+    total_sources = (await db.execute(_scoped(
+        select(func.count(KnowledgeSource.id)).where(KnowledgeSource.is_archived.is_(False)),
+        KnowledgeSource,
+    ))).scalar() or 0
 
-    total_chunks = (await db.execute(
-        select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.is_active.is_(True))
-    )).scalar() or 0
+    total_batches = (await db.execute(_scoped(
+        select(func.count(GenerationBatch.id)),
+        GenerationBatch,
+    ))).scalar() or 0
+
+    total_chunks = (await db.execute(_scoped(
+        select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.is_active.is_(True)),
+        KnowledgeChunk,
+    ))).scalar() or 0
 
     return {
         "enabled": enabled,

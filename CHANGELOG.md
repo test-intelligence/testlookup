@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-21 — /rag/status counts only the caller's projects
+
+- `get_rag_status` ran three unscoped `COUNT(*)` queries over `knowledge_sources`, `generation_batches` and `knowledge_chunks`. The endpoint carries no role guard and no project guard — only `get_current_active_user` — so **any** authenticated user read the totals for the entire install. Observed live: a caller got `total_batches: 2` while its own sources and chunks were `0`.
+- It also meant three full-table counts on every call, for numbers nothing displays: the only consumer, `KnowledgeGenerationTab`, reads `ragStatus.enabled` and nothing else. `total_sources` / `total_batches` / `total_chunks` are declared in the TS type and rendered nowhere. That resolved the open scope-or-delete question in favour of scoping, since the fields are part of a published response contract.
+- The counts now use `get_accessible_project_ids`, the same cached, HMAC-signed helper the rest of the codebase scopes with: `None` for an ADMIN (unrestricted), a membership set otherwise. This restores the invariant `backend/CLAUDE.md` already states — "content-addressable caches are tenant-scoped".
+- **An empty set is not the same as `None`.** A user who is a member of nothing yields an empty set, which is falsy, so a truthiness check would skip the filter and hand the *least* privileged caller the whole install's totals. The guard pins that distinction, and the mutation that introduces it is killed.
+
+
 ## 2026-08-21 — ChromaDB 0.5.20 → 1.5.9, client and server together
 
 - Dependabot's [#631](https://github.com/anandtopu/testlookup/pull/631) bumped only the Python client. The deployed **server** is pinned at `chromadb/chroma:0.5.20` in compose, the release compose, the air-gap compose, both k8s overlays and the Artifactory remap, and `db/chroma.py` reaches it over the network via `chromadb.HttpClient`. Merging the client alone would have shipped a client that cannot talk to the server it is deployed against.
