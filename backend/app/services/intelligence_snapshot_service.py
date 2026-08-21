@@ -180,10 +180,28 @@ async def get_stale_snapshot(
     db: AsyncSession,
     run_id: uuid.UUID,
 ) -> Optional[dict]:
-    """Return a stale snapshot for immediate use while refresh is in progress."""
+    """Return a stale snapshot for immediate use while refresh is in progress.
+
+    Stale and OBSOLETE are different problems, and only one of them is safe to
+    serve. A stale snapshot has the right shape and out-of-date content —
+    handing it over while a refresh runs is a reasonable latency trade. A
+    snapshot at a superseded ``schema_version`` has the WRONG SHAPE, and
+    serving it gives the consumer a payload the current contract says cannot
+    exist.
+
+    This path had no version filter, so it defeated the bump on its sibling:
+    ``get_cached_snapshot`` correctly refused a version-3 row, the request
+    fell through to here, and the same row was returned anyway with
+    ``stale: true``. Measured live — the run-block fix was invisible through
+    two deploys because of it.
+
+    An obsolete row is therefore treated as absent, which makes the caller
+    recompute.
+    """
     result = await db.execute(
         select(RunIntelligenceSnapshot).where(
             RunIntelligenceSnapshot.run_id == run_id,
+            RunIntelligenceSnapshot.schema_version >= CURRENT_SCHEMA_VERSION,
         )
     )
     snapshot = result.scalar_one_or_none()

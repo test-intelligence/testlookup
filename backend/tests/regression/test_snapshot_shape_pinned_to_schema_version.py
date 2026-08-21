@@ -122,3 +122,46 @@ def test_the_cache_gate_is_still_version_sensitive():
         "against CURRENT_SCHEMA_VERSION, so bumping the constant would stop "
         "invalidating anything"
     )
+
+
+def test_every_snapshot_read_path_is_version_gated():
+    """The bump only works if BOTH read paths honour it.
+
+    ``get_cached_snapshot`` compared versions from the start;
+    ``get_stale_snapshot`` did not. So a superseded row was refused by the
+    fresh path, the request fell through to the stale path, and the same
+    obsolete payload came back with ``stale: true``. The run-block fix was
+    invisible through two deploys because of it.
+
+    Stale and obsolete are different: a stale snapshot has the right shape and
+    old content, which is safe to serve while a refresh runs. A snapshot at a
+    superseded schema version has the wrong shape, and is not.
+
+    Written against every public reader rather than the one that was broken —
+    a sibling read path is exactly how this escaped the first time.
+    """
+    from app.services import intelligence_snapshot_service as svc
+
+    readers = [svc.get_cached_snapshot, svc.get_stale_snapshot]
+    ungated = [
+        fn.__name__ for fn in readers
+        if "CURRENT_SCHEMA_VERSION" not in inspect.getsource(fn)
+    ]
+    assert not ungated, (
+        f"these snapshot readers ignore the schema version: {ungated}. Any one "
+        "of them will serve a payload in a superseded shape and silently "
+        "defeat a version bump."
+    )
+
+
+def test_the_reader_list_still_finds_real_functions():
+    """Fail-open check: an empty or wrong reader list would pass vacuously."""
+    from app.services import intelligence_snapshot_service as svc
+
+    for name in ("get_cached_snapshot", "get_stale_snapshot"):
+        fn = getattr(svc, name, None)
+        assert fn is not None and callable(fn), f"{name} is not a function any more"
+        assert "RunIntelligenceSnapshot" in inspect.getsource(fn), (
+            f"{name} no longer reads the snapshot table; the guard above is "
+            "checking the wrong thing"
+        )

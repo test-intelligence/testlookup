@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-21 — The stale-snapshot path honours the schema version too
+
+- Bumping `CURRENT_SCHEMA_VERSION` was not enough. `get_cached_snapshot` compared versions and correctly refused the superseded row — and the request then fell through to `get_stale_snapshot`, which had no version filter and returned the very same payload with `stale: true`. The run-block fix stayed invisible through two deploys because of it.
+- Stale and obsolete are different problems. A stale snapshot has the right shape and out-of-date content, which is safe to serve while a refresh runs; a snapshot at a superseded schema version has the wrong shape, and handing it over gives the consumer a payload the current contract says cannot exist. An obsolete row is now treated as absent, so the caller recomputes.
+- The guard is written against **every** public snapshot reader rather than the one that broke — a sibling read path is exactly how this escaped the first time.
+
 ## 2026-08-21 — Snapshot cache invalidated for the new run-block shape
 
 - The previous entry changed the run-intelligence payload shape but did not bump `CURRENT_SCHEMA_VERSION`. `get_cached_snapshot` serves any stored row whose `schema_version >= CURRENT_SCHEMA_VERSION`, so all 36 existing snapshots kept returning the old shape — the fix was invisible on every run that had already been analysed. Confirmed live: the corrected source was present in the running container while the endpoint still answered `"broken_tests" present? False` with `_snapshot: {"cached": true}`.
