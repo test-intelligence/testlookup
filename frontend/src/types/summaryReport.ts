@@ -14,6 +14,9 @@ export interface SummaryTotals {
   broken: number
   evaluated: number
   pass_rate_pct: number
+  /** F-067: the population this rate is over — "per unique test" here. */
+  pass_rate_basis?: string | null
+  pass_rate_basis_label?: string | null
   fail_rate_pct: number
   skip_rate_pct: number
   broken_rate_pct: number

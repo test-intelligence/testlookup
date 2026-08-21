@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-21 — The UI names which population each pass rate is over
+
+- `/overview` shows **81.0%** and the Summary Report shows **83.3%** for the same window. Both are correct — the dashboard counts every execution, the report counts each distinct test once — and side by side with no explanation they read as a contradiction. The API has published the basis on both surfaces since #778; **nothing displayed it.**
+- Overview's pass-rate caption said `weighted · 30d`, which names no population at all. It now reads `per test execution · 30d`. The Summary Report's Pass % tile now leads with `per unique test`.
+- The TypeScript types never declared the fields, so the UI could not see what the API was already sending — `DashboardMetricValue` and the report totals now carry `basis` / `basis_label`.
+- **Falls back to the old copy when the field is absent.** A cached pre-#778 payload has no basis, and rendering `undefined · 30d` would be worse than the vague word it replaces. The mutation that removes the fallback is killed.
+- This closes the last non-decision part of F-067. What remains under that entry is the product call in F-049, which is unrelated.
+
+
 ## 2026-08-21 — The Summary Report publishes the pass rate's basis again
 
 - **F-067 was half-shipped.** Two surfaces report different pass rates over the same window — `/overview` **81.0%** (every execution) and the Summary Report **83.3%** (each distinct test once). Both are correct; #588 resolved the ambiguity by publishing the *basis* on both, and `summary_report_service` has set `pass_rate_basis` / `pass_rate_basis_label` ever since.

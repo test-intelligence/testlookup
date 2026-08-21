@@ -307,8 +307,16 @@ export default function SummaryReportPage() {
           {/* Headline KPIs */}
           <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
             <KpiTile label="Total tests"   value={fmtInt(totals.total_test_cases)} icon={<ListChecks className="h-4 w-4" />} tone="neutral" />
+            {/* F-067: name the population. This report counts each distinct
+                test once ("per unique test", 83.3% on the measured window)
+                while /overview counts every execution ("per test execution",
+                81.0%). Same window, both correct — and indistinguishable
+                without the basis. Falls back to the old copy if the API omits
+                it (a cached pre-#778 payload). */}
             <KpiTile label="Pass %"        value={fmtPct(totals.pass_rate_pct)}    icon={<CheckCircle2 className="h-4 w-4" />} tone="good"
-                     sub={`weighted ${fmtPct(totals.weighted_pass_rate_pct)}`} />
+                     sub={totals.pass_rate_basis_label
+                       ? `${totals.pass_rate_basis_label} · weighted ${fmtPct(totals.weighted_pass_rate_pct)}`
+                       : `weighted ${fmtPct(totals.weighted_pass_rate_pct)}`} />
             <KpiTile label="Fail %"        value={fmtPct(totals.fail_rate_pct)}    icon={<XCircle className="h-4 w-4" />} tone="bad" />
             <KpiTile label="Skip %"        value={fmtPct(totals.skip_rate_pct)}    icon={<MinusCircle className="h-4 w-4" />} tone="warn" />
             <KpiTile label="Broken %"      value={fmtPct(totals.broken_rate_pct)}  icon={<TriangleAlert className="h-4 w-4" />} tone="bad" />

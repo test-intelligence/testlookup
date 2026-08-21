@@ -278,11 +278,13 @@ interface VerdictCardProps {
   windowDays: number
   generatedLabel: string
   passRate: number
+  /** F-067: the population the rate is over, from the API. */
+  passRateBasisLabel?: string | null
 }
 
 function VerdictCard({
   verdict, newFailures24h, newFailuresDelta, totalExecutions, windowDays,
-  generatedLabel, passRate,
+  generatedLabel, passRate, passRateBasisLabel,
 }: VerdictCardProps) {
   const t = VERDICT_THEME[verdict]
   const gate = gateLabel(verdict)
@@ -313,7 +315,14 @@ function VerdictCard({
        : `(▼ ${Math.abs(newFailuresDelta)})`)
 
   const reason2Value = verdict === 'PENDING' ? '—' : `${passRatePct}%`
-  const reason2Sub = verdict === 'PENDING' ? '(awaiting runs)' : `weighted · ${windowDays}d`
+  // F-067: name the POPULATION, not just "weighted". /overview counts every
+  // execution and the Summary Report counts each distinct test once — 81.0%
+  // vs 83.3% on the same window. Both are right; showing which is which is
+  // what stops them reading as a contradiction. Falls back to the old copy
+  // when the API omits it (a cached pre-#588 payload).
+  const reason2Sub = verdict === 'PENDING'
+    ? '(awaiting runs)'
+    : `${passRateBasisLabel || 'weighted'} · ${windowDays}d`
   const reason3Value = `${totalExecutions}`
   // `total_executions_7d` counts TEST EXECUTIONS, not runs. Calling it runs
   // overstated the sample by the average tests-per-run: measured live at
@@ -1188,6 +1197,7 @@ export default function OverviewPage() {
               windowDays={days}
               generatedLabel={generatedLabel}
               passRate={passRate}
+              passRateBasisLabel={summary?.avg_pass_rate_7d?.basis_label}
             />
           </SectionErrorBoundary>
         )}

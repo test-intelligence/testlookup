@@ -4,6 +4,15 @@ export interface DashboardMetricValue {
   value: number | string
   trend?: number | null
   trend_direction?: 'up' | 'down' | 'flat'
+  /**
+   * F-067: the POPULATION a rate is computed over. /overview counts every
+   * execution ("per test execution", 81.0%) while the Summary Report counts
+   * each distinct test once ("per unique test", 83.3%) — same window, both
+   * correct. Optional because only the pass-rate metric carries it, and
+   * because a cached pre-#588 payload will not have it.
+   */
+  basis?: string | null
+  basis_label?: string | null
 }
 
 export type ReleaseReadinessBand = 'red' | 'orange' | 'yellow' | 'green'

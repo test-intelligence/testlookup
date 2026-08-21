@@ -803,4 +803,62 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
     await screen.findAllByText(/Project One/i)
     expect(screen.queryByTestId('overview-empty-window')).not.toBeInTheDocument()
   })
+
+  // ── F-067: the pass rate names its population ────────────────────────────
+  //
+  // /overview counts every execution (81.0% on the measured window) and the
+  // Summary Report counts each distinct test once (83.3%). Same window, both
+  // correct, and indistinguishable to a reader without the basis. The API has
+  // published it on both surfaces since #778; the UI showed neither, so the
+  // two figures still read as a contradiction.
+
+  it('renders the pass-rate basis the API supplies', async () => {
+    analyticsViewState.widgetIds = []
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value: 120 },
+        avg_pass_rate_7d: {
+          value: 81.0, basis: 'executions', basis_label: 'per test execution',
+        },
+        active_defects: { value: 0 },
+        flaky_test_count: { value: 0 },
+        new_failures_24h: { value: 0 },
+        avg_duration_ms: { value: 0 },
+      },
+      isLoading: false,
+    })
+    runsState.windowed = [{ id: 'r1', created_at: new Date().toISOString() }]
+    runsState.newest = [{ id: 'r1', created_at: new Date().toISOString() }]
+
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes><Route path="/overview" element={<OverviewPage />} /></Routes>
+      </MemoryRouter>,
+    )
+
+    expect((await screen.findAllByText(/per test execution/i)).length).toBeGreaterThan(0)
+  })
+
+  it('falls back to the old copy when the API omits the basis', async () => {
+    // A cached pre-#778 payload has no basis. Rendering "undefined · 30d" would
+    // be worse than the vague word it replaced.
+    analyticsViewState.widgetIds = []
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)   // no basis in the mock
+    runsState.windowed = [{ id: 'r1', created_at: new Date().toISOString() }]
+    runsState.newest = [{ id: 'r1', created_at: new Date().toISOString() }]
+
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes><Route path="/overview" element={<OverviewPage />} /></Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findAllByText(/Project One/i)
+    expect(screen.queryByText(/undefined/i)).not.toBeInTheDocument()
+    expect((await screen.findAllByText(/weighted/i)).length).toBeGreaterThan(0)
+  })
 })
