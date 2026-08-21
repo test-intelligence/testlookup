@@ -139,7 +139,21 @@ async def get_run_intelligence(
         "total_tests": run.total_tests,
         "passed_tests": run.passed_tests,
         "failed_tests": run.failed_tests,
+        # BROKEN is a first-class outcome and belongs here for the same reason
+        # it is on the ``/runs/{id}`` contract. Omitting it left the consumer
+        # with total=10, passed=4, failed=4, skipped=1 — one test unaccounted
+        # for — and RunIntelligencePage read ``run.broken_tests ?? 0``, so its
+        # otherwise-correct ``failed_tests + broken_tests`` silently evaluated
+        # to the FAILED-only count. A field the consumer already asks for must
+        # be sent.
+        "broken_tests": run.broken_tests,
         "skipped_tests": run.skipped_tests,
+        # ``unknown_tests`` for the same reason, and because the guard for
+        # this block checks the outcome columns as a SET rather than a
+        # hand-picked list — which is how this one was found at all. Rare
+        # (1 run in 1743 on the measured deployment) but real, and /runs
+        # publishes it.
+        "unknown_tests": run.unknown_tests,
         "pass_rate": run.pass_rate,
         "duration_ms": run.duration_ms,
         "start_time": run.start_time.isoformat() if run.start_time else None,

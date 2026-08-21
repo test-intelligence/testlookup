@@ -106,6 +106,10 @@ def _make_run():
         failed_tests=0,
         skipped_tests=0,
         broken_tests=0,
+        # Every outcome column the run block serialises. This stand-in is a
+        # TestRun substitute, so a column missing here is an AttributeError
+        # rather than a wrong number -- which is how it should fail.
+        unknown_tests=0,
         pass_rate=100.0,
         duration_ms=1234,
         start_time=None,

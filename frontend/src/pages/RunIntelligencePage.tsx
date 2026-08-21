@@ -66,6 +66,7 @@ import type {
   RunIntelligence,
 } from '@/services/runIntelligenceService'
 import { copyTextToClipboard } from '@/utils/clipboard'
+import { computeRunOutcome } from '@/utils/runOutcome'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 type Persona = 'executive' | 'developer' | 'manager'
@@ -711,10 +712,8 @@ function TestOutcomeCard({
   affectedSuites: Array<{ suite: string; failed_count: number }>
   categoryBreakdown: Record<string, number>
 }) {
-  const total = run.total_tests ?? ((run.passed_tests ?? 0) + (run.failed_tests ?? 0) + (run.skipped_tests ?? 0) + (run.broken_tests ?? 0))
-  const passRate = total > 0 ? ((run.passed_tests ?? 0) / total) * 100 : 0
-  const failed = run.failed_tests ?? 0
-  const skipped = run.skipped_tests ?? 0
+  const { passed, broken, skipped, failed, total, evaluated, passRate } =
+    computeRunOutcome(run)
   const dominantCategory = Object.entries(categoryBreakdown).sort((a, b) => b[1] - a[1])[0]?.[0]?.replace(/_/g, ' ').toLowerCase() ?? '—'
   const topSuite = affectedSuites[0]?.suite
 
@@ -729,9 +728,9 @@ function TestOutcomeCard({
       ) : <span>—</span>}
     >
       <div className="grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
-        <Stat tone={passRate >= 90 ? 'good' : passRate >= 70 ? 'warn' : 'bad'} label="Pass rate" value={`${passRate.toFixed(1)}`} unit="%" tiny={`${run.passed_tests ?? 0} / ${total} passed`} borderRight />
+        <Stat tone={passRate >= 90 ? 'good' : passRate >= 70 ? 'warn' : 'bad'} label="Pass rate" value={`${passRate.toFixed(1)}`} unit="%" tiny={`${passed} / ${evaluated} evaluated`} borderRight />
         <Stat label="Total tests" value={`${total}`} tiny={`across ${affectedSuites.length || 1} suite${affectedSuites.length === 1 ? '' : 's'}`} borderRight />
-        <Stat tone={failed > 0 ? 'bad' : undefined} label="Failed" value={`${failed}`} tiny={failed > 0 ? dominantCategory : '—'} borderRight />
+        <Stat tone={failed > 0 ? 'bad' : undefined} label="Failed" value={`${failed}`} tiny={broken > 0 ? `incl. ${broken} broken` : failed > 0 ? dominantCategory : '—'} borderRight />
         <Stat label="Skipped" value={`${skipped}`} tiny={skipped > 0 ? 'in run' : '—'} borderRight />
         <Stat label="Anomalies" value={`${failureClusters.length}`} tiny={failureClusters.length > 0 ? `${failureClusters.length} cluster${failureClusters.length === 1 ? '' : 's'}` : 'no clusters'} />
       </div>
@@ -742,10 +741,10 @@ function TestOutcomeCard({
           style={{ letterSpacing: 'var(--tracking-wider)' }}
         >
           <span>Result distribution</span>
-          <span className="text-[var(--color-text-secondary)] font-medium">{run.passed_tests ?? 0} passed · {failed} failed{skipped > 0 ? ` · ${skipped} skipped` : ''}</span>
+          <span className="text-[var(--color-text-secondary)] font-medium">{passed} passed · {failed} failed{skipped > 0 ? ` · ${skipped} skipped` : ''}</span>
         </div>
         <div className="h-2 rounded-full overflow-hidden flex" style={{ background: 'var(--color-bg-secondary)' }}>
-          {(run.passed_tests ?? 0) > 0 && <div style={{ flex: run.passed_tests ?? 0, background: 'var(--status-passed)' }} />}
+          {passed > 0 && <div style={{ flex: passed, background: 'var(--status-passed)' }} />}
           {failed > 0 && <div style={{ flex: failed, background: 'var(--status-failed)' }} />}
           {skipped > 0 && <div style={{ flex: skipped, background: 'var(--status-broken)' }} />}
         </div>

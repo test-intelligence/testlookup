@@ -10,6 +10,7 @@ export interface RunSummary {
   failed_tests: number
   skipped_tests: number
   broken_tests: number
+  unknown_tests?: number
   pass_rate: number | null
   duration_ms: number | null
   start_time: string | null

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-20 — Run intelligence counts broken tests and stops putting skips in the pass rate
+
+- `/runs/{id}/intelligence` returned a `run` block with no `broken_tests`. On a run of 10 tests — 4 passed, 4 FAILED, 1 BROKEN, 1 skipped — the consumer saw four counts that add to 9, with the broken test simply absent. The same run on `/runs/{id}` carries `broken_tests: 1`, so two surfaces described one run differently. `unknown_tests` was missing for the same reason and is now included too.
+- The frontend type declared `broken_tests: number` as **required**, so it asserted a field the API never sent; the page read it as `run.broken_tests ?? 0`, which turned its otherwise-correct `failed_tests + broken_tests` into the FAILED-only count.
+- The Test-outcome card also divided by `total_tests`, putting skipped tests back into the pass-rate denominator. It rendered **40.0%** for a run whose own payload — and the `/runs` page — said **44.4%**. It now prefers the run's stored `pass_rate`, so the two surfaces cannot drift apart again, and counts BROKEN as a failure per the canonical rule.
+- The card's arithmetic is extracted as `computeRunOutcome` and imported by its guard: a test that re-declares the logic it guards would have passed against either version.
+
 ## 2026-08-20 — A quality gate for source files that `.gitignore` silently excludes
 
 - The security globs in `.gitignore` — `*credentials*`, `*secrets*`, `*api_key*`, `*apikey*` — match at every depth and do not care about file type, so they also match ordinary source. This has cost two real incidents: a regression test named `test_no_shared_default_credentials.py` was silently excluded and a security fix landed **unguarded**, and later a production module named `project_credentials_service.py` was excluded the same way — which would have put a router on `main` importing a file that is not in the repository. Both were caught by hand.
