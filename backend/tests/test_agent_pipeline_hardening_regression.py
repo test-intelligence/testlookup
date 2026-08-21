@@ -8,6 +8,7 @@ reproducible and auditable.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -780,7 +781,13 @@ def test_r3_memory_retrieval_is_deterministic_and_auditable():
     assert "resolve_ownership_from_memory" in defect_owner
     assert "_resolve_cluster_ownership_from_memory" in ownership_resolver
     assert "match_source=\"agent_memory\"" in ownership_resolver_memory
-    assert "CURRENT_SCHEMA_VERSION = 3" in snapshot_service
+    # Pins that the snapshot payload IS version-gated, not that the version
+    # happens to be 3. The constant exists to track payload-shape evolution
+    # ("3 -> 4" when the run block gained broken_tests/unknown_tests), so
+    # asserting a literal value made every legitimate bump a test failure.
+    # The bump itself is guarded, against the shape it belongs to, in
+    # tests/regression/test_snapshot_shape_pinned_to_schema_version.py.
+    assert re.search(r"^CURRENT_SCHEMA_VERSION = \d+$", snapshot_service, re.M)
     assert "AgentMemoryEntry" in snapshot_service
     assert "build_memory_reference" in snapshot_service
     for field in [

@@ -37,7 +37,17 @@ from app.services.agent_memory_service import _active_memory_filters, build_memo
 
 logger = logging.getLogger("services.intelligence_snapshot")
 
-CURRENT_SCHEMA_VERSION = 3
+# Bump this whenever the snapshot PAYLOAD SHAPE changes. ``get_cached_snapshot``
+# serves any row whose ``schema_version >= CURRENT_SCHEMA_VERSION``, so a shape
+# change without a bump leaves every existing snapshot serving the old shape
+# for as long as it lives.
+#
+# 3 -> 4: the ``run`` block gained ``broken_tests`` and ``unknown_tests``.
+# Without this bump the fix was invisible on every already-analysed run —
+# measured on the deployment right after shipping it: 36 snapshots sat at
+# version 3, and the endpoint kept returning a payload with no
+# ``broken_tests`` even though the corrected code was live in the container.
+CURRENT_SCHEMA_VERSION = 4
 
 
 def _hash_json(value: object) -> str:

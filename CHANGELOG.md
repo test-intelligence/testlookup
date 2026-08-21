@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-21 — Snapshot cache invalidated for the new run-block shape
+
+- The previous entry changed the run-intelligence payload shape but did not bump `CURRENT_SCHEMA_VERSION`. `get_cached_snapshot` serves any stored row whose `schema_version >= CURRENT_SCHEMA_VERSION`, so all 36 existing snapshots kept returning the old shape — the fix was invisible on every run that had already been analysed. Confirmed live: the corrected source was present in the running container while the endpoint still answered `"broken_tests" present? False` with `_snapshot: {"cached": true}`.
+- Bumped to 4, and a guard now pins the run block's key set to the schema version so the next shape change cannot ship without invalidating the cache.
+
 ## 2026-08-20 — Run intelligence counts broken tests and stops putting skips in the pass rate
 
 - `/runs/{id}/intelligence` returned a `run` block with no `broken_tests`. On a run of 10 tests — 4 passed, 4 FAILED, 1 BROKEN, 1 skipped — the consumer saw four counts that add to 9, with the broken test simply absent. The same run on `/runs/{id}` carries `broken_tests: 1`, so two surfaces described one run differently. `unknown_tests` was missing for the same reason and is now included too.
