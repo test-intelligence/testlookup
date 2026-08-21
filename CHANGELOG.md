@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-21 — The Summary Report publishes the pass rate's basis again
+
+- **F-067 was half-shipped.** Two surfaces report different pass rates over the same window — `/overview` **81.0%** (every execution) and the Summary Report **83.3%** (each distinct test once). Both are correct; #588 resolved the ambiguity by publishing the *basis* on both, and `summary_report_service` has set `pass_rate_basis` / `pass_rate_basis_label` ever since.
+- `SummaryTotals` never declared those fields, and **a Pydantic `response_model` drops undeclared keys** — so the service computed the basis and the API threw it away. Measured live: `/overview` returned `basis_label: "per test execution"` while the report returned `83.3` bare. The surface that most needed the label was the one that lost it.
+- The schema now declares both fields. The guard checks the *contract* rather than a field name: every `basis` key the service writes must be declared on the model that serialises it — the same silent-drop class as #492, which added `total_executions` to one branch of `_period_stats` and not the other and 500'd every suite-filtered request.
+- **Still open, and now the only part of F-067 that is:** the frontend renders neither label. The API is honest; the UI still shows 81.0% and 83.3% side by side with no explanation. That is a display change, not the product decision the backlog framed it as.
+
+
 ## 2026-08-21 — The dashboard says WHY it is empty
 
 - `/overview` rendered `0` / `—` across every KPI whenever the selected time window contained no runs, with nothing to explain it. On the measured deployment every active project's newest run was **14–16 days old**, so a 7- or 14-day window was *correctly* empty — and indistinguishable from an outage. `DEFAULT_TIME_WINDOW_DAYS` was already moved 7 → 30 for this exact complaint, but a user who picks 7 themselves still got the silent version.

@@ -608,6 +608,14 @@ class SummaryTotals(BaseModel):
     # ``evaluated`` = passed + failed + broken (skipped excluded from rate math).
     evaluated: int
     pass_rate_pct: float
+    # F-067: the POPULATION this rate is over. summary_report_service has set
+    # these since #588, but SummaryTotals never declared them and a Pydantic
+    # response_model drops undeclared keys — so the service computed the basis
+    # and the API threw it away. The report published 83.3% bare while
+    # /overview published 81.0% labelled "per test execution", which is the
+    # contradiction the labels exist to prevent.
+    pass_rate_basis: str = "unique_tests"
+    pass_rate_basis_label: str = "per unique test"
     fail_rate_pct: float
     skip_rate_pct: float
     broken_rate_pct: float
