@@ -59,6 +59,20 @@ def _run_async(coro):
             # that hid F-027. Log it; still never raise from a finally block.
             logger.warning("engine_dispose_failed_in_task_teardown error=%r", _exc)
         try:
+            # The shared httpx.AsyncClient is rotated per loop by
+            # get_http_client(), but the OUTGOING one was only ever
+            # dropped -- close_http_client() is called from the FastAPI
+            # lifespan and from nowhere in the worker path, so each task
+            # abandoned a client whose pool still held sockets bound to
+            # the loop about to close. Same reasoning as the engine
+            # disposal above: drain it on the loop that owns it.
+            from app.core.http_client import close_http_client
+            loop.run_until_complete(close_http_client())
+        except Exception as _exc:
+            logger.warning(
+                "http_client_close_failed_in_task_teardown error=%r", _exc
+            )
+        try:
             # Close all async generators and pending tasks cleanly
             loop.run_until_complete(loop.shutdown_asyncgens())
         except Exception:

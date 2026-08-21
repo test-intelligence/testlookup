@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-21 — Worker task teardown closes the shared httpx client
+
+- Every Celery task runs on its own event loop, and `get_http_client()` rotates the process-wide `httpx.AsyncClient` when it detects the owning loop changed. Rotating **replaces** the reference — the outgoing client was never closed. `close_http_client()` was called from the FastAPI lifespan and from nowhere in the worker path, so each task abandoned a client whose connection pool still held sockets bound to a loop that was about to close.
+- `reset_loop_bound_clients()` did not cover it either: it drops the Redis and Mongo clients, and its own docstring says those "only need dropping, not draining". A pool with live TCP connections needs draining — which is exactly why the Postgres engine is disposed explicitly on the owning loop. The httpx client belonged in that second category and was in neither.
+- Teardown now drains it on the loop that owns it, alongside the engine disposal, in both `worker/tasks.py` and `worker/training_tasks.py`, wrapped so a teardown failure cannot replace the task's real outcome.
+- **Scope of the claim:** the original AI-HTTPX-001 symptom — `RuntimeError: Event loop is closed` — did **not** reproduce on the deployment. Zero occurrences across every worker and beat pod during a window in which the integration probe demonstrably ran. That part appears fixed by the existing loop-rotation guard; this closes the residual mechanism, found by reading the code and confirming the absence of any caller, not by observing a leak in production.
+
+
 ## 2026-08-21 — Concurrent finalizations no longer abort the notification evaluation
 
 - Seeding `NotificationTestState` was a read-then-insert with no `ON CONFLICT`, against a table with `UniqueConstraint("project_id", "test_fingerprint")`. Two runs finalizing concurrently for the same project both saw no row for a fingerprint, both inserted, and the second raised IntegrityError.

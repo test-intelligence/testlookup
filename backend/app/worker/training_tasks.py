@@ -35,6 +35,14 @@ def _run_async(coro):
             loop.run_until_complete(dispose_engine_for_loop())
         except Exception:
             pass
+        try:
+            # See tasks.py: the shared httpx client is rotated per loop
+            # but never closed in the worker path, leaving a pool bound
+            # to a loop that is about to close.
+            from app.core.http_client import close_http_client
+            loop.run_until_complete(close_http_client())
+        except Exception:
+            pass
         loop.close()
 
 
