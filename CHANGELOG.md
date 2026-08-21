@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-21 — The dashboard says WHY it is empty
+
+- `/overview` rendered `0` / `—` across every KPI whenever the selected time window contained no runs, with nothing to explain it. On the measured deployment every active project's newest run was **14–16 days old**, so a 7- or 14-day window was *correctly* empty — and indistinguishable from an outage. `DEFAULT_TIME_WINDOW_DAYS` was already moved 7 → 30 for this exact complaint, but a user who picks 7 themselves still got the silent version.
+- The page now names the window it searched, how old the newest run actually is, and offers the smallest window that would reach it: *"No runs in the last 30 days … The most recent run finished 16 days ago, outside this window."* plus a **Show last 90 days** button.
+- **The two empty cases are not the same thing.** A project that has never ingested is told *"No test runs yet … widening the time window will not help"* — telling that reader to widen the window sends them round a loop no window can end. Conflating them is the actual defect; a mutation that collapses the branches is killed.
+- The suggestion is only offered when it would genuinely help: never the window already selected, and never one that still excludes the run (a run exactly 14 days old needs 30, not 14). A future-dated timestamp clamps to `earlier today` rather than rendering a negative age, and an unparseable one degrades to "no runs" rather than `NaN days ago`.
+- Logic lives in `utils/emptyWindow.ts` so it is testable without a DOM: 10 unit tests, 3 render tests, 4/4 mutations killed.
+
+
 ## 2026-08-21 — The dashboard's suite filter stops returning HTTP 500
 
 - `/api/v1/metrics/summary?suite_name=<x>` returned **HTTP 500 for every suite** on the live deployment — reproduced on `build-20260821-175825` for `api`, `regression` and `smoke`. `_period_stats` built its EXISTS clauses as a bare `exists().where(...)`; a bare `exists()` has no FROM of its own, so SQLAlchemy auto-correlated *both* `TestCase` and `TestRun` to the enclosing query and the subquery was left with nothing to select from: `InvalidRequestError: ... returned no FROM clauses due to auto-correlation`.

@@ -15,6 +15,7 @@ import SuiteBadge from '@/components/ui/SuiteBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import FirstRunGuide, { FIRST_RUN_DISMISS_KEY } from '@/components/onboarding/FirstRunGuide'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
+import { describeEmptyWindow, formatAgeDays } from '@/utils/emptyWindow'
 import { formatDuration, dayTimeAgo } from '@/utils/formatters'
 import { clsx } from 'clsx'
 import type { TrendPoint } from '@/types/metrics'
@@ -943,11 +944,27 @@ export default function OverviewPage() {
     ? valueMetrics.headline.hours_saved_30d
     : null
   const { data: recentRuns } = useRuns({ page: 1, size: 100, days })
+  // The newest run IGNORING the window. Without this the page cannot tell
+  // "no runs in the last 7 days" from "no runs at all", and it rendered the
+  // same silent 0/— for both. One row, and SWR keys on the params so it does
+  // not collide with the windowed fetch above.
+  const { data: newestRunPage } = useRuns({ page: 1, size: 1 })
   const recentRunItems = useMemo<TestRun[]>(() => recentRuns?.items ?? [], [recentRuns?.items])
   const suiteOptions = useMemo(() => collectSuiteOptions(recentRunItems), [recentRunItems])
   const latestRun = useMemo(
     () => recentRunItems.find((run) => runHasSuite(run, selectedSuite)),
     [recentRunItems, selectedSuite],
+  )
+
+  const emptyWindow = useMemo(
+    () =>
+      describeEmptyWindow({
+        totalInWindow: summary?.total_executions_7d?.value as number | undefined,
+        newestRunAt: newestRunPage?.items?.[0]?.created_at ?? null,
+        days,
+        options: TIME_OPTIONS,
+      }),
+    [summary?.total_executions_7d?.value, newestRunPage?.items, days],
   )
 
   const projectLabel = project?.name ?? 'All Projects'
@@ -1113,6 +1130,47 @@ export default function OverviewPage() {
           </div>
         </div>
       </div>
+
+      {/* Why the dashboard is empty. Rendered ONLY when the window really is
+          empty: a zeroed KPI row with no explanation is indistinguishable
+          from a broken page, which is exactly how a 7-day window over
+          16-day-old data was read as an outage. */}
+      {!summaryLoading && emptyWindow.kind !== 'has-data' && (
+        <div
+          className="card flex flex-wrap items-center gap-x-3 gap-y-1.5 py-3 px-4"
+          style={{ borderColor: 'var(--gate-conditional-border)', background: 'var(--gate-conditional-bg)' }}
+          data-testid="overview-empty-window"
+        >
+          <Clock className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--gate-conditional)' }} />
+          {emptyWindow.kind === 'no-runs-at-all' ? (
+            <p className="text-sm m-0" style={{ color: 'var(--gate-conditional)' }}>
+              <strong>No test runs yet</strong> for {scopeLabel}. Ingest a run and the
+              dashboard fills in — widening the time window will not help.
+            </p>
+          ) : (
+            <>
+              <p className="text-sm m-0" style={{ color: 'var(--gate-conditional)' }}>
+                <strong>No runs in the last {days === 1 ? '24 hours' : `${days} days`}</strong> for{' '}
+                {scopeLabel}. The most recent run finished{' '}
+                <strong>{formatAgeDays(emptyWindow.ageDays)}</strong>
+                {emptyWindow.suggestedDays == null
+                  ? ' — outside every available window.'
+                  : ', outside this window.'}
+              </p>
+              {emptyWindow.suggestedDays != null && (
+                <button
+                  type="button"
+                  onClick={() => setDays(emptyWindow.suggestedDays as number)}
+                  className="px-2.5 py-1 text-[13px] font-medium rounded-md border transition-colors"
+                  style={{ borderColor: 'var(--gate-conditional-border)', color: 'var(--gate-conditional)' }}
+                >
+                  Show last {emptyWindow.suggestedDays} days
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Top row — Verdict + Workflow ribbon */}
       <div className="grid grid-cols-1 xl:[grid-template-columns:1fr_1.55fr] gap-4">

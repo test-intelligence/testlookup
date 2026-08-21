@@ -41,6 +41,15 @@ vi.mock('@/hooks/useAnalyticsView', () => ({
   }),
 }))
 
+const runsState: { windowed: unknown[]; newest: unknown[] } = { windowed: [], newest: [] }
+vi.mock('@/hooks/useRuns', () => ({
+  // Two calls with different params: the windowed list and the single newest
+  // run. Distinguished by `size`, exactly as the page does.
+  useRuns: vi.fn((params?: { size?: number }) => ({
+    data: { items: params?.size === 1 ? runsState.newest : runsState.windowed },
+  })),
+}))
+
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: vi.fn((selector: (state: { activeProjectId: string; activeProject: { name: string } | null }) => unknown) =>
@@ -711,5 +720,87 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
       </MemoryRouter>,
     )
     expect((await screen.findAllByText(/30d · no executions recorded/)).length).toBeGreaterThan(0)
+  })
+
+  // ── Empty window vs empty project ────────────────────────────────────────
+  //
+  // The dashboard rendered 0/— across every KPI whenever the selected window
+  // held no runs, with nothing to say why. Measured on the deployment: every
+  // active project's newest run was 14-16 days old, so a 7- or 14-day window
+  // was CORRECTLY empty and looked identical to an outage. The two empty
+  // cases need different copy — telling a project with no data at all to
+  // "widen the window" sends the reader round a loop that cannot help.
+
+  function emptySummary(useDashboardSummary: unknown, useTrendData: unknown) {
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value: 0 },
+        avg_pass_rate_7d: { value: 0 },
+        active_defects: { value: 0 },
+        flaky_test_count: { value: 0 },
+        new_failures_24h: { value: 0 },
+        avg_duration_ms: { value: 0 },
+      },
+      isLoading: false,
+    })
+  }
+
+  function renderPage() {
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('names the window and the data age when the window is empty', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    emptySummary(useDashboardSummary, useTrendData)
+    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000).toISOString()
+    runsState.windowed = []
+    runsState.newest = [{ id: 'r1', created_at: sixteenDaysAgo }]
+
+    renderPage()
+
+    const banner = await screen.findByTestId('overview-empty-window')
+    // The window it searched, so the reader knows what to change.
+    expect(banner.textContent).toMatch(/No runs in the last 30 days/i)
+    // The age of the real data, so they know the data exists.
+    expect(banner.textContent).toMatch(/16 days ago/i)
+    // And a way out.
+    expect(banner.textContent).toMatch(/Show last 90 days/i)
+  })
+
+  it('does NOT tell a project with no runs at all to widen the window', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    emptySummary(useDashboardSummary, useTrendData)
+    runsState.windowed = []
+    runsState.newest = []
+
+    renderPage()
+
+    const banner = await screen.findByTestId('overview-empty-window')
+    expect(banner.textContent).toMatch(/No test runs yet/i)
+    expect(banner.textContent).toMatch(/widening the time window will not help/i)
+    expect(banner.textContent).not.toMatch(/Show last/i)
+  })
+
+  it('stays out of the way when the window has data', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)   // 120 executions
+    runsState.windowed = [{ id: 'r1', created_at: new Date().toISOString() }]
+    runsState.newest = [{ id: 'r1', created_at: new Date().toISOString() }]
+
+    renderPage()
+
+    // Anchor on the scope label, which renders in every state -- waiting on a
+    // string that only appears in SOME states makes the absence check below
+    // pass for the wrong reason (or fail, as it did first time).
+    await screen.findAllByText(/Project One/i)
+    expect(screen.queryByTestId('overview-empty-window')).not.toBeInTheDocument()
   })
 })
