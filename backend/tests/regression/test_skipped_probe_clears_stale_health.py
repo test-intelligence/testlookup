@@ -31,9 +31,11 @@ run).
 
 Two related facts this also fixes
 ---------------------------------
-* The eight never-configured providers (jira, splunk, github, ocp, slack,
+* The seven never-configured providers (jira, splunk, github, ocp, slack,
   teams, smtp) had **no row at all**, so they were invisible rather than
-  visibly-not-monitored. Only 2 of 10 providers appeared on the page.
+  visibly-not-monitored. Only 2 of 9 providers appeared on the page —
+  verified after the fix: the endpoint now lists 9 (1 healthy + 8 skipped,
+  the eighth skip being ollama).
 * ``IntegrationHealthPage`` already defines a ``skipped`` badge style. That
   state was unreachable — nothing ever wrote it. Confirmed against the live
   database: ``skipped`` appeared in neither the current-status table nor the
