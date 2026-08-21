@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-21 — The docs pipeline table describes the pipeline that actually runs
+
+- "How the AI agents work" listed six stages, including `failure_clustering`. The code has two lists and that matched neither: `_PIPELINE_STAGES` has **five** and no `failure_clustering`, while `_DEEP_PIPELINE_STAGES` has nineteen including it plus thirteen the page never mentioned. Across 901 recorded pipeline runs on the measured deployment, `failure_clustering` appears **zero** times — a reader following the docs would count six stages against the five their run shows.
+- The table is now exactly the standard pipeline, with deep-only stages described in prose beneath it and a pointer to the run's own Intelligence page as the authority. A guard compares the table against `_PIPELINE_STAGES` so the two cannot drift again.
+
 ## 2026-08-21 — A skipped integration no longer advertises its last health verdict
 
 - `persist_probe_results` began with `if r.status == "skipped": continue`, which left that provider's health row completely untouched — status and `last_checked_at` included. A provider that stopped being probed kept its last verdict forever.

@@ -235,11 +235,18 @@ export default function DocsPage() {
                   ['ingestion', 'Normalises the run and gathers its evidence'],
                   ['anomaly_detection', 'Finds what is unusual about this run versus history'],
                   ['root_cause_analysis', 'Classifies each failure and proposes a cause'],
-                  ['failure_clustering', 'Groups failures that share a cause into one finding'],
                   ['summary', 'Writes the four-layer report'],
                   ['triage', 'Assigns and prioritises what a human should look at'],
                 ]}
               />
+              <P>
+                Those five are the standard pipeline. A <strong>deep investigation</strong>{' '}
+                runs a longer chain that adds <code>failure_clustering</code> — which groups
+                failures sharing a cause into one finding — along with per-cluster
+                investigation, contract validation and a decision report. Which stages ran
+                for a given run is shown on that run&rsquo;s Intelligence page, so the list
+                there is the authority rather than this table.
+              </P>
               <P>
                 Further specialised agents run where relevant — among them{' '}
                 <code>flaky_sentinel</code>, <code>regression_watchman</code>,{' '}
