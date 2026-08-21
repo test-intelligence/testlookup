@@ -53,6 +53,7 @@ from typing import Any, Optional, Sequence
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -168,6 +169,80 @@ async def upsert_policy(
     row.consecutive_failure_threshold = consecutive_failure_threshold
     await db.flush()
     return row
+
+
+
+async def _load_or_seed_states(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    fingerprints: Sequence[str],
+    flaky_fps: set[str],
+) -> dict[str, Any]:
+    """Return ``fingerprint -> NotificationTestState``, seeding what is missing.
+
+    NOTIF-001: this used to be a read-then-insert with no ``ON CONFLICT``. Two
+    runs finalizing concurrently for the same project both saw no row for a
+    fingerprint, both inserted, and the second violated
+    ``uq_notif_test_state_project_fp``. That aborts the whole transaction, so
+    the run lost its ENTIRE notification evaluation, not just the one row --
+    and the engine owns its session, so nothing upstream could salvage it.
+
+    ``ON CONFLICT DO NOTHING`` makes the seed idempotent. It cannot return the
+    conflicting row, so the seeded fingerprints are re-selected; under READ
+    COMMITTED the conflicting insert blocks until the other transaction
+    commits, after which that SELECT sees its row.
+
+    Every fingerprint that ends up without an entry here is silently SKIPPED by
+    ``evaluate_case_transitions`` (``state is None -> continue``), so a
+    half-done merge costs notifications with no error anywhere -- which is why
+    this is extracted and tested directly rather than only asserted by shape.
+    """
+    state_rows = (
+        await db.execute(
+            select(NotificationTestState).where(
+                NotificationTestState.project_id == project_id,
+                NotificationTestState.test_fingerprint.in_(fingerprints),
+            )
+        )
+    ).scalars().all()
+    states_by_fp: dict[str, Any] = {s.test_fingerprint: s for s in state_rows}
+
+    missing = [fp for fp in fingerprints if fp not in states_by_fp]
+    if not missing:
+        return states_by_fp
+
+    await db.execute(
+        pg_insert(NotificationTestState)
+        .values([
+            {
+                "project_id": project_id,
+                "test_fingerprint": fp,
+                "state": _PASSING,
+                "consecutive_failures": 0,
+                # Seed silently: a test that was ALREADY flaky before we
+                # started tracking it must not fire test.newly_flaky on the
+                # first evaluated run.
+                "is_known_flaky": fp in flaky_fps,
+            }
+            for fp in missing
+        ])
+        .on_conflict_do_nothing(
+            index_elements=["project_id", "test_fingerprint"]
+        )
+    )
+    await db.flush()
+
+    seeded = (
+        await db.execute(
+            select(NotificationTestState).where(
+                NotificationTestState.project_id == project_id,
+                NotificationTestState.test_fingerprint.in_(missing),
+            )
+        )
+    ).scalars().all()
+    for row in seeded:
+        states_by_fp[row.test_fingerprint] = row
+    return states_by_fp
 
 
 # ── Pure state machine (unit-tested directly) ───────────────────────────────
@@ -502,30 +577,9 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
             )
             flaky_fps = set()
 
-        # Load existing state rows (project-scoped), create missing ones.
-        state_rows = (
-            await db.execute(
-                select(NotificationTestState).where(
-                    NotificationTestState.project_id == project_id,
-                    NotificationTestState.test_fingerprint.in_(fingerprints),
-                )
-            )
-        ).scalars().all()
-        states_by_fp: dict[str, Any] = {s.test_fingerprint: s for s in state_rows}
-        for fp in fingerprints:
-            if fp not in states_by_fp:
-                row = NotificationTestState(
-                    project_id=project_id,
-                    test_fingerprint=fp,
-                    state=_PASSING,
-                    consecutive_failures=0,
-                    # Seed silently: a test that was ALREADY flaky before we
-                    # started tracking it must not fire test.newly_flaky on
-                    # the first evaluated run.
-                    is_known_flaky=fp in flaky_fps,
-                )
-                db.add(row)
-                states_by_fp[fp] = row
+        states_by_fp: dict[str, Any] = await _load_or_seed_states(
+            db, project_id, fingerprints, flaky_fps,
+        )
 
         events = evaluate_case_transitions(
             run_id=run_id,

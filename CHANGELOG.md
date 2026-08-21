@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-21 — Concurrent finalizations no longer abort the notification evaluation
+
+- Seeding `NotificationTestState` was a read-then-insert with no `ON CONFLICT`, against a table with `UniqueConstraint("project_id", "test_fingerprint")`. Two runs finalizing concurrently for the same project both saw no row for a fingerprint, both inserted, and the second raised IntegrityError.
+- The blast radius was larger than one row: an IntegrityError aborts the whole transaction, so that run lost its **entire** notification evaluation, not just the seed. The engine owns its own session and commits it, so nothing upstream could salvage it.
+- Now `ON CONFLICT DO NOTHING` with an explicit `(project_id, test_fingerprint)` conflict target, followed by a re-select. `DO NOTHING` cannot return the conflicting row, and under READ COMMITTED the conflicting insert blocks until the other transaction commits — so the read-back is what supplies the object for a row the other finalization won. Without it that fingerprint is absent from the map and `evaluate_case_transitions` skips it via `state is None -> continue`, costing a notification with no error anywhere.
+- **`evaluate_run_transitions` had no execution coverage at all** — 102 notification tests passed while the seeding path was never run once, which is a large part of why this survived. The seed is now extracted as `_load_or_seed_states` and tested by execution: rows already present short-circuit the insert, and a row lost to a conflict still comes back in the map. Five mutations killed, including one that re-selects and then discards the result.
 ## 2026-08-21 — /rag/status counts only the caller's projects
 
 - `get_rag_status` ran three unscoped `COUNT(*)` queries over `knowledge_sources`, `generation_batches` and `knowledge_chunks`. The endpoint carries no role guard and no project guard — only `get_current_active_user` — so **any** authenticated user read the totals for the entire install. Observed live: a caller got `total_batches: 2` while its own sources and chunks were `0`.
