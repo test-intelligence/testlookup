@@ -2680,12 +2680,15 @@ def deliver_webhook(self, delivery_id: str) -> dict:
 def run_flaky_quarantine_maintenance(self) -> dict:
     """Nightly housekeeping for the flaky auto-quarantine workflow.
 
-    Runs three passes in order:
+    Runs four passes in order:
 
       1. ``expire_stale_proposals`` — PROPOSED rows older than 7 days
          flip to EXPIRED so the UI stays readable.
-      2. ``schedule_pending_rechecks`` — QUARANTINED rows whose
-         ``recheck_at`` has passed move to RECHECK_SCHEDULED.
+      2. ``schedule_pending_rechecks`` — windowed quarantines whose
+         ``recheck_at`` has passed move to RECHECK_SCHEDULED. Covers both
+         QUARANTINED (the first window) and RE_QUARANTINED (every window
+         after that); missing the latter stranded re-quarantined tests in
+         an active state permanently.
       3. ``run_recheck_cycle`` — evaluates RECHECK_SCHEDULED rows against
          recent TestCase history and either releases or re-quarantines
          the test.

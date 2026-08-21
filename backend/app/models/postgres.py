@@ -4233,7 +4233,17 @@ class ProjectLlmQuota(Base):
 #        ↓ (quarantine window nearing end)                  → [RELEASED]
 #   [RECHECK_SCHEDULED] celery beat task evaluates recent runs
 #        ↓ flip-rate below threshold → [RELEASED]
-#        ↓ flip-rate still high → [RE_QUARANTINED] → QUARANTINED (new window)
+#        ↓ flip-rate still high → [RE_QUARANTINED] (fresh window, fresh
+#          recheck_at) ── and that row is swept back to [RECHECK_SCHEDULED]
+#          when the new recheck_at passes, so the cycle repeats until the
+#          test either stabilises (→ RELEASED) or is released by hand.
+#
+# NOTE: a re-quarantine KEEPS the status RE_QUARANTINED — it does not write
+# QUARANTINED again. Both are therefore windowed, sweepable states, and any
+# sweep over one must cover the other (see flaky_quarantine_service.
+# _RECHECKABLE_STATES). This comment used to claim the row went back to
+# QUARANTINED; it never did, and the sweep that only selected QUARANTINED
+# left every re-quarantined test stranded in an active state for ever.
 #
 # Auxiliary terminal states:
 #   - EXPIRED  — proposal sat in PROPOSED too long without action

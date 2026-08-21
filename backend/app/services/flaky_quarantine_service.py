@@ -1016,9 +1016,33 @@ async def expire_stale_proposals() -> int:
     return expired
 
 
+#: Statuses this sweep can move into ``RECHECK_SCHEDULED``. Both are windowed
+#: quarantines that carry a ``recheck_at``, so both must be re-evaluated when
+#: that moment passes.
+#:
+#: ``RE_QUARANTINED`` was missing here, which made it a **dead end**: the
+#: recheck cycle writes that status with a fresh window (and a fresh
+#: ``recheck_at``), but no sweep selected it, so the row was never re-examined
+#: again. It stayed in an active state past its own ``quarantine_expires_at``
+#: for ever — permanently in the CI quarantine manifest, permanently tagged
+#: ``quarantined`` at ingest, permanently excluded from release-gate scoring.
+#: A genuine regression in a once-flaky test could never block a build again.
+#: The documented workflow (``postgres.py``, "Flaky Auto-Quarantine") always
+#: said ``[RE_QUARANTINED] -> QUARANTINED (new window)``; only the query
+#: disagreed.
+_RECHECKABLE_STATES = (
+    FlakyQuarantineStatus.QUARANTINED.value,
+    FlakyQuarantineStatus.RE_QUARANTINED.value,
+)
+
+
 async def schedule_pending_rechecks() -> int:
-    """Move QUARANTINED rows whose ``recheck_at`` has passed into
-    ``RECHECK_SCHEDULED`` so the next cycle evaluates their recovery."""
+    """Move windowed quarantines whose ``recheck_at`` has passed into
+    ``RECHECK_SCHEDULED`` so the next cycle evaluates their recovery.
+
+    Covers both ``QUARANTINED`` (first window) and ``RE_QUARANTINED`` (every
+    window after that) — see ``_RECHECKABLE_STATES``.
+    """
     if not await _feature_enabled():
         return 0
     now = datetime.now(timezone.utc)
@@ -1026,7 +1050,7 @@ async def schedule_pending_rechecks() -> int:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(FlakyQuarantineRequest).where(
-                FlakyQuarantineRequest.status == FlakyQuarantineStatus.QUARANTINED.value,
+                FlakyQuarantineRequest.status.in_(_RECHECKABLE_STATES),
                 FlakyQuarantineRequest.recheck_at != None,  # noqa: E711
                 FlakyQuarantineRequest.recheck_at <= now,
             )
