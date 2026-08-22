@@ -492,7 +492,8 @@ def test_run_guard_reports_stale_baseline_as_non_fatal(
     regression."""
     _redirect_repo_root(monkeypatch, tmp_path)
     guard = _make_fake_guard([])  # No current violations.
-    guard.save_baseline(["old/file.py:1"])
+    # A well-formed fingerprint that no current violation produces.
+    guard.save_baseline(["0" * 16])
 
     ok = qg.run_guard(guard, update_baseline=False)
     assert ok is True
@@ -509,7 +510,352 @@ def test_update_baseline_rewrites_file_to_current_keys(
 
     ok = qg.run_guard(guard, update_baseline=True)
     assert ok is True
-    assert guard.load_baseline() == {v.key}
+    # load_baseline maps key -> human annotation; the keys are the contract.
+    assert set(guard.load_baseline()) == {v.key}
+
+
+# ── Baseline keys: content fingerprints, not line numbers ────────────────────
+#
+# The scheme these pin exists because the old `<relpath>:<lineno>` key made
+# every guard hostage to line drift. On 2026-08-21 the SAME untouched
+# `run_triage_agent(` call in analysis_agent.py failed CI twice in one session
+# (631 -> 642 -> 684) purely because unrelated code was added above it, and the
+# fix both times was to bump a number in a baseline file. That is the habit
+# worth killing: bump-without-reading is how a real new violation gets waved
+# through.
+
+
+def _no_print_guard() -> qg.Guard:
+    """A guard over the real `backend.no-print` check, so these tests exercise
+    the whole path (walk -> violation -> key -> baseline file) rather than the
+    hash function alone."""
+    return qg.Guard(
+        name="fake.no-print",
+        description="print() in backend/app",
+        check=qg._backend_no_print,
+    )
+
+
+def test_inserting_a_line_above_a_tolerated_violation_is_not_a_new_violation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """THE regression this scheme exists to prevent."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    target = tmp_path / "backend" / "app" / "legacy.py"
+    _write(target, """
+        import structlog
+
+        logger = structlog.get_logger(__name__)
+
+
+        def debug_dump(payload):
+            print("tolerated on purpose")
+            return payload
+    """)
+    guard = _no_print_guard()
+    qg.run_guard(guard, update_baseline=True)
+    before = set(guard.load_baseline())
+    assert len(before) == 1, "expected exactly one tolerated print()"
+
+    # Insert lines ABOVE the tolerated print(). Nothing about the print
+    # changed -- only its line number did. This is the exact shape of the
+    # 631 -> 642 -> 684 drift.
+    body = target.read_text(encoding="utf-8")
+    target.write_text("# a new module comment" + chr(10) * 3 + body, encoding="utf-8")
+
+    capsys.readouterr()  # drop the --update-baseline chatter
+    ok = qg.run_guard(guard, update_baseline=False)
+    out = capsys.readouterr().out
+
+    assert ok is True
+    assert "FAIL" not in out
+    assert "stale" not in out.lower()
+    # And nothing needed rewriting: the baseline file is untouched.
+    assert set(guard.load_baseline()) == before
+
+
+def test_reindenting_a_tolerated_line_is_not_a_new_violation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Whitespace is normalized out of the key, so wrapping the call in an
+    `if` (which re-indents it) does not cost a baseline churn."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    target = tmp_path / "backend" / "app" / "legacy.py"
+    _write(target, """
+        def debug_dump(payload):
+            print("tolerated on purpose")
+    """)
+    loose = qg._backend_no_print()[0].key
+
+    _write(target, """
+        def debug_dump(payload):
+                print("tolerated on purpose")
+    """)
+    assert qg._backend_no_print()[0].key == loose
+
+
+def test_editing_the_tolerated_line_does_re_report_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other half of the contract. An exemption is granted for specific
+    code; change the code and it is re-reviewed, not inherited."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    target = tmp_path / "backend" / "app" / "legacy.py"
+    _write(target, """
+        def debug_dump(payload):
+            print("tolerated on purpose")
+    """)
+    guard = _no_print_guard()
+    qg.run_guard(guard, update_baseline=True)
+
+    _write(target, """
+        def debug_dump(payload):
+            print(f"leaking {payload}")
+    """)
+    capsys.readouterr()
+    ok = qg.run_guard(guard, update_baseline=False)
+    out = capsys.readouterr().out
+
+    assert ok is False
+    assert "FAIL" in out
+    # ...and the entry it replaced is called out as stale, by location.
+    assert "stale" in out.lower()
+    assert "legacy.py" in out
+
+
+def test_moving_the_call_to_another_function_does_re_report_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The enclosing function is part of the key: the reviewer approved a call
+    in a named place, not the string anywhere in the file."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    target = tmp_path / "backend" / "app" / "legacy.py"
+    _write(target, """
+        def debug_dump(payload):
+            print("tolerated on purpose")
+
+        def ship_it(payload):
+            return payload
+    """)
+    before = qg._backend_no_print()[0].key
+
+    _write(target, """
+        def debug_dump(payload):
+            return payload
+
+        def ship_it(payload):
+            print("tolerated on purpose")
+    """)
+    assert qg._backend_no_print()[0].key != before
+
+
+def test_enclosing_scope_is_the_innermost_def_and_carries_its_class(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    target = tmp_path / "backend" / "app" / "legacy.py"
+    _write(target, """
+        import functools
+
+        class Reporter:
+            @functools.cached_property
+            def summary(self):
+                print("inside a decorated method")
+                return 1
+
+        def free_function():
+            print("module level def")
+    """)
+    by_line = {v.line: v.scope for v in qg._backend_no_print()}
+    assert by_line[6] == "Reporter.summary"
+    assert by_line[10] == "free_function"
+
+
+def test_identical_lines_in_one_scope_keep_separate_baseline_entries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Two byte-identical matches in one function must not collapse into one
+    key -- baselining the first would silently tolerate the second."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    target = tmp_path / "backend" / "app" / "legacy.py"
+    _write(target, """
+        def debug_dump(payload):
+            print("same")
+            print("same")
+    """)
+    violations = qg.assign_occurrences(qg._backend_no_print())
+    assert len(violations) == 2
+    assert len({v.key for v in violations}) == 2
+
+    guard = _no_print_guard()
+    guard.save_baseline([violations[0]])
+    capsys.readouterr()
+    ok = qg.run_guard(guard, update_baseline=False)
+    assert ok is False
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_file_level_violations_key_on_the_path_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`line=0` means "this file, as a whole" (e.g. "never calls finalize_run").
+    Those were already drift-proof and stay keyed on the path -- including the
+    long-standing behaviour that two file-level findings on one path share an
+    entry, exactly as `<path>:0` did."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    a = qg.Violation(tmp_path / "backend" / "app" / "x.py", 0, "missing X")
+    b = qg.Violation(tmp_path / "backend" / "app" / "x.py", 0, "a different message")
+    c = qg.Violation(tmp_path / "backend" / "app" / "y.py", 0, "missing X")
+    assert a.key == b.key
+    assert a.key != c.key
+    # Path-only entries carry the path as their annotation, with no line.
+    assert a.annotation == "backend/app/x.py"
+
+
+def test_a_missing_file_still_produces_a_stable_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Guards report violations against files that do not exist ("expected
+    ingestion owner missing"). Reading source for the key must not raise."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    v = qg.Violation(tmp_path / "backend" / "app" / "gone.py", 12, "missing")
+    assert len(v.key) == 16
+    assert v.format() == "backend/app/gone.py:12: missing"
+
+
+# ── Baseline file: annotations, preserved notes, legacy entries ──────────────
+
+
+def test_baseline_entries_carry_a_readable_annotation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A hash nobody can read is a hash nobody reviews. Every entry records
+    where it came from, as a comment the loader ignores."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "legacy.py", """
+        def debug_dump(payload):
+            print("tolerated on purpose")
+    """)
+    guard = _no_print_guard()
+    qg.run_guard(guard, update_baseline=True)
+    text = guard.baseline_path.read_text(encoding="utf-8")
+
+    assert "backend/app/legacy.py:2" in text
+    assert "in debug_dump" in text
+    assert 'print("tolerated on purpose")' in text
+    # The annotation is a comment: it must not leak into the matched keys.
+    assert all(qg._BASELINE_KEY_RE.match(k) for k in guard.load_baseline())
+
+
+def test_update_baseline_preserves_handwritten_notes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two real baselines carry paragraphs explaining WHY their entries are
+    tolerated (GIT-001; "empty on purpose"). Regenerating must not eat them."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    guard = _make_fake_guard([qg.Violation(tmp_path / "a.py", 0, "x")])
+    guard.baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    guard.baseline_path.write_text(
+        "# Auto-generated by scripts/quality_gate.py --update-baseline." + chr(10)
+        + "# Each line is a tolerated <relpath>:<lineno> match for this guard." + chr(10)
+        + "# Reviewed in PR; remove entries as the code is cleaned up." + chr(10)
+        + "#" + chr(10)
+        + "# WHY: owner-approved exemption, see TICKET-7." + chr(10)
+        + "a.py:0" + chr(10),
+        encoding="utf-8",
+    )
+
+    qg.run_guard(guard, update_baseline=True)
+    text = guard.baseline_path.read_text(encoding="utf-8")
+    assert "# WHY: owner-approved exemption, see TICKET-7." in text
+    # The superseded boilerplate is dropped, not stacked.
+    assert text.count("Auto-generated by scripts/quality_gate.py") == 1
+    assert "<relpath>:<lineno> match for this guard" not in text
+
+    # Round-trips: a second regeneration neither drops nor duplicates the note.
+    qg.run_guard(guard, update_baseline=True)
+    text2 = guard.baseline_path.read_text(encoding="utf-8")
+    assert text2.count("# WHY: owner-approved exemption, see TICKET-7.") == 1
+    assert text2 == text
+
+
+def test_legacy_line_keyed_entries_are_reported_not_silently_honoured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A branch cut before this change still has `<path>:<lineno>` entries.
+    They tolerate nothing now, so the gate must say why rather than reporting
+    a pile of unexplained new violations."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    v = qg.Violation(tmp_path / "a.py", 3, "boom")
+    guard = _make_fake_guard([v])
+    guard.baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    guard.baseline_path.write_text("a.py:3" + chr(10), encoding="utf-8")
+
+    ok = qg.run_guard(guard, update_baseline=False)
+    out = capsys.readouterr().out
+    assert ok is False
+    assert "legacy" in out.lower()
+    assert "--update-baseline" in out
+
+
+def test_stale_entry_names_what_it_was_tolerating(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Pruning a stale hash is only possible if the gate says what it was."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    target = tmp_path / "backend" / "app" / "legacy.py"
+    _write(target, """
+        def debug_dump(payload):
+            print("tolerated on purpose")
+    """)
+    guard = _no_print_guard()
+    qg.run_guard(guard, update_baseline=True)
+
+    _write(target, """
+        def debug_dump(payload):
+            return payload
+    """)
+    capsys.readouterr()
+    ok = qg.run_guard(guard, update_baseline=False)
+    out = capsys.readouterr().out
+    assert ok is True  # stale is a cleanup nudge, never a build failure
+    assert "stale" in out.lower()
+    assert "backend/app/legacy.py:2" in out
+    assert "in debug_dump" in out
+
+
+def test_update_baseline_does_not_invent_a_file_for_a_clean_guard(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Several guards ship at zero with NO baseline file -- absolute rules, not
+    ratchets. A repo-wide --update-baseline must leave them that way."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    guard = _make_fake_guard([])
+    qg.run_guard(guard, update_baseline=True)
+    assert not guard.baseline_path.exists()
+
+    # An existing file, however, is kept and rewritten even when it empties out
+    # -- that is how a ratchet reaches zero without losing its notes.
+    guard.baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    guard.baseline_path.write_text("# keep me" + chr(10), encoding="utf-8")
+    qg.run_guard(guard, update_baseline=True)
+    assert guard.baseline_path.exists()
+    assert "# keep me" in guard.baseline_path.read_text(encoding="utf-8")
+
+
+def test_committed_baselines_are_all_fingerprints() -> None:
+    """Runs against the REAL scripts/quality-gate-baselines/. A half-migrated
+    file would tolerate nothing and fail CI with no explanation."""
+    files = sorted(qg.BASELINE_DIR.glob("*.txt"))
+    assert files, "expected committed baseline files"
+    for path in files:
+        for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            entry = raw.partition("#")[0].strip()
+            if entry:
+                assert qg._BASELINE_KEY_RE.match(entry), (
+                    f"{path.name}:{lineno} is not a fingerprint: {entry!r}. "
+                    f"Regenerate with --update-baseline."
+                )
 
 
 # ── repo.no-gitignored-source (GIT-001) ──────────────────────────────────────

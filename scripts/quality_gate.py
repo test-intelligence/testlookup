@@ -18,14 +18,24 @@ Guards are grouped by surface (``backend``, ``frontend``, ``database``,
 * Walks the relevant files.
 * Reports violations as ``file:line: message``.
 * Subtracts the baseline at ``scripts/quality-gate-baselines/<name>.txt``
-  (one ``file:line`` per line, ``#`` comments allowed) so existing,
-  intentional exceptions stay tolerated. **New** violations fail the
-  guard (exit code 1). This is the "ratchet" the team agreed on — gates
-  only get stricter from here.
+  (one **content fingerprint** per line, ``#`` comments allowed) so
+  existing, intentional exceptions stay tolerated. **New** violations
+  fail the guard (exit code 1). This is the "ratchet" the team agreed
+  on — gates only get stricter from here.
+
+Baseline entries are keyed by *what* is tolerated, not by *where* it sits:
+``sha256(relpath | enclosing function | normalized source line | nth-dup)``.
+Line numbers are not part of the key, so inserting lines above a tolerated
+violation is a no-op. Editing that line, or moving/renaming the function
+around it, does re-report it — the exemption was granted for specific code.
+See the "Baseline fingerprints" block below for the full rationale.
 
 To accept a new baseline entry (rare — usually you fix the code instead):
 
     python scripts/quality_gate.py --only <guard> --update-baseline
+
+Hand-editing a baseline file is not a workflow: the keys are hashes, so the
+only way to add one is to regenerate it and explain the entry in review.
 
 The CI workflow runs this script as a required job. ``--update-baseline``
 is *not* run in CI, so a baseline change must be reviewed in a PR.
@@ -41,7 +51,7 @@ import re
 import subprocess
 import sys
 import tokenize
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -58,22 +68,230 @@ DIM = "\033[2m" if _USE_COLOR else ""
 RESET = "\033[0m" if _USE_COLOR else ""
 
 
+# ── Baseline fingerprints ────────────────────────────────────────────────────
+#
+# A baseline entry used to be ``<relpath>:<lineno>``. That made every guard
+# hostage to line drift: inserting a line ANYWHERE above a tolerated match
+# re-reported it as a brand-new violation. On 2026-08-21 that fired twice in a
+# single session against the same untouched ``run_triage_agent(`` call in
+# ``analysis_agent.py`` (631 -> 642 -> 684), each time because unrelated code
+# was added above it. The cost is not the two-second edit; it is that bumping a
+# baseline number becomes reflex, and a reflex is exactly how a genuinely new
+# violation gets waved through.
+#
+# So an entry now fingerprints WHAT is tolerated, not WHERE it sits:
+#
+#     sha256(relpath | enclosing function | normalized matched line | nth-dup)
+#
+# * Line numbers are absent from the key, so code moving up or down is a no-op.
+# * The matched line's own text IS in the key, so editing the tolerated line
+#   re-reports it. Deliberate: the exemption was granted for specific code.
+# * The enclosing function (Python only, via AST) is in the key, so moving the
+#   call into another function — or renaming that function — re-reports it too.
+#   Same reasoning: the reviewer approved a call in a named place.
+# * ``nth-dup`` separates two byte-identical matches inside one function, so
+#   baselining one does not silently tolerate its twin.
+#
+# File-level violations (``line=0``, e.g. "this module never calls X") key on
+# the path alone, which was already drift-proof. Files with no AST we can parse
+# (``.ts``, ``.tsx``, ``.yaml``, unparseable Python) contribute an empty scope
+# component; path plus line text still keys them stably.
+#
+# Known, accepted blind spots: two identical lines in one function that swap
+# places keep each other's keys (they are interchangeable by definition), and a
+# function moved verbatim to another module re-reports, because the path
+# changed — which is worth a second look anyway.
+
+_WHITESPACE_RE = re.compile(r"\s+")
+_FILE_LEVEL_TEXT = "<file>"
+
+# The AST parse is the only expensive step, and its cache is keyed on a digest
+# of the source it parsed — NOT on (path, mtime, size). A size-preserving
+# rewrite inside one mtime tick collides under that stamp, and this cache
+# feeds baseline keys: a stale hit would silently fingerprint the wrong line.
+# Content addressing cannot go stale by construction. Lines themselves are
+# always read fresh; it is a read plus splitlines.
+_SCOPE_CACHE: dict[tuple[str, str], list[tuple[int, int, str]]] = {}
+
+
+def _source_lines(path: Path) -> list[str]:
+    """Lines of ``path``, or ``[]`` when it cannot be read. Guards do report
+    violations against files that do not exist ("expected owner missing"), so
+    this must never raise."""
+    try:
+        return path.read_text(encoding="utf-8").splitlines()
+    except (UnicodeDecodeError, OSError):
+        return []
+
+
+def _python_scopes(path: Path) -> list[tuple[int, int, str]]:
+    """``(start_line, end_line, dotted_qualname)`` for every class/def in a
+    Python file. Best-effort: a file that will not parse yields no scopes
+    rather than blowing up the gate (ruff and pytest own syntax errors)."""
+    if path.suffix != ".py":
+        return []
+    source = "\n".join(_source_lines(path))
+    stamp = (path.as_posix(), hashlib.sha256(source.encode("utf-8")).hexdigest())
+    cached = _SCOPE_CACHE.get(stamp)
+    if cached is not None:
+        return cached
+
+    spans: list[tuple[int, int, str]] = []
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        _SCOPE_CACHE[stamp] = spans
+        return spans
+
+    def walk(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                qual = f"{prefix}.{child.name}" if prefix else child.name
+                # Decorators sit above the ``def``, and a match on one belongs
+                # to the function it decorates.
+                start = min([child.lineno] + [d.lineno for d in child.decorator_list])
+                end = getattr(child, "end_lineno", None) or child.lineno
+                spans.append((start, end, qual))
+                walk(child, qual)
+            else:
+                walk(child, prefix)
+
+    walk(tree, "")
+    _SCOPE_CACHE[stamp] = spans
+    return spans
+
+
+def _enclosing_scope(path: Path, line: int) -> str:
+    """Dotted name of the innermost class/def containing ``line``, else ""."""
+    if line <= 0:
+        return ""
+    best = ""
+    best_span: Optional[int] = None
+    for start, end, qual in _python_scopes(path):
+        if start <= line <= end:
+            span = end - start
+            if best_span is None or span < best_span:
+                best_span, best = span, qual
+    return best
+
+
+def _normalize_line(text: str) -> str:
+    """Collapse runs of whitespace so re-indenting a tolerated line (a wrapping
+    ``if``, a reformat) does not invalidate its baseline entry."""
+    return _WHITESPACE_RE.sub(" ", text.strip())
+
+
+def _truncate(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 @dataclass
 class Violation:
-    """One occurrence of a forbidden pattern. ``key`` is what we match
-    against the baseline file (``file:line``) so the baseline survives
-    surrounding whitespace/comment changes."""
+    """One occurrence of a forbidden pattern.
+
+    ``key`` is what we match against the baseline file: a content fingerprint
+    that survives line drift (see "Baseline fingerprints" above).
+    ``occurrence`` is filled in by :func:`assign_occurrences` for the rare case
+    of two identical matches in one scope; leave it 0 when hand-constructing."""
 
     file: Path
     line: int
     message: str
+    occurrence: int = 0
+
+    @property
+    def relpath(self) -> str:
+        return self.file.relative_to(REPO_ROOT).as_posix()
+
+    @property
+    def source_line(self) -> str:
+        """The matched line, normalized. ``<file>`` for file-level violations."""
+        if self.line <= 0:
+            return _FILE_LEVEL_TEXT
+        lines = _source_lines(self.file)
+        if 1 <= self.line <= len(lines):
+            return _normalize_line(lines[self.line - 1])
+        return ""
+
+    @property
+    def scope(self) -> str:
+        return _enclosing_scope(self.file, self.line)
+
+    def identity_parts(self) -> tuple[str, str, str]:
+        """Everything but the duplicate counter — the grouping key used to
+        assign ``occurrence``."""
+        return (self.relpath, self.scope, self.source_line)
 
     @property
     def key(self) -> str:
-        return f"{self.file.relative_to(REPO_ROOT).as_posix()}:{self.line}"
+        rel, scope, text = self.identity_parts()
+        raw = chr(0).join([rel, scope, text, str(self.occurrence)])
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+    @property
+    def annotation(self) -> str:
+        """Human-readable pointer written beside the key in the baseline file.
+        Regenerated on every ``--update-baseline`` and never matched against —
+        it exists so a reviewer can tell what a hash is tolerating."""
+        rel, scope, text = self.identity_parts()
+        bits = [f"{rel}:{self.line}" if self.line > 0 else rel]
+        if scope:
+            bits.append(f"in {scope}")
+        if text and text != _FILE_LEVEL_TEXT:
+            bits.append(_truncate(text, 80))
+        if self.occurrence:
+            bits.append(f"(match #{self.occurrence + 1})")
+        return "  ".join(bits)
 
     def format(self) -> str:
-        return f"{self.key}: {self.message}"
+        return f"{self.relpath}:{self.line}: {self.message}"
+
+
+def assign_occurrences(violations: list[Violation]) -> list[Violation]:
+    """Number violations that fingerprint identically (same file, same
+    enclosing function, byte-identical line) so each keeps its own baseline
+    entry. Guards emit in file order, so the numbering is stable unless the
+    identical siblings are themselves reordered."""
+    counts: dict[tuple[str, str, str], int] = {}
+    for v in violations:
+        parts = v.identity_parts()
+        v.occurrence = counts.get(parts, 0)
+        counts[parts] = v.occurrence + 1
+    return violations
+
+
+# A fingerprint: 16 lowercase hex chars. Anything else in a baseline file is a
+# leftover from the old <relpath>:<lineno> scheme.
+_BASELINE_KEY_RE = re.compile(r"^[0-9a-f]{16}$")
+
+_BASELINE_NOTES_MARKER = (
+    "# ---- notes below this line are preserved across --update-baseline ----"
+)
+
+_BASELINE_HEADER = (
+    "# Auto-generated by scripts/quality_gate.py --update-baseline. Do not hand-edit.\n"
+    "#\n"
+    "# Each entry is a content fingerprint of one tolerated violation:\n"
+    "#   sha256(relpath | enclosing function | normalized matched line | nth-dup)\n"
+    "# Line numbers are NOT part of the key, so inserting lines above a tolerated\n"
+    "# violation does not re-report it. Editing that line, or moving/renaming the\n"
+    "# function around it, DOES — on purpose: the exemption was granted for\n"
+    "# specific code, so changed code deserves a fresh look.\n"
+    "#\n"
+    "# The text after `#` on an entry line is a pointer for humans. It is\n"
+    "# regenerated on every run and is never matched against.\n"
+    "#\n"
+    "# Reviewed in PR; remove entries as the code is cleaned up.\n"
+)
+
+# Header lines written by the pre-fingerprint format. Dropped on rewrite so the
+# migration does not stack two headers; every other comment is a human note and
+# survives.
+_LEGACY_HEADER_LINES = {
+    "# Auto-generated by scripts/quality_gate.py --update-baseline.",
+    "# Each line is a tolerated <relpath>:<lineno> match for this guard.",
+    "# Reviewed in PR; remove entries as the code is cleaned up.",
+}
 
 
 @dataclass
@@ -82,34 +300,80 @@ class Guard:
     description: str
     check: Callable[[], list[Violation]]
     fix_hint: str = ""
-    baselined: list[str] = field(default_factory=list)
 
     @property
     def baseline_path(self) -> Path:
         return BASELINE_DIR / f"{self.name.replace('.', '__')}.txt"
 
-    def load_baseline(self) -> set[str]:
-        if not self.baseline_path.exists():
-            return set()
-        keys: set[str] = set()
-        for raw in self.baseline_path.read_text(encoding="utf-8").splitlines():
-            line = raw.split("#", 1)[0].strip()
-            if line:
-                keys.add(line)
-        return keys
+    def load_baseline(self) -> dict[str, str]:
+        """Map every baseline entry to its human-readable annotation.
 
-    def save_baseline(self, keys: Iterable[str]) -> None:
-        sorted_keys = sorted(set(keys))
+        A dict rather than a set so the stale-entry warning can say *what* a
+        hash was tolerating. Membership tests (``key in baseline``) read the
+        same as they did against the old set."""
+        if not self.baseline_path.exists():
+            return {}
+        entries: dict[str, str] = {}
+        for raw in self.baseline_path.read_text(encoding="utf-8").splitlines():
+            entry, _, note = raw.partition("#")
+            entry = entry.strip()
+            if entry:
+                entries[entry] = note.strip()
+        return entries
+
+    def load_notes(self) -> list[str]:
+        """Hand-written commentary in the baseline file, which explains *why*
+        entries are tolerated and must outlive a regeneration.
+
+        Two baselines carry paragraphs of it — ``repo.no-gitignored-source``
+        documents GIT-001, ``backend.structlog-positional-args`` documents why
+        it is empty on purpose — and losing that to an ``--update-baseline``
+        would be a real loss."""
+        if not self.baseline_path.exists():
+            return []
+        lines = self.baseline_path.read_text(encoding="utf-8").splitlines()
+        if _BASELINE_NOTES_MARKER in lines:
+            lines = lines[lines.index(_BASELINE_NOTES_MARKER) + 1:]
+            return [ln for ln in lines if ln.lstrip().startswith("#")]
+        # Pre-fingerprint file: every comment that is not old boilerplate.
+        return [
+            ln for ln in lines
+            if ln.lstrip().startswith("#") and ln.strip() not in _LEGACY_HEADER_LINES
+        ]
+
+    def save_baseline(self, entries: Iterable["Violation | str"]) -> None:
+        """Rewrite the baseline file. Accepts Violations (which carry their own
+        annotation) or bare key strings. Entries sort by the location they came
+        from, not by hash, so the file stays readable and diffs stay small."""
+        rows: dict[str, tuple[tuple[str, int, str], str]] = {}
+        for entry in entries:
+            if isinstance(entry, Violation):
+                rows.setdefault(
+                    entry.key,
+                    ((entry.relpath, entry.line, entry.key), entry.annotation),
+                )
+            else:
+                key = str(entry)
+                rows.setdefault(key, (("", 0, key), ""))
+
+        if not rows and not self.baseline_path.exists():
+            # Guards that ship at zero with no baseline file are absolute
+            # rules, not ratchets. A repo-wide --update-baseline must not
+            # hand them an empty file and turn them into ratchets.
+            return
+
+        notes = self.load_notes()
         BASELINE_DIR.mkdir(parents=True, exist_ok=True)
-        header = (
-            "# Auto-generated by scripts/quality_gate.py --update-baseline.\n"
-            "# Each line is a tolerated <relpath>:<lineno> match for this guard.\n"
-            "# Reviewed in PR; remove entries as the code is cleaned up.\n"
-        )
-        self.baseline_path.write_text(
-            header + "\n".join(sorted_keys) + ("\n" if sorted_keys else ""),
-            encoding="utf-8",
-        )
+        out = [_BASELINE_HEADER.rstrip("\n"), _BASELINE_NOTES_MARKER]
+        out.extend(notes)
+        for key, (_sort, annotation) in sorted(rows.items(), key=lambda kv: kv[1][0]):
+            out.append(f"{key}  # {annotation}" if annotation else key)
+        # newline="" suppresses the platform translation write_text would
+        # do: the file must come out byte-identical whether it was
+        # regenerated on a developer's Windows box or by CI on Linux
+        # (.gitattributes pins these to eol=lf).
+        with self.baseline_path.open("w", encoding="utf-8", newline="") as fh:
+            fh.write(chr(10).join(out) + chr(10))
 
 
 # ── File walking helpers ─────────────────────────────────────────────────────
@@ -2391,31 +2655,54 @@ GUARD_BY_NAME = {g.name: g for g in GUARDS}
 
 def run_guard(guard: Guard, update_baseline: bool) -> bool:
     baseline = guard.load_baseline()
-    raw = guard.check()
+    raw = assign_occurrences(guard.check())
     keys = {v.key for v in raw}
-    new = [v for v in raw if v.key not in baseline]
-    stale = baseline - keys
+
+    # Entries that are not 16-hex fingerprints are leftovers from the old
+    # <relpath>:<lineno> scheme. They tolerate nothing, so say so loudly
+    # instead of letting the guard report every baselined violation as new
+    # with no explanation.
+    legacy = sorted(k for k in baseline if not _BASELINE_KEY_RE.match(k))
+    fingerprints = {k for k in baseline if _BASELINE_KEY_RE.match(k)}
+
+    new = [v for v in raw if v.key not in fingerprints]
+    stale = fingerprints - keys
 
     if update_baseline:
-        guard.save_baseline(keys)
-        print(f"{BLUE}== {guard.name}{RESET}: wrote {len(keys)} entries to "
-              f"{guard.baseline_path.relative_to(REPO_ROOT)}")
+        guard.save_baseline(raw)
+        if not guard.baseline_path.exists():
+            print(f"{BLUE}== {guard.name}{RESET}: clean, and has no baseline "
+                  f"file — left without one (absolute rule, not a ratchet)")
+        else:
+            print(f"{BLUE}== {guard.name}{RESET}: wrote {len(keys)} entries to "
+                  f"{guard.baseline_path.relative_to(REPO_ROOT)}")
         return True
 
-    if not new and not stale:
+    if legacy:
+        print(f"{YELLOW}!!{RESET}  {guard.name}: {len(legacy)} baseline "
+              f"{'entries use' if len(legacy) != 1 else 'entry uses'} the old "
+              f"<path>:<lineno> format and now tolerate nothing. Regenerate "
+              f"with `python scripts/quality_gate.py --only {guard.name} "
+              f"--update-baseline`.")
+        for k in legacy:
+            print(f"    {DIM}legacy: {k}{RESET}")
+
+    if not new and not stale and not legacy:
         print(f"{GREEN}OK{RESET}  {guard.name} {DIM}({guard.description}){RESET}")
         return True
 
     if stale:
         # Baseline drift means the code is cleaner than the baseline
         # claims. Not a failure — just nudge the developer to rerun
-        # ``--update-baseline``.
+        # ``--update-baseline``. The key is a hash, so print the annotation
+        # recorded beside it or the entry is unactionable.
         print(f"{YELLOW}!!{RESET}  {guard.name}: {len(stale)} baseline "
               f"entries are stale (the code is fixed). Run "
               f"`python scripts/quality_gate.py --only {guard.name} "
               f"--update-baseline` to prune.")
-        for k in sorted(stale):
-            print(f"    {DIM}stale: {k}{RESET}")
+        for k in sorted(stale, key=lambda e: (baseline.get(e, ""), e)):
+            note = baseline.get(k) or "(no recorded location)"
+            print(f"    {DIM}stale: {k}  {note}{RESET}")
 
     if new:
         print(f"{RED}FAIL{RESET} {guard.name} -- {len(new)} new violation"

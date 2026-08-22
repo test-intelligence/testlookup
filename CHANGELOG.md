@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-08-22 — Quality-gate baselines were keyed by line number, so any insertion above one re-reported it
+
+- A baseline entry in `scripts/quality-gate-baselines/*.txt` was `<relpath>:<lineno>`. That made every guard hostage to line drift: **inserting a line anywhere above a tolerated violation re-reported it as brand new**, with CI pointing at a line nobody had touched.
+- It is not hypothetical and not rare. On 2026-08-21 it fired **twice in one session** while two unrelated bugs were fixed in `backend/app/agents/analysis_agent.py`: the one tolerated `run_triage_agent(` call moved 631 → 642 → 684 purely because code was added above it, and `backend.analysis-router` failed CI both times. The CHANGELOG records at least two earlier instances (`routers/analyze.py` 147 → 157; "refreshed two stale line-number baselines" after a service restore). The fix was always the same: bump the number.
+- **The cost was never the two-second edit.** It trains contributors and agents to bump baseline numbers without reading what the entry tolerates — which is precisely how a genuinely new violation gets waved through.
+- Entries are now a **content fingerprint** of what is tolerated rather than where it sits:
+
+  ```
+  sha256(relpath | enclosing function | normalized matched line | nth-duplicate)[:16]
+  ```
+
+  | change to the code | before | now |
+  |---|---|---|
+  | lines inserted above a tolerated match | new violation | **no-op** |
+  | tolerated line re-indented | new violation | **no-op** |
+  | tolerated line edited | tolerated (line unchanged) | **re-reported** |
+  | call moved to another function, or that function renamed | tolerated | **re-reported** |
+  | a second, identical match added in the same function | tolerated | **re-reported** |
+
+  The last three are the point, not a side effect: an exemption is granted for specific code in a named place, so changed code gets re-read. Enclosing-function lookup is AST-based (Python only); non-Python files key on path plus line text. File-level findings (`line=0`, "this module never calls X") key on the path alone, as they effectively already did.
+
+- Every baseline file was regenerated with `--update-baseline`: **22 tolerated entries before, 22 after** — the same set, re-keyed. Each entry carries a human-readable pointer as a trailing comment (`# backend/app/agents/analysis_agent.py:642  in AnalysisAgent._analyse_one  run_triage_agent(`) that the loader ignores and regenerates, so a reviewer can still tell what a hash is tolerating. The line number survives only there, as a comment.
+- **Stale-entry pruning still works** and now names what it lost: the warning prints the recorded location beside the hash, because a bare hash is unactionable. Entries still in the old `<path>:<lineno>` form (a branch cut before this change) are reported as such, with the regeneration command, instead of silently tolerating nothing.
+- Two fixes found on the way, both in `save_baseline`, both pre-existing:
+  - It **erased hand-written commentary** on every regeneration. Two baselines carry paragraphs that are the whole reason their entries are tolerated — `repo.no-gitignored-source` documents GIT-001 (why eight real source files match a security glob and must not be renamed), `backend.structlog-positional-args` documents why it is empty on purpose. Notes below a marker line are now preserved verbatim across regenerations, and both blocks survived this one.
+  - A repo-wide `--update-baseline` **created an empty baseline file for every clean guard**, quietly converting 11 absolute rules (`backend.audit-write-discipline`, `frontend.ai-output-hedging`, `ai.prompt-manifest-sync`, …) into ratchets. A guard that is clean and has no file is now left without one.
+- Baseline files are written with explicit LF so a regeneration on Windows and one in CI produce identical bytes (`.gitattributes` pins them to `eol=lf`).
+- Tests: 15 in `scripts/test_quality_gate.py` (46 total, was 31), driving the real `backend.no-print` guard over a throwaway tree — the headline case is that inserting lines above a tolerated `print()` yields no new violation, no stale entry, and an untouched baseline file. Each guarantee was **mutation-checked**: 8 mutations (line number back in the key, scope dropped, duplicate counter dropped, line text dropped, whitespace normalization removed, notes dropped, legacy entries silently honoured, empty file invented), all killed, with the harness asserting each mutation applied.
+- That mutation pass earned its keep: it caught the scope test passing for the wrong reason. The AST cache was keyed on `(path, mtime_ns, size)`, and a **size-preserving rewrite inside one mtime tick** served stale lines — a cache that feeds baseline keys silently fingerprinting the wrong line. It is now keyed on a digest of the source it parsed, which cannot go stale.
+- `python scripts/quality_gate.py` exits 0 on a clean tree before and after; verified live that inserting two lines above the tolerated call in `analysis_agent.py` no longer fails `backend.analysis-router`, and that a freshly added `print()` in `backend/app/` still fails `backend.no-print`.
+
 ## 2026-08-22 — The setup wizard's "View Run Intelligence" step could never complete
 
 - The onboarding wizard has five steps; the last, **View Run Intelligence**, had **no completion path at all**. `auto_detect_progress` completes the first four from database state (a project exists, a run was ingested, Jira/telemetry is enabled) but skips this one — opening a page leaves no row to detect. The only other way a step completes is `onboardingService.completeStep`, and that function was **dead code**: defined in the service, wired to `POST /api/v1/onboarding/{project_id}/complete`, and called from nowhere in the app.
