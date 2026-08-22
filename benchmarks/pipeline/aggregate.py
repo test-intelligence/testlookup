@@ -28,6 +28,10 @@ SCHEMA_VERSION = 1
 # rather than suppressed, but flagged so nobody quotes a p95 over three runs.
 MIN_SAMPLES = 5
 
+# Share of all degraded runs falling on one day, above which the aggregate
+# degraded rate is describing an incident rather than a steady state.
+CONCENTRATION_THRESHOLD = 0.5
+
 # Failed-test count -> band. The bands exist because pipeline cost is driven by
 # the size of the failure set, so a single global average hides the only
 # dimension that matters.
@@ -150,6 +154,90 @@ def band_for(failed_tests: int) -> str:
     return "large"
 
 
+def _run_is_degraded(run: Any) -> bool:
+    """True when any stage in the run failed or was skipped non-deliberately."""
+    return any(_is_degradation(s) for s in _as_list(_as_dict(run).get("stages")))
+
+
+def _day_of(run: Any) -> Optional[str]:
+    """The UTC date a run started, as ``YYYY-MM-DD``; None if unusable."""
+    started = _as_dict(run).get("started_at")
+    try:
+        return started.date().isoformat()
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def summarize_temporal(runs: Iterable[Any]) -> dict[str, Any]:
+    """Show whether degradation is chronic or a single bad day.
+
+    This exists because the first real baseline reported "86% of runs degraded"
+    when 747 of 765 failures had happened in ONE HOUR three weeks earlier. Over
+    an all-time window a short incident is arithmetically indistinguishable
+    from a permanent condition, and the aggregate number reads as current
+    state. Anyone acting on it would have been fixing the wrong thing, or
+    fixing nothing at all because it had already stopped.
+
+    ``degraded_rate_excluding_peak_day`` is the number to compare against
+    ``bands[*].degraded_rate``: when they diverge sharply the aggregate is
+    being driven by one date, which is named.
+    """
+    clean = [_as_dict(r) for r in runs if isinstance(r, dict)]
+    runs_by_day: dict[str, int] = {}
+    degraded_by_day: dict[str, int] = {}
+    undated = 0
+
+    for run in clean:
+        day = _day_of(run)
+        if day is None:
+            undated += 1
+            continue
+        runs_by_day[day] = runs_by_day.get(day, 0) + 1
+        if _run_is_degraded(run):
+            degraded_by_day[day] = degraded_by_day.get(day, 0) + 1
+
+    total_degraded = sum(degraded_by_day.values())
+    peak_day = max(degraded_by_day, key=lambda d: degraded_by_day[d]) if degraded_by_day else None
+    peak_count = degraded_by_day.get(peak_day, 0) if peak_day else 0
+    peak_share = round(peak_count / total_degraded, 4) if total_degraded else None
+
+    dated = [r for r in clean if _day_of(r) is not None]
+    off_peak = [r for r in dated if _day_of(r) != peak_day]
+    off_peak_degraded = sum(1 for r in off_peak if _run_is_degraded(r))
+
+    # "Concentrated" needs BOTH a dominant day and more than one day observed:
+    # a single-day corpus is trivially 100% concentrated and says nothing.
+    concentrated = bool(
+        peak_share is not None
+        and peak_share >= CONCENTRATION_THRESHOLD
+        and len(runs_by_day) > 1
+        and total_degraded > 0
+    )
+
+    return {
+        "days_observed": len(runs_by_day),
+        "first_day": min(runs_by_day) if runs_by_day else None,
+        "last_day": max(runs_by_day) if runs_by_day else None,
+        "runs_without_a_date": undated,
+        "degraded_total": total_degraded,
+        "peak_degraded_day": peak_day,
+        "peak_degraded_count": peak_count,
+        "peak_day_share_of_degraded": peak_share,
+        # The honest comparison: what the degraded rate looks like once the
+        # worst single day is set aside.
+        "degraded_rate_excluding_peak_day": (
+            round(off_peak_degraded / len(off_peak), 4) if off_peak else None
+        ),
+        "degradation_is_concentrated": concentrated,
+        "concentration_note": (
+            f"{peak_count} of {total_degraded} degraded runs "
+            f"({peak_share:.0%}) fall on {peak_day} — the aggregate degraded "
+            "rate describes that day, not current state."
+            if concentrated and peak_share is not None else None
+        ),
+    }
+
+
 def _is_degradation(stage: Any) -> bool:
     """True when a stage's outcome means the run lost something.
 
@@ -234,7 +322,7 @@ def summarize_band(band: str, runs: list[dict]) -> dict[str, Any]:
     for run in runs:
         stages = [_as_dict(s) for s in _as_list(run.get("stages"))]
         if any(_is_degradation(s) for s in stages):
-            degraded += 1
+            degraded += 1  # see _run_is_degraded — same rule, per-run
         for stage in stages:
             if (_num(_as_dict(stage.get("result_data")).get("budget_skipped")) or 0) > 0:
                 budget_skipped_runs += 1
@@ -506,6 +594,7 @@ def build_baseline(
             name: summarize_stage(name, stages)
             for name, stages in sorted(by_stage.items())
         },
+        "temporal": summarize_temporal(clean),
         "grounding": {
             "claims": (
                 summarize_report_grounding(reports_list)

@@ -29,6 +29,7 @@ from aggregate import (  # noqa: E402
     summarize_narrative_citations,
     summarize_report_grounding,
     summarize_stage,
+    summarize_temporal,
 )
 
 T0 = datetime(2026, 8, 22, 12, 0, 0, tzinfo=timezone.utc)
@@ -349,3 +350,86 @@ def test_fabricated_ids_are_reported_separately_from_scarce_citations():
 def test_grounding_never_raises_on_malformed_input(garbage):
     assert summarize_report_grounding([garbage])["reports"] >= 0
     assert summarize_narrative_citations([garbage])["summaries"] >= 0
+
+
+# ── Temporal structure: an incident must not read as a steady state ─────────
+
+
+def _run_on(day: int, *, degraded: bool):
+    """A run started on 2026-08-<day>, optionally with a failed stage."""
+    started = datetime(2026, 8, day, 12, 0, 0, tzinfo=timezone.utc)
+    stage = {
+        "stage_name": "summary",
+        "status": "failed" if degraded else "completed",
+        "started_at": started,
+        "completed_at": started + timedelta(seconds=2),
+    }
+    return {
+        "pipeline_run_id": f"r{day}", "workflow_type": "deep", "status": "completed",
+        "started_at": started, "completed_at": started + timedelta(seconds=10),
+        "stages": [stage],
+    }
+
+
+def test_a_one_day_incident_is_named_not_averaged_away():
+    """The failure this exists to prevent.
+
+    The first real baseline reported "86% of runs degraded" when 747 of 765
+    failures had happened in a single hour three weeks earlier. Over a long
+    window an incident is arithmetically identical to a chronic condition.
+    """
+    runs = [_run_on(8, degraded=True) for _ in range(40)]
+    runs += [_run_on(d, degraded=False) for d in range(9, 22)]
+    temporal = summarize_temporal(runs)
+
+    assert temporal["degradation_is_concentrated"] is True
+    assert temporal["peak_degraded_day"] == "2026-08-08"
+    assert temporal["peak_day_share_of_degraded"] == 1.0
+    # The number a reader should act on: near zero once the bad day is set aside.
+    assert temporal["degraded_rate_excluding_peak_day"] == 0.0
+    assert "2026-08-08" in temporal["concentration_note"]
+
+
+def test_chronic_degradation_is_not_flagged_as_concentrated():
+    """Spread-out failures are a real ongoing problem and must not be excused."""
+    runs = [_run_on(d, degraded=True) for d in range(8, 20)]
+    runs += [_run_on(d, degraded=False) for d in range(8, 20)]
+    temporal = summarize_temporal(runs)
+
+    assert temporal["degradation_is_concentrated"] is False
+    assert temporal["concentration_note"] is None
+    assert temporal["degraded_rate_excluding_peak_day"] > 0.4
+
+
+def test_a_single_day_corpus_is_never_called_concentrated():
+    """Trivially 100% concentrated, and therefore says nothing."""
+    runs = [_run_on(8, degraded=True) for _ in range(10)]
+    temporal = summarize_temporal(runs)
+
+    assert temporal["days_observed"] == 1
+    assert temporal["degradation_is_concentrated"] is False
+
+
+def test_a_clean_corpus_reports_no_peak():
+    temporal = summarize_temporal([_run_on(d, degraded=False) for d in range(8, 15)])
+    assert temporal["degraded_total"] == 0
+    assert temporal["peak_degraded_day"] is None
+    assert temporal["degradation_is_concentrated"] is False
+
+
+def test_undated_runs_are_counted_not_dropped_silently():
+    runs = [_run_on(8, degraded=True), {"stages": [], "started_at": "yesterday"}]
+    temporal = summarize_temporal(runs)
+    assert temporal["runs_without_a_date"] == 1
+
+
+def test_temporal_block_is_part_of_the_baseline():
+    baseline = build_baseline([_run_on(8, degraded=True), _run_on(9, degraded=False)])
+    assert "temporal" in baseline
+    assert baseline["temporal"]["first_day"] == "2026-08-08"
+    assert baseline["temporal"]["last_day"] == "2026-08-09"
+
+
+@pytest.mark.parametrize("garbage", [None, "run", 7, {"started_at": object()}])
+def test_temporal_never_raises(garbage):
+    assert isinstance(summarize_temporal([garbage]), dict)

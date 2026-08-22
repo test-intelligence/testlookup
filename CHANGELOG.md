@@ -11,6 +11,40 @@
 
 - Changed to `?=`, so a podman host exports `DOCKER_COMPOSE="podman compose"` once instead of appending it to every invocation. Command-line overrides already worked; the environment did not, which is the form anyone actually wants for a machine-wide fact.
 - Surfaced by `make benchmark-pipeline` (#790) — but the defect was repo-wide and pre-existing: `make dev`, `make migrate`, `make seed-data` and every other compose target failed identically on the same host.
+## 2026-08-22 — A baseline that cannot see time reports an incident as a steady state
+
+- The first real baseline reported **86% of runs degraded**. That number was true and misleading: **747 of 765 failures happened in a single hour**, three weeks earlier. Over a long window a short incident is arithmetically identical to a chronic condition, and the aggregate reads as current state — so the harness's own first output produced a wrong conclusion about the system it was built to measure.
+- New `temporal` block, printed **above** the tables because it changes how the degraded column should be read:
+
+  ```
+  ! 750 of 776 degraded runs (97%) fall on 2026-08-08 — the aggregate degraded
+    rate describes that day, not current state.
+  ! Excluding 2026-08-08, the degraded rate is 12.4%.
+  ```
+
+- `degraded_rate_excluding_peak_day` is the number to compare against `bands[*].degraded_rate`. Where they diverge sharply, one date is driving the aggregate, and it is named.
+- **Chronic degradation is deliberately NOT excused.** Failures spread across days stay flagged; only a genuine concentration (≥50% of degraded runs on one day, across a multi-day corpus) triggers the note. A single-day corpus is never called concentrated — it is trivially 100% and says nothing.
+- Applied to the homelab this reframes the headline finding: the summary-stage `Event loop is closed` failure is **load-triggered** (~96% under a 747-pipeline burst) rather than chronic (~1.6% at normal volume), and the honest ongoing degraded rate is **12.4%**, not 86%.
+- 12 new tests (55 total).
+
+
+## 2026-08-22 — The first real baseline, and two collector bugs only a real run could find
+
+- Ran `collect.py` against the homelab (1,020 pipeline runs, 5,572 stage results). Two defects surfaced immediately, neither reachable by unit tests:
+  - **The Mongo database name is not in the URI.** The deployed `MONGO_URI` is `mongodb://host:27017`; the app keeps the name in a separate `MONGO_DB` setting (default `testlookup_logs`). `get_default_database()` raised `ConfigurationError`. Added `--mongo-db`, defaulted from the same env var the app reads.
+  - **A grounding failure destroyed the whole baseline.** Grounding is an *enrichment*, but its exception propagated and threw away a complete set of already-collected Postgres measurements. It is now caught: the run degrades to `not_measured` with the reason recorded in `window.grounding_error`, and the primary measurement survives. `aggregate.py` had this discipline; the collector did not.
+- First measured baseline committed to `benchmarks/results/pipeline_baseline.json`. Selected findings, all previously estimates:
+
+  | Metric | Measured |
+  |---|---|
+  | Runs analysed | 1,020 (892 offline, 118 investigation, 10 deep) |
+  | Analysis engine mix | **rules 819 / llm 53** — the LLM path runs 6% of the time |
+  | Summary stage p50 / p95 | 1.8 s / 47.7 s |
+  | Parse failures | 14, or **7.8% of LLM calls** |
+  | Total cost, 1,020 runs | **$0.04** (self-hosted Ollama + rules) |
+  | Reports where every claim shares one evidence set | **10/10 (100%)** — F-16 confirmed |
+  | Summaries carrying any citation | **0/105 (0%)** — F-3 confirmed, pre-fix |
+- The two grounding numbers are the "before" side of F-3 and F-16, measured on the deployed image that predates both fixes.
 
 ## 2026-08-22 — A summary claim can finally cite the evidence behind it
 

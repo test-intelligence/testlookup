@@ -68,7 +68,7 @@ def _normalize_dsn(url: str) -> str:
 
 
 async def _fetch_grounding(
-    mongo_uri: str, test_run_ids: list[str]
+    mongo_uri: str, test_run_ids: list[str], *, mongo_db: Optional[str] = None
 ) -> tuple[list[dict], list[dict]]:
     """Read published decision reports + run summaries for the same runs.
 
@@ -90,7 +90,12 @@ async def _fetch_grounding(
 
     client = AsyncIOMotorClient(mongo_uri)
     try:
-        db = client.get_default_database()
+        # The deployed MONGO_URI carries no database path (it is
+        # ``mongodb://host:27017``), so get_default_database() raises. The app
+        # keeps the name in a separate setting -- MONGO_DB, default
+        # "testlookup_logs" -- and this collector has to resolve it the same
+        # way rather than assuming the URI is self-describing.
+        db = client[mongo_db] if mongo_db else client.get_default_database()
         report_docs = await db["decision_reports"].find(
             {"test_run_id": {"$in": test_run_ids}, "status": "published"},
             {"_id": 0, "test_run_id": 1, "report_version": 1, "decision_intelligence": 1},
@@ -121,6 +126,7 @@ async def collect(
     workflow_type: Optional[str],
     limit: int,
     mongo_uri: Optional[str] = None,
+    mongo_db: Optional[str] = None,
 ) -> dict[str, Any]:
     try:
         import asyncpg
@@ -170,10 +176,22 @@ async def collect(
     } for row in run_rows]
 
     reports = summaries = None
+    grounding_error: Optional[str] = None
     if mongo_uri and runs:
         # Grounding documents are keyed by test_run_id, not pipeline_run_id.
         test_run_ids = sorted({r["test_run_id"] for r in runs})
-        reports, summaries = await _fetch_grounding(mongo_uri, test_run_ids)
+        try:
+            reports, summaries = await _fetch_grounding(
+                mongo_uri, test_run_ids, mongo_db=mongo_db
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Grounding is an ENRICHMENT. Letting its failure propagate threw
+            # away a complete set of already-collected Postgres measurements --
+            # observed against the homelab, where the URI carried no database
+            # name. An optional metric must never cost the primary one.
+            reports = summaries = None
+            grounding_error = f"{type(exc).__name__}: {exc}"[:200]
+            print(f"warning: grounding skipped — {grounding_error}", file=sys.stderr)
 
     baseline = build_baseline(
         runs,
@@ -182,6 +200,7 @@ async def collect(
             "workflow_type": workflow_type or "all",
             "limit": limit,
             "grounding_source": "mongo" if mongo_uri else None,
+            **({"grounding_error": grounding_error} if grounding_error else {}),
         },
         reports=reports,
         summaries=summaries,
@@ -200,6 +219,18 @@ def render(baseline: dict[str, Any]) -> str:
         lines.append(
             "  ! FEW SAMPLES — percentiles below are arithmetic, not evidence."
         )
+    # Printed before the tables, because it changes how the degraded column
+    # should be read. Learned the hard way: the first real baseline reported
+    # 86% degraded when 747 of 765 failures were one hour, three weeks back.
+    temporal = baseline.get("temporal") or {}
+    if temporal.get("degradation_is_concentrated"):
+        lines.append(f"  ! {temporal.get('concentration_note')}")
+        off_peak = temporal.get("degraded_rate_excluding_peak_day")
+        if off_peak is not None:
+            lines.append(
+                f"  ! Excluding {temporal.get('peak_degraded_day')}, the degraded "
+                f"rate is {off_peak:.1%}."
+            )
     lines.append("")
     # Note for editors: this file must parse on Python 3.11 (what CI runs), so
     # no nested same-quote f-strings — every cell is formatted before interpolation.
@@ -284,6 +315,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--mongo-uri", default=os.environ.get("MONGO_URI"),
                         help="read the report store for grounding metrics "
                              "(claim evidence coverage, narrative citations)")
+    parser.add_argument("--mongo-db", default=os.environ.get("MONGO_DB", "testlookup_logs"),
+                        help="database name; the deployed MONGO_URI carries none")
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -297,6 +330,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         workflow_type=args.workflow_type,
         limit=args.limit,
         mongo_uri=args.mongo_uri,
+        mongo_db=args.mongo_db,
     ))
 
     if baseline.get("runs_observed", 0) == 0:
