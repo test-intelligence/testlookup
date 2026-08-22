@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-22 — The summary asks the provider for its schema instead of parsing prose
+
+- The review called structured output a system-wide gap. **Measured, it is one stage.** Over 1,557 LLM calls on the homelab:
+
+  | Stage | LLM calls | Schema failures |
+  |---|---|---|
+  | **summary** | 796 (51%) | **57 — all of them (7.16%)** |
+  | root_cause_analysis | 294 | 0 |
+  | all other stages | 467 | 0 |
+
+- The zeros were checked rather than assumed: the ReAct path records `schema_validation_failed` as a Mongo event, and there are **zero across 9,657 events**. One stage makes half the LLM calls and produces every recorded failure.
+- `_call_json_layer` now tries `with_structured_output` first and uses the result without touching the regex parser.
+- **Every failure mode falls back to the prose path** — unsupported provider, transport error, timeout, unexpected response shape. Not defensive politeness: this deployment has already run three models (`qwen2.5:7b`, `mistralai/mistral-nemo`, `inclusionai/ling-2.6-flash`), so "the provider cannot do this" is a live case. Worst case of trying is one wasted call; it can never cost a report.
+- A structured success is recorded as a `summary_structured_output` decision, so a later drop in schema failures is **attributable to this change** rather than to the model having a good day — the same reasoning that made `shared_evidence_bundle_rate` a separate metric for F-16.
+- 7 regression guards, one per failure mode.
+- **Not yet confirmed.** Whether 7.16% actually moves needs a deploy and a fresh burst.
+- **Known gap, deliberately not bundled:** the fast classifier returns `None` on a parse failure and falls through silently, so its ~294 calls are unmeasured territory.
+
 ## 2026-08-22 — F-17 fixed the 87% that was not running
 
 - #797 taught the **rules engine** to cite the text it matched on. Deployed and measured: **evidence coverage did not move — still 3 of 4,693 (0.06%)**.

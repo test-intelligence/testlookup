@@ -677,6 +677,68 @@ class SummaryAgent(BaseAgent):
         "action_plan": ActionPlan,
     }
 
+    async def _try_structured_layer(
+        self,
+        llm,
+        prompt: str,
+        schema_model: type,
+        layer_name: str,
+        pipeline_run_id: str | None,
+    ) -> dict | None:
+        """Ask the provider to return the schema directly. None = fall back.
+
+        Returns None rather than raising for every failure mode -- unsupported
+        provider, transport error, timeout, or a response that is somehow still
+        not the schema. The caller then runs the prose path, so the worst case
+        of trying is one wasted call, never a lost report.
+
+        A structured success is recorded as a decision so adoption is
+        measurable: the baseline harness counts schema failures per LLM call,
+        and without this marker a drop in failures could not be attributed to
+        this change rather than to the model having a good day.
+        """
+        try:
+            structured_llm = llm.with_structured_output(schema_model)
+        except Exception as exc:  # noqa: BLE001 — provider cannot do it
+            logger.debug(
+                "structured_output_unsupported", layer=layer_name, error=str(exc)[:200]
+            )
+            return None
+
+        try:
+            result = await asyncio.wait_for(
+                structured_llm.ainvoke(prompt), timeout=_LAYER_TIMEOUT_SECONDS
+            )
+        except Exception as exc:  # noqa: BLE001 — includes TimeoutError
+            logger.warning(
+                "structured_output_call_failed",
+                layer=layer_name,
+                error_type=type(exc).__name__,
+            )
+            return None
+
+        # Providers may hand back the model, a dict, or (on some paths) raw text.
+        if isinstance(result, schema_model):
+            payload = result.model_dump()
+        elif isinstance(result, dict):
+            payload = dict(result)
+        else:
+            logger.debug("structured_output_unexpected_shape", layer=layer_name)
+            return None
+
+        if pipeline_run_id:
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="summary_structured_output",
+                chosen="native_schema",
+                rationale=(
+                    "provider returned the layer schema directly; no prose "
+                    "parsing was required"
+                ),
+                context={"layer": layer_name, "schema": schema_model.__name__},
+            )
+        return payload
+
     async def _call_json_layer(
         self,
         llm,
@@ -686,14 +748,35 @@ class SummaryAgent(BaseAgent):
         layer_name: str = "unknown",
         pipeline_run_id: str | None = None,
     ) -> dict:
-        """Call LLM with a JSON-requesting prompt. Returns parsed dict or error stub."""
+        """Call LLM with a JSON-requesting prompt. Returns parsed dict or error stub.
+
+        F-4: tries provider-native structured output first, falling back to the
+        historical parse-from-prose path. This stage is where the failures
+        actually are -- measured on the homelab 2026-08-22, the summary made 796
+        of the pipeline's 1,557 LLM calls and accounted for **all 57** recorded
+        schema failures (7.16%); every other stage measured zero. Recovering
+        JSON with a regex is what makes those 57 possible.
+
+        The fallback is not optional politeness: ``with_structured_output``
+        needs provider support (function calling / json_schema), and this
+        deployment has already run three different models. A provider that
+        cannot do it must still produce a report.
+        """
         # Truncate context to token budget
         safe_context = truncate_to_token_budget(context, _MAX_CONTEXT_TOKENS)
+        prompt = prompt_template.format(system=_SYSTEM_PROMPT, context=safe_context)
+        schema_model = self._LAYER_SCHEMAS.get(layer_name)
+
+        if schema_model is not None:
+            structured = await self._try_structured_layer(
+                llm, prompt, schema_model, layer_name, pipeline_run_id
+            )
+            if structured is not None:
+                return structured
+
         try:
             resp = await asyncio.wait_for(
-                llm.ainvoke(
-                    prompt_template.format(system=_SYSTEM_PROMPT, context=safe_context)
-                ),
+                llm.ainvoke(prompt),
                 timeout=_LAYER_TIMEOUT_SECONDS,
             )
             raw = _extract_text(resp)
