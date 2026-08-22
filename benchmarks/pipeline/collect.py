@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from aggregate import build_baseline  # noqa: E402
 
 _RUNS_SQL = """
-    SELECT id, workflow_type, status, started_at, completed_at
+    SELECT id, test_run_id, workflow_type, status, started_at, completed_at
     FROM agent_pipeline_runs
     WHERE started_at IS NOT NULL
       AND started_at >= now() - make_interval(days => $1)
@@ -67,8 +67,60 @@ def _normalize_dsn(url: str) -> str:
     )
 
 
+async def _fetch_grounding(
+    mongo_uri: str, test_run_ids: list[str]
+) -> tuple[list[dict], list[dict]]:
+    """Read published decision reports + run summaries for the same runs.
+
+    Returns ``(reports, summaries)``. The two stores answer different grounding
+    questions: reports carry typed claims with an evidence list, summaries
+    carry the generated narrative whose citations come from verbatim matching.
+
+    Only PUBLISHED reports count. A rejected or superseded attempt is not what
+    a reader was shown, and scoring it would flatter or damn the baseline with
+    output nobody acted on.
+    """
+    try:
+        from motor.motor_asyncio import AsyncIOMotorClient
+    except ImportError:  # pragma: no cover - environment guard
+        raise SystemExit(
+            "motor is required for --mongo-uri. Run inside the backend "
+            "container (make shell-backend) or drop the flag to skip grounding."
+        )
+
+    client = AsyncIOMotorClient(mongo_uri)
+    try:
+        db = client.get_default_database()
+        report_docs = await db["decision_reports"].find(
+            {"test_run_id": {"$in": test_run_ids}, "status": "published"},
+            {"_id": 0, "test_run_id": 1, "report_version": 1, "decision_intelligence": 1},
+        ).to_list(length=len(test_run_ids) * 5)
+        summary_docs = await db["run_summaries"].find(
+            {"test_run_id": {"$in": test_run_ids}},
+            {"_id": 0, "test_run_id": 1, "layer1_executive_summary": 1,
+             "layer2_incident_view": 1, "layer3_evidence_pack": 1,
+             "layer4_action_plan": 1},
+        ).to_list(length=len(test_run_ids))
+    finally:
+        client.close()
+
+    # Keep only the newest published version per run — older versions were
+    # superseded, and counting them would weight noisy runs more heavily.
+    latest: dict[str, dict] = {}
+    for doc in sorted(report_docs, key=lambda d: d.get("report_version") or 0, reverse=True):
+        run_id = str(doc.get("test_run_id") or "")
+        if run_id and run_id not in latest:
+            latest[run_id] = dict(doc.get("decision_intelligence") or {})
+    return list(latest.values()), summary_docs
+
+
 async def collect(
-    dsn: str, *, days: int, workflow_type: Optional[str], limit: int
+    dsn: str,
+    *,
+    days: int,
+    workflow_type: Optional[str],
+    limit: int,
+    mongo_uri: Optional[str] = None,
 ) -> dict[str, Any]:
     try:
         import asyncpg
@@ -109,6 +161,7 @@ async def collect(
 
     runs = [{
         "pipeline_run_id": str(row["id"]),
+        "test_run_id": str(row["test_run_id"]),
         "workflow_type": row["workflow_type"],
         "status": row["status"],
         "started_at": row["started_at"],
@@ -116,11 +169,23 @@ async def collect(
         "stages": stages_by_run.get(row["id"], []),
     } for row in run_rows]
 
-    baseline = build_baseline(runs, window={
-        "days": days,
-        "workflow_type": workflow_type or "all",
-        "limit": limit,
-    })
+    reports = summaries = None
+    if mongo_uri and runs:
+        # Grounding documents are keyed by test_run_id, not pipeline_run_id.
+        test_run_ids = sorted({r["test_run_id"] for r in runs})
+        reports, summaries = await _fetch_grounding(mongo_uri, test_run_ids)
+
+    baseline = build_baseline(
+        runs,
+        window={
+            "days": days,
+            "workflow_type": workflow_type or "all",
+            "limit": limit,
+            "grounding_source": "mongo" if mongo_uri else None,
+        },
+        reports=reports,
+        summaries=summaries,
+    )
     baseline["generated_at"] = datetime.now(timezone.utc).isoformat()
     return baseline
 
@@ -169,6 +234,37 @@ def render(baseline: dict[str, Any]) -> str:
             f"{_pct_cell(stage.get('fallback_rate')):>9} "
             f"{stage.get('parse_failures', 0):>11}"
         )
+    grounding = baseline.get("grounding") or {}
+    claims = grounding.get("claims")
+    narrative = grounding.get("narrative")
+    if claims or narrative:
+        lines.append("")
+        lines.append("  GROUNDING")
+    if claims:
+        lines.append(
+            f"    claims: {claims.get('claims_total', 0)} across "
+            f"{claims.get('reports', 0)} published report(s); "
+            f"with evidence {_pct_cell(claims.get('claims_with_evidence_rate'))}"
+        )
+        shared = claims.get("shared_evidence_bundle_rate")
+        lines.append(
+            f"    reports where EVERY claim shares one evidence set: "
+            f"{claims.get('reports_sharing_one_evidence_set', 0)}"
+            f"/{claims.get('multi_claim_reports', 0)} ({_pct_cell(shared)})"
+            "   <- finding F-16"
+        )
+    if narrative:
+        lines.append(
+            f"    narrative: {narrative.get('summaries_with_any_citation', 0)}"
+            f"/{narrative.get('summaries', 0)} summaries carry any citation "
+            f"({_pct_cell(narrative.get('citation_rate'))}); "
+            f"{narrative.get('citations_total', 0)} citation(s) total"
+        )
+        lines.append(
+            f"    layers that CAN be cited: {', '.join(narrative.get('citable_layers') or [])} "
+            f"— uncitable by construction: "
+            f"{', '.join(narrative.get('uncitable_layers') or [])}   <- finding F-3"
+        )
     not_measured = baseline.get("not_measured") or []
     if not_measured:
         lines.append("")
@@ -185,6 +281,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--workflow-type", default=None,
                         help="offline | deep | live (default: all)")
     parser.add_argument("--limit", type=int, default=500)
+    parser.add_argument("--mongo-uri", default=os.environ.get("MONGO_URI"),
+                        help="read the report store for grounding metrics "
+                             "(claim evidence coverage, narrative citations)")
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -197,6 +296,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         days=args.days,
         workflow_type=args.workflow_type,
         limit=args.limit,
+        mongo_uri=args.mongo_uri,
     ))
 
     if baseline.get("runs_observed", 0) == 0:

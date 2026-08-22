@@ -266,42 +266,187 @@ def summarize_band(band: str, runs: list[dict]) -> dict[str, Any]:
     }
 
 
-# Metrics the review asks for that this input genuinely cannot answer. Listed
-# explicitly so the gap is visible in the artifact itself rather than being
-# mistaken for a zero.
-NOT_MEASURED: tuple[dict[str, str], ...] = (
-    {
-        "metric": "citation_coverage",
-        "why": (
-            "Citations live on the persisted summary document, not on "
-            "agent_stage_results. Deriving them needs the report store, which "
-            "this collector does not read yet."
+# ── Grounding: how well claims and narrative are tied to evidence ────────────
+#
+# Two different mechanisms, measured separately because they fail differently:
+#
+#   * typed claims in the decision report carry an ``evidence`` list built
+#     server-side, so the question is whether that evidence is CLAIM-SPECIFIC
+#     or one shared bundle stamped onto every claim (finding F-16);
+#   * the summary narrative gets citations only from a verbatim 40-character
+#     match against evidence excerpts, applied to ONE layer, so the question is
+#     how often that can fire at all (finding F-3).
+
+# Summary layers that could carry a citation today. ``extract_citations`` is
+# applied to layer 3 alone, so layers 1, 2 and 4 are uncitable by construction
+# -- which is most of what a reader actually acts on.
+_CITABLE_LAYERS = ("layer3_evidence_pack",)
+_ALL_LAYERS = (
+    "layer1_executive_summary",
+    "layer2_incident_view",
+    "layer3_evidence_pack",
+    "layer4_action_plan",
+)
+
+
+def _evidence_signature(claim: Any) -> str:
+    """A stable identity for a claim's evidence list, order-insensitive."""
+    refs = _as_list(_as_dict(claim).get("evidence"))
+    parts = []
+    for ref in refs:
+        ref = _as_dict(ref)
+        parts.append("|".join(str(ref.get(k) or "") for k in ("type", "id", "evidence_id")))
+    return "&".join(sorted(parts))
+
+
+def summarize_report_grounding(reports: Iterable[Any]) -> dict[str, Any]:
+    """Claim-level evidence coverage across published decision reports."""
+    clean = [_as_dict(r) for r in reports if isinstance(r, dict)]
+    claims_total = 0
+    claims_with_evidence = 0
+    claims_by_kind: dict[str, int] = {}
+    refs_per_claim: list[int] = []
+    shared_bundle_reports = 0
+    multi_claim_reports = 0
+
+    for report in clean:
+        claims = [_as_dict(c) for c in _as_list(report.get("claims"))]
+        if not claims:
+            continue
+        signatures = [_evidence_signature(c) for c in claims]
+        for claim, signature in zip(claims, signatures):
+            claims_total += 1
+            refs = _as_list(claim.get("evidence"))
+            refs_per_claim.append(len(refs))
+            if refs:
+                claims_with_evidence += 1
+            kind = str(claim.get("kind") or "unknown")
+            claims_by_kind[kind] = claims_by_kind.get(kind, 0) + 1
+        # The F-16 question. With one claim there is nothing to share WITH, so
+        # such reports are excluded from the denominator rather than counted as
+        # evidence of good behaviour.
+        if len(claims) > 1:
+            multi_claim_reports += 1
+            if len(set(signatures)) == 1:
+                shared_bundle_reports += 1
+
+    return {
+        "reports": len(clean),
+        "claims_total": claims_total,
+        "claims_with_evidence": claims_with_evidence,
+        "claims_with_evidence_rate": (
+            round(claims_with_evidence / claims_total, 4) if claims_total else None
         ),
-        "blocked_on": "finding F-3 / requirement G.2",
-    },
-    {
+        "evidence_refs_per_claim": _distribution(refs_per_claim, unit="refs"),
+        "claims_by_kind": dict(sorted(claims_by_kind.items())),
+        # Reports where EVERY claim carries a byte-identical evidence list.
+        # A high rate means the claim-evidence drawer is showing bundle-level
+        # provenance as though it were claim-level (finding F-16).
+        "multi_claim_reports": multi_claim_reports,
+        "reports_sharing_one_evidence_set": shared_bundle_reports,
+        "shared_evidence_bundle_rate": (
+            round(shared_bundle_reports / multi_claim_reports, 4)
+            if multi_claim_reports else None
+        ),
+    }
+
+
+def summarize_narrative_citations(summaries: Iterable[Any]) -> dict[str, Any]:
+    """How often the generated narrative carries a citation at all."""
+    clean = [_as_dict(s) for s in summaries if isinstance(s, dict)]
+    citations_total = 0
+    summaries_with_citations = 0
+    layers_present = 0
+
+    for summary in clean:
+        cited = 0
+        for layer_key in _CITABLE_LAYERS:
+            layer = _as_dict(summary.get(layer_key))
+            cited += len(_as_list(layer.get("citations")))
+        citations_total += cited
+        if cited:
+            summaries_with_citations += 1
+        layers_present += sum(
+            1 for key in _ALL_LAYERS if summary.get(key) not in (None, "", {}, [])
+        )
+
+    return {
+        "summaries": len(clean),
+        "summaries_with_any_citation": summaries_with_citations,
+        "citation_rate": (
+            round(summaries_with_citations / len(clean), 4) if clean else None
+        ),
+        "citations_total": citations_total,
+        # Structural, not observed: citations are extracted for layer 3 only,
+        # so the other layers cannot carry one however well the model behaves.
+        "citable_layers": list(_CITABLE_LAYERS),
+        "uncitable_layers": [k for k in _ALL_LAYERS if k not in _CITABLE_LAYERS],
+        "layers_rendered": layers_present,
+    }
+
+
+# Metrics the review asks for that the supplied input genuinely cannot answer.
+# Built per-run rather than as a constant, because what is derivable depends on
+# which stores the collector was pointed at.
+def _not_measured(*, have_reports: bool, have_summaries: bool) -> list[dict[str, str]]:
+    gaps: list[dict[str, str]] = []
+    if not have_reports:
+        gaps.append({
+            "metric": "claim_evidence_coverage",
+            "why": (
+                "No decision reports supplied. Pass --mongo-uri so the "
+                "collector can read the published report store."
+            ),
+            "blocked_on": "collector input",
+        })
+    if not have_summaries:
+        gaps.append({
+            "metric": "citation_coverage",
+            "why": (
+                "No run summaries supplied. Pass --mongo-uri so the collector "
+                "can read the narrative store."
+            ),
+            "blocked_on": "collector input",
+        })
+    gaps.append({
         "metric": "unsupported_claim_rate",
-        "why": "No component classifies a claim as supported today.",
+        "why": (
+            "Coverage says whether a claim cites evidence, not whether the "
+            "evidence supports it. Nothing classifies support today."
+        ),
         "blocked_on": "requirement G.3 (narrative critic)",
-    },
-    {
+    })
+    gaps.append({
         "metric": "failure_category_macro_f1",
         "why": (
             "Needs labelled outcomes joined to analyses; ai_eval_service "
             "computes this on demand but nothing schedules it."
         ),
         "blocked_on": "requirement I.1 (nightly evaluation)",
-    },
-)
+    })
+    return gaps
 
 
-def build_baseline(runs: Iterable[Any], *, window: Optional[dict] = None) -> dict[str, Any]:
+def build_baseline(
+    runs: Iterable[Any],
+    *,
+    window: Optional[dict] = None,
+    reports: Optional[Iterable[Any]] = None,
+    summaries: Optional[Iterable[Any]] = None,
+) -> dict[str, Any]:
     """Aggregate normalized pipeline runs into one comparable baseline document.
 
-    ``runs`` are dicts shaped by ``collect.py``. Anything that is not a dict is
-    dropped rather than raising -- see the module docstring.
+    ``runs`` are dicts shaped by ``collect.py``. ``reports`` and ``summaries``
+    are the optional Mongo-backed grounding inputs; when either is omitted the
+    corresponding metric is DECLARED unmeasured rather than reported as zero,
+    because "we did not look" and "there were none" are different findings.
+
+    Anything that is not a dict is dropped rather than raising -- see the
+    module docstring.
     """
     clean = [_as_dict(r) for r in runs if isinstance(r, dict)]
+    reports_list = None if reports is None else [r for r in reports]
+    summaries_list = None if summaries is None else [s for s in summaries]
 
     banded: dict[str, list[dict]] = {name: [] for name, _, _ in BANDS}
     by_stage: dict[str, list[dict]] = {}
@@ -333,5 +478,18 @@ def build_baseline(runs: Iterable[Any], *, window: Optional[dict] = None) -> dic
             name: summarize_stage(name, stages)
             for name, stages in sorted(by_stage.items())
         },
-        "not_measured": [dict(item) for item in NOT_MEASURED],
+        "grounding": {
+            "claims": (
+                summarize_report_grounding(reports_list)
+                if reports_list is not None else None
+            ),
+            "narrative": (
+                summarize_narrative_citations(summaries_list)
+                if summaries_list is not None else None
+            ),
+        },
+        "not_measured": _not_measured(
+            have_reports=reports_list is not None,
+            have_summaries=summaries_list is not None,
+        ),
     }

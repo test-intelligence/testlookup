@@ -28,7 +28,9 @@ stack, or a restored dump.
 ## Running
 
 ```bash
-# Inside the backend container (the stack must have run at least one pipeline):
+# Inside the backend container (the stack must have run at least one pipeline).
+# Grounding metrics come along automatically: --mongo-uri defaults from
+# MONGO_URI, which the backend container already sets.
 make benchmark-pipeline
 
 # Or directly, against any reachable database:
@@ -52,6 +54,13 @@ python benchmarks/pipeline/collect.py \
 | Fallback rate + reasons | stage | `fallback_used` / `fallback_reason` |
 | Parse failures per LLM call | stage | `decision_log` schema-validation entries |
 | Engine mix | stage | `analysis_mode` |
+| Claim evidence coverage | report | `decision_reports.decision_intelligence.claims` |
+| Shared-evidence-bundle rate | report | evidence signature per claim |
+| Narrative citation rate | summary | `run_summaries.layer3_evidence_pack.citations` |
+
+The last three need `--mongo-uri` (set from `MONGO_URI` by default). Without it
+the collector still runs; those metrics are declared unmeasured rather than
+reported as zero.
 
 **Run-size bands** are `green` (0 failures), `small` (1-9), `medium` (10-49),
 `large` (50+). Cost is driven by the size of the failure set, so a single
@@ -85,17 +94,43 @@ failures, wall-clock-budget skips, and skips with no recorded `execution_path`
 count toward `degraded_rate`. The first draft of this harness counted every
 skip and reported healthy green runs as 100% degraded.
 
-## What it does not measure yet
+## Grounding: two mechanisms that fail differently
+
+Measured separately, because conflating them hides both.
+
+**Typed claims** in the decision report carry a server-built `evidence` list, so
+the question is not *whether* a claim cites evidence — nearly all do — but
+whether that evidence is **claim-specific** or one bundle stamped onto every
+claim. `shared_evidence_bundle_rate` counts reports where every claim carries a
+byte-identical evidence list. A high rate means the claim-evidence drawer
+presents bundle-level provenance as claim-level (finding **F-16**). Reports with
+a single claim are excluded from that denominator — one claim has nothing to
+share with, and counting it would flatter the rate.
+
+**The narrative** gets citations only from a verbatim 40-character match against
+evidence excerpts, applied to layer 3 alone. `citation_rate` measures how often
+that fires; `uncitable_layers` reports the structural half — three of four
+layers cannot carry a citation however well the model behaves (finding **F-3**).
+That list is emitted even for an empty corpus, because it is a property of the
+code rather than an observation about runs.
+
+Only **published** reports count. A rejected or superseded attempt is not what a
+reader was shown.
+
+## What it still does not measure
 
 Declared in the output's `not_measured` block rather than silently absent:
 
-- **`citation_coverage`** — citations live on the persisted summary document,
-  not on `agent_stage_results`. Blocked on finding F-3 / requirement G.2.
-- **`unsupported_claim_rate`** — nothing classifies a claim as supported today.
+- **`unsupported_claim_rate`** — coverage says whether a claim *cites* evidence,
+  not whether that evidence *supports* it. Nothing classifies support today.
   Blocked on requirement G.3 (narrative critic).
 - **`failure_category_macro_f1`** — needs labelled outcomes joined to analyses;
   `ai_eval_service` computes this on demand but nothing schedules it. Blocked
   on requirement I.1 (nightly evaluation).
+
+When run without `--mongo-uri`, the grounding metrics join that list with
+`blocked_on: collector input` — "we did not look" is reported as its own
+answer, distinct from "there was nothing to find".
 
 ## Related
 

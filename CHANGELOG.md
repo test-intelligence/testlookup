@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-22 — The baseline can now see how grounded a report actually is
+
+- The pipeline baseline (#790) could measure cost and latency but not grounding: citations and typed claims live in MongoDB (`decision_reports`, `run_summaries`), and the collector only read Postgres. That left the review's citation targets unmeasurable — and F-3 unable to follow the measure-then-fix discipline everything else has used.
+- `collect.py` now reads the report store when given `--mongo-uri` (which defaults from `MONGO_URI`, so `make benchmark-pipeline` picks it up inside the container with no flag). **Only `published` reports count** — a rejected or superseded attempt is not what a reader was shown, and scoring it would flatter or damn the baseline with output nobody acted on. Where several versions exist, only the newest published one per run is scored.
+- Two grounding mechanisms, measured **separately**, because they fail differently and conflating them hides both:
+
+  | Mechanism | The real question | Metric |
+  |---|---|---|
+  | Typed claims | not *whether* a claim cites evidence — nearly all do — but whether that evidence is claim-**specific** | `shared_evidence_bundle_rate` |
+  | Narrative | how often a verbatim 40-char match can fire at all | `citation_rate` + `uncitable_layers` |
+
+- **`shared_evidence_bundle_rate` is the number F-16 moves.** It counts reports where every claim carries a byte-identical evidence list. Against a corpus shaped like today's output it reads *claims with evidence: 100%* and *shared bundle: 100%* — coverage that looks perfect while no claim carries evidence chosen for it. A metric that reported only the first number would show F-16's fix doing nothing.
+- Reports with a single claim are excluded from that denominator: one claim has nothing to share with, and counting it would flatter the rate.
+- `uncitable_layers` is reported **structurally**, from the code rather than the corpus — `extract_citations` runs on layer 3 alone, so three of four summary layers cannot carry a citation however well the model behaves. It is emitted even for an empty corpus, where an observed rate would mean nothing.
+- **"We did not look" stays distinct from "there was nothing to find."** Omitting `--mongo-uri` leaves `grounding` null and moves the metrics into `not_measured` with `blocked_on: collector input`, rather than reporting 0% grounding for a corpus nobody read. A test pins that distinction.
+- 44 tests (was 32).
+
+
 ## 2026-08-22 — The AI pipeline can finally be measured
 
 - Every performance and quality target for the AI layer was an estimate. `architecture/AI_QUALITY.md` and the AI review both set targets — p50 report latency, cost per run, parse-failure rate — and **nothing measured any of them**, so no change to the AI layer could be shown to have helped or hurt.
