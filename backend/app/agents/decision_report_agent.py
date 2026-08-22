@@ -76,6 +76,52 @@ def _as_dict_list(value: Any) -> list[dict[str, Any]]:
 
 
 
+_METRIC_REF = {
+    "type": "metric",
+    "id": "metric_snapshot",
+    "definition_version": "run_metrics_v1",
+    "freshness": "run",
+}
+
+
+def _claim_evidence(
+    evidence_sha: str, supporting: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """A provenance anchor plus the evidence that supports THIS claim.
+
+    The anchor (the signed decision-evidence hash) is legitimately common to
+    every claim: it says *which bundle this report was computed from*. What
+    follows it must differ per claim, because that is the part a reader treats
+    as support.
+
+    Every claim used to carry one identical array -- the anchor, the first five
+    authorized artifacts, and the metric snapshot -- so the claim-evidence
+    drawer showed bundle-level provenance as though it were claim-level.
+    Measured on the homelab 2026-08-22: 10 of 10 published reports had every
+    claim sharing a byte-identical evidence list. Coverage read 100% while no
+    claim cited evidence chosen for it.
+    """
+    return [
+        {"type": "decision_evidence", "id": evidence_sha, "freshness": "run"},
+        *supporting,
+    ]
+
+
+def _artifact_ref(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "artifact",
+        "id": item.get("artifact_id") or item.get("evidence_id"),
+        "evidence_id": item.get("evidence_id"),
+        "source": item.get("source"),
+        "kind": item.get("kind"),
+        "excerpt": item.get("excerpt"),
+        "checksum_sha256": item.get("checksum_sha256"),
+        "scope": item.get("scope"),
+        "freshness": item.get("freshness"),
+        "sensitivity": item.get("sensitivity"),
+    }
+
+
 def _build_typed_claims(
     metrics: dict[str, Any],
     release: dict[str, Any],
@@ -84,30 +130,17 @@ def _build_typed_claims(
     evidence_sha: str,
     evidence_refs: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Derive bounded, deterministic facts/inferences/unknowns."""
-    refs = [{"type": "decision_evidence", "id": evidence_sha, "freshness": "run"}]
-    for item in (evidence_refs or [])[:5]:
-        if not isinstance(item, dict):
-            continue
-        refs.append({
-            "type": "artifact",
-            "id": item.get("artifact_id") or item.get("evidence_id"),
-            "evidence_id": item.get("evidence_id"),
-            "source": item.get("source"),
-            "kind": item.get("kind"),
-            "excerpt": item.get("excerpt"),
-            "checksum_sha256": item.get("checksum_sha256"),
-            "scope": item.get("scope"),
-            "freshness": item.get("freshness"),
-            "sensitivity": item.get("sensitivity"),
-        })
-    refs.append({
-        "type": "metric",
-        "id": "metric_snapshot",
-        "definition_version": "run_metrics_v1",
-        "freshness": "run",
-    })
+    """Derive bounded, deterministic facts/inferences/unknowns.
+
+    Each claim cites what actually supports it. Authorized tool-observation
+    artifacts are NOT attached to the aggregate claims below -- none of them is
+    about a specific test, so listing five arbitrary observations under "N of M
+    tests failed" was noise wearing the costume of evidence. They get their own
+    claim instead, which is a statement those artifacts genuinely support.
+    """
+    artifacts = [_artifact_ref(i) for i in (evidence_refs or [])[:5] if isinstance(i, dict)]
     claims: list[dict[str, Any]] = []
+
     total = metrics.get("total_tests")
     failed = metrics.get("failed_tests")
     if isinstance(total, (int, float)) and isinstance(failed, (int, float)):
@@ -117,10 +150,12 @@ def _build_typed_claims(
             text=f"{int(failed)} of {int(total)} tests failed.",
             confidence=1.0,
             confidence_basis="deterministic_run_metrics",
-            evidence=refs,
+            # The metric snapshot IS the evidence for a metric claim.
+            evidence=_claim_evidence(evidence_sha, [_METRIC_REF]),
             source_stage="deterministic_run_metrics",
             freshness="run",
         ).model_dump())
+
     recommendation = release.get("recommendation")
     if recommendation:
         blockers = release.get("blocking_issues") or []
@@ -130,7 +165,18 @@ def _build_typed_claims(
             text=f"Release recommendation is {recommendation}.",
             confidence=0.95 if not quality.get("contradictions") else 0.65,
             confidence_basis="release_risk_policy_evaluation",
-            evidence=refs,
+            # A policy verdict is supported by the policy and the metrics it
+            # evaluated -- not by whichever tool observations happened to be
+            # captured first.
+            evidence=_claim_evidence(evidence_sha, [
+                _METRIC_REF,
+                {
+                    "type": "policy",
+                    "id": "release_risk_policy",
+                    "source_stage": "release_risk",
+                    "freshness": "run",
+                },
+            ]),
             counter_evidence=[{"type": "contradiction", "count": len(quality.get("contradictions") or [])}] if quality.get("contradictions") else [],
             source_stage="release_risk",
             freshness="run",
@@ -143,10 +189,21 @@ def _build_typed_claims(
                 text=f"{len(blockers)} release blocker(s) were recorded.",
                 confidence=1.0,
                 confidence_basis="release_risk_policy_evaluation",
-                evidence=refs,
+                # Cite the blockers themselves, so a reader can see WHICH.
+                evidence=_claim_evidence(evidence_sha, [
+                    {
+                        "type": "release_blocker",
+                        "id": f"release_blocker.{index}",
+                        "excerpt": str(blocker)[:200],
+                        "source_stage": "release_risk",
+                        "freshness": "run",
+                    }
+                    for index, blocker in enumerate(blockers[:5])
+                ]),
                 source_stage="release_risk",
                 freshness="run",
             ).model_dump())
+
     missing = quality.get("missing_or_failed_specialists") or []
     if missing:
         claims.append(DecisionClaimV1(
@@ -155,10 +212,35 @@ def _build_typed_claims(
             text="Some specialist evidence is unavailable, so the report is degraded.",
             confidence=1.0,
             confidence_basis="terminal_completeness_check",
-            evidence=refs,
+            # Name the absent stages. "Some evidence is unavailable" with a
+            # generic bundle attached is unactionable; naming them is not.
+            evidence=_claim_evidence(evidence_sha, [
+                {
+                    "type": "missing_specialist",
+                    "id": str(name),
+                    "source_stage": "decision_report",
+                    "freshness": "run",
+                }
+                for name in list(missing)[:8]
+            ]),
             source_stage="decision_report",
             freshness="run",
         ).model_dump())
+
+    if artifacts:
+        # The artifacts get a claim they actually support, rather than being
+        # stapled to claims they do not.
+        claims.append(DecisionClaimV1(
+            claim_id="fact.evidence.captured",
+            kind="fact",
+            text=f"{len(artifacts)} authorized evidence artifact(s) were captured for this run.",
+            confidence=1.0,
+            confidence_basis="authorized_evidence_capture",
+            evidence=_claim_evidence(evidence_sha, artifacts),
+            source_stage="decision_report",
+            freshness="run",
+        ).model_dump())
+
     return claims[:20]
 
 

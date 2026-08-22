@@ -328,6 +328,29 @@ def test_typed_claims_bind_to_authorized_artifact_and_metric_references():
         "sensitivity": "internal",
     }]
     report = build_decision_intelligence(state)
-    evidence = report["claims"][0]["evidence"]
-    assert any(item.get("type") == "artifact" and item.get("id") == "00000000-0000-0000-0000-000000000001" for item in evidence)
-    assert any(item.get("type") == "metric" and item.get("definition_version") == "run_metrics_v1" for item in evidence)
+    claims = {c["claim_id"]: c for c in report["claims"]}
+
+    # The invariant this test has always protected: an authorized artifact and
+    # the metric snapshot both remain citable from the report.
+    #
+    # What changed (F-16): they no longer land on the SAME claim. Every claim
+    # used to carry one identical evidence array, so this assertion passed while
+    # no claim cited evidence chosen for it — 10 of 10 published homelab reports
+    # had byte-identical evidence on every claim. Artifacts now support the
+    # claim that is about them; the metric supports the metric claim.
+    artifact_evidence = claims["fact.evidence.captured"]["evidence"]
+    assert any(
+        item.get("type") == "artifact"
+        and item.get("id") == "00000000-0000-0000-0000-000000000001"
+        for item in artifact_evidence
+    )
+
+    metric_evidence = claims["fact.metrics.test_outcome"]["evidence"]
+    assert any(
+        item.get("type") == "metric"
+        and item.get("definition_version") == "run_metrics_v1"
+        for item in metric_evidence
+    )
+
+    # And the two are no longer interchangeable.
+    assert not any(item.get("type") == "artifact" for item in metric_evidence)

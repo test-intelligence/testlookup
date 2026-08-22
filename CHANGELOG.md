@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-22 — Every decision claim carried the same evidence, so none of them cited its own
+
+- `_build_typed_claims` built **one** `refs` array — the signed evidence hash, the first five authorized artifacts, and the metric snapshot — and attached the identical array to every claim. The claim-evidence drawer presented bundle-level provenance as claim-level.
+- **Measured before the fix: 10 of 10 published homelab reports had every claim sharing a byte-identical evidence list.** Coverage read *100% of claims have evidence* the whole time.
+- **The naive metric cannot see this bug.** "Claims with evidence" was 100% before and is 100% after — which is exactly why `benchmarks/pipeline/aggregate.py` reports `shared_evidence_bundle_rate` separately. A metric counting only coverage would have shown this change doing nothing.
+- Each claim now cites what actually supports it:
+
+  | Claim | Evidence |
+  |---|---|
+  | `fact.metrics.test_outcome` | the metric snapshot |
+  | `inference.release.recommendation` | the release policy + the metrics it evaluated |
+  | `fact.release.blockers` | the blockers themselves, so a reader sees *which* |
+  | `unknown.specialists.missing` | the absent stages, **by name** |
+  | `fact.evidence.captured` *(new)* | the authorized artifacts |
+
+- **The signed decision-evidence hash stays on every claim** — it is a provenance anchor ("computed from this bundle"), not support, and dropping it would lose traceability. Only what follows it varies.
+- Tool-observation artifacts are **no longer stapled to aggregate claims**. None of them is about a specific test, so listing five arbitrary observations under "7 of 100 tests failed" was noise wearing the costume of evidence. They now carry their own claim.
+- `claims` sits outside `DECISION_EVIDENCE_FIELDS`, so the critic's evidence fingerprint and comparison checks are unaffected — verified before changing anything.
+- An existing test asserted one claim carried both an artifact *and* a metric ref — it encoded the coupling that was the defect. Rewritten to protect the real invariant (both remain citable) while asserting they are no longer interchangeable.
+- 11 regression guards; 8 fail without the fix.
+
 ## 2026-08-22 — Every Celery task leaked a Redis pool bound to a dead event loop
 
 - `_run_async` builds a fresh event loop per Celery task and, in teardown, drains the SQLAlchemy engine **and** the shared httpx client *on that loop* — both hold sockets bound to it. The httpx comment spells out the reasoning: *"each task abandoned a client whose pool still held sockets bound to the loop about to close."*
