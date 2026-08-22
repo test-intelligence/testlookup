@@ -13,6 +13,7 @@ Improvements over v1:
 import hashlib
 import importlib.metadata
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional, cast
@@ -58,6 +59,12 @@ import structlog
 # WF-3: Stage classification for partial-completion logic
 DEEP_REQUIRED_STAGES = frozenset({"ingestion", "anomaly_detection", "failure_clustering", "root_cause_analysis", "summary", "decision_report", "decision_report_critic"})
 DEEP_OPTIONAL_STAGES = frozenset({"triage", "contract_validation", "log_intelligence", "regression_watchman", "change_ownership", "gap_detection", "report_refinement", "flaky_sentinel", "test_health", "release_risk"})
+
+# Stages the wall-clock budget may never skip. Both are deterministic (no LLM
+# call) and together they are what publishes a truncated run as a *report that
+# names its own gaps* rather than as silence. Skipping them to reclaim a few
+# seconds would convert an honest degraded answer into no answer.
+_DEADLINE_EXEMPT_STAGES = frozenset({"decision_report", "decision_report_critic"})
 
 logger = structlog.get_logger("agents.workflow")
 
@@ -105,6 +112,20 @@ def _canonical_checksum(data: Any) -> str:
     except (TypeError, ValueError):
         payload = json.dumps(str(data), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _stage_input_checksum(state: Any) -> str:
+    """Checksum a stage's INPUT state for the replay breadcrumb.
+
+    ``pipeline_deadline_ts`` is excluded on purpose: it is scheduling metadata
+    for one attempt -- a monotonic instant that necessarily differs between
+    attempts -- so including it would make two attempts over byte-identical
+    inputs record different input hashes, which is precisely the drift a replay
+    hash exists to rule out.
+    """
+    if isinstance(state, dict):
+        state = {k: v for k, v in state.items() if k != "pipeline_deadline_ts"}
+    return _canonical_checksum(state)
 
 
 def _runtime_version_snapshot() -> dict[str, str]:
@@ -1383,11 +1404,82 @@ def _planner_stage_selection(
     return True, "legacy_plan_stage_missing"
 
 
+def _pipeline_deadline() -> float:
+    """The ``time.monotonic()`` instant after which no new stage may start.
+
+    Returns 0.0 when the budget is disabled. Computed once per pipeline attempt,
+    so a resumed run gets a fresh budget (it is a fresh Celery task with a fresh
+    soft limit) while no single attempt can outrun that limit.
+    """
+    budget = int(getattr(settings, "AI_PIPELINE_DEADLINE_SECONDS", 0) or 0)
+    return time.monotonic() + budget if budget > 0 else 0.0
+
+
+def _deadline_exhausted(state: WorkflowState, stage_name: str) -> bool:
+    """True when the pipeline's wall-clock budget forbids STARTING this stage.
+
+    Terminal synthesis is exempt: those stages are deterministic, cheap, and
+    they are what turns a truncated run into a published report that names its
+    own gaps instead of nothing at all. Skipping them to save seconds would
+    trade a loud failure for a silent one.
+    """
+    if stage_name in _DEADLINE_EXEMPT_STAGES:
+        return False
+    deadline_ts = float(state.get("pipeline_deadline_ts") or 0.0)
+    if deadline_ts <= 0:
+        return False
+    return time.monotonic() >= deadline_ts
+
+
 def _make_checkpointed_node(original_node, stage_name: str):
     """Wrap a node function so its output is checkpointed after successful execution."""
     async def wrapper(state: WorkflowState) -> dict[str, Any]:
         pipeline_run_id = state.get("pipeline_run_id", "")
-        input_checksum = _canonical_checksum(state)
+        input_checksum = _stage_input_checksum(state)
+
+        # Wall-clock budget. Checked BEFORE the stage starts so the pipeline
+        # stops taking on new work rather than being killed part-way through
+        # it: the Celery soft limit turns an overrunning run into a whole-task
+        # retry (twice, then the DLQ), which spends the queue on one run and
+        # publishes a report that never mentions the two failed attempts.
+        #
+        # The skip is written to stage_errors, which is what
+        # ``build_decision_intelligence`` folds into
+        # ``missing_or_failed_specialists`` -- so the published report degrades
+        # itself and names this stage without any change to the report agent.
+        if _deadline_exhausted(state, stage_name):
+            reason = "Pipeline wall-clock budget exhausted before this stage started"
+            logger.warning(
+                "stage_skipped_deadline_exhausted",
+                pipeline_run_id=pipeline_run_id,
+                stage_name=stage_name,
+            )
+            await _write_stage_skipped(
+                pipeline_run_id,
+                stage_name,
+                skipped_reason=reason,
+                execution_path=ExecutionPath.DEADLINE_SKIP,
+                stop_reason="pipeline_deadline_exceeded",
+            )
+            await emit_event(
+                pipeline_run_id,
+                "stage_skipped",
+                stage_name=stage_name,
+                detail={
+                    "reason": "pipeline_deadline_exceeded",
+                    "rationale": reason,
+                    "input_checksum_sha256": input_checksum,
+                },
+            )
+            return {
+                "completed_stages": [stage_name],
+                "skipped_stages": [stage_name],
+                "current_stage": stage_name,
+                "execution_path": ExecutionPath.DEADLINE_SKIP,
+                "stage_quality": "degraded",
+                "stage_errors": {stage_name: [reason]},
+                "errors": [],
+            }
 
         selected, selection_reason = _planner_stage_selection(state, stage_name)
         if not selected:
@@ -1544,6 +1636,7 @@ async def run_offline_pipeline(
         "project_id":         project_id,
         "build_number":       build_number,
         "workflow_type":      workflow_type,
+        "pipeline_deadline_ts": _pipeline_deadline(),
         # Stage outputs (initialised empty — agents populate these)
         "test_run_data":      None,
         "branch":             None,
@@ -1737,6 +1830,7 @@ async def run_deep_pipeline(
         "project_id":         project_id,
         "build_number":       build_number,
         "workflow_type":      "deep",
+        "pipeline_deadline_ts": _pipeline_deadline(),
         "test_run_data":      None,
         "branch":             None,
         "failed_test_ids":    [],

@@ -64,6 +64,11 @@ class WorkflowState(TypedDict):
     project_id: str             # Project.id
     build_number: str
     workflow_type: str          # WorkflowType enum value: "offline" | "deep" | "live"
+    # ``time.monotonic()`` instant after which no new stage may START. Set once
+    # at pipeline start from AI_PIPELINE_DEADLINE_SECONDS and never advanced, so
+    # a resume gets a fresh budget while a single attempt cannot outrun the
+    # Celery soft limit. 0.0 = unbounded (the budget is disabled).
+    pipeline_deadline_ts: float
 
     # ── Stage 1: Ingestion Agent ──────────────────────────────────
     test_run_data: Optional[dict]        # Serialized TestRun summary

@@ -184,6 +184,26 @@ class Settings(BaseSettings):
     # The default matches a 2-minute beat cadence (debounce ≪ cadence).
     AI_PIPELINE_DEBOUNCE_WINDOW_SECONDS: int = 60
 
+    # ── Pipeline wall-clock budget ────────────────────────────
+    # The agent pipeline runs as a Celery task under a 1740s soft /
+    # 1800s hard limit. Without an in-graph budget an oversized run
+    # does not degrade -- it is killed at the soft limit and retried
+    # WHOLE, twice, before reaching the DLQ. That is ~87 minutes of
+    # ai_analysis capacity spent on one run while other runs queue
+    # behind it, and the report that eventually publishes never says
+    # it took three attempts to produce.
+    #
+    # This deadline is checked between stages AND before each per-test
+    # analysis, so the pipeline stops starting new work and publishes a
+    # *degraded* report naming what it skipped. Terminal synthesis is
+    # exempt (see _DEADLINE_EXEMPT_STAGES) -- it is deterministic and
+    # it is what turns a truncated run into a self-describing report
+    # rather than nothing at all.
+    #
+    # Default leaves ~4 minutes under the soft limit for that terminal
+    # synthesis, persistence, and finalisation. 0 disables the budget.
+    AI_PIPELINE_DEADLINE_SECONDS: int = 1500
+
     # ── Phase 4 high-volume sampling (2026-05-16) ─────────────
     # Auto-flag a project as ``high_volume`` when it sustains
     # ``HIGH_VOLUME_TESTS_PER_MINUTE`` test events per minute for

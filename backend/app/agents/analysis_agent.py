@@ -233,7 +233,38 @@ class AnalysisAgent(BaseAgent):
             context=concurrency_policy,
         )
         results_list = []
+        # Wall-clock budget. This stage is the one that can consume a whole
+        # pipeline on its own: with a local provider it runs 3-wide at up to
+        # AI_TIMEOUT_SECONDS each, so a few dozen failures outlast the Celery
+        # soft limit and get the entire task retried rather than degraded.
+        # Checking between batches stops the stage taking on NEW work; every
+        # test it never reached still gets a stored, zero-confidence record so
+        # the gap is visible instead of silently absent.
+        deadline_ts = float(state.get("pipeline_deadline_ts") or 0.0)
+        budget_skipped: list[str] = []
         for start in range(0, len(prioritized_ids), concurrency):
+            if deadline_ts and time.monotonic() >= deadline_ts:
+                budget_skipped = list(prioritized_ids[start:])
+                results_list.extend(
+                    self._build_budget_exhausted_analysis() for _ in budget_skipped
+                )
+                logger.warning(
+                    "analysis_budget_exhausted",
+                    pipeline_run_id=pipeline_run_id,
+                    analysed=start,
+                    not_analysed=len(budget_skipped),
+                )
+                await self.log_decision(
+                    pipeline_run_id,
+                    decision_point="analysis_budget_exhausted",
+                    chosen="stop_starting_analyses",
+                    rationale=(
+                        f"wall-clock budget exhausted after {start} of "
+                        f"{len(prioritized_ids)} tests; the rest are recorded unanalysed"
+                    ),
+                    context={"analysed": start, "not_analysed": len(budget_skipped)},
+                )
+                break
             batch_ids = prioritized_ids[start:start + concurrency]
             batch_tasks = [
                 self._analyse_with_retry(semaphore, tc_id, test_meta.get(tc_id, {}), state)
@@ -300,6 +331,16 @@ class AnalysisAgent(BaseAgent):
         total_analysed = len(prioritized_ids)
         error_ratio = error_count / max(total_analysed, 1)
         stage_quality = "degraded" if error_ratio > 0.3 else "normal"
+        if budget_skipped:
+            # Recorded as a stage error, not folded into error_ratio: these
+            # tests did not fail analysis, they never got one. Saying so
+            # explicitly is what puts root_cause_analysis into the decision
+            # report's missing_or_failed_specialists and degrades the report.
+            errors.append(
+                f"{len(budget_skipped)} of {total_analysed} failed tests were not "
+                "analysed: the pipeline wall-clock budget was exhausted"
+            )
+            stage_quality = "degraded"
         stage_errors: dict[str, list[str]] = {}
         if errors:
             stage_errors["root_cause_analysis"] = errors
@@ -338,6 +379,7 @@ class AnalysisAgent(BaseAgent):
                 "mode_distribution": mode_counts,
                 "fallback_count": fallback_count,
                 "adaptive_concurrency": concurrency_policy,
+                "budget_skipped": len(budget_skipped),
             },
             analysis_mode=dominant_mode,
             fallback_reason=stage_fallback_reason,
@@ -1141,6 +1183,36 @@ class AnalysisAgent(BaseAgent):
             "evidence_references": [],
             "requires_human_review": True,
             "timed_out": True,
+            "tools_used": [],
+        }
+
+    def _build_budget_exhausted_analysis(self) -> dict:
+        """The honest record for a failed test the stage never got to.
+
+        The alternative — dropping these ids — would leave the run reporting a
+        clean analysis over a subset of its failures with nothing saying so,
+        which is the failure mode the deadline exists to prevent. A stored
+        record with zero confidence keeps the test visible, keeps the coverage
+        arithmetic honest, and flows through the same downstream readers as any
+        other low-confidence verdict.
+        """
+        return {
+            "root_cause_summary": (
+                "Not analysed: the pipeline's wall-clock budget was exhausted "
+                "before this test was reached. Re-run the analysis to classify it."
+            ),
+            "failure_category": self.UNKNOWN_CATEGORY,
+            "backend_error_found": False,
+            "pod_issue_found": False,
+            "is_flaky": False,
+            "confidence_score": 0,
+            "recommended_actions": [
+                "Re-run the AI analysis for this run",
+                "Reduce the failure count or raise AI_PIPELINE_DEADLINE_SECONDS",
+            ],
+            "evidence_references": [],
+            "requires_human_review": True,
+            "budget_exhausted": True,
             "tools_used": [],
         }
 

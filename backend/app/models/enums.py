@@ -46,3 +46,4 @@ class ExecutionPath(str, PyEnum):
     ALL_GREEN_SKIP      = "all_green_skip"     # no failures — analysis stages bypassed
     LOW_CONFIDENCE_SKIP = "low_confidence_skip"  # no analyses above threshold — triage skipped
     CONDITIONAL_SKIP    = "conditional_skip"   # stage not on active pipeline branch
+    DEADLINE_SKIP       = "deadline_skip"      # pipeline wall-clock budget exhausted before the stage ran

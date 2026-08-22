@@ -350,7 +350,13 @@ def test_stage_replay_checksums_and_runtime_versions_are_persisted():
     assert "input_checksum_sha256" in checkpoint_stage
     assert "output_checksum_sha256" in checkpoint_stage
     assert '"runtime_versions": _runtime_version_snapshot()' in checkpoint_stage
-    assert "input_checksum = _canonical_checksum(state)" in wrapper
+    # The wrapper checksums its input state through a named helper rather than
+    # inline, so the one field that must NOT enter the hash — the per-attempt
+    # wall-clock deadline — is excluded in exactly one place.
+    assert "input_checksum = _stage_input_checksum(state)" in wrapper
+    stage_input_checksum = _function_source("app/agents/workflow.py", "_stage_input_checksum")
+    assert "_canonical_checksum" in stage_input_checksum
+    assert "pipeline_deadline_ts" in stage_input_checksum
     assert '"final_state_checksum_sha256": _canonical_checksum(final_state)' in mark_done
 
 

@@ -30,6 +30,24 @@
 - Tests: 15 in `scripts/test_quality_gate.py` (46 total, was 31), driving the real `backend.no-print` guard over a throwaway tree — the headline case is that inserting lines above a tolerated `print()` yields no new violation, no stale entry, and an untouched baseline file. Each guarantee was **mutation-checked**: 8 mutations (line number back in the key, scope dropped, duplicate counter dropped, line text dropped, whitespace normalization removed, notes dropped, legacy entries silently honoured, empty file invented), all killed, with the harness asserting each mutation applied.
 - That mutation pass earned its keep: it caught the scope test passing for the wrong reason. The AST cache was keyed on `(path, mtime_ns, size)`, and a **size-preserving rewrite inside one mtime tick** served stale lines — a cache that feeds baseline keys silently fingerprinting the wrong line. It is now keyed on a digest of the source it parsed, which cannot go stale.
 - `python scripts/quality_gate.py` exits 0 on a clean tree before and after; verified live that inserting two lines above the tolerated call in `analysis_agent.py` no longer fails `backend.analysis-router`, and that a freshly added `print()` in `backend/app/` still fails `backend.no-print`.
+## 2026-08-22 — An oversized run was retried whole instead of degrading
+
+- The agent pipeline had no wall-clock budget of its own. It runs as a Celery task under a 1740s soft / 1800s hard limit, and the analysis stage alone can outlast that: with a local provider it runs 3-wide at up to `AI_TIMEOUT_SECONDS` (300s) per test, so roughly 18 slow failures consume the whole task.
+- What happened then was **not** a clean kill. `SoftTimeLimitExceeded` is an ordinary `Exception`, so `run_agent_pipeline`'s handler caught it and called `self.retry` — re-running the entire pipeline, twice, before the DLQ. **One oversized run could occupy ~87 minutes of `ai_analysis` capacity while other runs queued behind it, and the report that eventually published said nothing about the two attempts before it.**
+- New `AI_PIPELINE_DEADLINE_SECONDS` (default 1500, `0` disables) is checked in two places, because between-stage checks alone do not bound a stage that is *itself* the overrun:
+
+  | Checkpoint | Behaviour past the deadline |
+  |---|---|
+  | before each stage starts | stage is skipped, `execution_path = deadline_skip` |
+  | before each analysis batch | stage stops taking new work; unreached tests get a stored zero-confidence record |
+
+- **The skip is recorded in `stage_errors`**, which `build_decision_intelligence` already folds into `missing_or_failed_specialists` — so the published report degrades itself and names the stage with no change to the report agent.
+- `decision_report` and `decision_report_critic` are **exempt**. Both are deterministic, and they are what turns a truncated run into a report describing its own gaps rather than silence. Skipping them to reclaim seconds would trade an honest degraded answer for no answer.
+- Failed tests the stage never reached are stored with `budget_exhausted: true` and zero confidence rather than dropped — dropping them would leave the run reporting a clean analysis over a subset of its failures with nothing saying so, which is the exact failure mode the budget exists to prevent.
+- `pipeline_deadline_ts` is excluded from the stage input checksum via the new `_stage_input_checksum` helper: it is per-attempt scheduling metadata, and letting it into the hash would make two attempts over byte-identical inputs record different replay breadcrumbs.
+- 7 regression guards; 4 fail without the fix and 3 are forward-guards (they pin the exemption and the disabled-budget path, which no current code path can violate).
+- Needs **no** quality-gate baseline edit, though it moves the tolerated `run_triage_agent(` call down 42 lines: #787 re-keyed the baselines on content fingerprints, so the drift that forced a baseline bump in #785 no longer fires.
+
 
 ## 2026-08-22 — The setup wizard's "View Run Intelligence" step could never complete
 
