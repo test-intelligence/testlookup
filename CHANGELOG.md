@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-22 — A rules verdict now cites the text it matched on
+
+- F-3 gave the narrative a citation contract (#792). Deployed, it measured **0 of 30 summaries cited** — not because the model declined it, but because there was nothing to cite. Measured on the homelab: **4,690 of 4,693 analyses carried zero `evidence_references` (99.94%)**, because `rules_engine._build_result` hardcoded `"evidence_references": []` and the rules engine produces **4,087 of 4,693** analyses.
+- **The citation mechanism had been fixed at the wrong end of the chain.** The binding constraint was evidence *supply*.
+- A deterministic classifier has no tool observations, but it is not evidence-free: **the input it matched on is its evidence.** "INFRASTRUCTURE, because this error text contains 'connection refused'" is a checkable claim, and the text is what makes it checkable. History-based heuristics cite the record they counted instead — *"12 of 20 historical runs failed."*
+- Attached in `analysis_router.classify_test` after the rules/ML/LLM branch, so both deterministic engines are covered in **one place** rather than at every `_build_result` call site.
+- Three refusals, each pinned by a test:
+  - **Never cites its own conclusion.** Quoting `root_cause_summary` back as support would be circular and would inflate coverage while teaching a reader nothing. A verdict reached from nothing citable reports nothing.
+  - **Never overwrites tool observations** — an LLM verdict that gathered evidence has strictly better references.
+  - **Never becomes an attested artifact.** Tool observations carry an HMAC attestation and land in the signed evidence store; classifier inputs are local provenance (`kind: classifier_input`), which the capture path now skips. Blurring those would let unattested text into a store whose entire purpose is HMAC-bound provenance.
+- That skip also avoids a trap: without it, every one of these refs would be flagged `evidence_producer_unverified`, filling each decision report with thousands of authorization errors for evidence that never applied for authorization. A test drives the real capture function to prove it stays clean.
+- 14 regression guards. **Not yet confirmed end to end** — whether narrative citations actually move off 0% needs a deploy and a fresh burst, then `benchmarks/pipeline/collect.py`.
+
 ## 2026-08-22 — Every decision claim carried the same evidence, so none of them cited its own
 
 - `_build_typed_claims` built **one** `refs` array — the signed evidence hash, the first five authorized artifacts, and the metric snapshot — and attached the identical array to every claim. The claim-evidence drawer presented bundle-level provenance as claim-level.

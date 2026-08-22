@@ -235,6 +235,24 @@ async def classify_test(
     else:
         result = await _classify_llm(test_case, history, run_context, routing=routing)
 
+    # F-17: a deterministic verdict is not evidence-free -- the input it matched
+    # on is its evidence. Attached here, after dispatch, so rules AND ML are
+    # covered in one place rather than at every `_build_result` call site.
+    #
+    # Without this the evidence catalogue that F-3's citation contract reads is
+    # empty for 87% of analyses, so no narrative citation can fire however
+    # correct the contract is. Measured on the homelab: 4,690 of 4,693 analyses
+    # carried no evidence at all.
+    #
+    # Never overwrites tool observations, and never fabricates: an engine that
+    # classified from nothing citable still reports nothing.
+    try:
+        from app.services.classifier_evidence import attach_classifier_evidence
+
+        attach_classifier_evidence(result, test_case, history)
+    except Exception as exc:  # pragma: no cover — provenance must not break analysis
+        logger.debug("classifier_evidence_attach_failed", error=str(exc))
+
     # Attach the routing record. Private dispatchers may have updated routing
     # in-place (e.g., ML fallback to rules) — reflect the final state here.
     # AI-F2: stamp the registry version tags of the prompts the engine that
