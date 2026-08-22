@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-21 — A contradiction the report called "resolved" was resolved the wrong way
+
+- `report_refinement_agent` reconciles the three routes that can independently flag a failed test. When per-test analysis says **flaky** but the anomaly/regression route says **real regression**, it records the contradiction with `resolution = PREFER_ANOMALY` — and then built the reconciled record from `_primary_route()`, a **fixed precedence** (`analysis > anomaly > cluster`) that never looked at the resolution.
+- That contradiction can only fire for a test that *has* an analysis entry, so `"analysis"` is always in `routes` and always wins the precedence. **Every contradiction labelled `PREFER_ANOMALY` was reconciled as `primary_route="analysis"`, `is_flaky=true` — the exact opposite of its own label.** A test the anomaly route had identified as a real regression was handed downstream as flaky.
+- Measured by driving the real agent (analysis says flaky, anomaly + regression both flag it):
+
+  | | `primary_route` | `is_flaky` | reported |
+  |---|---|---|---|
+  | before | `analysis` | `true` | `resolved 1/1` |
+  | after | `anomaly` | `false` | `resolved 1/1` |
+
+- **And it always reported success.** `contradictions_resolved` was derived from `resolution != FLAG_FOR_REVIEW`, but the agent only ever assigns `PREFER_ANOMALY` or `MERGE` — so the count was *structurally equal* to the number of contradictions found, `unresolved_count` was always `0`, and the evidence ref's `contribution` was always `100`. Three numbers that could not report a problem, sitting on top of a reconciliation doing the opposite of what it claimed.
+- The counts now derive from a new per-contradiction `applied` flag — **what was acted on, not what was labelled.** A strategy added tomorrow with no application branch reads as *unresolved* instead of silently claiming success, and `PREFER_ANOMALY` on a test with no anomaly route is honestly reported as unapplied rather than counted as a win.
+- `MERGE` now records `merged_routes` so the disagreement stays visible instead of being erased, and every reconciled record carries `resolved_by`.
+- 6 guards, 3/3 mutations killed. Found by the same probe as #781 and #783 — enums whose members are written but never selected.
+
+
 ## 2026-08-21 — The decision report says how much of the failure set it actually analysed
 
 - `gap_detection_agent` runs on every deep workflow. It sorts each failed test into five `GapReason` buckets and computes `coverage_ratio` and `integrity_ok`. All of it was contract-validated, threaded through the pipeline into `quality_review.gap_report` — and **read by nobody.** Not the markdown, not `report_status`, not `requires_human_review`, not the UI, not MCP, not the CLI. An entire pipeline stage produced nothing observable.

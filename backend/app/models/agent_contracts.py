@@ -165,6 +165,19 @@ class Contradiction(BaseModel):
     routes: list[str] = Field(default_factory=list)
     resolution: ResolutionStrategy = ResolutionStrategy.FLAG_FOR_REVIEW
     detail: str = ""
+    #: Whether the reconciliation actually ACTED on ``resolution``, rather than
+    #: merely labelling the contradiction with it.
+    #:
+    #: ``contradictions_resolved`` used to be derived from ``resolution !=
+    #: FLAG_FOR_REVIEW``, i.e. from the label. The agent only ever assigns
+    #: PREFER_ANOMALY or MERGE, so that count was structurally equal to the
+    #: number of contradictions found: it could never report an unresolved one,
+    #: and ``unresolved_count`` was always 0. Counting the label also could not
+    #: notice that the label and the behaviour disagreed -- and they did.
+    #: Deriving the counts from this flag means a strategy added without an
+    #: application branch shows up as unresolved instead of silently claiming
+    #: success.
+    applied: bool = False
 
     @field_validator("test_id", mode="before")
     @classmethod
@@ -424,12 +437,12 @@ class RefinedReport(BaseModel):
             resolved = sum(
                 1
                 for c in self.contradictions
-                if c.resolution != ResolutionStrategy.FLAG_FOR_REVIEW
+                if c.applied and c.resolution != ResolutionStrategy.FLAG_FOR_REVIEW
             )
             unresolved = sum(
                 1
                 for c in self.contradictions
-                if c.resolution == ResolutionStrategy.FLAG_FOR_REVIEW
+                if not (c.applied and c.resolution != ResolutionStrategy.FLAG_FOR_REVIEW)
             )
             self.contradictions_resolved = resolved
             self.unresolved_count = unresolved

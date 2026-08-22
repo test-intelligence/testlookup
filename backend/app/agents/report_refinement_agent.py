@@ -13,6 +13,8 @@ whole body is wrapped in a try/except that degrades to a deterministic fallback
 contract. Contradiction detail carries ONLY structural tokens — never raw
 error/log text.
 """
+from typing import Optional
+
 import structlog
 
 from app.agents.base import BaseAgent
@@ -86,19 +88,21 @@ class ReportRefinementAgent(BaseAgent):
                 routes = self._routes_for(tid, analysis_ids, anomaly_ids, cluster_ids)
                 entry = analyses.get(tid)
                 entry = entry if isinstance(entry, dict) else {}
+                contradiction: Optional[Contradiction] = None
 
                 # FLAKY_VS_REGRESSION: analysis calls it flaky but a route also
                 # treats it as a regression/new anomaly.
                 if entry.get("is_flaky") is True and (
                     tid in regression_ids or tid in anomaly_ids
                 ):
-                    contradictions.append(Contradiction(
+                    contradiction = Contradiction(
                         test_id=tid,
                         type=ContradictionType.FLAKY_VS_REGRESSION,
                         routes=routes,
                         resolution=ResolutionStrategy.PREFER_ANOMALY,
                         detail="flaky_analysis_vs_regression_signal",
-                    ))
+                    )
+                    contradictions.append(contradiction)
                 # CATEGORY_DISAGREEMENT: analysis category present and the test
                 # also routes through anomaly under a different signal.
                 elif (
@@ -106,26 +110,33 @@ class ReportRefinementAgent(BaseAgent):
                     and tid in anomaly_ids
                     and tid in analysis_ids
                 ):
-                    contradictions.append(Contradiction(
+                    contradiction = Contradiction(
                         test_id=tid,
                         type=ContradictionType.CATEGORY_DISAGREEMENT,
                         routes=routes,
                         resolution=ResolutionStrategy.MERGE,
                         detail="analysis_category_vs_anomaly_route",
-                    ))
+                    )
+                    contradictions.append(contradiction)
 
-                reconciled_tests[tid] = {
-                    "primary_route": self._primary_route(routes),
-                    "is_flaky": bool(entry.get("is_flaky")),
-                    "category": entry.get("failure_category"),
-                    "severity": entry.get("severity"),
-                    "routes": routes,
-                }
+                # Apply the resolution we just recorded. It used to be recorded
+                # and then ignored: `_primary_route` returns a fixed precedence
+                # (analysis > anomaly > cluster), and FLAKY_VS_REGRESSION can
+                # only fire for a test that HAS an analysis entry -- so every
+                # contradiction labelled PREFER_ANOMALY was reconciled as
+                # `analysis`, the exact opposite of the label, and still counted
+                # as resolved. A test the anomaly/regression route called a real
+                # regression was handed downstream as flaky.
+                reconciled_tests[tid] = self._reconcile(tid, routes, entry, contradiction)
 
+            # Count what was ACTED ON. Deriving this from the label made it
+            # structurally equal to `total` -- a metric that cannot report a
+            # problem, and that never noticed the label and the behaviour
+            # disagreeing.
             resolved = sum(
                 1
                 for c in contradictions
-                if c.resolution != ResolutionStrategy.FLAG_FOR_REVIEW
+                if c.applied and c.resolution != ResolutionStrategy.FLAG_FOR_REVIEW
             )
             total = len(contradictions)
             resolved_fraction = (resolved / total) if total else 1.0
@@ -223,6 +234,50 @@ class ReportRefinementAgent(BaseAgent):
         if tid in cluster_ids:
             routes.append("cluster")
         return routes
+
+    @staticmethod
+    def _reconcile(
+        tid: str,
+        routes: list[str],
+        entry: dict,
+        contradiction=None,
+    ) -> dict:
+        """Build the reconciled record, ACTING on the contradiction's strategy.
+
+        Sets ``contradiction.applied`` so the resolved/unresolved counts are
+        derived from what happened rather than from what was labelled. A
+        strategy with no branch here stays ``applied=False`` and is reported
+        as unresolved -- which is the honest answer and the thing the old
+        label-derived count could never say.
+        """
+        record = {
+            "primary_route": ReportRefinementAgent._primary_route(routes),
+            "is_flaky": bool(entry.get("is_flaky")),
+            "category": entry.get("failure_category"),
+            "severity": entry.get("severity"),
+            "routes": routes,
+        }
+        if contradiction is None:
+            return record
+
+        strategy = contradiction.resolution
+        if strategy == ResolutionStrategy.PREFER_ANOMALY and "anomaly" in routes:
+            # The anomaly/regression route says this is real. Do not hand a
+            # regression downstream labelled flaky.
+            record["primary_route"] = "anomaly"
+            record["is_flaky"] = False
+            contradiction.applied = True
+        elif strategy == ResolutionStrategy.PREFER_ANALYSIS and "analysis" in routes:
+            record["primary_route"] = "analysis"
+            contradiction.applied = True
+        elif strategy == ResolutionStrategy.MERGE:
+            # Keep the analysis verdict but record that another route
+            # corroborated it, so the disagreement is not erased.
+            record["merged_routes"] = list(routes)
+            contradiction.applied = True
+
+        record["resolved_by"] = strategy.value if contradiction.applied else None
+        return record
 
     @staticmethod
     def _primary_route(routes: list[str]) -> str:
