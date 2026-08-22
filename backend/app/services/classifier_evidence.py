@@ -47,6 +47,14 @@ CLASSIFIER_EVIDENCE_KIND = "classifier_input"
 # the input is a complete and honest account of why the verdict was reached.
 _DETERMINISTIC_ENGINES = {"rules_engine", "ml_classifier", "rules", "ml"}
 
+# The fast classifier is an LLM call, but a single-shot one that runs NO tools:
+# it classifies purely from the error text handed to it and returns before the
+# ReAct loop that would gather observations. That makes its evidence story
+# identical to a rule's -- the input it matched on is what it has -- and it is
+# why excluding "llm" wholesale left this deployment at 0.06% coverage after
+# F-17 shipped. Measured: all 593 LLM analyses carried tools_used = [].
+_TOOL_FREE_EXECUTION_PATHS = {"fast_classifier"}
+
 _EXCERPT_LIMIT = 300
 
 
@@ -76,6 +84,18 @@ def _engine_of(analysis: dict) -> Optional[str]:
         value = str(analysis.get(key) or "").strip().lower()
         if value in _DETERMINISTIC_ENGINES:
             return "rules_engine" if value in {"rules_engine", "rules"} else "ml_classifier"
+
+    # A tool-free LLM verdict. Not "deterministic", but evidentially in the same
+    # position: it saw only the error text, so that text is the whole of what
+    # supports it. Checked via the routing record rather than the model name so
+    # a provider change cannot silently reopen the gap.
+    routing = _as_dict(analysis.get("_routing"))
+    if routing.get("execution_path") in _TOOL_FREE_EXECUTION_PATHS:
+        return "fast_classifier"
+
+    # A ReAct verdict that ran tools but recorded nothing is NOT covered here:
+    # its evidence should come from the tools, and papering over their absence
+    # would hide a real failure behind a synthetic citation.
     return None
 
 

@@ -161,6 +161,12 @@ async def run_triage_agent(
             )
             if quick is not None:
                 quick["tools_used"] = []  # Fast classifier uses no tools — honest empty list
+                # F-17: no tools does not mean no evidence. This classifier saw
+                # the error text and nothing else, so that text is the whole of
+                # what supports its verdict — and citing it is what lets the
+                # summary's evidence catalogue exist at all. Leaving this as []
+                # is why coverage measured 0.06% on a deployment where every
+                # analysis takes this path.
                 quick["evidence_references"] = []
                 # US-15.1: the fast classifier IS an LLM call, just a single-shot
                 # one — say so rather than leaving provenance blank.
@@ -172,6 +178,15 @@ async def run_triage_agent(
                     "fallback_reason": None,
                     "execution_path": "fast_classifier",
                 }
+                try:
+                    from app.services.classifier_evidence import attach_classifier_evidence
+
+                    attach_classifier_evidence(
+                        quick,
+                        {"test_name": test_name, "error_message": error_message or stack_trace},
+                    )
+                except Exception as ev_exc:  # pragma: no cover — provenance is best-effort
+                    logger.debug("classifier evidence skipped: %s", ev_exc)
                 await _store_audit_trail(test_case_id, f"fast_classifier:{test_name}", quick, [])
                 await _store_analysis_cache(test_name, error_message or "", stack_trace or "", quick, project_id)
                 return quick

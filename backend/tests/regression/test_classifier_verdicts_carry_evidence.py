@@ -178,3 +178,47 @@ def test_attach_mutates_only_when_there_is_evidence():
 def test_never_raises_on_any_input_shape(garbage):
     assert build_classifier_evidence(garbage, garbage, garbage) == []
     assert attach_classifier_evidence(garbage, garbage) == garbage
+
+
+# ── The fast classifier: an LLM verdict with no tools ────────────────────────
+
+
+_FAST = {
+    "llm_model": "mistralai/mistral-nemo",
+    "tools_used": [],
+    "evidence_references": [],
+    "_routing": {"mode_used": "llm", "execution_path": "fast_classifier"},
+}
+
+
+def test_the_fast_classifier_cites_the_text_it_saw():
+    """It is an LLM call, but a single-shot one that runs no tools.
+
+    Excluding "llm" wholesale left this deployment at 0.06% coverage after F-17
+    shipped: every one of its 593 LLM analyses carried tools_used = [], because
+    they all took this path and returned before the ReAct loop.
+    """
+    evidence = build_classifier_evidence(_FAST, _CASE)
+
+    assert len(evidence) == 1
+    assert evidence[0]["source"] == "fast_classifier"
+    assert "Connection refused" in evidence[0]["excerpt"]
+    assert evidence[0]["kind"] == CLASSIFIER_EVIDENCE_KIND
+
+
+def test_it_keys_on_the_routing_record_not_the_model_name():
+    """A provider change must not silently reopen the gap."""
+    other_provider = dict(_FAST, llm_model="inclusionai/ling-2.6-flash")
+    assert build_classifier_evidence(other_provider, _CASE)
+
+
+def test_a_react_verdict_that_ran_tools_is_still_excluded():
+    """Its evidence belongs to the tools; substituting the input would hide
+    their failure behind a synthetic citation."""
+    react = {
+        "llm_model": "qwen2.5:7b",
+        "tools_used": ["query_splunk_logs"],
+        "evidence_references": [],
+        "_routing": {"mode_used": "llm", "execution_path": "react_agent"},
+    }
+    assert build_classifier_evidence(react, _CASE) == []

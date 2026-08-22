@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-22 — F-17 fixed the 87% that was not running
+
+- #797 taught the **rules engine** to cite the text it matched on. Deployed and measured: **evidence coverage did not move — still 3 of 4,693 (0.06%)**.
+- The reason was a gap in that fix, not the deploy. All 30 new deep runs resolved to `llm` mode, and `classify_test` — where the evidence was attached — is only called for ML/rules mode. The LLM path goes through `run_triage_agent` and bypassed the hook entirely.
+- And that path produces no evidence either: **all 593 LLM analyses carried `tools_used = []`**. Every one took the fast-classifier short-circuit, which returns before the ReAct loop and sets `evidence_references = []`. #797 excluded LLM verdicts on the assumption they would carry tool observations. **They do not.**
+- The fast classifier is an LLM call, but a single-shot one that runs no tools: it sees the error text and nothing else, so that text is the whole of what supports it — evidentially identical to a rule.
+- Keyed on the **routing record** (`execution_path == "fast_classifier"`), not the model name, so a provider change cannot silently reopen the gap. This deployment already runs two different models (`mistralai/mistral-nemo`, `inclusionai/ling-2.6-flash`).
+- **A ReAct verdict that ran tools stays excluded.** Its evidence belongs to those tools; substituting the classifier input would hide a tool failure behind a synthetic citation.
+- 3 new guards (17 total in the file).
+
 ## 2026-08-22 — A rules verdict now cites the text it matched on
 
 - F-3 gave the narrative a citation contract (#792). Deployed, it measured **0 of 30 summaries cited** — not because the model declined it, but because there was nothing to cite. Measured on the homelab: **4,690 of 4,693 analyses carried zero `evidence_references` (99.94%)**, because `rules_engine._build_result` hardcoded `"evidence_references": []` and the rules engine produces **4,087 of 4,693** analyses.
