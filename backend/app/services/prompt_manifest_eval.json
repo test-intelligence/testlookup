@@ -1,6 +1,6 @@
 {
-  "attested_at": "2026-08-11T21:58:49.256697+00:00",
-  "change_id": "AI-EVIDENCE-AUTHORITY-0120",
+  "attested_at": "2026-08-22T14:31:32.115196+00:00",
+  "change_id": "F-3-evidence-id-citations",
   "eval_gate_run_id": null,
   "gate_results": [
     {
@@ -96,7 +96,7 @@
       "task_type": "release_decision"
     }
   ],
-  "manifest_digest": "9019e136d3b4b9fb09e0b0c6056d766e6836a0467659a34c782b49b67a317f61",
+  "manifest_digest": "cfda795043edde047962fe0d734446bf238ff47f0e463c4b61cb88475fc7217d",
   "mode": "offline_golden",
   "notes": "",
   "prompt_versions": {
@@ -115,10 +115,10 @@
     "release_risk_reasoning": "v1:a152fb254091",
     "run_compare_report": "v1:5272dd391090",
     "run_compare_system": "v1:bbba41240c3f",
-    "summary_action_plan": "v1:ecf7e2106438",
-    "summary_evidence_pack": "v1:54b0e91c81d9",
+    "summary_action_plan": "v2:a554d240b844",
+    "summary_evidence_pack": "v2:531118f798af",
     "summary_executive": "v1:9885ab3d7268",
-    "summary_incident_view": "v1:470a2488b718",
+    "summary_incident_view": "v2:674423db4627",
     "summary_renderer_developer": "v1:58d153d90e99",
     "summary_renderer_manager": "v1:fb02a6a74429",
     "summary_renderer_system": "v1:42fc12956d2f",

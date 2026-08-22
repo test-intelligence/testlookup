@@ -32,6 +32,12 @@ from app.models.llm_schemas import (
     IncidentView,
     validate_llm_output_with_error,
 )
+from app.services.evidence_catalogue import (
+    build_evidence_catalogue,
+    coverage_summary,
+    ground_layer,
+    render_catalogue,
+)
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
 from app.services.prompt_registry import get_prompt, get_prompt_text
@@ -334,6 +340,7 @@ class SummaryAgent(BaseAgent):
         similar_failures: list[dict] | None = None,
         stage_quality: str = "normal",
         stage_errors: dict[str, list[str]] | None = None,
+        catalogue: list[dict] | None = None,
     ) -> str:
         build = run_data.get("build_number", "?")
         branch = run_data.get("branch", "?")
@@ -384,12 +391,12 @@ class SummaryAgent(BaseAgent):
                 f"not absent)"
             )
 
-        evidence_excerpts = []
-        for _tc_id, analysis in sorted_analyses[:5]:
-            for ev in analysis.get("evidence_references", [])[:2]:
-                evidence_excerpts.append(
-                    f"  [{ev.get('source', '?')}] {ev.get('excerpt', '')[:150]}"
-                )
+        # F-3: evidence reaches the model as a NUMBERED catalogue so each layer
+        # can cite it by id. Previously these excerpts were rendered unlabelled
+        # and citations were recovered by looking for 40 verbatim characters of
+        # an excerpt in the generated prose -- which a paraphrasing model never
+        # produces, leaving every analytical claim uncitable.
+        evidence_block = render_catalogue(catalogue or [])
 
         # Include similar historical failures if available
         similar_section = ""
@@ -418,7 +425,7 @@ class SummaryAgent(BaseAgent):
             + f"\nAnomalies ({len(anomalies)} detected):\n{anomaly_summary or 'None detected.'}\n\n"
             f"Top failure root causes ({len(analysis_bullets)} above threshold):\n"
             + ("\n".join(analysis_bullets) or "No analyses available.")
-            + (("\n\nEvidence excerpts:\n" + "\n".join(evidence_excerpts)) if evidence_excerpts else "")
+            + evidence_block
             + similar_section
         )
         return redact_text(raw_context)
@@ -495,11 +502,16 @@ class SummaryAgent(BaseAgent):
         stage_errors: dict[str, list[str]] | None = None,
         pipeline_run_id: str | None = None,
     ) -> dict:
+        # F-3: one catalogue per run, built ONCE and shared by every layer call.
+        # The three layers are separate invocations; a catalogue rebuilt per call
+        # could renumber and silently turn a correct citation into a wrong one.
+        catalogue = build_evidence_catalogue(analyses)
         context = self._build_context(
             run_data, anomaly_summary, anomalies, analyses,
             similar_failures=similar_failures or [],
             stage_quality=stage_quality,
             stage_errors=stage_errors or {},
+            catalogue=catalogue,
         )
         llm = await get_llm()
 
@@ -555,24 +567,49 @@ class SummaryAgent(BaseAgent):
         ):
             raise SummaryLLMUnavailable(layer1_error)
 
-        # Post-processing: attach similar_failures to layer3 and extract citations
-        if isinstance(layer3, dict):
-            if similar_failures:
-                layer3["similar_historical_failures"] = [
-                    str(sf.get("test_name", ""))[:100] for sf in similar_failures[:5]
-                ]
-            # Extract citations from evidence snippets
-            from app.services.summary_assembler import extract_citations  # noqa: PLC0415
-            evidence_snippets: list[dict] = []
-            for tc_id, analysis in self._sorted_analyses(analyses)[:10]:
-                for ev in (analysis.get("evidence_references") or [])[:2]:
-                    evidence_snippets.append({
-                        "source": str(ev.get("source") or ""),
-                        "excerpt": str(ev.get("excerpt") or "")[:400],
-                        "test_id": str(tc_id),
-                    })
-            citations = extract_citations(json.dumps(layer3), evidence_snippets)
-            layer3["citations"] = citations
+        # Post-processing: attach similar_failures to layer3
+        if isinstance(layer3, dict) and similar_failures:
+            layer3["similar_historical_failures"] = [
+                str(sf.get("test_name", ""))[:100] for sf in similar_failures[:5]
+            ]
+
+        # F-3: resolve each layer's model-supplied evidence_ids against the
+        # catalogue THIS server built. An id outside it resolves to nothing and
+        # is counted, so a fabricated citation cannot reach the stored report.
+        #
+        # This replaces summary_assembler.extract_citations, which required 40
+        # verbatim characters of an excerpt to appear in the prose and ran on
+        # layer 3 alone -- so a paraphrasing model produced no citations, and
+        # the layers a reader acts on could not carry one at all.
+        grounding_records = []
+        grounded_layers = {}
+        for layer_name, payload in (
+            ("layer2_incident_view", layer2),
+            ("layer3_evidence_pack", layer3),
+            ("layer4_action_plan", layer4),
+        ):
+            result = ground_layer(payload, catalogue, layer_name=layer_name)
+            grounded_layers[layer_name] = result["payload"]
+            grounding_records.append(result["grounding"])
+            if result["grounding"]["unresolved"] and pipeline_run_id:
+                await self.log_decision(
+                    pipeline_run_id,
+                    decision_point="citation_unresolved",
+                    chosen="dropped",
+                    rationale=(
+                        f"{len(result['grounding']['unresolved'])} evidence id(s) "
+                        "were not in the catalogue served to the model"
+                    ),
+                    context={
+                        "layer": layer_name,
+                        "unresolved": result["grounding"]["unresolved"][:5],
+                        "catalogue_size": len(catalogue),
+                    },
+                )
+        layer2 = grounded_layers["layer2_incident_view"]
+        layer3 = grounded_layers["layer3_evidence_pack"]
+        layer4 = grounded_layers["layer4_action_plan"]
+        citation_coverage = coverage_summary(grounding_records)
 
         # ── Executive panel (deterministic, never LLM-generated) ─────────
         from app.services.executive_panel_builder import build_executive_panel  # noqa: PLC0415
@@ -610,6 +647,11 @@ class SummaryAgent(BaseAgent):
             "layer2_incident_view": layer2,
             "layer3_evidence_pack": layer3,
             "layer4_action_plan": layer4,
+            # F-3: how much of this report is actually tied to evidence, and
+            # how many ids the model invented. Persisted with the summary so
+            # the baseline harness reads a measurement rather than inferring
+            # one from the presence of a citations array.
+            "citation_coverage": citation_coverage,
         }
 
     # Map layer names to Pydantic schemas for structured validation

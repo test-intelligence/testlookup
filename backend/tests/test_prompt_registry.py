@@ -37,9 +37,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _ORIGINAL_HASHES = {
     "summary_system": "3b2f2b5fde10",
     "summary_executive": "9885ab3d7268",
-    "summary_incident_view": "470a2488b718",
-    "summary_evidence_pack": "54b0e91c81d9",
-    "summary_action_plan": "ecf7e2106438",
     "summary_renderer_system": "42fc12956d2f",
     "summary_renderer_developer": "58d153d90e99",
     "summary_renderer_manager": "fb02a6a74429",
@@ -67,6 +64,15 @@ _ORIGINAL_MCP_HASHES = {
     "mcp.defect_triage_session": "670026c0afac",
     "mcp.suite_health_check": "b6bfbd9fe1cd",
 }
+# The ORIGINAL summary layer hashes — v2 deliberately differs (F-3): each layer
+# now returns ``evidence_ids`` so citations resolve against a server-built
+# catalogue instead of being recovered by verbatim text matching on one layer.
+_SUMMARY_LAYER_V1_HASHES = {
+    "summary_incident_view": "470a2488b718",
+    "summary_evidence_pack": "54b0e91c81d9",
+    "summary_action_plan": "ecf7e2106438",
+}
+
 # The ORIGINAL react_triage (v1) hash — v2 deliberately differs (AI-F3 recall).
 _REACT_TRIAGE_V1_HASH = "e8d6ac6b354e"
 
@@ -82,6 +88,27 @@ def test_moved_prompts_are_byte_identical_to_originals():
             f"({p.content_hash} != {original_hash})"
         )
         assert p.version == 1, f"{pid} bumped without updating this pin"
+
+
+def test_summary_layers_are_deliberate_v2():
+    """F-3: the three claim-bearing layers gained an evidence_ids contract.
+
+    Pinned like every other deliberate bump — the change is visible as a diff
+    here, and v1's structural anchors are asserted to have survived so the edit
+    cannot quietly rewrite the layer's shape while adding citations.
+    """
+    anchors = {
+        "summary_incident_view": '"release_impact": "GO | CONDITIONAL_GO | NO_GO"',
+        "summary_evidence_pack": '"top_stack_traces"',
+        "summary_action_plan": '"immediate_mitigation"',
+    }
+    for pid, v1_hash in _SUMMARY_LAYER_V1_HASHES.items():
+        p = pr.get_prompt(pid)
+        assert p.version == 2, f"{pid} version pin is stale"
+        assert p.content_hash != v1_hash
+        assert '"evidence_ids"' in p.text, f"{pid} lost the citation contract"
+        assert "Never invent an id." in p.text
+        assert anchors[pid] in p.text, f"{pid} lost a v1 structural anchor"
 
 
 # The ORIGINAL chat_system (v1) hash — v2 deliberately differs (AI-6 copilot:

@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-22 — A summary claim can finally cite the evidence behind it
+
+- `summary_assembler.extract_citations` attached an evidence item only when the first **40 characters of its excerpt appeared verbatim** in the generated prose, and it ran on layer 3 alone. A model that paraphrases — which is the entire point of a summary — produced an empty citation list. **The layers a reader acts on (incident view, action plan) could not carry a citation at all**, and the evidence pack only did when the model happened to copy text. The report rendered an "evidence pack" whose citations were almost always empty while reading as though its claims were sourced.
+- Replaced with an evidence-id contract:
+
+  | Step | Owner |
+  |---|---|
+  | Build a numbered catalogue from evidence the run already holds | server |
+  | Render it into the prompt as `[E1] (source, test) excerpt` | server |
+  | Return `evidence_ids` alongside each layer's content | model |
+  | Resolve those ids **against the catalogue the server built** | server |
+
+- **A model id is never authoritative.** It is a token that must match one this server generated for this run; a fabricated `E99` resolves to nothing, is dropped before storage, and is *counted*. Same principle as `tools/recall_memory`, where identity comes from a ContextVar and model input is free text only.
+- Citations now reach **three layers instead of one**. Layer 1 is free prose and stays uncitable — reported as such rather than quietly omitted.
+- The catalogue is built **once per run** and shared by all three layer calls. They are separate invocations; a catalogue rebuilt per call could renumber and turn a correct citation into a wrong one.
+- Resolved citations carry the **server's** `test_id`, which makes `agents/consistency.py`'s referential-integrity check structural instead of hopeful — the ids come from the analysed universe by construction.
+- Fabricated ids are recorded as a `citation_unresolved` decision and rolled into a `citation_coverage` block stored with the summary, so the baseline harness reads a measurement rather than inferring one from the presence of an array. The harness now separates **scarce citations from invented ones** — different problems with different fixes.
+- Prompts `summary_incident_view`, `summary_evidence_pack` and `summary_action_plan` bumped v1 → v2 through the governed path (manifest rewrite + offline eval-gate attestation, verdict PASS), pinned by a `test_summary_layers_are_deliberate_v2` guard asserting each kept its v1 structural anchors.
+- **The wiring test earned its place**: the unit tests passed while the real path dropped `evidence_ids` entirely, because a field absent from the Pydantic layer schema is *stripped* by validation. The contract was being asked for and silently discarded. Declaring it on the schemas fixed it.
+- 37 new tests (32 catalogue + 5 end-to-end grounding).
+
+
 ## 2026-08-22 — The baseline can now see how grounded a report actually is
 
 - The pipeline baseline (#790) could measure cost and latency but not grounding: citations and typed claims live in MongoDB (`decision_reports`, `run_summaries`), and the collector only read Postgres. That left the review's citation targets unmeasurable — and F-3 unable to follow the measure-then-fix discipline everything else has used.

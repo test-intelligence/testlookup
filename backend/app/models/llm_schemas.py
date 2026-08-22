@@ -32,6 +32,12 @@ class IncidentView(BaseModel):
     criticality: str = Field(default="MEDIUM")
     release_impact: str = Field(default="CONDITIONAL_GO")
     failure_breakdown: dict[str, int] = Field(default_factory=dict)
+    # F-3: ids the model cites, resolved server-side against the evidence
+    # catalogue and replaced by ``citations`` before the layer is stored.
+    # Declared here because a field absent from the schema is STRIPPED by
+    # validation -- the contract would be asked for and silently discarded.
+    evidence_ids: list[str] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
 
     @field_validator("criticality", mode="before")
     @classmethod
@@ -55,6 +61,11 @@ class EvidencePack(BaseModel):
     flaky_test_ids: list[str] = Field(default_factory=list)
     similar_historical_failures: list[str] = Field(default_factory=list)
     data_sources_used: list[str] = Field(default_factory=list)
+    # F-3: ids the model cites, resolved server-side against the evidence
+    # catalogue and replaced by ``citations`` before the layer is stored.
+    # Declared here because a field absent from the schema is STRIPPED by
+    # validation -- the contract would be asked for and silently discarded.
+    evidence_ids: list[str] = Field(default_factory=list)
     citations: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -65,6 +76,12 @@ class ActionPlan(BaseModel):
     validation_steps: list[str] = Field(default_factory=list)
     rollback_guidance: str = ""
     owner_hints: dict[str, str] = Field(default_factory=dict)
+    # F-3: ids the model cites, resolved server-side against the evidence
+    # catalogue and replaced by ``citations`` before the layer is stored.
+    # Declared here because a field absent from the schema is STRIPPED by
+    # validation -- the contract would be asked for and silently discarded.
+    evidence_ids: list[str] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ── Root-Cause Analysis Schema ──────────────────────────────────────────────

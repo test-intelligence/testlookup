@@ -90,20 +90,20 @@
       "version": 1
     },
     "summary_action_plan": {
-      "content_hash": "ecf7e2106438",
-      "version": 1
+      "content_hash": "a554d240b844",
+      "version": 2
     },
     "summary_evidence_pack": {
-      "content_hash": "54b0e91c81d9",
-      "version": 1
+      "content_hash": "531118f798af",
+      "version": 2
     },
     "summary_executive": {
       "content_hash": "9885ab3d7268",
       "version": 1
     },
     "summary_incident_view": {
-      "content_hash": "470a2488b718",
-      "version": 1
+      "content_hash": "674423db4627",
+      "version": 2
     },
     "summary_renderer_developer": {
       "content_hash": "58d153d90e99",

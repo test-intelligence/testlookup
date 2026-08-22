@@ -318,17 +318,31 @@ def test_narrative_citation_rate_is_measured():
 
 
 def test_uncitable_layers_are_reported_structurally():
-    """Three of four layers cannot carry a citation however the model behaves.
+    """Which layers CAN be cited is a property of the code, not of a corpus —
+    so it is reported even for an empty one, where a rate would be meaningless.
 
-    This is a property of extract_citations being applied to layer 3 alone, not
-    an observation about any particular run — so it is reported even for an
-    empty corpus, where an observed rate would be meaningless.
+    Since F-3 the three claim-bearing layers carry evidence_ids; layer 1 is free
+    prose and stays uncitable by design.
     """
     rollup = summarize_narrative_citations([])
-    assert rollup["citable_layers"] == ["layer3_evidence_pack"]
-    assert set(rollup["uncitable_layers"]) == {
-        "layer1_executive_summary", "layer2_incident_view", "layer4_action_plan",
-    }
+    assert rollup["citable_layers"] == [
+        "layer2_incident_view", "layer3_evidence_pack", "layer4_action_plan",
+    ]
+    assert rollup["uncitable_layers"] == ["layer1_executive_summary"]
+
+
+def test_fabricated_ids_are_reported_separately_from_scarce_citations():
+    """A model inventing ids is a different problem from citing little."""
+    honest = {"layer3_evidence_pack": {"citations": [{"ev_id": "E1"}]},
+              "citation_coverage": {"ids_unresolved": 0}}
+    fabricating = {"layer3_evidence_pack": {"citations": [{"ev_id": "E1"}]},
+                   "citation_coverage": {"ids_unresolved": 3}}
+    rollup = summarize_narrative_citations([honest, fabricating])
+
+    assert rollup["citation_rate"] == 1.0          # both cite something...
+    assert rollup["ids_unresolved"] == 3           # ...but one invented ids
+    assert rollup["summaries_with_fabricated_ids"] == 1
+    assert rollup["fabrication_rate"] == 0.5
 
 
 @pytest.mark.parametrize("garbage", [None, "report", 7, {"claims": "nope"}, {"claims": [None]}])

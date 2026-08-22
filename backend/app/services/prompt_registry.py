@@ -328,7 +328,7 @@ Return ONLY the 3-sentence paragraph. No bullet points, no headers.""",
 # agents/summary_agent.py _INCIDENT_VIEW_PROMPT
 _register(
     "summary_incident_view",
-    1,
+    2,
     """\
 {system}
 
@@ -341,6 +341,7 @@ Respond ONLY with a valid JSON object (no markdown fences):
   "scope": "affected services / suites / environments",
   "criticality": "CRITICAL | HIGH | MEDIUM | LOW",
   "release_impact": "GO | CONDITIONAL_GO | NO_GO",
+  "evidence_ids": ["E1", "E3"],
   "failure_breakdown": {{
     "product_bugs": 0,
     "infrastructure": 0,
@@ -351,6 +352,10 @@ Respond ONLY with a valid JSON object (no markdown fences):
   }}
 }}
 
+Cite evidence by id from the Evidence list in the data below. Use ONLY
+ids that appear there; omit evidence_ids entirely if nothing supports
+this. Never invent an id.
+
 Data:
 {context}""",
 )
@@ -358,7 +363,7 @@ Data:
 # agents/summary_agent.py _EVIDENCE_PACK_PROMPT
 _register(
     "summary_evidence_pack",
-    1,
+    2,
     """\
 {system}
 
@@ -370,10 +375,16 @@ Respond ONLY with a valid JSON object (no markdown fences):
   "log_anomalies": ["anomaly description 1"],
   "flaky_test_ids": ["test_id_1"],
   "similar_historical_failures": ["description of past similar failure"],
-  "data_sources_used": ["stacktrace", "splunk", "flakiness_db", "ocp_events"]
+  "data_sources_used": ["stacktrace", "splunk", "flakiness_db", "ocp_events"],
+  "evidence_ids": ["E1", "E2"]
 }}
 
 Only include items that are present in the analysis data. Use empty arrays if none.
+
+Cite evidence by id from the Evidence list in the data below. Use ONLY
+ids that appear there; omit evidence_ids entirely if nothing supports
+this. Never invent an id.
+
 
 Data:
 {context}""",
@@ -382,7 +393,7 @@ Data:
 # agents/summary_agent.py _ACTION_PLAN_PROMPT
 _register(
     "summary_action_plan",
-    1,
+    2,
     """\
 {system}
 
@@ -399,8 +410,13 @@ Respond ONLY with a valid JSON object (no markdown fences):
     "developer": "what the developer should do",
     "sre": "what SRE/ops should do",
     "release_manager": "what release manager should decide"
-  }}
+  }},
+  "evidence_ids": ["E1", "E3"]
 }}
+
+Cite evidence by id from the Evidence list in the data below. Use ONLY
+ids that appear there; omit evidence_ids entirely if nothing supports
+this. Never invent an id.
 
 Data:
 {context}""",

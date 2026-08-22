@@ -277,10 +277,19 @@ def summarize_band(band: str, runs: list[dict]) -> dict[str, Any]:
 #     match against evidence excerpts, applied to ONE layer, so the question is
 #     how often that can fire at all (finding F-3).
 
-# Summary layers that could carry a citation today. ``extract_citations`` is
-# applied to layer 3 alone, so layers 1, 2 and 4 are uncitable by construction
-# -- which is most of what a reader actually acts on.
-_CITABLE_LAYERS = ("layer3_evidence_pack",)
+# Summary layers that can carry a citation. Since F-3 each claim-bearing layer
+# returns ``evidence_ids`` resolved against a server-built catalogue, so all
+# three carry citations. Layer 1 is free prose (a three-sentence synthesis) and
+# is deliberately still uncitable -- reported rather than quietly omitted.
+#
+# Baselines taken BEFORE F-3 will show only layer 3 populated. That is a real
+# difference between corpora, not a bug in the harness, and it is exactly the
+# delta the fix is meant to produce.
+_CITABLE_LAYERS = (
+    "layer2_incident_view",
+    "layer3_evidence_pack",
+    "layer4_action_plan",
+)
 _ALL_LAYERS = (
     "layer1_executive_summary",
     "layer2_incident_view",
@@ -357,6 +366,8 @@ def summarize_narrative_citations(summaries: Iterable[Any]) -> dict[str, Any]:
     citations_total = 0
     summaries_with_citations = 0
     layers_present = 0
+    ids_unresolved = 0
+    summaries_with_fabricated_ids = 0
 
     for summary in clean:
         cited = 0
@@ -369,6 +380,15 @@ def summarize_narrative_citations(summaries: Iterable[Any]) -> dict[str, Any]:
         layers_present += sum(
             1 for key in _ALL_LAYERS if summary.get(key) not in (None, "", {}, [])
         )
+        # Post-F-3 summaries carry the agent's own grounding record. An id the
+        # model supplied that was NOT in the catalogue it was served is a
+        # fabrication -- the number that says whether the contract is holding,
+        # as distinct from whether citations merely exist.
+        coverage = _as_dict(summary.get("citation_coverage"))
+        unresolved = int(_num(coverage.get("ids_unresolved")) or 0)
+        ids_unresolved += unresolved
+        if unresolved:
+            summaries_with_fabricated_ids += 1
 
     return {
         "summaries": len(clean),
@@ -377,11 +397,19 @@ def summarize_narrative_citations(summaries: Iterable[Any]) -> dict[str, Any]:
             round(summaries_with_citations / len(clean), 4) if clean else None
         ),
         "citations_total": citations_total,
-        # Structural, not observed: citations are extracted for layer 3 only,
-        # so the other layers cannot carry one however well the model behaves.
+        # Structural, not observed: which layers CAN carry a citation at all.
+        # Layer 1 is free prose and remains uncitable by design.
         "citable_layers": list(_CITABLE_LAYERS),
         "uncitable_layers": [k for k in _ALL_LAYERS if k not in _CITABLE_LAYERS],
         "layers_rendered": layers_present,
+        # Fabricated ids: supplied by the model, absent from the catalogue the
+        # server served it. Non-zero means the contract is being violated, which
+        # is a different problem from citations being scarce.
+        "ids_unresolved": ids_unresolved,
+        "summaries_with_fabricated_ids": summaries_with_fabricated_ids,
+        "fabrication_rate": (
+            round(summaries_with_fabricated_ids / len(clean), 4) if clean else None
+        ),
     }
 
 
