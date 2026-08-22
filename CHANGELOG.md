@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-22 — The developer guide claimed 18 quality guards while listing 17 and enforcing 26
+
+- `architecture/DEVELOPER_GUIDE.md` section 1 is where a contributor looks before writing code, and it was wrong three ways at once: it stated **18 guards**, its per-surface tables listed **17**, and `scripts/quality_gate.py` runs **26**. Nine guards had no row anywhere — `backend.stdlib-logger-kwargs`, `backend.project-scope-guard-placement`, `backend.model-imports-resolve`, `backend.status-enum-vocab`, `backend.cloud-providers-are-priced`, `backend.settings-are-consumed`, `frontend.refresh-intervals-from-config`, `frontend.ai-output-hedging`, and `repo.no-gitignored-source`, which had no surface section at all.
+- Not the first time. The `backend.audit-write-discipline` entry below already records that the guide "gains the `ai.prompt-manifest-sync` row its guard count was already missing". A hand-maintained mirror of an auto-listable registry drifts every time a guard lands, and it drifts silently because nothing reads it.
+- All 26 guards now have a row, each written from that guard's own `description` and `fix_hint`, under a new **Repo** surface section alongside the existing five.
+- **The ratchet/absolute distinction is now per row, not prose.** The guide said "a few ship at zero with **no baseline file at all** — those are absolute rules, not ratchets"; that is **11 of 26** today, and **8 of the 9** newly documented guards are absolute rules, so leaving them unmarked would have misdescribed most of what was missing. Each row now carries a † when the guard has no file in `scripts/quality-gate-baselines/`, derived from `Guard.baseline_path.exists()` rather than eyeballed.
+- That distinction is the part worth getting right: a ratchet tolerates everything already in its baseline, an absolute rule fails on the **first** violation. Documenting one as the other tells a reader the opposite of what CI will do to them.
+- Tests: 2 in `scripts/test_quality_gate.py` (48 total, was 46), run against the real tree like `test_committed_baselines_are_all_fingerprints`. `test_developer_guide_documents_every_guard` pins the stated count to `len(GUARDS)` **and** the set of table rows to the set of registered names; `test_developer_guide_marks_absolute_rules_not_ratchets` pins every † to `baseline_path.exists()` plus both split counts in the intro. A count-only assertion was not enough — it would have passed on the broken state, 17 rows sitting under an "18 guards" claim — which is why the rows are pinned too.
+- Mutation-checked: stale count, dropped table row, ratchet mislabelled as absolute, absolute mislabelled as ratchet. All four caught, with the harness asserting each mutation applied and restoring the file byte-identical afterwards.
+
 ## 2026-08-22 — Quality-gate baselines were keyed by line number, so any insertion above one re-reported it
 
 - A baseline entry in `scripts/quality-gate-baselines/*.txt` was `<relpath>:<lineno>`. That made every guard hostage to line drift: **inserting a line anywhere above a tolerated violation re-reported it as brand new**, with CI pointing at a line nobody had touched.

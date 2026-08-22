@@ -33,11 +33,16 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **18 guards**.
-Most are *ratchets*: pre-existing violations are baselined in
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **26 guards**.
+15 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. A few ship at zero with **no baseline file at all** — those are
-absolute rules, not ratchets. Know these before you write code.
+fail CI. The other 11 ship at zero with **no baseline file at all** — those are
+absolute rules, not ratchets, and are marked **†** in the tables below. Know
+these before you write code.
+
+`python scripts/quality_gate.py --list` prints the registry's own one-line
+description of each guard; the tables here are that list grouped by surface,
+and `scripts/test_quality_gate.py` fails if the two drift apart.
 
 ### Backend
 
@@ -48,7 +53,13 @@ absolute rules, not ratchets. Know these before you write code.
 | `backend.finalize-run` | committing `test_case` rows without `finalize_run()` | Always `await ingestion_pipeline.finalize_run(...)` after the commit |
 | `backend.pii-log-redaction` | logging `email`/`password`/`api_key`/`raw_key` verbatim | Sanitize PII before logging |
 | `backend.structlog-positional-args` | `logger.warning("x: %s", e)` (stdlib style) | `logger.warning("event_name", error=str(e))` — positional args raise `TypeError` mid-request |
-| `backend.audit-write-discipline` | any UPDATE of an audit table, and any DELETE outside the retention purge | Append a **new** audit row instead of mutating one; if a purge is needed, extend `services/retention_service.py` |
+| `backend.stdlib-logger-kwargs` † | the mirror image — a **stdlib** `logging.Logger` called with structlog-style kwargs | Use the module's structlog logger for keyword fields, or keep stdlib and format positionally (`logger.error("x failed: %s", exc)`). Inside an `except` block the `TypeError` destroys the diagnostic *and* skips the scrubbed re-raise |
+| `backend.audit-write-discipline` † | any UPDATE of an audit table, and any DELETE outside the retention purge | Append a **new** audit row instead of mutating one; if a purge is needed, extend `services/retention_service.py` |
+| `backend.project-scope-guard-placement` † | an access check nested inside an `if not project_id` branch — the caller who *does* name a project skips it | Call `resolve_project_scope(db, user, project_id)` unconditionally; it 403s a non-admin naming a project they cannot reach |
+| `backend.model-imports-resolve` † | `from app.models.postgres import X` where `X` is not a real class | Fix the class name (`perf_baselines` is `PerfBaseline`, not `PerformanceBaseline`). A function-local import of a typo'd model is invisible until it runs, and a broad `except` turns it into a warning |
+| `backend.status-enum-vocab` † | filtering an enum-backed status column with hand-written string literals | Build the filter from the enum (`FlakyQuarantineStatus.QUARANTINED.value`). A mismatched vocabulary matches nothing, silently and forever — FIX-002 had the Fixer selecting zero candidates on every run while reporting success |
+| `backend.cloud-providers-are-priced` † | a non-self-hosted LLM provider with no price-table entry | Add a `(provider, model-regex, ModelPrice)` row to `PRICE_TABLE` in `services/llm_pricing.py` |
+| `backend.settings-are-consumed` † | a `Settings` field nothing reads — a dead config knob | Reference it in code (or a compose/k8s/env surface), or delete the field |
 
 **`backend.audit-write-discipline` — why it exists.** `settings_audit_log`,
 `access_audit_logs`, `test_case_audit_logs` and `identity_events` are
@@ -76,6 +87,8 @@ fails if a *second* deleter appears.
 | `frontend.single-axios` | a second `axios.create()` | Import the shared base from `services/api.ts` (it owns the 401-refresh queue) |
 | `frontend.all-projects-literal` | inlining the `'all'` project sentinel | Use the `ALL_PROJECTS_ID` constant; convert to `null` before API calls |
 | `frontend.clipboard-util` | raw `navigator.clipboard` | Use `copyTextToClipboard` from `@/utils/clipboard` (HTTP homelabs lack the secure-context API) |
+| `frontend.refresh-intervals-from-config` † | a hand-picked SWR `refreshInterval` | `import { REFRESH_INTERVALS } from '@/config/refreshIntervals'` and take a tier — `REALTIME` / `ACTIVE` / `POLLING` / `BACKGROUND` (`0` = disabled is fine) |
+| `frontend.ai-output-hedging` † | AI output rendered as a verdict — a bare `Root cause:`, `Root Cause Summary`, "the cause is …", "is caused by" | Hedge the copy ("Suggested root cause", "likely caused by") and render the conclusion through `components/ai/AISuggestion` so it carries the badge, basis and provenance (US-15.1). Pipeline **stage** names like "Root Cause Analysis" are already allowed |
 
 ### Database
 
@@ -92,17 +105,23 @@ fails if a *second* deleter appears.
 | `agents.log-decision-present` | every agent calls `self.log_decision(...)` | Log every non-trivial route/fallback/skip |
 | `agents.routing-metadata` | `classify_test()` populates `_routing` | Set `result['_routing'] = {...}` before returning |
 
+### Repo
+
+| Gate id | Forbids / requires | How to satisfy |
+|---|---|---|
+| `repo.no-gitignored-source` | a source file matched by `.gitignore` | Narrow the offending pattern. The security globs (`*credentials*`, `*secrets*`, `*api_key*`) match at **every depth** and have twice silently excluded real code from a commit |
+
 ### AI
 
 | Gate id | Requires | How to satisfy |
 |---|---|---|
-| `ai.prompt-manifest-sync` | every LLM prompt matches its pinned hash in `prompt_manifest.json`, and that manifest digest carries a green eval-gate attestation | Bump the prompt version, re-run the eval gate, re-attest (see `architecture/AI_EVALUATION.md`) |
+| `ai.prompt-manifest-sync` † | every LLM prompt matches its pinned hash in `prompt_manifest.json`, and that manifest digest carries a green eval-gate attestation | Bump the prompt version, re-run the eval gate, re-attest (see `architecture/AI_EVALUATION.md`) |
 
 ### Homelab
 
 | Gate id | Requires |
 |---|---|
-| `homelab.build-tag-placeholder` | `k8s/overlays/homelab/kustomization.yaml` keeps `newTag: BUILD_TAG_PLACEHOLDER` at rest |
+| `homelab.build-tag-placeholder` † | `k8s/overlays/homelab/kustomization.yaml` keeps `newTag: BUILD_TAG_PLACEHOLDER` at rest |
 
 Beyond the gate script, **architectural tests** ratchet structure:
 `test_architectural_transaction_boundaries.py`,

@@ -12,6 +12,7 @@ The tests stand on their own (no need for the backend test rig).
 """
 from __future__ import annotations
 
+import re
 import textwrap
 from pathlib import Path
 
@@ -856,6 +857,74 @@ def test_committed_baselines_are_all_fingerprints() -> None:
                     f"{path.name}:{lineno} is not a fingerprint: {entry!r}. "
                     f"Regenerate with --update-baseline."
                 )
+
+
+# ── DEVELOPER_GUIDE.md sync ───────────────────────────────────────────────
+#
+# The guide's section 1 is hand-maintained prose over an auto-listable
+# registry, so it drifts the moment a guard is added: it claimed "18 guards"
+# while the registry ran 26, and nine guards had no table row at all. These
+# two pin it to the registry itself.
+
+
+_GUIDE = "architecture/DEVELOPER_GUIDE.md"
+_DAGGER = chr(0x2020)  # marks an absolute rule (no baseline) in the guide
+
+
+def _guide_guard_rows(doc: str) -> dict[str, bool]:
+    """Gate id -> "is it flagged as an absolute rule", for every guard row in
+    the guide's per-surface tables. Rows read ``| `backend.no-print` | ... |``
+    and an absolute rule carries a trailing dagger after the id."""
+    rows = re.findall(r"^\| `([a-z]+\.[a-z0-9-]+)` *(" + _DAGGER + r"?)", doc, re.M)
+    return {name: bool(mark) for name, mark in rows}
+
+
+def test_developer_guide_documents_every_guard() -> None:
+    """Runs against the REAL architecture/DEVELOPER_GUIDE.md. A stated count
+    that nobody bumped is worse than no count: it reads as authoritative."""
+    doc = (qg.REPO_ROOT / _GUIDE).read_text(encoding="utf-8")
+
+    stated = re.search(r"enforces \*\*(\d+) guards\*\*", doc)
+    assert stated, f"{_GUIDE} no longer states a guard count in section 1"
+    assert int(stated.group(1)) == len(qg.GUARDS), (
+        f"{_GUIDE} says {stated.group(1)} guards; the registry has "
+        f"{len(qg.GUARDS)}. Run `python scripts/quality_gate.py --list` and "
+        f"update section 1 (count AND the per-surface table)."
+    )
+
+    documented = set(_guide_guard_rows(doc))
+    registered = {g.name for g in qg.GUARDS}
+    assert documented == registered, (
+        f"{_GUIDE} guard tables are out of sync with GUARDS. "
+        f"Undocumented: {sorted(registered - documented)}. "
+        f"Stale rows: {sorted(documented - registered)}."
+    )
+
+
+def test_developer_guide_marks_absolute_rules_not_ratchets() -> None:
+    """A guard with no baseline file fails on the FIRST violation; a ratchet
+    tolerates everything already listed. Documenting one as the other tells a
+    reader the opposite of what CI will do to them."""
+    doc = (qg.REPO_ROOT / _GUIDE).read_text(encoding="utf-8")
+    rows = _guide_guard_rows(doc)
+
+    for guard in qg.GUARDS:
+        absolute = not guard.baseline_path.exists()
+        kind = "an absolute rule" if absolute else "a ratchet"
+        assert rows.get(guard.name) == absolute, (
+            f"{guard.name} is {kind} (baseline file "
+            f"{'absent' if absolute else 'present'}) but {_GUIDE} marks it as "
+            f"the opposite. {_DAGGER} = absolute rule, no marker = ratchet."
+        )
+
+    absolutes = sum(1 for g in qg.GUARDS if not g.baseline_path.exists())
+    assert f"{len(qg.GUARDS) - absolutes} are *ratchets*" in doc, (
+        f"{_GUIDE} should open section 1 with the ratchet count "
+        f"({len(qg.GUARDS) - absolutes})."
+    )
+    assert f"The other {absolutes} ship at zero" in doc, (
+        f"{_GUIDE} should name the absolute-rule count ({absolutes})."
+    )
 
 
 # ── repo.no-gitignored-source (GIT-001) ──────────────────────────────────────
