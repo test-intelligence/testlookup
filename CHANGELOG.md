@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-22 — The setup wizard's "View Run Intelligence" step could never complete
+
+- The onboarding wizard has five steps; the last, **View Run Intelligence**, had **no completion path at all**. `auto_detect_progress` completes the first four from database state (a project exists, a run was ingested, Jira/telemetry is enabled) but skips this one — opening a page leaves no row to detect. The only other way a step completes is `onboardingService.completeStep`, and that function was **dead code**: defined in the service, wired to `POST /api/v1/onboarding/{project_id}/complete`, and called from nowhere in the app.
+- The consequence for every self-hoster: they open Run Intelligence, read the AI verdict, return to Getting Started, and the step still reads **pending** with a "Set Up" button. Setup progress caps below 100% and the "Setup complete" state never fires — unless the user gives up and hits **Skip**, which the progress bar then counts as done. The one step meant to prove the product delivered value was the one the wizard could never mark delivered.
+- `RunIntelligencePage` now completes the step the first time intelligence loads for a real project. It reads the active project from `useProjectStore` (the page already redirects away on a project change, so the active project is always this run's) and calls `completeStep(projectId, 'view_intelligence')` from an effect keyed on the loaded flag + project — once per open, not on every persona switch or refresh.
+- **Guarded on both ends.** The call is skipped when the active project is the synthetic `ALL_PROJECTS_ID` ("All Projects" has no real id to scope to) and while the page is still loading or errored. The completion is idempotent and fire-and-forget server-side, and the UI attaches `.catch()` so an onboarding-table gap in a partially-migrated env never surfaces an error over the intelligence view.
+- Regression test: opening the page completes `view_intelligence` for the active project exactly once, and does **not** in All-Projects mode or while loading/errored.
 ## 2026-08-21 — A contradiction the report called "resolved" was resolved the wrong way
 
 - `report_refinement_agent` reconciles the three routes that can independently flag a failed test. When per-test analysis says **flaky** but the anomaly/regression route says **real regression**, it records the contradiction with `resolution = PREFER_ANOMALY` — and then built the reconciled record from `_primary_route()`, a **fixed precedence** (`analysis > anomaly > cluster`) that never looked at the resolution.

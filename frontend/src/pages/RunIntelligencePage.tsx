@@ -58,6 +58,8 @@ import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
 import RunStepFlipCard from '@/components/runs/RunStepFlipCard'
 import { useDecisionReportVersions, useRunIntelligence, useRunModeSummary } from '@/hooks/useRunIntelligence'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
+import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
+import { onboardingService } from '@/services/onboardingService'
 import type {
   DimensionScore,
   FailureClusterIntel,
@@ -1339,6 +1341,22 @@ export default function RunIntelligencePage() {
     : null
   const { intelligence, isLoading, isError, refresh } = useRunIntelligence(runId ?? null, selectedReportVersion)
   const { versions: decisionReportVersions } = useDecisionReportVersions(runId ?? null)
+  const activeProjectId = useProjectStore((s) => s.activeProjectId)
+
+  // Auto-complete the "View Run Intelligence" onboarding step the first time
+  // intelligence loads for a real project. That step has no DB signal for
+  // `auto_detect_progress` to key off (opening a page leaves no row) and no
+  // other caller of `completeStep`, so without this it stays `pending` for
+  // ever and a self-hoster's setup wizard never reaches 100%. Idempotent and
+  // fire-and-forget server-side; keyed on the loaded flag + project so it runs
+  // once per open, not on every persona switch or refresh, and never with the
+  // synthetic "All Projects" id.
+  const intelligenceViewed = !isLoading && !isError && !!intelligence
+  useEffect(() => {
+    if (!intelligenceViewed) return
+    if (!activeProjectId || activeProjectId === ALL_PROJECTS_ID) return
+    void onboardingService.completeStep(activeProjectId, 'view_intelligence').catch(() => {})
+  }, [intelligenceViewed, activeProjectId])
   const [persona, setPersona] = useState<Persona>(() => {
     const saved = localStorage.getItem(PERSONA_KEY)
     return saved === 'developer' || saved === 'manager' ? saved : 'executive'

@@ -49,6 +49,12 @@ vi.mock('@/store/projectStore', () => ({
     selector(mockProjectState)),
 }))
 
+const { mockCompleteStep } = vi.hoisted(() => ({ mockCompleteStep: vi.fn() }))
+
+vi.mock('@/services/onboardingService', () => ({
+  onboardingService: { completeStep: mockCompleteStep },
+}))
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const MOCK_INTELLIGENCE = {
@@ -228,6 +234,50 @@ describe('RunIntelligencePage', () => {
         .filter(k => k.startsWith('tl.runIntel.decision.'))
         .forEach(k => localStorage.removeItem(k))
     } catch { /* ignore */ }
+    // Reset the onboarding step mock + project selection between tests (one
+    // test mutates activeProjectId to 'proj-2'). completeStep returns a
+    // promise the page attaches `.catch()` to, so resolve by default.
+    mockCompleteStep.mockReset()
+    mockCompleteStep.mockResolvedValue(undefined)
+    mockProjectState.activeProjectId = 'proj-1'
+  })
+
+  // Regression: the "View Run Intelligence" onboarding step has no DB signal
+  // for auto_detect_progress and no other caller of completeStep, so opening
+  // this page is the only thing that can complete it. Without the effect the
+  // setup wizard's view_intelligence step stays pending for ever and setup
+  // never reaches 100%.
+  describe('view_intelligence onboarding step', () => {
+    const renderPage = () =>
+      render(
+        <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+          <Routes><Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} /></Routes>
+        </MemoryRouter>,
+      )
+
+    it('completes the step for the active project when intelligence loads', () => {
+      mockHooks({ intelligence: structuredClone(MOCK_INTELLIGENCE) })
+      renderPage()
+      expect(mockCompleteStep).toHaveBeenCalledWith('proj-1', 'view_intelligence')
+      expect(mockCompleteStep).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not complete the step in All Projects mode (no real project id)', () => {
+      mockProjectState.activeProjectId = '__ALL__'
+      mockHooks({ intelligence: structuredClone(MOCK_INTELLIGENCE) })
+      renderPage()
+      expect(mockCompleteStep).not.toHaveBeenCalled()
+    })
+
+    it('does not complete the step while loading or on error', () => {
+      mockHooks({ isLoading: true })
+      renderPage()
+      expect(mockCompleteStep).not.toHaveBeenCalled()
+
+      mockHooks({ isError: true })
+      renderPage()
+      expect(mockCompleteStep).not.toHaveBeenCalled()
+    })
   })
 
   it('wires terminal decision fields before the release verdict', () => {
