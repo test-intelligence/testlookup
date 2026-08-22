@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-22 — The AI pipeline can finally be measured
+
+- Every performance and quality target for the AI layer was an estimate. `architecture/AI_QUALITY.md` and the AI review both set targets — p50 report latency, cost per run, parse-failure rate — and **nothing measured any of them**, so no change to the AI layer could be shown to have helped or hurt.
+- New `benchmarks/pipeline/` answers one question: *what does a pipeline run cost today, by run size?* It is an **aggregator, not an instrument** — `agent_stage_results` has carried per-stage tokens, cost, LLM-call counts, fallback flags and timings since Phase 6, and `agent_pipeline_runs` carries end-to-end timings. The baseline never existed because nothing rolled them up.
+- Runs are grouped into **run-size bands** (`green` / `small` 1-9 / `medium` 10-49 / `large` 50+), because pipeline cost is driven by the size of the failure set and a global average hides the only dimension that matters. The failure count comes from the analysis stage's own `result_data` (`analysed + budget_skipped`), so tests the wall-clock budget never reached still count as workload the pipeline faced.
+- `aggregate.py` is pure — no DB, no HTTP, no `app` imports — so it is unit-tested without a stack. That matters: the environments that *have* pipeline data are exactly the ones a contributor may not be able to run.
+- Three rules it holds to, each pinned by tests:
+  - **Never invent a number.** An absent measurement is `null`, never `0`. "No data" and "zero" are different answers, and a baseline that conflates them is worse than none.
+  - **Never raise.** Malformed rows are dropped. A harness that dies on one bad row measures nothing — the failure mode it exists to end.
+  - **Refuse to write an empty baseline.** A window with no runs exits non-zero rather than emitting a file of nulls, which once committed is indistinguishable from a measured result.
+- **A deliberate skip is not degradation.** All-green fast-path, planner and confidence-router skips are correct routing. The first draft counted every skipped stage and reported healthy green runs as **100% degraded** — caught by rendering the harness against synthetic runs before trusting it. Only failures, wall-clock-budget skips, and skips with no recorded `execution_path` now count.
+- Metrics that cannot honestly be derived yet are declared in a `not_measured` block with the reason and the requirement that unblocks them — citation coverage, unsupported-claim rate, category macro F1 — rather than being silently absent or rendered as zeros.
+- `make benchmark-pipeline` (or `DAYS=7 make benchmark-pipeline`); 32 tests.
+
+
 ## 2026-08-22 — The developer guide claimed 18 quality guards while listing 17 and enforcing 26
 
 - `architecture/DEVELOPER_GUIDE.md` section 1 is where a contributor looks before writing code, and it was wrong three ways at once: it stated **18 guards**, its per-surface tables listed **17**, and `scripts/quality_gate.py` runs **26**. Nine guards had no row anywhere — `backend.stdlib-logger-kwargs`, `backend.project-scope-guard-placement`, `backend.model-imports-resolve`, `backend.status-enum-vocab`, `backend.cloud-providers-are-priced`, `backend.settings-are-consumed`, `frontend.refresh-intervals-from-config`, `frontend.ai-output-hedging`, and `repo.no-gitignored-source`, which had no surface section at all.
