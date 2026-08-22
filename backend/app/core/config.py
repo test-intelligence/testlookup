@@ -459,6 +459,14 @@ class Settings(BaseSettings):
     KNOWLEDGE_CHUNK_MAX_TOKENS: int = 800
     KNOWLEDGE_CHUNK_OVERLAP_TOKENS: int = 50
     KNOWLEDGE_RESYNC_BATCH_CAP: int = 50
+    # A source is marked SYNCING and COMMITTED before a fetch+chunk+embed
+    # that can outlive the process (OOM kill, pod eviction, Celery hard
+    # time limit). Those deaths run no `except` block, so the row keeps a
+    # SYNCING it can never leave -- and list_stale_sources excludes SYNCING
+    # to prevent concurrent syncs, so nothing ever picks it up again.
+    # Must stay ABOVE celery task_time_limit (1860s = 31min) or the reaper
+    # would fail a sync that is merely slow, not dead.
+    KNOWLEDGE_SYNC_STUCK_MINUTES: int = 45
 
     # ── Analysis Mode (LLM-free operation) ──────────────────────────────────────
     # Controls which engine processes test results.

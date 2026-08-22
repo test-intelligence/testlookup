@@ -2570,12 +2570,27 @@ def sync_knowledge_source(self, source_id: str, trigger: str = "manual") -> dict
 
 @celery_app.task(queue="default", bind=True, max_retries=0)
 def resync_stale_knowledge_sources(self) -> dict:
-    """Periodic task: find stale/failed sources and enqueue individual sync tasks."""
+    """Periodic task: find stale/failed sources and enqueue individual sync tasks.
+
+    Reaps sources stranded in SYNCING first. ``run_sync`` commits SYNCING
+    before a fetch+chunk+embed that can outlive the process, and every terminal
+    write sits in an ``except`` block that a kill never runs -- so an OOM,
+    eviction or Celery hard time limit strands the row. ``list_stale_sources``
+    excludes SYNCING to avoid concurrent syncs, so nothing would ever pick it
+    up again. Reaping flips it to FAILED, which that same sweep already
+    selects, so recovery happens in this very run.
+    """
     async def _find_and_enqueue():
         from app.db.postgres import AsyncSessionLocal
-        from app.services.knowledge_sync_service import list_stale_sources
+        from app.services.knowledge_sync_service import (
+            list_stale_sources,
+            reap_stuck_syncing_sources,
+        )
 
         async with AsyncSessionLocal() as db:
+            reaped = await reap_stuck_syncing_sources(db)
+            if reaped:
+                await db.commit()
             stale = await list_stale_sources(db)
 
         from app.core.config import settings
@@ -2588,8 +2603,15 @@ def resync_stale_knowledge_sources(self) -> dict:
             )
             enqueued += 1
 
-        logger.info("Knowledge resync scheduled: enqueued=%d, total_stale=%d", enqueued, len(stale))
-        return {"enqueued": enqueued, "total_stale": len(stale)}
+        logger.info(
+            "Knowledge resync scheduled: enqueued=%d, total_stale=%d, reaped=%d",
+            enqueued, len(stale), len(reaped),
+        )
+        return {
+            "enqueued": enqueued,
+            "total_stale": len(stale),
+            "reaped_stuck_syncing": len(reaped),
+        }
 
     return cast(dict[str, Any], _run_async(_find_and_enqueue()))
 

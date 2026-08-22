@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-08-21 — A knowledge source killed mid-sync was never synced again
+
+- `run_sync` sets a source's `sync_status` to **`SYNCING`** and **commits it** before a fetch + chunk + embed that can run for minutes. Every terminal write — `SYNCED`, `FAILED` — lives in an `except` block, and **a process death runs no `except` block.** An OOM kill, a pod eviction, a worker redeploy, or Celery's hard `task_time_limit` (1860s) all leave the row on `SYNCING`.
+- Nothing rescued it. `list_stale_sources` — the only re-sync sweep — carries `sync_status != SYNCING` deliberately, to stop two syncs running at once. **So the one source that most needed re-syncing was the one source permanently excluded from re-syncing.** Its RAG chunks froze at the last good sync, retrieval kept citing content that had moved on, and the UI showed a sync still "in progress" indefinitely. Nothing appeared in the logs, because nothing failed.
+- Measured on a real Postgres: a source last touched 2 hours ago mid-sync — resync sweep picks up **0** sources, status `syncing`. After reaping: sweep picks up **1**, status `failed`, with an audit event `('reaper', 'failed')` recording why. A sync that started **5 minutes** ago is left alone.
+- The reaper flips stranded rows to `FAILED`, which `list_stale_sources` **already selects**, so recovery happens in the same beat run rather than needing a second mechanism. Each row gets a `sync_error` explaining itself and a `KnowledgeSyncEvent`, so the recovery is auditable instead of a silent status flip.
+- **The cutoff is the load-bearing part.** `KNOWLEDGE_SYNC_STUCK_MINUTES` (45) must stay *above* Celery's hard `task_time_limit` (31 min), or the reaper would mark a sync dead while the worker is still running it and re-enqueue the source alongside itself. That invariant spans two files and is invisible from either one, so a guard asserts it directly — lower the Celery limit and the test fails.
+- Same shape as the re-quarantine dead end fixed hours earlier, and the same shape `reap_stuck_agent_pipelines` already handles for agent runs: **a live state with no exit.** Found by turning that defect into a repeatable probe — scan every status enum for members that are written but that no query ever selects.
+- 4 guards, 4/4 mutations killed, each by its own guard in isolation.
+
+
 ## 2026-08-21 — A twice-quarantined test could never fail a build again
 
 - The nightly quarantine chain had a **dead end**. `run_recheck_cycle` ends a still-flaky test's window by writing `RE_QUARANTINED` with a fresh `quarantine_expires_at` *and* a fresh `recheck_at` — but `schedule_pending_rechecks`, the sweep that arms the next evaluation, selected `status == QUARANTINED` only. Nothing else in the chain selects `RE_QUARANTINED`, so once a row landed there it was never examined again.

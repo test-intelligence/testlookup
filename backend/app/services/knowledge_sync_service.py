@@ -425,3 +425,85 @@ async def list_stale_sources(
     results.extend(result.scalars().all())
 
     return results
+
+
+# -- Stuck-SYNCING reaper -----------------------------------------------------
+
+
+async def reap_stuck_syncing_sources(
+    db: AsyncSession,
+    stuck_minutes: Optional[int] = None,
+) -> list[KnowledgeSource]:
+    """Return SYNCING sources that can no longer be syncing, marked FAILED.
+
+    ``run_sync`` writes SYNCING and **commits it** before a fetch + chunk +
+    embed that can outlive the process. Every terminal write (SYNCED / FAILED)
+    lives in an ``except`` block, and a process death runs no ``except`` block:
+    an OOM kill, a pod eviction, a worker redeploy or Celery's hard
+    ``task_time_limit`` (1860s) all leave the row on SYNCING for ever.
+
+    Nothing rescued it. ``list_stale_sources`` -- the only re-sync sweep --
+    excludes ``sync_status != SYNCING`` on purpose, so that one source is never
+    re-fetched again: its RAG chunks stay frozen at the last good sync while
+    the UI shows a sync that is still "in progress" months later.
+
+    This is the same shape as the re-quarantine dead end, and the same shape
+    ``reap_stuck_agent_pipelines`` already handles for agent runs: a live state
+    with no exit. The cure is the same -- age it out.
+
+    The cutoff MUST stay above Celery's hard ``task_time_limit``; below it, a
+    sync that is merely slow would be failed while it is still running and
+    would then be re-enqueued alongside itself. ``updated_at`` carries
+    ``onupdate=func.now()``, so writing SYNCING stamps it and it is the honest
+    age of the attempt.
+
+    Marks each row FAILED with an explanatory ``sync_error`` (which
+    ``list_stale_sources`` already selects on, so the very next sweep re-queues
+    it) and records a ``KnowledgeSyncEvent`` so the recovery is auditable
+    rather than a silent status flip.
+
+    Stage-only -- the caller owns ``db.commit()``.
+    """
+    minutes = (
+        stuck_minutes
+        if stuck_minutes is not None
+        else getattr(settings, "KNOWLEDGE_SYNC_STUCK_MINUTES", 45)
+    )
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+
+    result = await db.execute(
+        select(KnowledgeSource).where(
+            KnowledgeSource.sync_status == KnowledgeSyncStatus.SYNCING.value,
+            KnowledgeSource.updated_at < cutoff,
+        )
+    )
+    stuck = list(result.scalars().all())
+
+    for source in stuck:
+        source.sync_status = KnowledgeSyncStatus.FAILED.value
+        source.sync_error = (
+            "sync did not finish within " + str(minutes) + " minutes and the "
+            "worker is no longer running it (process killed mid-sync); "
+            "released for re-sync"
+        )
+        db.add(
+            KnowledgeSyncEvent(
+                source_id=source.id,
+                project_id=source.project_id,
+                trigger="reaper",
+                status="failed",
+                content_changed=False,
+                error_message="stuck in SYNCING past the " + str(minutes)
+                + "-minute cutoff; no worker owns it",
+            )
+        )
+
+    if stuck:
+        logger.warning(
+            "reaped knowledge sources stranded in SYNCING",
+            count=len(stuck),
+            stuck_minutes=minutes,
+            source_ids=[str(s.id) for s in stuck],
+        )
+
+    return stuck
