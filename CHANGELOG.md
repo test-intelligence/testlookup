@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-22 — Baseline refreshed, split by code version
+
+- The committed baseline predated five AI-layer fixes. Regenerated — and split into **two** files, because one would blend code versions.
+- **The all-time corpus spans two versions on the same calendar day.** The fixes landed mid-day 2026-08-22, so runs before and after sit in the same buckets with nothing distinguishing them. The `temporal` block splits by *day* and cannot see a deploy boundary inside one. That is a real limitation of the harness, stated in `benchmarks/pipeline/README.md` rather than left for someone to trip over.
+
+  | File | Window | Purpose |
+  |---|---|---|
+  | `pipeline_baseline.json` | all-time (1,284 runs) | the corpus as it stands |
+  | `pipeline_baseline_post_fixes.json` | after the fixes | **the reference for future comparison** |
+
+- Deltas across the boundary, every one confirmed against deployed runs rather than asserted from tests:
+
+  | Metric | Before | After |
+  |---|---|---|
+  | Summary parse failures | 7.16% | **1.09%** (68 native-schema successes vs 0) |
+  | Narrative citations | 0% | **28%**, zero fabricated ids |
+  | Analyses carrying evidence | ~0% | **58%** |
+  | Reports sharing one evidence bundle | 100% | **0%** |
+
+- The all-time file now also reads `9.7%` as the degraded rate excluding the 2026-08-08 incident hour, down from 12.4% — the Redis-drain fix (#795) showing up in the aggregate.
+- Both files carry aggregate metrics only: **0 UUIDs, 0 error strings, 0 URLs**, verified before committing.
+
 ## 2026-08-22 — The summary asks the provider for its schema instead of parsing prose
 
 - The review called structured output a system-wide gap. **Measured, it is one stage.** Over 1,557 LLM calls on the homelab:

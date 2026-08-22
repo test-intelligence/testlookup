@@ -132,6 +132,36 @@ When run without `--mongo-uri`, the grounding metrics join that list with
 `blocked_on: collector input` — "we did not look" is reported as its own
 answer, distinct from "there was nothing to find".
 
+
+## The committed baselines
+
+Two files, because a single one would blend code versions.
+
+| File | Window | What it is for |
+|---|---|---|
+| `results/pipeline_baseline.json` | all-time | the corpus as it stands, dominated by historical runs |
+| `results/pipeline_baseline_post_fixes.json` | after the 2026-08-22 fixes | **the reference point for future comparison** |
+
+**Compare against the post-fix file, not the all-time one.** The all-time corpus
+spans two code versions on the same calendar day: the AI-layer fixes of
+2026-08-22 landed mid-day, so runs before and after them sit in the same buckets
+with nothing distinguishing them. The `temporal` block splits by *day*, which
+cannot see a deploy boundary inside one.
+
+This is a real limitation of the harness, not of the data. Measured deltas
+across that boundary (all confirmed against deployed runs):
+
+| Metric | Before | After |
+|---|---|---|
+| Summary parse failures | 7.16% | **1.09%** |
+| Narrative citations | 0% | **28%**, zero fabricated ids |
+| Analyses carrying evidence | ~0% | **58%** |
+| Reports sharing one evidence bundle | 100% | **0%** |
+
+A future change should regenerate the post-fix file and compare to *it*. Reading
+the all-time file as "current state" is the same error as reading a degraded
+rate that one bad hour produced.
+
 ## Related
 
 - `benchmarks/METHODOLOGY.md` — classification and throughput benchmarks
