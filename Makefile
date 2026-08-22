@@ -8,7 +8,12 @@
 # /usr/bin/bash; on Linux/macOS it's at /bin/bash — both resolve via PATH.
 SHELL := bash
 
-DOCKER_COMPOSE = docker compose
+# Overridable so a machine without the Docker CLI is not locked out of every
+# target. Podman hosts export DOCKER_COMPOSE="podman compose" once instead of
+# passing it per invocation; `?=` means the environment wins, a plain `=` would
+# not. Failure mode this fixes: `make <target>` dies with
+# "process_begin: CreateProcess(NULL, docker compose ...) failed" / e=2.
+DOCKER_COMPOSE ?= docker compose
 BACKEND_CONTAINER = testlookup_backend
 OLLAMA_CONTAINER = ollama
 K8S_NAMESPACE ?= testlookup

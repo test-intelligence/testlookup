@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-22 — Every make target assumed a Docker CLI that podman hosts do not have
+
+- `DOCKER_COMPOSE` was a plain `=` assignment, so the environment could not override it. On a host with podman but no Docker CLI — which is this project's own maintainer setup since the 2026-08-01 podman migration — **every** container-backed target died before running anything:
+
+  ```
+  process_begin: CreateProcess(NULL, docker compose exec backend ..., ...) failed.
+  make (e=2): The system cannot find the file specified.
+  ```
+
+- Changed to `?=`, so a podman host exports `DOCKER_COMPOSE="podman compose"` once instead of appending it to every invocation. Command-line overrides already worked; the environment did not, which is the form anyone actually wants for a machine-wide fact.
+- Surfaced by `make benchmark-pipeline` (#790) — but the defect was repo-wide and pre-existing: `make dev`, `make migrate`, `make seed-data` and every other compose target failed identically on the same host.
+
 ## 2026-08-22 — A summary claim can finally cite the evidence behind it
 
 - `summary_assembler.extract_citations` attached an evidence item only when the first **40 characters of its excerpt appeared verbatim** in the generated prose, and it ran on layer 3 alone. A model that paraphrases — which is the entire point of a summary — produced an empty citation list. **The layers a reader acts on (incident view, action plan) could not carry a citation at all**, and the evidence pack only did when the model happened to copy text. The report rendered an "evidence pack" whose citations were almost always empty while reading as though its claims were sourced.
