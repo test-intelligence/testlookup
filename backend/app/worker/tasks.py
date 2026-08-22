@@ -73,6 +73,24 @@ def _run_async(coro):
                 "http_client_close_failed_in_task_teardown error=%r", _exc
             )
         try:
+            # Redis, for the same reason as the engine and the httpx client
+            # above -- and it was the one left out. ``reset_loop_bound_clients``
+            # only NULLS ``_pool``/``_client`` at the START of the next task,
+            # which abandons a redis.asyncio pool still holding sockets bound to
+            # the loop about to close here. ``close_redis()`` existed all along
+            # and was called from the FastAPI lifespan and nowhere in the worker
+            # path.
+            #
+            # The leak is per-task, so it only bites under volume: on the
+            # homelab, a burst of ~750 pipelines in one hour failed ~96% of
+            # summary stages with "Event loop is closed", against ~1.6% at
+            # normal rates. Draining on the owning loop is the same fix the
+            # engine and httpx client already received.
+            from app.db.redis_client import close_redis
+            loop.run_until_complete(close_redis())
+        except Exception as _exc:
+            logger.warning("redis_close_failed_in_task_teardown error=%r", _exc)
+        try:
             # Close all async generators and pending tasks cleanly
             loop.run_until_complete(loop.shutdown_asyncgens())
         except Exception:

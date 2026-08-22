@@ -171,6 +171,11 @@ class SummaryAgent(BaseAgent):
             {"status": "running", "message": "Generating structured test run summary…"},
         )
 
+        # Which operation is in flight. The handler below wraps the whole body,
+        # so without this a failure anywhere reports the same opaque sentence --
+        # which is how 765 "Event loop is closed" rows accumulated on the
+        # homelab with no way to tell WHICH await raised.
+        current_op = "read_state"
         try:
             run_data = state.get("test_run_data") or {}
             anomalies = state.get("anomalies") or []
@@ -180,11 +185,13 @@ class SummaryAgent(BaseAgent):
             stage_quality = state.get("stage_quality") or "normal"
 
             # Fetch similar historical failures BEFORE LLM call to enrich context
+            current_op = "fetch_similar_failures"
             similar_failures = await self._fetch_similar_failures(
                 run_data=run_data,
                 analyses=analyses,
                 state=state,
             )
+            current_op = "build_provenance"
             summary_provenance = self._build_summary_provenance(
                 run_data=run_data,
                 anomaly_summary=anomaly_summary,
@@ -196,6 +203,7 @@ class SummaryAgent(BaseAgent):
             )
 
             fallback_reason: str | None = None
+            current_op = "generate_structured_report"
             try:
                 structured = await self._generate_structured_report(
                     run_data=run_data,
@@ -226,6 +234,7 @@ class SummaryAgent(BaseAgent):
             structured["_provenance"] = summary_provenance
 
             # Persist all 4 layers to MongoDB
+            current_op = "store_summary"
             await self._store_summary(test_run_id, structured, state)
 
             # Legacy fields kept for backward compatibility
@@ -296,7 +305,14 @@ class SummaryAgent(BaseAgent):
             )
 
         except Exception as exc:
-            error_msg = f"Summary agent error: {exc}"
+            # Name the operation AND the exception type. "Summary agent error:
+            # Event loop is closed" told an operator nothing actionable; the
+            # same failure now reads "... during store_summary
+            # [RuntimeError]: Event loop is closed".
+            error_msg = (
+                f"Summary agent error during {current_op} "
+                f"[{type(exc).__name__}]: {exc}"
+            )
             logger.error(error_msg, exc_info=True)
             await self.mark_stage_done(pipeline_run_id, error=error_msg)
             return validate_agent_contract(

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-22 — Every Celery task leaked a Redis pool bound to a dead event loop
+
+- `_run_async` builds a fresh event loop per Celery task and, in teardown, drains the SQLAlchemy engine **and** the shared httpx client *on that loop* — both hold sockets bound to it. The httpx comment spells out the reasoning: *"each task abandoned a client whose pool still held sockets bound to the loop about to close."*
+- **Redis was left out.** `reset_loop_bound_clients()` only NULLS `_pool`/`_client`, and it runs at the start of the *next* task, by which point the owning loop is gone. `close_redis()` existed all along and was called from the FastAPI lifespan and **nowhere in the worker path**.
+- The docstring stated the assumption that let it through — *"clients here are the ones that only need dropping, not draining"*. True for Motor, whose `close()` is synchronous and is called; false for `redis.asyncio`, whose pool holds live sockets.
+- **The leak is one pool per task, so it is invisible at low volume and severe under load.** Measured on the homelab: a burst of ~750 pipelines in a single hour failed **~96%** of summary stages with `Event loop is closed`, against **~1.6%** at normal rates.
+- Fix mirrors the two drains already present: `close_redis()` on the owning loop, before `shutdown_asyncgens()`. A failure inside the drain is logged and never escapes teardown.
+- **ChromaDB checked and deliberately not changed** — it uses a synchronous `HttpClient` wrapped in `asyncio.to_thread` with no module-level cache, so nothing is loop-bound.
+- Separately, `SummaryAgent.run`'s single handler wrapped the whole method, so a failure anywhere produced the same opaque sentence — which is how 765 identical rows accumulated with no way to tell which `await` raised. Errors now name the operation and the exception type: `Summary agent error during store_summary [RuntimeError]: Event loop is closed`.
+- 5 regression guards; 3 fail without the drain fix, 1 without the error-naming fix.
+- **Not yet proven to be the sole cause.** The blanket handler erased the origin, so confirmation requires watching the failure rate under load after this ships. `benchmarks/pipeline/collect.py` reports it.
+
 ## 2026-08-22 — Every make target assumed a Docker CLI that podman hosts do not have
 
 - `DOCKER_COMPOSE` was a plain `=` assignment, so the environment could not override it. On a host with podman but no Docker CLI — which is this project's own maintainer setup since the 2026-08-01 podman migration — **every** container-backed target died before running anything:

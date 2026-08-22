@@ -23,8 +23,19 @@ def reset_loop_bound_clients() -> None:
 
     Postgres is deliberately absent: its engine is disposed *on the loop that
     owns it* during task teardown (``dispose_engine_for_loop``), which is the
-    correct shutdown for a pool holding live asyncpg connections. Clients here
-    are the ones that only need dropping, not draining.
+    correct shutdown for a pool holding live asyncpg connections.
+
+    This function is a **safety net, not the drain**. It is synchronous and runs
+    before a task's loop exists, so it cannot await anything: nulling ``_pool``
+    and ``_client`` here abandons a redis.asyncio pool that still holds sockets
+    bound to the previous loop. The real drain is ``close_redis()`` in
+    ``worker.tasks._run_async``'s teardown, which runs on the loop that owns
+    those sockets.
+
+    The earlier wording here -- "clients that only need dropping, not draining"
+    -- was the assumption that let the leak through. It is per-task, so it only
+    shows under volume: ~750 pipelines in one hour failed ~96% of summary stages
+    with "Event loop is closed", against ~1.6% at normal rates.
     """
     import app.db.redis_client as _redis_mod
 
