@@ -7,6 +7,24 @@
 - `RunIntelligencePage` now completes the step the first time intelligence loads for a real project. It reads the active project from `useProjectStore` (the page already redirects away on a project change, so the active project is always this run's) and calls `completeStep(projectId, 'view_intelligence')` from an effect keyed on the loaded flag + project — once per open, not on every persona switch or refresh.
 - **Guarded on both ends.** The call is skipped when the active project is the synthetic `ALL_PROJECTS_ID` ("All Projects" has no real id to scope to) and while the page is still loading or errored. The completion is idempotent and fire-and-forget server-side, and the UI attaches `.catch()` so an onboarding-table gap in a partially-migrated env never surfaces an error over the intelligence view.
 - Regression test: opening the page completes `view_intelligence` for the active project exactly once, and does **not** in All-Projects mode or while loading/errored.
+## 2026-08-21 — One test's failed analysis took the whole analysis stage down with it
+
+- `AnalysisAgent.run` fans its per-test analyses out with `asyncio.gather(..., return_exceptions=True)`, so a task that raises comes back in `results_list` as the exception object rather than a dict. The aggregation loop handled that correctly for two lines — it recorded the error and synthesised a placeholder analysis — and then read the per-test counters off `result`, which on that branch **is** the `BaseException`.
+- The guard above those reads tested `analyses.get(tc_id)` — the dict the exception branch had just written, so always a dict by then — while the calls beneath it read `result`. **`result.get("timed_out")` raised `AttributeError`, which escaped `run()` entirely: one test whose task failed discarded every sibling analysis that had already succeeded and failed the whole `root_cause_analysis` stage.**
+- The trigger is ordinary, not exotic. `_analyse_one` awaits `log_decision` (a Mongo write) and `store_artifact` outside its own `try/except`, so a Mongo or object-store blip mid-run is enough to raise out of the task.
+- Measured by driving the real agent over three tests with the middle one raising:
+
+  | | stage outcome | analyses returned | errors recorded |
+  |---|---|---|---|
+  | before | `AttributeError` out of `run()` | 0 | 0 |
+  | after | completed | 3 | 1 |
+
+- The counters now derive from the **stored** analysis instead of the raised object — also the honest source, since that dict is what gets persisted and what every downstream reader sees. An errored test counts as low-confidence (its placeholder carries `confidence_score: 0`) but never as a timeout or a retry, and the `errors` list (tasks that raised) stays distinct from `error_ratio` (raised + timed out), which is what decides `stage_quality`.
+- **Why it survived:** `test_analysis_agent.py::test_run_handles_all_exceptions` makes `run_triage_agent` raise — but `_analyse_one` catches that internally and returns an error *dict*, so the exception never reached the branch that crashed. The test named for the behaviour never exercised it.
+- 2 regression guards in `tests/regression/test_analysis_stage_survives_one_failed_test.py`; both fail with the exact `AttributeError` when the fix is reverted. Found by an architecture review of the AI layer (finding F-1), not by the suite.
+- `scripts/quality-gate-baselines/backend__analysis-router.txt` moves `analysis_agent.py:631` → `:642`: the baseline is keyed by `path:lineno`, so inserting lines above a tolerated call re-reports it as new. Same tolerated call, no behaviour change.
+
+
 ## 2026-08-21 — A contradiction the report called "resolved" was resolved the wrong way
 
 - `report_refinement_agent` reconciles the three routes that can independently flag a failed test. When per-test analysis says **flaky** but the anomaly/regression route says **real regression**, it records the contradiction with `resolution = PREFER_ANOMALY` — and then built the reconciled record from `_primary_route()`, a **fixed precedence** (`analysis > anomaly > cluster`) that never looked at the resolution.

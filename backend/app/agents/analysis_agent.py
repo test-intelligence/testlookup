@@ -274,15 +274,26 @@ class AnalysisAgent(BaseAgent):
             # confidence with no way to say WHICH test they belonged to, which
             # is why generated reports counted failures without ever naming one.
             meta = test_meta.get(tc_id) or {}
-            if isinstance(analyses.get(tc_id), dict):
-                analyses[tc_id].setdefault("test_name", meta.get("test_name"))
-                analyses[tc_id].setdefault("suite_name", meta.get("suite_name"))
-                if result.get("timed_out"):
+            # Read the per-test counters off the STORED analysis, never off
+            # ``result``. On the exception branch above ``result`` IS the
+            # BaseException, while ``analyses[tc_id]`` is the error dict we just
+            # synthesised — so the old ``result.get("timed_out")`` raised
+            # AttributeError and killed the whole stage because ONE test's task
+            # failed. The guard read ``analyses.get(tc_id)`` (always a dict by
+            # then) and so never protected the calls beneath it.
+            #
+            # The stored dict is also the honest source: it is what gets
+            # persisted and what every downstream reader sees.
+            analysis = analyses.get(tc_id)
+            if isinstance(analysis, dict):
+                analysis.setdefault("test_name", meta.get("test_name"))
+                analysis.setdefault("suite_name", meta.get("suite_name"))
+                if analysis.get("timed_out"):
                     timed_out += 1
                     error_count += 1
-                if result.get("retry_count", 0) > 0:
+                if analysis.get("retry_count", 0) > 0:
                     retried += 1
-                if result.get("confidence_score", 0) < settings.AI_CONFIDENCE_THRESHOLD:
+                if analysis.get("confidence_score", 0) < settings.AI_CONFIDENCE_THRESHOLD:
                     low_confidence += 1
 
         # P2-4: Explicit error propagation — determine stage quality
