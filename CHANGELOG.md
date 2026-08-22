@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-21 — The decision report says how much of the failure set it actually analysed
+
+- `gap_detection_agent` runs on every deep workflow. It sorts each failed test into five `GapReason` buckets and computes `coverage_ratio` and `integrity_ok`. All of it was contract-validated, threaded through the pipeline into `quality_review.gap_report` — and **read by nobody.** Not the markdown, not `report_status`, not `requires_human_review`, not the UI, not MCP, not the CLI. An entire pipeline stage produced nothing observable.
+- The visible consequence was a badge that said **the opposite of the truth.** "Verified with analysis gaps" fired on `status === 'degraded'`, which means *a specialist stage was missing, or the persisted payload was truncated* — nothing to do with analysis coverage. So a report where every failure was analysed cleanly but one specialist timed out was labelled as having analysis gaps, while **a report whose release recommendation rested on 1 analysed failure out of 50 rendered as a clean green "Verified".** The existing panel test asserted the wrong label, which is how it survived.
+- The badge now reads `Verified — 49 of 50 failures not analysed`, and the human-review block names both numbers so the reader can judge the recommendation. `status === 'degraded'` gets its own honest label, **Verified with missing specialist evidence** — it is a real condition, just a different one.
+- The decision markdown gained an `**Analysis coverage:**` line, so the text report and `/chat` carry the same fact as the panel.
+- **Absent is not the same as clean.** A report generated before `gap_report` was published carries none, and rendering that as `0/0` full coverage would be the same lie in the other direction — it reports `not recorded`, and the mutation that removes that fallback is killed.
+- **A failed integrity check never prints as fact.** When the agent says its own counts do not reconcile (`analyzed + skipped + errored != failed`), coverage is reported as UNKNOWN rather than laundering an arithmetic failure into a coverage claim.
+- Logic lives in `components/ai/analysisCoverage.ts` so it is testable without a DOM: 12 unit tests, 2 render tests, 7 backend tests, **6/6 mutations killed** — one of them proven for real when an aborted mutation harness left the `_coverage_line` call deleted and the guard caught it.
+- **Left open, deliberately — an owner call:** whether low coverage should *degrade* the report or block a release verdict. This change makes the number visible and checkable; it does not change what gates a release.
+
+
 ## 2026-08-21 — A knowledge source killed mid-sync was never synced again
 
 - `run_sync` sets a source's `sync_status` to **`SYNCING`** and **commits it** before a fetch + chunk + embed that can run for minutes. Every terminal write — `SYNCED`, `FAILED` — lives in an `except` block, and **a process death runs no `except` block.** An OOM kill, a pod eviction, a worker redeploy, or Celery's hard `task_time_limit` (1860s) all leave the row on `SYNCING`.

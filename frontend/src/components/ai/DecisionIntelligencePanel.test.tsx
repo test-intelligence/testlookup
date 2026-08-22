@@ -155,7 +155,7 @@ describe('DecisionIntelligencePanel', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('labels verified degraded reports and exposes human-review gaps', () => {
+  it('does not call missing specialists an analysis gap', () => {
     renderPanel(report({
       status: 'degraded',
       quality_review: {
@@ -171,10 +171,44 @@ describe('DecisionIntelligencePanel', () => {
         }],
       },
     }), passed, published)
-    expect(screen.getByText('Verified with analysis gaps')).toBeTruthy()
+    // status==='degraded' means a specialist stage was missing or the payload
+    // was truncated. It is NOT a statement about analysis coverage, and this
+    // report carries no gap_report at all.
+    expect(screen.getByText('Verified with missing specialist evidence')).toBeTruthy()
+    expect(screen.queryByText(/not analysed/)).toBeNull()
     expect(screen.getByText(/Missing specialists: test_health/)).toBeTruthy()
     expect(screen.getByText(/1 evidence contradiction/)).toBeTruthy()
     expect(screen.getByText(/Data quality: historical_baseline_unavailable/)).toBeTruthy()
+  })
+
+  it('says how many failures were never analysed, on an otherwise clean report', () => {
+    // The defect: status is 'complete' (every specialist ran, nothing was
+    // truncated) so this rendered a green "Verified" -- while the release
+    // recommendation rested on 1 analysed failure out of 50. The pipeline
+    // computed exactly that and threw it away.
+    renderPanel(report({
+      status: 'complete',
+      quality_review: {
+        missing_or_failed_specialists: [],
+        contradictions: [],
+        gap_report: {
+          failed_count: 50,
+          analyzed_count: 1,
+          skipped_count: 49,
+          errored_count: 0,
+          coverage_ratio: 0.02,
+          integrity_ok: true,
+          inconclusive_count: 0,
+          no_evidence_count: 0,
+          gaps: [],
+        },
+        refined_report: null,
+        requires_human_review: false,
+        data_quality_flags: [],
+      },
+    }), passed, published)
+    expect(screen.getByText('Verified — 49 of 50 failures not analysed')).toBeTruthy()
+    expect(screen.getByText(/never analysed/)).toBeTruthy()
   })
 
   it('shows the retained verified report as stale after a rejected attempt', () => {

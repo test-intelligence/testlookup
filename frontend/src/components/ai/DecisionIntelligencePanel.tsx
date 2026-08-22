@@ -11,6 +11,7 @@ import type {
   ProposedAction,
 } from '@/services/runIntelligenceService'
 import { deriveDecisionTrustState } from './decisionTrustState'
+import { readAnalysisCoverage, describeAnalysisCoverage } from './analysisCoverage'
 import DecisionReportFeedbackControls from './DecisionReportFeedbackControls'
 
 interface Props {
@@ -211,6 +212,9 @@ export default function DecisionIntelligencePanel({
   if (!report && !latestAttempt && !latestVerification) return null
   const { state, displayReport } = deriveDecisionTrustState(report, latestVerification, latestAttempt)
   const verified = state === 'verified' || state === 'verified_gaps'
+    || state === 'verified_degraded'
+  const coverage = readAnalysisCoverage(displayReport?.quality_review?.gap_report)
+  const coverageNote = describeAnalysisCoverage(coverage)
   const stale = state === 'rejected_stale'
   const release = report?.release_decision
   const risk = number(release?.risk_score) ?? number(release?.composite_risk)
@@ -258,7 +262,11 @@ export default function DecisionIntelligencePanel({
             : state === 'pending' ? <Clock3 aria-hidden className="h-4 w-4 text-[var(--color-text-muted)]" />
             : <ShieldX aria-hidden className="h-4 w-4 text-[var(--status-failed)]" />}
           {state === 'verified' ? 'Verified'
-            : state === 'verified_gaps' ? 'Verified with analysis gaps'
+            : state === 'verified_gaps'
+              ? (coverage && coverage.integrityOk
+                  ? `Verified — ${coverage.uncoveredCount} of ${coverage.failedCount} failures not analysed`
+                  : 'Verified — coverage audit did not reconcile')
+            : state === 'verified_degraded' ? 'Verified with missing specialist evidence'
             : state === 'rejected_stale' ? 'Latest attempt rejected'
             : state === 'pending' ? 'Verification pending'
             : state === 'inconsistent' ? 'Verification unavailable'
@@ -329,11 +337,15 @@ export default function DecisionIntelligencePanel({
           </div>
 
           {(displayReport.quality_review.requires_human_review
+            || coverage?.hasAnalysisGaps
             || displayReport.quality_review.missing_or_failed_specialists.length > 0
             || displayReport.quality_review.contradictions.length > 0
             || (displayReport.quality_review.data_quality_flags?.length ?? 0) > 0) && (
             <div className="mt-3 rounded-md border border-[var(--alert-border-soft)] bg-[var(--alert-bg-soft)] p-3 text-[12px]">
               <strong>Human review required.</strong>{' '}
+              {coverage?.hasAnalysisGaps && coverageNote && (
+                <span>{coverageNote} </span>
+              )}
               {displayReport.quality_review.missing_or_failed_specialists.length > 0 && (
                 <span>Missing specialists: {displayReport.quality_review.missing_or_failed_specialists.join(', ')}. </span>
               )}

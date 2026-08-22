@@ -353,6 +353,44 @@ def build_decision_intelligence(state: dict[str, Any]) -> dict[str, Any]:
     return decision
 
 
+def _coverage_line(quality: dict) -> str:
+    """How much of the failure set this recommendation actually rests on.
+
+    ``gap_detection_agent`` computes this for every deep workflow and it was
+    threaded into ``quality_review.gap_report`` and then read by nothing --
+    not this markdown, not ``report_status``, not ``requires_human_review``,
+    not the UI. A release decision resting on 1 analysed failure out of 50
+    rendered identically to one resting on all 50.
+
+    Absent gap data reports "not recorded" rather than a fabricated 0/0:
+    reports generated before the field was published carry none, and that is
+    not the same as full coverage.
+    """
+    gap = quality.get("gap_report")
+    if not isinstance(gap, dict) or not gap:
+        return "**Analysis coverage:** not recorded"
+    try:
+        failed = int(gap.get("failed_count") or 0)
+        analyzed = int(gap.get("analyzed_count") or 0)
+        skipped = int(gap.get("skipped_count") or 0)
+        errored = int(gap.get("errored_count") or 0)
+    except (TypeError, ValueError):
+        return "**Analysis coverage:** not recorded"
+    if gap.get("integrity_ok") is False:
+        return (
+            "**Analysis coverage:** DID NOT RECONCILE -- "
+            f"{analyzed} analysed + {skipped + errored} unanalysed does not "
+            f"account for {failed} failure(s); treat coverage as unknown"
+        )
+    uncovered = skipped + errored
+    if uncovered:
+        return (
+            f"**Analysis coverage:** {analyzed}/{failed} failures analysed; "
+            f"{uncovered} never analysed"
+        )
+    return f"**Analysis coverage:** {analyzed}/{failed} failures analysed"
+
+
 def render_decision_markdown(decision: dict[str, Any]) -> str:
     metrics = _as_dict(decision.get("metrics"))
     release = _as_dict(decision.get("release_decision"))
@@ -376,6 +414,7 @@ def render_decision_markdown(decision: dict[str, Any]) -> str:
             f"{metrics.get('test_health_finding_count', 0)} test-health findings."
         ),
         "**Missing or failed specialists:** " + (", ".join(map(str, missing)) if missing else "None"),
+        _coverage_line(quality),
         f"**Independent verification:** {verification_status}",
         "**Verification repairs:** " + (", ".join(map(str, repairs)) if repairs else "None"),
         "**Unresolved verification failures:** "

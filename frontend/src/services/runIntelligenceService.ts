@@ -207,6 +207,8 @@ export interface DecisionIntelligence {
   quality_review: {
     missing_or_failed_specialists: string[]
     contradictions: Array<Record<string, unknown>>
+    /** Coverage audit from gap_detection_agent. Null on reports
+     *  generated before it was published -- absent is NOT "no gaps". */
     gap_report: Record<string, unknown> | null
     refined_report: Record<string, unknown> | null
     requires_human_review: boolean

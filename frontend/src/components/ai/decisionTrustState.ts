@@ -3,10 +3,17 @@ import type {
   DecisionReportAttempt,
   DecisionReportVerification,
 } from '@/services/runIntelligenceService'
+import { readAnalysisCoverage } from './analysisCoverage'
 
 export type DecisionTrustState =
   | 'verified'
+  /** Failures the pipeline never analysed. Comes from gap_report, the only
+   *  thing that actually measures analysis coverage. */
   | 'verified_gaps'
+  /** A specialist stage was missing/failed, or the persisted payload was
+   *  truncated. Distinct from 'verified_gaps': this one used to be LABELLED
+   *  as analysis gaps, which is a different claim about a different thing. */
+  | 'verified_degraded'
   | 'rejected_stale'
   | 'rejected_empty'
   | 'pending'
@@ -32,11 +39,16 @@ export function deriveDecisionTrustState(
     && latestVerification?.status === 'failed'
 
   if (report && reportVerified && publishedAgrees) {
-    return {
-      state: report.status === 'degraded' ? 'verified_gaps' : 'verified',
-      displayReport: report,
-      allowsLocalDecision: false,
-    }
+    // Analysis gaps outrank specialist degradation: a release decision resting
+    // on failures nobody analysed is the more serious claim, and it is the one
+    // the reader could not previously see at all.
+    const coverage = readAnalysisCoverage(report.quality_review?.gap_report)
+    const state: DecisionTrustState = coverage?.hasAnalysisGaps
+      ? 'verified_gaps'
+      : report.status === 'degraded'
+        ? 'verified_degraded'
+        : 'verified'
+    return { state, displayReport: report, allowsLocalDecision: false }
   }
   if (report && reportVerified && rejectionAgrees) {
     return { state: 'rejected_stale', displayReport: report, allowsLocalDecision: false }
