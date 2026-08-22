@@ -1,5 +1,56 @@
 import { ReactNode } from 'react'
 
+/**
+ * Base localStorage key for the first-run guide's dismissed state. Dismissal is
+ * remembered PER dashboard scope (a project id, or the All-Projects sentinel) —
+ * the real key is {@link firstRunDismissKey} — not once for the whole browser.
+ *
+ * The guide is a per-scope empty-state helper: `OverviewPage` shows it only when
+ * THIS scope has no runs at all. A single global flag coupled that per-scope
+ * show to a browser-wide hide, so dismissing the guide on the first empty
+ * project silently suppressed the same first-run help on every genuinely new,
+ * still-empty project created later — exactly the self-hoster who most needs it.
+ * Scoping the dismissal to the project keeps the two consistent. (These helpers
+ * live in this pure module, not in `FirstRunGuide.tsx`, so the component file
+ * exports only its component — keeping React Fast Refresh happy.)
+ */
+export const FIRST_RUN_DISMISS_KEY = 'tl_first_run_guide_dismissed'
+
+/**
+ * The per-scope localStorage key for a dashboard scope — a project id, or the
+ * All-Projects sentinel. Namespacing under {@link FIRST_RUN_DISMISS_KEY} keeps
+ * every scope's dismissal independent.
+ */
+export function firstRunDismissKey(scopeId: string): string {
+  return `${FIRST_RUN_DISMISS_KEY}:${scopeId}`
+}
+
+/**
+ * Whether the first-run guide has been dismissed for this dashboard scope.
+ * Falsy scope (no active project resolved yet) is treated as not-dismissed —
+ * the guide only renders once a real scope is in hand, so this never suppresses
+ * it. localStorage access is guarded: a privacy-mode / blocked-storage browser
+ * reports not-dismissed rather than throwing.
+ */
+export function isFirstRunGuideDismissed(scopeId: string | null | undefined): boolean {
+  if (!scopeId) return false
+  try {
+    return localStorage.getItem(firstRunDismissKey(scopeId)) === '1'
+  } catch {
+    return false
+  }
+}
+
+/** Persist dismissal of the first-run guide for this dashboard scope. */
+export function dismissFirstRunGuide(scopeId: string | null | undefined): void {
+  if (!scopeId) return
+  try {
+    localStorage.setItem(firstRunDismissKey(scopeId), '1')
+  } catch {
+    /* ignore — a blocked-storage browser just re-shows the guide next load */
+  }
+}
+
 /** One numbered onboarding step, optionally with a copy-paste command. */
 export interface Step {
   n: number

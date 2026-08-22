@@ -13,7 +13,8 @@ import { useValueMetricsKpi } from '@/hooks/useValueMetrics'
 import { useRuns } from '@/hooks/useRuns'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import FirstRunGuide, { FIRST_RUN_DISMISS_KEY } from '@/components/onboarding/FirstRunGuide'
+import FirstRunGuide from '@/components/onboarding/FirstRunGuide'
+import { isFirstRunGuideDismissed, dismissFirstRunGuide } from '@/components/onboarding/firstRunSteps'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { describeEmptyWindow, formatAgeDays } from '@/utils/emptyWindow'
 import { formatDuration, dayTimeAgo } from '@/utils/formatters'
@@ -933,9 +934,14 @@ export default function OverviewPage() {
   const project = useProjectStore((s) => s.activeProject)
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
-  const [guideDismissed, setGuideDismissed] = useState(() => {
-    try { return localStorage.getItem(FIRST_RUN_DISMISS_KEY) === '1' } catch { return false }
-  })
+  // Dismissal is scoped to the active dashboard (a project id, or the
+  // All-Projects sentinel) so dismissing the guide on one empty project does
+  // not suppress it on a genuinely new, still-empty one. Read fresh each render
+  // — keyed on activeProjectId so an in-session project switch re-evaluates (the
+  // route does not remount on switch); the bump forces a re-render (and re-read)
+  // the moment the user dismisses, without a reload.
+  const [, bumpGuideDismissed] = useState(0)
+  const guideDismissed = isFirstRunGuideDismissed(activeProjectId)
   const analyticsView = useAnalyticsView('dashboard')
 
   const suiteFilter = selectedSuite || null
@@ -1063,8 +1069,8 @@ export default function OverviewPage() {
           projectName={project?.name}
           projectId={project?.id}
           onDismiss={() => {
-            try { localStorage.setItem(FIRST_RUN_DISMISS_KEY, '1') } catch { /* ignore */ }
-            setGuideDismissed(true)
+            dismissFirstRunGuide(activeProjectId)
+            bumpGuideDismissed((t) => t + 1)
           }}
         />
       )}

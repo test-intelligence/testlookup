@@ -1,9 +1,18 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import FirstRunGuide, { FIRST_RUN_DISMISS_KEY } from './FirstRunGuide'
-import { uploadCommand, ingestApiCommand, DEFAULT_INGEST_URL, CLI_INSTALL_COMMAND } from './firstRunSteps'
+import FirstRunGuide from './FirstRunGuide'
+import {
+  uploadCommand,
+  ingestApiCommand,
+  DEFAULT_INGEST_URL,
+  CLI_INSTALL_COMMAND,
+  FIRST_RUN_DISMISS_KEY,
+  firstRunDismissKey,
+  isFirstRunGuideDismissed,
+  dismissFirstRunGuide,
+} from './firstRunSteps'
 import { backendUrl } from '@/services/api'
 
 const copyMock = vi.fn(async (_value: string) => true)
@@ -263,5 +272,60 @@ describe('FirstRunGuide', () => {
 
   it('exports a stable dismiss key', () => {
     expect(FIRST_RUN_DISMISS_KEY).toBe('tl_first_run_guide_dismissed')
+  })
+
+  describe('per-scope dismissal', () => {
+    beforeEach(() => {
+      // Purge only this feature's keys so a prior test's dismissal cannot leak;
+      // leave the rest of localStorage (e.g. the time-window store) untouched.
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i)
+        if (k && k.startsWith(FIRST_RUN_DISMISS_KEY)) localStorage.removeItem(k)
+      }
+    })
+
+    it('namespaces the key under the base key, per scope', () => {
+      expect(firstRunDismissKey('proj-1')).toBe('tl_first_run_guide_dismissed:proj-1')
+      expect(firstRunDismissKey('__ALL__')).toBe('tl_first_run_guide_dismissed:__ALL__')
+    })
+
+    it('remembers dismissal for the scope it was set on', () => {
+      expect(isFirstRunGuideDismissed('proj-1')).toBe(false)
+      dismissFirstRunGuide('proj-1')
+      expect(isFirstRunGuideDismissed('proj-1')).toBe(true)
+    })
+
+    it('does NOT suppress the guide on a different, still-empty scope', () => {
+      // The whole point of scoping: onboarding project A must not hide the
+      // first-run help for a genuinely new project B created later.
+      dismissFirstRunGuide('proj-A')
+      expect(isFirstRunGuideDismissed('proj-A')).toBe(true)
+      expect(isFirstRunGuideDismissed('proj-B')).toBe(false)
+      expect(isFirstRunGuideDismissed('__ALL__')).toBe(false)
+    })
+
+    it('ignores the legacy browser-wide flag — it no longer suppresses any scope', () => {
+      // Pre-scoping builds wrote the bare key with no scope suffix. That value
+      // must not be read as "dismissed everywhere", or the bug survives the fix.
+      localStorage.setItem(FIRST_RUN_DISMISS_KEY, '1')
+      expect(isFirstRunGuideDismissed('proj-1')).toBe(false)
+      expect(isFirstRunGuideDismissed('__ALL__')).toBe(false)
+    })
+
+    it('treats a falsy scope as not-dismissed without touching storage', () => {
+      dismissFirstRunGuide(null)
+      dismissFirstRunGuide(undefined)
+      dismissFirstRunGuide('')
+      expect(isFirstRunGuideDismissed(null)).toBe(false)
+      expect(isFirstRunGuideDismissed(undefined)).toBe(false)
+      expect(isFirstRunGuideDismissed('')).toBe(false)
+      // Nothing was persisted under the base key for a falsy scope.
+      let wrote = false
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (k && k.startsWith(FIRST_RUN_DISMISS_KEY)) wrote = true
+      }
+      expect(wrote).toBe(false)
+    })
   })
 })

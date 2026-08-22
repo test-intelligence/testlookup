@@ -5,9 +5,6 @@ import { copyTextToClipboard } from '@/utils/clipboard'
 import { backendUrl } from '@/services/api'
 import { buildSteps } from './firstRunSteps'
 
-/** localStorage key — once dismissed the guide stays hidden for this browser. */
-export const FIRST_RUN_DISMISS_KEY = 'tl_first_run_guide_dismissed'
-
 function CommandRow({ command }: { command: string }) {
   const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
   const onCopy = async () => {

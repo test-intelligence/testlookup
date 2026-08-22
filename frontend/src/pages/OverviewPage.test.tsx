@@ -1,6 +1,8 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { FIRST_RUN_DISMISS_KEY, firstRunDismissKey } from '@/components/onboarding/firstRunSteps'
 
 import type { ValueMetrics } from '@/types/valueMetrics'
 import OverviewPage from './OverviewPage'
@@ -860,5 +862,86 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
     await screen.findAllByText(/Project One/i)
     expect(screen.queryByText(/undefined/i)).not.toBeInTheDocument()
     expect((await screen.findAllByText(/weighted/i)).length).toBeGreaterThan(0)
+  })
+})
+
+// ── First-run guide is dismissed per project, not per browser ────────────────
+//
+// The guide shows only when THIS scope has no runs at all (an empty dashboard),
+// but dismissal used to write one browser-wide flag. Dismissing it on the first
+// empty project then suppressed the same first-run help on every genuinely new,
+// still-empty project — the self-hoster who most needs it. Dismissal is now
+// keyed on the active project id (`proj-1` in this suite's projectStore mock).
+describe('OverviewPage — first-run guide dismissal is scoped to the project', () => {
+  beforeEach(() => {
+    valueKpiState.metrics = undefined
+    analyticsViewState.widgetIds = []
+    // Purge only this feature's keys; leave the rest of localStorage alone.
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i)
+      if (k && k.startsWith(FIRST_RUN_DISMISS_KEY)) localStorage.removeItem(k)
+    }
+  })
+
+  async function renderEmptyProject() {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value: 0 },
+        avg_pass_rate_7d: { value: 0 },
+        active_defects: { value: 0 },
+        flaky_test_count: { value: 0 },
+        new_failures_24h: { value: 0 },
+        avg_duration_ms: { value: 0 },
+      },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
+    runsState.windowed = []
+    runsState.newest = []
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('shows the guide on an empty project and writes the per-project key on dismiss', async () => {
+    await renderEmptyProject()
+    expect(await screen.findByText(/Welcome to TestLookup/i)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /dismiss getting started/i }))
+
+    // Gone immediately (reactive to the dismiss, no reload needed)…
+    expect(screen.queryByText(/Welcome to TestLookup/i)).toBeNull()
+    // …and persisted under the project-scoped key, not the bare browser-wide one.
+    expect(localStorage.getItem(firstRunDismissKey('proj-1'))).toBe('1')
+    expect(localStorage.getItem(FIRST_RUN_DISMISS_KEY)).toBeNull()
+  })
+
+  it('stays hidden when THIS project was already dismissed', async () => {
+    localStorage.setItem(firstRunDismissKey('proj-1'), '1')
+    await renderEmptyProject()
+    await screen.findAllByText(/Project One/i)
+    expect(screen.queryByText(/Welcome to TestLookup/i)).toBeNull()
+  })
+
+  it('still shows when only a DIFFERENT project was dismissed', async () => {
+    // Regression: onboarding another project must not hide this one's guide.
+    localStorage.setItem(firstRunDismissKey('some-other-project'), '1')
+    await renderEmptyProject()
+    expect(await screen.findByText(/Welcome to TestLookup/i)).toBeInTheDocument()
+  })
+
+  it('ignores a legacy browser-wide dismiss flag', async () => {
+    // A pre-scoping build wrote the bare key; it must no longer suppress the
+    // guide, or the browser-wide bug survives the fix.
+    localStorage.setItem(FIRST_RUN_DISMISS_KEY, '1')
+    await renderEmptyProject()
+    expect(await screen.findByText(/Welcome to TestLookup/i)).toBeInTheDocument()
   })
 })
