@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-08-23 — A cached narrative could speak about a test it was never written for (F-12)
+
+- The semantic cache returns the **whole** cached analysis for any neighbour at cosine similarity ≥ `SEMANTIC_SIMILARITY_THRESHOLD` (0.85) — root cause summary, recommended actions, failure category — and the caller then clears `evidence_references`. The confidence came across **unchanged**.
+- So a narrative written about a *different* failure arrived asserting this test's root cause, at the source test's full confidence, with nothing cited that could contradict it. At the 0.85 threshold that is up to **15% dissimilarity at zero confidence cost**.
+- **The existing grounding metrics cannot catch this.** Citation rate 76.5% and 0 fabricated evidence IDs both measure whether citations *resolve*, not whether the prose *belongs to this test* — a borrowed narrative with its evidence cleared passes both. `unsupported_claim_rate`, the metric that would catch it, is still blocked on F-11.
+- Three changes make reuse honest instead of invisible:
+
+  | | |
+  |---|---|
+  | confidence scaled by actual similarity | a distant neighbour cannot speak with a near neighbour's authority |
+  | original kept as `confidence_score_before_reuse` | the penalty is auditable, not silently destructive |
+  | `semantic_source_test` recorded | borrowed prose is traceable to its origin |
+
+  Anything below `NEAR_EXACT_REUSE_SIMILARITY` (0.98) is additionally flagged `requires_human_review`.
+- **This does not stop reuse**, and that is deliberate: whether a 0.85 neighbour's narrative should be reused at all is a product decision, not a bug fix. A near-exact match keeps its full confidence so the cache stays worth having.
+- 7 regression guards, mutation-checked: removing the penalty fails two of them, including the one asserting it is *proportional* rather than a flat haircut.
+
+## 2026-08-23 — The AI architecture review is tracked, and current
+
+- The review was deliberately gitignored as a local working reference. It is now **tracked in `main`** at `architecture/reviews/2026-08-21-ai-architecture-review.html`, alongside the other living architecture docs, so its status moves with the code instead of drifting on one machine.
+- It lives in `architecture/` rather than `docs/` because `.gitignore` excludes `docs/` wholesale — un-ignoring one file inside an excluded directory needs `docs/*` surgery that would also expose the genuinely local-only PROGRESS/BACKLOG notes, and `git add -f` is exactly what the `repo.no-gitignored-source` guard warns against.
+- **F-4 was stale.** The register still listed it Major/open; it shipped in #799 and measured **7.16% → 0%** summary schema failures (0 in 114 structured calls on 08-23). Marked Fixed with the measurement and the deploy-boundary caveat — the all-time 5.94% blends both code versions.
+- New **Progress log** section, placed after the findings register, recording every reading taken on 2026-08-23: the first real baseline (1,329 runs), degraded 10.6% not 60.8%, citations 8.9% → 76.5%, shared-bundle → 0%, the classifier denominator, and the two regressions found by measuring rather than by CI.
+- Open backlog stated plainly at the end: eight Major (F-5–F-12), three Minor (F-13–F-15), with **F-12** named as the live grounding risk and **F-11** as what would make it visible.
+
 ## 2026-08-23 — The build badge copies its provenance for a bug report
 
 - "Which build are you running?" is the first question on any self-host bug report, and the answer — version, full 40-char commit SHA, build date, env — lived only in the sidebar badge's hover `title`. A tooltip is **unselectable, invisible on a touch device, and easy to mis-transcribe from a 40-char SHA**, so the operator with the problem had no clean way to hand a maintainer the exact image.

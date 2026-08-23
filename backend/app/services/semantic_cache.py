@@ -25,6 +25,10 @@ logger = logging.getLogger("services.semantic_cache")
 
 _COLLECTION_NAME = "ai_analysis_cache"
 
+# Above this similarity a reused narrative is treated as describing the same
+# failure; below it the verdict is still returned, but flagged for review.
+NEAR_EXACT_REUSE_SIMILARITY = 0.98
+
 
 async def _get_chroma_client():
     from app.db.chroma import get_configured_chroma_client
@@ -112,6 +116,28 @@ async def semantic_cache_lookup(
         analysis = cast(dict[str, Any], json.loads(cached_json))
         analysis["semantic_cache_hit"] = True
         analysis["semantic_similarity"] = round(similarity, 4)
+
+        # F-12: this narrative was written about a DIFFERENT failure. Reusing it
+        # is the whole point of the cache; asserting it at the source's
+        # confidence is not. At the 0.85 threshold we accept up to 15%
+        # dissimilarity at zero confidence cost, and the caller clears
+        # ``evidence_references`` -- so a borrowed root cause arrives with full
+        # confidence and nothing cited that could contradict it. That is the
+        # exact shape of a confident wrong answer.
+        #
+        # Three things make reuse honest instead of invisible: scale confidence
+        # by how far the match actually is, name the test the prose came from so
+        # it is traceable, and hand anything short of a near-exact match to a
+        # human. Note what this does NOT do -- it does not stop reuse, because
+        # whether a 0.85 neighbour's narrative should be reused at all is a
+        # product call, not a bug fix.
+        analysis["semantic_source_test"] = str(meta.get("test_name") or "") or None
+        raw_confidence = analysis.get("confidence_score")
+        if isinstance(raw_confidence, (int, float)) and not isinstance(raw_confidence, bool):
+            analysis["confidence_score_before_reuse"] = raw_confidence
+            analysis["confidence_score"] = int(round(float(raw_confidence) * similarity))
+        if similarity < NEAR_EXACT_REUSE_SIMILARITY:
+            analysis["requires_human_review"] = True
         logger.info(
             "Semantic cache hit for '%s' (similarity=%.3f, cached_id=%s)",
             test_name[:40], similarity, ids_list[0],

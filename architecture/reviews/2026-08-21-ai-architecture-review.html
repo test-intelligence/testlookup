@@ -1,0 +1,683 @@
+<title>TestLookup AI Architecture Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+  :root {
+    --ground:#F6F8F8; --surface:#FFFFFF; --surface-2:#EDF2F2; --surface-3:#E3EBEA;
+    --ink:#10191B; --ink-2:#465A58; --ink-3:#6E8380;
+    --rule:#D2DEDD; --rule-strong:#B4C6C4;
+    --accent:#0B6E75; --accent-soft:#E0F0F0;
+    --crit:#B3352B; --crit-soft:#F8E6E3;
+    --warn:#8A5C07; --warn-soft:#F7EEDA;
+    --ok:#1F6B49; --ok-soft:#DFEFE5;
+    --shadow:0 1px 2px rgba(16,25,27,.05), 0 8px 24px -18px rgba(16,25,27,.35);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#0A1012; --surface:#111A1C; --surface-2:#172224; --surface-3:#1E2B2E;
+      --ink:#E4EDEC; --ink-2:#9DB0AE; --ink-3:#7B908D;
+      --rule:#22302F; --rule-strong:#334746;
+      --accent:#45CFC6; --accent-soft:#12302F;
+      --crit:#F0847A; --crit-soft:#331A18;
+      --warn:#E0AC4A; --warn-soft:#302512;
+      --ok:#62C08E; --ok-soft:#12291F;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.8);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#0A1012; --surface:#111A1C; --surface-2:#172224; --surface-3:#1E2B2E;
+    --ink:#E4EDEC; --ink-2:#9DB0AE; --ink-3:#7B908D;
+    --rule:#22302F; --rule-strong:#334746;
+    --accent:#45CFC6; --accent-soft:#12302F;
+    --crit:#F0847A; --crit-soft:#331A18;
+    --warn:#E0AC4A; --warn-soft:#302512;
+    --ok:#62C08E; --ok-soft:#12291F;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.8);
+  }
+
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+    font-size:16.5px; line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:1200px; margin:0 auto; padding:0 24px 96px; }
+
+  header.mast { padding:56px 0 32px; border-bottom:1px solid var(--rule); }
+  .eyebrow {
+    font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px; font-weight:500;
+    letter-spacing:.09em; text-transform:uppercase; color:var(--ink-3);
+    display:flex; flex-wrap:wrap; gap:6px 14px; margin-bottom:18px;
+  }
+  h1 {
+    font-family:"IBM Plex Sans Condensed","IBM Plex Sans",sans-serif; font-weight:700;
+    font-size:clamp(38px,6vw,60px); line-height:1.03; letter-spacing:-.015em;
+    margin:0 0 18px; text-wrap:balance; max-width:16ch;
+  }
+  .standfirst { font-size:19px; line-height:1.55; color:var(--ink-2); max-width:64ch; margin:0; }
+  .standfirst strong { color:var(--ink); font-weight:600; }
+
+  .score { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1px;
+           background:var(--rule); border:1px solid var(--rule); margin-top:36px; }
+  .score div { background:var(--surface); padding:16px 18px; }
+  .score .n { font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; font-size:30px;
+              line-height:1; letter-spacing:-.01em; font-variant-numeric:tabular-nums; }
+  .score .k { font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.08em;
+              text-transform:uppercase; color:var(--ink-3); margin-top:8px; line-height:1.35; }
+  .score .n.crit { color:var(--crit); }
+
+  .cols { display:block; }
+  @media (min-width:1080px) {
+    .cols { display:grid; grid-template-columns:212px minmax(0,1fr); gap:56px; align-items:start; }
+    nav.toc { position:sticky; top:24px; max-height:calc(100vh - 48px); overflow-y:auto; padding-top:44px; }
+  }
+  nav.toc ol { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
+  nav.toc a {
+    display:block; padding:5px 0 5px 12px; color:var(--ink-2); text-decoration:none;
+    font-size:13.5px; line-height:1.35; border-left:2px solid var(--rule);
+  }
+  nav.toc a:hover, nav.toc a:focus-visible { color:var(--accent); border-left-color:var(--accent); }
+  nav.toc .tnum { font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--ink-3); margin-right:7px; }
+  @media (max-width:1079px) { nav.toc { display:none; } }
+
+  main { min-width:0; padding-top:44px; }
+  section { margin-bottom:64px; scroll-margin-top:20px; }
+  h2 {
+    font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700;
+    font-size:clamp(26px,3.4vw,34px); line-height:1.12; letter-spacing:-.01em;
+    margin:0 0 10px; text-wrap:balance;
+  }
+  h2 .num { font-family:"IBM Plex Mono",monospace; font-size:13px; font-weight:500;
+            color:var(--accent); display:block; letter-spacing:.08em; margin-bottom:10px; }
+  h3 {
+    font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:600; font-size:20.5px;
+    line-height:1.25; margin:40px 0 10px; text-wrap:balance;
+  }
+  h4 { font-family:"IBM Plex Sans",sans-serif; font-weight:600; font-size:15px; margin:26px 0 8px; }
+  p { max-width:70ch; margin:0 0 14px; }
+  .lede { font-size:17.5px; color:var(--ink-2); max-width:66ch; margin-bottom:22px; }
+  ul, ol.body { max-width:70ch; padding-left:20px; margin:0 0 16px; }
+  li { margin-bottom:7px; }
+  strong { font-weight:600; }
+  em { font-style:italic; color:var(--ink-2); }
+  a { color:var(--accent); text-underline-offset:2px; }
+  code {
+    font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.86em;
+    background:var(--surface-2); padding:1.5px 5px; border-radius:3px; word-break:break-word;
+  }
+
+  .tw { overflow-x:auto; margin:20px 0 26px; border:1px solid var(--rule); background:var(--surface); }
+  table { border-collapse:collapse; width:100%; min-width:680px; font-size:14.5px; }
+  th, td { text-align:left; padding:11px 14px; border-bottom:1px solid var(--rule); vertical-align:top; }
+  thead th {
+    font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:500; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--ink-3); background:var(--surface-2);
+    border-bottom:1px solid var(--rule-strong); white-space:nowrap;
+  }
+  tbody tr:last-child td { border-bottom:0; }
+  td.num, th.num { font-variant-numeric:tabular-nums; white-space:nowrap; }
+  td .src { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--ink-3);
+            display:block; margin-top:4px; word-break:break-word; }
+  caption { caption-side:top; text-align:left; font-size:12px; color:var(--ink-3); padding:10px 14px;
+            border-bottom:1px solid var(--rule); background:var(--surface-2);
+            font-family:"IBM Plex Mono",monospace; letter-spacing:.05em; text-transform:uppercase; }
+  .id { font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:600; white-space:nowrap; }
+
+  .chip {
+    font-family:"IBM Plex Mono",monospace; font-size:10.5px; font-weight:600; letter-spacing:.07em;
+    text-transform:uppercase; padding:3px 7px; border-radius:2px; white-space:nowrap; display:inline-block;
+  }
+  .chip.b { background:var(--crit-soft); color:var(--crit); }
+  .chip.m { background:var(--warn-soft); color:var(--warn); }
+  .chip.s { background:var(--surface-3); color:var(--ink-2); }
+  .chip.ok { background:var(--ok-soft); color:var(--ok); }
+  .chip.ac { background:var(--accent-soft); color:var(--accent); }
+
+  .note { border-left:3px solid var(--accent); background:var(--surface); padding:16px 18px;
+          margin:22px 0; box-shadow:var(--shadow); }
+  .note.warn { border-left-color:var(--warn); }
+  .note.crit { border-left-color:var(--crit); }
+  .note p:last-child { margin-bottom:0; }
+  .note .lbl { font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.08em;
+               text-transform:uppercase; color:var(--ink-3); display:block; margin-bottom:7px; }
+
+  .kept { display:grid; grid-template-columns:repeat(auto-fit,minmax(236px,1fr)); gap:1px;
+          background:var(--rule); border:1px solid var(--rule); margin:22px 0; }
+  .kept div { background:var(--surface); padding:15px 17px; }
+  .kept h4 { margin:0 0 6px; font-size:14.5px; }
+  .kept p { font-size:13.5px; color:var(--ink-2); margin:0; max-width:none; }
+
+  footer { border-top:1px solid var(--rule); padding-top:26px; margin-top:20px; font-size:14px; color:var(--ink-2); }
+  footer p { max-width:74ch; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  @media (prefers-reduced-motion:no-preference) { html { scroll-behavior:smooth; } }
+</style>
+
+<div class="wrap">
+<header class="mast">
+  <div class="eyebrow">
+    <span>TestLookup</span><span>main @ 7752041a</span><span>21 Aug 2026</span><span>Architecture review + PRD</span>
+  </div>
+  <h1>AI Architecture Review</h1>
+  <p class="standfirst">The agent layer is built. Nineteen graph stages, twenty-nine declared capabilities, thirty-five hash-pinned prompts, a deterministic decision report with an independent critic &mdash; the governance scaffolding here is ahead of most production AI systems. The measurement system that was missing now exists and has been run: <strong>1,020 real pipeline runs measured</strong>, all three blocking findings shipped, and the numbers below are readings rather than estimates.</p>
+  <div class="score">
+    <div><div class="n">19</div><div class="k">deep-graph stages</div></div>
+    <div><div class="n">38</div><div class="k">modules in agents/</div></div>
+    <div><div class="n">29</div><div class="k">capability specs</div></div>
+    <div><div class="n">35</div><div class="k">pinned prompts</div></div>
+    <div><div class="n crit">17</div><div class="k">findings (0 blocking open)</div></div>
+    <div><div class="n">1,020</div><div class="k">runs measured</div></div>
+  </div>
+</header>
+
+<div class="cols">
+<nav class="toc" aria-label="Contents">
+  <ol>
+    <li><a href="#s1"><span class="tnum">1</span>System assessment</a></li>
+    <li><a href="#s2"><span class="tnum">2</span>Findings register</a></li>
+    <li><a href="#s3"><span class="tnum">3</span>Optimization</a></li>
+    <li><a href="#s4"><span class="tnum">4</span>Output quality</a></li>
+    <li><a href="#s5"><span class="tnum">5</span>Self-improvement</a></li>
+    <li><a href="#s6"><span class="tnum">6</span>Roadmap &amp; PRD</a></li>
+    <li><a href="#s7"><span class="tnum">7</span>KPIs</a></li>
+    <li><a href="#s8"><span class="tnum">8</span>Method &amp; limits</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="s1">
+  <h2><span class="num">Section 1</span>System and architecture assessment</h2>
+  <p class="lede">What exists, how it is wired, and where the structure works against the product's own goals. Every claim below is anchored to a file and line in <code>backend/app</code>.</p>
+
+  <h3>1.1 &nbsp;The thesis in one paragraph</h3>
+  <p>The 2026-08-11 review asked for a canonical evidence bundle, a terminal synthesis stage after all specialists, typed claims, and an independent critic. All four shipped. <code>DecisionReportAgent</code> now recomputes nothing with an LLM &mdash; it projects deterministic facts and the critic re-derives the authoritative report and compares it field by field, fingerprint included (<code>decision_report_critic_agent.py:172-310</code>). That is the right architecture, and it is genuinely rare.</p>
+  <p>The consequence is that the remaining risk has moved. It is no longer <em>&ldquo;is the report structurally sound?&rdquo;</em> It is <strong>&ldquo;is the content inside the structure any good, and would we know if it got worse?&rdquo;</strong> The prior PRD wrote down ten quality targets &mdash; citation validity above 98%, unsupported claims below 1%, p50 report latency under 90 seconds, calibration error at target. Nothing in the running system measures a single one of them, and one of them (citation validity) cannot be satisfied by the current implementation at all. Section 2 covers why.</p>
+
+  <h3>1.2 &nbsp;The AI surface</h3>
+  <p>Three orchestration planes, plus a chat agent and a set of shared services. They do not share a lifecycle, a state model, or a run envelope &mdash; the open <code>AIA-002</code> item from the prior review.</p>
+  <div class="tw">
+    <table>
+      <caption>Orchestration planes</caption>
+      <thead><tr><th>Plane</th><th>Entry point</th><th>Shape</th><th>LLM stages</th><th>Governance</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Deep pipeline</strong><span class="src">agents/workflow.py:893</span></td><td>Celery <code>run_agent_pipeline</code></td><td>19 nodes, near-linear</td><td>5 of 19: anomaly, analysis, summary, regression-watchman, release-risk</td><td>Per-stage budget reserve/settle, checkpoints, planner + verifier</td></tr>
+        <tr><td><strong>Offline pipeline</strong><span class="src">agents/workflow.py:827</span></td><td>Same task, <code>workflow_type=offline</code></td><td>5 nodes</td><td>analysis, summary</td><td>Same chassis; no decision report</td></tr>
+        <tr><td><strong>Investigator</strong><span class="src">agents/investigator/workflow.py</span></td><td>Manual or NO_GO trigger</td><td>plan &rarr; 5 parallel hypotheses &rarr; synthesis</td><td>All hypothesis nodes</td><td><code>agent_policies</code>, shadow/suggest/act, per-run budgets</td></tr>
+        <tr><td><strong>Fixer</strong><span class="src">agents/fixer/pipeline.py</span></td><td>Scheduled or manual</td><td>diagnose &rarr; generate &rarr; sandbox validate &rarr; draft PR</td><td>Patch generation</td><td>Test-glob enforcement, never auto-merges, ships disabled</td></tr>
+        <tr><td><strong>Chat</strong><span class="src">agents/conversation.py</span></td><td>REST / WebSocket</td><td>Intent &rarr; parallel context fetch &rarr; single call</td><td>Answer + history compression</td><td>Redaction, project scoping, optional tool loop</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Worth stating plainly, because it is a strength that is easy to misread as a gap: <strong>most of the deep pipeline is deterministic.</strong> Only five of nineteen stages construct a model. Clustering, contract validation, log intelligence, change ownership, flaky sentinel, test health, gap detection, report refinement, the decision report and its critic all compute their results in code &mdash; the <code>.ainvoke()</code> calls in the log, contract and flaky agents are LangChain <em>tools</em>, not model calls. The LLM is used where judgment is needed and nowhere else.</p>
+
+  <h3>1.3 &nbsp;Orchestration: correct, but paying for it in wall-clock</h3>
+  <p>The deep graph is a 19-node chain in which only one fan-out survives (ingestion into anomaly plus analysis). Four read-only domain specialists &mdash; <code>contract_validation</code>, <code>log_intelligence</code>, <code>regression_watchman</code>, <code>change_ownership</code> &mdash; declare no dependency on each other in the capability registry, yet run strictly one after another (<code>workflow.py:995-1000</code>).</p>
+  <p>The comment at <code>workflow.py:944-963</code> explains why, and it is worth reading before anyone &ldquo;fixes&rdquo; this: a previous fan-in placed clustering three hops from ingestion while the other branches were one hop, so LangGraph scheduled <code>summary</code> in two supersteps. On the homelab, 2026-08-16, that made the whole specialist chain run twice and the decision-report verification log both a pass and a fail 464&nbsp;ms apart, with the failure winning. Serializing was the correct emergency response. It is not the correct steady state &mdash; the Investigator already demonstrates the right pattern with reducer-keyed parallel nodes (<code>investigator/state.py:47-56</code>), and the fix is an explicit barrier node rather than depth-matched edges.</p>
+
+  <h3>1.4 &nbsp;Context construction is the weakest layer</h3>
+  <p>Four independent problems compound here, and together they are the most likely cause of any perceived &ldquo;the AI is vague&rdquo; complaint.</p>
+  <ul>
+    <li><strong>No shared evidence bundle upstream.</strong> The capability registry declares <code>inputs="RunEvidenceBundleV1"</code> for exactly ten stages, but the bundle is only ever built at the terminal decision stage (<code>decision_report_agent.py:296</code>). Every specialist re-queries Postgres for the same run &mdash; 25 query sites across seven specialists (anomaly 9, regression-watchman 6, flaky 3, ownership 3, release-risk 2, health 1, clustering 1), opening 11 separate sessions.</li>
+    <li><strong>Ollama's context window is never set.</strong> <code>llm_factory.py:176-182</code> passes <code>num_predict</code> but never <code>num_ctx</code>. Ollama silently truncates over-length prompts server-side, so evidence &mdash; and on the ReAct path, the tool instructions themselves &mdash; can vanish with no error, no metric, and no log line.</li>
+    <li><strong>Token budgeting is <code>len(text)/4</code></strong> (<code>resilience.py:183-188</code>), not a tokenizer. Stack traces and structured logs tokenize far worse than 4 characters per token, so the estimate skews optimistic exactly where the payload is largest.</li>
+    <li><strong>The summary sends the same context four times.</strong> <code>summary_agent.py:504-547</code> builds one context string and issues four sequential calls with it &mdash; executive summary, incident view, evidence pack, action plan &mdash; each truncated to <code>LLM_MAX_TOKENS - 1500</code>.</li>
+  </ul>
+
+  <h3>1.5 &nbsp;Model layer: strong isolation, no structure</h3>
+  <p>Eight providers behind one factory, with a <code>BudgetedLLM</code> wrapper that checks the admission decision at the invocation boundary, sanitizes arguments through the privacy policy, and records observed token usage back into the pipeline budget context (<code>llm_factory.py:19-107</code>). <code>AI_OFFLINE_MODE</code> is a hard egress ceiling. This part is done well.</p>
+  <p>What is absent is any use of structured output. <code>BudgetedLLM.with_structured_output</code> exists at line 101 and <strong>is never called anywhere in the codebase</strong>. Every structured result in the system is produced by asking a model for JSON in prose, then recovering it with fence-stripping and a balanced-brace regex (<code>llm_json_parser.py</code>), or &mdash; on the main analysis path &mdash; by LangChain's legacy string-parsing ReAct agent with <code>handle_parsing_errors=True</code> (<code>services/agent.py:194-205</code>). Parse failures are handled gracefully, which is why this has never looked like an outage; they are also charged a full retry (<code>analysis_agent.py:521-522</code>) and otherwise degrade to schema defaults.</p>
+  <p>One model tier serves everything. <code>qwen2.5:7b</code> at temperature 0.1 classifies a one-line assertion failure and synthesizes a release decision.</p>
+
+  <h3>1.6 &nbsp;Memory and retrieval: four indexes, no shared substrate</h3>
+  <div class="tw">
+    <table>
+      <caption>Retrieval systems</caption>
+      <thead><tr><th>System</th><th>Store</th><th>Serves</th><th>Reaches root-cause analysis?</th></tr></thead>
+      <tbody>
+        <tr><td>Semantic analysis cache<span class="src">services/semantic_cache.py</span></td><td>ChromaDB, per project</td><td>Skipping repeat LLM work</td><td>Yes &mdash; returns a whole prior analysis</td></tr>
+        <tr><td>Agent memory<span class="src">services/agent_memory_service.py</span></td><td>Postgres + Chroma</td><td>Recall tool, duplicate defects, ownership</td><td>Yes, via <code>recall_similar_failures</code></td></tr>
+        <tr><td>Knowledge RAG<span class="src">services/rag_retrieval_service.py</span></td><td>ChromaDB <code>knowledge_chunks</code></td><td>Generating test cases from requirements</td><td><strong>No</strong></td></tr>
+        <tr><td>Semantic search<span class="src">services/semantic_search.py</span></td><td>ChromaDB</td><td>UI search, chat context</td><td>Indirect</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The gap worth naming: <strong>the organization's own written knowledge never reaches failure triage.</strong> Runbooks, ADRs, incident write-ups and service ownership docs are ingested, chunked, embedded and gated behind <code>KNOWLEDGE_RAG_ENABLED</code> &mdash; and then used exclusively to generate test cases. The agent explaining why a payment test failed at 3&nbsp;a.m. cannot read the payment service's runbook.</p>
+
+  <h3>1.7 &nbsp;What is already excellent</h3>
+  <p>A review that only lists problems will get the wrong things changed. These are load-bearing and should survive every recommendation below.</p>
+  <div class="kept">
+    <div><h4>Prompt registry with an enforced ratchet</h4><p>Every prompt is versioned, hash-pinned in a manifest, and a CI gate fails on drift or a missing eval attestation. Prompts cannot ship silently.</p></div>
+    <div><h4>Deterministic report + independent critic</h4><p>The decision report computes facts without an LLM; the critic recomputes and compares fifteen checks including an evidence fingerprint.</p></div>
+    <div><h4>Honest confidence documentation</h4><p><code>confidence_gate.py</code> states in its own docstring that the numbers are self-declared, not calibrated, and forbids calling the threshold calibrated in UI copy.</p></div>
+    <div><h4>Budget reserve and settle</h4><p>Stages reserve budget before invocation and settle after, with durable pending receipts and a reaper for failed settlements.</p></div>
+    <div><h4>Tenant-scoped caches</h4><p>Semantic cache collections are per project by construction, and the recall tool takes identity from a server-side ContextVar, never from model output.</p></div>
+    <div><h4>Full-fidelity stage telemetry</h4><p>Decision logs, OTEL spans with fallback and route attributes, per-stage tokens and cost in Postgres, immutable events in Mongo.</p></div>
+  </div>
+</section>
+
+<section id="s2">
+  <h2><span class="num">Section 2</span>Findings register</h2>
+  <p class="lede">Sixteen findings. Severity is about consequence, not effort: <span class="chip b">Blocking</span> means it can produce a wrong or missing answer in production today.</p>
+  <div class="tw">
+    <table>
+      <caption>Findings</caption>
+      <thead><tr><th>ID</th><th>Sev</th><th>Area</th><th>Finding and consequence</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="id">F-1</td><td><span class="chip ok">Fixed</span></td><td>Correctness</td>
+          <td><strong>Fixed in <a href="https://github.com/anandtopu/testlookup/pull/785">#785</a></strong> — counters now derive from the stored analysis, with two regression guards that fail with the original <code>AttributeError</code> when the fix is reverted. Original finding: the error handler for a failed per-test analysis crashes the entire stage. The guard tests <code>analyses.get(tc_id)</code> &mdash; always a dict, since the exception branch just wrote one &mdash; then calls <code>result.get("timed_out")</code> where <code>result</code> is the exception. Any single raising task (a Mongo write in <code>log_decision</code>, artifact storage, task cancellation) raises <code>AttributeError</code> and takes all analyses with it. Reproduced in isolation.<span class="src">agents/analysis_agent.py:277-286 &middot; no test covers a raising analysis</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-2</td><td><span class="chip ok">Fixed</span></td><td>Capacity</td>
+          <td><strong>Fixed in <a href="https://github.com/anandtopu/testlookup/pull/786">#786</a></strong> &mdash; <code>AI_PIPELINE_DEADLINE_SECONDS</code> (default 1500) is checked before each stage and before each analysis batch; skips land in <code>stage_errors</code> so the report degrades and names them, with terminal synthesis exempt so a truncated run still publishes.<br><br><strong>Corrected mechanism.</strong> This finding originally said the pipeline is SIGKILLed and recovered by the reaper. It is not: a global <code>task_soft_time_limit=1740</code> fires first, and <code>SoftTimeLimitExceeded</code> is an ordinary <code>Exception</code>, so the task handler catches it and calls <code>self.retry</code>. The real behaviour was worse than described &mdash; <strong>the whole pipeline was re-run twice before the DLQ</strong>, so one oversized run could hold ~87 minutes of <code>ai_analysis</code> capacity while other runs queued, and the report that finally published never mentioned the two prior attempts.<span class="src">worker/celery_app.py:400 &middot; worker/tasks.py:1517-1540 &middot; core/config.py:113,291</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-3</td><td><span class="chip ok">Fixed</span></td><td>Grounding</td>
+          <td><strong>Fixed in <a href="https://github.com/anandtopu/testlookup/pull/792">#792</a>, confirmed working only after F-17 (#797 + #798): 0% &rarr; 28% cited, 63 citations, 0 fabricated.</strong> The contract alone measured 0 of 30 &mdash; correct and inert until evidence existed to cite. Each claim-bearing layer now returns <code>evidence_ids</code> resolved against a server-built catalogue; a fabricated id resolves to nothing and is counted. Citations reach three layers instead of one. Original finding: narrative citations only fired on verbatim reproduction, and only on one layer. <code>extract_citations</code> attaches an evidence item when the first 40 characters of its excerpt appear literally in the text, and it is applied solely to layer 3, the evidence pack. So a copied stack trace can be cited, while every analytical claim &mdash; the executive summary, the incident view, the action plan &mdash; is structurally uncitable. The claims that most need grounding are exactly the ones the mechanism cannot reach, and the prior PRD's 98% citation-validity target cannot be met this way.<span class="src">services/summary_assembler.py:226-249 &middot; summary_agent.py:568-570</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-4</td><td><span class="chip ok">Fixed</span></td><td>Reliability</td>
+          <td><strong>Fixed in <a href="https://github.com/anandtopu/testlookup/pull/799">#799</a> &mdash; summary schema failures 7.16% &rarr; 0%</strong>, measured on the homelab across a deploy boundary: 59 failures against 70 structured successes on 08-22, then <strong>0 failures against 114 structured successes on 08-23</strong>. The all-time rate reads 5.94% only because it blends both code versions. <code>with_structured_output</code> is now tried first with a fallback to the prose path for every failure mode (unsupported provider, transport error, timeout, unexpected shape), and a structured success is logged as a decision so adoption is attributable. Originally: no structured output anywhere. <code>with_structured_output</code> is defined and never called; JSON arrives via regex recovery and ReAct via string parsing. Failures are absorbed into schema defaults or a retry, so quality loss is invisible rather than absent.<span class="src">llm_factory.py:101 &middot; services/agent.py:194-205 &middot; llm_json_parser.py</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-5</td><td><span class="chip m">Major</span></td><td>Silent data loss</td>
+          <td><code>num_ctx</code> is never configured for Ollama, and token budgeting uses characters&divide;4. Over-length prompts are truncated server-side with no error, dropping evidence and, on the ReAct path, potentially the tool instructions &mdash; which then presents as a parse failure.<span class="src">llm_factory.py:176-182 &middot; resilience.py:183-188</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-6</td><td><span class="chip m">Major</span></td><td>Cost / latency</td>
+          <td>The summary issues four sequential calls over one identical ~2.6k-token context. Roughly 4&times; the necessary input tokens and 4&times; the latency for one report, with no prefix reuse and no parallelism.<span class="src">agents/summary_agent.py:504-547</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-7</td><td><span class="chip m">Major</span></td><td>Throughput</td>
+          <td>A batch loop wraps a semaphore that already bounds concurrency, adding a barrier per batch. The slowest test in each batch idles the rest, turning total time into the sum of per-batch maxima instead of total work divided by concurrency.<span class="src">agents/analysis_agent.py:236-246</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-8</td><td><span class="chip m">Major</span></td><td>Architecture</td>
+          <td>Ten capability specs declare <code>RunEvidenceBundleV1</code> as their input, but the bundle is built only in the terminal stage. Specialists re-query Postgres independently &mdash; 25 query sites in 11 separate sessions across seven specialists &mdash; and can observe different data if rows change mid-run.<span class="src">agent_capability_registry.py:39-60 &middot; decision_report_agent.py:296</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-9</td><td><span class="chip m">Major</span></td><td>Latency</td>
+          <td>Four independent read-only specialists run serially because a prior parallel fan-in double-executed the chain. Correct response, wrong steady state; the Investigator already shows the working pattern.<span class="src">workflow.py:944-1000 &middot; investigator/state.py:47-56</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-10</td><td><span class="chip m">Major</span></td><td>Learning loop</td>
+          <td>The learning loop has a cold-start hole it cannot climb out of. <code>auto</code> resolves ML &rarr; LLM &rarr; rules, and ML wins whenever a trained model file exists &mdash; so labels <em>do</em> improve the preferred engine, but only after <code>ML_MIN_TRAINING_SAMPLES</code> (200) labels have been gathered. Until then, and on every project that never reaches 200, the LLM runs and gains nothing from feedback except exact-fingerprint correction replay. The one mechanism that would improve the LLM itself &mdash; fine-tuning &mdash; is off by default, OpenAI-only, and refused under <code>AI_OFFLINE_MODE</code>.<span class="src">analysis_router.py:104-121 &middot; ml/classifier.py:48-51 &middot; config.py:429,479 &middot; training/finetuner.py:71</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-11</td><td><span class="chip m">Major</span></td><td>Evaluation</td>
+          <td>Nothing evaluates on a schedule. The beat schedule runs training, calibration and export jobs but no eval run or drift check; <code>eval_gate_service</code> is reachable only from an API route or the prompt-attestation CLI, and <code>golden_agent_outputs</code> is referenced only by tests. Quality is gated when a prompt changes and never otherwise.<span class="src">worker/celery_app.py &middot; services/eval_gate_service.py &middot; services/golden_agent_outputs.py</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-12</td><td><span class="chip ok">Fixed</span></td><td>Grounding</td>
+          <td><strong>Fixed &mdash; reuse is now penalised and traceable.</strong> Confidence is scaled by the actual similarity (a 0.85 neighbour no longer speaks at a 1.0 neighbour's authority), the original is kept as <code>confidence_score_before_reuse</code> so the penalty is auditable, and <code>semantic_source_test</code> names the test the prose came from; below 0.98 the verdict is also flagged for human review. Reuse itself is deliberately <em>not</em> stopped &mdash; whether a 0.85 neighbour's narrative should be reused at all is a product decision, not a bug fix. The existing grounding metrics could never have caught this: citation rate and fabricated-ID counts measure whether citations <em>resolve</em>, not whether the prose belongs to this test. Originally: the semantic cache can serve another test's narrative. At cosine similarity &ge;0.85 the full cached analysis is returned including root cause and recommended actions; evidence references are cleared but the prose is kept, and there is no confidence penalty proportional to distance.<span class="src">services/semantic_cache.py &middot; services/agent.py:126-149</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-13</td><td><span class="chip s">Minor</span></td><td>Chat quality</td>
+          <td>Intent classification counts regex hits and breaks ties by enum declaration order. <code>r"fail"</code> matches most QA questions; there is no abstain path, no multi-intent, and no confidence, so a misroute silently fetches the wrong context.<span class="src">agents/conversation.py:71-125</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-14</td><td><span class="chip s">Minor</span></td><td>Operations</td>
+          <td>Declared SLOs are decorative, and already drifting. Every capability carries <code>expected_latency_ms</code> and <code>expected_cost_usd</code>; nothing compares them to the observed <code>pipeline_stage_duration_seconds</code> histogram. The drift is visible in the registry itself &mdash; <code>gap_detection</code> and <code>report_refinement</code> both declare <code>cost_usd=0.02</code> and both are fully deterministic, with no model call anywhere in them.<span class="src">agent_capability_registry.py:50-51 &middot; core/metrics.py:80 &middot; agents/gap_detection_agent.py</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-16</td><td><span class="chip ok">Fixed</span></td><td>Grounding</td>
+          <td><strong>Fixed in <a href="https://github.com/anandtopu/testlookup/pull/796">#796</a> — measured 100% &rarr; 0%</strong> on the homelab (10/10 reports sharing one set before, 0/30 after). Note that <em>claims with evidence</em> read 100% throughout: the coverage metric could never see this. Original finding: decision-report claims share one evidence list rather than citing their own. <code>_build_typed_claims</code> builds a single <code>refs</code> array &mdash; the evidence hash, the first five artifacts, the metric snapshot &mdash; and attaches the identical array to every claim it emits. For deterministic facts (&ldquo;N of M tests failed&rdquo;) the metric snapshot genuinely is the evidence, so this is honest. For <code>inference.release.recommendation</code> it is not: five arbitrary artifacts are attached to a judgment they may have nothing to do with, and the claim-evidence drawer presents that as claim-level provenance.<span class="src">agents/decision_report_agent.py:88-103,120-158</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-15</td><td><span class="chip s">Minor</span></td><td>Documentation</td>
+          <td>The architecture README's pipeline diagram still shows a five-stage flow with clustering before summary. The real deep graph has 19 nodes, clustering after summary, and a decision report plus critic.<span class="src">architecture/README.md:230-252</span></td>
+        </tr>
+        <tr>
+          <td class="id">F-17</td><td><span class="chip ok">Fixed</span></td><td>Grounding</td>
+          <td><strong>Fixed in <a href="https://github.com/anandtopu/testlookup/pull/797">#797</a> + <a href="https://github.com/anandtopu/testlookup/pull/798">#798</a> &mdash; measured ~0% &rarr; 58% of new analyses carrying evidence, and narrative citations 0% &rarr; 28% with <em>zero</em> fabricated ids.</strong> #797 alone measured as no change: it taught the rules engine to cite, but this deployment runs every analysis through the fast classifier, which #797 excluded on the assumption LLM verdicts carry tool observations &mdash; all 593 carried <code>tools_used = []</code>. Original finding, found by measurement rather than review: grounding is starved at the source: <strong>4,690 of 4,693 analyses carry zero <code>evidence_references</code> (99.94%)</strong>. The evidence catalogue F-3 builds is therefore empty, <code>render_catalogue</code> returns an empty string, and the model is shown nothing to cite &mdash; so no citation can fire however good the contract is. Cause is upstream: <strong>4,087 of 4,693 analyses ran in <code>rules</code> mode</strong>, which invokes no tools and produces no evidence, and the LLM path's fast classifier returns before the ReAct loop, setting <code>evidence_references = []</code> explicitly. <strong>This makes the review's own 98% citation-validity target unreachable regardless of F-3.</strong><span class="src">measured on the homelab 2026-08-22 &middot; services/agent.py:151-175 (fast classifier) &middot; services/analysis_router.py</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+  <section id="progress-log">
+    <h2><span class="num">Log</span>Progress log</h2>
+    <p class="lede">This document is tracked in <code>main</code> and updated as backlog items ship. Every number
+      below is a reading taken from the running deployment, not an estimate.</p>
+
+    <h3>2026-08-23 &mdash; measurement gap closed</h3>
+    <ul>
+      <li><strong>F-4 shipped (<a href="https://github.com/anandtopu/testlookup/pull/799">#799</a>)</strong> &mdash;
+        summary schema failures <strong>7.16% &rarr; 0%</strong> (0 failures in 114 structured calls on 08-23).</li>
+      <li><strong>First real baseline reading (<a href="https://github.com/anandtopu/testlookup/pull/807">#807</a>)</strong>
+        &mdash; <code>make benchmark-pipeline</code> had never been run, so every figure in Section&nbsp;3 was an
+        estimate. Now <strong>1,329 runs</strong>, 2026-07-22&rarr;08-23, committed as the tracked baseline.</li>
+      <li><strong>Degraded rate is 10.6%, not 60.8%</strong> &mdash; 750 of 805 degraded runs fall on 2026-08-08
+        alone. The aggregate describes one incident, not current state.</li>
+      <li><strong>Grounding, post-fix window</strong> &mdash; narrative citation rate <strong>8.9% &rarr; 76.5%</strong>,
+        shared-evidence-bundle <strong>10.1% &rarr; 0%</strong>, fabricated evidence IDs <strong>0</strong>.</li>
+      <li><strong>Classifier now has a denominator</strong>
+        (<a href="https://github.com/anandtopu/testlookup/pull/809">#809</a> +
+         <a href="https://github.com/anandtopu/testlookup/pull/810">#810</a>) &mdash; it logged only failures, so
+        &ldquo;0 entries&rdquo; read identically whether it ran perfectly or never ran. Measured on 40 deliberately
+        novel failures: <strong>40 classified, 0 parse failures</strong>. With n=40 the honest ceiling is ~7% at 95%
+        confidence, not &ldquo;zero&rdquo;.</li>
+      <li><strong>Two regressions of my own, found by measuring</strong> &mdash;
+        <a href="https://github.com/anandtopu/testlookup/pull/803">#803</a> (F-17 evidence read as loss; 24/24 reports
+        failed to publish) and <a href="https://github.com/anandtopu/testlookup/pull/810">#810</a> (a fix on a line the
+        success path never reaches, which a source-reading test happily passed). Both invisible to CI.</li>
+      <li><strong>A publish trap fixed (<a href="https://github.com/anandtopu/testlookup/pull/805">#805</a>)</strong>
+        &mdash; checkpoint restore collapsed every reducer-backed state field to the last stage&rsquo;s contribution, so
+        a <code>partial</code> pipeline could never publish again. 26/26 stuck runs recovered.</li>
+    </ul>
+
+    <h3>2026-08-23 (later) &mdash; backlog started</h3>
+    <ul>
+      <li><strong>This document is now tracked in <code>main</code></strong> under
+        <code>architecture/reviews/</code> and updated as items ship &mdash; it sits there rather than
+        <code>docs/</code> because <code>.gitignore</code> excludes <code>docs/</code> wholesale.</li>
+      <li><strong>F-4 was stale in this register</strong> &mdash; listed Major/open, actually shipped in
+        <a href="https://github.com/anandtopu/testlookup/pull/799">#799</a>. Corrected, with its measurement.</li>
+      <li><strong>F-12 fixed</strong> &mdash; the cache returned a neighbour's full narrative at the source test's
+        <em>unchanged</em> confidence while the caller cleared its evidence, so nothing could contradict borrowed
+        prose. Confidence now scales with similarity, the original is preserved for audit, and the source test is
+        named. 7 guards, mutation-checked.</li>
+    </ul>
+
+    <h3>Open backlog</h3>
+    <p>Eight Major (<strong>F-5&ndash;F-12</strong>) and three Minor (<strong>F-13&ndash;F-15</strong>). Highest value
+      first: <strong>F-12</strong> (the semantic cache can serve another test&rsquo;s narrative) is the live grounding
+      risk, and <strong>F-11</strong> (nothing evaluates on a schedule) is what would make it visible &mdash;
+      <code>unsupported_claim_rate</code> is still unmeasured, and today&rsquo;s citation metrics cannot catch a
+      borrowed narrative because they check whether citations <em>resolve</em>, not whether the prose belongs to
+      this test.</p>
+  </section>
+
+  <section id="s3">
+  <h2><span class="num">Section 3</span>Optimization recommendations</h2>
+  <p class="lede">Ordered by expected value per unit of effort. Effects are structural estimates derived from the code paths, not measurements &mdash; which is exactly why O-0 comes first.</p>
+
+  <div class="note ok" style="border-left-color:var(--ok)">
+    <span class="lbl">Measured 2026-08-22 — no longer estimates</span>
+    <p>A baseline now exists (<code>benchmarks/results/pipeline_baseline.json</code>, 1,020 runs). Headline readings: the analysis engine mix is <strong>rules 819 / llm 53</strong> &mdash; the LLM path runs 6% of the time, which lowers the real-world value of O-1 for this deployment; parse failures are <strong>7.8% of LLM calls</strong>; 1,020 runs cost <strong>$0.04</strong> in total.</p>
+    <p>The estimates below that have <em>not</em> been measured are still estimates. Effects attributed to a specific change (O-3 query counts, O-6 token reduction) remain structural predictions until a before/after is run.</p>
+  </div>
+
+  <div class="tw">
+    <table>
+      <caption>Optimization backlog</caption>
+      <thead><tr><th>ID</th><th>Change</th><th>Mechanism</th><th>Expected effect</th><th class="num">Effort</th></tr></thead>
+      <tbody>
+        <tr><td class="id">O-0</td><td><strong>Baseline harness</strong></td><td>A repeatable local run over a fixed corpus of 3 run-size bands that records per-stage latency, tokens, cost, fallback rate, parse-failure rate and citation coverage.</td><td>Turns every row below from an argument into a measurement. Prerequisite for the eval gate to mean anything.</td><td class="num">1 wk</td></tr>
+        <tr><td class="id">O-1</td><td><strong>Provider-native structured output</strong></td><td>Route every JSON-shaped call through <code>with_structured_output</code> with the existing Pydantic schemas; keep <code>parse_llm_json</code> as the fallback for providers without it. Replace the string-ReAct executor with a tool-calling loop.</td><td>Removes the dominant class of silent quality loss (F-4); eliminates most low-confidence retries, which is a token saving as well as a latency one.</td><td class="num">2 wk</td></tr>
+        <tr><td class="id">O-2</td><td><strong>Set <code>num_ctx</code>; tokenize properly</strong></td><td>Pass an explicit context window per model from the model registry; separate the input budget from <code>num_predict</code>; count tokens with the provider's tokenizer and emit a <code>context_truncated</code> metric.</td><td>Stops invisible evidence loss (F-5). Likely reduces ReAct parse failures on its own, since the truncation currently eats the instructions.</td><td class="num">1 wk</td></tr>
+        <tr><td class="id">O-3</td><td><strong>Build the evidence bundle at ingestion</strong></td><td>Move <code>build_run_evidence_bundle</code> to the ingestion node, put the reference in state, and have specialists read from it. Honors the contract the capability registry already declares.</td><td>Removes ~40 duplicate queries per pipeline; makes every specialist observe one immutable snapshot; unblocks O-4.</td><td class="num">2 wk</td></tr>
+        <tr><td class="id">O-4</td><td><strong>Parallel specialist fan-out with a real barrier</strong></td><td>Fan the four read-only specialists out from one dispatch node into an explicit join node so every predecessor sits at equal depth. Add a regression test asserting each stage executes exactly once.</td><td>Collapses four serial stages into one wall-clock slot. The 2026-08-16 double-execution incident is prevented by the barrier, not by serialization.</td><td class="num">2 wk</td></tr>
+        <tr><td class="id">O-5</td><td><strong>Stream the analysis semaphore</strong></td><td>Delete the batch loop; submit all tasks and let the semaphore bound concurrency.</td><td>Removes head-of-line blocking (F-7). Largest gain when one test times out at 300&nbsp;s while others finish in seconds &mdash; the common case.</td><td class="num">2 d</td></tr>
+        <tr><td class="id">O-6</td><td><strong>One summary call, not four</strong></td><td>Emit all four layers from a single structured-output call, or run layers 2&ndash;4 concurrently against a shared prefix. Keep the deterministic executive panel exactly as it is.</td><td>Cuts summary input tokens by roughly 4&times; and its latency by a similar factor.</td><td class="num">1 wk</td></tr>
+        <tr><td class="id">O-7</td><td><strong>Model tiering by capability</strong></td><td>Add a <code>model_tier</code> to each capability spec &mdash; small for classification and extraction, large for synthesis and release reasoning &mdash; resolved through the existing factory.</td><td>Classification is the highest-volume call and needs the least capability; synthesis is once per run and needs the most. One tier for both is expensive at one end and weak at the other.</td><td class="num">2 wk</td></tr>
+        <tr><td class="id">O-8</td><td><strong>Graph-level wall-clock budget</strong></td><td>Give the pipeline a deadline derived from the Celery <code>time_limit</code>; stages check remaining time and degrade to deterministic output rather than being killed. Make async cluster-child supersession the default.</td><td>Converts a hard kill (F-2) into a disclosed partial report, which the decision contract already models as <code>degraded</code>.</td><td class="num">2 wk</td></tr>
+        <tr><td class="id">O-9</td><td><strong>Enforce declared SLOs</strong></td><td>Compare observed stage duration and cost against the capability spec; emit a breach metric and surface it on the agent activity page.</td><td>Makes the registry a contract instead of documentation (F-14), and gives the eval gate a latency dimension.</td><td class="num">1 wk</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+
+
+
+<section id="s4">
+  <h2><span class="num">Section 4</span>AI output quality</h2>
+  <p class="lede">Accuracy, grounding, and multi-agent coherence. The structural honesty work is done; this is about the content that flows through it.</p>
+
+  <h3>4.1 &nbsp;Replace verbatim citation matching with an evidence-ID contract</h3>
+  <p>This is the single highest-value quality change in the document, because it converts an unverifiable narrative into a checkable one.</p>
+  <ol class="body">
+    <li>Number the evidence the model is given: each item in the context carries a stable <code>ev_id</code> already available from the authorized artifact resolver.</li>
+    <li>Require the model to emit claims as objects with an <code>evidence_ids</code> array &mdash; enforced by structured output (O-1), not by instruction.</li>
+    <li>Validate server-side: drop or demote any claim whose ids do not resolve to authorized artifacts for this run. This mirrors what the decision critic already does for typed claims, extended to prose.</li>
+    <li>Report <em>citation coverage</em> and <em>unsupported-claim rate</em> as first-class metrics per report version.</li>
+  </ol>
+  <p>The decision report already refuses to publish on evidence-authorization errors; this brings the LLM narrative under the same rule instead of trusting a 40-character string match.</p>
+  <div class="note crit">
+    <span class="lbl">Revision 5 — the contract is not the binding constraint</span>
+    <p>All four steps above shipped in <a href="https://github.com/anandtopu/testlookup/pull/792">#792</a>, and citations still measured <strong>0 of 30</strong> on the homelab. The reason is not the model declining the contract &mdash; it is that <strong>99.94% of analyses produce no evidence at all</strong> (F-17), so the catalogue handed to the model is empty.</p>
+    <p><strong>Fixing the citation mechanism was the wrong end of the chain to start from.</strong> Evidence <em>production</em> is the prerequisite: the rules engine runs 87% of analyses and invokes no tools, and the LLM path's fast classifier returns before the ReAct loop that would gather any. Until that changes, G.2 is a correct mechanism with nothing to carry.</p>
+  </div>
+
+  <h3>4.2 &nbsp;Extend the critic to the narrative</h3>
+  <p><code>evaluate_decision_report</code> runs fifteen deterministic checks and none of them look at generated prose. Add three that can be computed without a second model: <strong>numeric consistency</strong> (every number in the narrative must appear in the metric snapshot), <strong>entity validity</strong> (every named test, suite or service must exist in the run), and <strong>verdict agreement</strong> (the narrative's implied release stance must match the deterministic decision). All three are cheap, local, and catch the failure modes that actually embarrass a report.</p>
+
+  <h3>4.3 &nbsp;Make the semantic cache degrade, not impersonate</h3>
+  <p>A near-match at 0.85 similarity is evidence about a <em>category</em>, not a root cause for <em>this</em> test. Recommended behavior: reuse the category and confidence band, discard the narrative and recommended actions, mark the result <code>cache_derived</code> with the similarity attached, and scale confidence by distance. The tenant scoping is already correct; this is about not passing off one failure's story as another's.</p>
+
+  <h3>4.4 &nbsp;Give triage access to the knowledge base</h3>
+  <p>Wire <code>rag_retrieval_service</code> into the analysis path as a seventh ReAct tool and as pre-retrieved context for the fast classifier, subject to the same <code>knowledge_rag</code> flag and redaction. A runbook that says &ldquo;connection reset here means the payment sandbox recycles at 03:00&rdquo; converts an <code>INFRASTRUCTURE / unknown</code> verdict into a specific, actionable one. The retrieval, chunking, embedding, redaction and faithfulness machinery all exist; only the wiring to triage is missing.</p>
+
+  <h3>4.5 &nbsp;Calibrate confidence instead of declaring it</h3>
+  <p>The system is admirably honest that its confidence numbers are self-declared. The next step is to stop needing the disclaimer: with human corrections, Jira resolutions and fix outcomes already stored as labels, fit a per-category reliability curve (isotonic or Platt) offline, publish it as a versioned artifact, and map raw scores through it. Then <code>ai_confidence_threshold</code> becomes a genuine risk dial and expected calibration error becomes a gate-able metric &mdash; the harness that computes it already exists in <code>agent_eval_harness.py</code> and is currently only exercised by tests.</p>
+
+  <h3>4.6 &nbsp;Multi-agent collaboration</h3>
+  <div class="tw">
+    <table>
+      <caption>Collaboration upgrades</caption>
+      <thead><tr><th>Pattern</th><th>Today</th><th>Proposed</th></tr></thead>
+      <tbody>
+        <tr><td>Evidence sharing</td><td>Each specialist re-queries the database</td><td>One immutable bundle, referenced by id (O-3)</td></tr>
+        <tr><td>Disagreement</td><td>Contradictions are detected and disclosed in <code>quality_review</code></td><td>Route contradicting pairs to one bounded resolution call before publication, with the disagreement preserved</td></tr>
+        <tr><td>Confidence weighting</td><td>Specialist outputs merge by position in the graph</td><td>Weight by measured per-specialist historical accuracy from the eval corpus</td></tr>
+        <tr><td>High-stakes verdicts</td><td>Single pass for NO_GO recommendations</td><td>Self-consistency sampling (3 samples, majority) reserved for release-blocking claims only</td></tr>
+        <tr><td>Specialist selection</td><td>Static topology; planner verifies but does not choose</td><td>Deterministic policy planner selects specialists from evidence shape, uncertainty and remaining budget (open item <code>AIA-005</code>)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="s5">
+  <h2><span class="num">Section 5</span>Self-improving system design</h2>
+  <p class="lede">The honest current state: every loop in this system requires a human to close it, and the one automated loop is disabled by default and forbidden by the product's own offline posture.</p>
+
+  <h3>5.1 &nbsp;What closes today</h3>
+  <div class="tw">
+    <table>
+      <caption>Existing feedback loops</caption>
+      <thead><tr><th>Loop</th><th>Signal</th><th>Improves</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Correction replay</td><td>Reviewer marks a verdict incorrect and supplies the right category</td><td>Future runs of the same fingerprint, deterministically</td><td><span class="chip ok">Closed</span> and well built</td></tr>
+        <tr><td>Jira resolution</td><td>Webhook maps resolved / invalid to a feedback rating</td><td>ML training corpus</td><td><span class="chip ok">Closed</span>, human-gated</td></tr>
+        <tr><td>Fix outcome</td><td>Merged Fixer PR records <code>fixed</code></td><td>ML training corpus</td><td><span class="chip ok">Closed</span>, human-gated</td></tr>
+        <tr><td>Flaky calibration</td><td>Nightly classifier calibration job</td><td>Quarantine decisions</td><td><span class="chip ok">Closed</span></td></tr>
+        <tr><td>Fine-tuning</td><td>Exported corpus crosses a threshold</td><td>Classifier and reasoning tracks</td><td><span class="chip b">Off by default, cloud-only, blocked by <code>AI_OFFLINE_MODE</code></span></td></tr>
+        <tr><td>Report eval cycles</td><td>Qualified-user utility votes over an approved corpus</td><td>Pilot release gate</td><td><span class="chip m">Built, never scheduled, awaiting a pilot</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note crit">
+    <span class="lbl">The structural problem</span>
+    <p>Labels flow to the ML classifier and the fine-tune corpus. <code>auto</code> resolves ML &rarr; LLM &rarr; rules, so a trained classifier <em>is</em> preferred once it exists &mdash; but it only exists after 200 labeled samples. <strong>Below that threshold the LLM runs and learns nothing</strong>, which is precisely the period when a new project's answers are worst and its users are deciding whether to trust the product. Fine-tuning, the one path that would improve the LLM directly, is off by default, OpenAI-only, and refused when <code>AI_OFFLINE_MODE</code> is true &mdash; which is the default.</p>
+  </div>
+
+  <h3>5.2 &nbsp;A flywheel that works offline</h3>
+  <p>Four layers, each shippable on its own, none requiring a cloud provider or model training.</p>
+  <div class="tw">
+    <table>
+      <caption>Proposed learning architecture</caption>
+      <thead><tr><th>Layer</th><th>What it does</th><th>New capability</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>1 &middot; Capture</strong></td>
+          <td>Add the signals already produced but not harvested: the Fixer's <em>sandbox validation result</em> (a re-run that passes is ground truth about the root cause, independent of whether a human merged the PR), quarantine reversals, and re-run outcomes on unchanged code.</td>
+          <td>The first labels that need no human at all</td>
+        </tr>
+        <tr>
+          <td><strong>2 &middot; Measure</strong></td>
+          <td>A nightly eval job over the golden corpus plus recent labeled analyses, writing an <code>AIEvalRun</code> per task type with accuracy, macro F1, calibration error, citation coverage and contradiction rate. Drift detection compares to the active baseline and opens an alert, not a silent log line.</td>
+          <td>Continuous quality signal (fixes F-11)</td>
+        </tr>
+        <tr>
+          <td><strong>3 &middot; Adapt without training</strong></td>
+          <td>Three mechanisms, in ascending order of ambition: <em>(a)</em> retrieval-augmented exemplars &mdash; inject the k nearest confirmed corrections as few-shot examples into the fast classifier, which is zero-shot today; <em>(b)</em> threshold auto-tuning &mdash; propose <code>ai_confidence_threshold</code> and <code>SEMANTIC_SIMILARITY_THRESHOLD</code> values from the measured precision curve; <em>(c)</em> prompt candidates &mdash; generate variants offline, score them through the existing eval gate, and require the same manifest attestation to promote.</td>
+          <td><strong>Improves the LLM path in an air-gapped install</strong></td>
+        </tr>
+        <tr>
+          <td><strong>4 &middot; Train</strong></td>
+          <td>When the human-label corpus passes the existing thresholds, run local distillation (LoRA against the Ollama-hosted base) rather than a cloud fine-tune. Promotion stays behind <code>eval_gate_service</code> and the model registry, which already support candidate versus active comparison.</td>
+          <td>Makes fine-tuning viable under the default posture</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Governance rides the mechanism that already exists: every adaptation is a proposal, proposals run in <code>shadow</code> until they beat the baseline over two consecutive eval cycles, and promotion writes an audit row. That is precisely the shadow-to-active discipline the agentic layer uses for actions &mdash; extended from <em>what the system does</em> to <em>what the system becomes</em>.</p>
+
+  <h3>5.3 &nbsp;Signal-to-target map</h3>
+  <div class="tw">
+    <table>
+      <caption>Which signal should tune what</caption>
+      <thead><tr><th>Signal</th><th>Available today</th><th>Should tune</th></tr></thead>
+      <tbody>
+        <tr><td>Category correction</td><td>Yes</td><td>Classifier exemplars, per-category calibration, ML weights</td></tr>
+        <tr><td>Claim-level report feedback</td><td>Yes (Phase 5 controls)</td><td>Which specialists are worth running; synthesis prompt selection</td></tr>
+        <tr><td>Sandbox validation pass</td><td><strong>Produced, not harvested</strong></td><td>Root-cause accuracy per category &mdash; the cheapest ground truth in the system</td></tr>
+        <tr><td>Jira resolution</td><td>Yes</td><td>Precision by category; duplicate-detection thresholds</td></tr>
+        <tr><td>Quarantine reversal</td><td>Partially</td><td>Flaky classifier calibration (already), plus flaky-vs-real routing</td></tr>
+        <tr><td>Release override</td><td>Recorded</td><td>Release policy weights; NO_GO threshold</td></tr>
+        <tr><td>Chat thumbs / retry</td><td>No</td><td>Intent classifier; retrieval depth per intent</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="s6">
+  <h2><span class="num">Section 6</span>Roadmap and requirements</h2>
+  <p class="lede">Six epics, sequenced so that measurement precedes tuning and correctness precedes optimization. Epics A&ndash;E from the 2026-08-11 PRD are largely delivered; these continue the series as F&ndash;K.</p>
+
+  <h3>Phase 1 &mdash; Trust the floor <span class="chip b">Weeks 1&ndash;4</span></h3>
+  <div class="tw">
+    <table>
+      <caption>Epic F &middot; Correctness and capacity</caption>
+      <thead><tr><th>Req</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead>
+      <tbody>
+        <tr><td class="id">F.1</td><td>A raising per-test analysis must never fail the stage</td><td>A regression test injects an exception into one of five analyses; the stage completes, records four results plus one error entry, and marks <code>stage_quality</code> honestly. Fixes finding F-1.</td></tr>
+        <tr><td class="id">F.2</td><td>The pipeline must degrade before it is killed</td><td>With a deadline set below the work required, the run publishes a <code>degraded</code> report naming the skipped stages; no SIGKILL, no orphaned <code>running</code> rows. Fixes finding F-2.</td></tr>
+        <tr><td class="id">F.3</td><td>Context truncation must be observable</td><td><code>num_ctx</code> is set from the model registry; a prompt exceeding it increments <code>context_truncated_total</code> and logs the stage. No silent loss. Fixes finding F-5.</td></tr>
+        <tr><td class="id">F.4</td><td>Baseline harness</td><td>One command produces per-stage latency, tokens, cost, fallback rate and parse-failure rate over three run-size bands; the output is committed as the reference baseline. Delivers O-0.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Phase 2 &mdash; Make the output checkable <span class="chip m">Weeks 5&ndash;10</span></h3>
+  <div class="tw">
+    <table>
+      <caption>Epic G &middot; Grounded generation</caption>
+      <thead><tr><th>Req</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead>
+      <tbody>
+        <tr><td class="id">G.1</td><td>Structured output on every JSON-shaped call</td><td>Providers that support it use <code>with_structured_output</code>; parse-failure rate against the baseline drops by at least half; the regex path remains as documented fallback. Fixes finding F-4.</td></tr>
+        <tr><td class="id">G.2</td><td>Claims carry their own resolvable evidence ids</td><td>Every material claim &mdash; narrative and typed &mdash; carries evidence selected for that claim, not a shared bundle; unresolvable ids are dropped or demoted and counted. Fixes finding F-3 and F-16.</td></tr>
+        <tr><td class="id">G.3</td><td>Narrative critic</td><td>Numeric-consistency, entity-validity and verdict-agreement checks join the critic's check list and can block publication. Extends 4.2.</td></tr>
+        <tr><td class="id">G.4</td><td>Cache results are labeled, not impersonated</td><td>A semantic-cache hit yields category and band only, marked <code>cache_derived</code> with similarity, confidence scaled by distance. Fixes finding F-12.</td></tr>
+        <tr><td class="id">G.5</td><td>Triage can read the knowledge base</td><td>With <code>knowledge_rag</code> enabled, root-cause analysis retrieves and cites knowledge chunks; a pilot corpus shows improved specificity without a faithfulness regression. Delivers 4.4.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Phase 3 &mdash; Earn the latency back <span class="chip m">Weeks 8&ndash;14, parallel</span></h3>
+  <div class="tw">
+    <table>
+      <caption>Epic H &middot; Throughput and cost</caption>
+      <thead><tr><th>Req</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead>
+      <tbody>
+        <tr><td class="id">H.1</td><td>One evidence bundle per run</td><td>Built at ingestion, referenced by every specialist; duplicate query count per pipeline falls measurably; no specialist reads the run table directly. Fixes finding F-8.</td></tr>
+        <tr><td class="id">H.2</td><td>Specialists run concurrently</td><td>The four read-only specialists execute in one wall-clock slot behind an explicit barrier; a test asserts each stage runs exactly once across 20 consecutive runs. Fixes finding F-9.</td></tr>
+        <tr><td class="id">H.3</td><td>Streaming analysis concurrency</td><td>The batch loop is removed; a corpus with one deliberate 300&nbsp;s outlier completes in materially less wall-clock than the batched baseline. Fixes finding F-7.</td></tr>
+        <tr><td class="id">H.4</td><td>Single-pass summary</td><td>The four layers come from one structured call or run concurrently; summary input tokens fall by at least 60% against baseline with no quality regression on the golden corpus. Fixes finding F-6.</td></tr>
+        <tr><td class="id">H.5</td><td>Capability-declared model tiers</td><td>Each spec declares a tier; classification runs on the small tier and synthesis on the large; cost per run and macro F1 both reported against baseline. Delivers O-7.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Phase 4 &mdash; Close a loop without a human <span class="chip ac">Quarter 2</span></h3>
+  <div class="tw">
+    <table>
+      <caption>Epics I&ndash;K &middot; Continuous quality</caption>
+      <thead><tr><th>Req</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead>
+      <tbody>
+        <tr><td class="id">I.1</td><td>Nightly evaluation and drift</td><td>A scheduled job writes an <code>AIEvalRun</code> per task type; a regression beyond the configured margin raises an alert and appears on the AI settings page. Fixes finding F-11.</td></tr>
+        <tr><td class="id">I.2</td><td>SLO enforcement</td><td>Observed stage latency and cost are compared to the capability spec; breaches emit a metric and surface in the UI. Fixes finding F-14.</td></tr>
+        <tr><td class="id">J.1</td><td>Sandbox outcomes become labels</td><td>Every Fixer validation result writes a provenance-tagged feedback row regardless of PR state; the corpus grows without human action. Delivers 5.2 layer 1.</td></tr>
+        <tr><td class="id">J.2</td><td>Calibrated confidence</td><td>A versioned per-category reliability mapping is fitted offline and applied at read time; expected calibration error is reported per release and gate-able. Delivers 4.5.</td></tr>
+        <tr><td class="id">K.1</td><td>Adaptation without training</td><td>Exemplar injection, threshold proposals and prompt candidates all run in shadow, must beat baseline over two consecutive cycles, and promote only through the existing eval gate and manifest attestation. Delivers 5.2 layer 3.</td></tr>
+        <tr><td class="id">K.2</td><td>Local distillation path</td><td>Fine-tuning is possible with <code>AI_OFFLINE_MODE=true</code> via local LoRA; promotion remains gated by the model registry. Fixes finding F-10.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>Non-goals for this cycle</h4>
+  <ul>
+    <li>Replacing LangGraph. The chassis is right; the prior review's conclusion stands.</li>
+    <li>Autonomous mutation. The Fixer's draft-PR-only posture is a feature.</li>
+    <li>New specialist agents. Nine exist; measure their contribution before adding a tenth.</li>
+    <li>Cloud-first anything. Every recommendation above works under <code>AI_OFFLINE_MODE=true</code>.</li>
+  </ul>
+</section>
+
+<section id="s7">
+  <h2><span class="num">Section 7</span>Success metrics</h2>
+  <p class="lede">The north-star from the prior PRD stands: the share of failed runs where a qualified user accepts the report without doing their own synthesis. These are the instrument readings underneath it.</p>
+  <div class="tw">
+    <table>
+      <caption>KPI set</caption>
+      <thead><tr><th>Metric</th><th>How measured</th><th>Baseline</th><th>Target</th></tr></thead>
+      <tbody>
+        <tr><td>Citation coverage</td><td>Material claims with a claim-specific, resolvable evidence id &divide; all material claims</td><td><strong>28%</strong> of summaries cite (14/50, 63 citations, <strong>0 fabricated ids</strong>), from 0%. Claim evidence: shared-bundle rate <strong>100% &rarr; 0%</strong>.</td><td>&ge;98%</td></tr>
+        <tr><td>Unsupported claim rate</td><td>Claims dropped or demoted by the narrative critic</td><td><span class="chip s">Not instrumented</span></td><td>&lt;1%, zero on release blockers</td></tr>
+        <tr><td>Parse-failure rate</td><td>Schema-validation failures &divide; LLM calls</td><td><strong>7.8% of LLM calls</strong> all-time (14 failures). <strong>0 across 150</strong> post-fix runs.</td><td>&minus;50% after G.1</td></tr>
+        <tr><td>Context truncation rate</td><td>New <code>context_truncated_total</code> &divide; LLM calls</td><td><span class="chip b">Invisible today</span></td><td>&lt;1%</td></tr>
+        <tr><td>Report latency p50 / p95</td><td>Pipeline start to published report, by run-size band</td><td>Small band, post-fix: <strong>p50 64&nbsp;s / p95 130&nbsp;s</strong>. Summary stage all-time p95 47.7&nbsp;s.</td><td>90&nbsp;s / 5&nbsp;min (prior PRD)</td></tr>
+        <tr><td>Cost per run</td><td>Existing per-stage cost meter, aggregated by band</td><td><strong>$0.04 across 1,020 runs</strong>; $0.0001/run post-fix (self-hosted Ollama + rules).</td><td>Set from baseline, then &minus;40% via H.4/H.5</td></tr>
+        <tr><td>Failure-category macro F1</td><td>Golden corpus plus labeled analyses, nightly</td><td><span class="chip s">Rules engine only, 42 synthetic cases</span></td><td>Baseline, then +10% relative</td></tr>
+        <tr><td>Expected calibration error</td><td><code>agent_eval_harness</code>, per category</td><td><span class="chip s">Harness exists, unused in production</span></td><td>&le;0.15 (harness threshold)</td></tr>
+        <tr><td>Human correction rate</td><td>Corrections &divide; analyses shown</td><td><span class="chip ok">Data exists</span></td><td>Downward trend quarter over quarter</td></tr>
+        <tr><td>Automatic label yield</td><td>Labels per week requiring no human action</td><td><span class="chip b">0</span></td><td>&gt;50% of corpus growth after J.1</td></tr>
+        <tr><td>Specialist contribution</td><td>Ablation: report quality with and without each specialist</td><td><span class="chip s">Named as a gate, never run</span></td><td>Every enabled specialist demonstrably positive</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    <span class="lbl">Why so many baselines are empty</span>
+    <p>This is not an oversight in the codebase so much as an ordering problem: the quality targets were written before the instruments. Phase 1 exists to fill this column. Until it does, no claim about improvement &mdash; including the estimates in Section 3 &mdash; can be defended.</p>
+  </div>
+</section>
+
+<section id="s8">
+  <h2><span class="num">Section 8</span>Method and limits</h2>
+  <p>Static review of the committed state of <code>main</code> at <code>7752041a</code> (the working branch carries no committed divergence; uncommitted decision-panel work was excluded). Covered: <code>backend/app/agents</code> including the Investigator and Fixer packages, the AI-related services in <code>backend/app/services</code>, the Celery topology and beat schedule, the prompt registry and its manifest gate, the evaluation and eval-gate services, the capability registry and planner, the LLM factory and policy layer, and the AI routers and frontend components. The 2026-08-11 review set and the Phase 3 audits were read first so that closed items are not re-reported.</p>
+  <h4>What was not done</h4>
+  <ul>
+    <li><strong>Superseded 2026-08-22.</strong> Revision 1 ran nothing. Since then the harness has been run against the homelab (1,020 runs), all three blocking findings shipped, and a 150-pipeline load test was driven against the deployed fix. Figures marked as measured are real; everything else remains a structural estimate.</li>
+    <li><strong>Homelab now exercised.</strong> Findings F-16 and the pre-fix citation rate are confirmed against real deployed data; the Redis-pool fix was deployed and load-tested there.</li>
+    <li><strong>No test suite run.</strong> Claims about coverage gaps come from reading tests, not from executing them.</li>
+    <li><strong>Frontend reviewed only at the contract boundary</strong> &mdash; what the AI panels consume, not their internals.</li>
+  </ul>
+  <footer>
+    <p>Findings F-1 through F-16 carry file and line references throughout; each is independently verifiable without re-reading this document. The fastest path to disagreeing with any estimate in Section 3 is to build the Phase 1 baseline harness, which is why it is the first item of work.</p>
+    <p><strong>Revision 6 — grounding confirmed end to end.</strong> All three grounding findings are now measured against deployed data, not asserted from tests:</p>
+    <ul>
+      <li><strong>F-16</strong> &mdash; reports where every claim shares one evidence set: <strong>100% &rarr; 0%</strong>.</li>
+      <li><strong>F-17</strong> &mdash; new analyses carrying evidence: <strong>~0% &rarr; 58%</strong>.</li>
+      <li><strong>F-3</strong> &mdash; summaries carrying a citation: <strong>0% &rarr; 28%</strong> (63 citations), with <strong>zero fabricated ids</strong>.</li>
+    </ul>
+    <p>That last number was the open question no test could settle: handed a catalogue of server-generated ids, the model returned 63 citations and <em>every one resolved</em>. The contract survives contact with a real model.</p>
+    <p><strong>F-3 took three attempts to actually work.</strong> The citation contract (<a href="https://github.com/anandtopu/testlookup/pull/792">#792</a>), then rules-engine evidence supply (<a href="https://github.com/anandtopu/testlookup/pull/797">#797</a>), then fast-classifier supply (<a href="https://github.com/anandtopu/testlookup/pull/798">#798</a>). The first two each looked correct, passed their tests, deployed cleanly &mdash; and measured exactly zero. Nothing but running the system found either gap.</p>
+    <p>A fourth false result is worth recording alongside them: one measurement run reported no change because all 20 pipelines had been <em>deduplicated rather than executed</em> (7200s TTL on <code>test_run_id:workflow_type</code>). It was caught only by checking that pipelines had started before reading the coverage number. Four times in this engagement a figure that looked like a finding was an artifact of how it was gathered &mdash; the same failure the temporal block in the harness exists to prevent.</p>
+    <p><strong>Revision 5 — measured after deploying.</strong> F-16 confirmed fixed against real data: reports where every claim shared one evidence set went <strong>100% &rarr; 0%</strong> (10/10 before, 0/30 after). Worth noting what did NOT move: <em>claims with evidence</em> read 100% on both sides, so the coverage metric alone would have scored this change as a no-op &mdash; which is why <code>shared_evidence_bundle_rate</code> exists as a separate number.</p>
+    <p>F-3 deployed and stayed at <strong>0 of 30</strong> cited. Investigating rather than assuming the model had declined the contract produced <strong>F-17</strong>, the new blocking finding above: the analyses supply no evidence to cite. Three review passes reasoned about citation <em>mechanism</em>; one measurement showed the constraint is citation <em>supply</em>. That is the second time this session a reading overturned a conclusion reached by reading code.</p>
+    <p><strong>Revision 4 — measured.</strong> The harness built for O-0 was run against the homelab: 1,020 pipeline runs, 5,572 stage results. It immediately produced a wrong conclusion of its own, which is worth recording: it reported <em>86% of runs degraded</em> when 747 of 765 failures had occurred in a single hour three weeks earlier. An aggregate over a long window makes an incident arithmetically identical to a chronic condition. The harness now names a dominant day above its own tables, and the honest ongoing degraded rate is <strong>12.4%</strong>.</p>
+    <p>That investigation found a defect no review pass had: every Celery task leaked a <code>redis.asyncio</code> pool bound to a closed event loop, because task teardown drained the SQLAlchemy engine and the httpx client but not Redis. One pool per task &mdash; invisible at 60 runs/week, ~96% summary-stage failure at 750/hour. Fixed in <a href="https://github.com/anandtopu/testlookup/pull/795">#795</a>, deployed, and load-tested: <strong>150 pipelines, zero failures of any stage</strong>, against ~96% before. Strong corroboration rather than proof &mdash; 150 is still 5&times; smaller than the burst that exposed it.</p>
+    <p><strong>Revision 3.</strong> F-1 shipped in <a href="https://github.com/anandtopu/testlookup/pull/785">#785</a> and F-2 in <a href="https://github.com/anandtopu/testlookup/pull/786">#786</a>. Building F-2 disproved its own stated mechanism: a global <code>task_soft_time_limit</code> means an overrunning pipeline is retried whole rather than SIGKILLed, which is worse than what revision 2 described. The row is corrected above. The line-keyed quality-gate baseline noted while fixing F-1 was re-keyed on content fingerprints in <a href="https://github.com/anandtopu/testlookup/pull/787">#787</a>, and F-2 was the first change to confirm it &mdash; moving a tolerated call 42 lines with no baseline edit required.</p>
+    <p><strong>Revision 2</strong> (same day) applied a verification pass over revision 1. Five claims were corrected: the deep pipeline has five LLM stages, not the set originally listed &mdash; the log, contract and flaky agents invoke tools, not models; <code>auto</code> mode resolves ML before LLM, inverting the original statement of the learning-loop gap (F-10); specialist query volume is 25 sites in 11 sessions, not &ldquo;40+ round trips&rdquo;; narrative citations can fire on verbatim reproduction within one layer rather than never (F-3); and per-stage latency and cost are in fact instrumented, though not end to end. One finding was added: F-16, shared claim evidence in the decision report.</p>
+  </footer>
+</section>
+
+</main>
+</div>
+</div>
