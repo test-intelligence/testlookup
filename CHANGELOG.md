@@ -1,13 +1,24 @@
 # Changelog
 
-## 2026-08-23 — Classifier provenance read as evidence loss, so no decision report published
+## 2026-08-23 — Classifier provenance read as evidence loss, so 24 runs lost their decision report
 
 - **A regression I introduced.** F-17 (#801) attached a provenance trail to fast-classifier verdicts — the error text a rule matched on, as a `classifier_input` evidence reference. The capture loop skips that kind by design: it is not an attested tool observation, it never applies for authorization, and no authorization error is recorded for it.
 - The evidence bundle carries an independent fail-closed guard: *candidates went in, nothing came out, nobody said why — flag it.* It counted **every** reference as a candidate. On any run whose failures were all fast-classified, it saw N candidates, zero artifacts, zero errors, and reported `evidence_reference_invalid`.
-- Consequence: the critic's `metric_data_quality` check failed, terminal verification failed closed, and **the decision report never published**. Measured on the homelab: **31 of 31** recorded attempts failed on that single check, the first ~20 minutes after the F-17 image rolled out. The run inspected carried 4 references, all `classifier_input`, zero `tool_observation`.
+- Consequence: the critic's `metric_data_quality` check failed, terminal verification failed closed, and the decision report did not publish for the affected runs. Measured on the homelab: **24 of 24** attempts recorded after the F-17 rollout failed on that single check — 100% of them — and **none** before it. The first came ~20 minutes after the image rolled out. The run inspected carried 4 references, all `classifier_input`, zero `tool_observation`.
+- **Scope, stated precisely.** This was not a total outage: 51 reports published in the same window with `verification.status = passed`. The failure was confined to runs whose evidence was *entirely* classifier provenance — the ones with no authorized `tool_observation` to keep the guard satisfied.
+- The attempts table also holds **7 failures from 2026-08-16 with 8 checks failing at once** and every `observed` value `null`. That is a **separate pre-existing defect**, not this one, and it has not recurred since.
 - The defect was **two modules each defining "what applies for authorization" and disagreeing** — a duplicated `classifier_input` constant, one skip, one counter that knew nothing about it. Both now import a single `applies_for_authorization()` predicate; the duplicated constant is gone, and a test asserts the two call sites resolve to the same function object.
 - **The guard is not weakened.** A tool observation that genuinely vanished still fails closed, and a malformed reference still counts as a candidate — it is reported by the capture loop rather than dropped here. Three of the eight guards exist to pin that, including a mixed run where a classifier reference must not mask a real loss.
 - The legacy (unauthorized) branch is untouched: there, classifier references *do* become inline bundle references, so its arithmetic was already consistent.
+- **Confirmed on the deployment** (`build-20260823-052302`), not asserted from tests. Three runs carrying *only* `classifier_input` evidence — the exact shape that failed before — were put through a fresh deep pipeline:
+
+  | | Before | After |
+  |---|---|---|
+  | `metric_data_quality` | 24 fail / 24 | **0 fail / 8** |
+  | Reports published for that shape | 0 | **3 of 3**, `verification.status = passed` |
+  | New failed attempts | 24 | **0** |
+
+- **A second defect surfaced while measuring, and is NOT fixed here.** Re-running an already-`partial` pipeline restores its stages from checkpoint, and the restore path at `agents/workflow.py` returns only `completed_stages` / `current_stage` — never the stage's agent contract. The contract is then missing, `completed_agent_contracts_present` fails, verification fails closed, and the run stays `partial`. `_load_checkpoint` selects the latest **failed or partial** prior run, so the next attempt restores the same way: **once a deep pipeline goes partial it can never publish again.** Every classifier-only run in the deployment is currently in that state, including the ones this regression put there. Tracked separately.
 
 ## 2026-08-22 — The fast classifier's failures were counted nowhere
 
