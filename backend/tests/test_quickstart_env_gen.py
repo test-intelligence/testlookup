@@ -18,10 +18,61 @@ from pathlib import Path
 
 import pytest
 
-# CI (Linux) has a working `bash` on PATH. On a Windows dev box `bash` may
-# resolve to the WSL shim; set TL_TEST_BASH to a real bash (e.g. git-bash) to
-# run these locally. Unset → plain "bash".
-_BASH = os.environ.get("TL_TEST_BASH", "bash")
+
+def _resolve_bash() -> str | None:
+    """Return a bash that actually *runs*, or None.
+
+    ``shutil.which("bash")`` was the old check, and it is not enough on
+    Windows: it finds the WSL shim at ``System32/bash.exe``, which exists,
+    passes the guard, and then dies with ``execvpe(/bin/bash) failed: No such
+    file or directory`` when no distro is installed. Presence was verified;
+    usability never was — so five tests *errored* locally where they were
+    meant to skip. CI (Linux) has a real bash, so CI never showed it.
+
+    Git for Windows ships a working bash even when WSL has no distro, so
+    prefer finding one over skipping: a test that runs beats a test that
+    politely opts out.
+    """
+    candidates: list[str] = []
+    override = os.environ.get("TL_TEST_BASH")
+    if override:
+        candidates.append(override)  # explicit choice wins, working or not
+    else:
+        found = shutil.which("bash")
+        if found:
+            candidates.append(found)
+        # Git for Windows ships both: bin/ is a small wrapper, usr/bin/ the
+        # real shell. Either passes the probe; list both so a trimmed install
+        # still resolves.
+        candidates += [
+            r"C:\Program Files\Git\bin\bash.exe",
+            r"C:\Program Files\Git\usr\bin\bash.exe",
+            r"C:\Program Files (x86)\Git\bin\bash.exe",
+        ]
+    for candidate in candidates:
+        try:
+            probe = subprocess.run(
+                [candidate, "-c", "exit 0"], capture_output=True, timeout=30
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode == 0:
+            return candidate
+    return None
+
+
+# Resolved once: the probe spawns a process, and these tests spawn enough
+# already. None => no usable bash on this machine => skip, don't error.
+_BASH = _resolve_bash()
+
+
+def _require_bash() -> None:
+    if _BASH is None:
+        pytest.skip(
+            "no working bash found (a WSL shim with no distro does not count) — "
+            "install Git for Windows or set TL_TEST_BASH to a real bash"
+        )
+
 
 _REPO = Path(__file__).resolve().parents[2]
 _SCRIPT = _REPO / "scripts" / "gen-dev-env.sh"
@@ -53,8 +104,7 @@ def _parse_env(text: str) -> dict[str, str]:
 
 @pytest.fixture
 def generated_env(tmp_path: Path) -> dict[str, str]:
-    if shutil.which("bash") is None:
-        pytest.skip("bash not available")
+    _require_bash()
     _run_generator(tmp_path)
     out = tmp_path / ".env"
     assert out.exists(), "no .env produced"
@@ -105,8 +155,7 @@ def test_no_stray_carriage_returns_in_values(generated_env):
 
 def test_secrets_look_random(generated_env, tmp_path_factory):
     # A second, independent generation must differ (not a fixed/templated value).
-    if shutil.which("bash") is None:
-        pytest.skip("bash not available")
+    _require_bash()
     other_dir = tmp_path_factory.mktemp("gen2")
     _run_generator(other_dir)
     other = _parse_env((other_dir / ".env").read_text(encoding="utf-8"))
@@ -114,8 +163,7 @@ def test_secrets_look_random(generated_env, tmp_path_factory):
 
 
 def test_idempotent_when_env_exists(tmp_path: Path):
-    if shutil.which("bash") is None:
-        pytest.skip("bash not available")
+    _require_bash()
     _run_generator(tmp_path)
     first = (tmp_path / ".env").read_text(encoding="utf-8")
     # Re-running must not mutate an existing .env.

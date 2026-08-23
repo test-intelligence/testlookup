@@ -99,7 +99,20 @@ def _harness_context():
                 "Could not fetch a JWT — set TESTLOOKUP_BENCHMARK_ACCESS_TOKEN "
                 "or start the server in development mode with DEV_AUTO_LOGIN_ENABLED=true."
             )
-        fixtures = await fetch_fixtures(BASE_URL, token)
+        try:
+            fixtures = await fetch_fixtures(BASE_URL, token)
+        except RuntimeError as exc:
+            # A stack that is UP but EMPTY is not a budget regression — there is
+            # simply nothing to benchmark. ``_skip_if_unreachable`` above only
+            # answers "is anything listening"; seeded data is a *separate*
+            # precondition and needs its own skip. Without this, every developer
+            # running `make dev` without `make seed-data` gets 7 ERRORs that say
+            # nothing about performance. Narrow on purpose: any other RuntimeError
+            # still propagates, because "we could not look" and "the budget was
+            # missed" must not render identically.
+            if "seeded data" not in str(exc):
+                raise
+            pytest.skip(f"{exc}")
         return token, fixtures
 
     token, fixtures = asyncio.run(_setup())

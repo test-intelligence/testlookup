@@ -9,6 +9,23 @@ import pytest
 os.environ.setdefault("TESTING", "true")
 os.environ.setdefault("OTEL_ENABLED", "false")
 
+# ``Settings.DATABASE_URL`` is the one field with no usable default (""), and
+# ``app/db/postgres.py`` parses it at *import* time. Unset, the whole suite dies
+# at collection with ``ArgumentError: Could not parse SQLAlchemy URL from string
+# ''`` — six files, 26 failures, none of them about the code under test. CI
+# exports a URL in the workflow, so CI never saw it; only a local run without
+# the Docker stack did, which made "the suite is green" mean different things in
+# the two places.
+#
+# ``setdefault``, so a real URL (CI, Docker, ``tests/integration/``) still wins.
+# The host is deliberately ``.invalid`` — an RFC 6761 TLD guaranteed never to
+# resolve. Unit tests only need this to *parse*; pointing it at localhost would
+# risk a stray test opening a real connection to a developer's own database.
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+asyncpg://testlookup:testlookup@db.invalid:5432/testlookup_test",
+)
+
 
 def _make_celery_fail_fast_without_a_broker() -> None:
     """A missing Redis must fail the dispatch, not retry it forever.

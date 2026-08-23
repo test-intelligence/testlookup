@@ -176,7 +176,7 @@ predicate). In the query layer:
 
 ### Async-session gotchas
 
-- `app/db/postgres.py` builds the engine at **import time** — `DATABASE_URL` must be set in any process that imports it (tests included).
+- `app/db/postgres.py` builds the engine at **import time** — `DATABASE_URL` must be set in any process that imports it. It is the only `Settings` field with no usable default, so an unset value kills a run at *collection*. `backend/tests/conftest.py` now `setdefault`s a non-resolving `db.invalid` placeholder, so the test suite needs no env prep; any other entry point (scripts, a REPL, a worker) still has to provide one.
 - After flushing a row with a `func.now()` / `onupdate` server-side default, `await db.refresh(row)` before a Pydantic serializer reads it, or you get `MissingGreenlet`.
 - `IN :ids` needs `bindparam("ids", expanding=True)` under asyncpg, or it binds the tuple as one scalar and 500s.
 
@@ -264,15 +264,17 @@ for a marker string before blaming deploy.
 ### Backend
 
 Use the **CI-faithful Python 3.11 venv** (`.venv311` at repo root). The default
-`.venv` (3.14) hard-crashes some tests. Required env (values needn't point at
-live services — most unit tests stub the DB, but the engine builds at import):
+`.venv` (3.14) hard-crashes some tests. **No env vars are required** — `conftest.py`
+defaults `DATABASE_URL` (and `TESTING` / `OTEL_ENABLED`), and every other setting
+already ships a working default. From `backend/`:
 
 ```bash
-DATABASE_URL=postgresql+asyncpg://test:test@localhost:5432/test \
-MONGODB_URL=mongodb://localhost:27017 REDIS_URL=redis://localhost:6379/0 \
-JWT_SECRET_KEY=testkey STORAGE_BACKEND=local \
-.venv311/Scripts/python -m pytest backend/tests --ignore=tests/integration -q
+../.venv311/Scripts/python -m pytest tests/ -q
 ```
+
+Expect **0 failures** on a machine with no Docker stack running. If you see any,
+they are real — that is the point of keeping this green. Set `DATABASE_URL`
+explicitly to run against a live database; `setdefault` yields to it.
 
 - **Run the whole suite to reproduce ordering bugs** — a failure that passes in isolation is usually test-ordering pollution (`importlib.reload` / `cache_clear` / `monkeypatch.setattr` on PEP-562-served names like `engine`, `AsyncSessionLocal`).
 - `tests/integration/` needs real asyncpg + Postgres; skipping locally is expected.

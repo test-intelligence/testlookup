@@ -6,6 +6,28 @@
 - The badge is now a button: one click copies the full multi-line identity — the same text the tooltip spells out, full SHA and all — to the clipboard, paste-ready. The truncated `· 1a2b3c4` chip stays for a glance; the clipboard carries the exact commit.
 - Copy reuses `copyTextToClipboard`, whose legacy `execCommand` fallback keeps the button working on a **plain-HTTP self-host** where the async Clipboard API is blocked; when both paths fail the button surfaces a manual-copy hint rather than going silently inert (the same honesty the first-run guide's copy buttons already follow).
 - 4 regression guards: the full SHA (not the truncated chip) reaches the clipboard, no "Click to copy" hint leaks into the pasted text, the tooltip confirms a successful copy, and a blocked clipboard shows the manual-copy fallback. Existing badge render/tooltip tests unchanged.
+## 2026-08-23 — The local suite runs green with no environment setup
+
+`pytest tests/` on a dev box without the Docker stack produced **26 failures and errors across 6 files**, none of them about the code under test. CI was green the whole time, so "the suite passes" meant two different things depending on where you ran it — and a developer who sees 26 red lines by default stops reading them, which is how a real regression hides.
+
+Now: **7226 passed, 41 skipped, 0 failed**, with `DATABASE_URL` genuinely unset and no env prep at all.
+
+### Three causes, and all three were guards that could not actually look
+
+**1. `DATABASE_URL` had no default.** It is the *only* `Settings` field with no usable fallback (`""`), and `app/db/postgres.py` parses it at **import** time — so an unset value killed the run at *collection*, before any test executed. CI exports one in the workflow, so CI never saw it. Fixed with `os.environ.setdefault` in `backend/tests/conftest.py`, beside the existing `TESTING` / `OTEL_ENABLED` defaults.
+
+The placeholder host is `db.invalid` — an RFC 6761 TLD guaranteed never to resolve. Unit tests only need the URL to *parse*; pointing it at `localhost` would risk a stray test opening a real connection to a developer's own database. `setdefault` means CI, Docker and `tests/integration/` still win.
+
+**2. `test_quickstart_env_gen.py` checked that bash existed, not that it worked.** `shutil.which("bash")` finds the WSL shim at `System32/bash.exe` on Windows; it then dies with `execvpe(/bin/bash) failed: No such file or directory` when no distro is installed. Presence verified, usability never — so 5 tests **errored** where they were meant to skip. The guard now probes with `bash -c "exit 0"` and falls back to Git for Windows, which ships a working bash. Locally these 6 tests now **run and pass** rather than skip.
+
+**3. `test_performance_budgets_live.py` skipped on "nothing is up", not on "nothing to measure".** With the stack running but unseeded, `fetch_fixtures` raised `RuntimeError: Not enough seeded data to benchmark` and produced 7 ERRORs. An empty stack is not a budget regression. It now skips with that message. Narrow on purpose — any other `RuntimeError` still propagates, because "we could not look" and "the budget was missed" must not render identically.
+
+### Verification
+
+The `conftest` default is load-bearing, not decorative: removing the `setdefault` call brings the collection error straight back. That mutation is worth a note — **the first attempt silently no-opped**, because it asserted on the absence of the substring `DATABASE_URL`, which still appeared in the comment above the call. The run then reported 38 passed, which reads exactly like "the fix was unnecessary". Re-done asserting on the *AST call node*, it applied and failed as expected. A mutation harness that cannot prove it mutated is another check that passes because it could not look.
+
+`setdefault` was also verified not to clobber an explicit value, so CI and Docker behaviour is unchanged.
+
 ## 2026-08-23 — The `["Body"]` trap, closed for good (and a wrong claim corrected)
 
 Follow-up to the `stream_object` fix below. Two things: `get_object_content` no longer relies on the accidental rebinding, and a **static guard** now makes the whole shape un-reintroducible.
