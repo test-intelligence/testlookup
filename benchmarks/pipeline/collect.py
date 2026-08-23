@@ -21,7 +21,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -33,7 +33,7 @@ _RUNS_SQL = """
     SELECT id, test_run_id, workflow_type, status, started_at, completed_at
     FROM agent_pipeline_runs
     WHERE started_at IS NOT NULL
-      AND started_at >= now() - make_interval(days => $1)
+      AND started_at >= $1
       AND ($2::text IS NULL OR workflow_type = $2)
     ORDER BY started_at DESC
     LIMIT $3
@@ -127,7 +127,15 @@ async def collect(
     limit: int,
     mongo_uri: Optional[str] = None,
     mongo_db: Optional[str] = None,
+    since: Optional[datetime] = None,
 ) -> dict[str, Any]:
+    """Aggregate recorded pipeline telemetry into a baseline.
+
+    ``since`` overrides the ``days`` window with an explicit lower bound. It
+    exists because ``--days 1`` is too coarse to separate code versions when
+    several deploys land in one day: a "post-fix" baseline taken that way was
+    86% pre-fix runs, which is worse than no baseline at all.
+    """
     try:
         import asyncpg
     except ImportError:  # pragma: no cover - environment guard
@@ -138,7 +146,8 @@ async def collect(
 
     conn = await asyncpg.connect(_normalize_dsn(dsn))
     try:
-        run_rows = await conn.fetch(_RUNS_SQL, days, workflow_type, limit)
+        cutoff = since or (datetime.now(timezone.utc) - timedelta(days=days))
+        run_rows = await conn.fetch(_RUNS_SQL, cutoff, workflow_type, limit)
         run_ids = [r["id"] for r in run_rows]
         stage_rows = await conn.fetch(_STAGES_SQL, run_ids) if run_ids else []
     finally:
@@ -197,6 +206,7 @@ async def collect(
         runs,
         window={
             "days": days,
+            "since": since.isoformat() if since else None,
             "workflow_type": workflow_type or "all",
             "limit": limit,
             "grounding_source": "mongo" if mongo_uri else None,
@@ -213,7 +223,13 @@ def render(baseline: dict[str, Any]) -> str:
     """A terminal summary — the JSON is the artifact, this is for reading."""
     lines = [
         f"AI pipeline baseline — {baseline.get('runs_observed', 0)} run(s) "
-        f"over {baseline.get('window', {}).get('days')} day(s)",
+        + (
+            # Saying "over 30 day(s)" when an explicit bound was given is how a
+            # narrow, version-isolated baseline gets read as a monthly one.
+            f"since {baseline.get('window', {}).get('since')}"
+            if baseline.get("window", {}).get("since")
+            else f"over {baseline.get('window', {}).get('days')} day(s)"
+        ),
     ]
     if not baseline.get("sufficient_samples"):
         lines.append(
@@ -317,12 +333,26 @@ def main(argv: Optional[list[str]] = None) -> int:
                              "(claim evidence coverage, narrative citations)")
     parser.add_argument("--mongo-db", default=os.environ.get("MONGO_DB", "testlookup_logs"),
                         help="database name; the deployed MONGO_URI carries none")
+    parser.add_argument("--since", default=None,
+                        help="ISO timestamp lower bound, overriding --days. Use "
+                             "this to isolate one code version: --days 1 cannot "
+                             "separate deploys that land in the same day")
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
 
     if not args.database_url:
         print("error: --database-url or DATABASE_URL is required", file=sys.stderr)
         return 2
+
+    since = None
+    if args.since:
+        try:
+            since = datetime.fromisoformat(args.since.replace("Z", "+00:00"))
+        except ValueError:
+            print(f"error: --since is not an ISO timestamp: {args.since}", file=sys.stderr)
+            return 2
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
 
     baseline = asyncio.run(collect(
         args.database_url,
@@ -331,11 +361,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         limit=args.limit,
         mongo_uri=args.mongo_uri,
         mongo_db=args.mongo_db,
+        since=since,
     ))
 
     if baseline.get("runs_observed", 0) == 0:
         print(
-            f"error: no pipeline runs in the last {args.days} day(s)"
+            (f"error: no pipeline runs since {args.since}" if args.since
+             else f"error: no pipeline runs in the last {args.days} day(s)")
             + (f" for workflow_type={args.workflow_type}" if args.workflow_type else "")
             + ".\n"
             "       Refusing to write an empty baseline: a file of nulls is\n"

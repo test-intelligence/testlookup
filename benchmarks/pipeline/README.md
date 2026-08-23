@@ -40,6 +40,24 @@ python benchmarks/pipeline/collect.py \
     --output benchmarks/results/pipeline_baseline.json
 ```
 
+### Isolating one code version with `--since`
+
+`--days` cannot separate deploys that land in the same day. On 2026-08-23 three
+fixes shipped hours apart; a `--days 1` "post-fix" baseline would have been
+**304 of 354 runs pre-fix**. Pass an explicit bound instead:
+
+```bash
+python benchmarks/pipeline/collect.py --since 2026-08-23T06:05:00Z --limit 500
+```
+
+The bound is recorded in `window.since` and the rendered header reports it, so a
+committed file cannot be mistaken for a wider window. A malformed `--since` is
+rejected rather than falling back to `--days`.
+
+Note what the runs in a narrow window actually are before quoting latency from
+one: pipelines resumed from a checkpoint skip stages rather than executing them,
+so their timings and token counts describe a resume, not fresh work.
+
 ### `--limit` silently caps the window
 
 The default is **500**. A run reporting `runs_observed: 500` with
