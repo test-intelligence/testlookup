@@ -834,6 +834,8 @@ class AnalysisAgent(BaseAgent):
                     rationale=(
                         "fast classifier produced output that could not be parsed"
                         if classifier_outcome == "parse_failed"
+                        else "fast classifier returned a usable verdict"
+                        if classifier_outcome == "classified"
                         else f"fast classifier declined: {classifier_outcome}"
                     ),
                     test_case_id=tc_id,

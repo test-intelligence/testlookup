@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-08-23 — The fast classifier had a numerator but no denominator
+
+- #802 made `FastClassifier` report *why* it returned nothing, and the outcome was logged as a pipeline decision. But the carrier dropped successes: `if classifier_outcome not in ("classified", "not_attempted")`. Only failures and abstentions were ever recorded — so there was no denominator, and **zero entries read identically whether the classifier ran perfectly or never ran at all.**
+- Not hypothetical. Measuring the classifier's parse-failure rate on **40 deliberately novel failures** (novel so the content-addressed analysis cache would miss — every previous attempt hit ~90% cache hits and barely exercised it) produced **zero** classifier decision entries. Only the Mongo payload's `classified_by: fast_classifier` proved it had run 40 times and succeeded 40 times.
+- A metric that looks healthiest when nothing happened is the same fail-open shape the instrumentation was added to remove.
+
+### The measurement
+
+| Outcome | Count |
+|---|---|
+| `classified` | **40** |
+| `parse_failed` | **0** |
+| `call_failed` | **0** |
+| `low_confidence` (abstention) | **0** |
+
+Cross-checked three ways: 40 payloads with `classified_by: fast_classifier` and `tools_used: []`; stage telemetry recording exactly 40 LLM calls in `llm` mode; confidence 85–100 (mean 95.0) with none under the abstention threshold. **With n=40 and zero events the honest claim is "under ~7% at 95% confidence", not "zero".** Input was realistic and varied across five suites, deliberately not adversarial.
+
+### The fix
+
+- Successes are carried and recorded, so attempts are countable. `not_attempted` stays out: it is not a classifier call, and one entry per test case would bloat the decision log on every rules/ML run.
+- The decision rationale no longer describes a success as `fast classifier declined: classified`.
+- New `classifier` block in the baseline: `attempts`, per-outcome counts, `failure_rate`, `abstention_rate`. An abstention counts as an **attempt but not a failure** — counting it would inflate the very rate this exists to make trustworthy. When nothing ran the block reports `measured: false` and `failure_rate: null`, never a reassuring 0%.
+- Parse failures still land on `classifier_schema_validation`, so the harness's existing count is unchanged.
+
 ## 2026-08-23 — A post-fix baseline that actually excludes the pre-fix code
 
 - `pipeline_baseline_post_fixes.json` was stale: it referenced the 2026-08-22 boundary, before #803 and #805. Regenerating it exposed a harness limitation — the window was `started_at >= now() - make_interval(days => N)`, so **one day was the finest slice available**. Three fixes deployed hours apart on 08-23, and a `--days 1` baseline would have been **304 of 354 runs pre-fix**: 86% of it measuring the code the file exists to exclude.

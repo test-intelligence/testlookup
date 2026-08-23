@@ -445,7 +445,18 @@ async def run_triage_agent(
     # F-4 follow-up: the fast classifier was the last LLM path whose failures
     # were counted nowhere. Carried on the analysis so AnalysisAgent can record
     # it in the stage decision log, which is where the baseline harness looks.
-    if classifier_outcome not in ("classified", "not_attempted"):
+    #
+    # `classified` is recorded too, and that is the point: without successes
+    # there is no denominator, so "no entries" reads identically whether the
+    # classifier ran perfectly or never ran at all. Measured 2026-08-23 against
+    # 40 novel failures -- zero entries, and only the Mongo payload's
+    # `classified_by` could tell the two apart. A metric that looks healthiest
+    # when nothing happened is the same fail-open shape this instrumentation
+    # was added to remove.
+    #
+    # `not_attempted` stays out: it is not a classifier call, and emitting one
+    # per test case would bloat the decision log on every rules/ML run.
+    if classifier_outcome != "not_attempted":
         analysis["_classifier_outcome"] = classifier_outcome
 
     # Store full audit trail to MongoDB

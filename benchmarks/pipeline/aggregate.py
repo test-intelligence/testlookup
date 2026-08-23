@@ -273,6 +273,55 @@ def _parse_failures(stage: dict) -> int:
     return count
 
 
+# Every outcome the fast classifier can report. `classified` is what makes the
+# rest interpretable: without it the denominator is invisible and "no entries"
+# reads the same whether the classifier ran perfectly or never ran at all.
+_CLASSIFIER_POINTS = frozenset({
+    "classifier_schema_validation",
+    "classifier_call_outcome",
+})
+_CLASSIFIER_FAILURES = frozenset({"parse_failed", "call_failed"})
+
+
+def _classifier_outcomes(stage: dict) -> dict[str, int]:
+    tally: dict[str, int] = {}
+    for entry in _as_list(stage.get("decision_log")):
+        entry = _as_dict(entry)
+        if entry.get("decision_point") in _CLASSIFIER_POINTS:
+            chosen = str(entry.get("chosen") or "unknown")
+            tally[chosen] = tally.get(chosen, 0) + 1
+    return tally
+
+
+def summarize_classifier(stages: list[dict]) -> dict[str, Any]:
+    """Fast-classifier outcomes, with a real denominator.
+
+    ``low_confidence`` is an abstention -- the classifier correctly handing a
+    hard case to the ReAct loop -- so it counts as an attempt but NOT as a
+    failure. Counting it would inflate the very rate this exists to make
+    trustworthy.
+    """
+    tally: dict[str, int] = {}
+    for stage in stages:
+        for chosen, n in _classifier_outcomes(stage).items():
+            tally[chosen] = tally.get(chosen, 0) + n
+    attempts = sum(tally.values())
+    failures = sum(n for k, n in tally.items() if k in _CLASSIFIER_FAILURES)
+    return {
+        "attempts": attempts,
+        "outcomes": dict(sorted(tally.items())),
+        "failures": failures,
+        "failure_rate": round(failures / attempts, 4) if attempts else None,
+        "abstention_rate": (
+            round(tally.get("low_confidence", 0) / attempts, 4) if attempts else None
+        ),
+        "sufficient_samples": attempts >= MIN_SAMPLES,
+        # An absent classifier is not a healthy one. Without this the baseline
+        # cannot distinguish "never ran" from "never failed".
+        "measured": attempts > 0,
+    }
+
+
 def summarize_stage(stage_name: str, stages: list[dict]) -> dict[str, Any]:
     """Per-stage rollup across every run in the window."""
     executed = [s for s in stages if s.get("status") == "completed"]
@@ -605,6 +654,9 @@ def build_baseline(
             for name, stages in sorted(by_stage.items())
         },
         "temporal": summarize_temporal(clean),
+        "classifier": summarize_classifier(
+            [st for stages in by_stage.values() for st in stages]
+        ),
         "grounding": {
             "claims": (
                 summarize_report_grounding(reports_list)
