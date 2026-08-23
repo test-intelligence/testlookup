@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-23 — The build badge copies its provenance for a bug report
+
+- "Which build are you running?" is the first question on any self-host bug report, and the answer — version, full 40-char commit SHA, build date, env — lived only in the sidebar badge's hover `title`. A tooltip is **unselectable, invisible on a touch device, and easy to mis-transcribe from a 40-char SHA**, so the operator with the problem had no clean way to hand a maintainer the exact image.
+- The badge is now a button: one click copies the full multi-line identity — the same text the tooltip spells out, full SHA and all — to the clipboard, paste-ready. The truncated `· 1a2b3c4` chip stays for a glance; the clipboard carries the exact commit.
+- Copy reuses `copyTextToClipboard`, whose legacy `execCommand` fallback keeps the button working on a **plain-HTTP self-host** where the async Clipboard API is blocked; when both paths fail the button surfaces a manual-copy hint rather than going silently inert (the same honesty the first-run guide's copy buttons already follow).
+- 4 regression guards: the full SHA (not the truncated chip) reaches the clipboard, no "Click to copy" hint leaks into the pasted text, the tooltip confirms a successful copy, and a blocked clipboard shows the manual-copy fallback. Existing badge render/tooltip tests unchanged.
 ## 2026-08-23 — The `["Body"]` trap, closed for good (and a wrong claim corrected)
 
 Follow-up to the `stream_object` fix below. Two things: `get_object_content` no longer relies on the accidental rebinding, and a **static guard** now makes the whole shape un-reintroducible.

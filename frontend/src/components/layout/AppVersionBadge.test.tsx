@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import AppVersionBadge from './AppVersionBadge'
@@ -11,6 +11,14 @@ vi.mock('@/hooks/useSystemHealth', () => ({
   useSystemHealth: () => mockHealth.value,
 }))
 
+// Clicking the badge copies the full build identity via the shared clipboard
+// helper (which carries its own secure-context/execCommand fallback). Mock it
+// so the copy path is deterministic and we can assert exactly what is copied.
+const copyMock = vi.hoisted(() => vi.fn(async (_value: string) => true))
+vi.mock('@/utils/clipboard', () => ({
+  copyTextToClipboard: (v: string) => copyMock(v),
+}))
+
 function health(data: SystemHealth['data']): SystemHealth {
   return { data, unavailable: [], isDegraded: false }
 }
@@ -20,6 +28,8 @@ const FULL_SHA = '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b'
 describe('AppVersionBadge', () => {
   beforeEach(() => {
     mockHealth.value = health(null)
+    copyMock.mockClear()
+    copyMock.mockResolvedValue(true)
   })
 
   it('renders nothing when the backend is unreachable (no health payload)', () => {
@@ -84,6 +94,58 @@ describe('AppVersionBadge', () => {
     expect(title).toContain(`Revision ${FULL_SHA}`)
     expect(title).toContain('Built 2026-08-17T09:00:00Z')
     expect(title).toContain('Env production')
+  })
+
+  it('copies the full build identity — full SHA and all — on click', async () => {
+    mockHealth.value = health({
+      status: 'healthy', version: '0.1.0', env: 'production',
+      build: { revision: FULL_SHA, built_at: '2026-08-17T09:00:00Z' },
+      uptime_seconds: 1, timestamp: '', checks: {},
+    })
+    render(<AppVersionBadge />)
+    fireEvent.click(screen.getByTestId('app-version-badge'))
+
+    await waitFor(() => expect(copyMock).toHaveBeenCalledTimes(1))
+    const copied = copyMock.mock.calls[0][0]
+    // The clipboard payload is the full identity, not the truncated chip: an
+    // operator pasting into a bug report needs the exact commit, not "1a2b3c4".
+    expect(copied).toContain('Version 0.1.0')
+    expect(copied).toContain(`Revision ${FULL_SHA}`)
+    expect(copied).toContain('Built 2026-08-17T09:00:00Z')
+    expect(copied).toContain('Env production')
+    // The copy is exactly what the tooltip spells out — no "Click to copy" hint
+    // leaking into the pasted text.
+    expect(copied).not.toContain('Click to copy')
+  })
+
+  it('confirms the copy in the tooltip after a successful click', async () => {
+    mockHealth.value = health({
+      status: 'healthy', version: '0.1.0', env: 'production',
+      uptime_seconds: 1, timestamp: '', checks: {},
+    })
+    render(<AppVersionBadge />)
+    const badge = screen.getByTestId('app-version-badge')
+    // Before the click the tooltip invites the action.
+    expect(badge.getAttribute('title')).toContain('Click to copy')
+    fireEvent.click(badge)
+    await waitFor(() =>
+      expect(screen.getByTestId('app-version-badge').getAttribute('title')).toBe('Build details copied'),
+    )
+  })
+
+  it('surfaces a manual-copy hint when the clipboard is unavailable', async () => {
+    // Regression: a plain-HTTP self-host can block both clipboard paths; the
+    // click must say so rather than silently doing nothing.
+    copyMock.mockResolvedValue(false)
+    mockHealth.value = health({
+      status: 'healthy', version: '0.1.0', env: 'production',
+      uptime_seconds: 1, timestamp: '', checks: {},
+    })
+    render(<AppVersionBadge />)
+    fireEvent.click(screen.getByTestId('app-version-badge'))
+    await waitFor(() =>
+      expect(screen.getByTestId('app-version-badge').getAttribute('title')).toContain('Ctrl/⌘-C'),
+    )
   })
 })
 
