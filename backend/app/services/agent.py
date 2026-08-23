@@ -191,6 +191,12 @@ async def run_triage_agent(
                     )
                 except Exception as ev_exc:  # pragma: no cover — provenance is best-effort
                     logger.debug("classifier evidence skipped: %s", ev_exc)
+                # The denominator, attached HERE because this path returns
+                # early -- it never reaches the assignment further down, which
+                # only the ReAct path executes. Setting it there alone left
+                # successes unrecorded exactly as before, and a source-level
+                # test did not catch it because the source did contain the fix.
+                quick["_classifier_outcome"] = classifier_outcome
                 await _store_audit_trail(test_case_id, f"fast_classifier:{test_name}", quick, [])
                 await _store_analysis_cache(test_name, error_message or "", stack_trace or "", quick, project_id)
                 return quick

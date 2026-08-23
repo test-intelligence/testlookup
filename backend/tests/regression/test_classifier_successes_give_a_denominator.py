@@ -34,7 +34,6 @@ What is guarded
 """
 from __future__ import annotations
 
-import inspect
 import sys
 from pathlib import Path
 
@@ -68,25 +67,86 @@ def _stage(*outcomes: str) -> dict:
 
 
 # ── The carrier records successes ────────────────────────────────────────────
+#
+# These call run_triage_agent for real. An earlier version of this file checked
+# `inspect.getsource` instead -- and passed while the behaviour was broken,
+# because the fast-classifier success path `return quick` short-circuits BEFORE
+# the assignment the source test was reading. A source test cannot see an early
+# return. Never assert on source text for a behavioural claim.
 
 
-def test_a_successful_classification_is_carried():
-    """Without this the denominator does not exist."""
-    src = inspect.getsource(agent_mod.run_triage_agent)
+class _Quick:
+    """A confident fast-classifier verdict."""
 
-    assert 'if classifier_outcome != "not_attempted":' in src, (
-        "successes must be carried, or attempts cannot be counted"
+    @staticmethod
+    async def classify_with_outcome(**_kw):
+        return {
+            "root_cause_summary": "connection refused",
+            "failure_category": "INFRASTRUCTURE",
+            "confidence_score": 95,
+            "recommended_actions": [],
+            "classified_by": "fast_classifier",
+        }, "classified"
+
+
+class _Abstains:
+    @staticmethod
+    async def classify_with_outcome(**_kw):
+        return None, "low_confidence"
+
+
+@pytest.fixture
+def _quiet(monkeypatch):
+    """Silence the side effects run_triage_agent performs around the verdict."""
+    async def _noop(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(agent_mod, "_store_audit_trail", _noop)
+    monkeypatch.setattr(agent_mod, "_store_analysis_cache", _noop)
+
+
+@pytest.mark.asyncio
+async def test_a_successful_classification_is_carried(monkeypatch, _quiet):
+    """The regression: this path returns early, so it needs its own assignment."""
+    import app.services.training.classifier as classifier_mod
+
+    monkeypatch.setattr(classifier_mod, "FastClassifier", _Quick)
+
+    analysis = await agent_mod.run_triage_agent(
+        test_name="test_payments_timeout",
+        error_message="ConnectionRefusedError: [Errno 111] Connection refused",
+        stack_trace="",
+        test_case_id="tc-1",
+        project_id="p-1",
     )
-    assert 'not in ("classified", "not_attempted")' not in src, (
-        "the old filter dropped every success"
+
+    assert analysis.get("classified_by") == "fast_classifier", "fast path did not run"
+    assert analysis.get("_classifier_outcome") == "classified", (
+        "a success on the fast path must be recorded, or there is no denominator"
     )
 
 
-def test_not_attempted_is_still_dropped():
-    """It is not a classifier call; one per test case would bloat the log."""
-    src = inspect.getsource(agent_mod.run_triage_agent)
+@pytest.mark.asyncio
+async def test_an_abstention_does_not_short_circuit_into_a_success(monkeypatch, _quiet):
+    """low_confidence falls through to ReAct; it must not be logged as classified."""
+    import app.services.training.classifier as classifier_mod
 
-    assert '"not_attempted"' in src
+    monkeypatch.setattr(classifier_mod, "FastClassifier", _Abstains)
+
+    async def _boom(*_a, **_kw):
+        raise RuntimeError("react path reached, as expected")
+
+    monkeypatch.setattr(agent_mod, "_build_agent_executor", _boom, raising=False)
+
+    try:
+        analysis = await agent_mod.run_triage_agent(
+            test_name="t", error_message="odd failure", stack_trace="",
+            test_case_id="tc-2", project_id="p-1",
+        )
+    except Exception:
+        return  # reaching ReAct at all is the assertion
+
+    assert analysis.get("_classifier_outcome") != "classified"
 
 
 # ── The rate is computed over attempts ───────────────────────────────────────

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-23 — The denominator fix was on a line the success path never reaches
+
+- #809 attached `_classifier_outcome` at the end of `run_triage_agent`. But the fast classifier's success path does `return quick` **~250 lines earlier** — so the assignment only ever ran on the ReAct path, and a successful classification still went unrecorded. Deployed and measured: 40 novel failures, all classified, and **still zero decision entries**. The denominator did not exist.
+- **The test could not have caught it.** It asserted on `inspect.getsource(...)` — the source *did* contain the fix, so the test passed, and the mutation check passed for the same reason. A source-level assertion cannot see an early return. Behavioural claims need the function called.
+- Fixed by setting the outcome on the path that actually executes, and the guards now **call `run_triage_agent`** with a stubbed classifier instead of reading its source. Mutation-checked properly this time: deleting the early-path assignment fails the test.
+
 ## 2026-08-23 — The fast classifier had a numerator but no denominator
 
 - #802 made `FastClassifier` report *why* it returned nothing, and the outcome was logged as a pipeline decision. But the carrier dropped successes: `if classifier_outcome not in ("classified", "not_attempted")`. Only failures and abstentions were ever recorded — so there was no denominator, and **zero entries read identically whether the classifier ran perfectly or never ran at all.**
