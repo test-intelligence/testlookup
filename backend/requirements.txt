@@ -18,7 +18,7 @@ pymongo==4.17.0          # Must stay <4.11 to match motor 3.7.0 constraint
 # ── Object Storage ───────────────────────────────────────────
 # aioboto3 bundles a compatible boto3 + botocore internally.
 # Do NOT pin boto3 separately — it conflicts with aiobotocore's botocore constraint.
-aioboto3==13.2.0
+aioboto3==15.5.0
 
 # ── Validation & Settings ────────────────────────────────────
 pydantic==2.13.4
