@@ -1812,6 +1812,69 @@ def _backend_status_enum_vocab() -> list[Violation]:
     return violations
 
 
+def _backend_streaming_body_not_rebound() -> list[Violation]:
+    """``async with response["Body"] as x`` throws the usable object away.
+
+    ``response["Body"]`` is aiobotocore's ``StreamingBody``, a wrapt proxy
+    that supports ``read(amt)`` and ``iter_chunks(n)``. But::
+
+        StreamingBody.__aenter__  -> return await self.__wrapped__.__aenter__()
+        ClientResponse.__aenter__ -> return self
+
+    so the ``as`` rebinds the target to the bare ``aiohttp.ClientResponse``,
+    which has neither method -- its signature is ``read(self)``.
+
+    ``S3StorageProvider.stream_object`` shipped in that shape and raised
+    ``TypeError: ClientResponse.read() takes 1 positional argument but 2 were
+    given`` on every call it ever made, from the day it was written (#824).
+
+    Nothing else can catch this. The sibling ``get_object_content`` used the
+    same shape and worked, because a *no-argument* ``read()`` is valid on
+    ClientResponse -- verified byte-identical against live MinIO. So the
+    hazard is invisible to any behavioural test until someone passes a size,
+    at which point it fails 100% of the time. A static guard is the only
+    thing that can hold it.
+
+    Entering the context is still required (it releases the connection);
+    only the ``as`` is forbidden. Bind first::
+
+        body = response["Body"]
+        async with body:
+            ...
+    """
+    import ast
+
+    violations: list[Violation] = []
+    root = REPO_ROOT / "backend" / "app"
+    for path in iter_files(root, (".py",)):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            # Sync ``with`` too: the same trap exists for botocore's
+            # StreamingBody, and a later port must not get a free pass.
+            if not isinstance(node, (ast.AsyncWith, ast.With)):
+                continue
+            for item in node.items:
+                if item.optional_vars is None:
+                    continue  # `async with body:` -- the correct shape
+                expr = item.context_expr
+                if not isinstance(expr, ast.Subscript):
+                    continue
+                key = expr.slice
+                if not (isinstance(key, ast.Constant) and key.value == "Body"):
+                    continue
+                violations.append(Violation(
+                    path,
+                    node.lineno,
+                    "`with ...[\"Body\"] as X` rebinds X to the bare "
+                    "ClientResponse, dropping the StreamingBody proxy "
+                    "(no read(size), no iter_chunks)",
+                ))
+    return violations
+
+
 def _database_downgrade_implemented() -> list[Violation]:
     """Every migration must implement ``downgrade()``. Empty stubs
     block rollback in incident response."""
@@ -2581,6 +2644,24 @@ GUARDS: list[Guard] = [
             "(``FlakyQuarantineStatus.QUARANTINED.value``), never from a "
             "hand-written string. See FIX-002: the Fixer selected zero "
             "candidates on every run while reporting success."
+        ),
+    ),
+    Guard(
+        name="backend.streaming-body-not-rebound",
+        description=(
+            "`async with response[\"Body\"] as X` rebinds X to the bare "
+            "aiohttp ClientResponse, silently dropping aiobotocore's "
+            "StreamingBody proxy — the shape that made S3 stream_object raise "
+            "TypeError on every call it ever made."
+        ),
+        check=_backend_streaming_body_not_rebound,
+        fix_hint=(
+            "Bind the proxy before entering the context: "
+            "``body = response[\"Body\"]`` then ``async with body:`` and use "
+            "``body``. Entering the context is still required (it releases the "
+            "connection); only the ``as`` is wrong. No behavioural test can "
+            "catch this — a no-argument read() works on ClientResponse too, so "
+            "the bug stays invisible until someone passes a size."
         ),
     ),
     Guard(

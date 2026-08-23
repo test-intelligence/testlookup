@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-08-23 — The `["Body"]` trap, closed for good (and a wrong claim corrected)
+
+Follow-up to the `stream_object` fix below. Two things: `get_object_content` no longer relies on the accidental rebinding, and a **static guard** now makes the whole shape un-reintroducible.
+
+### The correction first
+
+The previous entry claimed that routing `get_object_content` through the proxy would restore truncation detection, because reading via `ClientResponse` skips aiobotocore's `_verify_content_length()`. **That was wrong, and it is struck through below.** Measured against a raw socket server:
+
+| Scenario | current shape | proxy shape |
+|---|---|---|
+| `Content-Length: 100`, body 50 bytes, close | `ClientPayloadError` | `ClientPayloadError` |
+| chunked framing + lying `Content-Length` | rejected at the parser | rejected at the parser |
+| live MinIO: empty / 1B / 1MiB / 8MiB / missing key | — | **byte-identical, same exception** |
+
+`_verify_content_length()` is unreachable through the aiohttp backend. aiohttp enforces Content-Length framing itself, and rejects `Transfer-Encoding` + `Content-Length` together (request-smuggling hardening) — which was the only remaining way the two shapes could diverge. **There is no behaviour difference. There never was.**
+
+### So why change it
+
+Because the old shape worked *by accident*. `get_object_content` read through an object it never meant to bind, and stayed correct only because a no-argument `read()` happens to be valid on `ClientResponse`. That accident holds exactly until someone passes a size, switches to `iter_chunks`, or copies the pattern into a new method — which is the bug we just spent a PR on. The change removes an armed trap; it does not fix a live defect, and this entry should not be read as if it did.
+
+### The part that actually prevents recurrence
+
+A behaviourally-invisible change cannot be held by a behavioural test — so the guard is static. New absolute rule **`backend.streaming-body-not-rebound`** (`scripts/quality_gate.py`) AST-scans `backend/app/` and rejects `with <expr>["Body"] as X`, sync or async. Entering the context is still required (it releases the connection); only the `as` is refused.
+
+**Run against the pre-#824 tree it exits 1 and flags both call sites** (`storage.py:133` and `:140`) — it would have blocked the original bug at CI time, on the commit that introduced it.
+
+Mutation-checked in both directions, because a guard that cannot fail is worse than none: inverting the `as` detection kills 2 self-tests; removing the `["Body"]` specificity so it over-matches every `with X as Y` kills all 4. `architecture/DEVELOPER_GUIDE.md` is updated (26 → 27 guards, 11 → 12 absolute rules), which the guide's own meta-guard enforces.
+
 ## 2026-08-23 — `stream_object` on S3 raised a TypeError on every call it ever made
 
 - `S3StorageProvider.stream_object` has never worked. `async with response["Body"] as stream:` followed by `await stream.read(65536)` raised `TypeError: ClientResponse.read() takes 1 positional argument but 2 were given` on the first chunk, every time. Verified against live MinIO on aiobotocore 2.15.2 and confirmed identical in 2.25.1 (the version `aioboto3==15.5.0` pins), so it is not a version regression.
@@ -24,7 +52,9 @@ Mutation-checked three ways -- the original `read(65536)` (8 failures), the plau
 
 ### Caveat left alone deliberately
 
-`get_object_content` relies on the same accidental rebinding. It works, but reading through `ClientResponse` skips aiobotocore's `_verify_content_length()`, so a truncated response returns short content instead of raising `IncompleteReadError`. Routing it through the proxy is a one-line change that would newly raise on truncated bodies across `artifact_store`, `compliance_pack_service`, `document_connector`, `ingestion` and both `training` modules -- a behaviour change on live read paths, so it is flagged, not bundled in here.
+~~`get_object_content` relies on the same accidental rebinding. It works, but reading through `ClientResponse` skips aiobotocore's `_verify_content_length()`, so a truncated response returns short content instead of raising `IncompleteReadError`.~~
+
+> **Corrected 2026-08-23 (see the entry above).** The struck-through claim is wrong. `_verify_content_length()` is **unreachable** through the aiohttp backend: aiohttp enforces Content-Length framing itself (a short body raises `ClientPayloadError` in *both* shapes) and rejects `Transfer-Encoding` + `Content-Length` together outright, which is the only other way the two could diverge. Measured, not reasoned about. `get_object_content` still relies on the accidental rebinding, but the risk is a loaded trap for the next edit, not silent data loss today.
 
 ## 2026-08-23 — Post-fix baseline regenerated with the classifier block
 

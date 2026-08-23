@@ -133,21 +133,29 @@ class S3StorageProvider(StorageProvider):
         bucket = bucket or self._default_bucket
         async with self.get_client_context() as s3:
             response = await s3.get_object(Bucket=bucket, Key=key)
-            async with response["Body"] as stream:
-                return cast(bytes, await stream.read())
+            # Same binding rule as stream_object below: hold the StreamingBody
+            # proxy rather than whatever ``__aenter__`` hands back. This call
+            # returns identical bytes either way -- verified against live MinIO
+            # across empty/1B/1MiB/8MiB objects and a missing key -- because a
+            # no-argument ``read()`` is valid on ClientResponse too. That is
+            # precisely the hazard: the accident holds only while nobody passes
+            # a size, and passing one is what broke stream_object for its whole
+            # life. Bind the proxy so the next edit cannot reopen it.
+            body = response["Body"]
+            async with body:
+                return cast(bytes, await body.read())
 
     async def stream_object(self, key: str, bucket: str | None = None) -> AsyncGenerator[bytes, None]:
         bucket = bucket or self._default_bucket
         async with self.get_client_context() as s3:
             response = await s3.get_object(Bucket=bucket, Key=key)
-            # ``response["Body"]`` is aiobotocore's StreamingBody, a wrapt proxy that
-            # *does* support chunked reads. Its ``__aenter__`` returns
-            # ``self.__wrapped__.__aenter__()`` -- the bare ``aiohttp.ClientResponse``
-            # -- so ``async with response["Body"] as stream`` silently throws the proxy
-            # away at the ``as``. ClientResponse offers neither ``read(size)`` (its
-            # signature is ``read(self)``, hence the TypeError this shape raised on
-            # every call) nor ``iter_chunks``. Bind the proxy, enter the context
-            # without rebinding, and iterate with the supported streaming API.
+            # ``response["Body"]`` is aiobotocore's StreamingBody, a wrapt proxy
+            # supporting ``read(amt)`` and ``iter_chunks``. Its ``__aenter__``
+            # returns ``self.__wrapped__.__aenter__()`` -- the bare
+            # ``aiohttp.ClientResponse`` -- so ``as stream`` throws the proxy away
+            # and leaves an object with neither method (``read(self)``, no
+            # ``iter_chunks``). That is what raised TypeError here on every call.
+            # Bind the proxy; do not rebind through ``as``.
             body = response["Body"]
             async with body:
                 async for chunk in body.iter_chunks(_STREAM_CHUNK_SIZE):

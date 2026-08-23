@@ -1028,3 +1028,86 @@ def test_gitignored_source_roots_cover_tests_not_just_app_code() -> None:
     # Migrations too: a lost revision file breaks `alembic upgrade head`
     # for every deployment, and 0056_api_key_project_scope.py matches.
     assert "backend/migrations" in qg._SOURCE_ROOTS
+
+
+# ── backend.streaming-body-not-rebound ───────────────────────────────────────
+
+
+def test_streaming_body_flags_the_as_rebinding(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The exact shape that shipped broken in S3 ``stream_object`` (#824)."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "db" / "storage.py", '''
+        async def stream_object(self, key):
+            async with self.get_client_context() as s3:
+                response = await s3.get_object(Bucket="b", Key=key)
+                async with response["Body"] as stream:
+                    while chunk := await stream.read(65536):
+                        yield chunk
+    ''')
+
+    violations = qg._backend_streaming_body_not_rebound()
+
+    assert len(violations) == 1
+    assert "StreamingBody proxy" in violations[0].message
+
+
+def test_streaming_body_allows_the_bound_proxy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Entering the context is required; only the ``as`` is forbidden."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "db" / "storage.py", '''
+        async def stream_object(self, key):
+            async with self.get_client_context() as s3:
+                response = await s3.get_object(Bucket="b", Key=key)
+                body = response["Body"]
+                async with body:
+                    async for chunk in body.iter_chunks(65536):
+                        yield chunk
+    ''')
+
+    assert qg._backend_streaming_body_not_rebound() == []
+
+
+def test_streaming_body_flags_the_no_argument_read_too(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``get_object_content``'s shape WORKS, and must still be flagged.
+
+    A no-argument ``read()`` is valid on ClientResponse, so this variant
+    returns correct bytes — verified byte-identical against live MinIO. That
+    is exactly why no behavioural test can guard it: it is a loaded trap that
+    fires only when someone later passes a size. The guard must not wait for
+    the failing variant.
+    """
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "db" / "storage.py", '''
+        async def get_object_content(self, key):
+            async with self.get_client_context() as s3:
+                response = await s3.get_object(Bucket="b", Key=key)
+                async with response["Body"] as stream:
+                    return await stream.read()
+    ''')
+
+    assert len(qg._backend_streaming_body_not_rebound()) == 1
+
+
+def test_streaming_body_ignores_unrelated_context_managers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only a ``["Body"]`` subscript is the trap — do not cry wolf."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "svc.py", '''
+        async def go(session, payloads):
+            async with session.get(url) as resp:
+                data = await resp.json()
+            with open(path) as fh:
+                fh.read()
+            async with payloads["Header"] as h:
+                await h.read()
+            return data
+    ''')
+
+    assert qg._backend_streaming_body_not_rebound() == []
