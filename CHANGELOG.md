@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-23 — Quality is evaluated on a schedule, and that immediately found something (F-11)
+
+- Twelve jobs ran on the beat schedule — coverage, purge, training export, finetune checks, reindex, digests, probes — and **not one measured output quality**. `eval_gate_service` was reachable only from an ADMIN API route or the prompt CLI, so quality was gated when a prompt changed and **never otherwise**. A model swap or slow drift between prompt edits was invisible.
+- New `run_scheduled_agent_eval`, daily at 04:00 UTC (clear of the 02:00 purge and 03:00 finetune check).
+- **Scheduling the gate alone would have made it worse.** `ai_eval_datasets` was **empty on the deployment** — 0 datasets, 0 baselines — because seeding existed only behind a route nobody calls. With no dataset the gate returns `FAIL: no evaluation dataset found`, which reads as "quality regressed" when it means "nothing was measured". The task seeds idempotently first, through the **same** function the ADMIN route now calls rather than a second copy.
+
+### What the dry run found
+
+Run against live data inside a rolled-back transaction — nothing written:
+
+| Gate | Accuracy | F1 |
+|---|---|---|
+| classification | 0.83 | 0.90 |
+| root_cause | 0.80 | 0.80 |
+| release_decision | 1.00 | 1.00 |
+| **duplicate_detection** | **0.50** | **0.00** |
+
+**The missing schedule was hiding a failing capability.** `duplicate_detection` scores F1 0.00 against the golden set. Nothing had ever run this evaluation, so nothing had ever said so — that is now the first thing the daily job reports.
+
+### Two deliberate choices
+
+- **`NOT_BASELINED` is reported distinctly from a regression.** With zero baselines every gate returns `NO_BASELINE` → overall `FAIL`, every day, forever; a permanently-red job is one people learn to ignore. The gate's own status is untouched — `NO_BASELINE` must keep blocking a *release*, because shipping against nothing is not a pass. Caught by running it against the deployment before shipping, not from a test.
+- **The first run does not auto-baseline.** That would bake today's quality in as the reference, including the 0.00 — the "baseline the bug" trap.
+
+- 12 regression guards, mutation-checked: removing the beat entry fails 3, and making the route re-implement seeding fails the single-implementation guard.
+
 ## 2026-08-23 — A cached narrative could speak about a test it was never written for (F-12)
 
 - The semantic cache returns the **whole** cached analysis for any neighbour at cosine similarity ≥ `SEMANTIC_SIMILARITY_THRESHOLD` (0.85) — root cause summary, recommended actions, failure category — and the caller then clears `evidence_references`. The confidence came across **unchanged**.

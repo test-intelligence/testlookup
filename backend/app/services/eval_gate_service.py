@@ -246,6 +246,52 @@ async def persist_agent_stack_gate_run(
     return row
 
 
+async def ensure_golden_datasets(
+    db: AsyncSession,
+    *,
+    created_by: Optional[uuid.UUID] = None,
+) -> list[str]:
+    """Create any golden reference dataset that is missing. Idempotent.
+
+    The gate cannot evaluate anything without a dataset -- with none present it
+    returns ``FAIL: no evaluation dataset found``, which reads as "quality
+    regressed" when it actually means "nothing was measured". On a fresh
+    deployment that is the permanent state: seeding existed only behind an
+    ADMIN API route that nobody calls, so ``ai_eval_datasets`` sat empty and
+    every gate was unrunnable.
+
+    ``created_by`` is optional because a scheduled run has no user. The column
+    is nullable for exactly that case.
+
+    Returns the names created (empty when everything already exists), so a
+    caller can tell "seeded now" from "already there" instead of guessing.
+    """
+    from app.services.golden_datasets import get_all_golden_datasets
+
+    created: list[str] = []
+    for spec in get_all_golden_datasets():
+        existing = await db.execute(
+            select(AIEvalDataset).where(
+                AIEvalDataset.name == spec["name"],
+                AIEvalDataset.task_type == spec["task_type"],
+            )
+        )
+        if existing.scalar_one_or_none():
+            continue
+        db.add(AIEvalDataset(
+            name=spec["name"],
+            description=spec["description"],
+            task_type=spec["task_type"],
+            items=spec["items"],
+            item_count=spec["item_count"],
+            created_by=created_by,
+        ))
+        created.append(str(spec["name"]))
+    if created:
+        await db.flush()
+    return created
+
+
 async def evaluate_pre_release_gate(
     db: AsyncSession,
     *,

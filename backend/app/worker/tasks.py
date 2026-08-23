@@ -4298,6 +4298,82 @@ async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any
     return summary
 
 
+
+@celery_app.task(
+    name="app.worker.tasks.run_scheduled_agent_eval",
+    queue="default",
+    bind=True,
+    max_retries=0,
+)
+def run_scheduled_agent_eval(self, change_id: str | None = None) -> dict:
+    """Evaluate the agent stack against the golden datasets, on a schedule (F-11).
+
+    Every other quality signal in this system is event-driven: the eval gate
+    fires when a prompt changes and never otherwise, so a model swap, a routing
+    change or a slow drift in output quality is invisible until someone opens
+    an API route by hand. This is the scheduled reading.
+
+    It seeds the golden datasets first, because without them the gate returns
+    ``FAIL: no evaluation dataset found`` -- which reads as "quality regressed"
+    when it means "nothing was measured". Seeding is idempotent, so the cost
+    after the first run is four SELECTs.
+
+    ``NO_BASELINE`` is already a blocking status upstream and is deliberately
+    left that way: a gate with nothing to compare against has not passed.
+    """
+    async def _run() -> dict:
+        from datetime import datetime, timezone
+
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.eval_gate_service import (
+            GateStatus,
+            ensure_golden_datasets,
+            evaluate_agent_stack_release_gate,
+        )
+
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        async with AsyncSessionLocal() as db:
+            seeded = await ensure_golden_datasets(db)
+            result = await evaluate_agent_stack_release_gate(
+                db,
+                change_id=change_id or f"scheduled-{stamp}",
+                persist=True,
+            )
+            await db.commit()
+
+        gates = list(result.get("gate_results") or [])
+        by_status: dict[str, int] = {}
+        for gate in gates:
+            key = str(gate.get("status") or "UNKNOWN")
+            by_status[key] = by_status.get(key, 0) + 1
+        # The gate's own status stays untouched -- NO_BASELINE must keep
+        # blocking a RELEASE, because shipping against nothing is not a pass.
+        # But a daily job that reports FAIL forever is a job everyone learns to
+        # ignore, and "never baselined" is a different problem from "regressed".
+        # Verified against the deployment before shipping: with zero baselines
+        # all four gates return NO_BASELINE, so this is the first run's state,
+        # not a hypothetical.
+        gate_status = str(result.get("status") or "")
+        statuses = {str(g.get("status") or "") for g in gates}
+        signal = (
+            "NOT_BASELINED"
+            if gates and statuses == {GateStatus.NO_BASELINE}
+            else gate_status
+        )
+        summary = {
+            "status": gate_status,
+            "signal": signal,
+            "gates_evaluated": len(gates),
+            "by_status": by_status,
+            "blocking_gates": list(result.get("blocking_gates") or []),
+            "datasets_seeded": seeded,
+            "evaluated_at": stamp,
+        }
+        logger.info("scheduled_agent_eval_complete", **summary)
+        return summary
+
+    return _run_async(_run())
+
 @celery_app.task(
     name="app.worker.tasks.run_retention_purges",
     queue="default",

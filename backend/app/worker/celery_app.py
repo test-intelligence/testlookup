@@ -100,6 +100,15 @@ celery_app.conf.update(
         # project_retention_policies row is enabled are touched; per-project
         # try/except inside the task so one failure can't stop the sweep;
         # each project gets a settings_audit_log purge record.
+        # F-11: the only scheduled quality reading. Every other eval path is
+        # event-driven (the gate fires on a prompt change and never otherwise),
+        # so drift between changes was invisible. 04:00 UTC keeps it clear of
+        # the 02:00 purge and the 03:00 finetune check.
+        "daily-agent-eval": {
+            "task": "app.worker.tasks.run_scheduled_agent_eval",
+            "schedule": crontab(hour=4, minute=0),
+            "options": {"queue": "default"},
+        },
         "nightly-retention-purge": {
             "task": "app.worker.tasks.run_retention_purges",
             "schedule": crontab(hour=2, minute=0),

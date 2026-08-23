@@ -308,8 +308,8 @@
           <td>The learning loop has a cold-start hole it cannot climb out of. <code>auto</code> resolves ML &rarr; LLM &rarr; rules, and ML wins whenever a trained model file exists &mdash; so labels <em>do</em> improve the preferred engine, but only after <code>ML_MIN_TRAINING_SAMPLES</code> (200) labels have been gathered. Until then, and on every project that never reaches 200, the LLM runs and gains nothing from feedback except exact-fingerprint correction replay. The one mechanism that would improve the LLM itself &mdash; fine-tuning &mdash; is off by default, OpenAI-only, and refused under <code>AI_OFFLINE_MODE</code>.<span class="src">analysis_router.py:104-121 &middot; ml/classifier.py:48-51 &middot; config.py:429,479 &middot; training/finetuner.py:71</span></td>
         </tr>
         <tr>
-          <td class="id">F-11</td><td><span class="chip m">Major</span></td><td>Evaluation</td>
-          <td>Nothing evaluates on a schedule. The beat schedule runs training, calibration and export jobs but no eval run or drift check; <code>eval_gate_service</code> is reachable only from an API route or the prompt-attestation CLI, and <code>golden_agent_outputs</code> is referenced only by tests. Quality is gated when a prompt changes and never otherwise.<span class="src">worker/celery_app.py &middot; services/eval_gate_service.py &middot; services/golden_agent_outputs.py</span></td>
+          <td class="id">F-11</td><td><span class="chip ok">Fixed</span></td><td>Evaluation</td>
+          <td><strong>Fixed &mdash; a daily <code>run_scheduled_agent_eval</code> now evaluates the agent stack against the golden datasets at 04:00 UTC.</strong> Scheduling the gate alone would have made things worse: <code>ai_eval_datasets</code> was <strong>empty on the deployment</strong> (0 datasets, 0 baselines), so the gate returned <em>FAIL: no evaluation dataset found</em> &mdash; a red light meaning &ldquo;nothing was measured&rdquo;, not &ldquo;quality regressed&rdquo;. The task therefore seeds idempotently first, through the <em>same</em> function the ADMIN route now calls. A dry run against live data (rolled back) produced real metrics and surfaced a genuine problem the missing schedule had been hiding: <strong>duplicate_detection scores F1 0.00 / accuracy 0.50</strong> on the golden set. The scheduled summary reports <code>NOT_BASELINED</code> distinctly from a regression &mdash; a job that reads FAIL every day is one nobody reads &mdash; while <code>NO_BASELINE</code> keeps blocking releases. The first run deliberately does <em>not</em> auto-baseline: that would bake today's quality, including the 0.00, in as the reference. Originally: nothing evaluates on a schedule. The beat schedule runs training, calibration and export jobs but no eval run or drift check; <code>eval_gate_service</code> is reachable only from an API route or the prompt-attestation CLI, and <code>golden_agent_outputs</code> is referenced only by tests. Quality is gated when a prompt changes and never otherwise.<span class="src">worker/celery_app.py &middot; services/eval_gate_service.py &middot; services/golden_agent_outputs.py</span></td>
         </tr>
         <tr>
           <td class="id">F-12</td><td><span class="chip ok">Fixed</span></td><td>Grounding</td>
@@ -382,6 +382,20 @@
         <em>unchanged</em> confidence while the caller cleared its evidence, so nothing could contradict borrowed
         prose. Confidence now scales with similarity, the original is preserved for audit, and the source test is
         named. 7 guards, mutation-checked.</li>
+    </ul>
+
+    <h3>2026-08-23 (later) &mdash; F-11</h3>
+    <ul>
+      <li><strong>The agent stack is now evaluated daily</strong>, not just when a prompt changes. Twelve scheduled
+        jobs existed and none of them measured quality.</li>
+      <li><strong>The real blocker was an empty dataset table</strong> &mdash; seeding lived behind an ADMIN route
+        nobody calls, so the gate could only ever report <em>FAIL: no dataset</em>. Seeding now runs first, and has
+        one implementation shared by the route and the scheduler.</li>
+      <li><strong>The missing schedule was hiding a failing capability:</strong> duplicate_detection scores
+        <strong>F1 0.00, accuracy 0.50</strong> against the golden set. Nothing had ever run this, so nothing had
+        ever said so. That is now the first thing the daily job will report.</li>
+      <li>Deliberately <em>not</em> auto-baselining on first run &mdash; that bakes current quality in as the
+        reference, including the 0.00.</li>
     </ul>
 
     <h3>Open backlog</h3>

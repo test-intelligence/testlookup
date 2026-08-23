@@ -556,30 +556,10 @@ async def seed_golden_datasets(
     Creates 4 golden datasets (classification, root_cause, duplicate_detection,
     release_decision) if they don't already exist.
     """
-    from app.services.golden_datasets import get_all_golden_datasets
+    # One implementation, shared with the scheduled evaluation task. A second
+    # copy of this loop is how the route and the schedule would drift apart.
+    from app.services.eval_gate_service import ensure_golden_datasets
 
-    created = []
-    for spec in get_all_golden_datasets():
-        # Check if golden dataset already exists
-        existing = await db.execute(
-            select(AIEvalDataset).where(
-                AIEvalDataset.name == spec["name"],
-                AIEvalDataset.task_type == spec["task_type"],
-            )
-        )
-        if existing.scalar_one_or_none():
-            continue
-
-        dataset = AIEvalDataset(
-            name=spec["name"],
-            description=spec["description"],
-            task_type=spec["task_type"],
-            items=spec["items"],
-            item_count=spec["item_count"],
-            created_by=current_user.id,
-        )
-        db.add(dataset)
-        created.append(spec["name"])
-
+    created = await ensure_golden_datasets(db, created_by=current_user.id)
     await db.commit()
     return {"seeded": created, "total": len(created)}
