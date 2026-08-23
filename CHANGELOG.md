@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-23 — `stream_object` on S3 raised a TypeError on every call it ever made
+
+- `S3StorageProvider.stream_object` has never worked. `async with response["Body"] as stream:` followed by `await stream.read(65536)` raised `TypeError: ClientResponse.read() takes 1 positional argument but 2 were given` on the first chunk, every time. Verified against live MinIO on aiobotocore 2.15.2 and confirmed identical in 2.25.1 (the version `aioboto3==15.5.0` pins), so it is not a version regression.
+- **The size argument was never the problem.** aiobotocore's `StreamingBody` supports both `read(amt)` and `iter_chunks(n)`. The bug is the `as`: `StreamingBody.__aenter__` returns `await self.__wrapped__.__aenter__()`, and `aiohttp.ClientResponse.__aenter__` returns `self` -- so `as stream` silently rebinds `stream` from the capable proxy to the bare `ClientResponse`, whose signature really is `read(self)`. The object that could stream was discarded one token before it was used.
+- That distinction decides the fix. Swapping in `stream.iter_chunks(65536)` while keeping `as stream` fails too, with `AttributeError: 'ClientResponse' object has no attribute 'iter_chunks'` -- mutation-checked, not assumed. The fix holds the proxy (`body = response["Body"]`), enters the context without rebinding, and iterates `body.iter_chunks(_STREAM_CHUNK_SIZE)`.
+- Latent, not a live outage: nothing calls `stream_object` today. `get_object_content` sits two lines above with the same `as stream` shape and works only because `ClientResponse.read()` with **no** argument is valid -- see the caveat below.
+
+### Why 473 green tests never saw it
+
+`backend/tests/test_storage.py` did exercise `stream_object` -- under `LocalStorageProvider`, because the suite runs with `STORAGE_BACKEND=local`. The S3 implementation of a six-method ABC was never executed by anything. The test was not weak; it was pointed at the other subclass.
+
+A `unittest.mock` S3 client would have been just as blind. The defect lives in objects aiobotocore builds around a **real** `aiohttp.ClientResponse`, and only a real response object carries the `read(self)` signature that raises.
+
+### What now stops it
+
+- `_S3Stub` -- a small real S3 endpoint served over a real socket by `aiohttp.web` (already a pinned dependency; no new packages, no Docker, no service needed in CI). Real HTTP is what gives the test the ability to fail.
+- `stream_object` is now driven against the S3 provider directly: a multi-chunk object, five sizes across the 65536-byte boundary (`0`, `1`, `n-1`, `n`, `n+1`), and a missing key that must raise rather than look like an empty object.
+- The `StorageProvider` contract, `delete_prefix`, and the `DynamicStorageProvider` facade now run through **one parametrised fixture over both backends**, so no future abstract method can be half-tested the way this one was.
+- Opt-in `test_s3_stream_object_against_live_minio` (`live`/`integration`, skipped unless `TESTLOOKUP_TEST_MINIO_*` is set) runs the same assertions against real MinIO, so the manual verification is reproducible rather than folklore.
+
+Mutation-checked three ways -- the original `read(65536)` (8 failures), the plausible-but-wrong `stream.iter_chunks` (8 failures), and a byte-correct implementation that buffers the whole body into one chunk (2 failures, proving the streaming assertion is not dead). Under every mutation `test_storage_provider_contract[local]` stayed green while `[s3]` failed, which is the gap itself, reproduced.
+
+### Caveat left alone deliberately
+
+`get_object_content` relies on the same accidental rebinding. It works, but reading through `ClientResponse` skips aiobotocore's `_verify_content_length()`, so a truncated response returns short content instead of raising `IncompleteReadError`. Routing it through the proxy is a one-line change that would newly raise on truncated bodies across `artifact_store`, `compliance_pack_service`, `document_connector`, `ingestion` and both `training` modules -- a behaviour change on live read paths, so it is flagged, not bundled in here.
+
 ## 2026-08-23 — Post-fix baseline regenerated with the classifier block
 
 - `pipeline_baseline_post_fixes.json` now carries the `classifier` block added in #809/#810. Regenerated at the same `--since 2026-08-23T06:05:00Z` boundary as before, so it stays comparable: **53 runs** (31 deep, 19 investigation, 3 offline), `sufficient_samples: true`.

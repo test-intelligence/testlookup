@@ -11,6 +11,9 @@ from app.core.config import settings
 
 logger = logging.getLogger("db.storage")
 
+# Read granularity for ``stream_object`` on every provider.
+_STREAM_CHUNK_SIZE = 65536
+
 class StorageProvider(ABC):
     """Abstract base class for storage operations."""
 
@@ -137,8 +140,17 @@ class S3StorageProvider(StorageProvider):
         bucket = bucket or self._default_bucket
         async with self.get_client_context() as s3:
             response = await s3.get_object(Bucket=bucket, Key=key)
-            async with response["Body"] as stream:
-                while chunk := await stream.read(65536):
+            # ``response["Body"]`` is aiobotocore's StreamingBody, a wrapt proxy that
+            # *does* support chunked reads. Its ``__aenter__`` returns
+            # ``self.__wrapped__.__aenter__()`` -- the bare ``aiohttp.ClientResponse``
+            # -- so ``async with response["Body"] as stream`` silently throws the proxy
+            # away at the ``as``. ClientResponse offers neither ``read(size)`` (its
+            # signature is ``read(self)``, hence the TypeError this shape raised on
+            # every call) nor ``iter_chunks``. Bind the proxy, enter the context
+            # without rebinding, and iterate with the supported streaming API.
+            body = response["Body"]
+            async with body:
+                async for chunk in body.iter_chunks(_STREAM_CHUNK_SIZE):
                     yield chunk
 
     async def put_object(self, key: str, content: bytes, content_type: str = "application/json", bucket: str | None = None) -> None:
@@ -259,7 +271,7 @@ class LocalStorageProvider(StorageProvider):
         f = await asyncio.to_thread(open, full_path, "rb")
         try:
             while True:
-                chunk = await asyncio.to_thread(f.read, 65536)
+                chunk = await asyncio.to_thread(f.read, _STREAM_CHUNK_SIZE)
                 if not chunk:
                     break
                 yield chunk
