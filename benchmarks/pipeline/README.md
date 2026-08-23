@@ -40,6 +40,36 @@ python benchmarks/pipeline/collect.py \
     --output benchmarks/results/pipeline_baseline.json
 ```
 
+### `--limit` silently caps the window
+
+The default is **500**. A run reporting `runs_observed: 500` with
+`window.limit: 500` did **not** read the window you asked for -- it read the
+most recent 500 runs and stopped. Compare the two before quoting a span: the
+first read of 2026-08-23 looked like 30 days and covered 15. Pass a `--limit`
+above the row count you expect.
+
+### Running it against a Kubernetes deployment
+
+`make benchmark-pipeline` shells out to `docker compose exec backend`, which a
+k3s/OpenShift deployment does not have. Two things are in the way:
+
+1. **`benchmarks/` is not in the backend image.** The Dockerfile build context
+   is `backend/`, so the harness must be copied in first:
+
+   ```bash
+   kubectl exec -n <ns> <pod> -- mkdir -p /app/benchmarks/results
+   kubectl cp benchmarks/pipeline "<ns>/<pod>:/app/benchmarks/pipeline"
+   ```
+
+2. **`DOCKER_COMPOSE` is overridable** (`?=` in the Makefile, so the environment
+   wins). Point it at a shim that turns `exec backend <cmd>` into
+   `kubectl exec -n <ns> <pod> -- <cmd>` and the real target runs unmodified.
+   Pin the shim to **one** pod -- a multi-replica deployment will otherwise exec
+   into a pod with no harness in it.
+
+Run it in the pod rather than from a laptop: the database credentials never
+leave the cluster, and `MONGO_URI` / `DATABASE_URL` are already set there.
+
 ## What it measures
 
 | Metric | Grouping | Source |

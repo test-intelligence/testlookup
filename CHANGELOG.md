@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-23 — The baseline is a reading now, not an estimate
+
+- `make benchmark-pipeline` has existed since #790 but **nobody had ever run it**, so every number in the AI architecture review was an estimate. It has now been run against the homelab: **1,329 runs, 2026-07-22 → 2026-08-23**, not capped.
+- Two things are needed to run it against a k3s deployment, and both are now recorded in `benchmarks/pipeline/README.md` rather than left to be rediscovered: `benchmarks/` is **not in the backend image** (the build context is `backend/`), so it must be copied into the pod; and the Makefile's `docker compose exec backend` must be redirected via `DOCKER_COMPOSE=<shim>`. The default `--limit 500` also **silently caps** the window — the first run looked like a 30-day read but covered 15 days.
+
+### What moved since the previous tracked baseline
+
+| Metric | Was (1,284 runs) | Now (1,329 runs) |
+|---|---|---|
+| summary LLM calls | 1,076 | 1,228 |
+| summary parse failures | 73 | **73** |
+| parse-failure rate | 6.78% | 5.94% |
+| claims / with evidence | 192 / 100% | 294 / 100% |
+| shared-evidence-bundle rate (F-16) | 15.4% | **10.1%** |
+| narrative citation rate (F-3) | 7.6% | **8.9%** |
+| fabricated evidence IDs | 0 | **0** |
+| degraded rate excl. the 08-08 incident | 9.7% | 10.6% |
+
+- **The parse-failure count did not move at all while 152 more calls were made** — zero failures across every one of them. That is F-4 (provider-native structured output), and it shows up more honestly as a frozen numerator than as a falling rate. Split by day: 59 failures on 08-22 against 70 structured successes, then **0 failures against 114 structured successes on 08-23**.
+- The 5.94% aggregate still **blends code versions** and should not be quoted as current state — same limitation as #800. The harness splits by day, not by deploy, and several fixes landed hours apart today.
+- **The aggregate degraded rate is 60.8% and that number is meaningless**: 750 of 805 degraded runs fall on 2026-08-08 alone. The harness now says so in its own output, and the honest ongoing figure is **10.6%**. It rose slightly from 9.7%, which is expected — the window gained a day containing the failed decision-report verifications fixed in #803/#805.
+- `pipeline_baseline_post_fixes.json` is deliberately **left alone**. Only 5 runs exist after the #805 deploy, well under the sufficiency threshold, and a reference built from 5 runs would be worse than no reference.
+
 ## 2026-08-23 — A pipeline that went partial could never publish again
 
 - `_load_checkpoint` folded each restored stage's checkpoint into the resumed state with a plain `dict.update` — last-writer-wins. But `WorkflowState` declares **reducers** for its accumulating fields, and each node returns only its own contribution. Restoring N stages kept only the **Nth** stage's contributions and silently discarded the rest.

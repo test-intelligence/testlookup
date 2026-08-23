@@ -3,101 +3,101 @@
   "window": {
     "days": 3650,
     "workflow_type": "all",
-    "limit": 1500,
+    "limit": 2000,
     "grounding_source": "mongo"
   },
-  "runs_observed": 1284,
+  "runs_observed": 1329,
   "workflow_types": {
-    "deep": 85,
-    "investigation": 157,
+    "deep": 128,
+    "investigation": 159,
     "offline": 1042
   },
   "sufficient_samples": true,
   "bands": {
     "green": {
       "band": "green",
-      "runs": 165,
+      "runs": 172,
       "sufficient_samples": true,
       "end_to_end_seconds": {
         "unit": "seconds",
-        "n": 165,
+        "n": 172,
         "sufficient_samples": true,
-        "p50": 2.6736,
-        "p95": 15.8298,
+        "p50": 3.0732,
+        "p95": 15.552,
         "max": 77.0,
-        "total": 897.817
+        "total": 950.1437
       },
       "tokens_per_run": {
         "unit": "tokens",
-        "n": 165,
+        "n": 172,
         "sufficient_samples": true,
-        "p50": 27031.0,
-        "p95": 27135.4,
+        "p50": 27023.0,
+        "p95": 27134.35,
         "max": 31807.0,
-        "total": 2446469.0
+        "total": 2504870.0
       },
       "cost_per_run_usd": {
         "unit": "usd",
-        "n": 165,
+        "n": 172,
         "sufficient_samples": true,
         "p50": 0.0008,
         "p95": 0.0008,
         "max": 0.0009,
-        "total": 0.0715
+        "total": 0.0732
       },
       "llm_calls_per_run": {
         "unit": "calls",
-        "n": 165,
+        "n": 172,
         "sufficient_samples": true,
         "p50": 6.0,
         "p95": 6.0,
         "max": 6.0,
-        "total": 540.0
+        "total": 557.0
       },
-      "degraded_rate": 0.0242,
+      "degraded_rate": 0.0523,
       "budget_skipped_rate": 0.0
     },
     "small": {
       "band": "small",
-      "runs": 1117,
+      "runs": 1155,
       "sufficient_samples": true,
       "end_to_end_seconds": {
         "unit": "seconds",
-        "n": 1117,
+        "n": 1155,
         "sufficient_samples": true,
-        "p50": 0.4768,
-        "p95": 107.5897,
+        "p50": 0.4798,
+        "p95": 106.6652,
         "max": 210.0615,
-        "total": 23616.4061
+        "total": 25942.5999
       },
       "tokens_per_run": {
         "unit": "tokens",
-        "n": 1117,
+        "n": 1155,
         "sufficient_samples": true,
         "p50": 0.0,
-        "p95": 4461.0,
+        "p95": 4449.9,
         "max": 6056.0,
-        "total": 993727.0
+        "total": 1067956.0
       },
       "cost_per_run_usd": {
         "unit": "usd",
-        "n": 1117,
+        "n": 1155,
         "sufficient_samples": true,
         "p50": 0.0,
         "p95": 0.0001,
         "max": 0.0001,
-        "total": 0.021
+        "total": 0.0226
       },
       "llm_calls_per_run": {
         "unit": "calls",
-        "n": 1117,
+        "n": 1155,
         "sufficient_samples": true,
         "p50": 0.0,
-        "p95": 9.0,
+        "p95": 9.3,
         "max": 11.0,
-        "total": 1905.0
+        "total": 2174.0
       },
-      "degraded_rate": 0.7073,
+      "degraded_rate": 0.6874,
       "budget_skipped_rate": 0.0
     },
     "medium": {
@@ -190,45 +190,45 @@
   "stages": {
     "anomaly_detection": {
       "stage_name": "anomaly_detection",
-      "observations": 1127,
-      "completed": 1120,
+      "observations": 1170,
+      "completed": 1163,
       "failed": 1,
       "skipped": 6,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 1120,
+        "n": 1163,
         "sufficient_samples": true,
-        "p50": 0.0461,
-        "p95": 15.4179,
+        "p50": 0.0468,
+        "p95": 15.2969,
         "max": 95.3026,
-        "total": 3202.259
+        "total": 3519.5624
       },
       "total_tokens": {
         "unit": "tokens",
-        "n": 246,
+        "n": 282,
         "sufficient_samples": true,
-        "p50": 158.0,
-        "p95": 224.75,
+        "p50": 151.0,
+        "p95": 222.0,
         "max": 236.0,
-        "total": 39287.0
+        "total": 44084.0
       },
       "cost_usd": {
         "unit": "usd",
-        "n": 246,
+        "n": 282,
         "sufficient_samples": true,
         "p50": 0.0,
         "p95": 0.0,
         "max": 0.0,
-        "total": 0.0009
+        "total": 0.001
       },
       "llm_calls": {
         "unit": "calls",
-        "n": 246,
+        "n": 282,
         "sufficient_samples": true,
         "p50": 1.0,
         "p95": 1.0,
         "max": 1.0,
-        "total": 246.0
+        "total": 282.0
       },
       "fallback_rate": 0.0,
       "fallback_reasons": {},
@@ -238,10 +238,10 @@
     },
     "change_ownership": {
       "stage_name": "change_ownership",
-      "observations": 85,
+      "observations": 128,
       "completed": 0,
       "failed": 0,
-      "skipped": 85,
+      "skipped": 128,
       "latency_seconds": {
         "unit": "seconds",
         "n": 0,
@@ -286,10 +286,10 @@
     },
     "cluster_investigation_dispatch": {
       "stage_name": "cluster_investigation_dispatch",
-      "observations": 85,
+      "observations": 128,
       "completed": 0,
       "failed": 0,
-      "skipped": 85,
+      "skipped": 128,
       "latency_seconds": {
         "unit": "seconds",
         "n": 0,
@@ -334,10 +334,10 @@
     },
     "cluster_investigation_join": {
       "stage_name": "cluster_investigation_join",
-      "observations": 85,
+      "observations": 128,
       "completed": 0,
       "failed": 0,
-      "skipped": 85,
+      "skipped": 128,
       "latency_seconds": {
         "unit": "seconds",
         "n": 0,
@@ -382,10 +382,10 @@
     },
     "contract_validation": {
       "stage_name": "contract_validation",
-      "observations": 85,
+      "observations": 128,
       "completed": 0,
       "failed": 0,
-      "skipped": 85,
+      "skipped": 128,
       "latency_seconds": {
         "unit": "seconds",
         "n": 0,
@@ -430,18 +430,18 @@
     },
     "decision_report": {
       "stage_name": "decision_report",
-      "observations": 85,
-      "completed": 78,
+      "observations": 128,
+      "completed": 121,
       "failed": 7,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 78,
+        "n": 121,
         "sufficient_samples": true,
-        "p50": 0.0225,
-        "p95": 0.8954,
+        "p50": 0.023,
+        "p95": 1.0019,
         "max": 2.2002,
-        "total": 15.8579
+        "total": 27.0429
       },
       "total_tokens": {
         "unit": "tokens",
@@ -478,18 +478,18 @@
     },
     "decision_report_critic": {
       "stage_name": "decision_report_critic",
-      "observations": 85,
-      "completed": 58,
-      "failed": 27,
+      "observations": 128,
+      "completed": 92,
+      "failed": 36,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 58,
+        "n": 92,
         "sufficient_samples": true,
-        "p50": 0.0199,
-        "p95": 0.5209,
-        "max": 0.6972,
-        "total": 6.5069
+        "p50": 0.0216,
+        "p95": 0.8425,
+        "max": 0.997,
+        "total": 15.2301
       },
       "total_tokens": {
         "unit": "tokens",
@@ -526,18 +526,18 @@
     },
     "failure_clustering": {
       "stage_name": "failure_clustering",
-      "observations": 109,
-      "completed": 105,
+      "observations": 152,
+      "completed": 148,
       "failed": 0,
       "skipped": 1,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 105,
+        "n": 148,
         "sufficient_samples": true,
-        "p50": 6.2869,
-        "p95": 19.0,
+        "p50": 0.6046,
+        "p95": 17.65,
         "max": 23.0,
-        "total": 679.0071
+        "total": 687.3746
       },
       "total_tokens": {
         "unit": "tokens",
@@ -574,18 +574,18 @@
     },
     "flaky_sentinel": {
       "stage_name": "flaky_sentinel",
-      "observations": 109,
-      "completed": 105,
+      "observations": 152,
+      "completed": 148,
       "failed": 0,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 105,
+        "n": 148,
         "sufficient_samples": true,
-        "p50": 0.0186,
-        "p95": 18.0,
+        "p50": 0.0079,
+        "p95": 17.0,
         "max": 24.0,
-        "total": 302.1839
+        "total": 304.3313
       },
       "total_tokens": {
         "unit": "tokens",
@@ -622,10 +622,10 @@
     },
     "gap_detection": {
       "stage_name": "gap_detection",
-      "observations": 85,
+      "observations": 128,
       "completed": 0,
       "failed": 0,
-      "skipped": 85,
+      "skipped": 128,
       "latency_seconds": {
         "unit": "seconds",
         "n": 0,
@@ -670,31 +670,31 @@
     },
     "hypothesis_commit": {
       "stage_name": "hypothesis_commit",
-      "observations": 157,
-      "completed": 154,
+      "observations": 159,
+      "completed": 156,
       "failed": 0,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 154,
+        "n": 156,
         "sufficient_samples": true,
-        "p50": 2.7468,
-        "p95": 13.1507,
+        "p50": 2.8938,
+        "p95": 13.0379,
         "max": 30.6779,
-        "total": 687.3339
+        "total": 695.8934
       },
       "total_tokens": {
         "unit": "tokens",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 315.5,
-        "p95": 2980.5,
+        "p95": 2497.5,
         "max": 5154.0,
-        "total": 52429.0
+        "total": 53053.0
       },
       "cost_usd": {
         "unit": "usd",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 0.0,
         "p95": 0.0001,
@@ -703,235 +703,235 @@
       },
       "llm_calls": {
         "unit": "calls",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 1.0,
         "p95": 1.0,
         "max": 1.0,
-        "total": 90.0
+        "total": 92.0
       },
       "fallback_rate": 0.0,
       "fallback_reasons": {},
       "parse_failures": 0,
       "parse_failure_rate_per_llm_call": 0.0,
       "analysis_modes": {
-        "investigator": 154
+        "investigator": 156
       }
     },
     "hypothesis_environment": {
       "stage_name": "hypothesis_environment",
-      "observations": 157,
-      "completed": 154,
+      "observations": 159,
+      "completed": 156,
       "failed": 0,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 154,
+        "n": 156,
         "sufficient_samples": true,
-        "p50": 0.0606,
-        "p95": 1.4313,
+        "p50": 0.0608,
+        "p95": 1.7219,
         "max": 7.8314,
-        "total": 48.7866
+        "total": 50.6553
       },
       "total_tokens": {
         "unit": "tokens",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 5144.0,
         "p95": 5144.0,
         "max": 5144.0,
-        "total": 453293.0
+        "total": 463581.0
       },
       "cost_usd": {
         "unit": "usd",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 0.0002,
         "p95": 0.0002,
         "max": 0.0002,
-        "total": 0.0133
+        "total": 0.0136
       },
       "llm_calls": {
         "unit": "calls",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 1.0,
         "p95": 1.0,
         "max": 1.0,
-        "total": 90.0
+        "total": 92.0
       },
       "fallback_rate": 0.0,
       "fallback_reasons": {},
       "parse_failures": 0,
       "parse_failure_rate_per_llm_call": 0.0,
       "analysis_modes": {
-        "investigator": 154
+        "investigator": 156
       }
     },
     "hypothesis_infra": {
       "stage_name": "hypothesis_infra",
-      "observations": 157,
-      "completed": 154,
+      "observations": 159,
+      "completed": 156,
       "failed": 0,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 154,
+        "n": 156,
         "sufficient_samples": true,
         "p50": 0.0604,
-        "p95": 1.2179,
+        "p95": 1.627,
         "max": 4.5891,
-        "total": 33.5254
+        "total": 35.6727
       },
       "total_tokens": {
         "unit": "tokens",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 5437.0,
         "p95": 5437.0,
         "max": 5440.0,
-        "total": 488827.0
+        "total": 499610.0
       },
       "cost_usd": {
         "unit": "usd",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 0.0002,
         "p95": 0.0002,
         "max": 0.0002,
-        "total": 0.0143
+        "total": 0.0147
       },
       "llm_calls": {
         "unit": "calls",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 1.0,
         "p95": 1.0,
         "max": 1.0,
-        "total": 90.0
+        "total": 92.0
       },
       "fallback_rate": 0.0,
       "fallback_reasons": {},
       "parse_failures": 0,
       "parse_failure_rate_per_llm_call": 0.0,
       "analysis_modes": {
-        "investigator": 154
+        "investigator": 156
       }
     },
     "hypothesis_known_flaky": {
       "stage_name": "hypothesis_known_flaky",
-      "observations": 157,
-      "completed": 154,
+      "observations": 159,
+      "completed": 156,
       "failed": 0,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 154,
+        "n": 156,
         "sufficient_samples": true,
-        "p50": 0.0592,
-        "p95": 1.2667,
+        "p50": 0.0594,
+        "p95": 1.4769,
         "max": 7.8797,
-        "total": 43.2415
+        "total": 45.2017
       },
       "total_tokens": {
         "unit": "tokens",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 5238.0,
         "p95": 5238.0,
         "max": 5715.0,
-        "total": 467031.0
+        "total": 477507.0
       },
       "cost_usd": {
         "unit": "usd",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 0.0002,
         "p95": 0.0002,
         "max": 0.0002,
-        "total": 0.0137
+        "total": 0.014
       },
       "llm_calls": {
         "unit": "calls",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 1.0,
         "p95": 1.0,
         "max": 1.0,
-        "total": 90.0
+        "total": 92.0
       },
       "fallback_rate": 0.0,
       "fallback_reasons": {},
       "parse_failures": 0,
       "parse_failure_rate_per_llm_call": 0.0,
       "analysis_modes": {
-        "investigator": 154
+        "investigator": 156
       }
     },
     "hypothesis_regression": {
       "stage_name": "hypothesis_regression",
-      "observations": 157,
-      "completed": 154,
+      "observations": 159,
+      "completed": 156,
       "failed": 0,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 154,
+        "n": 156,
         "sufficient_samples": true,
         "p50": 0.0608,
-        "p95": 1.2755,
+        "p95": 1.5332,
         "max": 6.6969,
-        "total": 35.6261
+        "total": 37.1965
       },
       "total_tokens": {
         "unit": "tokens",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 5155.0,
         "p95": 5155.0,
         "max": 5155.0,
-        "total": 463950.0
+        "total": 474260.0
       },
       "cost_usd": {
         "unit": "usd",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 0.0002,
         "p95": 0.0002,
         "max": 0.0002,
-        "total": 0.0137
+        "total": 0.014
       },
       "llm_calls": {
         "unit": "calls",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 1.0,
         "p95": 1.0,
         "max": 1.0,
-        "total": 90.0
+        "total": 92.0
       },
       "fallback_rate": 0.0,
       "fallback_reasons": {},
       "parse_failures": 0,
       "parse_failure_rate_per_llm_call": 0.0,
       "analysis_modes": {
-        "investigator": 154
+        "investigator": 156
       }
     },
     "ingestion": {
       "stage_name": "ingestion",
-      "observations": 1127,
-      "completed": 1127,
+      "observations": 1170,
+      "completed": 1170,
       "failed": 0,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 1127,
+        "n": 1170,
         "sufficient_samples": true,
-        "p50": 0.0067,
-        "p95": 0.2012,
+        "p50": 0.0068,
+        "p95": 0.2046,
         "max": 22.0,
-        "total": 356.9667
+        "total": 361.7504
       },
       "total_tokens": {
         "unit": "tokens",
@@ -968,8 +968,8 @@
     },
     "investigator_plan": {
       "stage_name": "investigator_plan",
-      "observations": 157,
-      "completed": 157,
+      "observations": 159,
+      "completed": 159,
       "failed": 0,
       "skipped": 0,
       "latency_seconds": {
@@ -1016,60 +1016,60 @@
     },
     "investigator_synthesis": {
       "stage_name": "investigator_synthesis",
-      "observations": 157,
-      "completed": 154,
+      "observations": 159,
+      "completed": 156,
       "failed": 0,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 154,
+        "n": 156,
         "sufficient_samples": true,
-        "p50": 0.0197,
-        "p95": 0.6945,
-        "max": 0.9077,
-        "total": 13.9488
+        "p50": 0.0199,
+        "p95": 0.6978,
+        "max": 1.0043,
+        "total": 14.975
       },
       "total_tokens": {
         "unit": "tokens",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 5791.5,
         "p95": 5840.0,
         "max": 5842.0,
-        "total": 520939.0
+        "total": 532531.0
       },
       "cost_usd": {
         "unit": "usd",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 0.0002,
         "p95": 0.0002,
         "max": 0.0002,
-        "total": 0.0152
+        "total": 0.0155
       },
       "llm_calls": {
         "unit": "calls",
-        "n": 90,
+        "n": 92,
         "sufficient_samples": true,
         "p50": 1.0,
         "p95": 1.0,
         "max": 1.0,
-        "total": 90.0
+        "total": 92.0
       },
       "fallback_rate": 0.0,
       "fallback_reasons": {},
       "parse_failures": 0,
       "parse_failure_rate_per_llm_call": 0.0,
       "analysis_modes": {
-        "investigator": 154
+        "investigator": 156
       }
     },
     "log_intelligence": {
       "stage_name": "log_intelligence",
-      "observations": 85,
+      "observations": 128,
       "completed": 0,
       "failed": 0,
-      "skipped": 85,
+      "skipped": 128,
       "latency_seconds": {
         "unit": "seconds",
         "n": 0,
@@ -1114,10 +1114,10 @@
     },
     "regression_watchman": {
       "stage_name": "regression_watchman",
-      "observations": 85,
+      "observations": 128,
       "completed": 0,
       "failed": 0,
-      "skipped": 85,
+      "skipped": 128,
       "latency_seconds": {
         "unit": "seconds",
         "n": 0,
@@ -1162,45 +1162,45 @@
     },
     "release_risk": {
       "stage_name": "release_risk",
-      "observations": 109,
-      "completed": 105,
+      "observations": 152,
+      "completed": 148,
       "failed": 0,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 105,
+        "n": 148,
         "sufficient_samples": true,
-        "p50": 11.1527,
-        "p95": 24.1195,
+        "p50": 10.9259,
+        "p95": 23.0,
         "max": 90.4223,
-        "total": 1390.753
+        "total": 1764.3589
       },
       "total_tokens": {
         "unit": "tokens",
-        "n": 75,
+        "n": 118,
         "sufficient_samples": true,
-        "p50": 844.0,
-        "p95": 909.4,
+        "p50": 853.0,
+        "p95": 911.15,
         "max": 955.0,
-        "total": 62335.0
+        "total": 99527.0
       },
       "cost_usd": {
         "unit": "usd",
-        "n": 75,
+        "n": 118,
         "sufficient_samples": true,
         "p50": 0.0,
         "p95": 0.0,
         "max": 0.0,
-        "total": 0.0013
+        "total": 0.0021
       },
       "llm_calls": {
         "unit": "calls",
-        "n": 75,
+        "n": 118,
         "sufficient_samples": true,
         "p50": 1.0,
         "p95": 1.0,
         "max": 1.0,
-        "total": 75.0
+        "total": 118.0
       },
       "fallback_rate": 0.0,
       "fallback_reasons": {},
@@ -1210,10 +1210,10 @@
     },
     "report_refinement": {
       "stage_name": "report_refinement",
-      "observations": 85,
+      "observations": 128,
       "completed": 0,
       "failed": 0,
-      "skipped": 85,
+      "skipped": 128,
       "latency_seconds": {
         "unit": "seconds",
         "n": 0,
@@ -1258,117 +1258,117 @@
     },
     "root_cause_analysis": {
       "stage_name": "root_cause_analysis",
-      "observations": 1127,
-      "completed": 1119,
+      "observations": 1170,
+      "completed": 1162,
       "failed": 1,
       "skipped": 6,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 1119,
+        "n": 1162,
         "sufficient_samples": true,
-        "p50": 0.083,
-        "p95": 27.7488,
+        "p50": 0.0836,
+        "p95": 28.3633,
         "max": 110.0443,
-        "total": 4521.3077
+        "total": 4892.2268
       },
       "total_tokens": {
         "unit": "tokens",
-        "n": 160,
+        "n": 171,
         "sufficient_samples": true,
-        "p50": 800.5,
-        "p95": 1310.15,
+        "p50": 801.0,
+        "p95": 1314.5,
         "max": 1340.0,
-        "total": 132348.0
+        "total": 143586.0
       },
       "cost_usd": {
         "unit": "usd",
-        "n": 160,
+        "n": 171,
         "sufficient_samples": true,
         "p50": 0.0,
         "p95": 0.0,
         "max": 0.0,
-        "total": 0.0028
+        "total": 0.003
       },
       "llm_calls": {
         "unit": "calls",
-        "n": 160,
+        "n": 171,
         "sufficient_samples": true,
         "p50": 3.0,
         "p95": 5.0,
         "max": 5.0,
-        "total": 508.0
+        "total": 551.0
       },
       "fallback_rate": 0.0,
       "fallback_reasons": {},
       "parse_failures": 0,
       "parse_failure_rate_per_llm_call": 0.0,
       "analysis_modes": {
-        "llm": 278,
+        "llm": 316,
         "rules": 819
       }
     },
     "summary": {
       "stage_name": "summary",
-      "observations": 1127,
-      "completed": 359,
+      "observations": 1170,
+      "completed": 402,
       "failed": 766,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 359,
+        "n": 402,
         "sufficient_samples": true,
-        "p50": 36.4827,
-        "p95": 77.1383,
+        "p50": 36.0603,
+        "p95": 76.3366,
         "max": 154.1941,
-        "total": 13095.2876
+        "total": 14405.5787
       },
       "total_tokens": {
         "unit": "tokens",
-        "n": 270,
+        "n": 308,
         "sufficient_samples": true,
-        "p50": 2994.0,
-        "p95": 3447.5,
+        "p50": 2954.5,
+        "p95": 3433.55,
         "max": 3644.0,
-        "total": 759757.0
+        "total": 785087.0
       },
       "cost_usd": {
         "unit": "usd",
-        "n": 270,
+        "n": 308,
         "sufficient_samples": true,
         "p50": 0.0001,
         "p95": 0.0001,
         "max": 0.0001,
-        "total": 0.0161
+        "total": 0.0166
       },
       "llm_calls": {
         "unit": "calls",
-        "n": 270,
+        "n": 308,
         "sufficient_samples": true,
         "p50": 4.0,
         "p95": 4.0,
         "max": 4.0,
-        "total": 1076.0
+        "total": 1228.0
       },
       "fallback_rate": 0.0,
       "fallback_reasons": {},
       "parse_failures": 73,
-      "parse_failure_rate_per_llm_call": 0.0678,
+      "parse_failure_rate_per_llm_call": 0.0594,
       "analysis_modes": {}
     },
     "test_health": {
       "stage_name": "test_health",
-      "observations": 109,
-      "completed": 105,
+      "observations": 152,
+      "completed": 148,
       "failed": 0,
       "skipped": 0,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 105,
+        "n": 148,
         "sufficient_samples": true,
-        "p50": 0.0066,
-        "p95": 20.8,
+        "p50": 0.0047,
+        "p95": 19.65,
         "max": 25.0,
-        "total": 333.2201
+        "total": 334.6485
       },
       "total_tokens": {
         "unit": "tokens",
@@ -1405,18 +1405,18 @@
     },
     "triage": {
       "stage_name": "triage",
-      "observations": 1127,
-      "completed": 41,
+      "observations": 1170,
+      "completed": 57,
       "failed": 0,
-      "skipped": 1083,
+      "skipped": 1110,
       "latency_seconds": {
         "unit": "seconds",
-        "n": 41,
+        "n": 57,
         "sufficient_samples": true,
-        "p50": 3.0,
-        "p95": 23.0,
+        "p50": 0.3075,
+        "p95": 22.2,
         "max": 25.0,
-        "total": 270.2855
+        "total": 272.0203
       },
       "total_tokens": {
         "unit": "tokens",
@@ -1453,46 +1453,46 @@
     }
   },
   "temporal": {
-    "days_observed": 22,
+    "days_observed": 23,
     "first_day": "2026-07-22",
-    "last_day": "2026-08-22",
+    "last_day": "2026-08-23",
     "runs_without_a_date": 0,
-    "degraded_total": 796,
+    "degraded_total": 805,
     "peak_degraded_day": "2026-08-08",
     "peak_degraded_count": 750,
-    "peak_day_share_of_degraded": 0.9422,
-    "degraded_rate_excluding_peak_day": 0.0973,
+    "peak_day_share_of_degraded": 0.9317,
+    "degraded_rate_excluding_peak_day": 0.1062,
     "degradation_is_concentrated": true,
-    "concentration_note": "750 of 796 degraded runs (94%) fall on 2026-08-08 \u2014 the aggregate degraded rate describes that day, not current state."
+    "concentration_note": "750 of 805 degraded runs (93%) fall on 2026-08-08 \u2014 the aggregate degraded rate describes that day, not current state."
   },
   "grounding": {
     "claims": {
-      "reports": 65,
-      "claims_total": 192,
-      "claims_with_evidence": 192,
+      "reports": 99,
+      "claims_total": 294,
+      "claims_with_evidence": 294,
       "claims_with_evidence_rate": 1.0,
       "evidence_refs_per_claim": {
         "unit": "refs",
-        "n": 192,
+        "n": 294,
         "sufficient_samples": true,
         "p50": 2.0,
-        "p95": 3.45,
+        "p95": 3.0,
         "max": 4.0,
-        "total": 480.0
+        "total": 726.0
       },
       "claims_by_kind": {
-        "fact": 127,
-        "inference": 65
+        "fact": 195,
+        "inference": 99
       },
-      "multi_claim_reports": 65,
+      "multi_claim_reports": 99,
       "reports_sharing_one_evidence_set": 10,
-      "shared_evidence_bundle_rate": 0.1538
+      "shared_evidence_bundle_rate": 0.101
     },
     "narrative": {
-      "summaries": 263,
-      "summaries_with_any_citation": 20,
-      "citation_rate": 0.076,
-      "citations_total": 133,
+      "summaries": 292,
+      "summaries_with_any_citation": 26,
+      "citation_rate": 0.089,
+      "citations_total": 191,
       "citable_layers": [
         "layer2_incident_view",
         "layer3_evidence_pack",
@@ -1501,7 +1501,7 @@
       "uncitable_layers": [
         "layer1_executive_summary"
       ],
-      "layers_rendered": 948,
+      "layers_rendered": 1066,
       "ids_unresolved": 0,
       "summaries_with_fabricated_ids": 0,
       "fabrication_rate": 0.0
@@ -1519,5 +1519,5 @@
       "blocked_on": "requirement I.1 (nightly evaluation)"
     }
   ],
-  "generated_at": "2026-08-22T22:34:46.763951+00:00"
+  "generated_at": "2026-08-23T15:31:01.406753+00:00"
 }
