@@ -38,7 +38,7 @@ slowapi==0.1.9
 pyotp==2.9.0
 
 # ── Notifications ─────────────────────────────────────────────
-aiosmtplib==3.0.2
+aiosmtplib==5.1.2
 
 # ── LangChain & AI ───────────────────────────────────────────
 langchain==0.3.27
