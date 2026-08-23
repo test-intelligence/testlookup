@@ -45,7 +45,17 @@ BANDS: tuple[tuple[str, int, Optional[int]], ...] = (
 # decision_log decision_points that record an LLM output failing its schema.
 # These are the parse failures F-4/G.1 will move: today every structured result
 # is recovered from free text with a regex.
-_PARSE_FAILURE_POINTS = frozenset({"summary_schema_validation"})
+# ``classifier_schema_validation`` covers the fast classifier, which returned a
+# bare None for FOUR different outcomes and so measured zero parse failures
+# across 9,657 events -- not because there were none, but because nothing
+# recorded one. Its deliberate abstention ("low_confidence") is logged under a
+# different decision point on purpose and is NOT counted here: an abstention is
+# the classifier working, and counting it would inflate the very rate this
+# exists to make trustworthy.
+_PARSE_FAILURE_POINTS = frozenset({
+    "summary_schema_validation",
+    "classifier_schema_validation",
+})
 
 # ExecutionPath values where a skipped stage means the pipeline routed
 # correctly, not that it lost something. The all-green fast path skips analysis

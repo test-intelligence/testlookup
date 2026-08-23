@@ -817,6 +817,28 @@ class AnalysisAgent(BaseAgent):
                     error=str(evidence_exc),
                 )
 
+            # F-4 follow-up: record a fast-classifier failure in the decision
+            # log, which is what the baseline harness reads. "low_confidence" is
+            # deliberately included as a NON-failure outcome so the rate stays
+            # honest -- an abstention is the classifier working, not breaking.
+            classifier_outcome = analysis.get("_classifier_outcome")
+            if classifier_outcome and pipeline_run_id:
+                await self.log_decision(
+                    pipeline_run_id,
+                    decision_point=(
+                        "classifier_schema_validation"
+                        if classifier_outcome == "parse_failed"
+                        else "classifier_call_outcome"
+                    ),
+                    chosen=classifier_outcome,
+                    rationale=(
+                        "fast classifier produced output that could not be parsed"
+                        if classifier_outcome == "parse_failed"
+                        else f"fast classifier declined: {classifier_outcome}"
+                    ),
+                    test_case_id=tc_id,
+                )
+
             # If the router recorded a fallback, surface it as a decision entry
             # so the stage-level decision_log reflects per-test anomalies.
             if routing.get("fallback_from") and pipeline_run_id:

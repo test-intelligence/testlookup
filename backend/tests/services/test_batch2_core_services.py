@@ -26,8 +26,18 @@ def test_parse_agent_output_falls_back_on_non_json():
 @pytest.mark.asyncio
 async def test_run_triage_agent_fast_path_skips_react():
     store_mock = AsyncMock()
+    # run_triage_agent calls classify_with_outcome so a parse failure can be
+    # told apart from a deliberate abstention; classify() is kept for callers
+    # that only need the verdict. Both are stubbed so this test pins the
+    # short-circuit behaviour rather than an API name.
     fast_classify = AsyncMock(return_value={"confidence_score": 99})
-    fake_classifier = SimpleNamespace(FastClassifier=SimpleNamespace(classify=fast_classify))
+    fast_classify_outcome = AsyncMock(return_value=({"confidence_score": 99}, "classified"))
+    fake_classifier = SimpleNamespace(
+        FastClassifier=SimpleNamespace(
+            classify=fast_classify,
+            classify_with_outcome=fast_classify_outcome,
+        )
+    )
     with patch.dict(
         "sys.modules",
         {

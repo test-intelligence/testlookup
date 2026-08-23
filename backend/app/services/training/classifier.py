@@ -40,9 +40,38 @@ class FastClassifier:
         error_message: str,
         stack_trace: str = "",
     ) -> Optional[dict]:
+        """Attempt fast classification, discarding why it declined.
+
+        Kept for callers that only need the verdict. Prefer
+        :meth:`classify_with_outcome` -- this wrapper is exactly the shape that
+        made the classifier the last unmeasured LLM path in the pipeline.
         """
-        Attempt fast classification.
-        Returns a partial analysis dict on success, None if confidence < threshold.
+        result, _outcome = await cls.classify_with_outcome(
+            test_name=test_name, error_message=error_message, stack_trace=stack_trace,
+        )
+        return result
+
+    @classmethod
+    async def classify_with_outcome(
+        cls,
+        test_name: str,
+        error_message: str,
+        stack_trace: str = "",
+    ) -> tuple[Optional[dict], str]:
+        """Classify, and say WHY when the answer is None.
+
+        Returns ``(result, outcome)`` where outcome is one of:
+
+        * ``classified``     -- a usable verdict
+        * ``parse_failed``   -- the model answered, but not with JSON we could read
+        * ``call_failed``    -- the provider call itself raised
+        * ``low_confidence`` -- a deliberate abstention, **not a failure**
+
+        That last distinction is the reason this exists. All four cases used to
+        return a bare ``None``, so a model emitting unparseable output was
+        indistinguishable from one correctly declining a hard case. The pipeline
+        measured 0 parse failures for this path across 9,657 events -- not
+        because there were none, but because nothing ever recorded one.
         """
         # Determine which model to use
         fine_tuned = await ModelRegistry.get_active_model("classifier")
@@ -65,11 +94,17 @@ class FastClassifier:
             raw_content = response.content if hasattr(response, "content") else str(response)
             result = _parse_classifier_output(raw_content if isinstance(raw_content, str) else str(raw_content))
         except Exception as exc:
-            logger.debug("FastClassifier failed: %s", exc)
-            return None
+            logger.warning(
+                "fast_classifier_call_failed",
+                extra={"error_type": type(exc).__name__},
+            )
+            return None, "call_failed"
 
         if result is None:
-            return None
+            # The model answered; we could not read it. This is the case the
+            # bare `return None` hid -- it looked identical to an abstention.
+            logger.warning("fast_classifier_parse_failed test=%s", test_name[:80])
+            return None, "parse_failed"
 
         confidence = result.get("confidence", 0)
         if confidence < settings.CLASSIFIER_CONFIDENCE_THRESHOLD:
@@ -77,7 +112,10 @@ class FastClassifier:
                 "FastClassifier confidence too low (%d < %d) for %s — falling back to ReAct",
                 confidence, settings.CLASSIFIER_CONFIDENCE_THRESHOLD, test_name,
             )
-            return None
+            # Working as designed: a hard case handed to the ReAct loop. Counting
+            # this as a failure would misrepresent the classifier and inflate the
+            # very metric this instrumentation exists to make trustworthy.
+            return None, "low_confidence"
 
         category = result.get("category", "UNKNOWN")
         reasoning = result.get("reasoning", "")
@@ -100,7 +138,7 @@ class FastClassifier:
             "llm_model": model_name,
             "requires_human_review": confidence < 90,
             "classified_by": "fast_classifier",
-        }
+        }, "classified"
 
 
 def _parse_classifier_output(raw: str) -> Optional[dict]:

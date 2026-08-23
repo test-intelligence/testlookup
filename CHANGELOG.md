@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-22 — The fast classifier's failures were counted nowhere
+
+- `FastClassifier.classify` returned a bare `None` for **four** different outcomes — a provider error, unparseable output, a low-confidence abstention, and no result. The caller could not tell them apart, so nothing was ever recorded.
+- That made it the **last unmeasured LLM path**. The baseline reported `root_cause_analysis: 294 llm_calls, 0 parse_failures`, and the Mongo event log held **zero** `schema_validation_failed` events across 9,657 — not because there were none, but because no code path could emit one.
+- New `classify_with_outcome()` returns `(result, outcome)`: `classified` · `parse_failed` · `call_failed` · `low_confidence`. `classify()` remains as a wrapper for callers that only need the verdict.
+- **`low_confidence` is not a failure.** It is the classifier correctly handing a hard case to the ReAct loop. It is logged under a separate decision point and **excluded** from the harness's parse-failure count — counting it would inflate the very metric this instrumentation exists to make trustworthy. A test pins both halves of that distinction.
+- The outcome rides on the analysis to `AnalysisAgent`, which records it in the stage decision log — where the baseline harness already looks. No new read path.
+- 7 regression guards. One existing test stubbed `FastClassifier.classify` only; its stub now covers both methods, so it pins the short-circuit *behaviour* rather than an API name.
+
 ## 2026-08-22 — Baseline refreshed, split by code version
 
 - The committed baseline predated five AI-layer fixes. Regenerated — and split into **two** files, because one would blend code versions.

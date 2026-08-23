@@ -151,10 +151,14 @@ async def run_triage_agent(
         logger.debug("Semantic cache skipped: %s", sem_exc)
 
     # ── Fast path: single-call classifier ────────────────────────────────────
+    # Recorded on the returned analysis so the stage can log it: a classifier
+    # that emitted unreadable output must be distinguishable from one correctly
+    # declining a hard case. Both used to return a bare None.
+    classifier_outcome = "not_attempted"
     if error_message or stack_trace:
         try:
             from app.services.training.classifier import FastClassifier
-            quick = await FastClassifier.classify(
+            quick, classifier_outcome = await FastClassifier.classify_with_outcome(
                 test_name=test_name,
                 error_message=error_message or "",
                 stack_trace=stack_trace or "",
@@ -192,6 +196,7 @@ async def run_triage_agent(
                 return quick
         except Exception as fc_exc:
             logger.debug("FastClassifier skipped: %s", fc_exc)
+            classifier_outcome = "call_failed"
 
     # ── Token budget enforcement ─────────────────────────────────────────────
     # Truncate inputs that would blow the context window before the agent starts.
@@ -437,6 +442,11 @@ async def run_triage_agent(
         logger.warning("Confidence gate evaluation failed: %s", gate_exc)
         analysis.setdefault("requires_human_review", True)
     analysis["_routing"] = routing
+    # F-4 follow-up: the fast classifier was the last LLM path whose failures
+    # were counted nowhere. Carried on the analysis so AnalysisAgent can record
+    # it in the stage decision log, which is where the baseline harness looks.
+    if classifier_outcome not in ("classified", "not_attempted"):
+        analysis["_classifier_outcome"] = classifier_outcome
 
     # Store full audit trail to MongoDB
     await _store_audit_trail(test_case_id, user_question, analysis, intermediate_steps)
