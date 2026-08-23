@@ -16,6 +16,7 @@ import json
 import time
 import uuid
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Any, Optional, cast
 
 from langgraph.graph import END, StateGraph
@@ -1107,6 +1108,67 @@ async def _checkpoint_stage(
         )
 
 
+@lru_cache(maxsize=1)
+def _state_field_reducers() -> dict[str, Any]:
+    """The reducer each ``WorkflowState`` field declares, read from the schema.
+
+    Taken from the annotations rather than a hand-kept list: a second copy of
+    this mapping would drift the moment a field is added, which is precisely
+    the class of defect this function exists to fix.
+    """
+    from typing import get_type_hints  # noqa: PLC0415
+
+    reducers: dict[str, Any] = {}
+    try:
+        hints = get_type_hints(WorkflowState, include_extras=True)
+    except Exception as exc:  # pragma: no cover - annotation resolution failure
+        logger.warning("state_reducers_unavailable", error_type=type(exc).__name__)
+        return reducers
+    for name, annotation in hints.items():
+        for item in getattr(annotation, "__metadata__", ()):
+            if callable(item):
+                reducers[name] = item
+                break
+    return reducers
+
+
+def _merge_checkpoint_stage_state(merged: dict, data: dict) -> None:
+    """Fold one stage's checkpoint into the restored state, honouring reducers.
+
+    ``dict.update`` is last-writer-wins, which silently discards every
+    accumulating field the state declares -- ``agent_contracts``, ``analyses``,
+    ``deep_findings``, ``completed_stages``, ``stage_metrics``, ``errors``.
+    Restoring N stages kept only the Nth stage's contributions.
+
+    The visible symptom was narrower than the loss: the critic saw stages
+    marked complete whose contract was missing, failed
+    ``completed_agent_contracts_present``, and failed the run closed. Because
+    ``_load_checkpoint`` restores from the latest *failed or partial* prior
+    run, the next attempt restored the same way -- so a pipeline that had gone
+    partial could never publish a decision report again.
+    """
+    reducers = _state_field_reducers()
+    for key, value in data.items():
+        if key not in merged:
+            merged[key] = value
+            continue
+        reducer = reducers.get(key)
+        if reducer is None:
+            merged[key] = value
+            continue
+        try:
+            merged[key] = reducer(merged[key], value)
+        except Exception as exc:
+            # Never lose the stage over a reducer mismatch, but say so -- a
+            # silent fallback here restores the very bug this replaced.
+            logger.warning(
+                "checkpoint_reducer_failed",
+                field=key,
+                error_type=type(exc).__name__,
+            )
+            merged[key] = value
+
+
 async def _load_checkpoint(
     test_run_id: str,
     workflow_type: str,
@@ -1178,7 +1240,7 @@ async def _load_checkpoint(
                     )
                     continue
                 data = stage.checkpoint_data if isinstance(stage.checkpoint_data, dict) else {}
-                merged_state.update(data)
+                _merge_checkpoint_stage_state(merged_state, data)
                 checkpoint_stage_names.append(stage.stage_name)
                 checkpoint_replay_metadata[stage.stage_name] = metadata
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-23 — A pipeline that went partial could never publish again
+
+- `_load_checkpoint` folded each restored stage's checkpoint into the resumed state with a plain `dict.update` — last-writer-wins. But `WorkflowState` declares **reducers** for its accumulating fields, and each node returns only its own contribution. Restoring N stages kept only the **Nth** stage's contributions and silently discarded the rest.
+
+  | Field | Reducer | What was lost |
+  |---|---|---|
+  | `agent_contracts`, `analyses`, `deep_findings`, `stage_metrics` | `_merge_dicts` | every stage but the last |
+  | `errors`, `tools_used`, `skipped_stages` | `_concat_lists` | every stage but the last |
+  | `completed_stages` | `_dedup_concat_lists` | every stage but the last |
+
+- **Why it was fatal rather than merely lossy.** `completed_stages` gets rebuilt by the graph — each restored node re-emits its own name — but `agent_contracts` gets no second chance. So the critic saw N stages marked complete and one contract, failed `completed_agent_contracts_present`, and failed verification closed. No decision report published, and the run ended `partial`.
+- **The loop.** `_load_checkpoint` selects the latest **failed or partial** prior run. So the next attempt restored the same way and failed the same way: **once a deep pipeline went partial it could never publish again.** Same shape as #780 and #781 — a state that, once entered, is never escaped.
+- Measured on the homelab: 5 of 5 re-runs failed with `missing_contracts` naming exactly the two stages the worker logs showed as `stage_restored_from_checkpoint`, while 3 runs with no checkpoint completed and published. 36 of 121 deep runs were sitting in the trapped state.
+- The merge now applies the reducer each field declares, **read from the state schema itself** rather than a hand-kept list — a second copy of that mapping would drift the moment a field is added, which is the same defect class as the one fixed earlier today. A reducer that raises falls back to the newest value and logs, so a type change cannot abort a resume silently.
+- 10 regression guards, mutation-checked: reverting the merge to last-writer-wins fails 4 of them. One guard pins the *critic's* detection itself, so the check cannot quietly stop noticing dropped contracts.
+
 ## 2026-08-23 — Classifier provenance read as evidence loss, so 24 runs lost their decision report
 
 - **A regression I introduced.** F-17 (#801) attached a provenance trail to fast-classifier verdicts — the error text a rule matched on, as a `classifier_input` evidence reference. The capture loop skips that kind by design: it is not an attested tool observation, it never applies for authorization, and no authorization error is recorded for it.
