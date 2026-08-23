@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-23 — Post-fix baseline regenerated with the classifier block
+
+- `pipeline_baseline_post_fixes.json` now carries the `classifier` block added in #809/#810. Regenerated at the same `--since 2026-08-23T06:05:00Z` boundary as before, so it stays comparable: **53 runs** (31 deep, 19 investigation, 3 offline), `sufficient_samples: true`.
+
+  | Metric | Value |
+  |---|---|
+  | classifier attempts | **40** |
+  | classifier failures | **0** (`failure_rate` 0.0) |
+  | abstentions | 0 |
+  | `measured` | **true** |
+  | degraded runs | 0 |
+  | narrative citation rate | **76.5%** |
+  | shared-evidence-bundle rate | **0%** |
+  | fabricated evidence IDs | **0** |
+
+- **Read the classifier attempts carefully: 40 attempts inside a 53-run window does NOT mean 13 runs skipped the classifier.** Successes only became recordable when #810 deployed at 18:19Z. Every run in this window before that used the classifier and recorded nothing — the count starts at the instrumentation, not at the window. A later regeneration over a window that lies entirely after #810 will be the first one where attempts and runs are directly comparable.
+- `failure_rate: 0.0` is now earned rather than vacuous: zero failures over **forty recorded attempts**, not zero over zero. With n=40 the honest ceiling is roughly **7% at 95% confidence** — a few hundred attempts are needed before calling the classifier reliably parseable.
+
 ## 2026-08-23 — The denominator fix was on a line the success path never reaches
 
 - #809 attached `_classifier_outcome` at the end of `run_triage_agent`. But the fast classifier's success path does `return quick` **~250 lines earlier** — so the assignment only ever ran on the ReAct path, and a successful classification still went unrecorded. Deployed and measured: 40 novel failures, all classified, and **still zero decision entries**. The denominator did not exist.
