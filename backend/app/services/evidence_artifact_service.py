@@ -19,13 +19,11 @@ from app.models.postgres import (
     TestRun,
 )
 from app.services.canonical_json import canonical_json_bytes, stable_json_sha256
+from app.services.classifier_evidence import applies_for_authorization
 from app.services.evidence_sanitizer import sanitize_reference_text
 
 MAX_CAPTURED_ARTIFACTS = 500
 MAX_CAPTURE_SCAN = 2000
-# Local classifier provenance (F-17). Not an attested tool observation and not
-# a candidate for the signed evidence store -- see the skip in the capture loop.
-_CLASSIFIER_EVIDENCE_KIND = "classifier_input"
 
 _AUTHORIZED_TOOLS = frozenset({
     "fetch_allure_stacktrace",
@@ -118,7 +116,7 @@ async def capture_authorized_evidence_artifacts(
             source, _, _ = sanitize_reference_text(str(raw.get("source") or ""), limit=100)
             kind, _, _ = sanitize_reference_text(str(raw.get("kind") or ""), limit=100)
             excerpt, _, _ = sanitize_reference_text(str(raw.get("excerpt") or ""), limit=500)
-            if kind == _CLASSIFIER_EVIDENCE_KIND:
+            if not applies_for_authorization(raw):
                 # F-17: local classifier provenance -- the error text a rule
                 # matched on. It does NOT claim to be an attested artifact, so
                 # skipping it is correct; flagging it would fill the decision
@@ -126,6 +124,10 @@ async def capture_authorized_evidence_artifacts(
                 # applied for authorization. The boundary this preserves is the
                 # point: only HMAC-attested tool observations become signed
                 # evidence, and nothing here relaxes that.
+                #
+                # Shared with the bundle's silent-loss guard on purpose -- a
+                # second, local copy of this rule is what broke verification
+                # for every fast-classified run.
                 continue
             if source not in _AUTHORIZED_TOOLS or kind != "tool_observation" or not excerpt:
                 errors.append("evidence_producer_unverified")

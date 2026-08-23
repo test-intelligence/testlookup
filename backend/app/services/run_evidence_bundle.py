@@ -15,6 +15,7 @@ from app.models.evidence_contracts import (
     RunMetricSnapshotV1,
 )
 from app.services.canonical_json import stable_json_sha256
+from app.services.classifier_evidence import applies_for_authorization
 from app.services.evidence_sanitizer import (
     sanitize_persistence_payload,
     sanitize_reference_text,
@@ -221,15 +222,23 @@ def _evidence_references(
             else []
         )
         analyses = _as_dict(state.get("analyses"))
-        candidate_count = sum(
-            len(_as_dict(analysis).get("evidence_references") or [])
-            if isinstance(_as_dict(analysis).get("evidence_references"), list)
-            else 0
-            for analysis in analyses.values()
-        )
+        # Count only references that actually applied for authorization. Kinds
+        # the capture loop skips by design (classifier provenance) produce no
+        # artifact and no error, so counting them makes the silent-loss guard
+        # below fire on a run where nothing was lost.
+        candidate_count = 0
+        for analysis in analyses.values():
+            refs_field = _as_dict(analysis).get("evidence_references")
+            if not isinstance(refs_field, list):
+                continue
+            candidate_count += sum(
+                1 for raw in refs_field if applies_for_authorization(raw)
+            )
         errors = state.get("evidence_authorization_errors")
         invalid = len(errors) if isinstance(errors, list) else int(bool(errors))
         omitted = max(0, len(authorized) - MAX_EVIDENCE_REFERENCES)
+        # Fail closed: candidates went in, nothing came out, and nobody said
+        # why. That is evidence vanishing silently.
         if candidate_count and not authorized and not invalid:
             invalid = 1
         return (

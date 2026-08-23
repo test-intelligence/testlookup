@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-23 — Classifier provenance read as evidence loss, so no decision report published
+
+- **A regression I introduced.** F-17 (#801) attached a provenance trail to fast-classifier verdicts — the error text a rule matched on, as a `classifier_input` evidence reference. The capture loop skips that kind by design: it is not an attested tool observation, it never applies for authorization, and no authorization error is recorded for it.
+- The evidence bundle carries an independent fail-closed guard: *candidates went in, nothing came out, nobody said why — flag it.* It counted **every** reference as a candidate. On any run whose failures were all fast-classified, it saw N candidates, zero artifacts, zero errors, and reported `evidence_reference_invalid`.
+- Consequence: the critic's `metric_data_quality` check failed, terminal verification failed closed, and **the decision report never published**. Measured on the homelab: **31 of 31** recorded attempts failed on that single check, the first ~20 minutes after the F-17 image rolled out. The run inspected carried 4 references, all `classifier_input`, zero `tool_observation`.
+- The defect was **two modules each defining "what applies for authorization" and disagreeing** — a duplicated `classifier_input` constant, one skip, one counter that knew nothing about it. Both now import a single `applies_for_authorization()` predicate; the duplicated constant is gone, and a test asserts the two call sites resolve to the same function object.
+- **The guard is not weakened.** A tool observation that genuinely vanished still fails closed, and a malformed reference still counts as a candidate — it is reported by the capture loop rather than dropped here. Three of the eight guards exist to pin that, including a mixed run where a classifier reference must not mask a real loss.
+- The legacy (unauthorized) branch is untouched: there, classifier references *do* become inline bundle references, so its arithmetic was already consistent.
+
 ## 2026-08-22 — The fast classifier's failures were counted nowhere
 
 - `FastClassifier.classify` returned a bare `None` for **four** different outcomes — a provider error, unparseable output, a low-confidence abstention, and no result. The caller could not tell them apart, so nothing was ever recorded.

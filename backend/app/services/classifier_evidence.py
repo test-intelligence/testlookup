@@ -170,3 +170,26 @@ def attach_classifier_evidence(
     if evidence:
         analysis["evidence_references"] = evidence
     return analysis
+
+
+def applies_for_authorization(reference: Any) -> bool:
+    """Whether an evidence reference is a candidate for artifact authorization.
+
+    Classifier provenance never applies. It records the error text a local
+    rule matched on -- not an attested tool observation -- so the capture loop
+    skips it without recording an authorization error.
+
+    The bundle's silent-loss guard must use the SAME definition. When the two
+    disagreed, every run whose failures were all fast-classified produced
+    candidate references, zero authorized artifacts and zero errors -- which
+    reads as evidence vanishing silently. The guard fired, the critic's
+    ``metric_data_quality`` check failed, and the decision report never
+    published.
+
+    A malformed reference *is* a candidate: it should be counted and reported
+    as invalid by the capture loop, not quietly dropped here.
+    """
+    if not isinstance(reference, dict):
+        return True
+    kind = str(reference.get("kind") or "").strip()
+    return kind != CLASSIFIER_EVIDENCE_KIND
