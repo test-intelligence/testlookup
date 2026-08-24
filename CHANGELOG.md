@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-24 (verified on the deployment) — The specialist-contract fix, measured where it failed
+
+``build-20260824-195954`` carries the ``_degraded_contract`` fix. Six deep pipelines run against **fresh subjects** — test runs with no prior deep run, so no run was already carrying a failed state that a re-run could inherit.
+
+**All six took the branch that was failing.** Every one recorded ``log_intelligence`` with ``fallback_used: true`` and ``decision_reason: "no_log_context"`` — the exact "no usable context" return that produced the 8/8 ``missing_contracts: ["log_intelligence"]``. The fix is not being credited for runs that happened to have log context.
+
+| | before (8 runs) | after (6 runs) |
+|---|---|---|
+| `contract_evidence_support` | fail 8/8 | **pass 6/6** — `missing_contracts: []`, 14–15 contracts each |
+| `workflow_verification` | failed | **passed 6/6**, all 9 checks |
+| run status | `partial` 8/8 | **`completed` 6/6** |
+
+The degraded contract is what the verifier reads: ``fallback_used`` plus a ``no_*`` reason satisfies its ``no_evidence_ok`` branch, so an empty result is now a *stated negative* rather than an absent record.
+
+**Also corrected here: the `agents.base-agent-subclass` gate does not have a blind spot.**
+
+The 2026-08-24 (earlier) entry claimed the gate "passes, so it has a blind spot" because ``ContractAgent`` and ``LogIntelligenceAgent`` are not ``BaseAgent`` subclasses. Run directly, ``_agents_base_agent_subclass()`` returns **three** violations — those two plus ``run_compare_agent`` — and names them correctly. The gate is green because all three are reviewed entries in ``scripts/quality-gate-baselines/agents__base-agent-subclass.txt``.
+
+Mutation-checked rather than assumed: dropping a new non-subclass agent into ``app/agents/`` turns the gate **FAIL — 1 new violation**, naming the new file. The toleration is scoped to the three fingerprinted entries; it does not disarm the guard. **The debt is real and still open — it is tolerated, not unseen**, which is a different problem with a different fix (make the two agents subclass ``BaseAgent``, which is also the root cause behind the missing stage rows worked around in #840).
+
 ## 2026-08-24 (final) — A specialist with nothing to report said nothing at all
 
 ``_check_contract_evidence_support`` flags any agent whose output key is populated but which emitted no entry in ``agent_contracts`` — `if has_output and not contract: missing_contracts.append(...)`. Each specialist node has several return paths, and only the full one built a contract.
@@ -62,7 +82,7 @@ Those five rows sat at ``pending`` to the end of the run, where the sweep in ``_
 
 - The node wrapper now records execution for every node, agent-backed or not, and does it **before** ``_checkpoint_stage`` — that helper only writes when the row already reads ``completed``, so these same stages were silently discarding their checkpoint data too.
 - The backfill fills a gap rather than becoming a second writer: only ``pending``/``running`` rows are touched, so an agent's ``completed`` row keeps the tokens, cost, confidence and evidence counts the wrapper cannot reconstruct. ``failed`` and self-reported ``skipped`` rows are preserved, and a node returning a skip delta is not recorded as completed.
-- Not fixed here, and still open: ``ContractAgent`` and ``LogIntelligenceAgent`` are not ``BaseAgent`` subclasses at all, which the ``agents.base-agent-subclass`` quality gate is supposed to forbid — it passes, so it has a blind spot. ``log_intelligence`` also emits no agent contract, which fails ``contract_evidence_support`` and takes the decision critic down on every deep run.
+- Not fixed here, and still open: ``ContractAgent`` and ``LogIntelligenceAgent`` are not ``BaseAgent`` subclasses at all. ``log_intelligence`` also emits no agent contract, which fails ``contract_evidence_support`` and takes the decision critic down on every deep run. **Corrected 2026-08-24:** this entry originally said the ``agents.base-agent-subclass`` gate "passes, so it has a blind spot". It does not. The guard reports all three non-subclasses (``contract_agent``, ``log_intelligence_agent``, ``run_compare_agent``); the gate is green because each is a reviewed entry in ``scripts/quality-gate-baselines/agents__base-agent-subclass.txt``. A tolerated debt, not an unseen one.
 
 ## 2026-08-24 — A rebuilt plan reported every specialist as "flag off" while the agents ran
 
