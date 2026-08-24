@@ -554,24 +554,51 @@ class SummaryAgent(BaseAgent):
             logger.warning("Executive summary LLM call failed", error=str(exc))
             raise SummaryLLMUnavailable(str(exc)) from exc
 
-        # Layers 2, 3, 4: JSON responses (run in sequence to respect LLM rate limits)
-        layer2 = await self._call_json_layer(
-            llm, _INCIDENT_VIEW_PROMPT, context,
-            expected_keys=["what_failed", "likely_cause", "criticality", "release_impact"],
-            layer_name="incident_view",
-            pipeline_run_id=pipeline_run_id,
-        )
-        layer3 = await self._call_json_layer(
-            llm, _EVIDENCE_PACK_PROMPT, context,
-            expected_keys=["top_stack_traces", "log_anomalies", "data_sources_used"],
-            layer_name="evidence_pack",
-            pipeline_run_id=pipeline_run_id,
-        )
-        layer4 = await self._call_json_layer(
-            llm, _ACTION_PLAN_PROMPT, context,
-            expected_keys=["immediate_mitigation", "fix_recommendations", "validation_steps"],
-            layer_name="action_plan",
-            pipeline_run_id=pipeline_run_id,
+        # Layers 2, 3, 4: independent JSON layers, issued concurrently (F-6).
+        #
+        # They were sequential, so the stage cost the SUM of three round-trips
+        # where the slowest alone would do. Nothing forced the ordering: the
+        # three use different prompts, write disjoint keys, and none reads
+        # another -- layer3's similar_historical_failures, the grounding pass
+        # and the executive panel all run after all three have returned.
+        #
+        # The comment this replaces said "in sequence to respect LLM rate
+        # limits". It dates from the initial commit rather than from any
+        # incident, and three concurrent requests sit far inside the burst
+        # limit of every provider this deployment has run. A provider that
+        # does throttle is already handled: _call_json_layer turns any
+        # invoke-level failure into an empty layer, exactly as it would have
+        # sequentially.
+        #
+        # Measured first, on the homelab over 30 days (1,191 summary stages):
+        # only 308 of them make these calls at all -- the other 880 make none
+        # and finish in 0.22s. On the 308 the stage takes a p50 of 41.2s for
+        # four calls, so this is worth having on a quarter of runs and a no-op
+        # on the rest. See the F-6 row in the review doc for why the token
+        # half of the finding is NOT addressed here.
+        #
+        # gather() and not a fan-out of tasks: no exception escapes
+        # _call_json_layer (it returns {} instead), so there is no sibling to
+        # cancel, and a cancelled stage still cancels all three together.
+        layer2, layer3, layer4 = await asyncio.gather(
+            self._call_json_layer(
+                llm, _INCIDENT_VIEW_PROMPT, context,
+                expected_keys=["what_failed", "likely_cause", "criticality", "release_impact"],
+                layer_name="incident_view",
+                pipeline_run_id=pipeline_run_id,
+            ),
+            self._call_json_layer(
+                llm, _EVIDENCE_PACK_PROMPT, context,
+                expected_keys=["top_stack_traces", "log_anomalies", "data_sources_used"],
+                layer_name="evidence_pack",
+                pipeline_run_id=pipeline_run_id,
+            ),
+            self._call_json_layer(
+                llm, _ACTION_PLAN_PROMPT, context,
+                expected_keys=["immediate_mitigation", "fix_recommendations", "validation_steps"],
+                layer_name="action_plan",
+                pipeline_run_id=pipeline_run_id,
+            ),
         )
 
         # A timeout on layer 1 does not on its own prove the model is unusable,

@@ -288,8 +288,8 @@
           <td><strong>Fixed &mdash; the loss is now counted, and the window is explicit.</strong> Three paths dropped context with nobody told. (1) Truncation happened at <strong>six call sites and was recorded at none</strong>; the only trace was a marker appended <em>into the prompt</em>, which reaches the model rather than any metric. <code>truncate_with_report</code> now returns what was dropped, and the summary layer path logs a <code>context_truncated</code> decision where the baseline harness already reads. (2) Truncation shared the <code>chars // 4</code> accounting figure, the English one, which under-counts stack traces and JSON (nearer 2.5-3) and let over-length prompts through to be truncated server-side. Truncation now has <em>its own</em> stricter ratio: the two uses want opposite biases &mdash; over-estimating in accounting makes agents do <em>less</em> work (CI caught the copilot exhausting its tool budget a call early), while under-estimating in truncation hands an over-length prompt to the provider. Sharing one constant was the same conflation as (3). (3) <code>num_ctx</code> was never set for Ollama, so it applied its own default (2048 on many builds) and truncated from the left &mdash; taking the system prompt and, on the ReAct path, the tool instructions. <code>LLM_MAX_TOKENS</code> was doing double duty as the output cap and the context budget; the window is now its own setting. Originally: <code>num_ctx</code> is never configured for Ollama, and token budgeting uses characters&divide;4. Over-length prompts are truncated server-side with no error, dropping evidence and, on the ReAct path, potentially the tool instructions &mdash; which then presents as a parse failure.<span class="src">llm_factory.py:176-182 &middot; resilience.py:183-188</span></td>
         </tr>
         <tr>
-          <td class="id">F-6</td><td><span class="chip m">Major</span></td><td>Cost / latency</td>
-          <td>The summary issues four sequential calls over one identical ~2.6k-token context. Roughly 4&times; the necessary input tokens and 4&times; the latency for one report, with no prefix reuse and no parallelism.<span class="src">agents/summary_agent.py:504-547</span></td>
+          <td class="id">F-6</td><td><span class="chip ok">Fixed</span></td><td>Cost / latency</td>
+          <td><strong>Half fixed, and the other half measured away.</strong> The three JSON layers now issue together under one <code>gather</code>, so the stage costs the slowest round-trip instead of the sum of three. Nothing forced the ordering &mdash; disjoint output keys, no layer reads another, and the grounding pass and executive panel both run after all three return. The comment claiming they ran &ldquo;in sequence to respect LLM rate limits&rdquo; dates from the initial commit, not from an incident. The token half is <em>not</em> done, and measuring is why. Telemetry over 30 days (1,191 summary stages) reads <strong>2,365 input tokens at p50 across all four calls &mdash; about 591 per call</strong>, so the &ldquo;~2.6k-token context&rdquo; in the original finding is the stage <em>total</em>: all four calls together send roughly what was attributed to each one. Prefix reuse needs the shared block to clear the provider's minimum cacheable length, and the floor is <strong>1,024 tokens</strong> on the providers that offer caching at all &mdash; the <em>entire</em> per-call prompt here averages 591, so no shared prefix inside it can reach that floor no matter how the prompts are ordered. Reordering five registry prompts and re-hashing every attestation would buy nothing measurable. Folding four layers into one call would cut tokens, but concentrates into a single response the stage that produced <strong>100% of the pipeline's schema failures</strong>, and discards layer 1's bail-out. Scope is also smaller than it looks: only <strong>308 of 1,191</strong> stages make these calls at all; the other 880 make none and finish in 0.22s. On those 308 the stage takes a <strong>p50 of 41.2s</strong>. Originally: the summary issues four sequential calls over one identical ~2.6k-token context. Roughly 4&times; the necessary input tokens and 4&times; the latency for one report, with no prefix reuse and no parallelism.<span class="src">agents/summary_agent.py:504-547</span></td>
         </tr>
         <tr>
           <td class="id">F-7</td><td><span class="chip ok">Fixed</span></td><td>Throughput</td>
@@ -455,13 +455,37 @@
         into the same aggregate; the single-call invariant is now asserted from both sides.</li>
     </ul>
 
+    <h3>2026-08-23 (later) &mdash; F-6</h3>
+    <ul>
+      <li><strong>The finding's headline number was the stage total, not the per-call context.</strong> Measured:
+        2,365 input tokens at p50 across all four calls, ~591 each. All four together send roughly what the review
+        attributed to one.</li>
+      <li><strong>That kills the token half.</strong> Prompt-prefix reuse needs the shared block to clear the
+        provider's minimum cacheable length, and that floor is 1,024 tokens on the providers offering caching at
+        all. The <em>entire</em> per-call prompt averages 591 here, so no prefix inside it can reach the floor at
+        any ordering. Re-versioning five prompts and re-hashing every attestation would have bought nothing.</li>
+      <li><strong>The latency half is real and is now fixed</strong> &mdash; layers 2-4 issue concurrently, so the
+        stage costs the slowest round-trip rather than the sum of three.</li>
+      <li><strong>Smaller blast radius than it reads:</strong> only 308 of 1,191 summary stages make these calls;
+        880 make none and finish in 0.22s. On the 308 the p50 is 41.2s, which is where the win lands.</li>
+      <li><strong>The guard is a rendezvous, not a stopwatch</strong> &mdash; all three layers must arrive before any
+        may leave, so sequential code cannot satisfy it and no CI timing threshold can flake. Verified failing
+        against the old code before it was kept.</li>
+      <li><strong>Rejected: folding four layers into one call.</strong> It would cut tokens, but concentrates the
+        stage that produced 100% of the pipeline's schema failures into a single response, and discards layer 1's
+        bail-out on an unreachable provider.</li>
+    </ul>
+
     <h3>Open backlog</h3>
-    <p>Eight Major (<strong>F-5&ndash;F-12</strong>) and three Minor (<strong>F-13&ndash;F-15</strong>). Highest value
-      first: <strong>F-12</strong> (the semantic cache can serve another test&rsquo;s narrative) is the live grounding
-      risk, and <strong>F-11</strong> (nothing evaluates on a schedule) is what would make it visible &mdash;
-      <code>unsupported_claim_rate</code> is still unmeasured, and today&rsquo;s citation metrics cannot catch a
-      borrowed narrative because they check whether citations <em>resolve</em>, not whether the prose belongs to
-      this test.</p>
+    <p>No Major findings remain open. Three Minor items are left: <strong>F-13</strong> (chat intent classification
+      counts regex hits and breaks ties by enum declaration order, with no abstain path), <strong>F-14</strong>
+      (declared SLOs are never compared against observed <code>pipeline_stage_duration_seconds</code>), and
+      <strong>F-15</strong> (the architecture README still draws a five-stage pipeline for a nineteen-node graph).</p>
+    <p>Four decisions are queued for the owner rather than for code: <code>duplicate_detection</code> scores
+      <strong>F1 0.00</strong> and needs fixing before any eval baseline is set; whether 0.85-similarity narrative
+      reuse should be permitted at all; whether F-8's ten-agent bundle refactor is justified once drift data exists;
+      and whether the four specialist feature flags should be enabled on this deployment &mdash; they have
+      <em>never executed</em> here, which is why F-9's fan-out measured a zero delta.</p>
   </section>
 
   <section id="s3">

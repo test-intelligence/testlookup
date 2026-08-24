@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-23 — The summary's three JSON layers now run at the same time (F-6)
+
+- Layers 2, 3 and 4 were issued one after another, so the stage cost the **sum of three round-trips** where the slowest alone would do. They now issue together under one `asyncio.gather`.
+- Nothing forced the ordering: the three use different prompts, write **disjoint** keys, and none reads another. `similar_historical_failures`, the citation-grounding pass and the executive panel all run after all three have returned. The comment that justified it — *"run in sequence to respect LLM rate limits"* — dates from the **initial commit**, not from any incident, and three concurrent requests sit far inside every provider's burst limit.
+- **Measuring first changed half the finding.** The review said "four sequential calls over one identical ~2.6k-token context… roughly 4× the necessary input tokens". Telemetry over 30 days, 1,191 summary stages:
+
+  | | |
+  |---|---|
+  | stages that made all four LLM calls | 308 (25.9%), p50 **41.2s**, p95 79.3s |
+  | stages that made **none** | 880 (73.9%), p50 **0.22s** |
+  | p50 input tokens, **all four calls together** | **2,365** → ~591 per call |
+
+  The ~2.6k figure is the **stage total**, not the per-call context: all four calls together send roughly what was attributed to each one.
+
+- **So the token half is deliberately not done.** Prompt-prefix reuse requires the shared system+context block to clear the provider's minimum cacheable length, and that floor is **1,024 tokens** on the providers that offer caching at all. The *entire* per-call prompt averages **591** tokens here, so no shared prefix inside it can reach the floor at any ordering — reordering five registry prompts and re-hashing every attestation would buy nothing measurable. Folding all four layers into one structured call *would* cut tokens — and would concentrate the stage that produced **100% of the pipeline's recorded schema failures** into a single response, while discarding layer 1's bail-out on an unreachable provider. Neither is worth it on this deployment; both become worth revisiting if the context grows or the provider changes.
+- **Scope is a quarter of runs, not all of them.** 880 of 1,191 summary stages never make these calls at all. The win is real where it lands and zero everywhere else — stated here so a post-deploy re-measure is read against the right denominator.
+- 5 guards. The concurrency one is a **rendezvous, not a stopwatch**: all three layers must arrive before any may leave, so sequential code cannot satisfy it and no CI timing threshold can flake. Verified failing against the pre-change code before it was kept. The rest cover the risks the change introduces — tuple unpacking making a silent layer transposition possible, `gather`'s default sibling-cancellation on a raising child, layer 1 still gating the fan-out, and every layer still recording its own decisions.
+
 ## 2026-08-23 — The learning loop now says why it is not learning (F-10)
 
 - The finding is accurate in code: `auto` resolves ML → LLM → rules, ML only wins once a trained model exists (needs `ML_MIN_TRAINING_SAMPLES` labels), corrections match on an **exact** `test_fingerprint`, and fine-tuning — the one thing that would improve the LLM itself — is off by default, OpenAI-only, and refused under `AI_OFFLINE_MODE`.
