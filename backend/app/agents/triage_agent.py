@@ -77,11 +77,43 @@ class DefectTriageAgent(BaseAgent):
             except Exception as exc:
                 err = f"Triage failed for {tc_id}: {exc}"
                 logger.error("Triage failed", test_case_id=tc_id, error=str(exc), exc_info=True)
+                # A failure that passed the gate but got no ticket is invisible
+                # in the counts -- it is neither "created" nor "skipped by rule".
+                await self.log_decision(
+                    pipeline_run_id,
+                    decision_point="triage_ticket",
+                    chosen="error",
+                    rationale="failure met the triage gate but ticket creation failed",
+                    test_case_id=str(tc_id),
+                    context={"error_type": type(exc).__name__, "category": category},
+                )
                 errors.append(err)
                 triage_results.append({"test_case_id": tc_id, "action": "error", "error": str(exc)})
 
         created = sum(1 for r in triage_results if r["action"] == "created")
         skipped = sum(1 for r in triage_results if r["action"] == "skipped")
+
+        # Ticket creation is a mutating, externally-visible action, and the gate
+        # that decides it is a threshold nobody can see from the result. Record
+        # the rule alongside the counts so a "why was nothing filed?" question
+        # is answerable from the trail rather than from the source.
+        await self.log_decision(
+            pipeline_run_id,
+            decision_point="triage_gate",
+            chosen=f"created_{created}",
+            rationale=(
+                f"{created} ticket(s) created, {skipped} skipped, {len(errors)} error(s) "
+                f"across {len(analyses)} analysis/analyses; gate is confidence >= "
+                f"{_AUTO_TRIAGE_CONFIDENCE}, or >= 50 for "
+                f"{sorted(_HIGH_PRIORITY_CATEGORIES)}, and never for flaky"
+            ),
+            context={
+                "created": created,
+                "skipped": skipped,
+                "errors": len(errors),
+                "confidence_threshold": _AUTO_TRIAGE_CONFIDENCE,
+            },
+        )
 
         await self.mark_stage_done(
             pipeline_run_id,

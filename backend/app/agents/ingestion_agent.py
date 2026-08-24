@@ -34,6 +34,23 @@ class IngestionAgent(BaseAgent):
 
         try:
             run_data, failed_ids = await self._extract_run_data(test_run_id)
+            # The authoritative read is what every downstream route keys off:
+            # zero failures skips analysis entirely, and the failure count sets
+            # the fan-out width. Record what was actually seen.
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="ingestion_scope",
+                chosen="validated",
+                rationale=(
+                    f"{run_data['total_tests']} test(s) persisted, "
+                    f"{len(failed_ids)} failed/broken"
+                ),
+                context={
+                    "total_tests": run_data["total_tests"],
+                    "failed_count": len(failed_ids),
+                    "run_status": run_data.get("status"),
+                },
+            )
             await self.mark_stage_done(
                 pipeline_run_id,
                 result_data={"total_tests": run_data["total_tests"], "failed_count": len(failed_ids)},
@@ -73,6 +90,17 @@ class IngestionAgent(BaseAgent):
         except Exception as exc:
             error_msg = f"Ingestion agent error: {exc}"
             logger.error(error_msg, exc_info=True)
+            # A failed ingestion hands every later stage an empty run: zero
+            # failed ids, zero tests. Without this the pipeline looks like a
+            # clean run rather than a blind one.
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="ingestion_scope",
+                chosen="failed",
+                rationale="run facts could not be read; downstream stages receive an empty run",
+                alternatives=["validated"],
+                context={"error_type": type(exc).__name__},
+            )
             await self.mark_stage_done(pipeline_run_id, error=error_msg)
             output = {
                 "ingestion_enriched": False,

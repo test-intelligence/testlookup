@@ -84,8 +84,45 @@ class AnomalyDetectionAgent(BaseAgent):
                     db, project_id, test_run_id, branch
                 )
 
+                if baseline_rate is None or not prior_run_ids:
+                    # No baseline means every check below is skipped and the run
+                    # reports "no anomalies" -- which reads identically to a
+                    # clean run. Say which one it was.
+                    await self.log_decision(
+                        pipeline_run_id,
+                        decision_point="baseline_availability",
+                        chosen="no_baseline",
+                        rationale=(
+                            f"no comparable prior run for "
+                            f"{('branch=' + branch) if branch else 'this project'}; "
+                            "regression checks were not run"
+                        ),
+                        alternatives=["compare_to_baseline"],
+                    )
+
                 if baseline_rate is not None and prior_run_ids:
                     drop = baseline_rate - current_pass_rate
+                    # The regression verdict is a threshold call, and the
+                    # threshold is configurable -- a reader cannot reconstruct
+                    # it from the output.
+                    await self.log_decision(
+                        pipeline_run_id,
+                        decision_point="pass_rate_regression",
+                        chosen="regression" if drop >= settings.ANOMALY_REGRESSION_THRESHOLD else "within_tolerance",
+                        rationale=(
+                            f"pass rate {current_pass_rate:.1f}% vs baseline "
+                            f"{baseline_rate:.1f}% (drop {drop:.1f}%) against threshold "
+                            f"{settings.ANOMALY_REGRESSION_THRESHOLD}%, over "
+                            f"{len(prior_run_ids)} prior run(s)"
+                        ),
+                        context={
+                            "drop": round(drop, 2),
+                            "threshold": settings.ANOMALY_REGRESSION_THRESHOLD,
+                            "baseline_pass_rate": round(baseline_rate, 2),
+                            "sample_size": len(prior_run_ids),
+                            "baseline_type": f"branch={branch}" if branch else "project-wide",
+                        },
+                    )
                     if drop >= settings.ANOMALY_REGRESSION_THRESHOLD:
                         is_regression = True
                         anomalies.append({
@@ -243,6 +280,14 @@ class AnomalyDetectionAgent(BaseAgent):
         except Exception as exc:
             error_msg = f"Anomaly agent error: {exc}"
             log.error("anomaly_detection_error", error=str(exc), exc_info=True)
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="anomaly_detection_outcome",
+                chosen="failed",
+                rationale="baseline comparison failed; the run carries no anomaly signal",
+                alternatives=["completed"],
+                context={"error_type": type(exc).__name__},
+            )
             await self.mark_stage_done(
                 pipeline_run_id,
                 error=error_msg,

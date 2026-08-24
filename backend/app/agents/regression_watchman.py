@@ -22,6 +22,8 @@ Standalone endpoint: POST /api/v1/agents/regression-watch
 """
 import asyncio
 import json
+from collections import Counter
+
 import structlog
 from typing import Any
 
@@ -76,6 +78,16 @@ class RegressionWatchman(BaseAgent):
         except Exception as exc:
             logger.error("regression_watchman_failed", error_type=type(exc).__name__, exc_info=True)
             classification = {}
+            # An empty classification is indistinguishable from "every cluster
+            # looked fine" downstream, so the failure has to be stated.
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="regression_classification",
+                chosen="failed",
+                rationale="classification failed; no cluster was labelled",
+                alternatives=["classified"],
+                context={"error_type": type(exc).__name__},
+            )
             await self.mark_stage_done(
                 pipeline_run_id,
                 error=f"{type(exc).__name__}",
@@ -98,6 +110,25 @@ class RegressionWatchman(BaseAgent):
                 decision_reason="classification_error",
             )
 
+        # Whether a failure is a real regression, a known flake, or the
+        # environment is the judgement this stage exists to make, and it drives
+        # the release recommendation. Record the split, not just the count.
+        labels = Counter(
+            str(value.get("classification") or "unknown")
+            for value in classification.values()
+            if isinstance(value, dict)
+        )
+        await self.log_decision(
+            pipeline_run_id,
+            decision_point="regression_classification",
+            chosen=(labels.most_common(1)[0][0] if labels else "none"),
+            rationale=(
+                f"{len(classification)} cluster(s) classified: "
+                + ", ".join(f"{name}={count}" for name, count in sorted(labels.items()))
+                if labels else "no cluster carried a classification"
+            ),
+            context={"clusters": len(classification), **dict(labels)},
+        )
         await self.mark_stage_done(
             pipeline_run_id,
             result_data={"classified_clusters": len(classification)},

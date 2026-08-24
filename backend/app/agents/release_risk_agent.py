@@ -97,6 +97,20 @@ class ReleaseRiskAgent(BaseAgent):
                 "conditions_for_go": ["Manual review required — automated assessment failed"],
                 "reasoning": f"Release risk agent encountered an error: {exc}",
             }
+            # A substituted CONDITIONAL_GO at risk 50 is indistinguishable, in
+            # the stored decision, from one the scorer actually computed. This
+            # stage gates releases, so the substitution has to be on the record.
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="release_scoring",
+                chosen="fallback_conditional_go",
+                rationale=(
+                    "deterministic scoring failed; substituted CONDITIONAL_GO at risk 50 "
+                    "pending manual review rather than emitting a computed verdict"
+                ),
+                alternatives=["computed_recommendation"],
+                context={"error_type": type(exc).__name__},
+            )
 
         # Assemble input snapshot for audit/reproducibility
         state["release_memory_context"] = decision.get("memory_context")
@@ -109,6 +123,29 @@ class ReleaseRiskAgent(BaseAgent):
             input_snapshot=input_snapshot,
         )
 
+        # The GO / CONDITIONAL_GO / NO_GO call is the pipeline's terminal
+        # judgement and the one a human is most likely to be asked to justify.
+        await self.log_decision(
+            pipeline_run_id,
+            decision_point="release_recommendation",
+            chosen=str(decision["recommendation"]),
+            rationale=(
+                f"risk score {decision['risk_score']} across "
+                f"{len(decision.get('dimension_scores') or {})} dimension(s); "
+                f"{len(decision.get('blocking_issues') or [])} blocking issue(s), "
+                f"{len(decision.get('conditions_for_go') or [])} condition(s) for go"
+            ),
+            alternatives=[
+                option for option in ("GO", "CONDITIONAL_GO", "NO_GO")
+                if option != decision["recommendation"]
+            ],
+            context={
+                "risk_score": decision["risk_score"],
+                "composite_risk": decision.get("composite_risk", decision["risk_score"]),
+                "blocking_issues": len(decision.get("blocking_issues") or []),
+                "score_model_version": str(decision.get("score_model_version") or ""),
+            },
+        )
         await self.mark_stage_done(
             pipeline_run_id,
             result_data={

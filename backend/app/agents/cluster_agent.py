@@ -37,6 +37,13 @@ class ClusterAgent(BaseAgent):
         await self.broadcast_progress(project_id, {"status": "running", "message": "Clustering failure patterns..."})
 
         if not failed_test_ids:
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="clustering_scope",
+                chosen="skip_no_failures",
+                rationale="the run reported no failed tests, so there is nothing to cluster",
+                alternatives=["semantic", "per_test_fallback"],
+            )
             await self.mark_stage_done(pipeline_run_id, result_data={"clusters": 0})
             return validate_agent_contract(
                 ClusterAgentOutput,
@@ -85,6 +92,25 @@ class ClusterAgent(BaseAgent):
             fallback_reason = f"{type(exc).__name__}: {safe_error}"
             clusters = self._build_fallback_clusters(test_ids, errors)
 
+        # Semantic grouping and one-cluster-per-test produce structurally
+        # identical output, so nothing downstream can tell which one ran. Every
+        # later stage keys off these clusters, and per-test fallback means the
+        # grouping carries no signal at all.
+        await self.log_decision(
+            pipeline_run_id,
+            decision_point="clustering_strategy",
+            chosen="per_test_fallback" if fallback_reason else "semantic",
+            rationale=(
+                f"embedding clustering failed ({fallback_reason}); each test became "
+                "its own cluster"
+                if fallback_reason
+                else f"embedding clustering grouped {len(test_ids)} failure(s) "
+                     f"into {len(clusters)} cluster(s)"
+            ),
+            alternatives=["semantic"] if fallback_reason else ["per_test_fallback"],
+            context={"tests": len(test_ids), "clusters": len(clusters)},
+        )
+
         # Build reverse map: test_id -> cluster_id
         cluster_map: dict[str, str] = {}
         for cluster in clusters:
@@ -95,6 +121,16 @@ class ClusterAgent(BaseAgent):
         orphaned = valid_ids - set(cluster_map.keys())
         if orphaned:
             logger.info("Adding orphaned tests to individual clusters", count=len(orphaned))
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="orphan_recovery",
+                chosen="own_cluster",
+                rationale=(
+                    f"{len(orphaned)} failed test(s) were left out of every cluster and "
+                    "would otherwise disappear from the analysis"
+                ),
+                context={"orphaned": len(orphaned)},
+            )
             for i, tid in enumerate(sorted(orphaned)):
                 error = test_id_to_error.get(tid, "")
                 orphan_cluster = {

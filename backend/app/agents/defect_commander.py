@@ -56,6 +56,14 @@ class DefectCommander(BaseAgent):
             logger.error(
                 "defect_commander_failed", error=str(exc), exc_info=True,
             )
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="defect_promotion",
+                chosen="not_promoted",
+                rationale="promotion failed; no defect was created for this cluster",
+                alternatives=["promoted"],
+                context={"error_type": type(exc).__name__},
+            )
             await self.mark_stage_done(pipeline_run_id, error=str(exc))
             return {
                 "defect_promotion": None,
@@ -63,6 +71,19 @@ class DefectCommander(BaseAgent):
                 "errors": [str(exc)],
             }
 
+        # Promotion creates a tracked defect and assigns a severity -- a
+        # mutating, externally-visible outcome, which is exactly the kind the
+        # trail exists to explain.
+        await self.log_decision(
+            pipeline_run_id,
+            decision_point="defect_promotion",
+            chosen=str(result.get("severity") or "promoted"),
+            rationale=f"cluster promoted to defect {result.get('defect_id')}",
+            context={
+                "defect_id": str(result.get("defect_id") or ""),
+                "severity": result.get("severity"),
+            },
+        )
         await self.mark_stage_done(
             pipeline_run_id,
             result_data={"defect_id": result.get("defect_id"), "severity": result.get("severity")},

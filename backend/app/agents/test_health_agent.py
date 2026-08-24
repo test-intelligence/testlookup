@@ -84,6 +84,16 @@ class TestHealthAgent(BaseAgent):
         ]
 
         if not automation_test_ids:
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="test_health_scope",
+                chosen="skip_no_automation_defects",
+                rationale=(
+                    f"none of {len(analyses)} analysis/analyses was categorised "
+                    "AUTOMATION_DEFECT, so there is no test to score"
+                ),
+                alternatives=["analyze"],
+            )
             await self.mark_stage_done(pipeline_run_id, result_data={"analyzed": 0})
             return validate_agent_contract(
                 TestHealthAgentOutput,
@@ -95,13 +105,42 @@ class TestHealthAgent(BaseAgent):
 
         findings = []
         insufficient_count = 0
-        for tc_id in automation_test_ids[:15]:
+        examined = automation_test_ids[:15]
+        # The cap silently drops candidates, and a finding with no source
+        # context is a materially weaker one -- both belong in the trail.
+        await self.log_decision(
+            pipeline_run_id,
+            decision_point="test_health_scope",
+            chosen="analyze",
+            rationale=(
+                f"{len(automation_test_ids)} automation defect(s); analysing {len(examined)}"
+                + (f" (capped, {len(automation_test_ids) - len(examined)} not examined)"
+                   if len(automation_test_ids) > len(examined) else "")
+            ),
+            context={
+                "candidates": len(automation_test_ids),
+                "analyzed": len(examined),
+                "capped": len(automation_test_ids) > len(examined),
+            },
+        )
+        for tc_id in examined:
             finding = await self._analyze_test(tc_id)
             if finding:
                 findings.append(finding)
                 if finding.get("source_status") == "insufficient_source_context":
                     insufficient_count += 1
 
+        if insufficient_count:
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="source_context_availability",
+                chosen="scored_without_source",
+                rationale=(
+                    f"{insufficient_count} of {len(findings)} finding(s) had no readable "
+                    "source, so their health score rests on metadata alone"
+                ),
+                context={"insufficient_source": insufficient_count, "findings": len(findings)},
+            )
         await self.mark_stage_done(
             pipeline_run_id,
             result_data={

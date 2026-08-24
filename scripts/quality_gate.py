@@ -1991,21 +1991,41 @@ def _agents_log_decision_present() -> list[Violation]:
     """Every BaseAgent subclass should call ``self.log_decision(...)``
     at least once. A subclass without a single decision log entry
     produces an empty ``AgentStageResult.decision_log`` and breaks
-    the UI's "why did the agent do X" surface."""
+    the UI's "why did the agent do X" surface.
+
+    Asserted over the AST rather than by substring. ``"log_decision" in text``
+    was satisfied by any mention at all -- a docstring, a comment, an entry in
+    a list of things to do later -- so a file could describe the decision trail
+    it does not write and still pass. The same shape (a check matching a
+    substring that appears in prose) has produced silent no-ops here before.
+    """
     root = REPO_ROOT / "backend" / "app" / "agents"
     violations: list[Violation] = []
     for path in iter_files(root, (".py",)):
         if path.name in _SUPPORT_AGENT_FILES:
             continue
         text = path.read_text(encoding="utf-8")
-        if not _BASE_AGENT_RE.search(text):
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:  # a broken file fails louder elsewhere
             continue
-        if "log_decision" not in text:
-            violations.append(Violation(
-                path, 0,
-                "BaseAgent subclass missing self.log_decision(...) — "
-                "every non-trivial branch should be logged",
-            ))
+        for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
+            if not any(
+                isinstance(base, ast.Name) and base.id == "BaseAgent"
+                for base in cls.bases
+            ):
+                continue
+            calls = {
+                node.func.attr
+                for node in ast.walk(cls)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            }
+            if "log_decision" not in calls:
+                violations.append(Violation(
+                    path, cls.lineno,
+                    f"{cls.name} never calls self.log_decision(...) — "
+                    "every non-trivial routing/fallback/skip branch should be logged",
+                ))
     return violations
 
 

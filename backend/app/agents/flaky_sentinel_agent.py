@@ -103,6 +103,16 @@ class FlakySentinelAgent(BaseAgent):
         ]
 
         if not flaky_test_ids:
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="flaky_scope",
+                chosen="skip_no_candidates",
+                rationale=(
+                    f"none of {len(analyses)} analysis/analyses was classified FLAKY, "
+                    "so there is no lifecycle to investigate"
+                ),
+                alternatives=["investigate"],
+            )
             await self.mark_stage_done(pipeline_run_id, result_data={"flaky_investigated": 0})
             return validate_agent_contract(
                 FlakySentinelAgentOutput,
@@ -114,6 +124,24 @@ class FlakySentinelAgent(BaseAgent):
 
         findings = []
         capped_ids = flaky_test_ids[:10]  # Cap at 10 to avoid excessive processing
+        # The cap silently drops candidates. A bounded result that does not say
+        # it was bounded reads as a complete one.
+        await self.log_decision(
+            pipeline_run_id,
+            decision_point="flaky_scope",
+            chosen="investigate",
+            rationale=(
+                f"{len(flaky_test_ids)} flaky candidate(s); investigating "
+                f"{len(capped_ids)}"
+                + (f" (capped, {len(flaky_test_ids) - len(capped_ids)} not examined)"
+                   if len(flaky_test_ids) > len(capped_ids) else "")
+            ),
+            context={
+                "candidates": len(flaky_test_ids),
+                "investigated": len(capped_ids),
+                "capped": len(flaky_test_ids) > len(capped_ids),
+            },
+        )
 
         async with AsyncSessionLocal() as db:
             # Bulk fetch test case details

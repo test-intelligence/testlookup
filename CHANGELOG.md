@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026-08-24 (decision trail) — Nine agents made judgements and recorded none of them
+
+``AgentStageResult.decision_log`` is what answers *"why did the agent do that"* — in the UI,
+in the audit trail, and for anyone asked to justify a release call after the fact.
+``BaseAgent.log_decision`` writes it, and nine agents never called it: ``anomaly_agent``,
+``cluster_agent``, ``defect_commander``, ``flaky_sentinel_agent``, ``ingestion_agent``,
+``regression_watchman``, ``release_risk_agent``, ``test_health_agent``, ``triage_agent``.
+
+They were tolerated entries in the ``agents.log-decision-present`` baseline, so the gate was
+green and correct — **tolerated, not unseen**, the distinction #843 had to establish. Surfaced
+by #845's verification, which showed ``regression_watchman`` — the compliant example the
+stage-lifecycle fix was measured against — writing no decision trail at all.
+
+**The unexplained branches were not cosmetic.** Each of these is a judgement whose reasoning
+could not be reconstructed from the stored output:
+
+| agent | the silent judgement |
+|---|---|
+| `release_risk` | substituted `CONDITIONAL_GO` at risk 50 when its scorer threw — stored identically to a computed verdict |
+| `cluster_agent` | per-test fallback produces output structurally identical to real semantic clustering |
+| `anomaly_agent` | the regression verdict is a configurable threshold call, unreconstructable from the result |
+| `triage_agent` | ticket creation is a mutating external action behind an invisible confidence gate |
+| `flaky_sentinel` / `test_health` | silently cap work at 10 and 15 candidates |
+| `ingestion` | a failed read hands every later stage an empty run, which reads as a clean one |
+| `regression_watchman` | regression vs known-flake vs environment — the call that drives the release recommendation |
+| `defect_commander` | promotion creates a tracked defect and assigns a severity |
+
+Decisions were added at those branches, with the rule stated in the rationale (thresholds
+named, caps declared with the number not examined, fallbacks marked as substitutions). The
+baseline goes from **9 tolerated entries to 0**.
+
+**The guard was also checking the wrong thing.** ``agents.log-decision-present`` tested
+``"log_decision" not in text`` — a substring over the whole file. A docstring, a comment, or a
+``# TODO: call log_decision`` satisfied it, so a module could *describe* the trail it never
+wrote and pass. It is now an AST check for a real ``.log_decision(...)`` call on each
+``BaseAgent`` subclass, and it reports the offending class and line rather than the file.
+
+Demonstrated rather than argued: replacing every real call in ``cluster_agent`` with a prose
+mention leaves the old substring logic reporting **PASS** and makes the new guard **FAIL** —
+``ClusterAgent never calls self.log_decision(...)``. Removing ``release_risk``'s fallback
+decision fails the behavioural test. This is the third guard in this sequence found matching a
+substring that also appears in prose; the mutation harness itself hit the same trap in #844.
+
+
 ## 2026-08-24 (stage lifecycle, verified) — Three invisible stages now record themselves
 
 ``build-20260824-222106`` carries the lifecycle fix. Six deep pipelines on **fresh subjects**

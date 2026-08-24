@@ -12,12 +12,3 @@
 #
 # Reviewed in PR; remove entries as the code is cleaned up.
 # ---- notes below this line are preserved across --update-baseline ----
-0995599268029a0a  # backend/app/agents/anomaly_agent.py
-cb8aa7ace4aafa2c  # backend/app/agents/cluster_agent.py
-edc2a7ff98fe3e56  # backend/app/agents/defect_commander.py
-4f43ca8961a6a4a7  # backend/app/agents/flaky_sentinel_agent.py
-9b5a8663c67a7028  # backend/app/agents/ingestion_agent.py
-a258ecb0252a4e5d  # backend/app/agents/regression_watchman.py
-229ed6256160f762  # backend/app/agents/release_risk_agent.py
-a8746db2a1707612  # backend/app/agents/test_health_agent.py
-316b88bb746c1c2f  # backend/app/agents/triage_agent.py
