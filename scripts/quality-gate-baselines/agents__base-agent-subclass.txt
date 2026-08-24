@@ -12,6 +12,3 @@
 #
 # Reviewed in PR; remove entries as the code is cleaned up.
 # ---- notes below this line are preserved across --update-baseline ----
-cbd3428fc4aa786e  # backend/app/agents/contract_agent.py
-dcac7bd6156b96e0  # backend/app/agents/log_intelligence_agent.py
-2d4ebd599ec1155c  # backend/app/agents/run_compare_agent.py

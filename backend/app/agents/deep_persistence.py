@@ -20,10 +20,11 @@ persisted them. This module closes that gap:
 
 Honesty notes:
   * ``causal_chain`` / ``affected_services`` / ``contract_violations``
-    stay ``None`` — nothing in the deep graph computes them today
-    (``ContractAgent`` and ``LogIntelligenceAgent`` exist but are not
-    wired into any workflow node). Persisting fabricated values here
-    would recreate the seed-only fiction this module removes.
+    stay ``None``. ``ContractAgent`` and ``LogIntelligenceAgent`` *are*
+    wired into the deep graph and do produce findings, but nothing folds
+    that output into these columns, so there is still no computed value
+    to persist. Persisting fabricated ones would recreate the seed-only
+    fiction this module removes.
   * Every row carries ``log_evidence.origin = "pipeline"``; the seed
     scripts tag theirs ``"seed"``. The findings endpoint surfaces the
     origin so consumers (and the no-seed-only-data guard test) can tell

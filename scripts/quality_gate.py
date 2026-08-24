@@ -1954,6 +1954,14 @@ _SUPPORT_AGENT_FILES = {
     # outcome poller). Their audit surface is the fix_attempts rows + the
     # agent_runs ledger, not the BaseAgent stage/decision contract.
     "runners.py", "pipeline.py", "persistence.py",
+    # RunCompareAgent is not a pipeline stage. It is driven from
+    # run_compare_ai_service.generate_and_save_report on a REST path -- there is
+    # no AgentPipelineRun and no AgentStageResult row for it to write, so
+    # BaseAgent's lifecycle would find nothing to update and no-op while
+    # *looking* compliant, which is worse than the honest plain class. Its audit
+    # surface is the run_compare_reports row (status / ai_report /
+    # fallback_used), same reasoning as the Fixer modules above.
+    "run_compare_agent.py",
 }
 
 

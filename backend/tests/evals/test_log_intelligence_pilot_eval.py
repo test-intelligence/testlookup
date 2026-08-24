@@ -8,11 +8,26 @@ projection contains no raw canary values.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.agents import workflow as wf
+from app.agents.log_intelligence_agent import LogIntelligenceAgent
+
+
+@pytest.fixture(autouse=True)
+def _quiet_stage_lifecycle(monkeypatch):
+    """The stage now records itself, which needs Postgres and Mongo.
+
+    This corpus measures evidence contribution and sanitisation, not
+    persistence, so the lifecycle is stubbed rather than made fail-open --
+    a lifecycle that swallowed its own errors would leave the stage
+    unrecorded with nobody the wiser.
+    """
+    monkeypatch.setattr(LogIntelligenceAgent, "mark_stage_running", AsyncMock())
+    monkeypatch.setattr(LogIntelligenceAgent, "mark_stage_done", AsyncMock())
+    monkeypatch.setattr(LogIntelligenceAgent, "log_decision", AsyncMock())
 
 
 _CORPUS = [
@@ -47,8 +62,11 @@ def _state(*, enabled: bool) -> dict:
 async def test_log_pilot_corpus_enabled_contribution_is_bounded_and_disabled_is_empty(
     monkeypatch,
 ):
-    agent = MagicMock()
-    agent.investigate = AsyncMock(
+    # Patch the specialist call on the real agent rather than replacing the
+    # agent wholesale: the cluster-representative selection and the bounded
+    # projection now live on the agent, so a stand-in object would skip exactly
+    # the logic this corpus is here to measure.
+    investigate = AsyncMock(
         side_effect=lambda service, *_args: {
             "status": "complete",
             "distributed_trace": {
@@ -60,7 +78,7 @@ async def test_log_pilot_corpus_enabled_contribution_is_bounded_and_disabled_is_
             "evidence_refs": [{"source": "trace", "ref_id": service}],
         }
     )
-    monkeypatch.setattr(wf, "_log_intelligence", agent)
+    monkeypatch.setattr(LogIntelligenceAgent, "investigate", investigate)
 
     enabled = await wf.log_intelligence_node(_state(enabled=True))
     disabled = await wf.log_intelligence_node(_state(enabled=False))
@@ -71,7 +89,7 @@ async def test_log_pilot_corpus_enabled_contribution_is_bounded_and_disabled_is_
     assert len(findings["cluster_findings"]) == 5
     assert disabled["log_findings"]["status"] == "not_enough_evidence"
     assert disabled["log_findings"]["cluster_findings"] == []
-    assert agent.investigate.await_count == 5
+    assert investigate.await_count == 5
 
     serialized = repr(findings)
     assert "password=hunter2" not in serialized

@@ -27,6 +27,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.agents import workflow as wf
+from app.agents.log_intelligence_agent import LogIntelligenceAgent
 from app.core.config import settings
 
 
@@ -226,33 +227,36 @@ def test_planner_deep_stages_include_new_stages():
 
 @pytest.mark.asyncio
 async def test_log_intelligence_node_skips_when_flag_off(monkeypatch):
-    sentinel = AsyncMock(side_effect=AssertionError("agent must not run when flag off"))
-    monkeypatch.setattr(wf, "_log_intelligence", sentinel)
+    investigate = AsyncMock(side_effect=AssertionError("agent must not run when flag off"))
+    running = AsyncMock()
+    monkeypatch.setattr(LogIntelligenceAgent, "investigate", investigate)
+    monkeypatch.setattr(LogIntelligenceAgent, "mark_stage_running", running)
     result = await wf.log_intelligence_node(_minimal_state(log_intelligence_enabled=False))
     assert result["log_findings"]["status"] == "not_enough_evidence"
     assert "log_intelligence" in result["skipped_stages"]
-    sentinel.assert_not_called()
+    investigate.assert_not_called()
+    # A skip is not a run: the flag-off branch must also stay out of the
+    # pipeline timeline, not just avoid the specialist call.
+    running.assert_not_awaited()
 @pytest.mark.asyncio
 async def test_log_intelligence_node_preserves_failed_status(monkeypatch):
-    agent = MagicMock()
-    agent.investigate = AsyncMock(return_value={
+    investigate = AsyncMock(return_value={
         "status": "failed",
         "distributed_trace": {"error": "RuntimeError"},
         "log_anomaly": {},
         "log_summary": "degraded",
     })
-    monkeypatch.setattr(wf, "_log_intelligence", agent)
+    monkeypatch.setattr(LogIntelligenceAgent, "investigate", investigate)
     state = _minimal_state(log_intelligence_enabled=True)
     state["analyses"] = {"tc-1": {"service_name": "payments", "timestamp_utc": "2026-06-12T00:00:00Z"}}
     result = await wf.log_intelligence_node(state)
     assert result["log_findings"]["status"] == "failed"
-    agent.investigate.assert_awaited_once()
+    investigate.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_log_intelligence_node_scopes_and_bounds_cluster_contexts(monkeypatch):
-    agent = MagicMock()
-    agent.investigate = AsyncMock(side_effect=[
+    investigate = AsyncMock(side_effect=[
         {
             "status": "complete",
             "distributed_trace": {"causal_summary": f"cluster-{index}"},
@@ -262,7 +266,7 @@ async def test_log_intelligence_node_scopes_and_bounds_cluster_contexts(monkeypa
         }
         for index in range(5)
     ])
-    monkeypatch.setattr(wf, "_log_intelligence", agent)
+    monkeypatch.setattr(LogIntelligenceAgent, "investigate", investigate)
     analyses = {
         f"tc-{index}": {
             "service_name": f"service-{index}",
@@ -281,7 +285,7 @@ async def test_log_intelligence_node_scopes_and_bounds_cluster_contexts(monkeypa
 
     result = await wf.log_intelligence_node(state)
 
-    assert agent.investigate.await_count == 5
+    assert investigate.await_count == 5
     findings = result["log_findings"]
     assert findings["status"] == "complete"
     assert findings["cluster_count"] == 5

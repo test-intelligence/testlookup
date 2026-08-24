@@ -1,5 +1,74 @@
 # Changelog
 
+## 2026-08-24 (stage lifecycle) — A stage that ran recorded that it never ran
+
+``BaseAgent`` carries the whole observability contract — ``stage_started`` /
+``stage_completed`` events, the OTEL span, the Prometheus histograms, the decision trail
+flushed onto ``AgentStageResult``. But ``BaseAgent.run`` is abstract, so **calling** that
+lifecycle is opt-in per subclass, and two of the four deep specialists were not subclasses
+at all.
+
+Measured on the deployment (6 deep runs, ``pipeline_event_log``):
+
+| stage | `BaseAgent`? | lifecycle called? | `stage_started` | `stage_completed` |
+|---|---|---|---|---|
+| `regression_watchman` | yes | yes | 6 | 6 |
+| `change_ownership` | yes | **no** | **0** | **0** |
+| `contract_validation` | **no** | no | **0** | **0** |
+| `log_intelligence` | **no** | no | **0** | **0** |
+
+`change_ownership` emitted 6 `decision_made` events and nothing else; the other two were
+absent from the timeline entirely. All three produced findings that reached the report.
+
+**This is what #840 left behind.** That fix backfilled the ``AgentStageResult`` row from the
+node wrapper — deliberately status and timestamps only, explicitly deferring to any agent
+that writes its own. It fixed the *row*. A backfilled row still carries no span, no metrics,
+no decision trail and no timeline entry, so the stage stayed invisible everywhere else.
+
+- ``ContractAgent`` and ``LogIntelligenceAgent`` now subclass ``BaseAgent`` and own their
+  stage: ``run(state)`` drives ``mark_stage_running`` / ``mark_stage_done``, and the nodes
+  become two-line routers. The orchestration each node held — cluster-representative
+  selection for `log_intelligence`, contract assembly for both — moved onto the agent,
+  which is where a stage's work belongs once the stage is a real one.
+- ``ChangeOwnershipAgent`` was already a subclass and simply never called either method. The
+  lifecycle now wraps ``_execute`` rather than living inside it, so one
+  ``mark_stage_running`` pairs with exactly one ``mark_stage_done`` across all eight return
+  paths — including the early return that made the gap invisible.
+- ``mark_stage_running`` / ``mark_stage_done`` now no-op **loudly** when there is no
+  ``pipeline_run_id``: one predicate, ``_has_stage_identity``, that logs a warning. A silent
+  return there looks exactly like a healthy stage that recorded nothing, which is the failure
+  mode this area keeps producing.
+- ``_degraded_contract`` moved to ``app/models/agent_contracts.degraded_contract``. Both the
+  nodes and the agents need it now, and the agents are imported *by* ``workflow`` — leaving
+  it there would have been an import cycle. Re-exported under the old name.
+- **``run_compare_agent`` is not forced under ``BaseAgent``.** It runs from
+  ``run_compare_ai_service`` on a REST path: no ``AgentPipelineRun``, no
+  ``AgentStageResult``. The lifecycle would find no row, no-op, and *look* compliant — worse
+  than the honest plain class. It joins the documented support-module exemption, with its
+  audit surface named (the ``run_compare_reports`` row), on the precedent already set for the
+  Fixer modules.
+
+The ``agents.base-agent-subclass`` baseline goes from **3 tolerated entries to 0** — the file
+is now empty. That guard was never blind (corrected in #843); its three violations were
+grandfathered, and this removes them rather than the toleration.
+
+**Guards.** The load-bearing one is static and holds the *property*: every ``BaseAgent``
+subclass under ``app/agents/`` drives its own lifecycle — 20 classes, zero violations, no
+baseline — so a twenty-first is covered. Asserting on the four known stages would have passed
+happily the day a fifth was added. Two vacuity checks sit beside it, because a guard that
+stops finding its population reports green for the wrong reason: one asserts the scan still
+sees ≥15 subclasses including the three named here, the other that the #842 contract guard
+still reaches the *delegated* returns — when the specialists moved off the node, a check
+scanning only the node would have gone quietly vacuous while staying green.
+
+Mutation-checked, not assumed. Stripping ``change_ownership``'s ``mark_stage_running`` fails
+the static guard and the behavioural test; un-subclassing ``ContractAgent`` fails the quality
+gate and the subclass test; pointing the contract guard back at the nodes alone fails the
+vacuity check. The first attempt at that first mutation *refused to apply* — the substring
+survived in a docstring — which is the same no-op that once let a mutation harness report
+every guard as verified.
+
+
 ## 2026-08-24 (verified on the deployment) — The specialist-contract fix, measured where it failed
 
 ``build-20260824-195954`` carries the ``_degraded_contract`` fix. Six deep pipelines run against **fresh subjects** — test runs with no prior deep run, so no run was already carrying a failed state that a re-run could inherit.

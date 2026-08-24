@@ -13,6 +13,21 @@ import pytest
 
 from app.agents import contract_agent as contract_agent_module
 from app.agents import workflow
+from app.agents.contract_agent import ContractAgent
+
+
+@pytest.fixture(autouse=True)
+def _quiet_stage_lifecycle(monkeypatch):
+    """The stage now records itself, which needs Postgres and Mongo.
+
+    This corpus measures evidence contribution and sanitisation, not
+    persistence, so the lifecycle is stubbed rather than made fail-open --
+    a lifecycle that swallowed its own errors would leave the stage
+    unrecorded with nobody the wiser.
+    """
+    monkeypatch.setattr(ContractAgent, "mark_stage_running", AsyncMock())
+    monkeypatch.setattr(ContractAgent, "mark_stage_done", AsyncMock())
+    monkeypatch.setattr(ContractAgent, "log_decision", AsyncMock())
 
 
 _CORPUS = [

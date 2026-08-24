@@ -36,6 +36,7 @@ from app.agents.ingestion_agent import IngestionAgent
 from app.agents.release_risk_agent import ReleaseRiskAgent
 from app.agents.report_refinement_agent import ReportRefinementAgent
 from app.agents.state import WorkflowState
+from app.models.agent_contracts import degraded_contract
 from app.services.run_input_fingerprint import detect_run_input_drift
 from app.agents.summary_agent import SummaryAgent
 from app.agents.test_health_agent import TestHealthAgent
@@ -399,250 +400,37 @@ async def cluster_investigation_join_node(state: WorkflowState) -> dict:
     }
 
 
-def _degraded_contract(model, payload: dict, *, agent_name: str, decision_reason: str) -> dict:
-    """Contract for a specialist that produced findings but had no evidence.
-
-    Every early-return path in these nodes still writes its output key, and
-    ``_check_contract_evidence_support`` flags any populated output carrying no
-    contract -- so a stage that legitimately had nothing to look at has to SAY
-    so rather than stay silent. An absent contract reads as a lost record, not
-    as a negative result, and the decision critic fails closed on it.
-
-    ``fallback_used`` and a ``no_*`` reason are what make the emptiness legible
-    to the verifier's ``no_evidence_ok`` branch.
-    """
-    from app.models.agent_contracts import validate_agent_contract  # noqa: PLC0415
-
-    return validate_agent_contract(
-        model,
-        payload,
-        agent_name=agent_name,
-        fallback_used=True,
-        confidence=0,
-        evidence_refs=[],
-        decision_reason=decision_reason,
-    )
+# Re-exported so the single definition lives beside the contract models both
+# the nodes and the specialist agents import. Kept under the original name
+# because the flag-disabled branches here already read that way.
+_degraded_contract = degraded_contract
 
 
 async def contract_validation_node(state: WorkflowState) -> dict:
-    """Run the default-off, server-scoped API contract specialist."""
-    if not state.get("contract_agent_enabled"):
-        from app.models.agent_contracts import ContractAgentOutput  # noqa: PLC0415
+    """Run the default-off, server-scoped API contract specialist.
 
-        findings = {
-            "status": "not_enough_evidence",
-            "violations": [],
-            "violation_count": 0,
-            "critical_count": 0,
-            "drift_count": 0,
-            "endpoints_checked": [],
-            "evidence_refs": [],
-            "summary": "Contract Agent feature flag is disabled.",
-            "suggests_product_bug": False,
-        }
-        contracted = _degraded_contract(
-            ContractAgentOutput,
-            {"contract_findings": findings},
-            agent_name="contract_validation",
-            decision_reason="no_contract_validation_flag_disabled",
-        )
-        return {
-            "contract_findings": contracted.get("contract_findings", findings),
-            "agent_contracts": contracted.get("agent_contracts", {}),
-            "skipped_stages": ["contract_validation"],
-            "completed_stages": ["contract_validation"],
-            "current_stage": "gap_detection",
-            "errors": [],
-        }
-    result = await _contract_agent.validate_cluster(
-        list(state.get("failed_test_ids") or []),
-        project_id=str(state.get("project_id") or ""),
-        run_id=str(state.get("test_run_id") or ""),
-        pipeline_run_id=str(state.get("pipeline_run_id") or ""),
-    )
-    from app.models.agent_contracts import ContractAgentOutput, validate_agent_contract
-    contracted = validate_agent_contract(
-        ContractAgentOutput,
-        {"contract_findings": result},
-        agent_name="contract_validation",
-        fallback_used=result.get("status") != "complete",
-        confidence=80 if result.get("status") == "complete" else 0,
-        evidence_refs=list(result.get("evidence_refs") or []),
-        decision_reason=(
-            "contract evidence evaluated"
-            if result.get("status") == "complete"
-            else "no_contract_evidence_or_validation_failed"
-        ),
-    )
-    return {
-        "contract_findings": contracted.get("contract_findings", result),
-        "agent_contracts": contracted.get("agent_contracts", {}),
-        "completed_stages": ["contract_validation"],
-        "current_stage": "gap_detection",
-        "errors": [] if result.get("status") != "failed" else ["contract_validation_failed"],
-    }
+    Both branches live on the agent: ``disabled_delta`` for the flag-off skip,
+    ``run`` for the stage itself. The node stays a thin router so the agent
+    owns its own stage record — ``run`` is what calls ``mark_stage_running`` /
+    ``mark_stage_done``, and before it existed ``contract_validation`` produced
+    findings while writing no lifecycle event at all.
+    """
+    if not state.get("contract_agent_enabled"):
+        return _contract_agent.disabled_delta()
+    return await _contract_agent.run(cast(dict[str, Any], state))
 
 
 async def log_intelligence_node(state: WorkflowState) -> dict:
     """Run the default-off, bounded log/trace specialist per failure cluster.
 
-    The first implementation used the first analysis in the run, which could
-    attribute one service's trace to every failure.  We now select at most five
-    deterministic cluster representatives and retain the first result as the
-    backwards-compatible top-level projection.  All cluster calls are scoped
-    to data already present in the run state; no caller-supplied evidence is
-    accepted.
+    Both branches live on the agent: ``disabled_delta`` for the flag-off skip,
+    ``run`` for the stage itself (cluster-representative selection, the bounded
+    per-cluster investigation, and the no-context degraded contract from #842).
     """
     if not state.get("log_intelligence_enabled"):
-        from app.models.agent_contracts import LogIntelligenceAgentOutput  # noqa: PLC0415
+        return _log_intelligence.disabled_delta()
+    return await _log_intelligence.run(cast(dict[str, Any], state))
 
-        findings = {
-            "status": "not_enough_evidence",
-            "distributed_trace": {},
-            "log_anomaly": {},
-            "cluster_findings": [],
-            "log_summary": "Log Intelligence feature flag is disabled.",
-        }
-        contracted = _degraded_contract(
-            LogIntelligenceAgentOutput,
-            {"log_findings": findings},
-            agent_name="log_intelligence",
-            decision_reason="no_log_intelligence_flag_disabled",
-        )
-        return {
-            "log_findings": contracted.get("log_findings", findings),
-            "agent_contracts": contracted.get("agent_contracts", {}),
-            "skipped_stages": ["log_intelligence"],
-            "completed_stages": ["log_intelligence"],
-            "current_stage": "gap_detection",
-            "errors": [],
-        }
-    analyses = state.get("analyses") or {}
-    first = next((item for item in analyses.values() if isinstance(item, dict)), {})
-    run_data = state.get("test_run_data") or {}
-
-    def _context(analysis: dict[str, Any]) -> tuple[str, str, str, list[str]] | None:
-        service = analysis.get("service_name") or analysis.get("affected_service") or run_data.get("service_name")
-        timestamp = analysis.get("timestamp_utc") or analysis.get("failed_at") or run_data.get("completed_at")
-        correlation = analysis.get("correlation_id") or analysis.get("trace_id") or ""
-        related = analysis.get("related_services") or analysis.get("affected_services") or []
-        if not service or not timestamp:
-            return None
-        safe_related = [str(item) for item in related] if isinstance(related, list) else []
-        return str(service), str(timestamp), str(correlation), safe_related
-
-    contexts: list[tuple[str, tuple[str, str, str, list[str]]]] = []
-    seen_contexts: set[tuple[str, str, str]] = set()
-    clusters = state.get("failure_clusters") or []
-    candidate_clusters = sorted(
-        (item for item in clusters if isinstance(item, dict)),
-        key=lambda item: str(item.get("cluster_id") or ""),
-    ) if isinstance(clusters, list) else []
-    for index, cluster in enumerate(candidate_clusters[:5]):
-        members = cluster.get("member_test_ids") or cluster.get("test_ids") or []
-        members = sorted({str(item) for item in members}) if isinstance(members, list) else []
-        representative = next(
-            (analyses.get(str(member)) for member in members if isinstance(analyses.get(str(member)), dict)),
-            first,
-        )
-        context = _context(representative if isinstance(representative, dict) else {})
-        if context is None:
-            continue
-        key = (context[0], context[1], context[2])
-        if key in seen_contexts:
-            continue
-        seen_contexts.add(key)
-        contexts.append((str(cluster.get("cluster_id") or f"cluster_{index + 1}"), context))
-
-    if not contexts:
-        context = _context(first)
-        if context is not None:
-            contexts.append(("run", context))
-
-    if not contexts:
-        from app.models.agent_contracts import LogIntelligenceAgentOutput  # noqa: PLC0415
-
-        findings = {
-            "status": "not_enough_evidence",
-            "distributed_trace": {},
-            "log_anomaly": {},
-            "cluster_findings": [],
-            "log_summary": "Log evidence requires a scoped service and failure timestamp.",
-        }
-        contracted = _degraded_contract(
-            LogIntelligenceAgentOutput,
-            {"log_findings": findings},
-            agent_name="log_intelligence",
-            decision_reason="no_log_context",
-        )
-        return {
-            "log_findings": contracted.get("log_findings", findings),
-            "agent_contracts": contracted.get("agent_contracts", {}),
-            "completed_stages": ["log_intelligence"],
-            "current_stage": "gap_detection",
-            "errors": [],
-        }
-    cluster_results: list[dict[str, Any]] = []
-    for cluster_id, (service, timestamp, correlation, related) in contexts:
-        try:
-            result = await _log_intelligence.investigate(
-                service, timestamp, correlation, related,
-            )
-        except Exception as exc:  # noqa: BLE001 - preserve cluster-level degradation
-            result = {
-                "status": "failed",
-                "distributed_trace": {"error": type(exc).__name__},
-                "log_anomaly": {},
-                "log_summary": "Log specialist failed for this cluster.",
-            }
-        safe_result, _ = sanitize_persistence_payload(result if isinstance(result, dict) else {})
-        safe_cluster_id, _, _ = sanitize_reference_text(cluster_id, limit=64)
-        cluster_results.append({
-            "cluster_id": safe_cluster_id,
-            "status": safe_result.get("status", "failed"),
-            "distributed_trace": safe_result.get("distributed_trace") or {},
-            "log_anomaly": safe_result.get("log_anomaly") or {},
-            "log_summary": str(safe_result.get("log_summary") or "")[:500],
-            "evidence_refs": list(safe_result.get("evidence_refs") or [])[:20],
-        })
-
-    # Reuse the first cluster result for the legacy top-level fields without
-    # issuing a duplicate provider/tool call.
-    result = dict(cluster_results[0])
-    result["cluster_findings"] = [dict(item) for item in cluster_results]
-    result["cluster_count"] = len(cluster_results)
-    result["evidence_refs"] = [
-        ref
-        for item in cluster_results
-        for ref in item.get("evidence_refs", [])
-    ][:20]
-    statuses = [item["status"] for item in cluster_results]
-    if all(item == "complete" for item in statuses):
-        result["status"] = "complete"
-    elif all(item == "not_enough_evidence" for item in statuses):
-        result["status"] = "not_enough_evidence"
-    else:
-        result["status"] = "failed"
-    result["log_summary"] = " | ".join(
-        item["log_summary"] for item in cluster_results if item["log_summary"]
-    )[:1000]
-    from app.models.agent_contracts import LogIntelligenceAgentOutput, validate_agent_contract
-    contracted = validate_agent_contract(
-        LogIntelligenceAgentOutput,
-        {"log_findings": result},
-        agent_name="log_intelligence",
-        fallback_used=result.get("status") != "complete",
-        confidence=70 if result.get("status") == "complete" else 0,
-        evidence_refs=list(result.get("evidence_refs") or [])[:20],
-        decision_reason="log_evidence_evaluated" if result.get("log_summary") else "no_log_evidence",
-    )
-    return {
-        "log_findings": contracted.get("log_findings", result),
-        "agent_contracts": contracted.get("agent_contracts", {}),
-        "completed_stages": ["log_intelligence"],
-        "current_stage": "gap_detection",
-        "errors": [],
-    }
 
 async def regression_watchman_node(state: WorkflowState) -> dict:
     """Run the default-off baseline/regression specialist for failed clusters."""

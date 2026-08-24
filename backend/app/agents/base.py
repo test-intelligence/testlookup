@@ -138,12 +138,31 @@ class BaseAgent(ABC):
             except Exception:  # pragma: no cover — tracing is best-effort
                 pass
 
+    def _has_stage_identity(self, pipeline_run_id: str, call: str) -> bool:
+        """A stage can only be recorded against a pipeline that exists.
+
+        Without an id there is no row to flip and no timeline to append to, so
+        the lifecycle call is skipped -- but it is skipped *loudly*. A silent
+        return here would look exactly like a healthy stage that recorded
+        nothing, which is the failure mode this whole area keeps producing.
+        """
+        if pipeline_run_id:
+            return True
+        self.logger.warning(
+            "stage_lifecycle_skipped_no_pipeline_run_id",
+            stage_name=self.stage_name,
+            call=call,
+        )
+        return False
+
     async def mark_stage_running(
         self,
         pipeline_run_id: str,
         *,
         input_keys: Optional[list[str]] = None,
     ) -> None:
+        if not self._has_stage_identity(pipeline_run_id, "mark_stage_running"):
+            return
         # Emit pipeline event — include a snapshot of which state keys the
         # stage received so a failing stage can be debugged by looking at the
         # event log alone, without reconstructing the upstream state.
@@ -277,6 +296,8 @@ class BaseAgent(ABC):
         analysis_mode: Optional[str] = None,
         project_id: Optional[str] = None,
     ) -> None:
+        if not self._has_stage_identity(pipeline_run_id, "mark_stage_done"):
+            return
         from app.services.pipeline_budget_service import get_pipeline_budget_context
 
         budget_context = get_pipeline_budget_context() or {}

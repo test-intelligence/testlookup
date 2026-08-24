@@ -7,6 +7,12 @@ from typing import Any
 
 import structlog
 
+from app.agents.base import BaseAgent
+from app.models.agent_contracts import (
+    ContractAgentOutput,
+    degraded_contract,
+    validate_agent_contract,
+)
 from app.services.evidence_sanitizer import sanitize_reference_text
 from app.tools.validate_api_contract import validate_api_contract
 
@@ -22,8 +28,18 @@ def _checksum(value: Any) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-class ContractAgent:
-    """Validate REST response contracts using server-scoped evidence only."""
+class ContractAgent(BaseAgent):
+    """Validate REST response contracts using server-scoped evidence only.
+
+    Subclasses ``BaseAgent`` so the stage lands in the standard tables. It
+    did not until 2026-08-24, which is why ``contract_validation`` wrote no
+    ``stage_started`` / ``stage_completed`` event at all: 0 of 6 on the
+    deployment, against 6 of 6 for the compliant ``regression_watchman``.
+    The row itself was backfilled by the wrapper added in #840, but a
+    backfilled row carries no span, no metrics and no decision trail.
+    """
+
+    stage_name = "contract_validation"
 
     async def validate_cluster(
         self,
@@ -143,4 +159,109 @@ class ContractAgent:
             "evidence_refs": evidence_refs[:_MAX_VIOLATIONS],
             "summary": summary[:2000],
             "suggests_product_bug": bool(critical),
+        }
+    async def run(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Stage entry point: lifecycle around ``validate_cluster``.
+
+        Returns the workflow delta the ``contract_validation`` node used to
+        build inline. It lives here so the stage owns its own record --
+        ``mark_stage_running`` / ``mark_stage_done`` are what put the stage in
+        the pipeline timeline, the OTEL trace and the Prometheus histograms.
+        """
+        pipeline_run_id = str(state.get("pipeline_run_id") or "")
+        await self.mark_stage_running(pipeline_run_id, input_keys=sorted(state))
+
+        failed_ids = list(state.get("failed_test_ids") or [])
+        result = await self.validate_cluster(
+            failed_ids,
+            project_id=str(state.get("project_id") or ""),
+            run_id=str(state.get("test_run_id") or ""),
+            pipeline_run_id=pipeline_run_id,
+        )
+
+        status = result.get("status")
+        complete = status == "complete"
+        evidence_refs = list(result.get("evidence_refs") or [])
+        reason = (
+            "contract evidence evaluated"
+            if complete
+            else "no_contract_evidence_or_validation_failed"
+        )
+
+        await self.log_decision(
+            pipeline_run_id,
+            decision_point="contract_evidence_scope",
+            chosen=str(status or "unknown"),
+            rationale=(
+                f"{len(result.get('violations') or [])} violation(s) across "
+                f"{len(result.get('endpoints_checked') or [])} endpoint(s) "
+                f"from {len(failed_ids)} scoped test case(s)"
+            ),
+            context={"evidence_refs": len(evidence_refs)},
+        )
+
+        await self.mark_stage_done(
+            pipeline_run_id,
+            result_data={
+                "status": status,
+                "violation_count": result.get("violation_count"),
+                "critical_count": result.get("critical_count"),
+                "endpoints_checked": len(result.get("endpoints_checked") or []),
+            },
+            confidence_score=80 if complete else 0,
+            evidence_count=len(evidence_refs),
+            # A stage that ran and found nothing still ran. Naming the reason
+            # keeps "no evidence" distinguishable from "never executed".
+            fallback_reason=None if complete else reason,
+        )
+
+        contracted = validate_agent_contract(
+            ContractAgentOutput,
+            {"contract_findings": result},
+            agent_name=self.stage_name,
+            fallback_used=not complete,
+            confidence=80 if complete else 0,
+            evidence_refs=evidence_refs,
+            decision_reason=reason,
+        )
+        return {
+            "contract_findings": contracted.get("contract_findings", result),
+            "agent_contracts": contracted.get("agent_contracts", {}),
+            "completed_stages": [self.stage_name],
+            "current_stage": "gap_detection",
+            "errors": [] if status != "failed" else ["contract_validation_failed"],
+        }
+
+    def disabled_delta(self) -> dict[str, Any]:
+        """Delta for the flag-disabled branch — a skip, not a run.
+
+        No lifecycle call: the stage genuinely did not execute, so it must not
+        appear in the timeline as if it had. It still emits a contract, because
+        a populated output key with no contract is what the verifier reads as a
+        lost record (#842).
+        """
+        findings = {
+            "status": "not_enough_evidence",
+            "violations": [],
+            "violation_count": 0,
+            "critical_count": 0,
+            "drift_count": 0,
+            "endpoints_checked": [],
+            "evidence_refs": [],
+            "summary": "Contract Agent feature flag is disabled.",
+            "suggests_product_bug": False,
+        }
+        contracted = degraded_contract(
+            ContractAgentOutput,
+            {"contract_findings": findings},
+            agent_name=self.stage_name,
+            decision_reason="no_contract_validation_flag_disabled",
+        )
+        return {
+            "contract_findings": contracted.get("contract_findings", findings),
+            "agent_contracts": contracted.get("agent_contracts", {}),
+            "skipped_stages": [self.stage_name],
+            "completed_stages": [self.stage_name],
+            "current_stage": "gap_detection",
+            "errors": [],
         }

@@ -1942,9 +1942,11 @@ class DeepFinding(Base):
     (test_run_id, cluster_id) via ``agents/deep_persistence.py``
     (``log_evidence.origin == "pipeline"``); the demo seed scripts tag
     theirs ``origin == "seed"``. ``causal_chain`` / ``affected_services`` /
-    ``contract_violations`` are only populated by seeds today — no wired
-    agent computes them (ContractAgent / LogIntelligenceAgent exist but
-    are not part of any workflow graph).
+    ``contract_violations`` are only populated by seeds today. The
+    ``contract_validation`` and ``log_intelligence`` stages DO run in the
+    deep graph and produce findings, but nothing folds their output into
+    these columns — so they stay None rather than carrying a value this
+    table would imply came from the cluster synthesis.
     """
     __tablename__ = "deep_findings"
     __table_args__ = (

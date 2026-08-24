@@ -624,3 +624,37 @@ def validate_agent_contract(
         agent_name: contract,
     }
     return model_dump
+
+
+def degraded_contract(
+    schema: type[TContract],
+    payload: dict[str, Any],
+    *,
+    agent_name: str,
+    decision_reason: str,
+) -> dict[str, Any]:
+    """Contract for a specialist that produced findings but had no evidence.
+
+    Every early-return path in a specialist still writes its output key, and
+    ``_check_contract_evidence_support`` flags any populated output carrying no
+    contract -- so a stage that legitimately had nothing to look at has to SAY
+    so rather than stay silent. An absent contract reads as a lost record, not
+    as a negative result, and the decision critic fails closed on it.
+
+    ``fallback_used`` and a ``no_*`` reason are what make the emptiness legible
+    to the verifier's ``no_evidence_ok`` branch.
+
+    Lives here rather than in ``app/agents/workflow.py`` because both the
+    workflow nodes (flag-disabled branches) and the specialist agents
+    themselves (no-evidence branches) need it, and the agents are imported *by*
+    workflow -- putting it in workflow would be an import cycle.
+    """
+    return validate_agent_contract(
+        schema,
+        payload,
+        agent_name=agent_name,
+        fallback_used=True,
+        confidence=0,
+        evidence_refs=[],
+        decision_reason=decision_reason,
+    )

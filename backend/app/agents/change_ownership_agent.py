@@ -66,6 +66,41 @@ class ChangeOwnershipAgent(BaseAgent):
             self.logger.debug("change_ownership_decision_log_failed")
 
     async def run(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Stage entry point.
+
+        The lifecycle is driven here rather than inside ``_result`` so that a
+        single ``mark_stage_running`` pairs with exactly one ``mark_stage_done``
+        no matter which of the eight return paths ``_execute`` takes. This class
+        subclassed ``BaseAgent`` from the start but never called either, so
+        ``change_ownership`` appeared in the pipeline timeline with a
+        ``decision_made`` event and no ``stage_started`` / ``stage_completed``
+        at all — 0 of 6 on the deployment.
+        """
+        pipeline_run_id = str(state.get("pipeline_run_id") or "")
+        await self.mark_stage_running(pipeline_run_id, input_keys=sorted(state))
+        try:
+            delta = await self._execute(state)
+        except Exception as exc:  # pragma: no cover - _execute already fails closed
+            await self.mark_stage_done(
+                pipeline_run_id,
+                error=type(exc).__name__,
+                error_category="change_ownership_error",
+            )
+            raise
+        status = str(delta.get("status") or "")
+        await self.mark_stage_done(
+            pipeline_run_id,
+            result_data={
+                "status": status,
+                "ownership_resolutions": len(delta.get("ownership_resolutions") or []),
+            },
+            confidence_score=90 if status == "complete" else 0,
+            evidence_count=len(delta.get("ownership_resolutions") or []),
+            fallback_reason=None if status == "complete" else (str(delta.get("summary") or "")[:240] or None),
+        )
+        return delta
+
+    async def _execute(self, state: dict[str, Any]) -> dict[str, Any]:
         project_id = str(state.get("project_id") or "")
         run_id = str(state.get("test_run_id") or "")
         pipeline_run_id = str(state.get("pipeline_run_id") or "")
