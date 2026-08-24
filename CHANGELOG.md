@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-23 — A skipped stage now says which reason it was
+
+- Four specialist stages recorded the same rationale when they were not planned: **"Contract Agent is disabled or the run has no failed tests"**. Two different answers joined by "or", and **only one is actionable** — a flag that is off can be turned on; an all-green run cannot be configured into having failures.
+- Not academic: establishing why four capabilities had never executed on the homelab took five queries, because the plan would not say which case it was. Each of the four now reports either `"… feature flag is off for this project"` or `"all-green run has no failed tests for …"`.
+- The rest of the planner was already precise (`"AIQ_GAP_REFINEMENT_ENABLED is off — stage skipped"`, `"no analyses meet confidence threshold 0.8 for defect triage"`), so this brings four exceptions in line rather than inventing a convention.
+- 20 regression guards, mutation-checked: restoring the ambiguous string fails five, including one asserting that no rationale may contain a disjunction.
+
+**Correction to yesterday's note on this.** It was reported as the plan recording `planned: false` with an *empty* reason. That was wrong — the field is `rationale`, and it was populated all along; the query that found it "empty" was looking for `reason`. The reasons existed; they were ambiguous, which is a smaller problem than the one described.
+
 ## 2026-08-23 — Four independent specialists stopped queuing behind each other (F-9)
 
 - `contract_validation → log_intelligence → regression_watchman → change_ownership` ran as a strict chain, so a deep run paid the **sum** of their latencies rather than the slowest. They now fan out from `cluster_investigation_join` and rejoin at `gap_detection`.

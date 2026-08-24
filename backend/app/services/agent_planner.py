@@ -767,27 +767,55 @@ def build_workflow_plan(
         elif stage == "contract_validation":
             if contract_validation_enabled and not all_green:
                 rationale = "project Contract Agent flag enabled for failed tests"
+            elif not contract_validation_enabled:
+                # "disabled OR no failures" conflated two different answers to
+                # the operational question -- is this stage off, or was there
+                # nothing for it to do? Only the first is fixable by changing a
+                # flag, and a reader could not tell which they had.
+                planned = False
+                rationale = "Contract Agent feature flag is off for this project"
             else:
                 planned = False
-                rationale = "Contract Agent is disabled or the run has no failed tests"
+                rationale = "all-green run has no failed tests for Contract Agent"
         elif stage == "log_intelligence":
             if log_intelligence_enabled and not all_green:
                 rationale = "project Log Intelligence flag enabled for failed tests"
+            elif not log_intelligence_enabled:
+                # "disabled OR no failures" conflated two different answers to
+                # the operational question -- is this stage off, or was there
+                # nothing for it to do? Only the first is fixable by changing a
+                # flag, and a reader could not tell which they had.
+                planned = False
+                rationale = "Log Intelligence feature flag is off for this project"
             else:
                 planned = False
-                rationale = "Log Intelligence is disabled or the run has no failed tests"
+                rationale = "all-green run has no failed tests for Log Intelligence"
         elif stage == "regression_watchman":
             if regression_watchman_enabled and not all_green:
                 rationale = "project RegressionWatchman flag enabled for failed tests"
+            elif not regression_watchman_enabled:
+                # "disabled OR no failures" conflated two different answers to
+                # the operational question -- is this stage off, or was there
+                # nothing for it to do? Only the first is fixable by changing a
+                # flag, and a reader could not tell which they had.
+                planned = False
+                rationale = "RegressionWatchman feature flag is off for this project"
             else:
                 planned = False
-                rationale = "RegressionWatchman is disabled or the run has no failed tests"
+                rationale = "all-green run has no failed tests for RegressionWatchman"
         elif stage == "change_ownership":
             if change_ownership_enabled and not all_green:
                 rationale = "project Change/Ownership flag enabled for failed tests"
+            elif not change_ownership_enabled:
+                # "disabled OR no failures" conflated two different answers to
+                # the operational question -- is this stage off, or was there
+                # nothing for it to do? Only the first is fixable by changing a
+                # flag, and a reader could not tell which they had.
+                planned = False
+                rationale = "Change/Ownership feature flag is off for this project"
             else:
                 planned = False
-                rationale = "Change/Ownership is disabled or the run has no failed tests"
+                rationale = "all-green run has no failed tests for Change/Ownership"
         elif stage in _GAP_REFINEMENT_STAGES:
             if settings.AIQ_GAP_REFINEMENT_ENABLED:
                 rationale = "AIQ-P4 gap/refinement stage enabled by feature flag"
