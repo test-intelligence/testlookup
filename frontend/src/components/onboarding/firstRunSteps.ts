@@ -1,4 +1,5 @@
 import { ReactNode } from 'react'
+import { SUPPORTED_FORMATS, type ReportFormat } from '@/services/reportUploadService'
 
 /**
  * Base localStorage key for the first-run guide's dismissed state. Dismissal is
@@ -134,6 +135,44 @@ export function ingestApiCommand(projectId?: string, ingestUrl: string = DEFAULT
 }
 
 /**
+ * Short, prose-friendly display names for every ingest format the backend
+ * `/ingest/file` endpoint accepts, keyed by the canonical {@link ReportFormat}
+ * value. `'auto'` is the content-detection MODE, not a report format, so it is
+ * excluded here (it is the endpoint default, covered by the step-2 body copy).
+ *
+ * Typed as an exhaustive `Record` over `Exclude<ReportFormat, 'auto'>` on
+ * purpose: adding a parser to the canonical `SUPPORTED_FORMATS` registry (and
+ * its `ReportFormat` union, in `reportUploadService`) makes this map a compile
+ * error until the new format gets a label — so the first-run guide can never
+ * again silently under-advertise what the backend actually ingests. The guide
+ * historically listed only six of the eleven, telling a NUnit / xUnit / TRX /
+ * Robot / Cucumber self-hoster their CI was unsupported when it was not.
+ */
+export const INGEST_FORMAT_LABELS: Record<Exclude<ReportFormat, 'auto'>, string> = {
+  junit: 'JUnit',
+  testng: 'TestNG',
+  allure: 'Allure',
+  cypress: 'Cypress',
+  playwright: 'Playwright',
+  pytest: 'pytest',
+  robot: 'Robot Framework',
+  cucumber: 'Cucumber',
+  nunit: 'NUnit',
+  trx: 'TRX',
+  xunit: 'xUnit',
+}
+
+/**
+ * The advertised-format summary rendered in step 2, derived from the canonical
+ * {@link SUPPORTED_FORMATS} registry (minus `'auto'`) so it tracks the backend
+ * rather than a hand-maintained copy. Order follows the registry.
+ */
+export const SUPPORTED_FORMAT_SUMMARY = SUPPORTED_FORMATS
+  .filter((f) => f.value !== 'auto')
+  .map((f) => INGEST_FORMAT_LABELS[f.value as Exclude<ReportFormat, 'auto'>])
+  .join(' / ')
+
+/**
  * Build the three first-run steps, scoping the upload command to `projectId` and
  * the ingest `curl` to the deployment's own `ingestUrl` (defaulting to
  * {@link DEFAULT_INGEST_URL} when the caller does not resolve one).
@@ -149,7 +188,7 @@ export function buildSteps(projectId?: string, ingestUrl: string = DEFAULT_INGES
     {
       n: 2,
       title: 'Or ingest your own test results',
-      body: 'Point your CI at the ingest API (JUnit / TestNG / Allure / Cypress / Playwright / pytest), or upload a file from the CLI.',
+      body: `Point your CI at the ingest API (${SUPPORTED_FORMAT_SUMMARY}), or upload a file from the CLI.`,
       command: uploadCommand(projectId),
       cliInstall: CLI_INSTALL_COMMAND,
       apiCommand: ingestApiCommand(projectId, ingestUrl),

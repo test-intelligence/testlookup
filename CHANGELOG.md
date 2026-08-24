@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-24 — The first-run guide under-advertised which test formats it ingests
+
+- The empty-dashboard **First-Run Guide** told a new self-hoster to "Point your CI at the ingest API (**JUnit / TestNG / Allure / Cypress / Playwright / pytest**)" — **six** formats. The backend `/ingest/file` endpoint accepts **eleven** (`_SUPPORTED_FORMATS` in `routers/ingest.py`): the guide silently omitted **NUnit, xUnit, TRX (Visual Studio), Robot Framework, and Cucumber**. A .NET, Robot, or BDD shop looked at the very first screen, didn't see its format, and could reasonably conclude TestLookup couldn't ingest its results — when it could. The rest of the app already listed all eleven (`UploadReportModal`, `reportUploadService.SUPPORTED_FORMATS`); the guide was the lone stale copy.
+- The guide now derives its advertised list from the **canonical `SUPPORTED_FORMATS` registry** (minus the `auto` detection mode) rather than a hand-maintained string, so it tracks the backend instead of drifting from it.
+- **The drift can't silently recur.** `INGEST_FORMAT_LABELS` is typed as an exhaustive `Record<Exclude<ReportFormat, 'auto'>, string>`: adding a parser to the registry (and its `ReportFormat` union) makes the label map a **compile error** until the new format is named — so a future format can't be accepted by the backend yet missing from the first screen a self-hoster sees.
+- 4 regression guards: the rendered step-2 body names every non-auto registry format, the previously-omitted five are asserted by name, and the summary is proven to exclude `auto` and to match the registry-derived join.
 ## 2026-08-23 — A run can change underneath the pipeline, and now says so (F-8)
 
 - **The declared contract is fiction.** Ten capability specs name `RunEvidenceBundleV1` as their input, but the bundle is built **only in the terminal stage** — no specialist ever receives one. They re-query instead: `anomaly_agent`, `change_ownership_agent`, `flaky_sentinel_agent` and `regression_watchman` each `select(TestRun)` in their own session, at their own point in the run. **49 independent sessions** across `agents/`.

@@ -12,7 +12,10 @@ import {
   firstRunDismissKey,
   isFirstRunGuideDismissed,
   dismissFirstRunGuide,
+  SUPPORTED_FORMAT_SUMMARY,
+  INGEST_FORMAT_LABELS,
 } from './firstRunSteps'
+import { SUPPORTED_FORMATS } from '@/services/reportUploadService'
 import { backendUrl } from '@/services/api'
 
 const copyMock = vi.fn(async (_value: string) => true)
@@ -99,6 +102,53 @@ describe('FirstRunGuide', () => {
     expect(
       screen.getByText(content => content.includes('/api/v1/ingest/file')),
     ).toBeInTheDocument()
+  })
+
+  describe('advertised ingest formats', () => {
+    // The guide's step-2 body must name every format the backend `/ingest/file`
+    // endpoint accepts, so a self-hoster can see their CI runner is supported.
+    // Regression: the guide long advertised only six of the eleven — a NUnit /
+    // xUnit / TRX / Robot / Cucumber shop saw its format missing and could
+    // reasonably conclude TestLookup couldn't ingest it, when it can.
+    const nonAuto = SUPPORTED_FORMATS.filter((f) => f.value !== 'auto')
+
+    it('names every non-auto supported format from the canonical registry', () => {
+      renderGuide()
+      const step = screen.getByText(/Point your CI at the ingest API/i).textContent ?? ''
+      const haystack = step.toLowerCase()
+      for (const f of nonAuto) {
+        // Each canonical format value appears (case-insensitively) inside its
+        // display label — 'nunit' in "NUnit", 'trx' in "TRX", etc.
+        expect(haystack).toContain(f.value.toLowerCase())
+      }
+    })
+
+    it('surfaces the formats that were previously omitted', () => {
+      renderGuide()
+      const step = screen.getByText(/Point your CI at the ingest API/i).textContent ?? ''
+      for (const label of ['NUnit', 'xUnit', 'TRX', 'Robot Framework', 'Cucumber']) {
+        expect(step).toContain(label)
+      }
+    })
+
+    it('derives the summary from the registry, excluding the auto mode', () => {
+      // 'auto' is the detection MODE (the endpoint default), not a report
+      // format, so it is not advertised as one.
+      expect(SUPPORTED_FORMAT_SUMMARY).not.toMatch(/\bauto(-detect)?\b/i)
+      expect(SUPPORTED_FORMAT_SUMMARY).toBe(
+        nonAuto
+          .map((f) => INGEST_FORMAT_LABELS[f.value as keyof typeof INGEST_FORMAT_LABELS])
+          .join(' / '),
+      )
+    })
+
+    it('has a display label for every non-auto format (no blank slots)', () => {
+      for (const f of nonAuto) {
+        const label = INGEST_FORMAT_LABELS[f.value as keyof typeof INGEST_FORMAT_LABELS]
+        expect(label).toBeTruthy()
+        expect(label.trim()).toBe(label)
+      }
+    })
   })
 
   it('offers the CLI install command so the upload command is actually runnable', () => {
