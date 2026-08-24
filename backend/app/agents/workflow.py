@@ -1612,6 +1612,7 @@ def _make_checkpointed_node(original_node, stage_name: str):
             await _mark_stage_restored(pipeline_run_id, stage_name)
             return {"completed_stages": [stage_name], "current_stage": stage_name}
 
+        stage_started_at = datetime.now(timezone.utc)
         try:
             result = cast(dict[str, Any], await original_node(state))
         except Exception as exc:
@@ -1628,6 +1629,21 @@ def _make_checkpointed_node(original_node, stage_name: str):
             except Exception:
                 logger.warning("mark_stage_failed_db_error", stage_name=stage_name)
             raise
+
+        # Record that the node actually executed. The stage lifecycle
+        # (mark_stage_running / mark_stage_done) is opt-in per BaseAgent
+        # subclass, and three specialists plus the two plain cluster-investigation
+        # node functions never call it -- so their rows sat at "pending" and the
+        # end-of-run sweep relabelled them "not on active pipeline branch". The
+        # pipeline's own completed_stages listed them as run the whole time.
+        #
+        # This must precede _checkpoint_stage: that helper only writes when the
+        # row already reads "completed", so those same stages were silently
+        # dropping their checkpoint data too.
+        if pipeline_run_id and stage_name not in (result.get("skipped_stages") or []):
+            await _mark_stage_executed(
+                pipeline_run_id, stage_name, started_at=stage_started_at
+            )
 
         # Persist checkpoint
         if pipeline_run_id:
@@ -2096,6 +2112,52 @@ async def _write_stage_skipped(
     except Exception as exc:
         logger.warning(
             "skipped_stage_write_failed",
+            pipeline_run_id=pipeline_run_id,
+            stage_name=stage_name,
+            error_type=type(exc).__name__,
+        )
+
+
+async def _mark_stage_executed(
+    pipeline_run_id: str,
+    stage_name: str,
+    *,
+    started_at: datetime,
+) -> None:
+    """Backfill the row for a node that ran but wrote no stage record.
+
+    Only ``pending``/``running`` rows are touched. An agent that already called
+    ``mark_stage_done`` has written tokens, cost, confidence and evidence counts
+    the wrapper cannot reconstruct, so its ``completed`` row is left exactly as
+    it is -- this fills a gap, it does not become a second writer of the same
+    fact. ``failed`` and self-reported ``skipped`` rows are likewise preserved.
+    """
+    if not pipeline_run_id:
+        return
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select as sa_select  # noqa: PLC0415
+
+            result = await db.execute(
+                sa_select(AgentStageResult).where(
+                    AgentStageResult.pipeline_run_id == pipeline_run_id,
+                    AgentStageResult.stage_name == stage_name,
+                )
+            )
+            stage = result.scalar_one_or_none()
+            if stage is None or stage.status not in ("pending", "running"):
+                return
+            stage.status = "completed"
+            # A stage that never called mark_stage_running has no start; use the
+            # wrapper's measurement so the row carries a real duration. Stages
+            # that did mark themselves keep their own, earlier, timestamp.
+            if stage.started_at is None:
+                stage.started_at = started_at
+            stage.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+    except Exception as exc:
+        logger.warning(
+            "mark_stage_executed_error",
             pipeline_run_id=pipeline_run_id,
             stage_name=stage_name,
             error_type=type(exc).__name__,

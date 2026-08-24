@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-24 (later) — A node that ran was recorded as never having run
+
+``AgentStageResult`` rows seed ``pending`` and are flipped to ``completed`` by ``BaseAgent.mark_stage_done``. But ``BaseAgent.run`` is abstract, so that lifecycle is **opt-in per subclass** — fifteen agents call it and three do not:
+
+| Stage | `BaseAgent`? | Calls the lifecycle? | Row written? |
+|---|---|---|---|
+| `regression_watchman` | yes | yes | yes |
+| `change_ownership` | yes | **no** | no |
+| `contract_validation` | **no** | no | no |
+| `log_intelligence` | **no** | no | no |
+| `cluster_investigation_dispatch` / `_join` | plain node functions | n/a | no |
+
+Those five rows sat at ``pending`` to the end of the run, where the sweep in ``_persist_deep_outputs`` relabels anything still pending as ``skipped`` / *"Stage not on active pipeline branch"*.
+
+**Measured on the deployment**: the pipeline's own ``completed_stages`` listed all five as run, in 6 of 6 deep runs, while ``agent_stage_results`` called them skipped. The two records disagreed in both directions — the state list also omits four stages (``failure_clustering``, ``flaky_sentinel``, ``test_health``, ``release_risk``) whose rows read ``completed``.
+
+**This is what actually blocked F-9.** The fan-out was read as dead because the stage rows said "not on active pipeline branch"; it was running the whole time. The rows that would carry ``started_at`` / ``completed_at`` for the fanned-out specialists were simply never written, so there was no overlap to measure. Reaching for the nearest table instead of the pipeline's own output cost a full diagnostic cycle — right after fixing a defect of exactly that shape.
+
+- The node wrapper now records execution for every node, agent-backed or not, and does it **before** ``_checkpoint_stage`` — that helper only writes when the row already reads ``completed``, so these same stages were silently discarding their checkpoint data too.
+- The backfill fills a gap rather than becoming a second writer: only ``pending``/``running`` rows are touched, so an agent's ``completed`` row keeps the tokens, cost, confidence and evidence counts the wrapper cannot reconstruct. ``failed`` and self-reported ``skipped`` rows are preserved, and a node returning a skip delta is not recorded as completed.
+- Not fixed here, and still open: ``ContractAgent`` and ``LogIntelligenceAgent`` are not ``BaseAgent`` subclasses at all, which the ``agents.base-agent-subclass`` quality gate is supposed to forbid — it passes, so it has a blind spot. ``log_intelligence`` also emits no agent contract, which fails ``contract_evidence_support`` and takes the decision critic down on every deep run.
+
 ## 2026-08-24 — A rebuilt plan reported every specialist as "flag off" while the agents ran
 
 `attach_workflow_plan_and_verification` does not reuse the plan the pipeline ran under. It calls `build_workflow_plan` a **second time** to produce an explained plan carrying real outcomes, overwrites `workflow_plan` with the result, and verifies execution against it. That second call forwarded four inputs and let the rest fall back to kwarg defaults — and the four specialist flags default to `False`. So the rebuilt plan always said *"…feature flag is off for this project"*, whatever the flags actually were.

@@ -547,6 +547,31 @@
       the same way, a rebuilt plan reporting the default threshold of 80 where the run used 55. The owner decision
       "should the four specialist flags be enabled here" is therefore <strong>blocked on this fix, not open</strong>.</p>
 
+    <h3>2026-08-24 (later still) &mdash; F-9: the fan-out was never dead</h3>
+    <p><strong>Correction to the entry above.</strong> Reading
+      <code>agent_stage_results</code> after the plan fix showed
+      <code>cluster_investigation_dispatch</code>, <code>cluster_investigation_join</code> and three of
+      the four specialists as <em>"Stage not on active pipeline branch"</em>, which was taken to mean the
+      fan-out branch never activates. It does. The pipeline's own <code>completed_stages</code>, in 6 of 6
+      deep runs, lists every one of them as run. Trusting a derived table one step after proving a
+      different derived record was lying cost a full diagnostic cycle.</p>
+    <p>The real defect is narrower and duller. Stage rows seed <code>pending</code> and are flipped by
+      <code>BaseAgent.mark_stage_done</code> &mdash; but <code>BaseAgent.run</code> is abstract, so the
+      lifecycle is <strong>opt-in per subclass</strong>. Fifteen agents call it; <code>change_ownership</code>
+      does not, and <code>ContractAgent</code> and <code>LogIntelligenceAgent</code> are not
+      <code>BaseAgent</code> subclasses at all. The two cluster-investigation nodes are plain functions.
+      Those five rows stay <code>pending</code> until the end-of-run sweep relabels them skipped.</p>
+    <p><strong>That is what blocked F-9, not the flags and not the plan.</strong> The concurrency is real;
+      the <code>started_at</code>/<code>completed_at</code> pair that would prove it was never written. The
+      node wrapper now records execution for every node, agent-backed or not, ahead of
+      <code>_checkpoint_stage</code> &mdash; which only writes to an already-<code>completed</code> row, so
+      these stages were discarding checkpoint data too.</p>
+    <p><strong>Still open after this:</strong> <code>log_intelligence</code> runs but emits no agent
+      contract, so <code>contract_evidence_support</code> fails and the decision critic fails closed on
+      every deep run (6/6 <code>partial</code>). And the <code>agents.base-agent-subclass</code> quality
+      gate passes while two agents in <code>app/agents/</code> are not subclasses &mdash; the guard has a
+      blind spot. The F-9 number still is not measured; the instrument is one fix closer.</p>
+
     <h3>Open backlog</h3>
     <p>No Major findings remain open. Three Minor items are left: <strong>F-13</strong> (chat intent classification
       counts regex hits and breaks ties by enum declaration order, with no abstain path), <strong>F-14</strong>
