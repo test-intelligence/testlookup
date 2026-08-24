@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-08-24 (decision trail, verified) — Every agent that ran said why
+
+``build-20260824-231437``. Sixteen deep pipelines on fresh subjects (two batches: six, then
+ten chosen by highest failure count so the triage gate would actually be reached).
+
+| stage | executed | carried decisions |
+|---|---|---|
+| `ingestion` | 16 | **16** |
+| `anomaly_detection` | 16 | **16** |
+| `failure_clustering` | 16 | **16** |
+| `flaky_sentinel` | 15 | **15** |
+| `test_health` | 15 | **15** |
+| `regression_watchman` | 15 | **15** |
+| `release_risk` | 15 | **15** |
+| `triage` | 8 | **8** |
+
+Every stage that executed recorded a decision. The trail is substantive rather than
+ceremonial — a real `triage_gate` entry from the deployment:
+
+> `42 ticket(s) created, 8 skipped, 0 error(s) across 50 analysis/analyses; gate is
+> confidence >= 80, or >= 50 for ['INFRASTRUCTURE', 'PRODUCT_BUG'], and never for flaky`
+
+The rule, the counts and the threshold are all in the record, so *"why was nothing filed?"*
+is answerable without reading the source.
+
+**Two scope limits, stated rather than rounded away.**
+
+*Triage needed hunting.* The first batch of six recorded **zero** triage decisions, because the
+router skipped the stage in all six — `no analyses above confidence threshold 80`. The stage
+had not run, so there was nothing to record; the second batch selected runs with the most
+failures to reach it. A stage that never executes is not evidence that its decision works.
+
+*One run shows three stages `completed` with an empty decision log.* It is a **checkpoint
+replay** of a failed sibling: ``checkpoint_stages`` lists exactly ``ingestion``,
+``anomaly_detection``, ``root_cause_analysis``, ``summary``, ``triage``, and those stages
+emitted no ``stage_started`` either. They did not execute, so they decided nothing — the row
+is #840's backfill, and the decisions live on the source run named in
+``checkpoint_replay_metadata``. Correct behaviour, and the reason the raw counts above are
+"executed" rather than "rows".
+
+*``defect_commander`` is not covered by any of this.* It is not a planned pipeline stage — it
+runs only on demand via ``POST /api/v1/agents/defect-command``, and has **no**
+``agent_stage_results`` row in the entire history. Its decisions are covered by the test suite
+and by nothing on the deployment. (It is registered in the capability registry with
+``permission="mutating"``, which reads like a pipeline stage until you look for its caller.)
+
+
 ## 2026-08-24 (decision trail) — Nine agents made judgements and recorded none of them
 
 ``AgentStageResult.decision_log`` is what answers *"why did the agent do that"* — in the UI,
