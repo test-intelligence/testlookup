@@ -240,42 +240,67 @@ class AnalysisAgent(BaseAgent):
         # Checking between batches stops the stage taking on NEW work; every
         # test it never reached still gets a stored, zero-confidence record so
         # the gap is visible instead of silently absent.
+        # F-7: one gather over every test, bounded by the semaphore that already
+        # limits concurrency. The previous per-batch gather added a barrier the
+        # semaphore did not need -- the slowest test in each batch idled the
+        # rest, so the stage cost the SUM of per-batch maxima rather than total
+        # work divided by concurrency.
+        #
+        # The budget check that used to sit between batches becomes two checks,
+        # because there are two distinct cases:
+        #
+        #   already gone before the stage starts  -- caught here, so no task is
+        #       launched merely to discard itself;
+        #   expires while the stage is running    -- caught inside _analyse_one,
+        #       AFTER semaphore acquisition. It has to be there: a task
+        #       evaluates it when it actually gets a slot, and a check before
+        #       acquisition would let every queued task pass at t=0 and then run
+        #       long past the deadline. This is finer-grained than the per-batch
+        #       check it replaces -- the stage stops taking on new work at the
+        #       next freed slot, not the next batch boundary.
         deadline_ts = float(state.get("pipeline_deadline_ts") or 0.0)
-        budget_skipped: list[str] = []
-        for start in range(0, len(prioritized_ids), concurrency):
-            if deadline_ts and time.monotonic() >= deadline_ts:
-                budget_skipped = list(prioritized_ids[start:])
-                results_list.extend(
-                    self._build_budget_exhausted_analysis() for _ in budget_skipped
-                )
-                logger.warning(
-                    "analysis_budget_exhausted",
-                    pipeline_run_id=pipeline_run_id,
-                    analysed=start,
-                    not_analysed=len(budget_skipped),
-                )
-                await self.log_decision(
-                    pipeline_run_id,
-                    decision_point="analysis_budget_exhausted",
-                    chosen="stop_starting_analyses",
-                    rationale=(
-                        f"wall-clock budget exhausted after {start} of "
-                        f"{len(prioritized_ids)} tests; the rest are recorded unanalysed"
-                    ),
-                    context={"analysed": start, "not_analysed": len(budget_skipped)},
-                )
-                break
-            batch_ids = prioritized_ids[start:start + concurrency]
-            batch_tasks = [
-                self._analyse_with_retry(semaphore, tc_id, test_meta.get(tc_id, {}), state)
-                for tc_id in batch_ids
+        if deadline_ts and time.monotonic() >= deadline_ts:
+            results_list = [
+                self._build_budget_exhausted_analysis() for _ in prioritized_ids
             ]
+        else:
             try:
-                results_list.extend(await asyncio.gather(*batch_tasks, return_exceptions=True))
-            except Exception as gather_exc:
+                results_list = list(await asyncio.gather(
+                    *(
+                        self._analyse_with_retry(
+                            semaphore, tc_id, test_meta.get(tc_id, {}), state
+                        )
+                        for tc_id in prioritized_ids
+                    ),
+                    return_exceptions=True,
+                ))
+            except Exception as gather_exc:  # pragma: no cover - gather itself failing
                 logger.error("asyncio_gather_failed", error=str(gather_exc))
-                results_list.extend([gather_exc] * len(batch_ids))
+                results_list = [gather_exc] * len(prioritized_ids)
 
+        budget_skipped = [
+            tc_id
+            for tc_id, result in zip(prioritized_ids, results_list)
+            if isinstance(result, dict) and result.get("budget_exhausted")
+        ]
+        if budget_skipped:
+            analysed = len(prioritized_ids) - len(budget_skipped)
+            logger.warning(
+                "analysis_budget_exhausted",
+                pipeline_run_id=pipeline_run_id,
+                analysed=analysed,
+                not_analysed=len(budget_skipped),
+            )
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="analysis_budget_exhausted",
+                chosen="stop_starting_analyses",
+                rationale=(
+                    f"wall-clock budget exhausted after {analysed} of "
+                    f"{len(prioritized_ids)} tests; the rest are recorded unanalysed"
+                ),
+                context={"analysed": analysed, "not_analysed": len(budget_skipped)},
+            )
         analyses: dict[str, dict] = {}
         errors: list[str] = []
         timed_out = 0
@@ -593,6 +618,14 @@ class AnalysisAgent(BaseAgent):
         start_time = time.perf_counter()
         pipeline_run_id = state.get("pipeline_run_id", "")
         async with semaphore:
+            # The mid-run half of the budget check (F-2), moved here from the
+            # batch loop (F-7). It must be INSIDE the semaphore: a task
+            # evaluates this when it actually gets a slot. Checked before
+            # acquisition, every queued task would pass at t=0 and then run on
+            # past the deadline.
+            _deadline_ts = float(state.get("pipeline_deadline_ts") or 0.0)
+            if _deadline_ts and time.monotonic() >= _deadline_ts:
+                return self._build_budget_exhausted_analysis()
             logger.info(
                 "Analysing test case",
                 test_case_id=tc_id,

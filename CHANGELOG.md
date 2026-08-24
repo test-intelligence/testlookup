@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-23 — The analysis stage stopped idling behind its own batches (F-7)
+
+- The stage wrapped a semaphore — which already bounds concurrency — in a batch loop that awaited `asyncio.gather` **once per batch**. That gather is a barrier: the slowest test in each batch idled the rest, so the stage cost the **sum of per-batch maxima** instead of total work divided by concurrency. It now gathers once over every test.
+- **The barrier and the budget check were the same line.** The batch boundary was where F-2's wall-clock deadline was enforced, so removing it naively would have removed the enforcement too — trading a measurable safety property for an unmeasured throughput gain.
+- It splits into two genuinely different cases:
+
+  | Case | Where | Why there |
+  |---|---|---|
+  | budget **already** gone before the stage starts | before the gather | don't launch tasks merely to have each discard itself |
+  | budget expires **mid-run** | inside `_analyse_one`, *after* semaphore acquisition | a task evaluates it when it actually gets a slot; checked earlier, every queued task passes at t≈0 and runs on past the deadline |
+
+  The mid-run check is **finer-grained** than the per-batch one it replaces — the stage stops taking new work at the next freed slot, not the next batch boundary.
+- **The existing budget guard cannot see this.** It stubs `_analyse_with_retry` wholesale, so no per-task check is observable through it — a mocked test cannot observe a constraint inside the thing it replaced. New guards drive the real semaphore path.
+- 7 new guards, mutation-checked against the *plausible-wrong* version: hoisting the deadline check outside the semaphore still returns the right answer for an already-expired budget and still looks correct. It is caught.
+
 ## 2026-08-23 — A skipped stage now says which reason it was
 
 - Four specialist stages recorded the same rationale when they were not planned: **"Contract Agent is disabled or the run has no failed tests"**. Two different answers joined by "or", and **only one is actionable** — a flag that is off can be turned on; an all-green run cannot be configured into having failures.

@@ -292,8 +292,8 @@
           <td>The summary issues four sequential calls over one identical ~2.6k-token context. Roughly 4&times; the necessary input tokens and 4&times; the latency for one report, with no prefix reuse and no parallelism.<span class="src">agents/summary_agent.py:504-547</span></td>
         </tr>
         <tr>
-          <td class="id">F-7</td><td><span class="chip m">Major</span></td><td>Throughput</td>
-          <td>A batch loop wraps a semaphore that already bounds concurrency, adding a barrier per batch. The slowest test in each batch idles the rest, turning total time into the sum of per-batch maxima instead of total work divided by concurrency.<span class="src">agents/analysis_agent.py:236-246</span></td>
+          <td class="id">F-7</td><td><span class="chip ok">Fixed</span></td><td>Throughput</td>
+          <td><strong>Fixed &mdash; one gather over every test, bounded by the semaphore that already limited concurrency.</strong> The per-batch gather was a barrier the semaphore did not need: the slowest test in each batch idled the rest, so the stage cost the sum of per-batch maxima rather than total work divided by concurrency. The complication was that the batch boundary was also where F-2's wall-clock budget was checked; removing the barrier naively would have removed the budget enforcement with it. It splits into two cases: <em>already expired before the stage starts</em> is checked before the gather, so no task launches merely to discard itself; <em>expires mid-run</em> is checked inside <code>_analyse_one</code> <strong>after semaphore acquisition</strong> &mdash; placement is the whole argument, since a check before acquisition lets every queued task pass at t=0 and run on past the deadline. The mid-run check is finer-grained than the per-batch one it replaces. Originally: a batch loop wraps a semaphore that already bounds concurrency, adding a barrier per batch. The slowest test in each batch idles the rest, turning total time into the sum of per-batch maxima instead of total work divided by concurrency.<span class="src">agents/analysis_agent.py:236-246</span></td>
         </tr>
         <tr>
           <td class="id">F-8</td><td><span class="chip w">Measured</span></td><td>Architecture</td>
@@ -431,6 +431,18 @@
         own <code>baseline_diff</code>, not from workflow state. A guard now fails if that ever changes.</li>
       <li><strong>Guards assert the compiled graph, not its source</strong> &mdash; the first draft was all
         <code>inspect.getsource</code>, the same weakness that let an earlier fix ship green while broken.</li>
+    </ul>
+
+    <h3>2026-08-23 (later) &mdash; F-7</h3>
+    <ul>
+      <li><strong>The barrier and the budget check were the same line.</strong> Removing the batch loop meant
+        relocating F-2's wall-clock enforcement, not deleting it &mdash; two distinct cases, only one of which can be
+        caught per task.</li>
+      <li><strong>The existing budget guard could not see the fix.</strong> It stubs
+        <code>_analyse_with_retry</code> wholesale, so no per-task check is observable through it. New guards drive
+        the real semaphore path instead.</li>
+      <li><strong>The mutation tested was the plausible-wrong one</strong> &mdash; hoisting the deadline check outside
+        the semaphore still returns the right answer for an already-expired budget and still looks correct.</li>
     </ul>
 
     <h3>Open backlog</h3>
