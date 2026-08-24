@@ -42,7 +42,7 @@ from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
 from app.services.prompt_registry import get_prompt, get_prompt_text
 from app.services.redaction_service import redact_text
-from app.services.resilience import truncate_to_token_budget
+from app.services.resilience import truncate_to_token_budget, truncate_with_report
 
 
 def _prompt_version_tag(prompt_id: str) -> str:
@@ -762,8 +762,27 @@ class SummaryAgent(BaseAgent):
         deployment has already run three different models. A provider that
         cannot do it must still produce a report.
         """
-        # Truncate context to token budget
-        safe_context = truncate_to_token_budget(context, _MAX_CONTEXT_TOKENS)
+        # Truncate context to token budget, and RECORD it when it happens.
+        # Dropping evidence silently is what made F-5 invisible: six call sites
+        # truncated and none of them counted it, so a summary written from a
+        # partial context looked identical to one written from the whole thing.
+        # This is the layer path, so the decision log picks it up where the
+        # baseline harness already reads.
+        report = truncate_with_report(
+            context, _MAX_CONTEXT_TOKENS, label=layer_name or "layer"
+        )
+        safe_context = report.text
+        if report.truncated and pipeline_run_id:
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="context_truncated",
+                chosen=layer_name or "layer",
+                rationale=(
+                    f"context exceeded {_MAX_CONTEXT_TOKENS} tokens; dropped "
+                    f"{report.dropped_chars} of {report.original_chars} chars "
+                    f"({report.dropped_fraction:.1%})"
+                ),
+            )
         prompt = prompt_template.format(system=_SYSTEM_PROMPT, context=safe_context)
         schema_model = self._LAYER_SCHEMAS.get(layer_name)
 

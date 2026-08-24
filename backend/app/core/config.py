@@ -249,6 +249,13 @@ class Settings(BaseSettings):
     LLM_TEMPERATURE: float = 0.1
     LLM_MAX_TOKENS: int = 4096
     OLLAMA_BASE_URL: str = "http://localhost:11434"
+    # Ollama's CONTEXT window. Never set before, so Ollama applied its own
+    # default (2048 on many builds) and silently truncated any longer prompt
+    # from the left -- taking the system prompt and, on the ReAct path, the
+    # tool instructions with it, which surfaces later as a parse failure with
+    # no stated cause. Distinct from LLM_MAX_TOKENS, which caps OUTPUT
+    # (num_predict); one number cannot do both jobs.
+    OLLAMA_NUM_CTX: int = 8192
     LMSTUDIO_BASE_URL: str = "http://localhost:1234/v1"
     LOCALAI_BASE_URL: str = "http://localhost:8080/v1"
     VLLM_BASE_URL: str = "http://localhost:8000/v1"

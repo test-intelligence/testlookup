@@ -157,11 +157,26 @@ class TestTokenHandling:
     """Verify token budget estimation and truncation."""
 
     def test_estimate_token_count(self):
-        from app.services.resilience import estimate_token_count
+        """Asserts the PROPERTY, not the divisor.
+
+        This previously hard-coded ``4000 chars == 1000 tokens``, pinning the
+        4-chars-per-token constant itself. That constant was the F-5 defect:
+        4 is the English figure and under-counts stack traces and JSON, so an
+        over-length prompt slipped through and the provider truncated it
+        server-side with no error. A test that pins the constant fails whenever
+        the estimate is made safer, which is backwards.
+        """
+        from app.services.resilience import CHARS_PER_TOKEN, estimate_token_count
 
         assert estimate_token_count("") == 1  # min 1
-        assert estimate_token_count("hello world") == 2  # 11 chars / 4 ≈ 2
-        assert estimate_token_count("a" * 4000) == 1000
+        assert estimate_token_count("a" * 4000) == 4000 // CHARS_PER_TOKEN
+
+        # The property that matters: never under-count relative to the naive
+        # English ratio, because under-counting is what causes silent loss.
+        assert estimate_token_count("a" * 4000) >= 4000 // 4
+
+        # Monotonic: more text is never fewer tokens.
+        assert estimate_token_count("a" * 100) <= estimate_token_count("a" * 200)
 
     def test_truncate_to_token_budget_no_truncation(self):
         from app.services.resilience import truncate_to_token_budget

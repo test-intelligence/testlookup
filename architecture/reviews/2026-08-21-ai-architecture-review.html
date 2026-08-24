@@ -284,8 +284,8 @@
           <td><strong>Fixed in <a href="https://github.com/anandtopu/testlookup/pull/799">#799</a> &mdash; summary schema failures 7.16% &rarr; 0%</strong>, measured on the homelab across a deploy boundary: 59 failures against 70 structured successes on 08-22, then <strong>0 failures against 114 structured successes on 08-23</strong>. The all-time rate reads 5.94% only because it blends both code versions. <code>with_structured_output</code> is now tried first with a fallback to the prose path for every failure mode (unsupported provider, transport error, timeout, unexpected shape), and a structured success is logged as a decision so adoption is attributable. Originally: no structured output anywhere. <code>with_structured_output</code> is defined and never called; JSON arrives via regex recovery and ReAct via string parsing. Failures are absorbed into schema defaults or a retry, so quality loss is invisible rather than absent.<span class="src">llm_factory.py:101 &middot; services/agent.py:194-205 &middot; llm_json_parser.py</span></td>
         </tr>
         <tr>
-          <td class="id">F-5</td><td><span class="chip m">Major</span></td><td>Silent data loss</td>
-          <td><code>num_ctx</code> is never configured for Ollama, and token budgeting uses characters&divide;4. Over-length prompts are truncated server-side with no error, dropping evidence and, on the ReAct path, potentially the tool instructions &mdash; which then presents as a parse failure.<span class="src">llm_factory.py:176-182 &middot; resilience.py:183-188</span></td>
+          <td class="id">F-5</td><td><span class="chip ok">Fixed</span></td><td>Silent data loss</td>
+          <td><strong>Fixed &mdash; the loss is now counted, and the window is explicit.</strong> Three paths dropped context with nobody told. (1) Truncation happened at <strong>six call sites and was recorded at none</strong>; the only trace was a marker appended <em>into the prompt</em>, which reaches the model rather than any metric. <code>truncate_with_report</code> now returns what was dropped, and the summary layer path logs a <code>context_truncated</code> decision where the baseline harness already reads. (2) Truncation shared the <code>chars // 4</code> accounting figure, the English one, which under-counts stack traces and JSON (nearer 2.5-3) and let over-length prompts through to be truncated server-side. Truncation now has <em>its own</em> stricter ratio: the two uses want opposite biases &mdash; over-estimating in accounting makes agents do <em>less</em> work (CI caught the copilot exhausting its tool budget a call early), while under-estimating in truncation hands an over-length prompt to the provider. Sharing one constant was the same conflation as (3). (3) <code>num_ctx</code> was never set for Ollama, so it applied its own default (2048 on many builds) and truncated from the left &mdash; taking the system prompt and, on the ReAct path, the tool instructions. <code>LLM_MAX_TOKENS</code> was doing double duty as the output cap and the context budget; the window is now its own setting. Originally: <code>num_ctx</code> is never configured for Ollama, and token budgeting uses characters&divide;4. Over-length prompts are truncated server-side with no error, dropping evidence and, on the ReAct path, potentially the tool instructions &mdash; which then presents as a parse failure.<span class="src">llm_factory.py:176-182 &middot; resilience.py:183-188</span></td>
         </tr>
         <tr>
           <td class="id">F-6</td><td><span class="chip m">Major</span></td><td>Cost / latency</td>
@@ -396,6 +396,17 @@
         ever said so. That is now the first thing the daily job will report.</li>
       <li>Deliberately <em>not</em> auto-baselining on first run &mdash; that bakes current quality in as the
         reference, including the 0.00.</li>
+    </ul>
+
+    <h3>2026-08-23 (later) &mdash; F-5</h3>
+    <ul>
+      <li><strong>&ldquo;Silent&rdquo; was literal.</strong> Six call sites truncated context and not one counted it,
+        so a summary written from a half-dropped context was indistinguishable from one written whole.</li>
+      <li><strong>One number was doing two jobs.</strong> <code>LLM_MAX_TOKENS</code> capped output
+        (<code>num_predict</code>) <em>and</em> derived the context budget, so Ollama's context window was simply
+        never set.</li>
+      <li>Truncation is now reported and logged as a decision; the token estimate errs conservative so we truncate
+        visibly instead of letting the provider truncate silently.</li>
     </ul>
 
     <h3>Open backlog</h3>

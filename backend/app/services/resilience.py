@@ -172,20 +172,100 @@ def _backoff_delay(attempt: int, base: float, cap: float) -> float:
     return cast(float, max(0.1, delay + jitter))
 
 
+# Chars per token. 4 is the usual English figure and it is WRONG for what this
+# pipeline actually sends: stack traces, JSON and camelCase identifiers tokenize
+# nearer 2.5-3 chars/token, so a 4-based estimate under-counts and lets an
+# over-length prompt through. The provider then truncates it server-side with no
+# error -- dropping evidence, and on the ReAct path potentially the tool
+# instructions, which surfaces later as an unexplained parse failure.
+#
+# 3 errs toward truncating slightly early. Being visibly conservative beats
+# being invisibly over budget: our own truncation is logged, the provider's is
+# not.
+CHARS_PER_TOKEN = 4
+
+# Truncation uses a STRICTER ratio than accounting, because the two want
+# opposite biases and one number cannot serve both -- which is the same
+# conflation that left Ollama's context window unset (LLM_MAX_TOKENS was the
+# output cap AND the context budget).
+#
+#   accounting  (estimate_token_count): used for cost and for tool/reservation
+#       budgets. Over-estimating here makes the system do LESS work and
+#       over-report spend -- CI caught the copilot exhausting its budget after
+#       one tool call instead of two.
+#   truncation  (truncate_with_report): under-estimating here lets an
+#       over-length prompt through, and the provider truncates it server-side
+#       with NO error. Our truncation is logged; theirs is not.
+#
+# So: accounting stays at the English figure, truncation errs low and visible.
+TRUNCATION_CHARS_PER_TOKEN = 3
+
+_TRUNCATION_MARKER = chr(10) + "... [truncated to fit token budget]"
+
+
+class TruncationReport:
+    """What a budget truncation actually dropped.
+
+    Exists because the old helper returned a bare string, so a caller could not
+    tell a truncated context from an intact one. Six call sites truncate and not
+    one recorded it -- the only trace was a marker appended INTO the prompt,
+    which reaches the model rather than any metric. That is the "silent" in
+    silent data loss.
+    """
+
+    __slots__ = ("text", "truncated", "original_chars", "dropped_chars")
+
+    def __init__(
+        self, text: str, truncated: bool, original_chars: int, dropped_chars: int
+    ) -> None:
+        self.text = text
+        self.truncated = truncated
+        self.original_chars = original_chars
+        self.dropped_chars = dropped_chars
+
+    @property
+    def dropped_fraction(self) -> float:
+        if not self.original_chars:
+            return 0.0
+        return round(self.dropped_chars / self.original_chars, 4)
+
+
 def estimate_token_count(text: str) -> int:
-    """
-    Fast approximate token count (4 chars ≈ 1 token for English text).
-    This avoids importing tiktoken or calling the LLM tokenizer.
-    """
-    return max(1, len(text) // 4)
+    """Fast approximate token count, deliberately conservative for code."""
+    return max(1, len(text) // CHARS_PER_TOKEN)
+
+
+def truncate_with_report(
+    text: str, max_tokens: int, *, label: str = ""
+) -> TruncationReport:
+    """Truncate to an approximate token budget and say what was lost."""
+    max_chars = max_tokens * TRUNCATION_CHARS_PER_TOKEN
+    original = len(text)
+    if original <= max_chars:
+        return TruncationReport(text, False, original, 0)
+    dropped = original - max_chars
+    logger.warning(
+        "context_truncated_to_token_budget",
+        extra={
+            "truncation_label": label or "unlabelled",
+            "max_tokens": max_tokens,
+            "original_chars": original,
+            "dropped_chars": dropped,
+        },
+    )
+    return TruncationReport(
+        text[:max_chars] + _TRUNCATION_MARKER, True, original, dropped
+    )
 
 
 def truncate_to_token_budget(text: str, max_tokens: int) -> str:
-    """Truncate text to fit within an approximate token budget."""
-    max_chars = max_tokens * 4
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars] + "\n... [truncated to fit token budget]"
+    """Truncate text to fit within an approximate token budget.
+
+    Kept for callers that only need the text. Prefer ``truncate_with_report``
+    where the loss can be recorded -- a dropped context that nothing counts is
+    exactly what made this invisible.
+    """
+    return truncate_with_report(text, max_tokens).text
 
 
 def compute_analysis_cache_key(

@@ -178,7 +178,11 @@ async def get_llm(
             model=_model,
             base_url=_base_url or settings.OLLAMA_BASE_URL,
             temperature=_temperature,
+            # num_predict caps OUTPUT; num_ctx is the CONTEXT window. Leaving
+            # num_ctx unset let Ollama apply its own default and truncate long
+            # prompts server-side with no error -- silent evidence loss (F-5).
             num_predict=_max_tokens,
+            num_ctx=settings.OLLAMA_NUM_CTX,
         ), provider=_provider, model_name=_model)
 
     elif _provider == "lmstudio":

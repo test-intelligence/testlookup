@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-23 — Context was dropped silently, in three different ways (F-5)
+
+- **"Silent" was literal.** Truncation happened at **six call sites and was recorded at none**. The only trace was a marker appended *into the prompt* — which reaches the model, not any metric — so a summary written from a half-dropped context was indistinguishable from one written whole.
+- **The truncation ratio was optimistic.** `len(text) // 4` is the English figure and is wrong for what this pipeline sends: stack traces, JSON and camelCase identifiers tokenize nearer 2.5–3 chars/token. Under-counting let over-length prompts through, and the provider then truncated them **server-side with no error** — taking evidence and, on the ReAct path, the tool instructions, which surfaces later as a parse failure with no stated cause.
+- **`num_ctx` was never set for Ollama**, so it applied its own default (2048 on many builds) and truncated from the left. The root of that: `LLM_MAX_TOKENS` was doing double duty as the output cap (`num_predict`) *and* the basis for the context budget. One number cannot do both jobs, so the context window simply went unset.
+
+| | Before | Now |
+|---|---|---|
+| our own truncation | bare string, uncounted | `truncate_with_report` returns what was dropped; warning logged |
+| truncation ratio | shared the `chars // 4` accounting figure | its own `chars // 3`, erring toward truncating **visibly** |
+| Ollama context window | unset — provider default | explicit `OLLAMA_NUM_CTX`, distinct from the output cap |
+
+- The summary layer path now logs a `context_truncated` decision, at `_call_json_layer` — the one site of the three with a `pipeline_run_id`, and the hot path where all four layer calls run. That puts dropped context where the baseline harness already reads, so it becomes countable rather than merely logged.
+- **Truncation and accounting now use separate ratios, and that split came from CI.** The first attempt moved the single shared constant to 3 — which inflated every *budget* too, and CI caught the chat copilot exhausting its tool budget after one call instead of two. The two uses want opposite biases: accounting drives cost and reservation budgets, where over-estimating makes the system do **less** work; truncation is the reverse, where under-estimating hands an over-length prompt to the provider. Sharing one constant was the same conflation as `LLM_MAX_TOKENS` above. Accounting stays at 4 — no existing test needed changing.
+- 10 new guards, mutation-checked: reverting the estimate to 4 chars/token fails the conservatism guard.
+
 ## 2026-08-23 — Quality is evaluated on a schedule, and that immediately found something (F-11)
 
 - Twelve jobs ran on the beat schedule — coverage, purge, training export, finetune checks, reindex, digests, probes — and **not one measured output quality**. `eval_gate_service` was reachable only from an ADMIN API route or the prompt CLI, so quality was gated when a prompt changed and **never otherwise**. A model swap or slow drift between prompt edits was invisible.
