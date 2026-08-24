@@ -96,11 +96,24 @@ def test_deep_graph_contains_new_nodes_and_chain():
     assert ("triage", "failure_clustering") in edges
     assert ("failure_clustering", "cluster_investigation_dispatch") in edges
     assert ("cluster_investigation_dispatch", "cluster_investigation_join") in edges
-    assert ("cluster_investigation_join", "contract_validation") in edges
-    assert ("contract_validation", "log_intelligence") in edges
-    assert ("log_intelligence", "regression_watchman") in edges
-    assert ("regression_watchman", "change_ownership") in edges
-    assert ("change_ownership", "gap_detection") in edges
+    # F-9: the four read-only specialists used to run as a chain here. They now
+    # fan out from the join and rejoin at gap_detection -- the chain cost the
+    # SUM of their latencies where the slowest alone would do.
+    #
+    # This does NOT reopen AI-010. That incident was caused by UNEQUAL depth
+    # (three hops against the analysis branches' one), not by fan-out as such.
+    # All four sit exactly one hop from the join, so gap_detection's
+    # predecessors are at a single depth and it fires once --
+    # test_pipeline_stages_run_once.py::test_no_node_is_reachable_at_two_
+    # different_depths is the authority on that and passes.
+    for _specialist in (
+        "contract_validation",
+        "log_intelligence",
+        "regression_watchman",
+        "change_ownership",
+    ):
+        assert ("cluster_investigation_join", _specialist) in edges
+        assert (_specialist, "gap_detection") in edges
     assert ("gap_detection", "report_refinement") in edges
     assert ("report_refinement", "flaky_sentinel") in edges
     # No-triage deep route still reaches the specialist chain — now via the

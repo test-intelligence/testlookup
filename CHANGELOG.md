@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-23 — Four independent specialists stopped queuing behind each other (F-9)
+
+- `contract_validation → log_intelligence → regression_watchman → change_ownership` ran as a strict chain, so a deep run paid the **sum** of their latencies rather than the slowest. They now fan out from `cluster_investigation_join` and rejoin at `gap_detection`.
+- **Measured delta on the homelab: zero — and that is the honest number.** All four are skipped on every deep run there (**161 of 161**, `planner_not_selected`) because `build_workflow_plan` gates each behind a feature flag that defaults to off, and none of the four flags exists among the 14 defined on that deployment. The original claim of "15s + 20s + 10s" came from the registry's *declared* budgets — exactly the declared-vs-observed gap F-14 is about. The fan-out is correct and will matter wherever those flags are on; here it is a no-op.
+- **Two things that surfaced from measuring rather than asserting:** four capabilities have never executed on this deployment, so deep runs are thinner than the 19-node graph suggests; and the plan records `planned: false` with an **empty reason**, so a stage disabled by flag is indistinguishable from one that was budget-skipped or genuinely inapplicable.
+- **Why it had been serial, and why that did not forbid the fix.** An earlier parallel attempt double-executed the chain. The mechanism is recorded in the summary fan-in note in `workflow.py`: LangGraph schedules by **superstep**, so a join whose predecessors sit at *different depths* is reached once by the shallow branch and again by the deep one — running it, and everything after it, twice. The lesson was never "do not fan out"; it was **keep every predecessor at the same depth**. All four are now direct successors of one node.
+- **Safe on three counts, each checked rather than assumed:**
+
+  | | |
+  |---|---|
+  | outputs are disjoint | `contract_findings` / `log_findings` / `regression_classification` / `change_ownership_findings` |
+  | every *shared* field already has a reducer | `completed_stages`, `skipped_stages`, `errors`, `current_stage`, `agent_contracts` — so concurrent writes merge rather than collide |
+  | none reads another from state | `change_ownership_agent` mentions `regression_classification`, but reads it from its own `baseline_diff` dict |
+
+- **That third one nearly went wrong.** A grep matched the name and I flagged a dependency; checking precisely showed it reads its own diff, not workflow state. Acting on the grep would have serialised something that did not need it. A guard now fails if it ever *does* read from state, which would make the fan-out a race.
+- **The guards assert the compiled graph, not its source.** The first draft was thirteen `inspect.getsource` assertions — the same weakness that let an earlier fix ship green while broken. They now build the real graph and check predecessors. Mutation-checked: re-serialising the chain fails four of them.
+- **This does not reopen AI-010.** That incident came from *unequal depth* — the old fan-out rejoined at `summary` three hops against the analysis branches' one — not from parallelism. The repo's own guard, `test_pipeline_stages_run_once.py::test_no_node_is_reachable_at_two_different_depths`, passes with the new topology; that is better evidence than any test written alongside this change.
+- An existing wiring test pinned the serial chain and was updated to assert the fan-out, with the AI-010 reasoning recorded beside it.
+
 ## 2026-08-24 — The first-run guide under-advertised which test formats it ingests
 
 - The empty-dashboard **First-Run Guide** told a new self-hoster to "Point your CI at the ingest API (**JUnit / TestNG / Allure / Cypress / Playwright / pytest**)" — **six** formats. The backend `/ingest/file` endpoint accepts **eleven** (`_SUPPORTED_FORMATS` in `routers/ingest.py`): the guide silently omitted **NUnit, xUnit, TRX (Visual Studio), Robot Framework, and Cucumber**. A .NET, Robot, or BDD shop looked at the very first screen, didn't see its format, and could reasonably conclude TestLookup couldn't ingest its results — when it could. The rest of the app already listed all eleven (`UploadReportModal`, `reportUploadService.SUPPORTED_FORMATS`); the guide was the lone stale copy.

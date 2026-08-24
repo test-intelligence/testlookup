@@ -1022,11 +1022,28 @@ def _build_deep_graph() -> StateGraph:
     graph.add_edge("triage",            "failure_clustering")
     graph.add_edge("failure_clustering", "cluster_investigation_dispatch")
     graph.add_edge("cluster_investigation_dispatch", "cluster_investigation_join")
-    graph.add_edge("cluster_investigation_join", "contract_validation")
-    graph.add_edge("contract_validation", "log_intelligence")
-    graph.add_edge("log_intelligence", "regression_watchman")
-    graph.add_edge("regression_watchman", "change_ownership")
-    graph.add_edge("change_ownership", "gap_detection")
+    # F-9: the four read-only specialists are independent -- disjoint outputs
+    # (contract_findings / log_findings / regression_classification /
+    # change_ownership_findings), no cross-reads, and every field they SHARE
+    # (completed_stages, skipped_stages, errors, current_stage, agent_contracts)
+    # already carries a reducer. They ran serially, so the chain cost the SUM of
+    # their latencies instead of the slowest one.
+    #
+    # The earlier parallel attempt double-executed, and the reason is recorded
+    # in the summary fan-in note above: LangGraph schedules by superstep, so a
+    # join whose predecessors sit at DIFFERENT depths fires twice -- running
+    # everything downstream twice. The fix is not to avoid fan-out, it is to
+    # keep every predecessor at the SAME depth. All four below are direct
+    # successors of cluster_investigation_join, so gap_detection has four
+    # predecessors at one depth and fires exactly once.
+    for _specialist in (
+        "contract_validation",
+        "log_intelligence",
+        "regression_watchman",
+        "change_ownership",
+    ):
+        graph.add_edge("cluster_investigation_join", _specialist)
+        graph.add_edge(_specialist, "gap_detection")
     graph.add_edge("gap_detection",     "report_refinement")
     graph.add_edge("report_refinement", "flaky_sentinel")
     graph.add_edge("flaky_sentinel",  "test_health")

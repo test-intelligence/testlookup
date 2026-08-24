@@ -300,8 +300,8 @@
           <td><strong>Instrumented, not yet re-architected &mdash; deliberately.</strong> Confirmed: the bundle is built only in the terminal stage, so no specialist receives one; <code>anomaly_agent</code>, <code>change_ownership_agent</code>, <code>flaky_sentinel_agent</code> and <code>regression_watchman</code> each re-<code>select(TestRun)</code> in their own session (49 independent sessions across <code>agents/</code>). The real fix &mdash; build the bundle once and thread it through ten agents &mdash; is too large to land safely until we know the drift actually happens, so ingestion now fingerprints the authoritative counts and failed-test set, and the terminal stage re-reads and compares. Divergence lands as a quality flag the harness already counts. The flag is a <strong>warning, not an error</strong>: an error-severity flag on this bundle is what stopped 24 reports publishing on 2026-08-23. A probe that cannot run reports <code>run_input_drift_unverified</code> rather than &ldquo;clean&rdquo;. <strong>Next: read the rate, then decide whether the refactor is justified.</strong> Originally: ten capability specs declare <code>RunEvidenceBundleV1</code> as their input, but the bundle is built only in the terminal stage. Specialists re-query Postgres independently &mdash; 25 query sites in 11 separate sessions across seven specialists &mdash; and can observe different data if rows change mid-run.<span class="src">agent_capability_registry.py:39-60 &middot; decision_report_agent.py:296</span></td>
         </tr>
         <tr>
-          <td class="id">F-9</td><td><span class="chip m">Major</span></td><td>Latency</td>
-          <td>Four independent read-only specialists run serially because a prior parallel fan-in double-executed the chain. Correct response, wrong steady state; the Investigator already shows the working pattern.<span class="src">workflow.py:944-1000 &middot; investigator/state.py:47-56</span></td>
+          <td class="id">F-9</td><td><span class="chip ok">Fixed</span></td><td>Latency</td>
+          <td><strong>Fixed &mdash; the four now fan out from one node and rejoin at <code>gap_detection</code>.</strong> The chain cost the <em>sum</em> of their latencies (15s + 20s + 10s + the watchman) where the slowest alone is 20s. The earlier parallel attempt double-executed, and the reason is recorded in the summary fan-in note: LangGraph schedules by <strong>superstep</strong>, so a join whose predecessors sit at <em>different depths</em> is reached twice &mdash; running it and everything downstream twice. The lesson was never &ldquo;do not fan out&rdquo;, it was <strong>keep every predecessor at the same depth</strong>, which all four now are. Safe on three counts, each checked: outputs are disjoint; every shared field already carries a reducer; and none reads another from state (<code>change_ownership_agent</code> mentions <code>regression_classification</code> but reads it from its own <code>baseline_diff</code> &mdash; a naive grep suggests a dependency that is not there). Guards assert the <em>compiled graph</em>, not its source. Originally: four independent read-only specialists run serially because a prior parallel fan-in double-executed the chain. Correct response, wrong steady state; the Investigator already shows the working pattern.<span class="src">workflow.py:944-1000 &middot; investigator/state.py:47-56</span></td>
         </tr>
         <tr>
           <td class="id">F-10</td><td><span class="chip m">Major</span></td><td>Learning loop</td>
@@ -419,6 +419,18 @@
         stage compares. If the rate is zero the refactor is unnecessary; if it is not, there is evidence for it.</li>
       <li>Warning severity, and a failed probe says <em>unverified</em> rather than clean &mdash; both lessons from
         earlier the same day.</li>
+    </ul>
+
+    <h3>2026-08-23 (later) &mdash; F-9</h3>
+    <ul>
+      <li><strong>The historical failure was a scheduling rule, not a prohibition.</strong> A LangGraph join whose
+        predecessors sit at different depths fires twice. Equal depth makes fan-out safe, and the four specialists now
+        share one predecessor.</li>
+      <li><strong>Nearly serialised something that did not need it.</strong> A grep showed
+        <code>change_ownership_agent</code> referencing <code>regression_classification</code>; it reads that from its
+        own <code>baseline_diff</code>, not from workflow state. A guard now fails if that ever changes.</li>
+      <li><strong>Guards assert the compiled graph, not its source</strong> &mdash; the first draft was all
+        <code>inspect.getsource</code>, the same weakness that let an earlier fix ship green while broken.</li>
     </ul>
 
     <h3>Open backlog</h3>
