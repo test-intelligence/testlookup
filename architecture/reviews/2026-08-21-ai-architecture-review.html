@@ -520,16 +520,48 @@
         sequencing did not hold here either.</li>
     </ul>
 
+    <h3>2026-08-24 (later) &mdash; F-9: the instrument was the problem</h3>
+    <p>The four specialist flags had <strong>no <code>feature_flags</code> row at all</strong> on this deployment
+      &mdash; not "set to false", absent. <code>is_enabled</code> returns <code>False</code> for a missing row, and
+      only <code>contract_validation</code> and <code>change_ownership</code> have a legacy env fallback, so all four
+      had been hard-off since the deployment existed: <strong>154 skipped, 0 executed</strong>, every one.</p>
+    <p>Creating the rows and enabling them produced the more useful finding.
+      <code>attach_workflow_plan_and_verification</code> <strong>rebuilds</strong> the plan by calling
+      <code>build_workflow_plan</code> a second time, forwarding only four inputs and letting the rest fall back to
+      kwarg defaults &mdash; and the specialist flags default to <code>False</code>. The rebuilt plan therefore reads
+      <em>"feature flag is off for this project"</em> whatever the flags are, then overwrites the correct plan and is
+      what the verifier checks execution against. <strong>F-9's zero delta was never only about the flags: the
+      measurement reports "off" regardless of them.</strong></p>
+    <p>With all four flags on, the two records of one fact disagreed &mdash; <code>agent_contracts</code> held
+      contracts for <code>contract_validation</code>, <code>change_ownership</code> and
+      <code>regression_watchman</code> (they ran), while <code>agent_stage_results</code> recorded them
+      <code>skipped</code> and <code>workflow_verification</code> warned
+      <code>unplanned_stages_not_executed</code>. The critic's <code>completed_agent_contracts_present</code> check
+      then fails closed. Controlled run &mdash; 1 before, 4 on, 1 after reverting:
+      <strong>flags off &rarr; <code>completed</code>; flags on &rarr; 4/4 <code>partial</code>, critic failed 4/4;
+      flags off again &rarr; <code>completed</code></strong>. Against a base rate of 118 pass / 36 fail, four
+      straight failures is ~0.3% by chance.</p>
+    <p><strong>Flags reverted to disabled</strong> pending the fix; the rows were kept, so they are now visible and
+      toggleable rather than absent. The plan now carries <code>specialist_flags</code> and the rebuild recovers every
+      input &mdash; <code>triage_threshold</code> and <code>decision_graph_aggregate_budget</code> were being dropped
+      the same way, a rebuilt plan reporting the default threshold of 80 where the run used 55. The owner decision
+      "should the four specialist flags be enabled here" is therefore <strong>blocked on this fix, not open</strong>.</p>
+
     <h3>Open backlog</h3>
     <p>No Major findings remain open. Three Minor items are left: <strong>F-13</strong> (chat intent classification
       counts regex hits and breaks ties by enum declaration order, with no abstain path), <strong>F-14</strong>
       (declared SLOs are never compared against observed <code>pipeline_stage_duration_seconds</code>), and
       <strong>F-15</strong> (the architecture README still draws a five-stage pipeline for a nineteen-node graph).</p>
-    <p>Four decisions are queued for the owner rather than for code: <code>duplicate_detection</code> scores
+    <p>Three decisions are queued for the owner rather than for code: <code>duplicate_detection</code> scores
       <strong>F1 0.00</strong> and needs fixing before any eval baseline is set; whether 0.85-similarity narrative
-      reuse should be permitted at all; whether F-8's ten-agent bundle refactor is justified once drift data exists;
-      and whether the four specialist feature flags should be enabled on this deployment &mdash; they have
-      <em>never executed</em> here, which is why F-9's fan-out measured a zero delta.</p>
+      reuse should be permitted at all; and whether F-8's ten-agent bundle refactor is justified once drift data
+      exists.</p>
+    <p>The fourth &mdash; whether the four specialist feature flags should be enabled here &mdash; is
+      <strong>no longer an owner decision but a blocked one</strong>. Enabling them degrades every deep run until the
+      plan-rebuild fix lands, because the rebuilt plan reports them off whatever their real state, and the critic
+      fails closed against it. See the 2026-08-24 (later) entry above. Re-enable and re-measure F-9 once the fix is
+      deployed; the <code>feature_flags</code> rows now exist (disabled), so it is a toggle rather than a schema
+      change.</p>
   </section>
 
   <section id="s3">

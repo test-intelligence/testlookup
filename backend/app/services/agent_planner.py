@@ -884,6 +884,16 @@ def build_workflow_plan(
         "cluster_children_enabled": cluster_children_enabled,
         "cluster_children_aggregate_budget": cluster_budget,
         "decision_graph_aggregate_budget": graph_budget,
+        # Persisted so attach_workflow_plan_and_verification can rebuild an
+        # explained plan with the SAME inputs. Without these the rebuild fell
+        # back to the kwarg defaults (all False) and reported every specialist
+        # as "feature flag is off" even while the agent had just run.
+        "specialist_flags": {
+            "contract_validation": contract_validation_enabled,
+            "log_intelligence": log_intelligence_enabled,
+            "regression_watchman": regression_watchman_enabled,
+            "change_ownership": change_ownership_enabled,
+        },
         "stages": stages,
     }
     digest = compute_workflow_plan_hash(plan)
@@ -974,20 +984,31 @@ def attach_workflow_plan_and_verification(
     """Attach final planner and verifier records to a workflow state copy."""
     state = dict(final_state)
     initial_plan = state.get("initial_workflow_plan") or state.get("workflow_plan")
+    plan_inputs = initial_plan if isinstance(initial_plan, dict) else {}
+    # Every input below must be recovered from the original plan. A kwarg left
+    # to its default here does not raise -- it silently rewrites the plan with a
+    # different answer, and the verifier then checks execution against a plan
+    # that never applied. The specialist flags default to False, which is what
+    # made four running agents report as "feature flag is off for this project".
+    specialist_flags = plan_inputs.get("specialist_flags")
+    if not isinstance(specialist_flags, dict):
+        specialist_flags = {}
     explained_plan = build_workflow_plan(
         workflow_type=workflow_type,
         failed_test_ids=state.get("failed_test_ids"),
         analyses=state.get("analyses") or {},
-        cluster_children_enabled=(
-            bool(initial_plan.get("cluster_children_enabled"))
-            if isinstance(initial_plan, dict)
-            else False
+        threshold=plan_inputs.get("triage_threshold"),
+        cluster_children_enabled=bool(plan_inputs.get("cluster_children_enabled")),
+        cluster_children_aggregate_budget=plan_inputs.get(
+            "cluster_children_aggregate_budget"
         ),
-        cluster_children_aggregate_budget=(
-            initial_plan.get("cluster_children_aggregate_budget")
-            if isinstance(initial_plan, dict)
-            else None
+        decision_graph_aggregate_budget=plan_inputs.get(
+            "decision_graph_aggregate_budget"
         ),
+        contract_validation_enabled=bool(specialist_flags.get("contract_validation")),
+        log_intelligence_enabled=bool(specialist_flags.get("log_intelligence")),
+        regression_watchman_enabled=bool(specialist_flags.get("regression_watchman")),
+        change_ownership_enabled=bool(specialist_flags.get("change_ownership")),
     )
     state["initial_workflow_plan"] = initial_plan
     state["workflow_plan"] = explained_plan

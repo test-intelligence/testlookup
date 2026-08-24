@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-08-24 — A rebuilt plan reported every specialist as "flag off" while the agents ran
+
+`attach_workflow_plan_and_verification` does not reuse the plan the pipeline ran under. It calls `build_workflow_plan` a **second time** to produce an explained plan carrying real outcomes, overwrites `workflow_plan` with the result, and verifies execution against it. That second call forwarded four inputs and let the rest fall back to kwarg defaults — and the four specialist flags default to `False`. So the rebuilt plan always said *"…feature flag is off for this project"*, whatever the flags actually were.
+
+**This is why F-9 measured a zero delta.** The finding was read as "the four specialist flags were never enabled on this deployment". Enabling them showed the more useful answer: the measurement instrument reports "flag off" regardless of the flags, so F-9's fan-out could not have been measured either way.
+
+**Measured on the deployment, all four flags ON** — the two records of one fact disagreed:
+
+| Record | What it said about the four specialists |
+|---|---|
+| `agent_contracts` | contracts present for `contract_validation`, `change_ownership`, `regression_watchman` — **they ran** |
+| `initial_workflow_plan` | `planned=True` — correct |
+| `workflow_plan` (rebuilt) | `planned=False`, *"feature flag is off for this project"* |
+| `agent_stage_results` | `skipped` — "Stage not on active pipeline branch" |
+| `workflow_verification` | warn: `unplanned_stages_not_executed: completed_without_skip_marker: [all four]` |
+
+**Consequence, and why the flags are back off.** The critic's `completed_agent_contracts_present` check fails closed against the wrong plan. Controlled run — 1 before, 4 with the flags on, 1 after reverting:
+
+| Condition | run status | critic |
+|---|---|---|
+| flags off (baseline) | completed | completed |
+| **flags on** | **partial ×4** | **failed ×4** |
+| flags off (reverted) | completed | completed |
+
+The critic's base rate on deep runs was 118 pass / 36 fail, so four consecutive failures is ~0.3% by chance. Enabling the flags degraded every deep run, so they were reverted to disabled pending this fix. The four `feature_flags` rows did not previously **exist** — `is_enabled` returns `False` for a missing row, and only two of the four have a legacy env fallback — so the rows were created and left off.
+
+- The plan now carries `specialist_flags`, and the rebuild recovers every input it needs rather than defaulting it. `triage_threshold` and `decision_graph_aggregate_budget` were being dropped the same way — a rebuilt plan silently reported the default threshold of 80 where the run used 55.
+- **A defaulted kwarg is the shape to distrust.** It does not raise; it answers a different question and writes the answer down as fact. The sibling guard from the previous change tests `build_workflow_plan` directly and passed throughout — the bug lived in the round trip, which nothing exercised. The new guard asserts the round trip, and fails 6 ways without the fix.
+
 ## 2026-08-24 — F-6 measured on the deployment: summary p50 halved
 
 Deployed `build-20260824-f6` and ran a controlled before/after: 20 runs per arm, **byte-identical payloads**, same 4-way worker concurrency. The running worker was verified to contain `asyncio.gather` and zero occurrences of the old sequencing comment before the after arm was submitted.
