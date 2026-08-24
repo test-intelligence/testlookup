@@ -195,6 +195,17 @@ def build_run_metric_snapshot(state: dict[str, Any]) -> dict[str, Any]:
         "test_health_finding_count": "workflow_state.test_health_findings",
     })
 
+    # F-8: a run whose authoritative inputs moved mid-pipeline, or whose drift
+    # could not be verified, says so here where the harness already counts
+    # quality flags.
+    drift_flag = state.get("run_input_drift")
+    if isinstance(drift_flag, dict) and drift_flag.get("code"):
+        flags.append({
+            "code": str(drift_flag.get("code")),
+            "severity": str(drift_flag.get("severity") or "warning"),
+            "detail": str(drift_flag.get("detail") or "")[:240],
+        })
+
     payload = {
         "schema_version": 1,
         "definition_version": "run_metrics_v1",

@@ -296,8 +296,8 @@
           <td>A batch loop wraps a semaphore that already bounds concurrency, adding a barrier per batch. The slowest test in each batch idles the rest, turning total time into the sum of per-batch maxima instead of total work divided by concurrency.<span class="src">agents/analysis_agent.py:236-246</span></td>
         </tr>
         <tr>
-          <td class="id">F-8</td><td><span class="chip m">Major</span></td><td>Architecture</td>
-          <td>Ten capability specs declare <code>RunEvidenceBundleV1</code> as their input, but the bundle is built only in the terminal stage. Specialists re-query Postgres independently &mdash; 25 query sites in 11 separate sessions across seven specialists &mdash; and can observe different data if rows change mid-run.<span class="src">agent_capability_registry.py:39-60 &middot; decision_report_agent.py:296</span></td>
+          <td class="id">F-8</td><td><span class="chip w">Measured</span></td><td>Architecture</td>
+          <td><strong>Instrumented, not yet re-architected &mdash; deliberately.</strong> Confirmed: the bundle is built only in the terminal stage, so no specialist receives one; <code>anomaly_agent</code>, <code>change_ownership_agent</code>, <code>flaky_sentinel_agent</code> and <code>regression_watchman</code> each re-<code>select(TestRun)</code> in their own session (49 independent sessions across <code>agents/</code>). The real fix &mdash; build the bundle once and thread it through ten agents &mdash; is too large to land safely until we know the drift actually happens, so ingestion now fingerprints the authoritative counts and failed-test set, and the terminal stage re-reads and compares. Divergence lands as a quality flag the harness already counts. The flag is a <strong>warning, not an error</strong>: an error-severity flag on this bundle is what stopped 24 reports publishing on 2026-08-23. A probe that cannot run reports <code>run_input_drift_unverified</code> rather than &ldquo;clean&rdquo;. <strong>Next: read the rate, then decide whether the refactor is justified.</strong> Originally: ten capability specs declare <code>RunEvidenceBundleV1</code> as their input, but the bundle is built only in the terminal stage. Specialists re-query Postgres independently &mdash; 25 query sites in 11 separate sessions across seven specialists &mdash; and can observe different data if rows change mid-run.<span class="src">agent_capability_registry.py:39-60 &middot; decision_report_agent.py:296</span></td>
         </tr>
         <tr>
           <td class="id">F-9</td><td><span class="chip m">Major</span></td><td>Latency</td>
@@ -407,6 +407,18 @@
         never set.</li>
       <li>Truncation is now reported and logged as a decision; the token estimate errs conservative so we truncate
         visibly instead of letting the provider truncate silently.</li>
+    </ul>
+
+    <h3>2026-08-23 (later) &mdash; F-8 instrumented</h3>
+    <ul>
+      <li><strong>The declared contract is fiction.</strong> Ten capabilities name
+        <code>RunEvidenceBundleV1</code> as their input; it is built only terminally, so specialists re-query instead
+        &mdash; 49 independent sessions across the agent package.</li>
+      <li><strong>Measuring before re-architecting.</strong> Threading a single bundle through ten agents is a large,
+        risky change to make on a hazard nobody has yet observed. Ingestion fingerprints what it read; the terminal
+        stage compares. If the rate is zero the refactor is unnecessary; if it is not, there is evidence for it.</li>
+      <li>Warning severity, and a failed probe says <em>unverified</em> rather than clean &mdash; both lessons from
+        earlier the same day.</li>
     </ul>
 
     <h3>Open backlog</h3>

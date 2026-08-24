@@ -237,6 +237,11 @@ class IngestionAgentOutput(ContractedAgentOutput):
     test_run_data: Optional[dict[str, Any]] = None
     branch: Optional[str] = None
     failed_test_ids: list[str] = Field(default_factory=list)
+    # F-8: hash of the authoritative counts + failed-test set as ingestion saw
+    # them. MUST be declared here -- an undeclared key is silently stripped by
+    # the contract validator, which is how a previous field reached no consumer
+    # at all while every test stayed green.
+    run_input_fingerprint: Optional[str] = None
     total_tests: int = 0
     pass_rate: float = 0.0
     ingestion_enriched: bool = False

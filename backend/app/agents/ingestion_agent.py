@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.agents.base import BaseAgent
 from app.db.postgres import AsyncSessionLocal
 from app.models.agent_contracts import IngestionAgentOutput, validate_agent_contract
+from app.services.run_input_fingerprint import run_input_fingerprint
 from app.models.postgres import TestCase, TestRun, TestStatus
 
 logger = structlog.get_logger("agents.ingestion")
@@ -44,10 +45,17 @@ class IngestionAgent(BaseAgent):
                     "message": f"Ingestion validated: {run_data['total_tests']} tests, {len(failed_ids)} failures",
                 },
             )
+            # F-8: fingerprint what the authoritative read actually saw. Ten
+            # capabilities declare RunEvidenceBundleV1 as their input but the
+            # bundle is only built terminally, so specialists re-query the same
+            # TestRun row in their own sessions at their own moment. If the row
+            # moves mid-run they silently disagree. The terminal stage compares
+            # against this to find out whether that happens in practice.
             output = {
                 "test_run_data": run_data,
                 "branch": run_data.get("branch"),
                 "failed_test_ids": failed_ids,
+                "run_input_fingerprint": run_input_fingerprint(run_data, failed_ids),
                 "total_tests": run_data["total_tests"],
                 "pass_rate": run_data.get("pass_rate") or 0.0,
                 "ingestion_enriched": True,

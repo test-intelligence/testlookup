@@ -36,6 +36,7 @@ from app.agents.ingestion_agent import IngestionAgent
 from app.agents.release_risk_agent import ReleaseRiskAgent
 from app.agents.report_refinement_agent import ReportRefinementAgent
 from app.agents.state import WorkflowState
+from app.services.run_input_fingerprint import detect_run_input_drift
 from app.agents.summary_agent import SummaryAgent
 from app.agents.test_health_agent import TestHealthAgent
 from app.agents.triage_agent import DefectTriageAgent
@@ -673,6 +674,15 @@ async def release_risk_node(state: WorkflowState) -> dict:
 
 
 async def decision_report_node(state: WorkflowState) -> dict:
+    # F-8: specialists re-query the TestRun row in their own sessions rather
+    # than receiving the bundle their capability spec claims as input, so the
+    # row can move underneath them. Compare what ingestion saw with what is
+    # true now, and record it as a WARNING on the bundle. Non-blocking on
+    # purpose: an error-severity flag here is what stopped 24 reports from
+    # publishing earlier today. Measure the rate first.
+    drift = await detect_run_input_drift(cast(dict[str, Any], state))
+    if drift:
+        state["run_input_drift"] = drift  # type: ignore[typeddict-unknown-key]
     return await _decision_report.run(cast(dict[str, Any], state))
 
 

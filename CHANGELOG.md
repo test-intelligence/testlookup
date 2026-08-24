@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-23 — A run can change underneath the pipeline, and now says so (F-8)
+
+- **The declared contract is fiction.** Ten capability specs name `RunEvidenceBundleV1` as their input, but the bundle is built **only in the terminal stage** — no specialist ever receives one. They re-query instead: `anomaly_agent`, `change_ownership_agent`, `flaky_sentinel_agent` and `regression_watchman` each `select(TestRun)` in their own session, at their own point in the run. **49 independent sessions** across `agents/`.
+- If the row moves mid-pipeline — a concurrent finalize, an aggregate repair, a status update — two specialists reason over different numbers and the decision report combines them with nothing noticing.
+- **This measures it rather than re-architecting.** The real fix is to build the bundle once and thread it through every specialist: ten agents, dozens of query sites. That is a large, risky change to make on a hazard nobody has yet observed. Ingestion now fingerprints the authoritative counts and failed-test set; the terminal stage re-reads and compares; divergence lands as a quality flag the harness already counts. **If the rate is zero the refactor is unnecessary. If it is not, there is evidence for it.**
+
+### Three choices carried over from earlier the same day
+
+| Choice | Why |
+|---|---|
+| the flag is a **warning**, never an error | an error-severity flag on this exact bundle stopped 24 reports publishing this morning, before anyone knew the real rate |
+| a probe that cannot run reports `run_input_drift_unverified` | my first draft swallowed exceptions and returned "no drift" — a clean bill of health from a broken instrument, the third instance of that trap today |
+| the fingerprint is **declared on the contract** | `validate_agent_contract` silently strips undeclared keys; that is how a previous field reached no consumer while every test stayed green |
+
+- 14 regression guards, mutation-checked: escalating the flag to error severity fails the guard that keeps it non-blocking.
+
 ## 2026-08-23 — Context was dropped silently, in three different ways (F-5)
 
 - **"Silent" was literal.** Truncation happened at **six call sites and was recorded at none**. The only trace was a marker appended *into the prompt* — which reaches the model, not any metric — so a summary written from a half-dropped context was indistinguishable from one written whole.
