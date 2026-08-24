@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026-08-24 (stage lifecycle, verified) — Three invisible stages now record themselves
+
+``build-20260824-222106`` carries the lifecycle fix. Six deep pipelines on **fresh subjects**
+(`f6-before-008`…`014`, none with a prior deep run, so no run inherited a failed state).
+
+**Pipeline timeline** (`pipeline_event_log`, 6 runs):
+
+| stage | `stage_started` | `stage_completed` | `decision_made` |
+|---|---|---|---|
+| `contract_validation` | 0 → **6** | 0 → **6** | 0 → **6** |
+| `log_intelligence` | 0 → **6** | 0 → **6** | 0 → **6** |
+| `change_ownership` | 0 → **6** | 0 → **6** | 6 → 6 |
+| `regression_watchman` | 6 → 6 | 6 → 6 | 0 → 0 |
+
+**Stage rows** (`agent_stage_results`), where #840's backfill left only status and timestamps:
+
+| stage | rows | `decision_log` | `confidence_score` | `evidence_count` |
+|---|---|---|---|---|
+| `contract_validation` | 6 | 0 → **6** | 0 → **6** | 0 → **6** |
+| `log_intelligence` | 6 | 0 → **6** | 0 → **6** | 0 → **6** |
+| `change_ownership` | 6 | 0 → **6** | 0 → **6** | 0 → **6** |
+| `regression_watchman` | 6 | **0** | **0** | **0** |
+
+No regression on the critic: 6 of 6 `completed`, `workflow_verification` `passed`. The
+``_has_stage_identity`` warning fired **zero** times across both AI workers, so nothing took
+the no-pipeline-id path in practice — the guard is present, not load-bearing.
+
+**The reference implementation is now the least instrumented one.** ``regression_watchman``
+was the compliant example this fix was measured against, and it is the only specialist still
+writing no decision trail, no confidence and no evidence count: it calls ``mark_stage_done``
+without ``confidence_score`` / ``evidence_count`` and contains no ``log_decision`` call at
+all. Pre-existing and untouched here — those columns read ``0`` before this change too.
+
+**And it points at the next debt of exactly this shape.** ``agents.log-decision-present``
+is green, but its baseline carries **nine** tolerated entries — ``anomaly_agent``,
+``cluster_agent``, ``defect_commander``, ``flaky_sentinel_agent``, ``ingestion_agent``,
+``regression_watchman``, ``release_risk_agent``, ``test_health_agent``, ``triage_agent``.
+Nine agents produce no decision trail, and the guard reports that correctly to anyone who
+opens the baseline file. Tolerated, not unseen — the same distinction #843 had to correct,
+now applied before assuming rather than after. Being a ``BaseAgent`` subclass that calls the
+lifecycle is the floor, not the ceiling.
+
+
 ## 2026-08-24 (stage lifecycle) — A stage that ran recorded that it never ran
 
 ``BaseAgent`` carries the whole observability contract — ``stage_started`` /
