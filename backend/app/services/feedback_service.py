@@ -281,6 +281,13 @@ async def get_feedback_stats(db: AsyncSession) -> dict:
                 func.count(AIFeedback.id)
                 .filter(AIFeedback.exported.is_(False))
                 .label("unexported"),
+                # Folded into this same aggregate rather than issued as a
+                # second round-trip: test_feedback_stats_single_aggregate pins
+                # execute() to ONE call, and it is right to -- a status
+                # endpoint should not fan out queries to answer one question.
+                func.count(AIFeedback.id)
+                .filter(AIFeedback.corrected_category.isnot(None))
+                .label("labelled"),
             )
         )
     ).one()
@@ -352,9 +359,55 @@ async def get_training_status(db: AsyncSession, settings) -> dict:
     ).one()
     total = totals.total
     unexported = totals.unexported
+
+    # F-10: this endpoint reported the FINE-TUNE thresholds but not the ML
+    # activation gate -- the one that actually decides whether feedback changes
+    # anything. `auto` resolves ML -> LLM -> rules and ML only wins once a
+    # trained model exists, which needs ML_MIN_TRAINING_SAMPLES labels. Below
+    # that the LLM runs and learns nothing from corrections except
+    # exact-fingerprint replay, and the only mechanism that would improve the
+    # LLM itself (fine-tuning) is off by default, OpenAI-only, and refused under
+    # AI_OFFLINE_MODE.
+    #
+    # None of that was visible anywhere. Measured on a live deployment: 4,849
+    # analyses and ZERO feedback rows -- the loop had never been started, and
+    # nothing said so. Reporting the gate here makes the cold start legible
+    # instead of leaving someone to infer it from an unchanging model registry.
+    labelled = totals.labelled
+    try:
+        from app.services.ml.classifier import MLClassifier
+
+        model_available = bool(MLClassifier.is_available())
+    except Exception:  # pragma: no cover - readiness must not raise
+        model_available = False
+
+    min_required = int(getattr(settings, "ML_MIN_TRAINING_SAMPLES", 0) or 0)
+    if model_available:
+        blocked_reason = None
+    elif labelled < min_required:
+        blocked_reason = (
+            f"{labelled} of {min_required} labelled corrections collected; "
+            "until a model is trained, corrections only replay on an exact "
+            "test-fingerprint match"
+        )
+    else:
+        blocked_reason = (
+            f"{labelled} labelled corrections meet the {min_required} threshold "
+            "but no trained model is present yet"
+        )
+
     return {
         "finetune_enabled": settings.FINETUNE_ENABLED,
         "feedback": {"total": total, "unexported": unexported},
+        "ml_activation": {
+            "labelled_corrections": labelled,
+            "min_required": min_required,
+            "model_available": model_available,
+            # What `auto` would pick right now, so the answer to "is feedback
+            # doing anything?" is one field rather than an inference.
+            "auto_resolves_to": "ml" if model_available else "llm_or_rules",
+            "blocked_reason": blocked_reason,
+        },
         "thresholds": {
             "classifier": settings.FINETUNE_CLASSIFIER_MIN_EXAMPLES,
             "reasoning": settings.FINETUNE_REASONING_MIN_EXAMPLES,

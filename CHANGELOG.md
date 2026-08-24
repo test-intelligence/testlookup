@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-23 — The learning loop now says why it is not learning (F-10)
+
+- The finding is accurate in code: `auto` resolves ML → LLM → rules, ML only wins once a trained model exists (needs `ML_MIN_TRAINING_SAMPLES` labels), corrections match on an **exact** `test_fingerprint`, and fine-tuning — the one thing that would improve the LLM itself — is off by default, OpenAI-only, and refused under `AI_OFFLINE_MODE`.
+- **But measuring changed what is worth building.** On the deployment: **4,849 analyses, 0 feedback rows, 0 corrections.** The loop has never been started, so the problem is not "stuck below 200 labels" — nothing feeds it. The submission path is fully built and wired (`CorrectClassificationModal` → `aiFeedbackService` → feedback router) and simply unused.
+- Semantic correction reuse — the obvious fix — would be a **feature for data that does not exist**, so it is not built here. It would also repeat F-12's hazard: applying a correction by similarity is the same shape as reusing a neighbour's narrative.
+- The gap that *does* exist: `get_training_status` reported the **fine-tune** thresholds while omitting the **ML activation gate**, the one that decides whether feedback changes anything. It now returns labelled corrections against the threshold, whether a trained model exists, what `auto` resolves to right now, and a plain-language reason.
+
+  On this deployment that answers the question in one call — *0 of 200 labels, no model, auto → LLM, fine-tune disabled* — where previously all four had to be inferred from an unchanging model registry.
+
+- **The two blocked states are reported separately**, because they need different fixes: "0 of 200 labelled corrections collected" versus "250 labels meet the threshold but no model is trained yet". A single "not learning" would hide which one you have. Mutation-checked: collapsing them fails three guards.
+- **An existing guard caught a real regression.** The first version issued a **second DB round-trip** from a status endpoint, and `test_get_training_status_collapses_counts` pins `execute()` to one call (its comment reads `# was 2`). The count is folded into the same aggregate instead; a new guard asserts `db.calls == 1` so the invariant is protected from both sides. The only change to that test is its fake row gaining the third column the query now returns.
+
+**This does not fix the cold start — it makes it legible.** Whether to invest in semantic correction reuse should follow evidence of corrections actually being submitted.
+
 ## 2026-08-23 — The analysis stage stopped idling behind its own batches (F-7)
 
 - The stage wrapped a semaphore — which already bounds concurrency — in a batch loop that awaited `asyncio.gather` **once per batch**. That gather is a barrier: the slowest test in each batch idled the rest, so the stage cost the **sum of per-batch maxima** instead of total work divided by concurrency. It now gathers once over every test.

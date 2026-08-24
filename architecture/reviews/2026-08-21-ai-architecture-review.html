@@ -304,8 +304,8 @@
           <td><strong>Fixed &mdash; the four now fan out from one node and rejoin at <code>gap_detection</code>.</strong> The chain cost the <em>sum</em> of their latencies (15s + 20s + 10s + the watchman) where the slowest alone is 20s. The earlier parallel attempt double-executed, and the reason is recorded in the summary fan-in note: LangGraph schedules by <strong>superstep</strong>, so a join whose predecessors sit at <em>different depths</em> is reached twice &mdash; running it and everything downstream twice. The lesson was never &ldquo;do not fan out&rdquo;, it was <strong>keep every predecessor at the same depth</strong>, which all four now are. Safe on three counts, each checked: outputs are disjoint; every shared field already carries a reducer; and none reads another from state (<code>change_ownership_agent</code> mentions <code>regression_classification</code> but reads it from its own <code>baseline_diff</code> &mdash; a naive grep suggests a dependency that is not there). Guards assert the <em>compiled graph</em>, not its source. Originally: four independent read-only specialists run serially because a prior parallel fan-in double-executed the chain. Correct response, wrong steady state; the Investigator already shows the working pattern.<span class="src">workflow.py:944-1000 &middot; investigator/state.py:47-56</span></td>
         </tr>
         <tr>
-          <td class="id">F-10</td><td><span class="chip m">Major</span></td><td>Learning loop</td>
-          <td>The learning loop has a cold-start hole it cannot climb out of. <code>auto</code> resolves ML &rarr; LLM &rarr; rules, and ML wins whenever a trained model file exists &mdash; so labels <em>do</em> improve the preferred engine, but only after <code>ML_MIN_TRAINING_SAMPLES</code> (200) labels have been gathered. Until then, and on every project that never reaches 200, the LLM runs and gains nothing from feedback except exact-fingerprint correction replay. The one mechanism that would improve the LLM itself &mdash; fine-tuning &mdash; is off by default, OpenAI-only, and refused under <code>AI_OFFLINE_MODE</code>.<span class="src">analysis_router.py:104-121 &middot; ml/classifier.py:48-51 &middot; config.py:429,479 &middot; training/finetuner.py:71</span></td>
+          <td class="id">F-10</td><td><span class="chip w">Measured</span></td><td>Learning loop</td>
+          <td><strong>Measured, and the premise does not hold on this deployment.</strong> The cold-start hole is real in code &mdash; <code>FINETUNE_ENABLED</code> is False, fine-tuning is OpenAI-only and refused under <code>AI_OFFLINE_MODE</code>, and corrections match on an exact <code>test_fingerprint</code>. But the live state is <strong>4,849 analyses and ZERO feedback rows</strong>: the loop has never been started, so the problem is not &ldquo;stuck below 200 labels&rdquo;, it is that nothing feeds it. The submission path is fully built and wired (<code>CorrectClassificationModal</code> &rarr; <code>aiFeedbackService</code> &rarr; feedback router) and simply unused. Building semantic correction reuse would be a feature for data that does not exist, so instead the gate is now <em>visible</em>: <code>get_training_status</code> reported the FINE-TUNE thresholds while omitting the ML activation gate &mdash; the one that decides whether feedback changes anything. It now returns labelled corrections against <code>ML_MIN_TRAINING_SAMPLES</code>, whether a model exists, what <code>auto</code> resolves to, and a plain-language reason. <strong>This does not fix the cold start; it makes it legible.</strong> Originally: the learning loop has a cold-start hole it cannot climb out of. <code>auto</code> resolves ML &rarr; LLM &rarr; rules, and ML wins whenever a trained model file exists &mdash; so labels <em>do</em> improve the preferred engine, but only after <code>ML_MIN_TRAINING_SAMPLES</code> (200) labels have been gathered. Until then, and on every project that never reaches 200, the LLM runs and gains nothing from feedback except exact-fingerprint correction replay. The one mechanism that would improve the LLM itself &mdash; fine-tuning &mdash; is off by default, OpenAI-only, and refused under <code>AI_OFFLINE_MODE</code>.<span class="src">analysis_router.py:104-121 &middot; ml/classifier.py:48-51 &middot; config.py:429,479 &middot; training/finetuner.py:71</span></td>
         </tr>
         <tr>
           <td class="id">F-11</td><td><span class="chip ok">Fixed</span></td><td>Evaluation</td>
@@ -443,6 +443,16 @@
         the real semaphore path instead.</li>
       <li><strong>The mutation tested was the plausible-wrong one</strong> &mdash; hoisting the deadline check outside
         the semaphore still returns the right answer for an already-expired budget and still looks correct.</li>
+    </ul>
+
+    <h3>2026-08-23 (later) &mdash; F-10 measured</h3>
+    <ul>
+      <li><strong>Zero feedback rows against 4,849 analyses.</strong> The loop was never started, so the 200-label
+        threshold is not what is blocking it. Measuring first stopped a feature being built for absent data.</li>
+      <li><strong>The gate that matters was the one not reported.</strong> Fine-tune thresholds were surfaced; the ML
+        activation gate was not.</li>
+      <li><strong>An existing guard caught a second DB round-trip</strong> in the first version. The count is folded
+        into the same aggregate; the single-call invariant is now asserted from both sides.</li>
     </ul>
 
     <h3>Open backlog</h3>

@@ -55,7 +55,10 @@ async def test_get_training_status_collapses_counts():
     from app.services import feedback_service as svc
 
     db = SimpleNamespace(execute=AsyncMock(
-        return_value=_One(SimpleNamespace(total=10, unexported=4))
+        # `labelled` joined this aggregate when the ML activation gate was
+        # added (F-10) -- folded into the SAME query precisely so the
+        # single-call invariant below still holds.
+        return_value=_One(SimpleNamespace(total=10, unexported=4, labelled=0))
     ))
     settings = SimpleNamespace(
         FINETUNE_ENABLED=True,
