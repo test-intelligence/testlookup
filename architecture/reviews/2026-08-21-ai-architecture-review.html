@@ -289,7 +289,7 @@
         </tr>
         <tr>
           <td class="id">F-6</td><td><span class="chip ok">Fixed</span></td><td>Cost / latency</td>
-          <td><strong>Half fixed, and the other half measured away.</strong> The three JSON layers now issue together under one <code>gather</code>, so the stage costs the slowest round-trip instead of the sum of three. Nothing forced the ordering &mdash; disjoint output keys, no layer reads another, and the grounding pass and executive panel both run after all three return. The comment claiming they ran &ldquo;in sequence to respect LLM rate limits&rdquo; dates from the initial commit, not from an incident. The token half is <em>not</em> done, and measuring is why. Telemetry over 30 days (1,191 summary stages) reads <strong>2,365 input tokens at p50 across all four calls &mdash; about 591 per call</strong>, so the &ldquo;~2.6k-token context&rdquo; in the original finding is the stage <em>total</em>: all four calls together send roughly what was attributed to each one. Prefix reuse needs the shared block to clear the provider's minimum cacheable length, and the floor is <strong>1,024 tokens</strong> on the providers that offer caching at all &mdash; the <em>entire</em> per-call prompt here averages 591, so no shared prefix inside it can reach that floor no matter how the prompts are ordered. Reordering five registry prompts and re-hashing every attestation would buy nothing measurable. Folding four layers into one call would cut tokens, but concentrates into a single response the stage that produced <strong>100% of the pipeline's schema failures</strong>, and discards layer 1's bail-out. Scope is also smaller than it looks: only <strong>308 of 1,191</strong> stages make these calls at all; the other 880 make none and finish in 0.22s. On those 308 the stage takes a <strong>p50 of 41.2s</strong>. Originally: the summary issues four sequential calls over one identical ~2.6k-token context. Roughly 4&times; the necessary input tokens and 4&times; the latency for one report, with no prefix reuse and no parallelism.<span class="src">agents/summary_agent.py:504-547</span></td>
+          <td><strong>Half fixed, and the other half measured away.</strong> The three JSON layers now issue together under one <code>gather</code>, so the stage costs the slowest round-trip instead of the sum of three. Nothing forced the ordering &mdash; disjoint output keys, no layer reads another, and the grounding pass and executive panel both run after all three return. The comment claiming they ran &ldquo;in sequence to respect LLM rate limits&rdquo; dates from the initial commit, not from an incident. The token half is <em>not</em> done, and measuring is why. Telemetry over 30 days (1,191 summary stages) reads <strong>2,365 input tokens at p50 across all four calls &mdash; about 591 per call</strong>, so the &ldquo;~2.6k-token context&rdquo; in the original finding is the stage <em>total</em>: all four calls together send roughly what was attributed to each one. Prefix reuse needs the shared block to clear the provider's minimum cacheable length, and the floor is <strong>1,024 tokens</strong> on the providers that offer caching at all &mdash; the <em>entire</em> per-call prompt here averages 591, so no shared prefix inside it can reach that floor no matter how the prompts are ordered. Reordering five registry prompts and re-hashing every attestation would buy nothing measurable. Folding four layers into one call would cut tokens, but concentrates into a single response the stage that produced <strong>100% of the pipeline's schema failures</strong>, and discards layer 1's bail-out. <strong>Measured after deploying: p50 26.8s &rarr; 13.5s (&minus;50%)</strong> on identical payloads with input and output token counts matched &mdash; four sequential round-trips became two. Scope, corrected: the 880 stages that make no call are <em>not</em> cheap successes &mdash; <strong>766 are failures and 750 of those fall on 2026-08-08 alone</strong>. Excluding that incident day the four-call path is roughly <strong>70% of summary stages at rest</strong>, where the stage took a p50 of 41.2s organically. Originally: the summary issues four sequential calls over one identical ~2.6k-token context. Roughly 4&times; the necessary input tokens and 4&times; the latency for one report, with no prefix reuse and no parallelism.<span class="src">agents/summary_agent.py:504-547</span></td>
         </tr>
         <tr>
           <td class="id">F-7</td><td><span class="chip ok">Fixed</span></td><td>Throughput</td>
@@ -474,6 +474,50 @@
       <li><strong>Rejected: folding four layers into one call.</strong> It would cut tokens, but concentrates the
         stage that produced 100% of the pipeline's schema failures into a single response, and discards layer 1's
         bail-out on an unreachable provider.</li>
+    </ul>
+
+    <h3>2026-08-24 &mdash; F-6 deployed and measured</h3>
+    <p><strong>Summary-stage p50 halved: 26.8s &rarr; 13.5s (&minus;50%)</strong>, on a controlled before/after with
+      byte-identical payloads (20 runs per arm, 4 failures with real stack traces each, worker concurrency capping
+      in-flight AI stages at 4 in both arms). Backend image <code>build-20260824-f6</code>; the running worker was
+      verified to contain <code>asyncio.gather</code> and zero occurrences of the old sequencing comment.</p>
+    <div class="tw">
+      <table>
+        <caption>Matched on context size &mdash; summary stages that made all four LLM calls</caption>
+        <thead><tr><th>Band</th><th>Arm</th><th class="num">n</th><th class="num">avg in tok</th>
+          <th class="num">avg out tok</th><th class="num">p50</th><th class="num">mean</th><th class="num">p90</th></tr></thead>
+        <tbody>
+          <tr><td>light (matched)</td><td>before &mdash; sequential</td><td class="num">13</td><td class="num">536</td>
+            <td class="num">45</td><td class="num">26.8s</td><td class="num">25.0s</td><td class="num">32.7s</td></tr>
+          <tr><td>light (matched)</td><td><strong>after &mdash; concurrent</strong></td><td class="num">19</td><td class="num">492</td>
+            <td class="num">43</td><td class="num"><strong>13.5s</strong></td><td class="num">15.0s</td><td class="num">19.2s</td></tr>
+          <tr><td>heavy</td><td>before &mdash; sequential</td><td class="num">7</td><td class="num">1,524</td>
+            <td class="num">359</td><td class="num">48.2s</td><td class="num">50.3s</td><td class="num">67.1s</td></tr>
+          <tr><td>heavy</td><td>after &mdash; concurrent</td><td class="num">1</td><td class="num">1,161</td>
+            <td class="num">165</td><td class="num">22.4s</td><td class="num">22.4s</td><td class="num">&mdash;</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li><strong>The raw arm-vs-arm number was inflated and is not the one reported.</strong> Whole-arm it reads
+        29.3s &rarr; 13.8s (&minus;53%), but the before arm happened to draw <strong>7 heavy-context runs to the
+        after arm's 1</strong>, and heavy runs cost roughly twice what light ones do. Stratifying by context size
+        gives 26.8s &rarr; 13.5s on inputs matched within 8% and outputs within 4% &mdash; the stratification is
+        legitimate rather than cherry-picked because <em>both bands occur inside the before arm on one code version</em>,
+        so the variance is pre-existing and not induced by the change.</li>
+      <li><strong>&minus;50% is exactly what the structure predicts.</strong> Four sequential round-trips became two:
+        layer 1, then the slowest of three in parallel. At this context size per-call overhead dominates generation,
+        so halving the sequential round-trips halves the wall clock. The heavy band points the same way (48.2s &rarr;
+        22.4s) but n=1 cannot carry a claim.</li>
+      <li><strong>Correction to the scope stated when this shipped.</strong> It read &ldquo;a quarter of runs &mdash;
+        308 of 1,191 stages; the other 880 make none and finish in 0.22s&rdquo;, which implies 880 cheap successes.
+        <strong>766 of them are failures</strong>, and <strong>750 fall on 2026-08-08 alone</strong> &mdash; the same
+        incident day that already distorted the degraded-run rate. Excluding it, the four-call path is roughly
+        <strong>70% of summary stages at rest</strong>. The denominator was built out of one incident, which is the
+        error this document already records under the baseline reading.</li>
+      <li><strong>No rate-limit trouble.</strong> Tripling in-flight requests per stage produced 20 of 20 completed
+        four-call stages with zero fallbacks, so the &ldquo;respect LLM rate limits&rdquo; premise that justified the
+        sequencing did not hold here either.</li>
     </ul>
 
     <h3>Open backlog</h3>

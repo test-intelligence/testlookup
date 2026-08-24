@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-24 — F-6 measured on the deployment: summary p50 halved
+
+Deployed `build-20260824-f6` and ran a controlled before/after: 20 runs per arm, **byte-identical payloads**, same 4-way worker concurrency. The running worker was verified to contain `asyncio.gather` and zero occurrences of the old sequencing comment before the after arm was submitted.
+
+**Matched on context size** — summary stages that made all four LLM calls:
+
+| Band | Arm | n | avg in tok | avg out tok | p50 | mean | p90 |
+|---|---|---|---|---|---|---|---|
+| light (matched) | before — sequential | 13 | 536 | 45 | 26.8s | 25.0s | 32.7s |
+| light (matched) | **after — concurrent** | 19 | 492 | 43 | **13.5s** | 15.0s | 19.2s |
+| heavy | before — sequential | 7 | 1,524 | 359 | 48.2s | 50.3s | 67.1s |
+| heavy | after — concurrent | 1 | 1,161 | 165 | 22.4s | — | — |
+
+- **The raw arm-vs-arm number is inflated and is not the one reported.** Whole-arm it reads 29.3s → 13.8s (−53%), but the before arm drew **7 heavy-context runs to the after arm's 1**, and heavy runs cost roughly twice what light ones do. The matched comparison is **26.8s → 13.5s (−50%)** on inputs within 8% and outputs within 4%. Stratifying is legitimate rather than cherry-picking because **both bands occur inside the before arm on a single code version** — the variance is pre-existing, not induced by the change.
+- **−50% is exactly what the structure predicts.** Four sequential round-trips became two: layer 1, then the slowest of three in parallel. At this context size per-call overhead dominates generation, so halving the sequential round-trips halves the wall clock. The heavy band agrees directionally (48.2s → 22.4s) but n=1 cannot carry a claim.
+- **No rate-limit trouble.** Tripling in-flight requests per stage gave 20 of 20 completed four-call stages with zero fallbacks — the "respect LLM rate limits" premise behind the original sequencing did not hold here either.
+
+**Correction to the scope stated when this shipped.** The PR said "a quarter of runs — 308 of 1,191 stages; the other 880 make none and finish in 0.22s", which reads as 880 cheap successes. **766 of them are failures, and 750 fall on 2026-08-08 alone** — the same incident day that already distorted the degraded-run rate. Excluding it, the four-call path is roughly **70% of summary stages at rest**, not a quarter. The denominator was built out of one incident; bucketing by day before quoting a rate is a rule this project already learned once.
+
 ## 2026-08-23 — The summary's three JSON layers now run at the same time (F-6)
 
 - Layers 2, 3 and 4 were issued one after another, so the stage cost the **sum of three round-trips** where the slowest alone would do. They now issue together under one `asyncio.gather`.
