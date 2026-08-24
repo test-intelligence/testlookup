@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-24 (final) — A specialist with nothing to report said nothing at all
+
+``_check_contract_evidence_support`` flags any agent whose output key is populated but which emitted no entry in ``agent_contracts`` — `if has_output and not contract: missing_contracts.append(...)`. Each specialist node has several return paths, and only the full one built a contract.
+
+``log_intelligence_node``'s "no usable context" branch returned a populated ``log_findings`` — a status and a summary sentence — with no contract, and without marking itself skipped. **8 of 8 deep runs failed `contract_evidence_support` with `missing_contracts: ["log_intelligence"]`**, which fails the decision critic closed and took every run to ``partial``.
+
+An AST audit of all four specialist nodes found the same hole on **four** return paths, not one:
+
+| Node | Path | Firing? |
+|---|---|---|
+| `log_intelligence` | no usable context | **yes** — the 8/8 failure |
+| `log_intelligence` | flag disabled | latent |
+| `contract_validation` | flag disabled | latent |
+| `change_ownership` | flag disabled | latent |
+
+The three latent ones were invisible only because those flags happened to be on; turning any off reproduces the same critic failure under a different name.
+
+- One ``_degraded_contract`` helper now serves every early return, so the emptiness is **stated** — ``fallback_used`` plus a ``no_*`` reason, which is exactly what the verifier's ``no_evidence_ok`` branch reads — rather than absent. **An absent contract reads as a lost record, not a negative result.** Same lesson as the classifier that logged only failures: record the negative case, don't omit it.
+- ``regression_watchman``'s two early returns are deliberately untouched: they return ``{}``, which is falsy, so the verifier never asks for a contract.
+- The guard asserts the **property, not the four instances** — a static AST check that no specialist returns a populated output key without a contract, so a fifth path added later is covered. Three behavioural tests run the real ``_check_contract_evidence_support`` over each node's delta. Without the fix, 7 of 8 fail.
+
 ## 2026-08-24 (later still) — F-9 measured: the fan-out is real and worth ~1%
 
 With the stage-row fix deployed (`build-20260824-185303`) the four specialists finally record `started_at`/`completed_at`, so the fan-out can be read. 8 deep runs, flags on, all four stages timestamped 8/8:

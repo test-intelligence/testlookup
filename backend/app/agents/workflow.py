@@ -399,21 +399,56 @@ async def cluster_investigation_join_node(state: WorkflowState) -> dict:
     }
 
 
+def _degraded_contract(model, payload: dict, *, agent_name: str, decision_reason: str) -> dict:
+    """Contract for a specialist that produced findings but had no evidence.
+
+    Every early-return path in these nodes still writes its output key, and
+    ``_check_contract_evidence_support`` flags any populated output carrying no
+    contract -- so a stage that legitimately had nothing to look at has to SAY
+    so rather than stay silent. An absent contract reads as a lost record, not
+    as a negative result, and the decision critic fails closed on it.
+
+    ``fallback_used`` and a ``no_*`` reason are what make the emptiness legible
+    to the verifier's ``no_evidence_ok`` branch.
+    """
+    from app.models.agent_contracts import validate_agent_contract  # noqa: PLC0415
+
+    return validate_agent_contract(
+        model,
+        payload,
+        agent_name=agent_name,
+        fallback_used=True,
+        confidence=0,
+        evidence_refs=[],
+        decision_reason=decision_reason,
+    )
+
+
 async def contract_validation_node(state: WorkflowState) -> dict:
     """Run the default-off, server-scoped API contract specialist."""
     if not state.get("contract_agent_enabled"):
+        from app.models.agent_contracts import ContractAgentOutput  # noqa: PLC0415
+
+        findings = {
+            "status": "not_enough_evidence",
+            "violations": [],
+            "violation_count": 0,
+            "critical_count": 0,
+            "drift_count": 0,
+            "endpoints_checked": [],
+            "evidence_refs": [],
+            "summary": "Contract Agent feature flag is disabled.",
+            "suggests_product_bug": False,
+        }
+        contracted = _degraded_contract(
+            ContractAgentOutput,
+            {"contract_findings": findings},
+            agent_name="contract_validation",
+            decision_reason="no_contract_validation_flag_disabled",
+        )
         return {
-            "contract_findings": {
-                "status": "not_enough_evidence",
-                "violations": [],
-                "violation_count": 0,
-                "critical_count": 0,
-                "drift_count": 0,
-                "endpoints_checked": [],
-                "evidence_refs": [],
-                "summary": "Contract Agent feature flag is disabled.",
-                "suggests_product_bug": False,
-            },
+            "contract_findings": contracted.get("contract_findings", findings),
+            "agent_contracts": contracted.get("agent_contracts", {}),
             "skipped_stages": ["contract_validation"],
             "completed_stages": ["contract_validation"],
             "current_stage": "gap_detection",
@@ -459,14 +494,24 @@ async def log_intelligence_node(state: WorkflowState) -> dict:
     accepted.
     """
     if not state.get("log_intelligence_enabled"):
+        from app.models.agent_contracts import LogIntelligenceAgentOutput  # noqa: PLC0415
+
+        findings = {
+            "status": "not_enough_evidence",
+            "distributed_trace": {},
+            "log_anomaly": {},
+            "cluster_findings": [],
+            "log_summary": "Log Intelligence feature flag is disabled.",
+        }
+        contracted = _degraded_contract(
+            LogIntelligenceAgentOutput,
+            {"log_findings": findings},
+            agent_name="log_intelligence",
+            decision_reason="no_log_intelligence_flag_disabled",
+        )
         return {
-            "log_findings": {
-                "status": "not_enough_evidence",
-                "distributed_trace": {},
-                "log_anomaly": {},
-                "cluster_findings": [],
-                "log_summary": "Log Intelligence feature flag is disabled.",
-            },
+            "log_findings": contracted.get("log_findings", findings),
+            "agent_contracts": contracted.get("agent_contracts", {}),
             "skipped_stages": ["log_intelligence"],
             "completed_stages": ["log_intelligence"],
             "current_stage": "gap_detection",
@@ -515,14 +560,24 @@ async def log_intelligence_node(state: WorkflowState) -> dict:
             contexts.append(("run", context))
 
     if not contexts:
+        from app.models.agent_contracts import LogIntelligenceAgentOutput  # noqa: PLC0415
+
+        findings = {
+            "status": "not_enough_evidence",
+            "distributed_trace": {},
+            "log_anomaly": {},
+            "cluster_findings": [],
+            "log_summary": "Log evidence requires a scoped service and failure timestamp.",
+        }
+        contracted = _degraded_contract(
+            LogIntelligenceAgentOutput,
+            {"log_findings": findings},
+            agent_name="log_intelligence",
+            decision_reason="no_log_context",
+        )
         return {
-            "log_findings": {
-                "status": "not_enough_evidence",
-                "distributed_trace": {},
-                "log_anomaly": {},
-                "cluster_findings": [],
-                "log_summary": "Log evidence requires a scoped service and failure timestamp.",
-            },
+            "log_findings": contracted.get("log_findings", findings),
+            "agent_contracts": contracted.get("agent_contracts", {}),
             "completed_stages": ["log_intelligence"],
             "current_stage": "gap_detection",
             "errors": [],
@@ -617,8 +672,23 @@ async def regression_watchman_node(state: WorkflowState) -> dict:
 async def change_ownership_node(state: WorkflowState) -> dict:
     """Run the default-off baseline/change and ownership specialist."""
     if not state.get("change_ownership_enabled"):
+        from app.models.agent_contracts import ChangeOwnershipAgentOutput  # noqa: PLC0415
+
         result = {"status": "not_enough_evidence", "baseline_diff": {}, "ownership_resolutions": [], "summary": "Change/Ownership feature flag is disabled."}
-        return {"change_ownership_findings": result, "skipped_stages": ["change_ownership"], "completed_stages": ["change_ownership"], "current_stage": "gap_detection", "errors": []}
+        contracted = _degraded_contract(
+            ChangeOwnershipAgentOutput,
+            {"change_ownership_findings": result},
+            agent_name="change_ownership",
+            decision_reason="no_change_ownership_flag_disabled",
+        )
+        return {
+            "change_ownership_findings": contracted.get("change_ownership_findings", result),
+            "agent_contracts": contracted.get("agent_contracts", {}),
+            "skipped_stages": ["change_ownership"],
+            "completed_stages": ["change_ownership"],
+            "current_stage": "gap_detection",
+            "errors": [],
+        }
     result = await _change_ownership.run(dict(state))
     from app.models.agent_contracts import ChangeOwnershipAgentOutput, validate_agent_contract
     contracted = validate_agent_contract(ChangeOwnershipAgentOutput, {"change_ownership_findings": result}, agent_name="change_ownership", fallback_used=result.get("status") != "complete", confidence=70 if result.get("status") == "complete" else 0, evidence_refs=([{"source": "regression_diff_service", "kind": "baseline_diff"}, {"source": "ownership_resolver_service", "kind": "cluster_ownership"}] if result.get("status") == "complete" else []), decision_reason=str(result.get("summary") or "change_and_ownership_evaluated"))
