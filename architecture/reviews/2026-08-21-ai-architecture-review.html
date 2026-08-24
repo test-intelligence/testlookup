@@ -572,6 +572,45 @@
       gate passes while two agents in <code>app/agents/</code> are not subclasses &mdash; the guard has a
       blind spot. The F-9 number still is not measured; the instrument is one fix closer.</p>
 
+    <h3>2026-08-24 (final) &mdash; F-9 measured: the fan-out is real, and worth ~1%</h3>
+    <p>With the stage-row fix deployed (<code>build-20260824-185303</code>) the four specialists finally
+      record <code>started_at</code>/<code>completed_at</code>, so the fan-out can be read at last. 8 deep
+      runs, flags on, all four stages timestamped in 8 of 8.</p>
+    <div class="tw">
+      <table>
+        <caption>Four read-only specialists &mdash; serial cost vs actual wall clock</caption>
+        <thead><tr><th>Build</th><th class="num">serial sum</th><th class="num">slowest</th>
+          <th class="num">wall clock</th><th class="num">saved</th></tr></thead>
+        <tbody>
+          <tr><td>f6-after-001</td><td class="num">0.087s</td><td class="num">0.044s</td><td class="num"><strong>0.045s</strong></td><td class="num">0.042s</td></tr>
+          <tr><td>f6-after-002</td><td class="num">0.073s</td><td class="num">0.043s</td><td class="num"><strong>0.043s</strong></td><td class="num">0.030s</td></tr>
+          <tr><td>f6-after-003</td><td class="num">0.096s</td><td class="num">0.054s</td><td class="num"><strong>0.057s</strong></td><td class="num">0.039s</td></tr>
+          <tr><td>f6-after-004</td><td class="num">3.085s</td><td class="num">1.493s</td><td class="num"><strong>1.493s</strong></td><td class="num">1.592s</td></tr>
+          <tr><td>f6-after-005</td><td class="num">0.128s</td><td class="num">0.065s</td><td class="num"><strong>0.071s</strong></td><td class="num">0.057s</td></tr>
+          <tr><td>f6-after-006</td><td class="num">0.260s</td><td class="num">0.180s</td><td class="num"><strong>0.188s</strong></td><td class="num">0.072s</td></tr>
+          <tr><td>f6-after-007</td><td class="num">0.112s</td><td class="num">0.055s</td><td class="num"><strong>0.056s</strong></td><td class="num">0.056s</td></tr>
+          <tr><td>f6-after-008</td><td class="num">5.398s</td><td class="num">2.504s</td><td class="num"><strong>2.700s</strong></td><td class="num">2.698s</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>The concurrency is unambiguous.</strong> Wall clock tracks the <em>slowest</em> specialist,
+      not the sum &mdash; the ratio to slowest is 1.00&ndash;1.08 across all eight, where serial execution
+      would put it at 2&times;&ndash;2.2&times;.</p>
+    <p><strong>The magnitude is the finding.</strong> Aggregate: 9.239s serial &rarr; 4.653s wall, saving
+      <strong>4.586s against 380.1s of pipeline time &mdash; 1.2%</strong>, ranging 0.1% on the fast runs to
+      4.3% on the slowest. Mean pipeline 47.5s. O-4's <em>"collapses four serial stages into one wall-clock
+      slot"</em> is literally true and now measured; the slot is ~1.2s wide on a ~47s pipeline. Against O-4's
+      two-week estimate that makes F-9 <strong>Minor, not a headline performance win</strong>. Per-stage
+      means: <code>change_ownership</code> 0.55s, <code>contract_validation</code> 0.43s,
+      <code>regression_watchman</code> 0.14s, <code>cluster_investigation_dispatch</code> 0.05s,
+      <code>_join</code> 0.04s, <code>log_intelligence</code> 0.03s.</p>
+    <p><strong>Scope of the claim.</strong> Measured on <code>ZZ Worker Bench</code> synthetic runs &mdash;
+      12 tests, 4 failures each. On a run with hundreds of failures and real log volume the specialists would
+      plausibly do far more work and the absolute saving would grow. The ratio should hold; <strong>the 1.2%
+      is specific to this corpus and does not generalise.</strong> All 8 runs remain <code>partial</code>,
+      critic failed 8/8 &mdash; the <code>log_intelligence</code> missing-contract defect, independent of
+      F-9.</p>
+
     <h3>Open backlog</h3>
     <p>No Major findings remain open. Three Minor items are left: <strong>F-13</strong> (chat intent classification
       counts regex hits and breaks ties by enum declaration order, with no abstain path), <strong>F-14</strong>
@@ -582,11 +621,17 @@
       reuse should be permitted at all; and whether F-8's ten-agent bundle refactor is justified once drift data
       exists.</p>
     <p>The fourth &mdash; whether the four specialist feature flags should be enabled here &mdash; is
-      <strong>no longer an owner decision but a blocked one</strong>. Enabling them degrades every deep run until the
-      plan-rebuild fix lands, because the rebuilt plan reports them off whatever their real state, and the critic
-      fails closed against it. See the 2026-08-24 (later) entry above. Re-enable and re-measure F-9 once the fix is
-      deployed; the <code>feature_flags</code> rows now exist (disabled), so it is a toggle rather than a schema
-      change.</p>
+      <strong>resolved</strong>. They are enabled, the rows exist, and <strong>F-9 is measured</strong>: the
+      fan-out is genuinely concurrent and worth ~1.2% of pipeline wall clock on this corpus (see the
+      2026-08-24 (final) entry above). It took two fixes to get a number at all &mdash; the plan rebuild that
+      reported every flag off, then the stage rows that were never written for five stages that had been
+      running the whole time.</p>
+    <p><strong>The one thing still blocking a clean deep run</strong> is not F-9:
+      <code>log_intelligence</code> executes but emits no agent contract, so
+      <code>contract_evidence_support</code> fails and the decision critic fails closed &mdash; 8 of 8 runs
+      <code>partial</code>. Related and still open: <code>ContractAgent</code> and
+      <code>LogIntelligenceAgent</code> are not <code>BaseAgent</code> subclasses, which the
+      <code>agents.base-agent-subclass</code> gate is supposed to forbid but passes anyway.</p>
   </section>
 
   <section id="s3">

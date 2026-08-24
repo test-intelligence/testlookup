@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-24 (later still) — F-9 measured: the fan-out is real and worth ~1%
+
+With the stage-row fix deployed (`build-20260824-185303`) the four specialists finally record `started_at`/`completed_at`, so the fan-out can be read. 8 deep runs, flags on, all four stages timestamped 8/8:
+
+| build | serial sum | slowest | wall clock | saved |
+|---|---|---|---|---|
+| f6-after-001 | 0.087s | 0.044s | **0.045s** | 0.042s |
+| f6-after-002 | 0.073s | 0.043s | **0.043s** | 0.030s |
+| f6-after-003 | 0.096s | 0.054s | **0.057s** | 0.039s |
+| f6-after-004 | 3.085s | 1.493s | **1.493s** | 1.592s |
+| f6-after-005 | 0.128s | 0.065s | **0.071s** | 0.057s |
+| f6-after-006 | 0.260s | 0.180s | **0.188s** | 0.072s |
+| f6-after-007 | 0.112s | 0.055s | **0.056s** | 0.056s |
+| f6-after-008 | 5.398s | 2.504s | **2.700s** | 2.698s |
+
+- **The concurrency is unambiguous.** Wall clock tracks the *slowest* specialist, not the sum: the ratio to slowest is 1.00–1.08 across all eight, where serial execution would put it at 2×–2.2×.
+- **The magnitude is the finding.** Aggregate: 9.239s serial → 4.653s wall, saving **4.586s against 380.1s of pipeline time — 1.2%**, ranging 0.1% on the fast runs to 4.3% on the slowest. Mean pipeline 47.5s. O-4's "collapses four serial stages into one wall-clock slot" is literally true and now measured; the slot is ~1.2s wide on a ~47s pipeline. Against O-4's 2-week estimate that makes F-9 Minor, not a headline performance win.
+- Per-stage means over the 8 runs: `change_ownership` 0.55s, `contract_validation` 0.43s, `regression_watchman` 0.14s, `cluster_investigation_dispatch` 0.05s, `_join` 0.04s, `log_intelligence` 0.03s.
+- **Scope of the claim.** Measured on `ZZ Worker Bench` synthetic runs — 12 tests, 4 failures each. On a run with hundreds of failures and real log volume the specialists would plausibly do far more work and the absolute saving would grow. The ratio (wall ≈ slowest) should hold; **the 1.2% is specific to this corpus and does not generalise.**
+- All 8 runs are still `partial`, critic failed 8/8 — the `log_intelligence` missing-contract defect, independent of F-9 and not fixed here.
+
 ## 2026-08-24 (later) — A node that ran was recorded as never having run
 
 ``AgentStageResult`` rows seed ``pending`` and are flipped to ``completed`` by ``BaseAgent.mark_stage_done``. But ``BaseAgent.run`` is abstract, so that lifecycle is **opt-in per subclass** — fifteen agents call it and three do not:
