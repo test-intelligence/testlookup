@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-25 (onboarding) — The setup bar reached 100% on steps you only skipped
+
+The Getting Started progress card showed a bare percentage. That percentage is folded:
+``onboarding_service._build_status`` counts a step as done when its status is ``completed``
+**or** ``skipped`` (``completed_count`` and ``progress_pct`` both), so a self-hoster who
+skipped a step — Jira, telemetry — saw the bar climb toward, or sit at, 100% with no signal
+that the "progress" was skipped work rather than finished work. "Setup complete" then read as
+"everything is wired up" when it wasn't.
+
+- The card now shows a breakdown under the bar — **``{completed} of {total} steps completed``**,
+  with **``· {n} skipped``** appended when any were skipped — derived from the per-step
+  statuses (``status === 'completed'`` vs ``'skipped'``), not from the folded ``completed_count``.
+  So 2 done + 1 skipped of 3 reads *"2 of 3 steps completed · 1 skipped"* beside the 100% bar
+  instead of implying all three were done. No backend change: the data was already on the
+  ``OnboardingStatus`` the page fetches.
+- Regression test (``OnboardingPage.test.tsx``) pins the split against a folded 3/3→100%
+  fixture with one skipped step: the card must show *"2 of 3"* and *"1 skipped"*, never a bare
+  "3 of 3 completed".
+
 ## 2026-08-25 — The same tree failed the gate locally and passed it in CI
 
 ``repo.no-gitignored-source`` asks ``git check-ignore`` whether a source path matches one of

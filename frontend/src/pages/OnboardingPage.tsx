@@ -136,6 +136,14 @@ export default function OnboardingPage() {
 
   const steps = status?.steps ?? []
   const progressPct = status?.progress_pct ?? 0
+  // The backend folds skipped steps into completed_count / progress_pct
+  // (see onboarding_service._build_status: `status in ("completed", "skipped")`),
+  // so the bar can read 100% with steps a self-hoster only skipped, never did.
+  // Derive the true breakdown from the step statuses so the card is legible
+  // about what was actually done vs. skipped vs. still pending.
+  const doneCount = steps.filter(s => s.status === 'completed').length
+  const skippedCount = steps.filter(s => s.status === 'skipped').length
+  const totalCount = status?.total_count ?? steps.length
 
   async function handleSkip(stepKey: string) {
     if (!projectId) return
@@ -205,6 +213,19 @@ export default function OnboardingPage() {
             style={{ width: `${progressPct}%` }}
           />
         </div>
+        {totalCount > 0 && (
+          <p className="text-xs text-[var(--color-text-muted)] mt-2">
+            <span className="font-medium text-[var(--color-text-secondary)]">
+              {doneCount} of {totalCount}
+            </span>{' '}
+            {totalCount === 1 ? 'step' : 'steps'} completed
+            {skippedCount > 0 && (
+              <span className="text-[var(--color-text-faint)]">
+                {' · '}{skippedCount} skipped
+              </span>
+            )}
+          </p>
+        )}
         {status?.is_complete && (
           <p className="text-xs text-[var(--status-passed)] mt-2">
             Setup complete — you're ready to use all features.

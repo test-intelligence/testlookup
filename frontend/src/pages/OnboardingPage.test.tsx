@@ -74,6 +74,44 @@ describe('OnboardingPage', () => {
     expect(screen.getByText(/Setup Progress/i)).toBeInTheDocument()
   })
 
+  it('breaks the progress count into completed vs skipped, not the folded percentage', async () => {
+    // The backend folds skipped steps into completed_count / progress_pct, so
+    // the bar can read 100% with steps only skipped. The card must still show
+    // how many were actually done vs. skipped, derived from the step statuses.
+    mockProjectState.activeProjectId = 'proj-breakdown'
+    mockProjectState.activeProject = { id: 'proj-breakdown', name: 'Breakdown Project' }
+
+    const { onboardingService } = await import('@/services/onboardingService')
+
+    ;(onboardingService.detectProgress as ReturnType<typeof vi.fn>).mockResolvedValue({
+      project_id: 'proj-breakdown',
+      steps: [
+        { key: 'create_project', label: 'Create Project', description: 'Add a project', status: 'completed', completed_at: '2026-04-03T15:00:00Z' },
+        { key: 'upload_run', label: 'Upload Run', description: 'Load a run', status: 'completed', completed_at: '2026-04-03T15:00:00Z' },
+        { key: 'connect_jira', label: 'Connect Jira', description: 'Link Jira', status: 'skipped', completed_at: null },
+      ],
+      // Backend counts the skipped step as done: 3/3 -> 100%.
+      completed_count: 3,
+      total_count: 3,
+      progress_pct: 100,
+      is_complete: true,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/getting-started']}>
+        <Routes>
+          <Route path="/getting-started" element={<OnboardingPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    // Two of three were actually completed; the skipped one is called out
+    // separately rather than inflating the "completed" count.
+    expect(await screen.findByText(/2 of 3/)).toBeInTheDocument()
+    expect(screen.getByText(/steps completed/)).toBeInTheDocument()
+    expect(screen.getByText(/1 skipped/)).toBeInTheDocument()
+  })
+
   it('offers a Restore control for a skipped step and calls restoreStep', async () => {
     // A skip used to be a dead end — the card dimmed to opacity-50 with no
     // control. A self-hoster who skipped by accident must be able to reopen it.
