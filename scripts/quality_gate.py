@@ -2147,6 +2147,121 @@ def _homelab_build_tag_placeholder() -> list[Violation]:
     return violations
 
 
+_CAPABILITY_REGISTRY_REL = "backend/app/services/agent_capability_registry.py"
+_AGENT_PLANNER_REL = "backend/app/services/agent_planner.py"
+# Stage-order tuples in agent_planner.py. A workflow type added without being
+# listed here would make the guard read fewer planned stages than exist, so the
+# companion check below asserts this set still covers every _*_STAGES tuple.
+_PLANNER_STAGE_TUPLES = (
+    "_OFFLINE_STAGES", "_LIVE_STAGES", "_INVESTIGATION_STAGES", "_DEEP_STAGES",
+)
+_NON_PLANNED_EXECUTIONS = {"child_spawned", "on_demand", "runtime"}
+
+
+def _string_tuple_assignments(tree: ast.Module) -> dict[str, set[str]]:
+    """Every ``NAME = ("a", "b", ...)`` in a module, as {NAME: {values}}."""
+    found: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        if not isinstance(node.value, (ast.Tuple, ast.List, ast.Set)):
+            continue
+        values = {
+            elt.value for elt in node.value.elts
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+        }
+        if values:
+            found[target.id] = values
+    return found
+
+
+def _declared_capabilities(tree: ast.Module) -> dict[str, str]:
+    """{stage_name: execution} for every ``_capability("name", ...)`` call."""
+    found: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+        if name != "_capability" or not node.args:
+            continue
+        first = node.args[0]
+        if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+            continue
+        execution = "planned"
+        for kw in node.keywords:
+            if kw.arg == "execution" and isinstance(kw.value, ast.Constant):
+                execution = str(kw.value.value)
+        found[first.value] = execution
+    return found
+
+
+def _agents_capability_has_executor() -> list[Violation]:
+    """Every declared capability has something that actually runs it.
+
+    ``defect_commander`` sat in the registry with ``permission="mutating"`` and
+    ``dependencies=("root_cause_analysis",)`` -- reading exactly like a pipeline
+    stage -- while appearing in no workflow's stage order. It had never written
+    a single ``agent_stage_results`` row on the deployment. Nothing was wrong
+    with the agent; it runs on demand via ``POST /api/v1/agents/defect-command``.
+    What was wrong was the record, which described a stage nobody plans.
+
+    The rule has two directions, and both matter:
+
+    * a capability that says ``execution="planned"`` must appear in a stage
+      order, or it is describing a stage that never runs;
+    * a capability that appears in a stage order must NOT claim to be
+      ``on_demand`` / ``child_spawned`` / ``runtime``, or the declaration is
+      lying in the other direction.
+    """
+    registry_path = REPO_ROOT / _CAPABILITY_REGISTRY_REL
+    planner_path = REPO_ROOT / _AGENT_PLANNER_REL
+    if not registry_path.exists() or not planner_path.exists():
+        return []
+    try:
+        registry_tree = ast.parse(registry_path.read_text(encoding="utf-8"))
+        planner_tree = ast.parse(planner_path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    capabilities = _declared_capabilities(registry_tree)
+    tuples = _string_tuple_assignments(planner_tree)
+    planned: set[str] = set()
+    for name in _PLANNER_STAGE_TUPLES:
+        planned |= tuples.get(name, set())
+
+    # Fail loudly rather than silently reading an empty plan: an empty `planned`
+    # would report every capability as an orphan, and a renamed tuple would make
+    # this guard quietly stop covering a whole workflow type.
+    missing_tuples = [n for n in _PLANNER_STAGE_TUPLES if n not in tuples]
+    if missing_tuples:
+        return [Violation(
+            planner_path, 0,
+            f"stage-order tuple(s) {missing_tuples} not found — this guard reads "
+            "the planner by name and has lost sight of a workflow type",
+        )]
+
+    violations: list[Violation] = []
+    for stage, execution in sorted(capabilities.items()):
+        if execution == "planned" and stage not in planned:
+            violations.append(Violation(
+                registry_path, 0,
+                f"capability '{stage}' declares execution='planned' but no workflow "
+                "stage order contains it — it describes a stage nothing runs; give "
+                "it an executor or declare execution='on_demand'/'child_spawned'/'runtime'",
+            ))
+        elif execution in _NON_PLANNED_EXECUTIONS and stage in planned:
+            violations.append(Violation(
+                registry_path, 0,
+                f"capability '{stage}' declares execution='{execution}' but a workflow "
+                "stage order plans it — the declaration contradicts the planner",
+            ))
+    return violations
+
+
 def _agents_routing_metadata_populated() -> list[Violation]:
     """``analysis_router.classify_test`` must populate a ``_routing``
     dict on every return so per-test rows carry mode-used /
@@ -2719,6 +2834,22 @@ GUARDS: list[Guard] = [
         description="Every BaseAgent subclass calls self.log_decision(...) at least once.",
         check=_agents_log_decision_present,
         fix_hint="Log every non-trivial routing/fallback/skip branch via `await self.log_decision(...)`.",
+    ),
+    Guard(
+        name="agents.capability-has-executor",
+        description=(
+            "Every capability in the registry is actually executed by "
+            "something: planned in a workflow stage order, spawned as a "
+            "child, exposed on demand, or runtime bookkeeping."
+        ),
+        check=_agents_capability_has_executor,
+        fix_hint=(
+            "Either add the stage to the right _*_STAGES tuple in "
+            "app/services/agent_planner.py, or declare how it really runs: "
+            "_capability(\"name\", execution=\"on_demand\", ...). "
+            "defect_commander read as a mutating pipeline stage for months "
+            "while having no executor at all."
+        ),
     ),
     Guard(
         name="agents.routing-metadata",

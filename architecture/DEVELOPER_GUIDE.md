@@ -33,10 +33,10 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **27 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **28 guards**.
 15 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 12 ship at zero with **no baseline file at all** — those are
+fail CI. The other 13 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -105,6 +105,7 @@ fails if a *second* deleter appears.
 | `agents.base-agent-subclass` | every agent subclasses `BaseAgent` | Subclass it (support modules like `state.py`/`workflow.py` are exempt) |
 | `agents.log-decision-present` | every agent calls `self.log_decision(...)` | Log every non-trivial route/fallback/skip |
 | `agents.routing-metadata` | `classify_test()` populates `_routing` | Set `result['_routing'] = {...}` before returning |
+| `agents.capability-has-executor` † | a capability in `agent_capability_registry` that no workflow plans, or one that contradicts the planner | Add the stage to the right `_*_STAGES` tuple in `services/agent_planner.py`, or declare how it really runs: `_capability("name", execution="on_demand"/"child_spawned"/"runtime", ...)`. `defect_commander` read as a mutating pipeline stage depending on `root_cause_analysis` while having no executor at all — zero `agent_stage_results` rows in the deployment's entire history |
 
 ### Repo
 

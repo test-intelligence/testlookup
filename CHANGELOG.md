@@ -1,5 +1,55 @@
 # Changelog
 
+## 2026-08-24 (capability executors) — A mutating pipeline stage that nothing ran
+
+``agent_capability_registry`` is the canonical description of what the agent layer can do.
+``defect_commander`` sat in it looking exactly like a pipeline stage — ``permission="mutating"``,
+``dependencies=("root_cause_analysis",)``, ``concurrency_class="action_proposal"`` — and **no
+workflow's stage order contains it**. On the deployment it had never written a single
+``agent_stage_results`` row in the entire history of the table.
+
+Nothing is wrong with the agent. It runs on demand via ``POST /api/v1/agents/defect-command``
+(confirmed served on the deployment). What was wrong was the record, which described a
+mutating pipeline stage that nothing plans — the same drift as the two "not wired into any
+workflow node" comments corrected in #844, pointing the other way.
+
+**It is deliberately not wired into the pipeline.** ``_promote`` reads ``state["cluster_id"]``
+— one cluster — which the deep state does not carry, and it calls ``_create_jira_ticket``.
+Adding it to ``_DEEP_STAGES`` would need new cluster-selection logic and would start filing
+real tickets on every deep run. That is a product decision, not a wiring cleanup, so the
+record was corrected instead of the behaviour.
+
+- ``CapabilitySpecV1`` gains ``execution``: ``planned`` (default), ``child_spawned``,
+  ``on_demand``, ``runtime``. Three capabilities are in no stage order and now say why:
+  ``defect_commander`` is ``on_demand``, ``cluster_investigation`` is ``child_spawned``
+  (dispatched per cluster), ``workflow`` is ``runtime`` bookkeeping. The other twenty-four
+  are genuinely planned and keep the default.
+- Stored workflow plans are unaffected: plan stage dicts are assembled field by field, and
+  ``capability_registry_snapshot`` — the only thing that dumps a whole spec — has no callers.
+
+**Guard: `agents.capability-has-executor`**, at zero with no baseline. It holds both
+directions, because a one-way check is half a rule: a ``planned`` capability must appear in a
+stage order, and a capability in a stage order must not claim to be anything else.
+
+It also fails loudly if it loses sight of the planner. It reads ``_OFFLINE_STAGES`` /
+``_LIVE_STAGES`` / ``_INVESTIGATION_STAGES`` / ``_DEEP_STAGES`` **by name**, so a renamed or
+added workflow type would otherwise shrink the planned set silently and turn the whole guard
+into a generator of false orphans — or, worse, quietly stop covering a workflow.
+
+Three mutations, three different failures:
+
+| mutation | what fails |
+|---|---|
+| revert `defect_commander` to `execution="planned"` (the original defect) | `declares execution='planned' but no workflow stage order contains it` |
+| mark the planned `release_risk` as `on_demand` | `the declaration contradicts the planner` |
+| rename `_DEEP_STAGES` | `this guard reads the planner by name and has lost sight of a workflow type` |
+
+The regression test additionally pins each non-planned capability to its named executor, so
+folding ``defect_commander`` into the deep pipeline has to be a deliberate edit rather than a
+quiet one — it files tickets — and asserts the ``on_demand`` endpoint actually exists, since
+declaring an executor that does not exist would be the same defect wearing a nicer label.
+
+
 ## 2026-08-24 (decision trail, verified) — Every agent that ran said why
 
 ``build-20260824-231437``. Sixteen deep pipelines on fresh subjects (two batches: six, then

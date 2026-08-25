@@ -48,6 +48,13 @@ class CapabilitySpecV1(RuntimeContract):
     max_retries: int = Field(ge=0)
     fallback: str
     concurrency_class: str = "default"
+    # How this capability actually gets executed. "planned" means a workflow
+    # type lists it in its stage order; the other three are real executors that
+    # a stage list will never contain. Declaring it is what stops a capability
+    # from *reading* like a pipeline stage that nothing runs -- defect_commander
+    # sat here with permission="mutating" and dependencies=("root_cause_analysis",)
+    # and had never produced a single agent_stage_results row.
+    execution: Literal["planned", "child_spawned", "on_demand", "runtime"] = "planned"
 
 
 class TaskBudgetV1(RuntimeContract):
