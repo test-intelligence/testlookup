@@ -28,7 +28,7 @@ cp .env.example .env           # edit secrets before starting
 make dev                       # boots postgres + mongo + redis + minio + backend + frontend
 ```
 
-Backend: `http://localhost:8000/docs` (Swagger). Frontend: `http://localhost:3000`.
+Backend API reference: `http://localhost:8000/api-docs` (Swagger). In-app user documentation: `http://localhost:3000/docs`. Frontend: `http://localhost:3000`.
 
 ### Full mode (with local LLM)
 

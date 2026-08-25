@@ -13,7 +13,8 @@ wrong — nobody gets a stack trace from a stale sentence.
 
 So the constants are asserted from BOTH sides. The frontend test
 (`frontend/src/pages/DocsPage.test.tsx`) pins that the page renders them; this
-one pins that they still match Python. Change a weight in the engine and this
+one pins that they still match Python. Both now read
+`frontend/src/content/docs/*.md`, which is what the page renders. Change a weight in the engine and this
 fails until the documentation is updated too.
 """
 from __future__ import annotations
@@ -23,15 +24,36 @@ import pathlib
 import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
-DOCS_PAGE = REPO / "frontend" / "src" / "pages" / "DocsPage.tsx"
+# The prose moved out of the page component into content files. DocsPage.tsx is
+# now the shell — nav, routing, Markdown rendering — and holds no documentation
+# text, so asserting against it would pass vacuously forever. Read what the page
+# actually renders instead.
+# NOT "docs" — `.gitignore` carries a bare `docs/` rule that matches at every
+# depth, so a directory of that name anywhere in the tree is silently
+# excluded from every commit. The content lived there briefly and was
+# invisible to git and to the Mermaid validator until the guard caught it.
+DOCS_CONTENT = REPO / "frontend" / "src" / "content" / "guide"
 
 pytestmark = pytest.mark.skipif(
-    not DOCS_PAGE.exists(), reason="frontend not present in this checkout"
+    not DOCS_CONTENT.is_dir(), reason="frontend not present in this checkout"
 )
 
 
 def _docs() -> str:
-    return DOCS_PAGE.read_text(encoding="utf-8")
+    """Every documentation page the app renders, concatenated.
+
+    Concatenated rather than per-file because these assertions are about the
+    documentation as a whole: the reader does not care which file states the
+    observation floor, only that the guide does.
+    """
+    raw = chr(10).join(
+        sorted(p.read_text(encoding="utf-8") for p in DOCS_CONTENT.glob("*.md"))
+    )
+    # Strip emphasis markers before matching. These assertions are about what
+    # the READER sees; "Fewer than **5**" renders as "Fewer than 5", and a
+    # content check that a bold marker can defeat is checking formatting, not
+    # content.
+    return raw.replace("**", "").replace("`", "")
 
 
 def test_the_docs_page_is_readable_and_non_trivial():
@@ -39,7 +61,10 @@ def test_the_docs_page_is_readable_and_non_trivial():
     to a stub they would all pass vacuously."""
     src = _docs()
     assert len(src) > 4_000, f"docs page looks like a stub ({len(src)} bytes)"
-    for marker in ("flaky", "GO / NO-GO", "AI reports"):
+    # The three areas whose constants this file pins. Labels changed when the
+    # documentation was restructured; these are the subjects, not the headings,
+    # so a future rename does not silently empty this guard.
+    for marker in ("flaky", "risk dimensions", "advisory, not authoritative"):
         assert marker in src, f"section marker {marker!r} missing"
 
 
@@ -149,3 +174,45 @@ def test_the_docs_state_that_bands_only_tighten():
     mis-predict their own gate."""
     src = _docs().lower()
     assert "never unblock" in src or "can never unblock" in src
+
+
+# ── The content must actually be in the repository ──────────────────────────
+
+
+def test_every_documentation_file_is_tracked_by_git():
+    """A content file on disk but not in git is invisible to CI.
+
+    The failure this exists for: ``.gitignore`` ignores ``AGENTS.md`` at every
+    depth (coding-agent instruction files, deliberately). A case-insensitive
+    checkout — every Windows clone — matches ``agents.md`` too, so the page's
+    agent documentation sat on disk, rendered locally and passed every local
+    test while never being committed. CI checked out 18 of 19 content files and
+    failed there and only there.
+
+    Disk-vs-git, not disk-vs-registry: the registry check cannot see this,
+    because locally the file is present in both.
+
+    This lives in the Python suite rather than the frontend one because the
+    frontend build runs ``tsc`` over its tests, and Node built-ins are not typed
+    there — the sibling promotion regressions avoid them for the same reason.
+    """
+    import subprocess
+
+    on_disk = sorted(p.name for p in DOCS_CONTENT.glob("*.md"))
+    assert len(on_disk) > 15, (
+        f"only {len(on_disk)} content files found — this check would pass vacuously"
+    )
+
+    proc = subprocess.run(
+        ["git", "ls-files", "--", "*.md"],
+        cwd=DOCS_CONTENT, capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:  # pragma: no cover - not a git checkout
+        pytest.skip("git unavailable")
+    tracked = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+
+    untracked = [name for name in on_disk if name not in tracked]
+    assert not untracked, (
+        "documentation files on disk but not in git — CI will never see them, "
+        f"and neither will the Mermaid validator: {untracked}"
+    )

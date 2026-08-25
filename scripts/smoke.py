@@ -56,8 +56,8 @@ def run_checks() -> list[Check]:
     checks.append(Check("backend liveness (/health/live)", st == 200, True,
                         err or f"HTTP {st}"))
 
-    st, _, err = probe(f"{API}/openapi.json")
-    checks.append(Check("API schema (/openapi.json)", st == 200, True,
+    st, _, err = probe(f"{API}/api-docs/openapi.json")
+    checks.append(Check("API schema (/api-docs/openapi.json)", st == 200, True,
                         err or f"HTTP {st}"))
 
     st, body, err = probe(f"{WEB}/")

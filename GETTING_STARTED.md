@@ -114,7 +114,7 @@ Then ask your AI assistant: *"List all QA projects in TestLookup"* or *"Show me 
 
 ## Step 7 -- Try the API directly
 
-Swagger UI is at http://localhost:8000/docs. Key endpoints:
+Swagger UI is at http://localhost:8000/api-docs (the user documentation lives at /docs). Key endpoints:
 
 | Method | Path | Purpose |
 |--------|------|---------|

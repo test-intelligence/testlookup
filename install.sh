@@ -83,7 +83,8 @@ cat <<EOF
 TestLookup is starting. Give it a minute for migrations + health checks, then:
 
   Dashboard : http://localhost:3000
-  API docs  : http://localhost:8000/docs
+  User docs : http://localhost:3000/docs
+  API ref   : http://localhost:8000/api-docs
 
 Useful commands (run from ./$DIR):
   $DC -f $COMPOSE_FILE ps           # service status

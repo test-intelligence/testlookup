@@ -123,9 +123,24 @@ app = FastAPI(
     title="TestLookup",
     description="360° AI-Powered Software Testing Intelligence Platform",
     version=settings.APP_VERSION,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    # The API reference lives at /api-docs, not /docs.
+    #
+    # /docs belongs to the in-app user documentation (frontend DocsPage). The
+    # ingress used to route /docs to this service, so Swagger UI shadowed it:
+    # the sidebar's "Documentation" link worked (client-side routing never hits
+    # the server) while any direct link, bookmark or refresh of /docs landed on
+    # Swagger instead. A page you can only reach by not linking to it is not
+    # reachable documentation.
+    docs_url="/api-docs",
+    redoc_url="/api-docs/redoc",
+    # Under the /api-docs prefix on purpose. The ingress routes /api/,
+    # /webhooks/, /ws/, /health/, /metrics and (now) /api-docs to this service;
+    # everything else falls through to the SPA. A bare /openapi.json therefore
+    # returned the frontend's HTML, so Swagger UI rendered its shell and could
+    # never load the spec -- broken from outside the cluster for as long as the
+    # rule has existed. Serving the spec under the same routed prefix as the UI
+    # keeps the two together and reachable.
+    openapi_url="/api-docs/openapi.json",
     lifespan=lifespan,
 )
 
@@ -262,5 +277,8 @@ async def root():
     return JSONResponse({
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
-        "docs": "/docs",
+        # The API reference. /docs is the in-app user documentation, served by
+        # the frontend.
+        "api_docs": "/api-docs",
+        "user_docs": "/docs",
     })

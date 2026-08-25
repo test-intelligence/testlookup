@@ -132,6 +132,10 @@ const appRoutes: AppRoute[] = [
   { path: 'overview', component: OverviewPage },
   { path: 'getting-started', component: OnboardingPage },
   { path: 'docs', component: DocsPage },
+  // Deep link to one documentation topic. Without this, /docs/flaky 404s and
+  // no section of the guide can be linked to from an issue, a chat message or
+  // another page.
+  { path: 'docs/:docId', component: DocsPage },
   { path: 'value-metrics', component: ValueMetricsPage },
   { path: 'intelligence', component: IntelligenceHubPage },
   { path: 'runs', component: RunsPage },

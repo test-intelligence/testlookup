@@ -38,18 +38,22 @@ import pytest
 
 pytestmark = pytest.mark.regression
 
+# The prose moved out of DocsPage.tsx into Markdown content files; the page
+# component is now the shell and holds no table to read.
 DOCS_PAGE = (
     pathlib.Path(__file__).resolve().parents[3]
-    / "frontend" / "src" / "pages" / "DocsPage.tsx"
+    / "frontend" / "src" / "content" / "guide" / "ai-agents.md"
 )
 
 
 def _documented_stages() -> list[str]:
-    """Stage names from the ``['stage', 'description']`` table rows."""
+    """Stage names from the first column of the Markdown stage table."""
     src = DOCS_PAGE.read_text(encoding="utf-8")
-    head = src.index("head={['Stage', 'What the agent does']}")
-    table = src[head : head + 1200]
-    return re.findall(r"\['([a-z_]+)', '", table)
+    head = src.index("| Stage | What it does | Permission |")
+    table = src[head:]
+    blank = chr(10) + chr(10)
+    table = table[: table.index(blank, table.index(chr(10)))]
+    return re.findall(r"^\|\s*`([a-z_]+)`\s*\|", table, re.MULTILINE)
 
 
 @pytest.mark.skipif(not DOCS_PAGE.exists(), reason="frontend tree not present")
@@ -63,36 +67,48 @@ def test_the_guard_can_read_the_docs_table():
 
 
 @pytest.mark.skipif(not DOCS_PAGE.exists(), reason="frontend tree not present")
-def test_the_documented_table_is_exactly_the_standard_pipeline():
-    from app.agents.workflow import _PIPELINE_STAGES
+def test_the_documented_table_is_exactly_the_deep_pipeline():
+    """The page states it documents the DEEP pipeline, so it must match that
+    list exactly, in order.
+
+    The original defect was a table matching NEITHER stage list, so a reader
+    counted a different number of stages than the product ran. WHICH list the
+    table describes is a choice; describing one that does not exist is not.
+    """
+    from app.agents.workflow import _DEEP_PIPELINE_STAGES
 
     documented = _documented_stages()
-    assert documented == list(_PIPELINE_STAGES), (
-        "the /docs pipeline table no longer matches _PIPELINE_STAGES.\n"
-        f"  documented: {documented}\n"
-        f"  actual    : {list(_PIPELINE_STAGES)}\n"
-        "The table describes the STANDARD pipeline; deep-only stages belong in "
-        "the prose beneath it, not in the table, or readers count a different "
-        "number of stages than the product runs."
+    assert documented == list(_DEEP_PIPELINE_STAGES), (
+        "the /docs pipeline table no longer matches _DEEP_PIPELINE_STAGES. "
+        f"documented={documented} actual={list(_DEEP_PIPELINE_STAGES)}"
     )
 
 
 @pytest.mark.skipif(not DOCS_PAGE.exists(), reason="frontend tree not present")
-def test_deep_only_stages_are_not_presented_as_standard():
-    """``failure_clustering`` is the one that was wrong; pin the whole class.
+def test_the_page_says_which_pipeline_the_table_describes():
+    """A complete table, mislabelled, is the same defect as an incomplete one."""
+    src = DOCS_PAGE.read_text(encoding="utf-8").lower()
+    assert "deep" in src, "the page never says which workflow it documents"
+    assert "standard" in src and "five stages" in src, (
+        "the page must tell the reader a standard run is shorter than this table"
+    )
 
-    Any stage that exists only in the deep chain must stay out of the table.
+
+@pytest.mark.skipif(not DOCS_PAGE.exists(), reason="frontend tree not present")
+def test_every_deep_only_stage_is_documented():
+    """The inverse of the original defect.
+
+    ``failure_clustering`` was the stage that was wrong: documented as standard
+    when a standard run never executes it. Now that the table IS the deep list,
+    the risk flips -- a deep-only stage MISSING leaves a reader unable to
+    account for a stage they can see on the Intelligence page.
     """
     from app.agents.workflow import _DEEP_PIPELINE_STAGES, _PIPELINE_STAGES
 
     deep_only = set(_DEEP_PIPELINE_STAGES) - set(_PIPELINE_STAGES)
-    assert deep_only, "no deep-only stages found — the guard is checking nothing"
-    leaked = sorted(deep_only & set(_documented_stages()))
-    assert not leaked, (
-        f"deep-only stages are listed as standard pipeline stages: {leaked}. "
-        "A standard run never executes them, so the documented count will not "
-        "match what the Intelligence page shows."
-    )
+    assert deep_only, "no deep-only stages found -- the guard is checking nothing"
+    missing = sorted(deep_only - set(_documented_stages()))
+    assert not missing, f"deep-only stages absent from the documented table: {missing}"
 
 
 def test_the_two_stage_lists_are_still_distinct():

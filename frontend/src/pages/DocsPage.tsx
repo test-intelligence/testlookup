@@ -1,109 +1,214 @@
 /**
- * In-app user documentation (backlog B-2).
+ * In-app user documentation.
  *
- * Written against what the code ACTUALLY does. Every number, threshold and
- * weight below was read out of the implementation, and each section names the
- * module it describes so a reader can check the claim:
+ * Content lives in `src/content/guide/*.md`, registered in `manifest.ts`. This
+ * component is the shell: navigation, filtering, deep links and Markdown
+ * rendering. It deliberately holds no prose.
  *
- *   flaky scoring        services/flaky_score_service.py
- *   GO / NO-GO           services/criticality_service.py, release_council_service.py
- *   analysis routing     services/analysis_router.py
- *   agents               agents/*.py  (stage_name on each)
+ * Why the split — the previous version carried five sections of hand-written
+ * JSX. Prose inside a component is invisible to every tool that reads Markdown,
+ * including this repository's Mermaid validator (which walks git-tracked
+ * `*.md`), and adding a section meant editing React. Diagrams written in the
+ * content files are now checked by CI for free.
  *
- * Deliberately also documents what the product does NOT do — "insufficient
- * data" states, advisory-not-authoritative AI output, and the conditions under
- * which a summary is deterministic rather than model-written. Documentation
- * that overstates the product is the same defect class as a field that reports
- * a value nothing produces.
+ * The documentation's stated values carry over unchanged: every number is read
+ * out of the implementation, each claim names the module it came from, and the
+ * pages say plainly what the product does NOT do. Documentation that overstates
+ * the product is the same defect class as a field reporting a value nothing
+ * produces.
+ *
+ * Routing: `/docs` shows the default page, `/docs/:docId` deep-links one. Both
+ * are served by the SPA — the ingress sends the API reference to `/api-docs`.
  */
-import { useState } from 'react'
-import {
-  Rocket, Sparkles, Bot, Repeat, GaugeCircle, ChevronRight,
-} from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { ChevronRight, Search as SearchIcon } from 'lucide-react'
 
 import PageHeader from '@/components/ui/PageHeader'
+import {
+  DOC_GROUPS,
+  DOC_PAGES,
+  DEFAULT_DOC_ID,
+  findDocPage,
+  type DocPage,
+} from '@/content/guide/manifest'
+import { DOC_SOURCES } from '@/content/guide/sources'
 
-type SectionId = 'start' | 'reports' | 'agents' | 'flaky' | 'gate'
-
-const SECTIONS: { id: SectionId; label: string; icon: typeof Rocket }[] = [
-  { id: 'start',   label: 'Start a new project', icon: Rocket },
-  { id: 'reports', label: 'Using AI reports',    icon: Sparkles },
-  { id: 'agents',  label: 'How the AI agents work', icon: Bot },
-  { id: 'flaky',   label: 'How flaky tests are determined', icon: Repeat },
-  { id: 'gate',    label: 'How GO / NO-GO is decided', icon: GaugeCircle },
-]
-
-function H({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-base font-semibold text-[var(--color-text)] mt-1 mb-2">{children}</h2>
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
 }
 
-function P({ children }: { children: React.ReactNode }) {
-  return <p className="text-[13.5px] leading-relaxed text-[var(--color-text-muted)] mb-3">{children}</p>
+/** Headings for the on-page table of contents. */
+function headingsOf(markdown: string): { depth: number; text: string; id: string }[] {
+  const out: { depth: number; text: string; id: string }[] = []
+  let inFence = false
+  for (const line of markdown.split('\n')) {
+    if (line.trimStart().startsWith('```')) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    const m = /^(#{2,3})\s+(.*)$/.exec(line)
+    if (m) out.push({ depth: m[1].length, text: m[2].trim(), id: slugify(m[2].trim()) })
+  }
+  return out
 }
 
-function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
+/**
+ * A fenced ```mermaid block. The app does not bundle a Mermaid renderer, so the
+ * source is shown as labelled, copyable text. Every diagram in the content is
+ * followed by a written description of the same flow — a picture nobody can
+ * render is not an explanation, and a screen reader never gets one anyway.
+ */
+function Diagram({ source }: { source: string }) {
   return (
-    <div className="flex gap-3 mb-3">
-      <div
-        className="flex-none w-6 h-6 rounded-full grid place-items-center text-[11px] font-semibold"
+    <figure className="mb-3">
+      <figcaption className="text-[12px] uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
+        Diagram source (Mermaid)
+      </figcaption>
+      <pre
+        className="overflow-x-auto rounded-lg border p-3 text-[12px] leading-relaxed"
         style={{
-          background: 'color-mix(in srgb, var(--color-accent) 14%, transparent)',
-          color: 'var(--color-accent)',
+          borderColor: 'var(--color-border)',
+          background: 'var(--color-bg-secondary)',
+          color: 'var(--color-text-muted)',
         }}
       >
-        {n}
-      </div>
-      <div className="min-w-0">
-        <div className="text-[13.5px] font-medium text-[var(--color-text)]">{title}</div>
-        <div className="text-[13px] leading-relaxed text-[var(--color-text-muted)]">{children}</div>
-      </div>
-    </div>
+        <code>{source}</code>
+      </pre>
+    </figure>
   )
 }
 
-function Table({ head, rows }: { head: string[]; rows: (string | number)[][] }) {
-  return (
-    <div className="overflow-x-auto mb-3">
-      <table className="w-full text-[13px] border border-[var(--color-border)] rounded-lg overflow-hidden">
-        <thead className="bg-[var(--color-bg-secondary)]">
-          <tr>
-            {head.map(h => (
-              <th key={h} className="text-left px-3 py-2 font-medium text-[var(--color-text)]">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i} className="border-t border-[var(--color-border)]">
-              {r.map((c, j) => (
-                <td key={j} className="px-3 py-2 text-[var(--color-text-muted)] align-top">{c}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-/** Something the product deliberately does not claim. */
-function Honest({ children }: { children: React.ReactNode }) {
-  return (
+const MARKDOWN_COMPONENTS = {
+  h1: (p: { children?: React.ReactNode }) => (
+    <h2 className="text-lg font-semibold text-[var(--color-text)] mt-1 mb-3">{p.children}</h2>
+  ),
+  h2: (p: { children?: React.ReactNode }) => (
+    <h2
+      id={slugify(String(p.children ?? ''))}
+      className="text-base font-semibold text-[var(--color-text)] mt-6 mb-2 scroll-mt-4"
+    >
+      {p.children}
+    </h2>
+  ),
+  h3: (p: { children?: React.ReactNode }) => (
+    <h3
+      id={slugify(String(p.children ?? ''))}
+      className="text-[14px] font-semibold text-[var(--color-text)] mt-4 mb-2 scroll-mt-4"
+    >
+      {p.children}
+    </h3>
+  ),
+  p: (p: { children?: React.ReactNode }) => (
+    <p className="text-[13.5px] leading-relaxed text-[var(--color-text-muted)] mb-3">{p.children}</p>
+  ),
+  ul: (p: { children?: React.ReactNode }) => (
+    <ul className="list-disc pl-5 mb-3 text-[13.5px] leading-relaxed text-[var(--color-text-muted)] space-y-1">
+      {p.children}
+    </ul>
+  ),
+  ol: (p: { children?: React.ReactNode }) => (
+    <ol className="list-decimal pl-5 mb-3 text-[13.5px] leading-relaxed text-[var(--color-text-muted)] space-y-1">
+      {p.children}
+    </ol>
+  ),
+  strong: (p: { children?: React.ReactNode }) => (
+    <strong className="font-semibold text-[var(--color-text)]">{p.children}</strong>
+  ),
+  blockquote: (p: { children?: React.ReactNode }) => (
     <div
       className="rounded-lg border px-3 py-2.5 mb-3 text-[13px] leading-relaxed"
       style={{
-        borderColor: 'color-mix(in srgb, var(--status-broken) 35%, transparent)',
-        background: 'color-mix(in srgb, var(--status-broken) 8%, transparent)',
+        borderColor: 'color-mix(in srgb, var(--color-accent) 35%, transparent)',
+        background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)',
         color: 'var(--color-text-muted)',
       }}
     >
-      {children}
+      {p.children}
     </div>
-  )
+  ),
+  table: (p: { children?: React.ReactNode }) => (
+    <div className="overflow-x-auto mb-3">
+      <table className="w-full text-[13px] border border-[var(--color-border)] rounded-lg overflow-hidden">
+        {p.children}
+      </table>
+    </div>
+  ),
+  thead: (p: { children?: React.ReactNode }) => (
+    <thead className="bg-[var(--color-bg-secondary)]">{p.children}</thead>
+  ),
+  th: (p: { children?: React.ReactNode }) => (
+    <th className="text-left px-3 py-2 font-medium text-[var(--color-text)]">{p.children}</th>
+  ),
+  tr: (p: { children?: React.ReactNode }) => (
+    <tr className="border-t border-[var(--color-border)]">{p.children}</tr>
+  ),
+  td: (p: { children?: React.ReactNode }) => (
+    <td className="px-3 py-2 text-[var(--color-text-muted)] align-top">{p.children}</td>
+  ),
+  a: (p: { href?: string; children?: React.ReactNode }) => (
+    <a
+      href={p.href}
+      className="underline underline-offset-2"
+      style={{ color: 'var(--color-accent)' }}
+    >
+      {p.children}
+    </a>
+  ),
+  code: (p: { className?: string; children?: React.ReactNode }) => {
+    const language = /language-(\w+)/.exec(p.className ?? '')?.[1]
+    if (language === 'mermaid') return <Diagram source={String(p.children ?? '')} />
+    if (!language) {
+      return (
+        <code
+          className="rounded px-1 py-0.5 text-[12.5px]"
+          style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)' }}
+        >
+          {p.children}
+        </code>
+      )
+    }
+    return (
+      <pre
+        className="overflow-x-auto rounded-lg border p-3 mb-3 text-[12.5px] leading-relaxed"
+        style={{
+          borderColor: 'var(--color-border)',
+          background: 'var(--color-bg-secondary)',
+          color: 'var(--color-text)',
+        }}
+      >
+        <code>{p.children}</code>
+      </pre>
+    )
+  },
 }
 
 export default function DocsPage() {
-  const [active, setActive] = useState<SectionId>('start')
+  const { docId } = useParams<{ docId?: string }>()
+  const navigate = useNavigate()
+  const [filter, setFilter] = useState('')
+
+  const active: DocPage = findDocPage(docId) ?? findDocPage(DEFAULT_DOC_ID) ?? DOC_PAGES[0]
+  const source = DOC_SOURCES[active.id] ?? ''
+  const toc = useMemo(() => headingsOf(source), [source])
+
+  const matches = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    if (!q) return DOC_PAGES
+    return DOC_PAGES.filter((p) => {
+      const haystack = [p.label, p.summary, ...p.keywords, DOC_SOURCES[p.id] ?? '']
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(q)
+    })
+  }, [filter])
 
   return (
     <>
@@ -112,276 +217,106 @@ export default function DocsPage() {
         subtitle="How TestLookup works — the actual rules behind the numbers on every page."
       />
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0, 220px) minmax(0, 1fr)' }}>
-        {/* Nav */}
-        <nav className="flex flex-col gap-0.5" aria-label="Documentation sections">
-          {SECTIONS.map(s => {
-            const Icon = s.icon
-            const on = active === s.id
+      <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0, 250px) minmax(0, 1fr)' }}>
+        <nav className="flex flex-col gap-2 min-w-0" aria-label="Documentation sections">
+          <label className="relative block">
+            <span className="sr-only">Filter documentation</span>
+            <SearchIcon
+              className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]"
+              aria-hidden="true"
+            />
+            <input
+              type="search"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter topics…"
+              className="w-full rounded-lg border pl-8 pr-2 py-1.5 text-[13px] bg-transparent"
+              style={{ borderColor: 'var(--color-border)', color: 'var(--color-text)' }}
+            />
+          </label>
+
+          {matches.length === 0 && (
+            <p className="px-2 py-3 text-[13px] text-[var(--color-text-muted)]">
+              No topic matches “{filter}”. Try a feature name such as “flaky”, “ingest” or
+              “release gate”.
+            </p>
+          )}
+
+          {DOC_GROUPS.map((group) => {
+            const pages = matches.filter((p) => p.group === group)
+            if (pages.length === 0) return null
             return (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => setActive(s.id)}
-                aria-current={on ? 'page' : undefined}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-left transition-colors"
-                style={{
-                  background: on ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',
-                  color: on ? 'var(--color-accent)' : 'var(--color-text-muted)',
-                }}
-              >
-                <Icon className="h-4 w-4 flex-none" />
-                <span className="min-w-0">{s.label}</span>
-                {on && <ChevronRight className="h-3.5 w-3.5 ml-auto flex-none" />}
-              </button>
+              <div key={group}>
+                <div className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                  {group}
+                </div>
+                {pages.map((p) => {
+                  const Icon = p.icon
+                  const on = p.id === active.id
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => navigate(`/docs/${p.id}`)}
+                      aria-current={on ? 'page' : undefined}
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-left transition-colors"
+                      style={{
+                        background: on
+                          ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)'
+                          : 'transparent',
+                        color: on ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                      }}
+                    >
+                      <Icon className="h-4 w-4 flex-none" aria-hidden="true" />
+                      <span className="min-w-0">{p.label}</span>
+                      {on && <ChevronRight className="h-3.5 w-3.5 ml-auto flex-none" aria-hidden="true" />}
+                    </button>
+                  )
+                })}
+              </div>
             )
           })}
         </nav>
 
-        <div className="card p-5 min-w-0">
-          {active === 'start' && (
-            <section aria-labelledby="doc-start">
-              <h2 id="doc-start" className="text-base font-semibold text-[var(--color-text)] mb-3">
-                Setting up a new project
-              </h2>
-              <Step n={1} title="Create the project">
-                <strong>Settings → Projects → New</strong>. The name and slug are yours; the
-                slug appears in URLs. Whoever creates it becomes a member automatically.
-              </Step>
-              <Step n={2} title="Send your first test results">
-                Three routes, all equivalent once ingested: upload a report file from
-                <strong> Runs → Upload Report</strong>; POST to <code>/api/v1/ingest/file</code>
-                from CI; or stream live from a test run via the SDK. Ten report formats are
-                understood — JUnit, TestNG, pytest, Allure (including a zipped results
-                directory), Cypress, Playwright, Robot, Cucumber, NUnit and TRX.
-              </Step>
-              <Step n={3} title="Let a baseline build up">
-                A single run tells you what failed. Trends, flakiness and release risk all
-                need history — see the flakiness section for exactly how much.
-              </Step>
-              <Step n={4} title="Set who owns failures">
-                Failures are auto-assigned at ingest to the suite owner, or to the project's
-                default QA-lead when no owner is set. If <strong>My Failures</strong> looks
-                empty, you are probably looking at the "Mine" scope while the synthetic
-                QA-lead owns the rows — the page opens on <strong>Team</strong> for leads for
-                that reason.
-              </Step>
-              <Step n={5} title="Decide how much AI you want">
-                <strong>Settings → AI Configuration</strong> selects the analysis engine.
-                Rules-based needs nothing external. ML needs a trained model. LLM needs a
-                configured provider — local (Ollama) or hosted.
-              </Step>
-            </section>
-          )}
+        <div className="min-w-0">
+          <div className="card p-5 min-w-0">
+            <p className="text-[12px] text-[var(--color-text-muted)] mb-1">
+              {active.group} · {active.summary}
+            </p>
 
-          {active === 'reports' && (
-            <section aria-labelledby="doc-reports">
-              <h2 id="doc-reports" className="text-base font-semibold text-[var(--color-text)] mb-3">
-                Reading the AI reports
-              </h2>
-              <P>
-                Every analysed run has an intelligence view with four layers. They are
-                produced independently, so one can be present while another is not.
-              </P>
-              <Table
-                head={['Layer', 'What it answers']}
-                rows={[
-                  ['Executive summary', 'What happened in this run, in a few sentences'],
-                  ['Incident view', 'What failed, the likely cause, criticality, release impact'],
-                  ['Evidence pack', 'Stack traces, log anomalies, similar historical failures, citations'],
-                  ['Action plan', 'Immediate mitigation, fixes, validation steps, per-role owner hints'],
-                ]}
-              />
-              <H>Where the analysis comes from</H>
-              <P>
-                Each failing test is routed to one of three engines. <strong>Rules</strong>
-                match error signatures — deterministic and always available.{' '}
-                <strong>ML</strong> uses a trained classifier when one exists.{' '}
-                <strong>LLM</strong> runs a reasoning agent against the configured model. Auto
-                picks the first available of ML → LLM → Rules, and falls back rather than
-                failing if a tier is unavailable.
-              </P>
-              <Honest>
-                <strong>AI output is advisory, not authoritative.</strong> Every analysis
-                carries a confidence score and provenance showing which engine produced it.
-                Results below the configured confidence threshold are marked as needing human
-                review rather than acted on automatically. Treat a root cause as a lead to
-                confirm, not a verdict.
-              </Honest>
-              <Honest>
-                <strong>A summary is not always model-written.</strong> If the configured LLM
-                is unavailable — no model pulled, provider unreachable, rate-limited — the
-                summary is rebuilt deterministically from stored pipeline evidence and says so
-                in its own text. The run's provenance reports{' '}
-                <code>fallback_used: true</code> in that case. Empty is never presented as
-                "all clear".
-              </Honest>
-            </section>
-          )}
+            {toc.length > 2 && (
+              <details className="mb-4 rounded-lg border p-3" style={{ borderColor: 'var(--color-border)' }}>
+                <summary className="text-[13px] font-medium text-[var(--color-text)] cursor-pointer">
+                  On this page
+                </summary>
+                <ul className="mt-2 space-y-1">
+                  {toc.map((h) => (
+                    <li key={h.id} style={{ paddingLeft: h.depth === 3 ? 12 : 0 }}>
+                      <a
+                        href={`#${h.id}`}
+                        className="text-[13px] underline underline-offset-2"
+                        style={{ color: 'var(--color-accent)' }}
+                      >
+                        {h.text}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
 
-          {active === 'agents' && (
-            <section aria-labelledby="doc-agents">
-              <h2 id="doc-agents" className="text-base font-semibold text-[var(--color-text)] mb-3">
-                How the AI agents work
-              </h2>
-              <P>
-                Analysis is a pipeline of small agents, each owning one stage and recording
-                what it decided and why. Stages run in order; the pipeline can end early when
-                there is nothing worth passing on.
-              </P>
-              <Table
-                head={['Stage', 'What the agent does']}
-                rows={[
-                  ['ingestion', 'Normalises the run and gathers its evidence'],
-                  ['anomaly_detection', 'Finds what is unusual about this run versus history'],
-                  ['root_cause_analysis', 'Classifies each failure and proposes a cause'],
-                  ['summary', 'Writes the four-layer report'],
-                  ['triage', 'Assigns and prioritises what a human should look at'],
-                ]}
-              />
-              <P>
-                Those five are the standard pipeline. A <strong>deep investigation</strong>{' '}
-                runs a longer chain that adds <code>failure_clustering</code> — which groups
-                failures sharing a cause into one finding — along with per-cluster
-                investigation, contract validation and a decision report. Which stages ran
-                for a given run is shown on that run&rsquo;s Intelligence page, so the list
-                there is the authority rather than this table.
-              </P>
-              <P>
-                Further specialised agents run where relevant — among them{' '}
-                <code>flaky_sentinel</code>, <code>regression_watchman</code>,{' '}
-                <code>change_ownership</code>, <code>release_risk</code>,{' '}
-                <code>defect_commander</code>, <code>log_intelligence</code>, and a{' '}
-                <code>decision_report_critic</code> that reviews the decision report before it
-                is shown.
-              </P>
-              <H>Why you can audit them</H>
-              <P>
-                Each stage writes a decision-trail entry: the decision point, what was chosen,
-                and the rationale. The run's pipeline ribbon shows which stages ran, which
-                were skipped, and how long each took. When a stage is skipped the reason is
-                recorded — for example "no analyses above the confidence threshold".
-              </P>
-              <Honest>
-                <strong>Prompts are redacted before they leave the process.</strong> Text sent
-                to a model passes a sanitiser, and the count of redacted strings is recorded
-                with the invocation. When offline mode is on, no hosted provider can be called
-                at all — that ceiling is set by the environment and cannot be lifted from this
-                UI.
-              </Honest>
-            </section>
-          )}
-
-          {active === 'flaky' && (
-            <section aria-labelledby="doc-flaky">
-              <h2 id="doc-flaky" className="text-base font-semibold text-[var(--color-text)] mb-3">
-                How flaky tests are determined
-              </h2>
-              <P>
-                Flakiness is a score in 0–1 fused from four measured signals. It is not a
-                guess about intent — each component is observable, and all four are shown
-                alongside the score so you can see which one drove it.
-              </P>
-              <Table
-                head={['Signal', 'Weight', 'What it measures']}
-                rows={[
-                  ['Result volatility', '0.45', 'Pass/fail flips on unchanged code — the closest thing to direct evidence'],
-                  ['Retry rate', '0.25', 'How often the test only passes on a retry'],
-                  ['Environment instability', '0.20', 'Whether failures track the environment rather than the code'],
-                  ['Duration variance', '0.10', 'Spread in runtime; a slow test is not a flaky test, so this counts least'],
-                ]}
-              />
-              <H>How much history it needs</H>
-              <P>
-                A test needs at least <strong>5 observations</strong> before any score is
-                produced. Confidence is reported with the score and follows the observation
-                count directly.
-              </P>
-              <Table
-                head={['Observations', 'Confidence']}
-                rows={[
-                  ['Fewer than 5', 'No score at all — reported as insufficient'],
-                  ['5 – 9', 'Low'],
-                  ['10 – 19', 'Medium'],
-                  ['20 or more', 'High'],
-                ]}
-              />
-              <Honest>
-                <strong>Below five observations you get "insufficient", not zero.</strong> A
-                new test is not a stable test, and reporting 0.0 would read as evidence of
-                stability that nobody has. The components observed so far are still shown, so
-                you can see what little is known.
-              </Honest>
-              <P>
-                The weights used are stored with each score. Changing them later affects new
-                scores only — it never silently reinterprets history.
-              </P>
-            </section>
-          )}
-
-          {active === 'gate' && (
-            <section aria-labelledby="doc-gate">
-              <h2 id="doc-gate" className="text-base font-semibold text-[var(--color-text)] mb-3">
-                How the GO / NO-GO decision is made
-              </h2>
-              <P>
-                Two independent things decide the release signal: a weighted{' '}
-                <strong>composite risk score</strong> built from seven dimensions, and the run's{' '}
-                <strong>pass rate</strong> measured against the bar you configure. Either one
-                alone can block a release.
-              </P>
-              <H>The seven risk dimensions</H>
-              <Table
-                head={['Dimension', 'Reads as']}
-                rows={[
-                  ['User impact', 'Product-bug share weighted by open defect pressure'],
-                  ['Environment sensitivity', 'How much of the failure is environmental'],
-                  ['Reproducibility', 'Whether the failure repeats or wanders'],
-                  ['Regression likelihood', 'Whether this looks like something that used to pass'],
-                  ['Historical recurrence', 'Whether this has happened before'],
-                  ['Blast radius', 'How far across suites the failure reaches'],
-                  ['Diagnosis confidence', 'How sure the analysis is — low confidence raises risk'],
-                ]}
-              />
-              <P>
-                Each dimension scores 0–100 and the weighted sum is clamped to 0–100. Weights
-                are configurable per deployment, and a project's release-gate policy can
-                override them.
-              </P>
-              <H>The decision rules, in order</H>
-              <P>
-                Order matters: the two NO-GO rules are evaluated first, so nothing below can
-                soften a NO-GO.
-              </P>
-              <Table
-                head={['#', 'Condition', 'Result']}
-                rows={[
-                  ['1', 'Pass rate below 70% of your configured bar', 'NO-GO — catastrophic, whatever the composite says'],
-                  ['2', 'Composite risk at or above the NO-GO threshold', 'NO-GO'],
-                  ['3', 'Composite risk at or above the GO threshold', 'CONDITIONAL GO'],
-                  ['4', 'Pass rate below your configured bar', 'CONDITIONAL GO'],
-                  ['5', 'Otherwise', 'GO'],
-                ]}
-              />
-              <P>
-                So with a 90% bar, a run at 62% or below is a hard NO-GO; between 63% and 89%
-                it is CONDITIONAL GO even when the composite is calm; at or above 90% with low
-                risk it is GO.
-              </P>
-              <H>Pass-rate bands can only make it stricter</H>
-              <P>
-                If the project has a release-gate policy with pass-rate bands, the band verdict
-                is layered over the composite one and the <em>stricter</em> of the two wins.
-                Bands can block a release; they can never unblock one. That keeps the release
-                gate and the overview page in agreement — when the overview shows red, the gate
-                cannot say GO.
-              </P>
-              <Honest>
-                <strong>An override is recorded, not hidden.</strong> A human can override the
-                decision; the override, who made it and when are kept with the run.
-              </Honest>
-            </section>
-          )}
+            <article aria-label={active.label}>
+              {source ? (
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+                  {source}
+                </ReactMarkdown>
+              ) : (
+                <p className="text-[13.5px] text-[var(--color-text-muted)]">
+                  This topic has no content yet.
+                </p>
+              )}
+            </article>
+          </div>
         </div>
       </div>
     </>

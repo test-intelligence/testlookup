@@ -823,7 +823,7 @@ ssh labadmin@192.168.0.101 "df -h /opt/local-path-provisioner"
 For debugging, you can bypass the ingress and access services directly:
 
 ```bash
-# Backend API (Swagger docs at http://localhost:8000/docs)
+# Backend API (Swagger reference at http://localhost:8000/api-docs)
 kubectl -n testlookup port-forward svc/testlookup-backend 8000:8000
 
 # Frontend (http://localhost:3000)
