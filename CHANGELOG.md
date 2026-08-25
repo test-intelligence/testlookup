@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-08-25 — The same tree failed the gate locally and passed it in CI
+
+``repo.no-gitignored-source`` asks ``git check-ignore`` whether a source path matches one of
+``.gitignore``'s security globs. Git answers that question differently depending on the
+checkout: a Windows clone sets ``core.ignorecase = true``, so the **lowercase** glob
+``*apikey*`` matches **camelCase** source like ``ApiKeysPage.tsx``; case-sensitive Linux CI
+does not.
+
+After #848 pruned those five entries as stale — correct for CI, where they genuinely do not
+match — the gate reported **five violations on Windows and none in CI, from identical
+source**. A guard whose verdict depends on the developer's filesystem is worse than no guard:
+it teaches people that a red gate is something you look past.
+
+- The guard now runs ``git -c core.ignorecase=false check-ignore …``. CI is the authority, so
+  it asks CI's question everywhere. Local goes back to green with no baseline change and no
+  file renamed.
+- **It does not blind the guard.** A genuinely lowercase match is still caught on every
+  platform — verified both ways against a scratch file: ``probe_apikey_helper.ts`` is
+  reported (including the untracked case, *"git add will skip it and your commit will land
+  without it"*), while camelCase ``probeApiKeyHelper.ts`` is not.
+
+Two tests, deliberately doing different jobs:
+
+* ``test_the_guard_asks_git_case_sensitively`` pins the **answer** — camelCase sources
+  unmatched, the lowercase ``api_key_service.py`` still matched.
+* ``test_the_guard_passes_the_case_flag_to_git`` pins the **mechanism** by inspecting the argv
+  the guard builds. The behavioural test passes on Linux even without the flag, because there
+  the default already is case-sensitive — so only this one fails on a CI runner if the flag is
+  removed, which is exactly where the regression would otherwise sail straight through.
+
+The mutation check needed the same care: asserting the flag was gone by substring kept
+failing, because the explanatory comment above the call also contains
+``core.ignorecase=false``. Inspecting the built argv is what actually distinguishes the code
+from the prose about it — the third time this session that a substring test could not tell
+those apart.
+
+
 ## 2026-08-24 (guard scope) — The decision guard could only see direct subclasses
 
 ``agents.log-decision-present`` matched ``class X(BaseAgent)`` — a **direct** base only.

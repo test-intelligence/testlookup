@@ -13,6 +13,7 @@ The tests stand on their own (no need for the backend test rig).
 from __future__ import annotations
 
 import re
+import subprocess
 import textwrap
 from pathlib import Path
 
@@ -1156,3 +1157,95 @@ def test_streaming_body_ignores_unrelated_context_managers(
     ''')
 
     assert qg._backend_streaming_body_not_rebound() == []
+
+
+# ── GIT-001: the verdict must not depend on the developer's filesystem ───────
+
+
+def _check_ignore(paths: list[str], *, force_case_sensitive: bool) -> set[str]:
+    """Ask git which of ``paths`` match an ignore rule, the way the guard does."""
+    argv = ["git"]
+    if force_case_sensitive:
+        argv += ["-c", "core.ignorecase=false"]
+    argv += ["check-ignore", "--stdin", "-v", "--no-index"]
+    proc = subprocess.run(
+        argv, cwd=qg.REPO_ROOT,
+        input=b"\n".join(p.encode() for p in paths),
+        capture_output=True,
+    )
+    assert proc.returncode in (0, 1), proc.stderr.decode(errors="replace")[:400]
+    return {
+        line.rsplit("\t", 1)[-1]
+        for line in proc.stdout.decode(errors="replace").splitlines()
+        if "\t" in line
+    }
+
+
+# The camelCase API-key sources. `*apikey*` is lowercase, so a case-SENSITIVE
+# match (Linux CI) misses them and a case-INSENSITIVE one (a Windows checkout,
+# where core.ignorecase defaults to true) hits them.
+_CAMEL_CASE_SOURCES = [
+    "frontend/src/hooks/useApiKeys.ts",
+    "frontend/src/pages/settings/ApiKeysPage.tsx",
+    "frontend/src/services/apiKeyService.ts",
+    "frontend/src/types/apiKey.ts",
+]
+# A genuine lowercase match, which must stay caught on every platform.
+_LOWERCASE_SOURCE = "backend/app/services/api_key_service.py"
+
+
+def test_the_guard_asks_git_case_sensitively():
+    """The gate's verdict must be the same on Windows and on Linux CI.
+
+    Before this, a Windows checkout reported five `repo.no-gitignored-source`
+    violations that CI could not see: git honoured `core.ignorecase = true`, so
+    the lowercase glob `*apikey*` matched `ApiKeysPage.tsx`. The same tree
+    failed locally and passed in CI, which is how a gate teaches people to stop
+    reading it.
+    """
+    matched = _check_ignore(
+        _CAMEL_CASE_SOURCES + [_LOWERCASE_SOURCE], force_case_sensitive=True
+    )
+
+    assert _LOWERCASE_SOURCE in matched, (
+        "forcing case sensitivity must not blind the guard — a genuinely "
+        "lowercase `api_key` source is still a real finding"
+    )
+    for path in _CAMEL_CASE_SOURCES:
+        assert path not in matched, (
+            f"{path} is camelCase; the lowercase glob does not match it on a "
+            "case-sensitive filesystem, which is the answer CI gets"
+        )
+
+
+def test_the_guard_passes_the_case_flag_to_git():
+    """Pin the mechanism, not just today's answer.
+
+    The behavioural test above passes on Linux even without the flag, because
+    there the default already *is* case-sensitive. Only this assertion fails on
+    a Linux CI runner if someone removes it, which is exactly where the
+    regression would otherwise sail through.
+    """
+    captured: dict = {}
+    real_run = subprocess.run
+
+    def _capture(argv, *args, **kwargs):
+        if isinstance(argv, list) and "check-ignore" in argv:
+            captured["argv"] = argv
+        return real_run(argv, *args, **kwargs)
+
+    original = qg.subprocess.run
+    qg.subprocess.run = _capture
+    try:
+        qg._repo_no_gitignored_source()
+    finally:
+        qg.subprocess.run = original
+
+    argv = captured.get("argv")
+    assert argv, "the guard never invoked git check-ignore"
+    joined = " ".join(argv)
+    assert "core.ignorecase=false" in joined, (
+        "the guard must pin git's case behaviour to CI's; without it the same "
+        f"tree gets different verdicts per platform. argv was: {joined}"
+    )
+    assert "--no-index" in joined, "the --no-index question is the one that matters"

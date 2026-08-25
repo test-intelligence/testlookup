@@ -2633,8 +2633,17 @@ def _repo_no_gitignored_source() -> list[Violation]:
     # ``--no-index`` asks the question that matters: does the PATH match an
     # ignore pattern? Without it, git answers "no" for anything already
     # tracked, and CI — where every file is tracked — could never fail.
+    #
+    # ``-c core.ignorecase=false`` pins the ANSWER to the one CI gets. A Windows
+    # checkout sets ``core.ignorecase = true``, so git matched the lowercase
+    # glob ``*apikey*`` against camelCase source like ``ApiKeysPage.tsx``;
+    # case-sensitive Linux CI did not. The same tree therefore failed the gate
+    # locally and passed it in CI — five violations that only existed on one
+    # platform. A guard whose verdict depends on the developer's filesystem
+    # teaches people to ignore it. CI is the authority, so ask CI's question.
     proc = subprocess.run(
-        ["git", "check-ignore", "--stdin", "-v", "--no-index"],
+        ["git", "-c", "core.ignorecase=false",
+         "check-ignore", "--stdin", "-v", "--no-index"],
         cwd=REPO_ROOT,
         # BYTES, deliberately. On Windows a TEXT stdin translates "\n" into
         # "\r\n", git takes the CR as part of the filename, and every answer
