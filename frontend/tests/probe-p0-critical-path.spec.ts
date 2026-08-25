@@ -123,17 +123,28 @@ test('P0-8 no console errors or failed API calls across the journey', async () =
 
 // ── Ingestion → persistence → analysis → logout ──────────────────────────────
 //
-// Test data note: runs land in an ACTIVE demo project under a build number
-// prefixed `e2e-probe-`, so anything this suite creates is identifiable.
+// Test data note: this suite reuses ONE run row rather than minting a new one
+// per execution. Ingestion is idempotent per (project, build_number) — two
+// POSTs of the same build produce a single run — so a STABLE build number
+// means the probe can run any number of times and leave exactly one row.
 //
-// The project must be active. `runs_service` deliberately filters the listing
-// to `Project.is_active` — soft-deleted projects keep their rows but vanish
-// from every read path. An earlier version of this probe ingested into a `ZZ …`
-// bench project, which is soft-deleted (119 of 123 projects are), so the run
-// persisted and was correctly invisible: the assertion failed for a reason that
-// had nothing to do with ingestion working.
+// An earlier version used `e2e-probe-${Date.now()}` and accumulated a run per
+// execution, which then had to be cleaned out of the deployment by hand.
+//
+// A stable id alone would let the read-back pass on a row some PREVIOUS run
+// left behind — a check that passes without looking at this execution. So this
+// records the row's `updated_at` BEFORE ingesting and asserts it strictly
+// increases afterwards: exact proof that this write landed, immune to clock
+// skew between the runner and the server, and still only one row.
+//
+// It has to be `updated_at`, not a value in the payload. Re-ingesting an
+// existing build is idempotent in the "ignore the duplicate" sense: the row is
+// touched but scalar fields like `commit_hash` are NOT overwritten. Asserting
+// on a resent commit_hash fails on every execution after the first.
 const PROJECT_ID = 'ede55bd1-91d7-4a26-b536-43a6ffab6a37' // Payment Service (active)
-let ingestedBuild = ''
+const INGEST_BUILD = 'e2e-probe-persistent'
+let updatedAtBefore = ''
+let probeStamp = ''
 let ingestedRunId = ''
 let token = ''
 
@@ -145,12 +156,26 @@ test('P0-9 ingestion accepts a run through the public API', async ({ request }) 
   token = (await login.json()).access_token
   expect(token, 'a bearer token is required to ingest').toBeTruthy()
 
-  ingestedBuild = `e2e-probe-${Date.now()}`
+  probeStamp = `probe-${Date.now()}`
+
+  // Snapshot the row's updated_at before writing, so P0-10 can prove THIS
+  // execution moved it rather than finding a row an earlier run left.
+  const before = await request.get(
+    `${BASE}/api/v1/runs?project_id=${PROJECT_ID}&size=25`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  )
+  if (before.ok()) {
+    const rows = (await before.json()).items ?? []
+    updatedAtBefore =
+      rows.find((r: { build_number?: string }) => r.build_number === INGEST_BUILD)?.updated_at ?? ''
+  }
+
   const res = await request.post(`${BASE}/api/v1/ingest`, {
     headers: { Authorization: `Bearer ${token}` },
     data: {
       project_id: PROJECT_ID,
-      build_number: ingestedBuild,
+      build_number: INGEST_BUILD,
+      commit_hash: probeStamp,
       framework: 'junit',
       results: [
         { test_name: 'e2e_probe_passes', status: 'PASSED', duration_ms: 12, suite_name: 'E2EProbe' },
@@ -172,10 +197,12 @@ test('P0-9 ingestion accepts a run through the public API', async ({ request }) 
 })
 
 test('P0-10 the ingested run is persisted and readable', async ({ request }) => {
-  expect(ingestedBuild, 'P0-9 must have ingested a build').toBeTruthy()
+  expect(probeStamp, 'P0-9 must have ingested a payload').toBeTruthy()
 
   // Poll rather than sleep: ingestion finalises asynchronously, so the
-  // condition — not a fixed delay — is what we wait on.
+  // condition — not a fixed delay — is what we wait on. The assertion is on
+  // THIS execution's commit_hash, so a row left by an earlier run cannot
+  // satisfy it.
   await expect
     .poll(
       async () => {
@@ -186,11 +213,18 @@ test('P0-10 the ingested run is persisted and readable', async ({ request }) => 
         if (!res.ok()) return `http ${res.status()}`
         const body = await res.json()
         const rows = Array.isArray(body) ? body : (body.items ?? body.runs ?? [])
-        const hit = rows.find((r: { build_number?: string }) => r.build_number === ingestedBuild)
+        const hit = rows.find((r: { build_number?: string }) => r.build_number === INGEST_BUILD)
         if (hit?.id) ingestedRunId = hit.id
-        return Boolean(hit)
+        if (!hit) return false
+        // First execution ever: the row did not exist, so its presence is the
+        // proof. Afterwards, only a strictly newer timestamp counts.
+        if (!updatedAtBefore) return true
+        return String(hit.updated_at ?? '') > updatedAtBefore
       },
-      { timeout: 90_000, message: `ingested build ${ingestedBuild} never became readable` },
+      {
+        timeout: 90_000,
+        message: `run ${INGEST_BUILD} was not updated by this execution (updated_at still ${updatedAtBefore})`,
+      },
     )
     .toBe(true)
 })
@@ -200,7 +234,7 @@ test('P0-11 the ingested run surfaces in the UI', async () => {
   // resets module state the ids are '', and `body.includes('')` is always true
   // — a check that passes because it could not look. That is exactly what
   // happened on the first run of this suite.
-  expect(ingestedBuild, 'no build id to look for — this test would pass vacuously').toBeTruthy()
+  expect(probeStamp, 'nothing was ingested — this test would pass vacuously').toBeTruthy()
   expect(ingestedRunId, 'P0-10 must have captured the run id').toBeTruthy()
 
   // The run DETAIL page, not the list. `/runs` renders the user's active
@@ -211,9 +245,9 @@ test('P0-11 the ingested run surfaces in the UI', async () => {
   await page.goto(`${BASE}/runs/${ingestedRunId}`, { waitUntil: 'domcontentloaded' })
 
   await expect
-    .poll(async () => (await page.locator('body').innerText()).includes(ingestedBuild), {
+    .poll(async () => (await page.locator('body').innerText()).includes(INGEST_BUILD), {
       timeout: 60_000,
-      message: `the run detail page never showed ${ingestedBuild}`,
+      message: `the run detail page never showed ${INGEST_BUILD}`,
     })
     .toBe(true)
 
