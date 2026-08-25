@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-08-25 (follow-up) — A second copy of the stage list had already drifted
+
+Wiring ``defect_commander`` into ``_DEEP_STAGES`` was not enough, and the deployment is what
+said so. ``_create_pipeline_run`` seeds one ``AgentStageResult`` row per stage from a
+**hand-maintained list in ``workflow.py``** — a second copy of the planner's list. The new
+stage went into the planner and not into the copy, so no row was seeded for it.
+
+The consequence is quiet, which is why it matters. ``mark_stage_running`` looks the row up and
+**returns without writing when it is missing**, so with the flag on the stage would have
+executed and recorded nothing: no status, no timestamps, no decision trail. That is precisely
+the "a stage that ran was recorded as never having run" defect of #840 and #844, arriving
+through a list nobody thought of as a rule.
+
+It survived a green 7262-test suite because nothing exercises ``_create_pipeline_run``, and it
+was caught only by reading ``agent_stage_results`` after two real deep runs on the deployment:
+**zero rows for a stage the plan had just named.** Checking the flag was off would not have
+found it — the flag *was* off, correctly, and the missing row was invisible behind that.
+
+- The seeding lists are now **derived** from the planner rather than maintained beside it.
+  Membership is the contract; seeding order is irrelevant since these only create ``pending``
+  rows.
+- ``test_seeded_stages_match_the_planner.py`` guards the property per workflow type, in both
+  directions — a planned stage with no row, and a seeded row for a stage nothing runs (which
+  sits ``pending`` and is then relabelled ``skipped``, reading as a deliberate skip). Plus a
+  vacuity check, since two empty lists agree with each other.
+
+Mutation-checked by restoring the hand-written copy: the deep case and the derived-not-copied
+assertion both fail.
+
+**Deployment evidence for the flag itself** (`build-20260825-165853`, two deep runs, both
+`completed` / verification `passed`): the plan records `planned: false` with rationale
+*"DefectCommander feature flag is off for this project"*, `is_enabled('defect_commander')`
+returns `False` with no flag row, the node returns a skip without touching the lifecycle, and
+the `defects` table is unchanged at **657 before and after**.
+
+
 ## 2026-08-25 — DefectCommander joins the deep pipeline, default off
 
 ``defect_commander`` was reachable only through ``POST /api/v1/agents/defect-command`` and had

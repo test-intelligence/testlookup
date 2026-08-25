@@ -47,6 +47,8 @@ from app.db.postgres import AsyncSessionLocal
 from app.models.enums import ExecutionPath
 from app.models.postgres import AgentPipelineRun, AgentStageResult, TestRun
 from app.services.agent_planner import (
+    _DEEP_STAGES as _PLANNER_DEEP_STAGES,
+    _LIVE_STAGES as _PLANNER_LIVE_STAGES,
     attach_workflow_plan_and_verification,
     build_workflow_plan,
 )
@@ -2179,17 +2181,21 @@ async def _persist_memory(
 _PIPELINE_STAGES = [
     "ingestion", "anomaly_detection", "root_cause_analysis", "summary", "triage",
 ]
-_DEEP_PIPELINE_STAGES = [
-    "ingestion", "anomaly_detection", "failure_clustering", "root_cause_analysis",
-    "cluster_investigation_dispatch", "cluster_investigation_join",
-    "summary", "triage", "contract_validation", "log_intelligence", "regression_watchman", "change_ownership", "gap_detection", "report_refinement",
-    "flaky_sentinel", "test_health", "release_risk",
-    "decision_report",
-    "decision_report_critic",
-]
-_LIVE_PIPELINE_STAGES = [
-    "ingestion", "summary",
-]
+# Derived from the planner, NOT hand-maintained beside it.
+#
+# This was a second copy of the same list, and the copies drifted the moment a
+# stage was added: `defect_commander` went into the planner's _DEEP_STAGES and
+# not into this one, so no AgentStageResult row was seeded for it. With the
+# flag on, `mark_stage_running` would have found no row and the stage would
+# have executed while recording nothing -- the exact "a stage that ran was
+# recorded as never having run" defect that #840 and #844 were about, arriving
+# through a list nobody thought of as a rule.
+#
+# One definition now. The seeding order does not matter (these only create
+# `pending` rows); membership is the contract, and it is guarded by
+# tests/regression/test_seeded_stages_match_the_planner.py.
+_DEEP_PIPELINE_STAGES = list(_PLANNER_DEEP_STAGES)
+_LIVE_PIPELINE_STAGES = list(_PLANNER_LIVE_STAGES)
 
 
 async def _create_pipeline_run(
