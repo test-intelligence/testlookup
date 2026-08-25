@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-08-24 (test flake) — A key expired only if the clock happened to tick
+
+``FakeRedis._is_expired`` compared with a strict ``>``::
+
+    if key in self._expiry and time.monotonic() > self._expiry[key]:
+
+``set(..., ex=0)`` stores an expiry of exactly ``time.monotonic()``, so at that instant the
+key was **not** expired — it stayed readable until the clock ticked past the value. Two tests
+papered over it with ``await asyncio.sleep(0.01)`` and a comment reading *"Need a tiny sleep
+to ensure monotonic clock advances"*.
+
+On Windows that sleep is not enough. ``time.monotonic()`` there has ~15.6ms granularity, so a
+10ms sleep frequently returns before the clock ticks at all.
+``test_cache_expired_key_returns_none`` failed **2 times in 12 runs** of
+``test_phase5_hardening.py`` on otherwise-unchanged code, always on the slower runs.
+
+**That shape is worse than an ordinary flake: it reads as "your change broke this".** It first
+appeared in the #849 full-suite run, and the first two samples — failing on the branch, clean
+on ``main`` — pointed straight at the change under review. Only repeated runs showed both
+sides were the same coin.
+
+- ``>=`` is both correct and deterministic: at the boundary the key **is** expired, which is
+  what ``ex=0`` means and what those tests always claimed to assert. ``expire(key, 0)`` shares
+  the comparison and so shares the fix.
+- Both ``asyncio.sleep(0.01)`` workarounds are gone, and with them the file's last use of
+  ``asyncio``.
+- The guard asserts the boundary **with no sleep anywhere**, including one case with
+  ``time.monotonic`` frozen — which is the Windows behaviour made explicit instead of
+  probabilistic. Under the old ``>`` it fails **3 of 4, every run**, so the guard cannot become
+  the flake it was written to remove.
+
+Found while verifying #849; unrelated to it, and fixed separately so neither change had to
+carry the other's explanation.
+
+
 ## 2026-08-24 (capability executors) — A mutating pipeline stage that nothing ran
 
 ``agent_capability_registry`` is the canonical description of what the agent layer can do.

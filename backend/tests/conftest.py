@@ -118,7 +118,14 @@ class FakeRedis:
         self._expiry: dict[str, float] = {}
 
     def _is_expired(self, key: str) -> bool:
-        if key in self._expiry and time.monotonic() > self._expiry[key]:
+        # ``>=``, not ``>``. A key set with ``ex=0`` gets an expiry of exactly
+        # ``time.monotonic()``, so a strict ``>`` leaves it alive until the
+        # clock ticks past that instant. On Windows the monotonic clock has
+        # ~15.6ms granularity while the tests waited 10ms, so "expired"
+        # depended on whether the clock happened to tick -- roughly 2 failures
+        # in 12 runs of test_phase5_hardening.py on unchanged code, always on
+        # the slower runs. At the boundary the key IS expired.
+        if key in self._expiry and time.monotonic() >= self._expiry[key]:
             self._data.pop(key, None)
             self._expiry.pop(key, None)
             return True

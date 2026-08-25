@@ -7,7 +7,6 @@ Covers:
   P5-5: Directionality assertions are in test_criticality_service.py (separate file)
   P5-8: Rate limit config structure
 """
-import asyncio
 
 import pytest
 
@@ -35,9 +34,9 @@ class TestFakeRedisTTL:
     async def test_set_with_zero_ttl_expires_immediately(self, fake_redis):
         """TTL of 0 should expire the key on next get."""
         await fake_redis.set("key3", "value3", ex=0)
-        # monotonic clock: setting ex=0 means expiry = now + 0, which is already past
-        # Need a tiny sleep to ensure monotonic clock advances
-        await asyncio.sleep(0.01)
+        # No sleep: an ex=0 key is expired at the instant it is written, so
+        # this asserts the boundary rather than waiting for a clock tick that
+        # a 10ms sleep could not guarantee.
         result = await fake_redis.get("key3")
         assert result is None
 
@@ -195,7 +194,6 @@ class TestCacheServiceIntegration:
     async def test_cache_expired_key_returns_none(self, fake_redis):
         """Verify expired cache entries return None."""
         await fake_redis.set("expiring", "data", ex=0)
-        await asyncio.sleep(0.01)
         assert await fake_redis.get("expiring") is None
 
 
