@@ -40,6 +40,57 @@ logger = structlog.get_logger("agents.defect_commander")
 class DefectCommander(BaseAgent):
     stage_name = "defect_commander"
 
+    @staticmethod
+    def select_cluster_id(state: dict) -> Optional[str]:
+        """Pick the one cluster to promote, deterministically.
+
+        ``_promote`` acts on a single cluster, but the deep pipeline carries a
+        LIST. Largest cluster first — it represents the most failing tests, so
+        it is the defect worth filing — with the cluster id as tie-break so two
+        equal-sized clusters always resolve the same way. A non-deterministic
+        choice here would file a different defect on each re-run of the same
+        evidence, which is the sort of thing nobody notices until it has been
+        happening for months.
+
+        An explicit ``cluster_id`` in state always wins: that is how the
+        standalone endpoint drives this agent, and it must keep working.
+        """
+        explicit = state.get("cluster_id")
+        if explicit:
+            return str(explicit)
+        clusters = state.get("failure_clusters") or []
+        if not isinstance(clusters, list):
+            return None
+        candidates = [c for c in clusters if isinstance(c, dict) and c.get("cluster_id")]
+        if not candidates:
+            return None
+        best = sorted(
+            candidates,
+            key=lambda c: (
+                -int(c.get("size") or len(c.get("member_test_ids") or [])),
+                str(c.get("cluster_id")),
+            ),
+        )[0]
+        return str(best["cluster_id"])
+
+    def disabled_delta(self) -> dict:
+        """Delta for the flag-disabled branch — a skip, not a run.
+
+        No lifecycle call: the stage genuinely did not execute, so it must not
+        appear in the timeline as if it had. This agent MUTATES (it writes a
+        Defect row and, when Jira is configured, files a ticket), so the
+        difference between "skipped" and "ran and found nothing" is the
+        difference between two very different answers to "why is there no
+        defect for this run?".
+        """
+        return {
+            "defect_promotion": None,
+            "skipped_stages": [self.stage_name],
+            "completed_stages": [self.stage_name],
+            "current_stage": "gap_detection",
+            "errors": [],
+        }
+
     async def run(self, state: dict) -> dict:
         pipeline_run_id = state["pipeline_run_id"]
         project_id = state["project_id"]
@@ -50,8 +101,32 @@ class DefectCommander(BaseAgent):
             {"status": "running", "message": "Promoting failure cluster to defect…"},
         )
 
+        cluster_id = self.select_cluster_id(state)
+        if not cluster_id:
+            # Ran, looked, found no cluster to promote. That is a result, and a
+            # mutating stage that produced no mutation has to say so rather
+            # than leave an absence for someone to interpret.
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="defect_promotion",
+                chosen="no_cluster",
+                rationale="the run carried no failure cluster to promote",
+                alternatives=["promoted"],
+            )
+            await self.mark_stage_done(
+                pipeline_run_id,
+                result_data={"defect_id": None, "clusters_available": 0},
+                fallback_reason="no_failure_cluster",
+            )
+            return {
+                "defect_promotion": None,
+                "completed_stages": [self.stage_name],
+                "current_stage": "gap_detection",
+                "errors": [],
+            }
+
         try:
-            result = await self._promote(state)
+            result = await self._promote({**state, "cluster_id": cluster_id})
         except Exception as exc:
             logger.error(
                 "defect_commander_failed", error=str(exc), exc_info=True,
@@ -68,6 +143,7 @@ class DefectCommander(BaseAgent):
             return {
                 "defect_promotion": None,
                 "completed_stages": ["defect_commander"],
+                "current_stage": "gap_detection",
                 "errors": [str(exc)],
             }
 
@@ -96,6 +172,7 @@ class DefectCommander(BaseAgent):
         return {
             "defect_promotion": result,
             "completed_stages": ["defect_commander"],
+            "current_stage": "gap_detection",
             "errors": [],
         }
 

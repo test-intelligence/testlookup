@@ -43,6 +43,7 @@ _DEEP_STAGES = (
     "log_intelligence",
     "regression_watchman",
     "change_ownership",
+    "defect_commander",
     "gap_detection",
     "report_refinement",
     "flaky_sentinel",
@@ -690,6 +691,7 @@ def build_workflow_plan(
     log_intelligence_enabled: bool = False,
     regression_watchman_enabled: bool = False,
     change_ownership_enabled: bool = False,
+    defect_commander_enabled: bool = False,
 ) -> dict[str, Any]:
     """Build the minimal useful agent path for the currently known state."""
     threshold = threshold if threshold is not None else settings.AI_CONFIDENCE_THRESHOLD
@@ -703,6 +705,8 @@ def build_workflow_plan(
         raise ValueError("regression_watchman_enabled must be a boolean")
     if not isinstance(change_ownership_enabled, bool):
         raise ValueError("change_ownership_enabled must be a boolean")
+    if not isinstance(defect_commander_enabled, bool):
+        raise ValueError("defect_commander_enabled must be a boolean")
     graph_budget = (
         _nonnegative_budget_snapshot(decision_graph_aggregate_budget)
         if decision_graph_aggregate_budget is not None
@@ -816,6 +820,19 @@ def build_workflow_plan(
             else:
                 planned = False
                 rationale = "all-green run has no failed tests for Change/Ownership"
+        elif stage == "defect_commander":
+            # MUTATING stage: it writes a Defect row and, when Jira is
+            # configured, files a ticket. Default off, and the rationale keeps
+            # "off" distinguishable from "nothing to promote" — for an action
+            # that reaches outside the system, those must never be conflated.
+            if defect_commander_enabled and not all_green:
+                rationale = "project DefectCommander flag enabled for failed tests"
+            elif not defect_commander_enabled:
+                planned = False
+                rationale = "DefectCommander feature flag is off for this project"
+            else:
+                planned = False
+                rationale = "all-green run has no failed tests to promote"
         elif stage in _GAP_REFINEMENT_STAGES:
             if settings.AIQ_GAP_REFINEMENT_ENABLED:
                 rationale = "AIQ-P4 gap/refinement stage enabled by feature flag"
@@ -893,6 +910,7 @@ def build_workflow_plan(
             "log_intelligence": log_intelligence_enabled,
             "regression_watchman": regression_watchman_enabled,
             "change_ownership": change_ownership_enabled,
+            "defect_commander": defect_commander_enabled,
         },
         "stages": stages,
     }
@@ -1009,6 +1027,7 @@ def attach_workflow_plan_and_verification(
         log_intelligence_enabled=bool(specialist_flags.get("log_intelligence")),
         regression_watchman_enabled=bool(specialist_flags.get("regression_watchman")),
         change_ownership_enabled=bool(specialist_flags.get("change_ownership")),
+        defect_commander_enabled=bool(specialist_flags.get("defect_commander")),
     )
     state["initial_workflow_plan"] = initial_plan
     state["workflow_plan"] = explained_plan

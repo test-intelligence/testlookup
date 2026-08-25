@@ -57,6 +57,11 @@ _SPECIALISTS = (
     "log_intelligence",
     "regression_watchman",
     "change_ownership",
+    # Added when DefectCommander was wired into the deep pipeline behind a
+    # default-off flag. It belongs INSIDE this guard, not beside it: the
+    # equal-depth invariant is exactly what a fifth fan-out member could break,
+    # and it is the one member that mutates.
+    "defect_commander",
 )
 _JOIN = "cluster_investigation_join"
 
@@ -99,7 +104,8 @@ def test_every_specialist_has_the_same_single_predecessor(specialist):
     )
 
 
-def test_the_join_waits_for_exactly_those_four():
+def test_the_join_waits_for_exactly_those_specialists():
+    """No more and no fewer — an extra predecessor at another depth double-fires."""
     assert _predecessors("gap_detection") == sorted(_SPECIALISTS)
 
 
@@ -108,14 +114,18 @@ def test_the_join_waits_for_exactly_those_four():
 
 def test_the_specialist_outputs_are_disjoint():
     """Two parallel nodes writing one un-reduced key is the collision case.
-    These four write different keys, so no reducer is needed for them."""
+    Each writes a different key, so no reducer is needed for them."""
     outputs = {
         "contract_validation": "contract_findings",
         "log_intelligence": "log_findings",
         "regression_watchman": "regression_classification",
         "change_ownership": "change_ownership_findings",
+        "defect_commander": "defect_promotion",
     }
 
+    assert set(outputs) == set(_SPECIALISTS), (
+        "a specialist without an output key here is unchecked for collisions"
+    )
     assert len(set(outputs.values())) == len(outputs), "outputs must not overlap"
 
 

@@ -110,6 +110,8 @@ class WorkflowState(TypedDict):
     contract_findings: Optional[dict]  # Contract Agent output contract
     log_intelligence_enabled: bool       # frozen project feature-flag snapshot
     log_findings: Optional[dict]        # Log Intelligence output contract
+    defect_commander_enabled: bool     # frozen project feature-flag snapshot (MUTATING stage)
+    defect_promotion: Optional[dict]   # DefectCommander output, None when off or nothing to promote
     regression_watchman_enabled: bool  # frozen project feature-flag snapshot
     regression_classification: Optional[dict]  # RegressionWatchman output contract
     change_ownership_enabled: bool      # frozen project feature-flag snapshot

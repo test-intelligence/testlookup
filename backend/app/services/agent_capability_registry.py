@@ -4,16 +4,17 @@ Every entry declares how it is executed via ``execution``:
 
 * ``planned``       — a workflow type lists it in its stage order (the default);
 * ``child_spawned`` — dispatched per cluster, never top-level (``cluster_investigation``);
-* ``on_demand``     — reachable only through its own endpoint (``defect_commander``,
-  ``POST /api/v1/agents/defect-command``);
+* ``on_demand``     — reachable only through its own endpoint (none today;
+  ``defect_commander`` was the example until it was wired into the deep
+  pipeline behind a default-off flag, and it still serves
+  ``POST /api/v1/agents/defect-command`` as well);
 * ``runtime``       — a pseudo-capability for runtime bookkeeping (``workflow``).
 
 The ``agents.capability-has-executor`` gate holds the two halves together: a
 ``planned`` capability must appear in a stage list, and one that appears in a
-stage list must not claim to be anything else. Before it existed,
-``defect_commander`` read as a mutating pipeline stage depending on
-``root_cause_analysis`` while having no executor at all -- zero
-``agent_stage_results`` rows in the entire history of the deployment.
+stage list must not claim to be anything else. It is what forced this entry to
+change when ``defect_commander`` moved into ``_DEEP_STAGES``: leaving it as
+``on_demand`` fails the gate with "the declaration contradicts the planner".
 """
 from __future__ import annotations
 
@@ -75,7 +76,7 @@ _SPECS = (
     _capability("decision_report_critic", inputs="DecisionReportV1", output="DecisionReportVerificationV1", dependencies=("decision_report",), evidence=("signed_decision_snapshot",), cost_usd=0, fallback="reject_publication", concurrency_class="verification"),
     _capability("regression_watchman", inputs="RunEvidenceBundleV1", output="RegressionWatchmanOutput", dependencies=("ingestion",), evidence=("historical_results",)),
     _capability("change_ownership", inputs="RunEvidenceBundleV1", output="ChangeOwnershipAgentOutput", dependencies=("ingestion",), evidence=("baseline_diff", "ownership_resolutions"), latency_ms=10_000, cost_usd=0, timeout_seconds=90, fallback="not_enough_evidence", concurrency_class="domain_evidence", permission="read_only"),
-    _capability("defect_commander", execution="on_demand", inputs="AnalysisAgentOutput", output="DefectCommanderOutput", dependencies=("root_cause_analysis",), evidence=("analysis_findings",), concurrency_class="action_proposal", permission="mutating"),
+    _capability("defect_commander", inputs="AnalysisAgentOutput", output="DefectCommanderOutput", dependencies=("root_cause_analysis", "failure_clustering"), evidence=("analysis_findings",), concurrency_class="action_proposal", permission="mutating"),
     _capability("investigator_plan", inputs="InvestigationRequestV1", output="InvestigationPlanV1", latency_ms=1_000, cost_usd=0, fallback="bounded_static_hypothesis_plan", concurrency_class="investigation"),
     _capability("hypothesis_infra", inputs="InvestigationPlanV1", output="AgentFindingV1", dependencies=("investigator_plan",), evidence=("infrastructure_observations",), concurrency_class="investigation_hypothesis"),
     _capability("hypothesis_commit", inputs="InvestigationPlanV1", output="AgentFindingV1", dependencies=("investigator_plan",), evidence=("change_history",), concurrency_class="investigation_hypothesis"),

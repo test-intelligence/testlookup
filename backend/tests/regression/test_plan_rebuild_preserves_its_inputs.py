@@ -112,11 +112,17 @@ def test_the_plan_records_the_specialist_flags():
     """Nothing can be recovered from a plan that never stored it."""
     plan = _built(log_intelligence_enabled=False)
 
+    # Exhaustive equality on purpose: a flag added to the plan without being
+    # threaded through the REBUILD is exactly the #839 defect, and an
+    # `is-subset` assertion would not notice the new key. This fired when
+    # `defect_commander` was added, which is the check doing its job.
     assert plan["specialist_flags"] == {
         "contract_validation": True,
         "log_intelligence": False,
         "regression_watchman": True,
         "change_ownership": True,
+        # Not passed by this test, so it records the default — off.
+        "defect_commander": False,
     }
 
 

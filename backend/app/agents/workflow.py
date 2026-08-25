@@ -28,6 +28,7 @@ from app.agents.contract_agent import ContractAgent
 from app.agents.log_intelligence_agent import LogIntelligenceAgent
 from app.agents.regression_watchman import RegressionWatchman
 from app.agents.change_ownership_agent import ChangeOwnershipAgent
+from app.agents.defect_commander import DefectCommander
 from app.agents.decision_report_agent import DecisionReportAgent
 from app.agents.decision_report_critic_agent import DecisionReportCriticAgent
 from app.agents.flaky_sentinel_agent import FlakySentinelAgent
@@ -99,6 +100,7 @@ _contract_agent = ContractAgent()
 _log_intelligence = LogIntelligenceAgent()
 _regression_watchman = RegressionWatchman()
 _change_ownership = ChangeOwnershipAgent()
+_defect_commander = DefectCommander()
 _gap_detection = GapDetectionAgent()
 _report_refinement = ReportRefinementAgent()
 _flaky_sentinel = FlakySentinelAgent()
@@ -430,6 +432,24 @@ async def log_intelligence_node(state: WorkflowState) -> dict:
     if not state.get("log_intelligence_enabled"):
         return _log_intelligence.disabled_delta()
     return await _log_intelligence.run(cast(dict[str, Any], state))
+
+
+async def defect_commander_node(state: WorkflowState) -> dict:
+    """Run the default-off defect promoter.
+
+    The only MUTATING stage in the deep graph: it writes a Defect row and, when
+    ``JIRA_ENABLED`` is set, files a ticket. It is therefore gated twice over —
+    this project flag (absent = off, since a missing feature flag evaluates
+    False) and ``JIRA_ENABLED`` (default False) for the outward-facing half.
+
+    Both branches live on the agent, like the other specialists: ``run`` picks
+    a cluster deterministically and drives the stage lifecycle, while
+    ``disabled_delta`` records a skip WITHOUT a lifecycle call, so "off" never
+    looks like "ran and promoted nothing".
+    """
+    if not state.get("defect_commander_enabled"):
+        return _defect_commander.disabled_delta()
+    return await _defect_commander.run(cast(dict[str, Any], state))
 
 
 async def regression_watchman_node(state: WorkflowState) -> dict:
@@ -809,6 +829,7 @@ def _build_deep_graph() -> StateGraph:
     graph.add_node("log_intelligence", _make_checkpointed_node(log_intelligence_node, "log_intelligence"))
     graph.add_node("regression_watchman", _make_checkpointed_node(regression_watchman_node, "regression_watchman"))
     graph.add_node("change_ownership", _make_checkpointed_node(change_ownership_node, "change_ownership"))
+    graph.add_node("defect_commander", _make_checkpointed_node(defect_commander_node, "defect_commander"))
 
     graph.add_node("gap_detection",        _make_checkpointed_node(gap_detection_node, "gap_detection"))
     graph.add_node("report_refinement",    _make_checkpointed_node(report_refinement_node, "report_refinement"))
@@ -899,6 +920,11 @@ def _build_deep_graph() -> StateGraph:
         "log_intelligence",
         "regression_watchman",
         "change_ownership",
+        # Fifth member of the same fan-out, NOT a new depth. gap_detection's
+        # predecessors must all sit one hop from cluster_investigation_join --
+        # a predecessor at a different depth makes the join fire twice and
+        # re-runs everything downstream (see the summary fan-in note above).
+        "defect_commander",
     ):
         graph.add_edge("cluster_investigation_join", _specialist)
         graph.add_edge(_specialist, "gap_detection")
@@ -1628,6 +1654,7 @@ async def run_offline_pipeline(
             pipeline_setup.get("async_decision_report_supersession_enabled", False)
         ),
         "contract_agent_enabled": bool(pipeline_setup.get("contract_agent_settings", {}).get("enabled", False)),
+        "defect_commander_enabled": bool(pipeline_setup.get("defect_commander_settings", {}).get("enabled", False)),
         "contract_findings": None,
         "log_intelligence_enabled": bool(pipeline_setup.get("log_intelligence_settings", {}).get("enabled", False)),
         "log_findings": None,
@@ -1820,6 +1847,7 @@ async def run_deep_pipeline(
             pipeline_setup.get("async_decision_report_supersession_enabled", False)
         ),
         "contract_agent_enabled": bool(pipeline_setup.get("contract_agent_settings", {}).get("enabled", False)),
+        "defect_commander_enabled": bool(pipeline_setup.get("defect_commander_settings", {}).get("enabled", False)),
         "contract_findings": None,
         "log_intelligence_enabled": bool(pipeline_setup.get("log_intelligence_settings", {}).get("enabled", False)),
         "log_findings": None,
@@ -2216,6 +2244,8 @@ async def _create_pipeline_run(
         log_intelligence_enabled = await is_enabled("log_intelligence", db=db, project_id=uuid.UUID(str(project_id)))
         regression_watchman_enabled = await is_enabled("regression_watchman", db=db, project_id=uuid.UUID(str(project_id)))
         change_ownership_enabled = await is_enabled("change_ownership", db=db, project_id=uuid.UUID(str(project_id)))
+        # MUTATING stage — a missing flag row evaluates False, so absent = off.
+        defect_commander_enabled = await is_enabled("defect_commander", db=db, project_id=uuid.UUID(str(project_id)))
 
         policy = await get_effective_policy(db, uuid.UUID(str(project_id)))
         run_budget = run_budget_from_policy(policy)
@@ -2230,6 +2260,7 @@ async def _create_pipeline_run(
             log_intelligence_enabled=log_intelligence_enabled,
             regression_watchman_enabled=regression_watchman_enabled,
             change_ownership_enabled=change_ownership_enabled,
+            defect_commander_enabled=defect_commander_enabled,
         )
         db.add(AgentPipelineRun(
             id=pipeline_run_id,
@@ -2245,6 +2276,7 @@ async def _create_pipeline_run(
                 "log_intelligence_settings": {"enabled": log_intelligence_enabled},
                 "regression_watchman_settings": {"enabled": regression_watchman_enabled},
                 "change_ownership_settings": {"enabled": change_ownership_enabled},
+                "defect_commander_settings": {"enabled": defect_commander_enabled},
                 "run_budget": run_budget,
                 "budget_spend": {
                     "llm_calls": 0,
@@ -2285,6 +2317,7 @@ async def _create_pipeline_run(
                 "log_intelligence_settings": {"enabled": log_intelligence_enabled},
                 "regression_watchman_settings": {"enabled": regression_watchman_enabled},
                 "change_ownership_settings": {"enabled": change_ownership_enabled},
+                "defect_commander_settings": {"enabled": defect_commander_enabled},
         }
 
 

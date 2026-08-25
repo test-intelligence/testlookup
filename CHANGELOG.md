@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-08-25 — DefectCommander joins the deep pipeline, default off
+
+``defect_commander`` was reachable only through ``POST /api/v1/agents/defect-command`` and had
+never written an ``agent_stage_results`` row (#849). It is now a planned stage in
+``_DEEP_STAGES``, gated by a project feature flag that **defaults off**.
+
+**It is the only MUTATING stage in the deep graph** — it writes a ``Defect`` row and, when
+``JIRA_ENABLED`` is set, files a real ticket. So the gating is doubled and both halves fail
+closed: a missing feature-flag row evaluates ``False`` (verified in ``is_enabled``), and
+``JIRA_ENABLED`` defaults ``False`` independently. Turning the stage on writes a Defect row;
+it does not reach Jira unless Jira is separately configured.
+
+- ``run(state)`` picks the cluster **deterministically** — largest by size, ``cluster_id`` as
+  tie-break. ``_promote`` acts on one cluster while the deep state carries a list, and a
+  non-deterministic pick would file a *different* defect on each re-run of identical evidence.
+  An explicit ``cluster_id`` still wins, so the standalone endpoint is unchanged.
+- ``disabled_delta()`` records a skip **without** a lifecycle call, so "off" never looks like
+  "ran and promoted nothing". When it runs and finds no cluster it does the opposite — marks
+  itself and logs a ``no_cluster`` decision, because a mutating stage that mutated nothing has
+  to say so.
+- The capability flips ``execution`` from ``on_demand`` to ``planned`` and keeps
+  ``permission="mutating"``. The ``agents.capability-has-executor`` guard from #849 is what
+  forced that edit: leaving it ``on_demand`` fails with *"the declaration contradicts the
+  planner"*. A guard written three PRs ago caught the inconsistency the moment it appeared.
+
+**Fan-out depth, not a new hop.** It joins the existing four-specialist fan-out from
+``cluster_investigation_join`` rather than hanging off a deeper edge. ``gap_detection``'s
+predecessors must all sit one hop from that join — a predecessor at a different depth makes
+the join fire twice and re-runs everything downstream, which is the double-execution incident
+recorded in the summary fan-in note. The graph compiles to 22 nodes.
+
+**The flag is threaded through both plan sites**, which is the #839 trap: the rebuild in
+``attach_workflow_plan_and_verification`` re-derives the plan, and a kwarg left to its default
+there silently rewrites it while the verifier checks execution against a plan that never
+applied. Round-tripped in both directions. On a stage that mutates external state, that
+failure mode does not produce a wrong dashboard number — it files tickets.
+
+Mutation-checked:
+
+| mutation | what fails |
+|---|---|
+| flag defaults to `True` | `test_the_plan_does_not_schedule_it_by_default` + the off/nothing-to-promote distinction |
+| rebuild drops the flag (#839 shape) | `test_the_flag_survives_the_plan_rebuild[True]` |
+
+
 ## 2026-08-25 (onboarding) — The setup bar reached 100% on steps you only skipped
 
 The Getting Started progress card showed a bare percentage. That percentage is folded:

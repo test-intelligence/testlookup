@@ -17,9 +17,11 @@ action-proposal concurrency class — and **no workflow's stage order contains
 it**. On the deployment it had never written a single ``agent_stage_results``
 row in the entire history of the table.
 
-Nothing is wrong with the agent. It runs on demand via
+Nothing was wrong with the agent -- it ran on demand via
 ``POST /api/v1/agents/defect-command``. What was wrong was the *record*, which
-described a mutating pipeline stage that nothing plans — the same
+described a mutating pipeline stage that nothing planned. (It has since been
+wired into the deep graph behind a default-off flag, so it is `planned` today;
+the defect this suite guards is the mismatch, not the value.) — the same
 documentation-drifts-from-behaviour shape as the two "not wired into any
 workflow node" comments corrected in #844, which were stale in the other
 direction.
@@ -50,10 +52,18 @@ NON_PLANNED = {"child_spawned", "on_demand", "runtime"}
 # executor and leaving the declaration behind is a test failure, not a silent
 # return to the original defect.
 EXECUTORS = {
-    "defect_commander": "on_demand",       # POST /api/v1/agents/defect-command
     "cluster_investigation": "child_spawned",  # dispatched per cluster
     "workflow": "runtime",                 # terminal-failure bookkeeping
 }
+
+# `defect_commander` was pinned here as `on_demand` precisely so that folding it
+# into the deep pipeline could not happen quietly -- it files tickets. That pin
+# fired when the stage was added to `_DEEP_STAGES`, which is the guard working,
+# not a guard in the way. It is now `planned` and gated by a default-off project
+# flag; the properties that matter moved to
+# tests/regression/test_defect_commander_is_flag_gated.py, which pins the
+# default-off behaviour, the flag surviving the plan rebuild, and the retained
+# `permission="mutating"`.
 
 
 def _planned_stages() -> set[str]:
