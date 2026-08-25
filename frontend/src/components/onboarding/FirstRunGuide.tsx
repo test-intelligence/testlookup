@@ -138,7 +138,7 @@ export default function FirstRunGuide({
         <Link to="/flaky-coach" className="btn-ghost text-sm inline-flex items-center gap-1.5">
           Flaky coach <ArrowRight className="h-3.5 w-3.5" />
         </Link>
-        <Link to="/releases" className="btn-ghost text-sm inline-flex items-center gap-1.5">
+        <Link to="/release-gate" className="btn-ghost text-sm inline-flex items-center gap-1.5">
           Release gate <ArrowRight className="h-3.5 w-3.5" />
         </Link>
         <Link to="/getting-started" className="btn-ghost text-sm inline-flex items-center gap-1.5">

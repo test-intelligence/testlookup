@@ -504,6 +504,14 @@ Deployed `build-20260824-f6` and ran a controlled before/after: 20 runs per arm,
 - 5 guards. The concurrency one is a **rendezvous, not a stopwatch**: all three layers must arrive before any may leave, so sequential code cannot satisfy it and no CI timing threshold can flake. Verified failing against the pre-change code before it was kept. The rest cover the risks the change introduces — tuple unpacking making a silent layer transposition possible, `gather`'s default sibling-cancellation on a raising child, layer 1 still gating the fan-out, and every layer still recording its own decisions.
 
 ## 2026-08-23 — The learning loop now says why it is not learning (F-10)
+## 2026-08-24 — The first-run guide's "Release gate" button pointed at the wrong page
+
+- The empty-dashboard guide's three shortcut buttons (Failure analysis, Flaky coach, Release gate) are meant to hand a brand-new self-hoster straight to the feature each names. Two were correct — `/failures` and `/flaky-coach`. The third, labelled **Release gate**, linked to **`/releases`**: a *different* feature (the Releases-workflow CRUD page), not the release-risk gate the onboarding narrative promises ("dig into … the release-risk gate").
+- Worse, `/releases` is a **management-only** route (QA_LEAD/ADMIN). A fresh ENGINEER- or viewer-role self-hoster — exactly who the first-run guide targets — clicked "Release gate" and was **silently redirected to `/overview`** by the management guard, landing nowhere near the feature.
+- Fixed to `/release-gate` — the Sidebar's own "Release Gate" target, a role-open route (registered in `appRoutes`, not `managementRoutes`) whose `ReleaseGatePage` is the release-risk gate itself. The three shortcut buttons now all match their feature routes.
+- Regression guard tightened: the existing link test pinned `/releases` (baking in the bug); it now asserts `/release-gate` **and** that the href is not `/releases`, so neither the wrong-feature nor the access-bounce regression can return.
+
+
 
 - The finding is accurate in code: `auto` resolves ML → LLM → rules, ML only wins once a trained model exists (needs `ML_MIN_TRAINING_SAMPLES` labels), corrections match on an **exact** `test_fingerprint`, and fine-tuning — the one thing that would improve the LLM itself — is off by default, OpenAI-only, and refused under `AI_OFFLINE_MODE`.
 - **But measuring changed what is worth building.** On the deployment: **4,849 analyses, 0 feedback rows, 0 corrections.** The loop has never been started, so the problem is not "stuck below 200 labels" — nothing feeds it. The submission path is fully built and wired (`CorrectClassificationModal` → `aiFeedbackService` → feedback router) and simply unused.

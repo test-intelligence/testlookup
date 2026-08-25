@@ -47,7 +47,15 @@ describe('FirstRunGuide', () => {
     renderGuide()
     expect(screen.getByRole('link', { name: /failure analysis/i })).toHaveAttribute('href', '/failures')
     expect(screen.getByRole('link', { name: /flaky coach/i })).toHaveAttribute('href', '/flaky-coach')
-    expect(screen.getByRole('link', { name: /release gate/i })).toHaveAttribute('href', '/releases')
+    // The "Release gate" button is the release-risk gate feature (the Sidebar's
+    // "Release Gate" → /release-gate, a role-open route), NOT the management-only
+    // Releases-workflow CRUD page at /releases. Regression: it linked to
+    // /releases — a different feature, AND a route gated to QA_LEAD/ADMIN, so a
+    // fresh ENGINEER/viewer self-hoster clicking it during first-run was
+    // silently bounced to /overview. The other two buttons already match their
+    // feature routes (/failures, /flaky-coach); this brings the third in line.
+    expect(screen.getByRole('link', { name: /release gate/i })).toHaveAttribute('href', '/release-gate')
+    expect(screen.getByRole('link', { name: /release gate/i })).not.toHaveAttribute('href', '/releases')
   })
 
   it('offers an in-app path to the guided setup checklist', () => {
