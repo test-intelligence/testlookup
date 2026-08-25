@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026-08-24 (guard scope) — The decision guard could only see direct subclasses
+
+``agents.log-decision-present`` matched ``class X(BaseAgent)`` — a **direct** base only.
+Probing the running worker with ``issubclass``, which is transitive, surfaced seven agents the
+guard could not see at all: the five hypothesis agents
+(``InfraHypothesisAgent(HypothesisAgent)`` and siblings) and the two ``_Standalone*`` variants
+of ``DefectCommander`` and ``RegressionWatchman``.
+
+All seven turned out to be fine — they **inherit** ``run`` from a parent that does log, and
+the measurement backs that up: 185 of 185 completed hypothesis-stage rows carry a decision.
+But a subclass that *overrode* ``run`` without logging would have been invisible to the gate,
+which is a hole whether or not anything is sitting in it today.
+
+- The rule is now anchored on ``run`` rather than on the base list: **the class that
+  implements the stage owes the decision.** One that inherits ``run``, or delegates with
+  ``super().run(...)``, is covered wherever that ``run`` is defined. Population goes from 20
+  direct subclasses to **27 classes reaching ``BaseAgent`` by any path, 20 of which implement
+  ``run``**.
+- Nothing is newly exempt: every direct subclass defines ``run``, so the anchor cannot let one
+  through that the old check caught. Violations stay at 0.
+- The sibling lifecycle property (``mark_stage_running`` / ``mark_stage_done``, #844) had the
+  identical blind spot and is widened the same way.
+
+**One predicate, not two.** Both regression suites now import
+``tests/regression/_agent_graph.py`` instead of each computing the population themselves —
+they had already drifted into two copies of "direct bases only". A new test loads
+``scripts/quality_gate.py`` and asserts the gate and the suite agree on exactly which classes
+owe a trail, so the thing that blocks CI and the thing that blocks the branch cannot reach
+different conclusions.
+
+Four mutations, four correct outcomes:
+
+| mutation | expected | result |
+|---|---|---|
+| transitive subclass overrides `run`, no logging | **fail** (the new capability) | `InfraHypothesisAgent implements run() but never calls self.log_decision(...)` |
+| same, but delegating via `super().run(...)` | **pass** (no false positive) | OK |
+| direct subclass loses its decision | **fail** (no regression) | `IngestionAgent implements run() ...` |
+| transitive override skipping the lifecycle | **fail** (sibling rule) | lifecycle property fails |
+
+Found by verifying the deployment after #850 — the guard's own blind spot showed up only
+because the live probe used a different, broader definition of "agent" than the static check
+did. Two ways of asking the same question disagreeing is what made it visible.
+
+
 ## 2026-08-24 (test flake) — A key expired only if the clock happened to tick
 
 ``FakeRedis._is_expired`` compared with a strict ``>``::

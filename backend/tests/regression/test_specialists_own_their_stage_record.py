@@ -45,8 +45,6 @@ would have passed happily on the day a fifth was added.
 """
 from __future__ import annotations
 
-import ast
-import pathlib
 from unittest.mock import AsyncMock
 
 import pytest
@@ -58,26 +56,9 @@ from app.agents.change_ownership_agent import ChangeOwnershipAgent  # noqa: E402
 from app.agents.contract_agent import ContractAgent  # noqa: E402
 from app.agents.log_intelligence_agent import LogIntelligenceAgent  # noqa: E402
 
+from ._agent_graph import agent_classes, class_calls, implementers  # noqa: E402
+
 LIFECYCLE = ("mark_stage_running", "mark_stage_done")
-AGENTS_ROOT = pathlib.Path(__file__).resolve().parents[2] / "app" / "agents"
-
-
-def _base_agent_classes() -> list[tuple[str, ast.ClassDef]]:
-    """Every ``class X(BaseAgent)`` under ``app/agents/``, by AST.
-
-    Source-level rather than by import because an agent that fails to import
-    would otherwise silently drop out of the guard's population.
-    """
-    found: list[tuple[str, ast.ClassDef]] = []
-    for path in sorted(AGENTS_ROOT.rglob("*.py")):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError:  # pragma: no cover — a broken file fails elsewhere
-            continue
-        for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
-            if any(isinstance(b, ast.Name) and b.id == "BaseAgent" for b in cls.bases):
-                found.append((path.name, cls))
-    return found
 
 
 # ── The two that were not subclasses at all ──────────────────────────────────
@@ -99,32 +80,37 @@ def test_the_specialist_is_a_base_agent(agent, stage):
 # ── The property, so a sixteenth agent is covered ────────────────────────────
 
 
-def test_every_base_agent_drives_its_own_stage_lifecycle():
-    """``run`` is abstract, so the lifecycle is opt-in — assert every opt-in."""
+def test_every_agent_that_implements_run_drives_its_own_stage_lifecycle():
+    """``run`` is abstract, so the lifecycle is opt-in — assert every opt-in.
+
+    Anchored on ``run`` and resolved through the inheritance graph, the same
+    population the decision-trail guard uses: the class that implements the
+    stage owes the record, and one that inherits ``run`` is covered where that
+    ``run`` is defined.
+    """
     offenders = []
-    for filename, cls in _base_agent_classes():
-        calls = {
-            node.func.attr
-            for node in ast.walk(cls)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-        }
-        missing = [name for name in LIFECYCLE if name not in calls]
+    for filename, cls in implementers():
+        missing = [name for name in LIFECYCLE if not class_calls(cls, name)]
         if missing:
             offenders.append(f"{filename}::{cls.name} missing {', '.join(missing)}")
 
     assert not offenders, (
         "a stage that never marks itself leaves no span, no metrics and no "
-        "timeline entry — the row alone is a backfill, not a record:\n  "
-        + "\n  ".join(offenders)
+        "timeline entry — the row alone is a backfill, not a record: "
+        + "; ".join(offenders)
     )
 
 
 def test_the_lifecycle_guard_can_actually_see_the_agents():
     """A guard that finds nothing to check reports green for the wrong reason."""
-    classes = _base_agent_classes()
-    assert len(classes) >= 15, (
-        f"only {len(classes)} BaseAgent subclasses found under {AGENTS_ROOT} — "
-        "the scan has lost its population and would pass vacuously"
+    classes = agent_classes()
+    assert len(classes) >= 27, (
+        f"only {len(classes)} agent classes found — the scan has lost its "
+        "population and would pass vacuously"
+    )
+    assert len(implementers()) >= 20, (
+        f"only {len(implementers())} implement run(); the property above would "
+        "cover almost nothing"
     )
     names = {cls.name for _f, cls in classes}
     for required in ("ContractAgent", "LogIntelligenceAgent", "ChangeOwnershipAgent"):

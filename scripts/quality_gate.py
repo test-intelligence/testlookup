@@ -1987,45 +1987,102 @@ def _agents_base_agent_subclass() -> list[Violation]:
     return violations
 
 
-def _agents_log_decision_present() -> list[Violation]:
-    """Every BaseAgent subclass should call ``self.log_decision(...)``
-    at least once. A subclass without a single decision log entry
-    produces an empty ``AgentStageResult.decision_log`` and breaks
-    the UI's "why did the agent do X" surface.
+def _agent_class_graph() -> list[tuple[Path, ast.ClassDef]]:
+    """Every class under ``app/agents/`` that reaches ``BaseAgent`` by any path.
 
-    Asserted over the AST rather than by substring. ``"log_decision" in text``
-    was satisfied by any mention at all -- a docstring, a comment, an entry in
-    a list of things to do later -- so a file could describe the decision trail
-    it does not write and still pass. The same shape (a check matching a
-    substring that appears in prose) has produced silent no-ops here before.
+    Resolved across files by class name, because the inheritance that matters
+    here spans modules (``InfraHypothesisAgent`` -> ``HypothesisAgent`` ->
+    ``BaseAgent``). Name-based resolution cannot tell two same-named classes in
+    different modules apart; that is acceptable in this tree and fails toward
+    *including* a class rather than skipping it.
     """
-    root = REPO_ROOT / "backend" / "app" / "agents"
-    violations: list[Violation] = []
-    for path in iter_files(root, (".py",)):
+    bases: dict[str, list[str]] = {}
+    located: list[tuple[Path, ast.ClassDef]] = []
+    for path in iter_files(REPO_ROOT / "backend" / "app" / "agents", (".py",)):
         if path.name in _SUPPORT_AGENT_FILES:
             continue
-        text = path.read_text(encoding="utf-8")
         try:
-            tree = ast.parse(text)
+            tree = ast.parse(path.read_text(encoding="utf-8"))
         except SyntaxError:  # a broken file fails louder elsewhere
             continue
         for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
-            if not any(
-                isinstance(base, ast.Name) and base.id == "BaseAgent"
-                for base in cls.bases
-            ):
-                continue
-            calls = {
-                node.func.attr
-                for node in ast.walk(cls)
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-            }
-            if "log_decision" not in calls:
-                violations.append(Violation(
-                    path, cls.lineno,
-                    f"{cls.name} never calls self.log_decision(...) — "
-                    "every non-trivial routing/fallback/skip branch should be logged",
-                ))
+            bases[cls.name] = [
+                getattr(b, "id", getattr(b, "attr", "")) for b in cls.bases
+            ]
+            located.append((path, cls))
+
+    def derives(name: str, seen: frozenset = frozenset()) -> bool:
+        if name in seen:  # defensive; a cycle cannot occur in valid Python
+            return False
+        for base in bases.get(name, []):
+            if base == "BaseAgent" or derives(base, seen | {name}):
+                return True
+        return False
+
+    return [(path, cls) for path, cls in located if derives(cls.name)]
+
+
+def _defines_run(cls: ast.ClassDef) -> bool:
+    return any(
+        isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name == "run"
+        for m in cls.body
+    )
+
+
+def _delegates_to_super_run(cls: ast.ClassDef) -> bool:
+    """``super().run(...)`` — the parent's decisions still fire, so this is fine."""
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "run"
+        and isinstance(node.func.value, ast.Call)
+        and getattr(node.func.value.func, "id", "") == "super"
+        for node in ast.walk(cls)
+    )
+
+
+def _class_calls(cls: ast.ClassDef, attr: str) -> bool:
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == attr
+        for node in ast.walk(cls)
+    )
+
+
+def _agents_log_decision_present() -> list[Violation]:
+    """Every agent that implements ``run`` records at least one decision.
+
+    ``AgentStageResult.decision_log`` is the "why did the agent do that"
+    surface; an agent that never calls ``log_decision`` leaves it empty.
+
+    Two widenings, each from a real miss:
+
+    * **By AST, not substring.** ``"log_decision" in text`` was satisfied by a
+      docstring, a comment, or a ``# TODO``, so a module could describe the
+      trail it never wrote and pass.
+    * **Following inheritance, not just direct bases.** The check matched
+      ``class X(BaseAgent)`` only. Probing the deployment with ``issubclass``
+      surfaced seven agents the guard could not see — the five hypothesis
+      agents plus the two ``_Standalone*`` variants — all of which were fine,
+      because they inherit ``run``. A subclass that *overrode* ``run`` without
+      logging would have been missed entirely.
+
+    The rule is therefore anchored on ``run``: the class that implements the
+    stage owes the decision. A class that inherits ``run``, or delegates with
+    ``super().run(...)``, is covered wherever that ``run`` is defined.
+    """
+    violations: list[Violation] = []
+    for path, cls in _agent_class_graph():
+        if not _defines_run(cls):
+            continue  # inherits a run(), checked where that run() is defined
+        if _class_calls(cls, "log_decision") or _delegates_to_super_run(cls):
+            continue
+        violations.append(Violation(
+            path, cls.lineno,
+            f"{cls.name} implements run() but never calls self.log_decision(...) — "
+            "every non-trivial routing/fallback/skip branch should be logged",
+        ))
     return violations
 
 
@@ -2831,9 +2888,18 @@ GUARDS: list[Guard] = [
     ),
     Guard(
         name="agents.log-decision-present",
-        description="Every BaseAgent subclass calls self.log_decision(...) at least once.",
+        description=(
+            "Every agent that implements run() calls self.log_decision(...) "
+            "at least once — following inheritance, so a subclass that "
+            "overrides run() owes its own decision trail."
+        ),
         check=_agents_log_decision_present,
-        fix_hint="Log every non-trivial routing/fallback/skip branch via `await self.log_decision(...)`.",
+        fix_hint=(
+            "Log every non-trivial routing/fallback/skip branch via "
+            "`await self.log_decision(...)`. A subclass that only extends "
+            "behaviour can delegate with `await super().run(state)` instead — "
+            "the parent's decisions still fire."
+        ),
     ),
     Guard(
         name="agents.capability-has-executor",

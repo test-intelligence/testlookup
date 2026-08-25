@@ -34,7 +34,6 @@ What is guarded
 from __future__ import annotations
 
 import ast
-import pathlib
 import textwrap
 from unittest.mock import AsyncMock
 
@@ -45,7 +44,12 @@ pytest.importorskip("asyncpg")
 from app.agents.cluster_agent import ClusterAgent  # noqa: E402
 from app.agents.release_risk_agent import ReleaseRiskAgent  # noqa: E402
 
-AGENTS_ROOT = pathlib.Path(__file__).resolve().parents[2] / "app" / "agents"
+from ._agent_graph import (  # noqa: E402
+    agent_classes,
+    class_calls,
+    delegates_to_super_run,
+    implementers,
+)
 
 # The nine that had no decision trail. Named so a silent regression on any one
 # of them is legible, rather than showing up as an anonymous count change.
@@ -56,52 +60,61 @@ FORMERLY_SILENT = {
 }
 
 
-def _calls_log_decision(cls: ast.ClassDef) -> bool:
-    """True when the class body contains a real ``.log_decision(...)`` call.
+def _records_a_decision(cls) -> bool:
+    """The predicate the quality gate uses, anchored on ``run``.
 
-    This is the predicate the quality gate uses. Extracted and asserted here
-    too so the rule has one definition and both call sites agree on it.
+    A class that implements ``run`` owes its own trail; one that inherits it,
+    or delegates with ``super().run(...)``, is covered where that ``run`` lives.
     """
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "log_decision"
-        for node in ast.walk(cls)
-    )
-
-
-def _base_agent_classes() -> list[tuple[str, ast.ClassDef]]:
-    found: list[tuple[str, ast.ClassDef]] = []
-    for path in sorted(AGENTS_ROOT.rglob("*.py")):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError:  # pragma: no cover
-            continue
-        for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
-            if any(isinstance(b, ast.Name) and b.id == "BaseAgent" for b in cls.bases):
-                found.append((path.name, cls))
-    return found
+    return class_calls(cls, "log_decision") or delegates_to_super_run(cls)
 
 
 # ── The property ─────────────────────────────────────────────────────────────
 
 
-def test_every_base_agent_records_at_least_one_decision():
+def test_every_agent_that_implements_run_records_at_least_one_decision():
     offenders = [
         f"{filename}::{cls.name}"
-        for filename, cls in _base_agent_classes()
-        if not _calls_log_decision(cls)
+        for filename, cls in implementers()
+        if not _records_a_decision(cls)
     ]
     assert not offenders, (
         "an agent with no decision trail leaves an empty decision_log, and the "
-        "'why did it do that' surface has nothing to show:\n  "
-        + "\n  ".join(offenders)
+        "'why did it do that' surface has nothing to show: "
+        + ", ".join(offenders)
+    )
+
+
+def test_the_population_follows_inheritance_not_just_direct_bases():
+    """The widening itself, pinned.
+
+    The original check matched ``class X(BaseAgent)`` only. Probing the
+    deployment with ``issubclass`` surfaced seven agents it could not see —
+    the five hypothesis agents and the two ``_Standalone*`` variants. They were
+    all fine (they inherit ``run``), but a subclass that *overrode* ``run``
+    without logging would have been invisible.
+    """
+    names = {cls.name for _f, cls in agent_classes()}
+    for indirect in (
+        "InfraHypothesisAgent", "CommitHypothesisAgent", "EnvironmentHypothesisAgent",
+        "KnownFlakyHypothesisAgent", "RegressionHypothesisAgent",
+        "_StandaloneCommander", "_StandaloneWatchman",
+    ):
+        assert indirect in names, (
+            f"{indirect} reaches BaseAgent through a parent and must be in the "
+            "population; a direct-base-only scan misses it"
+        )
+    assert len(names) >= 27, (
+        f"only {len(names)} agent classes found — the graph has lost members and "
+        "the properties above would pass vacuously"
     )
 
 
 def test_the_nine_formerly_silent_agents_are_all_still_covered():
     """Named, so one quietly losing its trail is not just a count going down."""
-    recording = {cls.name for _f, cls in _base_agent_classes() if _calls_log_decision(cls)}
+    recording = {
+        cls.name for _f, cls in agent_classes() if _records_a_decision(cls)
+    }
     missing = sorted(FORMERLY_SILENT - recording)
     assert not missing, f"these had their decision trail restored and lost it again: {missing}"
 
@@ -123,7 +136,7 @@ def test_a_prose_mention_is_not_a_decision_trail():
     cls = next(n for n in ast.walk(prose_only) if isinstance(n, ast.ClassDef))
 
     assert "log_decision" in ast.unparse(cls), "the mention must be present"
-    assert not _calls_log_decision(cls), (
+    assert not _records_a_decision(cls), (
         "a docstring and a TODO are not a decision trail — this is exactly what "
         "the old substring check accepted"
     )
@@ -197,3 +210,44 @@ async def test_release_risk_says_when_its_verdict_was_substituted(monkeypatch):
     verdict = [d for d in decisions if d["decision_point"] == "release_recommendation"]
     assert verdict, "the terminal GO/NO_GO judgement was not recorded"
     assert verdict[0]["chosen"] == "CONDITIONAL_GO"
+
+
+def test_the_guard_and_the_gate_agree_on_who_is_covered():
+    """One rule, two call sites — assert they reach the same conclusion.
+
+    The gate blocks CI and this suite blocks the branch; if they compute the
+    population differently, one of them is quietly guarding a smaller set. That
+    failure mode has bitten this repo before, which is why the predicate lives
+    in a single module and is pinned against the gate here rather than trusted
+    to stay in sync by convention.
+    """
+    import importlib.util
+    import pathlib
+    import sys
+
+    gate_path = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "quality_gate.py"
+    spec = importlib.util.spec_from_file_location("_qg_for_test", gate_path)
+    assert spec and spec.loader, f"could not load the quality gate at {gate_path}"
+    gate = importlib.util.module_from_spec(spec)
+    # Register before exec: the gate defines dataclasses, and @dataclass looks
+    # its own module up in sys.modules while building __init__.
+    sys.modules["_qg_for_test"] = gate
+    try:
+        spec.loader.exec_module(gate)
+    finally:
+        sys.modules.pop("_qg_for_test", None)
+
+    gate_pop = {
+        cls.name for _p, cls in gate._agent_class_graph()
+        if gate._defines_run(cls) and not gate._delegates_to_super_run(cls)
+    }
+    test_pop = {cls.name for _f, cls in implementers()}
+
+    assert gate_pop == test_pop, (
+        "the gate and this suite disagree about which agents owe a decision "
+        f"trail; only in gate: {sorted(gate_pop - test_pop)}, "
+        f"only in tests: {sorted(test_pop - gate_pop)}"
+    )
+    assert not gate._agents_log_decision_present(), (
+        "the gate reports violations this suite did not"
+    )
