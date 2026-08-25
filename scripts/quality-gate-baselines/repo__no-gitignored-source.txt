@@ -13,11 +13,12 @@
 # Reviewed in PR; remove entries as the code is cleaned up.
 # ---- notes below this line are preserved across --update-baseline ----
 #
-# -- Why these eight are here -------------------------------------------------
+# -- Why these three are here -------------------------------------------------
 #
-# All eight match `.gitignore` lines 27-28, `*api_key*` / `*apikey*`. Those
-# globs exist to stop a file full of API keys being committed; they also match
-# the source of the API-key FEATURE, which is a different thing entirely.
+# All three match `.gitignore` line 27, `*api_key*` (lowercase, with the
+# underscore). That glob exists to stop a file full of API keys being
+# committed; it also matches the source of the API-key FEATURE, which is a
+# different thing entirely.
 #
 # These files are tracked, so they work today. What they are not is safe: any
 # one of them, deleted and recreated -- or added by a tool that does not force
@@ -34,16 +35,21 @@
 # overbroad glob is backwards, and `git add -f` just moves the trap to whoever
 # touches the file next.
 #
-# The real fix is to anchor the two globs to the file types that actually carry
-# secrets (`*api_key*.json`, `*.env`, `*.txt`, ...) so they stop matching
-# source. That narrows a SECURITY control, so it is the owner's call, not this
-# guard's -- see GIT-001 in docs/exploratory/BACKLOG.md. Clear these eight by
-# doing that, then re-run with --update-baseline.
+# This list held EIGHT entries until five were pruned: the camelCase
+# frontend/client sources (useApiKeys.ts, ApiKeysPage.tsx, apiKeyService.ts,
+# apiKey.ts, ParallelSuitesWithOneApiKeyTest.java). Those spell the feature as
+# `ApiKey` / `apiKey`, which does NOT contain the lowercase substring
+# `api_key` or `apikey` and so never matched the globs on a case-sensitive
+# filesystem -- git check-ignore is the authority, and on Linux CI it does not
+# flag them. They were baselined (likely captured on a case-insensitive box)
+# and had sat as permanent stale `!!` drift, training reviewers to tune out
+# gate warnings. A test now pins this baseline at zero stale entries.
+#
+# The real fix for the three that DO match is to anchor the glob to the file
+# types that actually carry secrets (`*api_key*.json`, `*.env`, `*.txt`, ...)
+# so it stops matching source. That narrows a SECURITY control, so it is the
+# owner's call, not this guard's -- see GIT-001 in docs/exploratory/BACKLOG.md.
+# Clear these three by doing that, then re-run with --update-baseline.
 775dae70c8bba1ee  # backend/app/routers/api_keys.py
 f9b92aa520f6c7ff  # backend/migrations/versions/0056_api_key_project_scope.py
 418a2f36ce7ac705  # backend/tests/test_api_key_auth.py
-1162ad75ea999656  # client/examples/java/testng_realistic/src/test/java/com/example/ParallelSuitesWithOneApiKeyTest.java
-e49f0d4df1f83ea2  # frontend/src/hooks/useApiKeys.ts
-463f2a3b273255ff  # frontend/src/pages/settings/ApiKeysPage.tsx
-8083f3066305341a  # frontend/src/services/apiKeyService.ts
-6dce1dc0663f2f14  # frontend/src/types/apiKey.ts

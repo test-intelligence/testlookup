@@ -128,6 +128,27 @@ folding ``defect_commander`` into the deep pipeline has to be a deliberate edit 
 quiet one — it files tickets — and asserts the ``on_demand`` endpoint actually exists, since
 declaring an executor that does not exist would be the same defect wearing a nicer label.
 
+## 2026-08-25 — The quality gate stopped crying wolf about five files it had already forgiven
+
+- `repo.no-gitignored-source` (GIT-001) baselines source files that match `.gitignore`'s
+  security globs so a rename-or-recreate can never drop them from a commit silently. Its
+  baseline held **eight** entries; on every run the gate printed a yellow `!!` that **five**
+  of them were *stale* — the code is fixed — and passed anyway.
+- The five (`useApiKeys.ts`, `ApiKeysPage.tsx`, `apiKeyService.ts`, `apiKey.ts`,
+  `ParallelSuitesWithOneApiKeyTest.java`) spell the feature `ApiKey` / `apiKey`, which
+  contains neither the lowercase substring `api_key` nor `apikey`. The globs `*api_key*` /
+  `*apikey*` therefore **never matched them on a case-sensitive filesystem** — `git
+  check-ignore` is the authority and on Linux CI does not flag them. They were almost
+  certainly captured on a case-insensitive box and had been dead weight since.
+- Pruned to the **three** genuine lowercase-`api_key` matches (the `api_keys.py` router, the
+  `0056_api_key_project_scope.py` migration, `test_api_key_auth.py`) via
+  `--update-baseline`, and rewrote the preserved note to explain the case-sensitivity split.
+  The gate now reports `OK` with no `!!` — a permanent yellow line was training reviewers to
+  tune out gate warnings.
+- Regression guard: a new self-test pins the baseline at **zero stale entries** (every
+  fingerprint must still fire) and asserts the five camelCase sources cannot creep back in.
+  It runs against the real tree because staleness is a property of the committed baseline
+  versus the current repo, which only real `git check-ignore` can decide.
 
 ## 2026-08-24 (decision trail, verified) — Every agent that ran said why
 

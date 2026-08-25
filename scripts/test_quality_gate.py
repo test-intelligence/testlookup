@@ -1030,6 +1030,51 @@ def test_gitignored_source_roots_cover_tests_not_just_app_code() -> None:
     assert "backend/migrations" in qg._SOURCE_ROOTS
 
 
+def test_gitignored_source_baseline_has_no_stale_entries() -> None:
+    """The committed baseline must list only violations that still fire.
+
+    A stale entry — a fingerprint the guard no longer produces — is not a
+    failure, so the gate only prints a `!!` nudge and passes. Left alone it
+    prints on every run forever, and a permanent yellow line trains reviewers
+    to tune out gate warnings. Five camelCase sources (``useApiKeys.ts``,
+    ``ApiKeysPage.tsx``, ``apiKeyService.ts``, ``apiKey.ts``,
+    ``ParallelSuitesWithOneApiKeyTest.java``) sat exactly like that: they spell
+    the feature ``ApiKey`` / ``apiKey``, which contains neither the lowercase
+    substring ``api_key`` nor ``apikey``, so the globs never matched them on a
+    case-sensitive filesystem — ``git check-ignore`` is the authority and on
+    Linux CI does not flag them. This pins the baseline at zero stale entries
+    so that drift cannot re-accumulate unnoticed.
+
+    Unlike the sibling GIT-001 tests this runs against the real tree, not a
+    tmp fixture: staleness is a property of the *committed* baseline versus the
+    *current* repo, and only the real ``git check-ignore`` can decide it. The
+    CI quality-gate job is a full ``actions/checkout`` with git available, the
+    same context the gate itself relies on.
+    """
+    guard = next(g for g in qg.GUARDS if g.name == "repo.no-gitignored-source")
+    baseline = guard.load_baseline()
+    fingerprints = {k for k in baseline if qg._BASELINE_KEY_RE.match(k)}
+    live_keys = {v.key for v in qg._repo_no_gitignored_source()}
+
+    stale = fingerprints - live_keys
+    assert not stale, (
+        "repo.no-gitignored-source baseline carries stale entries the guard no "
+        "longer produces — prune with `python scripts/quality_gate.py --only "
+        "repo.no-gitignored-source --update-baseline`. Stale: "
+        + ", ".join(sorted(baseline.get(k) or k for k in stale))
+    )
+
+    # The three that remain are the genuine lowercase-`api_key` matches; the
+    # camelCase sources must not creep back in.
+    annotations = " ".join(baseline.values())
+    assert "backend/app/routers/api_keys.py" in annotations
+    for pruned in ("useApiKeys.ts", "ApiKeysPage.tsx", "apiKeyService.ts", "apiKey.ts"):
+        assert pruned not in annotations, (
+            f"{pruned} is back in the baseline; it never matches the lowercase "
+            "glob on a case-sensitive filesystem and must not be baselined."
+        )
+
+
 # ── backend.streaming-body-not-rebound ───────────────────────────────────────
 
 
