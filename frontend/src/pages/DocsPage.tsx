@@ -27,6 +27,7 @@ import remarkGfm from 'remark-gfm'
 import { ChevronRight, Search as SearchIcon } from 'lucide-react'
 
 import PageHeader from '@/components/ui/PageHeader'
+import MermaidDiagram from '@/components/guide/MermaidDiagram'
 import {
   DOC_GROUPS,
   DOC_PAGES,
@@ -58,32 +59,6 @@ function headingsOf(markdown: string): { depth: number; text: string; id: string
     if (m) out.push({ depth: m[1].length, text: m[2].trim(), id: slugify(m[2].trim()) })
   }
   return out
-}
-
-/**
- * A fenced ```mermaid block. The app does not bundle a Mermaid renderer, so the
- * source is shown as labelled, copyable text. Every diagram in the content is
- * followed by a written description of the same flow — a picture nobody can
- * render is not an explanation, and a screen reader never gets one anyway.
- */
-function Diagram({ source }: { source: string }) {
-  return (
-    <figure className="mb-3">
-      <figcaption className="text-[12px] uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
-        Diagram source (Mermaid)
-      </figcaption>
-      <pre
-        className="overflow-x-auto rounded-lg border p-3 text-[12px] leading-relaxed"
-        style={{
-          borderColor: 'var(--color-border)',
-          background: 'var(--color-bg-secondary)',
-          color: 'var(--color-text-muted)',
-        }}
-      >
-        <code>{source}</code>
-      </pre>
-    </figure>
-  )
 }
 
 const MARKDOWN_COMPONENTS = {
@@ -164,7 +139,7 @@ const MARKDOWN_COMPONENTS = {
   ),
   code: (p: { className?: string; children?: React.ReactNode }) => {
     const language = /language-(\w+)/.exec(p.className ?? '')?.[1]
-    if (language === 'mermaid') return <Diagram source={String(p.children ?? '')} />
+    if (language === 'mermaid') return <MermaidDiagram source={String(p.children ?? '')} />
     if (!language) {
       return (
         <code

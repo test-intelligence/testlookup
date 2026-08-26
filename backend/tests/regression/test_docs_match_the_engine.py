@@ -216,3 +216,46 @@ def test_every_documentation_file_is_tracked_by_git():
         "documentation files on disk but not in git — CI will never see them, "
         f"and neither will the Mermaid validator: {untracked}"
     )
+
+
+def test_every_page_with_a_diagram_is_covered_by_the_render_probe():
+    """A new diagram must not quietly land outside the live probe.
+
+    The probe that checks diagrams draw as pictures — and that their labels are
+    not clipped by their own node boxes — walks an explicit list of pages. A
+    list like that goes stale the first time someone adds a diagram to a page
+    that is not on it, and nothing complains: the probe still passes, having
+    simply not looked.
+
+    That is the shape of defect this repository keeps finding (a metric with no
+    denominator, a stage list with a second copy), so the list is asserted
+    against the content rather than trusted.
+    """
+    probe = REPO / "frontend" / "tests" / "probe-docs-render.spec.ts"
+    if not probe.is_file():  # pragma: no cover - frontend not checked out
+        pytest.skip("probe not present in this checkout")
+
+    import re
+
+    declared = re.search(r"const DIAGRAM_PAGES = \[([^\]]*)\]", probe.read_text(encoding="utf-8"))
+    assert declared, "DIAGRAM_PAGES is no longer declared the way this guard reads it"
+    listed = set(re.findall(r"'([a-z-]+)'", declared.group(1)))
+
+    with_diagrams = {
+        path.stem
+        for path in DOCS_CONTENT.glob("*.md")
+        if "```mermaid" in path.read_text(encoding="utf-8")
+    }
+    assert with_diagrams, "no page has a diagram — this guard would pass vacuously"
+
+    unprobed = sorted(with_diagrams - listed)
+    assert not unprobed, (
+        "these pages have diagrams the live render probe never looks at: "
+        f"{unprobed} — add them to DIAGRAM_PAGES in {probe.name}"
+    )
+
+    stale = sorted(listed - with_diagrams)
+    assert not stale, (
+        f"the probe lists pages that no longer have a diagram: {stale} — it will "
+        "wait 30s for an SVG that never comes"
+    )

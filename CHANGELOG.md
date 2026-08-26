@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-08-25 (follow-up) — The documentation's diagrams are pictures now, and legible
+
+The thirteen diagrams in the user guide were written in Mermaid and rendered as **source code**:
+the reader got ``flowchart LR`` and a list of arrow syntax where a picture belonged. Mermaid is
+now bundled and the fenced blocks are drawn, lazily — it is a large library and only these
+pages use it, so it is a dynamic import (two chunks, ~112 kB, that nobody else pays for) and it
+is never fetched from a CDN, because this product ships to air-gapped deployments.
+
+Three things are worth recording, because two of them were caught only by looking.
+
+**A picture can draw perfectly and still be unreadable.** Under ``fontFamily: 'inherit'``
+Mermaid sizes every node box by measuring its label in a detached element, and that element
+resolves ``inherit`` to a different font than the finished SVG. Every box came out about 12%
+too narrow, so the deployment showed ``Backend AP``, ``MCP serve``, ``CI syst`` — labels cut
+off by their own borders. **Every existing assertion passed on that diagram**, here and in the
+live probes, because ``textContent`` still holds the whole label when it is visually clipped.
+It was found by taking a screenshot and reading it. The fix is a concrete font stack; the guard
+compares each label's required width against the width Mermaid allocated it, which is a
+geometry the text checks cannot see. ``getBBox()`` on the ``foreignObject`` is not that
+geometry — it returns the allocated width, so it always "fits".
+
+**The fallback must not remove the thing it falls back from.** When a diagram fails to parse
+the reader gets its source and a plain statement that it could not be drawn, rather than a
+blank space they cannot distinguish from an empty page. The first version swapped the host
+element out to show that — but the host *is* the render target, so once it was gone the ref was
+null and every later redraw returned early at the null check. One parse failure would have been
+permanent. It is hidden now, not unmounted.
+
+**A ``docs/`` directory is still invisible to git.** The component was first written to
+``frontend/src/components/docs/``, which the bare ``docs/`` rule in ``.gitignore`` matches at
+every depth — the same trap that hid the guide's own content files earlier this week. The
+``repo.no-gitignored-source`` gate refused the commit; the directory is ``components/guide/``.
+
+The written ``In words:`` description under every diagram stays. A picture is an aid, not the
+explanation, and a screen reader never gets one.
+
 ## 2026-08-25 (follow-up) — A second copy of the stage list had already drifted
 
 Wiring ``defect_commander`` into ``_DEEP_STAGES`` was not enough, and the deployment is what
