@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-08-25 (follow-up) — The diagram check runs in CI now, and two more defects it found
+
+The clipping check that caught `Backend AP` / `MCP serve` only ran on demand against the
+deployment. It runs on every push now, as **Docs — Diagrams draw and fit**: a harness page
+served by ``vite dev``, so it needs no backend, no deployment and no credentials. The existing
+``mermaid-check`` job cannot do this — it runs under jsdom, which has no layout engine, so
+``scrollWidth`` is always 0 and a clipped label is invisible to it.
+
+**The first version of the harness was worthless, and said it was fine.** It mounted
+``<MermaidDiagram>`` directly. Reintroducing the exact pre-fix configuration to check the
+harness would catch it — the only test of a new guard that matters — and it **passed**. In the
+app, react-markdown wraps a fenced block in ``<pre>``, so the diagram host inherits
+*monospace* while Mermaid measures its labels against the body's *sans*. That mismatch is the
+whole defect. Mounted bare, the host inherited the body font, measurement and rendering agreed,
+and the harness could not reproduce the bug it existed for. It renders the real ``DocsPage``
+now, and reintroducing the pre-fix config fails it with the same labels the live probe found.
+
+A second lesson sits inside the first: **an incomplete mutation is a passing mutation.** The
+first attempt to reintroduce the defect changed the top-level ``fontFamily`` but left
+``themeVariables.fontFamily`` concrete, so labels still rendered in the right font and the
+check passed. That read exactly like "the guard is blind" and was in fact "the guard was never
+shown the bug".
+
+Building the harness surfaced a real defect in the component. Rendering thirteen diagrams at
+once left **six stuck in ``pending`` — no SVG, no error, no fallback, just an empty bordered
+box**, which is precisely the outcome the fallback exists to prevent. Two renders of one
+instance can overlap (React's double-invoke in development, a theme toggle, a quick
+navigation), and both used the same Mermaid id, so they collided inside Mermaid and neither
+settled. The id is now unique per *attempt*, not per component. As a backstop, ``pending`` is
+no longer terminal: a render that has not settled in 15s shows the source instead.
+
 ## 2026-08-25 (follow-up) — The documentation's diagrams are pictures now, and legible
 
 The thirteen diagrams in the user guide were written in Mermaid and rendered as **source code**:

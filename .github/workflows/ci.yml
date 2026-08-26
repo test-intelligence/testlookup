@@ -169,6 +169,61 @@ jobs:
         run: node validate.mjs
 
   # ─────────────────────────────────────────────────────────────
+  # JOB 0d: The guide's diagrams actually DRAW, and are legible
+  # mermaid-check above proves the diagrams PARSE. It cannot see how
+  # they look: it runs under jsdom, which has no layout engine, so
+  # scrollWidth is always 0 and a clipped label is invisible.
+  #
+  # This renders the real DocsPage in a real browser and compares each
+  # label's required width against the box Mermaid drew for it. The
+  # defect it exists for shipped once: every label cut off ("Backend
+  # AP", "MCP serve") because Mermaid measured labels in the body font
+  # while the SVG rendered in the monospace it inherits from <pre>.
+  # Every text assertion passed — textContent holds the whole label when
+  # it is visually clipped.
+  #
+  # No backend, no deployment, no credentials: it serves a harness page
+  # with `vite dev`, which is why it can run on every push while the
+  # equivalent live probe cannot.
+  # ─────────────────────────────────────────────────────────────
+  docs-diagram-render:
+    name: Docs — Diagrams draw and fit
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./frontend
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node 22 to match the frontend job: jsdom 30 pulls undici 8, which
+      # needs >= 22.19.
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Diagrams draw, and no label is clipped
+        run: npx playwright test --config playwright.docs.config.ts
+
+      - name: Upload trace on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-diagram-trace
+          path: frontend/test-results/
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────
   # JOB 1: Backend tests and linting
   # ─────────────────────────────────────────────────────────────
   backend-test:

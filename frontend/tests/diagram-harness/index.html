@@ -1,0 +1,21 @@
+<!doctype html>
+<!--
+  Harness page for the CI diagram-rendering check. Not part of the app: it is
+  served by `vite dev` from its own path and is never built into `dist`.
+
+  data-theme is set explicitly because every CSS custom property in index.css
+  lives under a [data-theme="..."] selector — there is no :root fallback. Without
+  it `readDiagramPalette()` would silently return its hardcoded defaults and the
+  check would measure a font the app never uses. The spec asserts the palette
+  resolved, so this cannot rot quietly.
+-->
+<html lang="en" data-theme="signal">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Diagram harness</title>
+  </head>
+  <body>
+    <main id="root"></main>
+    <script type="module" src="./harness.tsx"></script>
+  </body>
+</html>

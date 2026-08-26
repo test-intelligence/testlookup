@@ -1,6 +1,8 @@
 /** Rendering sweep: every documentation page renders as formatted content. */
 import { test, expect, type Page } from '@playwright/test'
 
+import { measureDiagramLabels } from './lib/diagram-geometry'
+
 const BASE = 'http://testlookup.local'
 const IDS = [
   'introduction','getting-started','concepts','ingestion','failure-analysis','flaky',
@@ -111,43 +113,23 @@ test('diagram labels fit inside their boxes', async () => {
   // textContent still holds the full label when that happens, so the other
   // probes here pass on a diagram no reader can read. This compares the
   // painted geometry instead.
-  const clipped: string[] = []
+  const allClipped: string[] = []
 
   for (const id of DIAGRAM_PAGES) {
     await page.goto(`${BASE}/docs/${id}`, { waitUntil: 'domcontentloaded' })
     await page.locator('article figure svg').first().waitFor({ timeout: 30_000 })
     await page.waitForTimeout(500) // let fonts settle before measuring
 
-    const overflows = await page.evaluate(() => {
-      const bad: string[] = []
-      for (const node of Array.from(document.querySelectorAll('article figure svg g.node'))) {
-        // Mermaid puts each label in a <foreignObject> whose width it computed
-        // by measuring the text. Compare that allocated width against what the
-        // HTML inside actually needs. getBBox() on the foreignObject itself is
-        // useless here — it returns the allocated width, so it always "fits".
-        const fo = node.querySelector('foreignObject')
-        const inner = fo?.firstElementChild as HTMLElement | null
-        if (!fo || !inner) continue
-        const allocated = fo.getBBox().width
-        const needed = inner.scrollWidth
-        if (needed > allocated + 1) {
-          bad.push(
-            `${inner.textContent?.trim()} (needs ${Math.round(needed)}px, got ${Math.round(allocated)}px)`,
-          )
-        }
-      }
-      return bad
-    })
+    const { clipped, nodes } = await page.evaluate(measureDiagramLabels, 'article figure')
 
     // Guard against a vacuous pass: if the selector matched no nodes at all,
     // this test would report success without measuring anything.
-    const nodeCount = await page.locator('article figure svg g.node').count()
     if (id === 'architecture') {
-      expect(nodeCount, 'no diagram nodes were measured — the check is vacuous').toBeGreaterThan(3)
+      expect(nodes, 'no diagram nodes were measured — the check is vacuous').toBeGreaterThan(3)
     }
 
-    for (const o of overflows) clipped.push(`${id}: ${o}`)
+    for (const o of clipped) allClipped.push(`${id}: ${o}`)
   }
 
-  expect(clipped, 'these labels are cut off by their own node box').toEqual([])
+  expect(allClipped, 'these labels are cut off by their own node box').toEqual([])
 })

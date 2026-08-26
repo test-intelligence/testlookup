@@ -8,10 +8,10 @@
  * outcomes be asserted deliberately. That the real library draws is verified
  * against the deployment in `tests/probe-docs-render.spec.ts`.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import MermaidDiagram from './MermaidDiagram'
+import MermaidDiagram, { RENDER_TIMEOUT_MS } from './MermaidDiagram'
 
 const renderDiagram = vi.fn()
 const initialize = vi.fn()
@@ -24,6 +24,8 @@ vi.mock('mermaid', () => ({
 }))
 
 const SOURCE = 'flowchart LR\n  A[Run] --> B[Analysis]'
+const SOURCE_TWO = `flowchart LR
+  A[Run] --> E[Second]`
 
 beforeEach(() => {
   renderDiagram.mockReset()
@@ -113,5 +115,46 @@ describe('MermaidDiagram', () => {
     const config = initialize.mock.calls[0][0] as { fontFamily?: string }
     expect(config.fontFamily, 'inherit makes mermaid mis-measure every label').not.toBe('inherit')
     expect(config.fontFamily, 'a real font stack is required').toMatch(/\w/)
+  })
+
+  it('gives each render attempt its own id', async () => {
+    // Two renders of one instance can overlap: a theme toggle or a quick
+    // navigation re-runs the effect while the previous render is in flight.
+    // With a shared id they collide inside mermaid and NEITHER settles — the
+    // component sits in 'pending' forever and the reader gets a blank box.
+    // Measured in the CI harness: 6 of 13 diagrams stuck, no error, no
+    // fallback, until the id was made unique per attempt.
+    renderDiagram.mockResolvedValue({ svg: '<svg><text>x</text></svg>' })
+
+    const { rerender } = render(<MermaidDiagram source={SOURCE} />)
+    await waitFor(() => expect(renderDiagram).toHaveBeenCalledTimes(1))
+
+    rerender(<MermaidDiagram source={SOURCE_TWO} />)
+    await waitFor(() => expect(renderDiagram).toHaveBeenCalledTimes(2))
+
+    const [firstId] = renderDiagram.mock.calls[0]
+    const [secondId] = renderDiagram.mock.calls[1]
+    expect(secondId, 'two overlapping renders must not share a mermaid id').not.toBe(firstId)
+  })
+
+  it('shows the source rather than waiting forever if mermaid never answers', async () => {
+    // 'pending' must not be terminal. A render that neither resolves nor
+    // rejects would otherwise leave an empty bordered box on the page for good
+    // — the exact outcome the fallback exists to prevent.
+    vi.useFakeTimers()
+    try {
+      renderDiagram.mockReturnValue(new Promise(() => {}))
+      render(<MermaidDiagram source={SOURCE} />)
+
+      // Let the dynamic import settle, then run out the clock. act() so the
+      // state change from the timeout is flushed before asserting.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(RENDER_TIMEOUT_MS + 1_000)
+      })
+
+      expect(screen.getByText(/could not be drawn/i)).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

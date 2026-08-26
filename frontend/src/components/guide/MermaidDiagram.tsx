@@ -26,19 +26,25 @@
 import { useEffect, useId, useRef, useState } from 'react'
 
 import { useThemeStore } from '@/store/themeStore'
+import { mermaidConfig, readDiagramPalette } from './mermaidConfig'
 
 type RenderState = 'pending' | 'drawn' | 'failed'
 
-function cssVar(name: string, fallback: string): string {
-  if (typeof window === 'undefined') return fallback
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  return value || fallback
-}
+/**
+ * How long to wait for mermaid before showing the source instead.
+ *
+ * Without this, 'pending' is terminal: a render that never settles leaves an
+ * empty bordered box on the page for good, which is precisely the outcome the
+ * fallback exists to prevent. Generous, because a slow machine drawing a large
+ * diagram is not a failure.
+ */
+export const RENDER_TIMEOUT_MS = 15_000
 
 export default function MermaidDiagram({ source }: { source: string }) {
   const theme = useThemeStore((s) => s.theme)
   const reactId = useId()
   const hostRef = useRef<HTMLDivElement>(null)
+  const attemptRef = useRef(0)
   const [state, setState] = useState<RenderState>('pending')
 
   useEffect(() => {
@@ -48,47 +54,26 @@ export default function MermaidDiagram({ source }: { source: string }) {
       try {
         const mermaid = (await import('mermaid')).default
 
-        const text = cssVar('--color-text', '#e6e6e6')
-        const muted = cssVar('--color-text-muted', '#9aa0a6')
-        const accent = cssVar('--color-accent', '#3b82f6')
-        const surface = cssVar('--color-bg-secondary', '#181d25')
-        const border = cssVar('--color-border', '#2a2f38')
-        // A CONCRETE stack, never 'inherit'. Mermaid sizes every node box by
-        // measuring its label in a detached element; under 'inherit' that
-        // element resolves the font differently from the finished SVG, so the
-        // boxes come out narrower than the text and every label is clipped
-        // ("Backend AP", "MCP serve"). The app uses one sans stack across all
-        // six themes, so naming it here costs nothing and keeps measurement
-        // and rendering in the same font.
-        const font = cssVar('--font-sans', 'system-ui, sans-serif')
+        mermaid.initialize(mermaidConfig(readDiagramPalette()))
 
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: 'strict',
-          // 'base' is the only theme that honours themeVariables fully.
-          theme: 'base',
-          fontFamily: font,
-          themeVariables: {
-            background: 'transparent',
-            fontFamily: font,
-            primaryColor: surface,
-            primaryTextColor: text,
-            primaryBorderColor: accent,
-            secondaryColor: surface,
-            tertiaryColor: surface,
-            lineColor: muted,
-            textColor: text,
-            mainBkg: surface,
-            nodeBorder: accent,
-            clusterBkg: 'transparent',
-            clusterBorder: border,
-            edgeLabelBackground: surface,
-          },
-        })
-
-        // mermaid needs a DOM id that is a valid CSS selector.
-        const id = `mermaid-${reactId.replace(/[^a-zA-Z0-9]/g, '')}`
-        const { svg } = await mermaid.render(id, source)
+        // mermaid needs a DOM id that is a valid CSS selector, and it must be
+        // unique per ATTEMPT, not per component. Two renders of this instance
+        // can overlap — a theme toggle or a quick navigation re-runs the effect
+        // while the previous render is still in flight — and giving both the
+        // same id makes them collide inside mermaid: neither resolves, the
+        // component stays 'pending' forever, and the reader gets the blank box
+        // this component exists to avoid. Reproduced 6 of 13 diagrams stuck.
+        const id = `mermaid-${reactId.replace(/[^a-zA-Z0-9]/g, '')}-${++attemptRef.current}`
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const { svg } = await Promise.race([
+          mermaid.render(id, source),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error('mermaid did not settle')),
+              RENDER_TIMEOUT_MS,
+            )
+          }),
+        ]).finally(() => clearTimeout(timer))
         if (cancelled || !hostRef.current) return
         hostRef.current.innerHTML = svg
         setState('drawn')
