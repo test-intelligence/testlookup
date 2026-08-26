@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-26 (ci) — The documentation checks now gate the image build
+
+``build-images`` waited on five jobs and not on either documentation check, so an image could
+be built and pushed with diagrams that did not parse, or drew with every label cut off. Both of
+those shipped to the deployment this week. It now waits on ``mermaid-check`` and
+``docs-diagram-render`` as well. They are two of the cheapest jobs in the workflow — the render
+check takes about 51s — and they guard the one thing a test suite cannot see: whether the
+picture a reader gets is legible.
+
+The regression test asserts the rule, not the list. It requires **every** job whose name marks
+it as a documentation check to appear in ``needs``, so a third one added later has to make the
+decision explicitly rather than quietly running beside a build that ignores it. A second test
+names the two known jobs outright, because a rename that also dropped the gate would otherwise
+be judged by a guard that had stopped finding anything. A third asserts every ``needs`` entry
+names a real job — a typo there does not weaken the gate, it stops the workflow from running at
+all, which reads like an infrastructure failure rather than an edit mistake.
+
 ## 2026-08-26 (onboarding) — The first-run docs link was dead on an air-gapped self-host
 
 The empty-dashboard first-run guide handed readers off to the documentation with an

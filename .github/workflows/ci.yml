@@ -771,7 +771,22 @@ jobs:
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
-    needs: [quality-gate, backend-test, postgres-integration, frontend-test, mcp-test]
+    # The docs jobs gate this too. They are cheap and they guard something a
+    # test suite cannot see: `mermaid-check` that every diagram parses, and
+    # `docs-diagram-render` that the diagrams actually DRAW and their labels
+    # are not clipped. An image that ships unreadable documentation is a
+    # broken image, and both defects reached the deployment before this line
+    # existed.
+    needs:
+      [
+        quality-gate,
+        backend-test,
+        postgres-integration,
+        frontend-test,
+        mcp-test,
+        mermaid-check,
+        docs-diagram-render,
+      ]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     permissions:
