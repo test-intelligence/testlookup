@@ -1,5 +1,75 @@
 # Changelog
 
+## 2026-08-26 — the search OR spanned three tables, so every keyword search scanned test_cases end to end
+
+Keyword search ORs five predicates. Three are ``test_cases`` columns with trigram indexes; the
+other two were a ``test_runs`` column and a correlated ``EXISTS`` over ``test_steps``. Postgres
+cannot turn a cross-table OR into a bitmap index scan, so it degraded to a join filter applied
+to every row — ``Seq Scan on test_cases ... Rows Removed by Join Filter: 15780`` — with the
+three trigram indexes sitting unused.
+
+Both foreign operands are now resolved as uncorrelated array subqueries and matched with
+``= ANY(...)``. The planner lifts each into an ``InitPlan`` evaluated once, every remaining
+operand is a ``test_cases`` column, and it builds a ``BitmapOr`` across
+``ix_test_cases_name_trgm``, ``_suite_trgm``, ``_error_trgm``, ``ix_test_cases_run_suite`` and
+``ix_test_cases_canonical``. The count query drops from 15.0 ms to 2.6 ms and the sequential
+scan is gone.
+
+``IN (SELECT ...)`` does **not** work here — that compiles to a hashed SubPlan, which is still
+a per-row filter and keeps the scan. The ARRAY form is load-bearing, not stylistic.
+
+End to end through the service, median of 9 runs per term, on 15,780 test cases / 60,360 steps
+/ 290 runs. **All 17 totals identical before and after:**
+
+| term | before | after | |
+|---|---:|---:|---|
+| ``xyzzy`` (no match) | 40.7 ms | 4.9 ms | -88% |
+| ``timeout`` | 44.5 ms | 12.7 ms | -71% |
+| ``failed`` | 34.8 ms | 10.8 ms | -69% |
+| ``connection reset by peer`` | 53.7 ms | 19.5 ms | -64% |
+| ``err`` | 33.5 ms | 15.0 ms | -55% |
+| ``connection`` | 43.8 ms | 21.2 ms | -52% |
+| ``api`` | 62.3 ms | 41.3 ms | -34% |
+| ``assert`` | 62.1 ms | 45.6 ms | -27% |
+| ``step`` | 94.4 ms | 74.2 ms | -21% |
+| ``ck`` (2 chars, untouched path) | 97.0 ms | 106.2 ms | +9% |
+
+``ck`` and ``er`` take the unchanged code path, so their ±9% is the run-to-run noise floor on
+this machine — worth keeping in mind when reading the smaller deltas.
+
+On the ``GET /api/v1/search`` benchmark, ``keyword_search`` goes from 13.8 to 18.7 req/s
+(median of 5) and p50 from 60.3 ms to 46.3 ms. **The ``search_concurrent`` budget (20/s) is
+still missed**, at about 93% of it. That is no longer the query's fault: the query is ~12 ms of
+a ~46 ms request, so the remaining cost is request overhead — auth, project-scope resolution,
+serialisation — which is a different problem from the one fixed here.
+
+**Two code paths, deliberately.** Patterns shorter than three characters keep the original
+correlated form. pg_trgm pads them into boundary trigrams ("ab" -> ``{"  a"," ab","ab "}``)
+whose posting lists cover nearly the whole table, so the index-driven shape pays a large GIN
+scan and still returns almost every row — measured end to end, ``as`` went 40 ms -> 143 ms and
+``st`` -> 161 ms, while ``ass`` was 55 ms and ``err`` 12 ms. The cliff sits exactly where a
+pattern first yields a full interior trigram. Each shape is genuinely the better plan in its
+own regime, so both are kept and both are tested.
+
+**Correctness.** Result sets are unchanged, proven two ways: a symmetric ``EXCEPT`` in both
+directions across 11 terms directly in SQL, and an integration test that pushes the *same* term
+through each path by monkeypatching the threshold, so it compares the shapes rather than two
+different queries.
+
+**Cross-tenant isolation** previously rested on the ``EXISTS`` correlating on the test's own
+canonical anchor. The new form has no correlation at all — it gathers canonical ids from steps
+across every project. It is still safe, because ``canonical_test_cases`` rows are per-(project,
+fingerprint) so an id from project A can never equal a project-B test's anchor, and the outer
+query is still pinned to ``test_runs.project_id``. That is an argument, and a leak class
+deserves better: a two-project fixture proves it (project A finds its own step match, project B
+finds nothing, in **both** shapes).
+
+Mutation-checked. Dropping the step operand fails 4 tests; dropping ``assertion_message`` fails
+1. Dropping the **run-level suite label** operand originally failed *nothing* — that operand
+exists so live_stream runs are findable by their session label, and it had no test at all.
+``test_run_level_suite_label_is_searchable_in_both_shapes`` now covers it, and the same mutation
+fails 2.
+
 ## 2026-08-26 — a full-text column maintained on every write that no query has ever read
 
 ``test_cases.search_vector`` is a ``tsvector`` column with a GIN index

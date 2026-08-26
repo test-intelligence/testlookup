@@ -497,6 +497,7 @@ jobs:
           tests/integration/test_report_eval_cycle_postgres.py
           tests/integration/test_dead_search_vector_removed_postgres.py
           tests/integration/test_search_step_index_postgres.py
+          tests/integration/test_search_step_scope_postgres.py
           tests/integration/test_decision_report_supersession_postgres_mongo.py
           tests/regression/test_notification_history_schema.py
 

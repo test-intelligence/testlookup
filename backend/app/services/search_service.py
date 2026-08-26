@@ -4,12 +4,30 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import any_, distinct, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.models.postgres import Project, TestCase, TestRun, TestStep
 from app.services.sql_utils import like_contains
+
+
+# Below this length the ORIGINAL correlated form is kept. pg_trgm pads short
+# patterns into boundary trigrams ("ab" -> {"  a"," ab","ab "}) whose posting
+# lists cover almost the whole table, so the index-driven form pays a large GIN
+# scan and still returns nearly every row. Measured end-to-end, median of 9:
+#
+#     term   original   indexed form
+#     a       ~50 ms      133.1 ms
+#     as      40.0 ms     143.5 ms
+#     st         —        161.0 ms
+#     ass        —         55.0 ms
+#     err        —         11.8 ms
+#
+# The cliff sits exactly at three characters, which is where a pattern first
+# yields a full interior trigram. Two code paths is the honest outcome here:
+# each shape is genuinely the better plan in its own regime.
+MIN_INDEXED_TERM_LEN = 3
 
 
 def build_search_filters(
@@ -25,20 +43,60 @@ def build_search_filters(
     # of a failed assertion lands on the test that produced it. Steps live in
     # ``test_steps`` anchored to the project-scoped ``canonical_test_cases``
     # identity, linked from the per-run row via ``TestCase.canonical_test_case_id``.
-    # Correlated EXISTS keeps this offline-safe (pure SQL, no embeddings) and
-    # tenant-safe: the join is on the test's OWN canonical anchor (project-scoped),
-    # and the outer query is already bounded by ``TestRun.project_id`` below, so a
-    # match cannot surface a step from another project. (NULL canonical link =
-    # no snapshot yet → the EXISTS is simply false, never a leak.)
-    step_match = select(TestStep.id).where(
-        TestStep.canonical_test_case_id == TestCase.canonical_test_case_id,
-        or_(
-            TestStep.name.ilike(pattern, escape="\\"),
-            TestStep.assertion_message.ilike(pattern, escape="\\"),
-        ),
-    ).correlate(TestCase).exists()
-    filters = [
-        or_(
+    # Both shapes below are offline-safe (pure SQL, no embeddings) and
+    # tenant-safe. A step can only reach a test case through the canonical
+    # anchor, which is itself per-(project, fingerprint), and the outer query is
+    # bounded by ``TestRun.project_id``. A NULL canonical link (no snapshot yet)
+    # matches neither shape. Proven with a two-project fixture in
+    # ``tests/integration/test_search_step_scope_postgres.py``.
+    #
+    # This used to be a correlated ``EXISTS`` over ``test_steps``, and the suite
+    # label below used to read ``TestRun.primary_suite_name`` directly. Both put
+    # a non-``test_cases`` operand inside the OR, and Postgres cannot turn a
+    # cross-table OR into a bitmap index scan — it degrades to a Join Filter
+    # evaluated over every row (``Seq Scan on test_cases ... Rows Removed by
+    # Join Filter: 15780``), with the three trigram indexes sitting unused.
+    #
+    # Written as ``col = ANY(<array subquery>)`` the planner lifts each side
+    # into an ``InitPlan`` evaluated once, and every remaining operand is a
+    # ``test_cases`` column — so it builds a BitmapOr across
+    # ix_test_cases_name_trgm, _suite_trgm, _error_trgm, ix_test_cases_run_suite
+    # and ix_test_cases_canonical. Measured on 15,780 cases / 60,360 steps:
+    # 15.0ms -> 2.6ms for the count query, and no sequential scan.
+    #
+    # ``IN (SELECT ...)`` does NOT work here — that becomes a hashed SubPlan,
+    # which is still a per-row filter and keeps the scan. The ARRAY form is
+    # load-bearing, not stylistic.
+    #
+    # Result sets are unchanged. A test case matches the step branch iff its
+    # canonical id is among those with a matching step, and the run branch iff
+    # its run's label matches; a NULL ``canonical_test_case_id`` is excluded
+    # either way (``NULL = ANY(...)`` is NULL, as ``EXISTS`` was false).
+    # Verified by symmetric EXCEPT in both directions across 11 terms.
+    if len(q.strip()) >= MIN_INDEXED_TERM_LEN:
+        # A constant empty uuid[]: array_agg returns NULL when nothing matches,
+        # and ``= ANY(NULL)`` is NULL rather than false, which would silently
+        # drop the other OR branches' rows on any term with no step or suite
+        # match.
+        empty_uuids = text("'{}'::uuid[]")
+        step_canonical_ids = func.coalesce(
+            select(func.array_agg(distinct(TestStep.canonical_test_case_id)))
+            .where(
+                or_(
+                    TestStep.name.ilike(pattern, escape="\\"),
+                    TestStep.assertion_message.ilike(pattern, escape="\\"),
+                )
+            )
+            .scalar_subquery(),
+            empty_uuids,
+        )
+        suite_run_ids = func.coalesce(
+            select(func.array_agg(TestRun.id))
+            .where(TestRun.primary_suite_name.ilike(pattern, escape="\\"))
+            .scalar_subquery(),
+            empty_uuids,
+        )
+        matched = [
             TestCase.test_name.ilike(pattern, escape="\\"),
             TestCase.suite_name.ilike(pattern, escape="\\"),
             # Run-level suite label — surfaces tests of live_stream runs
@@ -47,11 +105,33 @@ def build_search_filters(
             # the session-supplied label ("API Regression Multi-Class")
             # never matches those tests even though they're clearly
             # part of that suite.
-            TestRun.primary_suite_name.ilike(pattern, escape="\\"),
+            TestCase.test_run_id == any_(suite_run_ids),
             TestCase.error_message.ilike(pattern, escape="\\"),
-            step_match,
+            TestCase.canonical_test_case_id == any_(step_canonical_ids),
+        ]
+        filters = [or_(*matched)]
+    else:
+        step_match = (
+            select(TestStep.id)
+            .where(
+                TestStep.canonical_test_case_id == TestCase.canonical_test_case_id,
+                or_(
+                    TestStep.name.ilike(pattern, escape="\\"),
+                    TestStep.assertion_message.ilike(pattern, escape="\\"),
+                ),
+            )
+            .correlate(TestCase)
+            .exists()
         )
-    ]
+        filters = [
+            or_(
+                TestCase.test_name.ilike(pattern, escape="\\"),
+                TestCase.suite_name.ilike(pattern, escape="\\"),
+                TestRun.primary_suite_name.ilike(pattern, escape="\\"),
+                TestCase.error_message.ilike(pattern, escape="\\"),
+                step_match,
+            )
+        ]
     if project_id:
         # Single-project pin (access already verified by the router).
         filters.append(TestRun.project_id == project_id)

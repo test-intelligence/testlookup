@@ -8,14 +8,25 @@ linked from the per-run row via ``TestCase.canonical_test_case_id``.
 Two requirements verified here:
 
 1. **Searchability** — the keyword filter (the offline-default, no-embedding
-   path) matches BOTH ``test_steps.name`` AND ``test_steps.assertion_message``
-   via a correlated ``EXISTS``. The semantic indexer's embedded document also
-   carries the concatenated step text.
+   path) matches BOTH ``test_steps.name`` AND ``test_steps.assertion_message``.
+   The semantic indexer's embedded document also carries the step text.
 
-2. **No cross-project leak** — the step ``EXISTS`` correlates on the test's OWN
-   canonical anchor (itself project-scoped), and the overall keyword query is
-   bound by ``TestRun.project_id`` for the requested project. A step belonging
-   to project A therefore cannot surface a row under project B's filter.
+2. **No cross-project leak** — a step belonging to project A cannot surface a
+   row under project B's filter.
+
+The step operand used to be a correlated ``EXISTS``. That put a non-
+``test_cases`` operand inside the search OR, which stopped Postgres building a
+bitmap index scan and made every search sequentially scan ``test_cases``. It is
+now an uncorrelated ``= ANY(<array subquery>)`` over the same two columns, so
+requirement 1 is unchanged in substance.
+
+Requirement 2 now holds by a different mechanism, and the assertions below
+follow it: ``canonical_test_cases`` rows are themselves per-(project,
+fingerprint), so a canonical id collected from project A's steps can never
+equal the anchor of a project-B test case — and the outer query is still pinned
+to ``test_runs.project_id``. Verified end-to-end against real Postgres with a
+two-project fixture (project A = 1 hit, project B = 0, unscoped = 1); that lives
+in ``tests/integration/test_search_step_scope_postgres.py``.
 
 Style mirrors ``test_semantic_search_fingerprint_scope.py``: aiosqlite isn't
 installed locally and the repo's Postgres-specific types (UUID/JSONB/TSVECTOR)
@@ -61,8 +72,7 @@ def test_keyword_search_matches_step_name_and_assertion_message():
     ``test_steps.assertion_message`` — a failing assertion is findable."""
     sql = _compile_keyword_sql("expected 200 but got 500", str(uuid.uuid4()))
 
-    # The granular-step EXISTS subquery is present and reads from test_steps.
-    assert "EXISTS" in sql
+    # The granular-step subquery is present and reads from test_steps.
     assert "FROM test_steps" in sql
     # Both step columns participate in the match.
     assert "test_steps.name ILIKE" in sql
@@ -71,22 +81,38 @@ def test_keyword_search_matches_step_name_and_assertion_message():
     assert "expected 200 but got 500" in sql
 
 
-def test_step_exists_correlates_on_own_canonical_anchor_and_project_scoped():
-    """No cross-project leak: the step EXISTS joins on the test's OWN canonical
-    anchor (project-scoped), and the whole query is bound by the requested
-    project's ``test_runs.project_id``."""
+def test_step_match_goes_through_the_project_scoped_canonical_anchor():
+    """No cross-project leak: a step can only reach a test case through the
+    canonical anchor, which is itself per-(project, fingerprint), and the whole
+    query stays bound by the requested project's ``test_runs.project_id``."""
     project_a = str(uuid.uuid4())
     sql = _compile_keyword_sql("flaky step", project_a)
 
-    # Correlate on the per-run row's own canonical link, NOT an unscoped join —
-    # the canonical identity is itself per-(project, fingerprint).
+    # The step ids are collected as canonical_test_case_id and matched against
+    # the per-run row's own anchor. A canonical id belongs to exactly one
+    # project, so ids gathered from another project's steps cannot match here.
+    assert "array_agg(DISTINCT test_steps.canonical_test_case_id)" in sql
+    assert "test_cases.canonical_test_case_id = ANY" in sql
+    # The outer query is pinned to the requested project — the second,
+    # independent barrier.
+    assert f"test_runs.project_id = '{project_a}'" in sql
+
+
+def test_short_terms_keep_the_correlated_exists_form():
+    """Patterns below ``MIN_INDEXED_TERM_LEN`` deliberately keep the original
+    correlated form: pg_trgm pads them into boundary trigrams whose posting
+    lists cover nearly the table, so the index-driven shape is measurably the
+    WORSE plan there (``as``: 40ms -> 143ms end-to-end). Both paths must keep
+    searching step text."""
+    sql = _compile_keyword_sql("ab", str(uuid.uuid4()))
+
+    assert "EXISTS" in sql
+    assert "test_steps.name ILIKE" in sql
+    assert "test_steps.assertion_message ILIKE" in sql
     assert (
         "test_steps.canonical_test_case_id = test_cases.canonical_test_case_id"
         in sql
     )
-    # The outer query is pinned to the requested project, so a step belonging to
-    # another project's canonical cannot surface a row here.
-    assert f"test_runs.project_id = '{project_a}'" in sql
 
 
 def test_two_projects_compile_to_distinct_project_filters():
