@@ -51,19 +51,22 @@ export default function MermaidDiagram({ source }: { source: string }) {
     let cancelled = false
 
     async function draw() {
+      // Declared out here so the catch below can clean up mermaid's scratch
+      // element by the same id.
+      //
+      // Unique per ATTEMPT, not per component: two renders of this instance can
+      // overlap — a theme toggle or a quick navigation re-runs the effect while
+      // the previous render is still in flight — and giving both the same id
+      // makes them collide inside mermaid, so neither resolves, the component
+      // stays 'pending' forever and the reader gets the blank box this
+      // component exists to avoid. Reproduced 6 of 13 diagrams stuck.
+      const id = `mermaid-${reactId.replace(/[^a-zA-Z0-9]/g, '')}-${++attemptRef.current}`
+
       try {
         const mermaid = (await import('mermaid')).default
 
         mermaid.initialize(mermaidConfig(readDiagramPalette()))
 
-        // mermaid needs a DOM id that is a valid CSS selector, and it must be
-        // unique per ATTEMPT, not per component. Two renders of this instance
-        // can overlap — a theme toggle or a quick navigation re-runs the effect
-        // while the previous render is still in flight — and giving both the
-        // same id makes them collide inside mermaid: neither resolves, the
-        // component stays 'pending' forever, and the reader gets the blank box
-        // this component exists to avoid. Reproduced 6 of 13 diagrams stuck.
-        const id = `mermaid-${reactId.replace(/[^a-zA-Z0-9]/g, '')}-${++attemptRef.current}`
         let timer: ReturnType<typeof setTimeout> | undefined
         const { svg } = await Promise.race([
           mermaid.render(id, source),
@@ -78,6 +81,16 @@ export default function MermaidDiagram({ source }: { source: string }) {
         hostRef.current.innerHTML = svg
         setState('drawn')
       } catch {
+        // Belt as well as braces. `suppressErrorRendering` makes mermaid clean
+        // up after itself, but the cleanup only runs on the paths mermaid
+        // knows about — if it ever fails between creating its scratch element
+        // and reaching that code, the leftover would be stranded under <body>
+        // and visible on every page. Removing it by id costs nothing and does
+        // not depend on which branch inside mermaid failed.
+        for (const stray of [document.getElementById(`d${id}`), document.getElementById(id)]) {
+          stray?.remove()
+        }
+
         if (cancelled) return
         // Clear any diagram from a previous render, so the fallback is not
         // shown underneath a stale picture of something else.

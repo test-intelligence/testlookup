@@ -23,6 +23,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import '../../src/index.css'
 import DocsPage from '../../src/pages/DocsPage'
+import MermaidDiagram from '../../src/components/guide/MermaidDiagram'
 import { readDiagramPalette } from '../../src/components/guide/mermaidConfig'
 
 const SOURCES = import.meta.glob('../../src/content/guide/*.md', {
@@ -42,6 +43,17 @@ function pagesWithDiagrams(): { page: string; count: number }[] {
   return out
 }
 
+// `?broken=1` adds one diagram that cannot parse.
+//
+// Not part of the guide — deliberately. It exists so CI can check what happens
+// when a render FAILS, which is where the reader-visible defect was: mermaid's
+// default is to draw its own "Syntax error in text" graphic into a scratch
+// element under <body> and leave it there, so in a single-page app it shows at
+// the bottom of every page for the rest of the session, including pages with no
+// diagrams. Reported from /docs/troubleshooting, which has none.
+const BROKEN_DIAGRAM = ['flowchart LR', '  A[Unclosed --> B['].join(String.fromCharCode(10))
+const withBroken = new URLSearchParams(window.location.search).has('broken')
+
 const pages = pagesWithDiagrams()
 const expected = pages.reduce((n, p) => n + p.count, 0)
 
@@ -57,6 +69,11 @@ function Harness() {
           </Routes>
         </MemoryRouter>
       ))}
+      {withBroken && (
+        <section data-broken="1">
+          <MermaidDiagram source={BROKEN_DIAGRAM} />
+        </section>
+      )}
     </>
   )
 }

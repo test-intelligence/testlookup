@@ -116,4 +116,48 @@ test.describe('user guide diagrams', () => {
       'the measurement did not notice a label that no longer fits — it is inert',
     ).toContain(victim as string)
   })
+
+  test('a diagram that cannot be drawn leaves nothing behind on the page', async ({ page }) => {
+    // The reported defect: /docs/troubleshooting showed "Syntax error in text /
+    // mermaid version 11.17.2" three times at the bottom — a page with no
+    // diagrams of its own.
+    //
+    // Mermaid's default on a render failure is to draw that graphic into the
+    // scratch element it created under <body> and NOT remove it (errorRenderer
+    // .draw followed by a bare throw, in its render()). In a single-page app the
+    // element then survives every navigation, and each further attempt adds
+    // another copy — which is why the count need not match the number of broken
+    // diagrams.
+    //
+    // The reader should get the failure where the diagram is, and nowhere else.
+    await page.goto(`${HARNESS}?broken=1`)
+    await page.locator('[data-broken] ').first().waitFor({ timeout: 60_000 })
+    await expect
+      .poll(() => page.getByText(/could not be drawn/i).count(), { timeout: 60_000 })
+      .toBeGreaterThan(0)
+    // Give any stray graphic time to be appended before asserting its absence.
+    await page.waitForTimeout(1_000)
+
+    const stray = await page.evaluate(() => ({
+      graphics: (document.body.innerText.match(/Syntax error in text/g) || []).length,
+      nodes: document.querySelectorAll(
+        'body > div[id^="dmermaid"], body > div[id^="mermaid"], body > svg',
+      ).length,
+    }))
+    expect(stray.graphics, "mermaid's error graphic is stranded on the page").toBe(0)
+    expect(stray.nodes, 'mermaid left a scratch element under <body>').toBe(0)
+
+    // And the failure is still reported where the reader can act on it.
+    await expect(page.locator('[data-broken]').getByText(/could not be drawn/i)).toBeVisible()
+
+    // The good diagrams are unaffected — a fix that stopped rendering
+    // everything would also satisfy the assertions above.
+    const handle = await page.waitForFunction(() => window.__HARNESS__, undefined, {
+      timeout: 60_000,
+    })
+    const info = await handle.jsonValue()
+    await expect
+      .poll(() => page.locator('article figure svg').count(), { timeout: 60_000 })
+      .toBe(info.expected)
+  })
 })

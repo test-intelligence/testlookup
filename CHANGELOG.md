@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-08-26 — "Syntax error in text" was stranded at the bottom of pages that have no diagrams
+
+Reported from ``/docs/troubleshooting``, which contains no diagrams at all: three copies of
+"Syntax error in text / mermaid version 11.17.2" at the bottom of the page.
+
+They were not that page's. When a render fails, Mermaid's default is to draw its own error
+graphic **into the scratch element it created under ``<body>``, and not remove it** — in its
+``render()``, ``errorRenderer.draw(...)`` is followed by a bare ``throw``, while the
+``suppressErrorRendering`` branch right beside it calls ``removeTempElements()`` first. In a
+single-page app that element then survives every navigation and shows on every page for the
+rest of the session. Each further attempt appends another copy, so **the count does not tell
+you how many diagrams are broken** — one diagram rendered twice produced two graphics in the
+reproduction.
+
+The component's own fallback was working the whole time: it shows the diagram source in place,
+where the reader can see *which* diagram is broken. The stray graphics were mermaid writing
+outside it.
+
+Fixed in two independent layers, and each was verified to hold on its own — the leak returns
+only when both are removed:
+
+- ``suppressErrorRendering: true``, so mermaid cleans up and rethrows into the existing
+  fallback;
+- the component removes mermaid's scratch element by id in its ``catch``, which does not depend
+  on which branch inside mermaid failed.
+
+The regression test renders a deliberately unparseable diagram (harness ``?broken=1``, not in
+the guide) and asserts three things: nothing is stranded under ``<body>``, the failure IS
+reported in place, and the thirteen good diagrams still draw — a "fix" that stopped rendering
+everything would satisfy the first two.
+
+**Not established: why a diagram failed to parse for the reporter in the first place.** It did
+not reproduce on the current build across direct loads, sidebar navigation at three speeds,
+twelve reloads of the four-diagram page, or CPU throttling up to 16x. What is fixed is that a
+failure can no longer leave anything behind on an unrelated page.
+
 ## 2026-08-26 (ci) — The documentation checks now gate the image build
 
 ``build-images`` waited on five jobs and not on either documentation check, so an image could

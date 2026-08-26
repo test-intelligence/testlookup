@@ -51,6 +51,21 @@ export function mermaidConfig(palette: DiagramPalette): MermaidConfig {
   return {
     startOnLoad: false,
     securityLevel: 'strict',
+    // Mermaid must not put anything on the page by itself.
+    //
+    // On a render failure its default is to draw an error graphic — "Syntax
+    // error in text / mermaid version 11.17.2" — into the temporary element it
+    // created under <body>, and NOT to remove it (see `errorRenderer.draw`
+    // followed by a bare `throw` in mermaid's render()). In a single-page app
+    // that element then sits at the bottom of EVERY page for the rest of the
+    // session, including pages with no diagrams at all, and a second attempt
+    // adds a second copy. Reported from /docs/troubleshooting, which has no
+    // diagrams of its own.
+    //
+    // With this set, mermaid calls removeTempElements() and rethrows, which is
+    // what this component already handles: it shows the diagram source in
+    // place, where the reader can see which diagram is broken.
+    suppressErrorRendering: true,
     // 'base' is the only theme that honours themeVariables fully.
     theme: 'base',
     // A CONCRETE stack, never 'inherit'. Mermaid sizes every node box by
