@@ -78,4 +78,42 @@ test.describe('user guide diagrams', () => {
 
     expect(pageErrors, 'the harness logged errors while rendering').toEqual([])
   })
+
+  test('the clipping check can actually detect a clipped label', async ({ page }) => {
+    // A self-test, and it earns its place.
+    //
+    // The structural cause of the original defect is gone: the diagram no
+    // longer sits inside a <pre>, so it no longer inherits monospace, and
+    // reintroducing the old Mermaid config no longer clips anything. That is
+    // the right outcome for the product and an awkward one for this check —
+    // it leaves the measurement above with no failing case in the codebase,
+    // and a guard nobody can demonstrate failing is the kind that turns out to
+    // have been inert for months.
+    //
+    // So: take a diagram that drew correctly, narrow one label's box, and
+    // require the measurement to notice. This asserts the detector works,
+    // independently of whether the app currently has anything to detect.
+    await page.goto(HARNESS)
+    await page.locator('article figure svg').first().waitFor({ timeout: 60_000 })
+
+    const before = await page.evaluate(measureDiagramLabels, 'article figure')
+    expect(before.clipped, 'precondition: nothing should be clipped yet').toEqual([])
+
+    const victim = await page.evaluate(() => {
+      const fo = document.querySelector('article figure g.node foreignObject')
+      if (!fo) return null
+      const label = fo.firstElementChild?.textContent?.trim() ?? ''
+      // Narrow the allocated box without touching the text inside it — exactly
+      // the shape of the real defect, where Mermaid allocated too little room.
+      fo.setAttribute('width', String(Math.max(1, (fo as SVGGraphicsElement).getBBox().width - 30)))
+      return label
+    })
+    expect(victim, 'no node label was available to narrow').toBeTruthy()
+
+    const after = await page.evaluate(measureDiagramLabels, 'article figure')
+    expect(
+      after.clipped.join(' '),
+      'the measurement did not notice a label that no longer fits — it is inert',
+    ).toContain(victim as string)
+  })
 })

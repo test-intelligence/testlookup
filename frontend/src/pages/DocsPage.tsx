@@ -20,7 +20,7 @@
  * Routing: `/docs` shows the default page, `/docs/:docId` deep-links one. Both
  * are served by the SPA — the ingress sends the API reference to `/api-docs`.
  */
-import { useMemo, useState } from 'react'
+import { isValidElement, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -137,19 +137,24 @@ const MARKDOWN_COMPONENTS = {
       {p.children}
     </a>
   ),
-  code: (p: { className?: string; children?: React.ReactNode }) => {
-    const language = /language-(\w+)/.exec(p.className ?? '')?.[1]
-    if (language === 'mermaid') return <MermaidDiagram source={String(p.children ?? '')} />
-    if (!language) {
-      return (
-        <code
-          className="rounded px-1 py-0.5 text-[12.5px]"
-          style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)' }}
-        >
-          {p.children}
-        </code>
-      )
-    }
+  // react-markdown renders a fenced block as <pre><code class="language-x">.
+  // The BLOCK decides its own container here, rather than the inner <code>
+  // rendering a second one inside the wrapper: a <figure> inside a <pre> is
+  // invalid HTML (pre takes phrasing content), and so is a <pre> inside a
+  // <pre>. React builds the DOM through createElement, so nothing corrects
+  // this the way an HTML parser would — the bad nesting really is in the tree.
+  //
+  // It was not cosmetic. A <pre> makes its contents inherit MONOSPACE, so the
+  // diagram host inherited monospace while Mermaid measured its labels against
+  // the body's sans font, and every label came out clipped.
+  pre: (p: { children?: React.ReactNode }) => {
+    const child = isValidElement(p.children) ? p.children : null
+    const props = (child?.props ?? {}) as { className?: string; children?: React.ReactNode }
+    const language = /language-(\w+)/.exec(props.className ?? '')?.[1]
+    const source = String(props.children ?? '')
+
+    if (language === 'mermaid') return <MermaidDiagram source={source} />
+
     return (
       <pre
         className="overflow-x-auto rounded-lg border p-3 mb-3 text-[12.5px] leading-relaxed"
@@ -159,10 +164,19 @@ const MARKDOWN_COMPONENTS = {
           color: 'var(--color-text)',
         }}
       >
-        <code>{p.children}</code>
+        <code>{source}</code>
       </pre>
     )
   },
+  // Inline code only — a fenced block is handled by `pre` above.
+  code: (p: { children?: React.ReactNode }) => (
+    <code
+      className="rounded px-1 py-0.5 text-[12.5px]"
+      style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)' }}
+    >
+      {p.children}
+    </code>
+  ),
 }
 
 export default function DocsPage() {

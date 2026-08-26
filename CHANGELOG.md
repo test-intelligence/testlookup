@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-25 (follow-up) — The diagrams are out of the `<pre>`, which is where the clipping came from
+
+react-markdown renders a fenced block as ``<pre><code>``, and the page overrode only ``code``.
+So a diagram's ``<figure>`` sat inside a ``<pre>`` — invalid HTML, since ``<pre>`` takes
+phrasing content — and a ``bash`` block rendered a ``<pre>`` inside the ``<pre>`` react-markdown
+had already made. React builds the DOM through ``createElement``, so nothing corrected either
+one the way an HTML parser would; the bad nesting really was in the tree.
+
+It was never cosmetic. **A ``<pre>`` makes its contents inherit monospace**, so the diagram host
+inherited monospace while Mermaid measured its labels against the body's sans font. That
+mismatch is what clipped every label — ``Backend AP``, ``MCP serve``. The explicit font stack
+fixed the symptom; this removes the cause. ``pre`` now owns block-level rendering and decides
+its own container: a diagram replaces the ``<pre>`` entirely, a code block renders exactly one.
+
+**This leaves the CI clipping check with no failing case, and that is worth stating plainly.**
+With the monospace inheritance gone, reintroducing the old Mermaid config no longer clips
+anything — the right outcome for the product, an awkward one for the guard, because a check
+nobody can demonstrate failing is the kind that turns out to have been inert for months. So it
+now carries a control: take a diagram that drew correctly, narrow one label's box, and require
+the measurement to notice. Mutation-checked by making the detector inert, which that control
+catches and the real diagrams do not.
+
 ## 2026-08-25 (follow-up) — The diagram check runs in CI now, and two more defects it found
 
 The clipping check that caught `Backend AP` / `MCP serve` only ran on demand against the

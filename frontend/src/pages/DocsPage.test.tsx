@@ -276,4 +276,42 @@ describe('markdown rendering', () => {
       unmount()
     }
   })
+
+  it('never puts a diagram inside a <pre>', () => {
+    // <pre> takes phrasing content, so a <figure> inside one is invalid HTML.
+    // React builds the DOM with createElement, so nothing corrects it the way
+    // an HTML parser would. It was not cosmetic either: <pre> makes its
+    // contents inherit monospace, which is why Mermaid — measuring labels in
+    // the body's sans font — sized every node box too narrow and clipped them.
+    for (const id of ['architecture', 'introduction', 'ai-agents']) {
+      const { unmount } = renderDocs(`/docs/${id}`)
+      expect(
+        document.querySelectorAll('pre figure').length,
+        `${id}: a diagram is nested inside a <pre>`,
+      ).toBe(0)
+      unmount()
+    }
+  })
+
+  it('never nests one <pre> inside another', () => {
+    // The same defect on the other branch: the inner <code> used to render its
+    // own block container inside the wrapper react-markdown had already made.
+    for (const id of ['getting-started', 'ingestion', 'integrations']) {
+      const { unmount } = renderDocs(`/docs/${id}`)
+      expect(
+        document.querySelectorAll('pre pre').length,
+        `${id}: nested <pre> elements`,
+      ).toBe(0)
+      unmount()
+    }
+  })
+
+  it('still renders a fenced code block, exactly once', () => {
+    // Guard against fixing the nesting by dropping the block altogether.
+    renderDocs('/docs/getting-started')
+    const article = document.querySelector('article')
+    const blocks = article?.querySelectorAll('pre') ?? []
+    expect(blocks.length, 'the code blocks disappeared').toBeGreaterThan(0)
+    expect(article?.textContent, 'the command text is missing').toContain('curl -X POST')
+  })
 })
