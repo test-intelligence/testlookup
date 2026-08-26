@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-08-26 — every local benchmark has been measuring SQL echo
+
+``backend/app/db/postgres.py`` builds the engine with ``echo=settings.is_development``, and
+``scripts/gen-dev-env.sh`` writes ``APP_ENV=development``. So the stack ``make dev`` produces
+logs **every statement to stdout**, on the request's critical path — and
+``benchmarks/METHODOLOGY.md`` told you to benchmark exactly that stack.
+
+Measured on a search request (in-process ASGI, median of 15, 15,780 test cases): **32.2 ms with
+echo, 27.9 ms without** — about 13% of the request, spent in ``TextIOWrapper.write``.
+
+Nothing in a benchmark's output says echo is on, which is what makes it worth documenting
+rather than just fixing locally. A/B comparisons collected the same way stay valid — both arms
+pay the same tax — but absolute figures are inflated, and any attempt to split "database time"
+from "framework time" comes out wrong. It cost an afternoon here: a first pass at profiling the
+search request attributed 24% of a ``cProfile`` to logging before the cause was spotted.
+
+Two traps recorded alongside it:
+
+- **Suppression must come AFTER the import that builds the engine.**
+  ``create_async_engine(echo=True)`` attaches its own handler and sets the level when the engine
+  is constructed, so ``logging.getLogger("sqlalchemy.engine").setLevel(CRITICAL)`` at the top of
+  a script is silently undone by a later ``from app.main import app``. The symptom is a profile
+  that looks clean while the SQL is still being written.
+- **The throughput harness measures over HTTP**, so its latency includes uvicorn, the TCP round
+  trip and the client. The same request measured **~46 ms over HTTP and 27.9 ms in-process** —
+  roughly 18 ms outside the application. A scenario sitting near its budget may be measuring the
+  harness as much as the server.
+
+The ``cProfile`` share (0.179 s of 0.759 s) is presented as a pointer, not a number: cProfile
+reports cumulative time under its own overhead and exaggerates. The wall-clock A/B is the figure
+quoted.
+
+``test_benchmark_methodology_matches_the_code.py`` pins the two code facts the warning rests on,
+so the document cannot quietly become wrong while still looking authoritative — the more
+dangerous direction for a doc. It asserts the mechanism, not the 13%, which is hardware-specific.
+Mutation-checked: flipping ``echo=`` off, flipping ``APP_ENV`` to production, and removing the
+ordering note each fail it.
+
 ## 2026-08-26 — the search OR spanned three tables, so every keyword search scanned test_cases end to end
 
 Keyword search ORs five predicates. Three are ``test_cases`` columns with trigram indexes; the
