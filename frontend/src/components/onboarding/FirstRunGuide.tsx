@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Rocket, Copy, Check, AlertTriangle, ArrowRight, ListChecks, X } from 'lucide-react'
+import { Rocket, Copy, Check, AlertTriangle, ArrowRight, ListChecks, BookOpen, X } from 'lucide-react'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { backendUrl } from '@/services/api'
 import { buildSteps } from './firstRunSteps'
@@ -144,14 +144,18 @@ export default function FirstRunGuide({
         <Link to="/getting-started" className="btn-ghost text-sm inline-flex items-center gap-1.5">
           <ListChecks className="h-3.5 w-3.5" /> Setup checklist
         </Link>
-        <a
-          href="https://github.com/anandtopu/testlookup/blob/main/GETTING_STARTED.md"
-          target="_blank"
-          rel="noreferrer"
-          className="btn-ghost text-sm inline-flex items-center gap-1.5"
-        >
-          Getting started docs <ArrowRight className="h-3.5 w-3.5" />
-        </a>
+        {/*
+          The docs hand-off stays IN-APP (/docs/getting-started), not an
+          external github.com/blob/main/GETTING_STARTED.md link. TestLookup is
+          local-first and routinely self-hosted air-gapped, where an outbound
+          github.com link is simply dead — the exact first-run reader who most
+          needs the docs can't reach them. The in-app guide serves the same
+          getting-started content off the deployment's own origin, so it always
+          resolves. (src/content/guide/getting-started.md, routed by /docs/:docId.)
+        */}
+        <Link to="/docs/getting-started" className="btn-ghost text-sm inline-flex items-center gap-1.5">
+          <BookOpen className="h-3.5 w-3.5" /> Documentation <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
       </div>
     </section>
   )

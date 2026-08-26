@@ -69,6 +69,20 @@ describe('FirstRunGuide', () => {
     )
   })
 
+  it('links the docs hand-off to the in-app route, not external github', () => {
+    // TestLookup is local-first and routinely self-hosted air-gapped, where an
+    // outbound github.com/blob/main/GETTING_STARTED.md link is dead — the exact
+    // first-run reader who most needs the docs can't reach them. The guide must
+    // point at the in-app /docs/getting-started page (served off the
+    // deployment's own origin) so the docs always resolve.
+    renderGuide()
+    const docs = screen.getByRole('link', { name: /documentation/i })
+    expect(docs).toHaveAttribute('href', '/docs/getting-started')
+    // It is not an off-origin absolute URL (github.com, or any http(s):// host).
+    expect(docs.getAttribute('href')).not.toMatch(/^https?:\/\//)
+    expect(docs.getAttribute('href')).not.toContain('github.com')
+  })
+
   it('shows the project name when provided', () => {
     renderGuide({ projectName: 'Checkout API' })
     expect(screen.getByText(/Checkout API/)).toBeInTheDocument()

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-26 (onboarding) — The first-run docs link was dead on an air-gapped self-host
+
+The empty-dashboard first-run guide handed readers off to the documentation with an
+**external** `https://github.com/anandtopu/testlookup/blob/main/GETTING_STARTED.md` link.
+TestLookup is local-first and routinely self-hosted air-gapped, where an outbound
+github.com link simply does not resolve — so the one reader who most needs the getting-started
+docs, a fresh self-hoster staring at an empty dashboard, clicked through to nothing.
+
+The guide now links the in-app `/docs/getting-started` page instead (`src/content/guide/getting-started.md`,
+routed by `/docs/:docId`). It serves the same getting-started content off the deployment's own
+origin, so it resolves on any self-host, online or air-gapped. A regression test asserts the docs
+hand-off is an in-app route and never an off-origin absolute URL.
 ## 2026-08-25 (follow-up) — The diagrams are out of the `<pre>`, which is where the clipping came from
 
 react-markdown renders a fenced block as ``<pre><code>``, and the page overrode only ``code``.
