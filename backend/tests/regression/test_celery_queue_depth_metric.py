@@ -24,6 +24,7 @@ Two design points worth keeping:
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import re
 from pathlib import Path
@@ -106,40 +107,80 @@ class TestItIsCollectedAtScrapeTime:
         assert metrics.celery_queue_length.labels(queue_name="default")._value.get() == 3.0
 
 
-def test_no_alert_rule_fires_on_a_metric_nothing_defines():
-    """Generalises the bug: every app-level metric an alert references must be
-    emitted somewhere.
+def test_no_alert_rule_is_structurally_unable_to_fire():
+    """Every metric an alert references must have something that EMITS it.
 
-    Excludes metric families emitted by prometheus-fastapi-instrumentator
-    (`http_*`) — those are real at runtime but never appear as `Counter(...)` in
-    this repo, which is what made a purely static check misjudge them. That was
-    confirmed by scraping the live endpoint, not by reading code.
+    This test used to state that invariant and not enforce it, in two ways
+    that each made it silently inert:
+
+    1. It built its "emitted" set from ``Counter(...)`` / ``Gauge(...)``
+       *declarations*. A metric declared in ``app/core/metrics.py`` and never
+       incremented anywhere counted as emitted. Declaration is not emission —
+       an unlabelled counter that nothing touches still appears in ``/metrics``
+       as ``<name> 0.0``, which reads to a human as "this never happened"
+       rather than "nothing can ever record this".
+    2. It matched referenced names with ``celery_[a-z0-9_]+``. ``_`` is a
+       word character, so that pattern never matches ``testlookup_celery_...``
+       — it examined exactly two names, the two the author had just fixed,
+       and never saw the seven ``testlookup_*`` names in the same file.
+
+    Result: four alerts could not fire while this test was green —
+    TestLookupAIPipelineFailures, TestLookupLLMCircuitBreakerOpen,
+    TestLookupFlakyQuarantineMaintenanceFailing and
+    TestLookupPerfBaselineRefreshFailing.
+
+    Scope: only metrics this repo declares are judged. ``http_*`` comes from
+    prometheus-fastapi-instrumentator and ``up`` / ``node_*`` from other
+    exporters; they are real at runtime but never appear as ``Counter(...)``
+    here, and a static check that failed them would be wrong.
     """
     if not ALERTS.exists():
         pytest.skip("alert rules not present")
-    rules = ALERTS.read_text(encoding="utf-8")
 
-    emitted: set[str] = set()
-    for path in (REPO_ROOT / "backend" / "app").rglob("*.py"):
+    app_dir = REPO_ROOT / "backend" / "app"
+    metrics_py = app_dir / "core" / "metrics.py"
+
+    # prometheus name -> python variable, straight from the declarations.
+    declared: dict[str, str] = {}
+    tree = ast.parse(metrics_py.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)):
+            continue
+        func = node.value.func
+        cls = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+        if cls not in {"Counter", "Gauge", "Histogram", "Summary", "Info"}:
+            continue
+        if not node.value.args or not isinstance(node.value.args[0], ast.Constant):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                declared[node.value.args[0].value] = target.id
+
+    # A variable referenced anywhere outside metrics.py is one something can
+    # record through. Deliberately generous: the point is to catch names with
+    # NO code path at all, not to police how they are used.
+    emitters: set[str] = set()
+    for path in app_dir.rglob("*.py"):
+        if path == metrics_py or "__pycache__" in str(path):
+            continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        for m in re.finditer(
-            r'(?:Counter|Gauge|Histogram|Summary)\(\s*["\']([a-zA-Z_:][a-zA-Z0-9_:]*)["\']', text
-        ):
-            name = m.group(1)
-            emitted |= {name, f"{name}_total", f"{name}_sum", f"{name}_count", f"{name}_bucket"}
+        emitters |= {var for var in declared.values() if var in text}
 
-    # Empty again: celery_task_runtime_seconds was the last known-inert entry
-    # and is now emitted by the workers' own scrape target. Kept as a mechanism
-    # so a future gap can be recorded visibly instead of silently tolerated.
-    KNOWN_INERT: set[str] = set()
+    rules = ALERTS.read_text(encoding="utf-8")
+    referenced = set(re.findall(r"[a-zA-Z_:][a-zA-Z0-9_:]*", rules))
 
-    referenced = set(re.findall(r"\b(celery_[a-z0-9_]+)\b", rules))
-    ghosts = sorted(r for r in referenced if r not in emitted and r not in KNOWN_INERT)
-    assert not ghosts, (
-        f"alert rules reference Celery metrics nothing emits: {ghosts}. "
-        f"An alert on a non-existent metric never fires — it reads as healthy "
-        f"forever."
+    ghosts = sorted(
+        name for name in referenced
+        if (base := re.sub(r"_(bucket|count|sum)$", "", name)) in declared
+        and declared[base] not in emitters
     )
-    # The queue-depth metric specifically must NOT be inert — that is the point
-    # of this change, so it can never quietly join the known-inert list.
-    assert "celery_queue_length" in emitted
+    assert not ghosts, (
+        f"alert rules reference metrics that nothing emits: {ghosts}. "
+        f"The alert never fires, so the condition it exists to catch reads as "
+        f"healthy forever."
+    )
+
+    # The two metrics whose absence prompted this test must never quietly
+    # rejoin the ghost list.
+    assert declared["celery_queue_length"] in emitters
+    assert declared["celery_task_runtime_seconds"] in emitters

@@ -185,6 +185,18 @@ async def _release_duplicate_lock(key: str, owner: str) -> None:
         await redis.delete(key)
 
 
+def _count_pipeline(workflow_type: str, status: str) -> None:
+    """Record one AI pipeline outcome. Never raises."""
+    try:
+        from app.core.metrics import ai_analyses_total
+
+        ai_analyses_total.labels(
+            workflow_type=workflow_type or "unknown", status=status
+        ).inc()
+    except Exception:  # noqa: BLE001 — metrics must never break the task
+        pass
+
+
 def _release_dedup_for_retry(dedup_key: str, dedup_owner: str, task_id: str) -> None:
     """Drop this attempt's dedup lock so Celery's retry can actually do the work.
 
@@ -1515,6 +1527,12 @@ def run_agent_pipeline(
         final_state = _run_async(_run())
         stages_done = final_state.get("completed_stages", [])
         errors = final_state.get("errors", [])
+        # TestLookupAIPipelineFailures alerts on this counter and nothing
+        # incremented it, so the alert could never fire (verified live, 0
+        # samples). A dedup short-circuit is not a completion — counting it
+        # would inflate the success rate with runs that never executed.
+        if not final_state.get("duplicate"):
+            _count_pipeline(workflow_type, "success")
         logger.info(
             "[Task %s] Pipeline complete. stages=%s errors=%d",
             self.request.id, stages_done, len(errors),
@@ -1556,6 +1574,7 @@ def run_agent_pipeline(
         return {"completed_stages": stages_done, "error_count": len(errors)}
     except Exception as exc:
         safe_error = f"{type(exc).__name__}: agent pipeline failed"
+        _count_pipeline(workflow_type, "failure")
         logger.error(
             "[Task %s] Pipeline failed (%s)",
             self.request.id,

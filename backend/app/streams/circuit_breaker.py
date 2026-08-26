@@ -116,7 +116,21 @@ class LLMCircuitBreaker:
 
         state = await cls._get_state()
         if state == _STATE_HALF_OPEN or failure_count >= FAILURE_THRESHOLD:
+            # Count the TRANSITION, not the call: record_failure() can run
+            # again while the circuit is already OPEN, and counting those
+            # would report a breaker that tripped once as tripping
+            # repeatedly. TestLookupLLMCircuitBreakerOpen alerts on any
+            # increase, and nothing incremented this counter — verified
+            # live, 0 samples — so the alert could never fire.
+            was_open = state == _STATE_OPEN
             await cls._open()
+            if not was_open:
+                try:
+                    from app.core.metrics import llm_circuit_breaker_trips_total
+
+                    llm_circuit_breaker_trips_total.inc()
+                except Exception:  # noqa: BLE001 — metrics never break the path
+                    pass
             logger.warning(
                 "Circuit breaker → OPEN (failures=%d in %ds)",
                 failure_count, FAILURE_WINDOW_S,

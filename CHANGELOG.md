@@ -1,5 +1,60 @@
 # Changelog
 
+## 2026-08-26 — four alerts could never fire, and the test written to prevent that checked the wrong thing
+
+``testlookup_celery_tasks_total``, ``testlookup_analyses_total`` and
+``testlookup_llm_circuit_breaker_trips_total`` were declared in ``app/core/metrics.py`` and
+incremented by nothing. Verified against the live deployment's ``/metrics``: 0 observations.
+Four alert rules depend on them and were therefore structurally unable to fire —
+``TestLookupAIPipelineFailures``, ``TestLookupLLMCircuitBreakerOpen``,
+``TestLookupFlakyQuarantineMaintenanceFailing`` and ``TestLookupPerfBaselineRefreshFailing``.
+
+An unlabelled counter that nothing touches still appears in ``/metrics`` as ``<name> 0.0``.
+``testlookup_llm_circuit_breaker_trips_total 0.0`` reads as "the breaker has never tripped"
+when it means "nothing can ever record a trip" — the same shape as a metric with no
+denominator looking healthiest when nothing ran.
+
+This is the third time this class has appeared here. ``celery_queue_length`` and
+``celery_task_runtime_seconds`` were each found inert, fixed, and given a regression test —
+and ``test_no_alert_rule_fires_on_a_metric_nothing_defines`` was written to generalise it. It
+did not. Its docstring says every alerted metric must be *emitted*; it built its set from
+``Counter(...)`` **declarations**, so a metric declared and never incremented counted as
+emitted. And it matched referenced names with ``celery_[a-z0-9_]+`` — ``_`` is a word
+character, so that pattern never matches ``testlookup_celery_...``. It examined exactly two
+names, the two its author had just fixed, and never saw the seven ``testlookup_*`` names in
+the same rules file.
+
+The test now enforces what it always claimed: it resolves each declared metric to its Python
+variable, treats a variable referenced anywhere outside ``metrics.py`` as having a code path
+that records it, and scans **every** metric name in the rules file. Metrics this repo does not
+declare (``http_*`` from the instrumentator, ``up``/``node_*``) stay out of scope.
+
+Emitters added:
+
+- ``celery_tasks_total`` from a ``task_postrun`` receiver, labelled with Celery's terminal
+  state lower-cased verbatim so an unexpected state (``revoked``) reports itself instead of
+  being folded into a bucket that means nothing. This is also the only signal that separates a
+  task still retrying from one that has failed terminally — queue depth cannot, because a task
+  waiting on a retry countdown is not on the queue at all.
+- ``llm_circuit_breaker_trips_total`` on the **transition** to OPEN, not on every failure past
+  the threshold. The alert fires on any increase, so counting each failure would report one
+  trip as many and put the noise on the on-call.
+- ``ai_analyses_total`` at the pipeline task boundary, skipping the dedup short-circuit — that
+  path completes no pipeline, and counting it would inflate the success rate with runs that
+  never executed.
+
+The behavioural tests drive the real Celery signal rather than calling the receiver. That
+distinction was not academic: with the receiver called directly, deleting
+``@task_postrun.connect`` left every test green — a metric wired to nothing, which is the
+exact defect being fixed. All five mutations now fail.
+
+**Still unemitted (11), no alert depends on any of them, 3 draw empty panels on the overview
+dashboard:** ``analysis_duration_seconds``, ``celery_task_duration_seconds`` (superseded by
+``celery_task_runtime_seconds``), ``feature_flag_evaluations_total``,
+``ingestion_duration_seconds``, ``ingestion_runs_total``, ``ingestion_test_cases_total``,
+``llm_request_duration_seconds``, ``llm_requests_total``, ``release_decisions_total``,
+``secret_read_failures_total``, ``websocket_connections_active``.
+
 ## 2026-08-26 — a retry that met its own dedup lock reported success and ingested nothing
 
 ``ingest_test_run`` takes a Redis ``SET NX`` lock so two webhooks for the same MinIO prefix

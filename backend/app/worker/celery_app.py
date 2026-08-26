@@ -507,6 +507,37 @@ def _record_task_runtime(task_id=None, task=None, **_kwargs: object) -> None:
         pass
 
 
+@task_postrun.connect
+def _record_task_outcome(task_id=None, task=None, state=None, **_kwargs: object) -> None:
+    """Count task outcomes so failure and retry are visible to Prometheus.
+
+    ``testlookup_celery_tasks_total`` backs
+    TestLookupFlakyQuarantineMaintenanceFailing and
+    TestLookupPerfBaselineRefreshFailing. Nothing anywhere incremented it, so
+    both alerts were structurally unable to fire — verified against the live
+    deployment's /metrics, 0 samples. Same class as ``celery_queue_length``
+    and ``celery_task_runtime_seconds`` before it.
+
+    It is also the only signal that separates a task still retrying from one
+    that has failed terminally — queue depth cannot, because a task waiting
+    on a retry countdown is not on the queue at all.
+
+    ``state`` is Celery's terminal state for this execution: SUCCESS, FAILURE
+    or RETRY. Lower-cased verbatim rather than mapped through a table, so an
+    unexpected state (REVOKED, REJECTED) reports itself instead of being
+    folded into an "other" bucket that means nothing to the reader.
+    """
+    try:
+        from app.core.metrics import celery_tasks_total
+
+        celery_tasks_total.labels(
+            task_name=getattr(task, "name", "unknown"),
+            status=str(state or "unknown").lower(),
+        ).inc()
+    except Exception:  # noqa: BLE001 — metrics must never break the task
+        pass
+
+
 #: Readiness sentinel. Written once the worker has booted and connected to the
 #: broker; removed on shutdown.
 READY_SENTINEL = "/tmp/celery-worker-ready"
