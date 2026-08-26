@@ -822,6 +822,86 @@ def _backend_stdlib_logger_kwargs() -> list[Violation]:
     return violations
 
 
+_AT_MOST_ONCE_MARKER = "at-most-once:"
+
+
+def _backend_dedup_lock_allows_retry() -> list[Violation]:
+    """A dedup lock must not silence the task's own Celery retry.
+
+    The trap: a task takes a Redis ``SET NX`` lock to suppress *concurrent*
+    duplicates, then fails and calls ``self.retry()``. Celery keeps the task
+    id stable across retries, but the lock outlives the failed attempt — so
+    the retry meets its own lock, concludes it is a duplicate, logs "skipping
+    duplicate" and returns **success** having done nothing. The retry policy
+    is inert and the work is dropped silently, which is the worst available
+    shape: every counter says the task succeeded.
+
+    ``_is_duplicate(key, ttl, owner=...)`` exists precisely so the same task
+    id can reacquire. This guard requires it wherever a dedup call shares a
+    task with ``self.retry(``.
+
+    Why a guard and not a test: this was fixed once, in ``run_agent_pipeline``
+    (Phase J), and pinned by a source-text assertion naming that one function.
+    Three sibling call sites in the same file kept the bug for months while
+    that assertion stayed green — ``ingest_test_run`` silently dropped an
+    entire uploaded run on any transient MinIO or DB failure. Guard the class,
+    not the instance.
+
+    Escape hatch: a call marked ``at-most-once:`` in a comment on or just
+    above it is exempt. Suppressing a retry is correct when the work is an
+    irreversible external side effect (an email already delivered), and that
+    intent should be stated rather than inferred.
+    """
+    violations: list[Violation] = []
+    for path in iter_files(REPO_ROOT / "backend" / "app", (".py",)):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        if "_is_duplicate" not in text:
+            continue
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        lines = text.splitlines()
+
+        for scope in ast.walk(tree):
+            if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            body = list(ast.walk(scope))
+            retries = any(
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "retry"
+                and isinstance(n.func.value, ast.Name)
+                and n.func.value.id == "self"
+                for n in body
+            )
+            if not retries:
+                continue
+            for node in body:
+                if not (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "_is_duplicate"
+                ):
+                    continue
+                if any(k.arg == "owner" for k in node.keywords):
+                    continue
+                window = lines[max(0, node.lineno - 6):node.lineno]
+                if any(_AT_MOST_ONCE_MARKER in ln for ln in window):
+                    continue
+                violations.append(Violation(
+                    path,
+                    node.lineno,
+                    f"_is_duplicate(...) without owner= inside {scope.name}(), "
+                    "which calls self.retry() — the retry will meet this "
+                    "lock, report success and do nothing",
+                ))
+    return violations
+
+
 def _audit_call_name(func: ast.AST) -> str:
     """Terminal callable name — ``update`` for both ``update(X)`` and
     ``sa.update(X)`` / ``db.query(X).update(...)``."""
@@ -2739,6 +2819,25 @@ GUARDS: list[Guard] = [
             "stdlib and format positionally "
             "(``logger.error(\"x failed: %s\", exc)``). This is the "
             "mirror of backend.structlog-positional-args."
+        ),
+    ),
+    Guard(
+        name="backend.dedup-lock-allows-retry",
+        description=(
+            "A task that calls self.retry() must pass owner= to _is_duplicate "
+            "— otherwise the retry meets the failed attempt's own dedup "
+            "lock, logs 'skipping duplicate' and returns success having "
+            "done nothing, so the work is dropped silently."
+        ),
+        check=_backend_dedup_lock_allows_retry,
+        fix_hint=(
+            "Set ``dedup_owner = str(self.request.id)`` and pass "
+            "``owner=dedup_owner`` so the same task id can reacquire, and "
+            "release the lock on the error path so a redelivery after the "
+            "retries are exhausted is not refused for the whole TTL. If "
+            "suppressing the retry is deliberate (the side effect is "
+            "irreversible, e.g. mail already sent), mark the call "
+            "``at-most-once:`` in a comment and say why."
         ),
     ),
     Guard(

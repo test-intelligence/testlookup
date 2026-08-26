@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-08-26 — a retry that met its own dedup lock reported success and ingested nothing
+
+``ingest_test_run`` takes a Redis ``SET NX`` lock so two webhooks for the same MinIO prefix
+cannot double-ingest, then on failure calls ``self.retry()``. Celery keeps the task id stable
+across a retry, but the lock outlives the failed attempt — so the retry walked into its own
+lock, decided it was a duplicate, logged "Skipping duplicate ingestion" and returned
+**success** having ingested nothing.
+
+The retry policy was therefore inert: ``max_retries=3`` and the exponential backoff could
+never do any work. A transient MinIO or database blip mid-parse dropped the entire uploaded
+run, and because the task reported success, nothing anywhere said so. The same prefix was then
+refused for the rest of the lock's hour.
+
+This exact bug was found and fixed once before, in ``run_agent_pipeline`` (Phase J): pass
+``owner=str(self.request.id)`` so the same task id can reacquire, and release the lock on the
+error path. That fix was pinned by a source-text assertion naming that one function, so it
+stayed green while three sibling call sites in the same file kept the bug —
+``ingest_test_run``, ``dispatch_ai_summary_email`` and ``notify_test_suite_owner``.
+
+All three now use the owner-scoped form and release on the error path. The per-(subscription,
+run) email key is deliberately left as-is and marked ``at-most-once:``: mail already delivered
+must not be re-sent by a retry of the parent task.
+
+The regression tests are behavioural, not source-text — they drive the real task through
+``Task.apply()`` and let Celery run its own retry, then assert the payload was actually
+ingested. Each half of the fix is separately load-bearing and separately pinned: removing
+``owner=`` fails the retry test, and removing the release fails a second test covering the
+redelivery that arrives after the retries are exhausted, which ``owner=`` alone cannot help.
+
+New guard ``backend.dedup-lock-allows-retry`` scans all of ``backend/app/`` for the class
+rather than the instance: any ``_is_duplicate(...)`` without ``owner=`` inside a function that
+also calls ``self.retry(``. It was mutation-checked against all three historical sites by name,
+and its ``at-most-once:`` escape hatch was checked to be real — removing the marker from the
+deliberate call makes the guard flag it.
+
 ## 2026-08-26 — "Syntax error in text" was stranded at the bottom of pages that have no diagrams
 
 Reported from ``/docs/troubleshooting``, which contains no diagrams at all: three copies of

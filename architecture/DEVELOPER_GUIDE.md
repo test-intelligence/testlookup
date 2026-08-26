@@ -33,10 +33,10 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **28 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **29 guards**.
 15 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 13 ship at zero with **no baseline file at all** — those are
+fail CI. The other 14 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -54,6 +54,7 @@ and `scripts/test_quality_gate.py` fails if the two drift apart.
 | `backend.pii-log-redaction` | logging `email`/`password`/`api_key`/`raw_key` verbatim | Sanitize PII before logging |
 | `backend.structlog-positional-args` | `logger.warning("x: %s", e)` (stdlib style) | `logger.warning("event_name", error=str(e))` — positional args raise `TypeError` mid-request |
 | `backend.stdlib-logger-kwargs` † | the mirror image — a **stdlib** `logging.Logger` called with structlog-style kwargs | Use the module's structlog logger for keyword fields, or keep stdlib and format positionally (`logger.error("x failed: %s", exc)`). Inside an `except` block the `TypeError` destroys the diagnostic *and* skips the scrubbed re-raise |
+| `backend.dedup-lock-allows-retry` † | a task that calls `self.retry()` passing `_is_duplicate(key)` **without** `owner=` | Celery keeps the task id stable across retries, so the retry meets the failed attempt's own `SET NX` lock, logs "skipping duplicate" and returns **success** having done nothing — the retry policy is inert and the work is dropped silently. Set `dedup_owner = str(self.request.id)`, pass `owner=dedup_owner`, and release the lock on the error path. Fixed once in `run_agent_pipeline` and pinned by a source-text assertion naming that one function; three siblings kept the bug, including `ingest_test_run`, which dropped a whole uploaded run on any transient MinIO failure. Mark a deliberate at-most-once call `at-most-once:` |
 | `backend.audit-write-discipline` † | any UPDATE of an audit table, and any DELETE outside the retention purge | Append a **new** audit row instead of mutating one; if a purge is needed, extend `services/retention_service.py` |
 | `backend.project-scope-guard-placement` † | an access check nested inside an `if not project_id` branch — the caller who *does* name a project skips it | Call `resolve_project_scope(db, user, project_id)` unconditionally; it 403s a non-admin naming a project they cannot reach |
 | `backend.model-imports-resolve` † | `from app.models.postgres import X` where `X` is not a real class | Fix the class name (`perf_baselines` is `PerfBaseline`, not `PerformanceBaseline`). A function-local import of a typo'd model is invisible until it runs, and a broad `except` turns it into a warning |

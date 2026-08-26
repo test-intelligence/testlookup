@@ -185,6 +185,25 @@ async def _release_duplicate_lock(key: str, owner: str) -> None:
         await redis.delete(key)
 
 
+def _release_dedup_for_retry(dedup_key: str, dedup_owner: str, task_id: str) -> None:
+    """Drop this attempt's dedup lock so Celery's retry can actually do the work.
+
+    A task that takes a ``SET NX`` lock to suppress concurrent duplicates and
+    then calls ``self.retry()`` will, on the retry, meet its own surviving
+    lock, conclude it is a duplicate, and return **success** having done
+    nothing. The retry policy goes inert and the work is dropped silently.
+
+    Never raises: failing to release must not replace the original error.
+    """
+    try:
+        _run_async(_release_duplicate_lock(dedup_key, dedup_owner))
+    except Exception as release_exc:
+        logger.warning(
+            "[Task %s] Failed to release dedup lock %s after error (%s)",
+            task_id, dedup_key, type(release_exc).__name__,
+        )
+
+
 # ── Tasks ─────────────────────────────────────────────────────────────────────
 
 @celery_app.task(
@@ -670,9 +689,10 @@ def ingest_test_run(self, sentinel_dict: dict, minio_prefix: str):
     from app.services.ingestion import process_sentinel
 
     dedup_key = f"testlookup:dedup:ingest:{minio_prefix}"
+    dedup_owner = str(self.request.id)
 
     async def _run():
-        if await _is_duplicate(dedup_key):
+        if await _is_duplicate(dedup_key, owner=dedup_owner):
             logger.info("[Task %s] Skipping duplicate ingestion for %s", self.request.id, minio_prefix)
             return
         sentinel = SentinelFile(**sentinel_dict)
@@ -690,6 +710,7 @@ def ingest_test_run(self, sentinel_dict: dict, minio_prefix: str):
             pass  # Non-blocking — indexing will catch up on the next hourly beat
     except Exception as exc:
         logger.error("[Task %s] Ingestion failed: %s", self.request.id, exc, exc_info=True)
+        _release_dedup_for_retry(dedup_key, dedup_owner, self.request.id)
         countdown = _exponential_backoff(self.request.retries)
         raise self.retry(exc=exc, countdown=countdown)
 
@@ -2124,10 +2145,13 @@ def dispatch_ai_summary_email(
     from datetime import datetime, timezone
 
     dedup_key = f"testlookup:dedup:ai_email:{test_run_id}"
+    dedup_owner = str(self.request.id)
 
     async def _dispatch():
-        # Dedup check
-        if await _is_duplicate(dedup_key, ttl=3600):
+        # Dedup check. owner= so this task's own retry can reacquire: without
+        # it a transient failure leaves the lock standing and the retry
+        # reports success without sending anything.
+        if await _is_duplicate(dedup_key, ttl=3600, owner=dedup_owner):
             logger.info("[AI Email] Skipping duplicate for run %s", test_run_id)
             return
 
@@ -2221,7 +2245,11 @@ def dispatch_ai_summary_email(
                     if not user or not user.email:
                         continue
 
-                    # Dedup per (subscription, run)
+                    # Dedup per (subscription, run). Deliberately NOT
+                    # owner-scoped and never released: sending mail is
+                    # irreversible, so a retry of the parent task must not
+                    # re-deliver to a subscriber who already received it.
+                    # at-most-once: retry suppression is the point here.
                     sub_dedup = f"testlookup:dedup:per_run_email:{sub.id}:{test_run_id}"
                     if await _is_duplicate(sub_dedup, ttl=3600):
                         continue
@@ -2275,6 +2303,7 @@ def dispatch_ai_summary_email(
         _run_async(_dispatch())
     except Exception as exc:
         logger.error("[AI Email] Failed for run %s: %s", test_run_id, exc)
+        _release_dedup_for_retry(dedup_key, dedup_owner, self.request.id)
         countdown = _exponential_backoff(self.request.retries)
         raise self.retry(exc=exc, countdown=countdown)
 
@@ -3992,8 +4021,10 @@ def notify_test_suite_owner(
         f"{hashlib.sha256(test_name.encode()).hexdigest()[:16]}"
     )
 
+    dedup_owner = str(self.request.id)
+
     async def _run():
-        if await _is_duplicate(dedup_key, ttl=300):
+        if await _is_duplicate(dedup_key, ttl=300, owner=dedup_owner):
             logger.info(
                 "[Task %s] notify_test_suite_owner: dedup hit for %s / %s",
                 self.request.id, to_email, test_name,
@@ -4050,6 +4081,7 @@ def notify_test_suite_owner(
         return _run_async(_run())
     except Exception as exc:
         # Let Celery retry with backoff; max_retries=3 caps it.
+        _release_dedup_for_retry(dedup_key, dedup_owner, self.request.id)
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
 
 
