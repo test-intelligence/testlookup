@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-26 — running one test file on its own failed, while CI stayed green
+
+``pytest tests/test_roi04_background_indexing.py`` failed two tests on main.
+``pytest tests/`` passed them. So did CI.
+
+The file's autouse fixture replaces ``app.core.deps`` in ``sys.modules`` with a stub carrying
+a fixed list of names. ``app/routers/search.py`` does
+``from app.core.deps import get_current_active_user, resolve_project_scope``, and
+``resolve_project_scope`` was not on that list — so importing the router raised
+``ImportError: cannot import name 'resolve_project_scope' from 'app.core.deps'
+(unknown location)``.
+
+Why it hid: the stub is only consulted the first time ``app.routers.search`` is imported in
+the process. In a full-suite run some earlier test file has already imported it, so the real
+module is cached and the stub never bites. Alone, this file imports it first and fails. The
+failure was therefore invisible to every green signal the project has, and visible to anyone
+running the one file they were working on.
+
+``resolve_project_scope`` added to the stub, with a comment recording the failure mode: a
+missing name here does not surface as a missing attribute, it surfaces as an ImportError with
+``(unknown location)``, and only under one import order.
 ## 2026-08-26 — four alerts could never fire, and the test written to prevent that checked the wrong thing
 
 ``testlookup_celery_tasks_total``, ``testlookup_analyses_total`` and
