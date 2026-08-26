@@ -1,0 +1,50 @@
+"""Every real-Postgres integration test must be named in the CI job that runs them.
+
+The ``Backend — PostgreSQL/Mongo integration and rollback`` job does not
+discover ``tests/integration/``; it passes an explicit list of files to pytest.
+A new ``*_postgres*.py`` file is therefore **not run by CI at all** until
+someone remembers to add it — and it fails no build while it sits there, so the
+omission looks exactly like a passing test.
+
+That is the same shape as a guard that reports success because it never looked.
+This check closes it: adding the file to the repo forces adding it to the job.
+
+(Measured when this was written: 13 of 13 existing files were correctly listed,
+so this pins a healthy state rather than papering over a backlog.)
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.regression
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+INTEGRATION_DIR = REPO_ROOT / "backend" / "tests" / "integration"
+
+
+def test_every_postgres_integration_file_is_listed_in_the_ci_job():
+    if not CI_WORKFLOW.exists():
+        pytest.skip("ci.yml not present in this checkout")
+
+    listed = set(
+        re.findall(r"tests/integration/(\S+\.py)", CI_WORKFLOW.read_text(encoding="utf-8"))
+    )
+    on_disk = sorted(p.name for p in INTEGRATION_DIR.glob("*_postgres*.py"))
+
+    # If the glob ever matches nothing the assertion below is vacuous, and this
+    # test would pass while proving nothing.
+    assert on_disk, (
+        f"no *_postgres*.py files found under {INTEGRATION_DIR} — the glob is "
+        f"wrong, so this check cannot see anything"
+    )
+
+    missing = [name for name in on_disk if name not in listed]
+    assert not missing, (
+        "these real-Postgres integration tests exist but CI never runs them — "
+        "add them to the 'Run protected PostgreSQL integration suite' step in "
+        f".github/workflows/ci.yml: {missing}"
+    )

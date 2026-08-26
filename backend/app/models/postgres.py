@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 from enum import Enum as PyEnum
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy import (
     BigInteger,
@@ -20,7 +20,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.postgres import Base
@@ -377,7 +377,6 @@ class TestCase(Base):
         # migration 0090. Sibling of ix_test_cases_run_status.
         Index("ix_test_cases_run_suite", "test_run_id", "suite_name"),
         Index("ix_test_cases_fingerprint", "test_fingerprint"),
-        Index("ix_test_cases_search", "search_vector", postgresql_using="gin"),
         Index("ix_test_cases_canonical", "canonical_test_case_id"),
         # Hot path: ``/my-failures`` filters by ``assigned_to_user_id +
         # triage_status = 'PENDING_REVIEW'``. Composite index keeps the
@@ -474,9 +473,6 @@ class TestCase(Base):
     # S3 reference
     minio_s3_prefix: Mapped[Optional[str]] = mapped_column(String(1000))
     has_attachments: Mapped[bool] = mapped_column(Boolean, default=False)
-
-    # Full-text search vector
-    search_vector: Mapped[Optional[Any]] = mapped_column(TSVECTOR)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())

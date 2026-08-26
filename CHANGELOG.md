@@ -1,5 +1,151 @@
 # Changelog
 
+## 2026-08-26 — a full-text column maintained on every write that no query has ever read
+
+``test_cases.search_vector`` is a ``tsvector`` column with a GIN index
+(``ix_test_cases_search``), kept current by a ``BEFORE INSERT OR UPDATE`` trigger over
+test_name, suite_name, class_name and error_message. All of it has been in place since
+``0001_initial_schema``.
+
+Nothing reads it. Outside the migrations, the only references anywhere in ``backend/app``,
+``cli``, ``mcp``, ``client`` or ``frontend/src`` were the column declaration and the
+``Index(...)`` in the ORM model. It has been pure write cost for the life of the project.
+
+Measured with the shape ingestion actually uses — bulk INSERT of 2,000 ``test_cases`` rows,
+three samples each way against a 15,780-row table:
+
+| | samples | median |
+|---|---|---:|
+| with trigger + GIN index | 142.9 / 145.1 / 123.6 ms | 142.9 ms |
+| without | 104.2 / 114.4 / 93.0 ms | **104.2 ms** |
+
+About **27% off bulk insert**, and the two sample sets do not overlap — the slowest run
+without it still beat the fastest run with it. The index was also 4,944 kB against a 30 MB
+table.
+
+**A correction worth recording.** The first measurement of this used five UPDATEs over a single
+run's rows and reported "13.99 ms vs 6.53 ms, +114%". That was one sample per arm and the batch
+was ~54 rows — far too small for trigger and index maintenance to rise above run-to-run noise.
+A paired four-sample rerun of that same probe showed **no difference at all** (median 5.65 ms
+vs 5.64 ms). The +114% figure was cold-cache noise. The numbers above use the operation the
+system actually performs, at the size it performs it, with repeated samples.
+
+**Why it was removed rather than wired into search.** Full text matches lexemes; the keyword
+search matches substrings. On the same corpus:
+
+| term | ILIKE hits | ``search_vector`` hits | lost |
+|---|---:|---:|---:|
+| ``timeout`` | 465 | 24 | 441 (95%) |
+| ``assert`` | 660 | 0 | 660 (100%) |
+| ``NullPointer`` | 382 | 0 | 382 (100%) |
+
+QA error text is full of compound tokens — ``TimeoutException``, ``AssertionError``,
+``NullPointerException`` — which ``to_tsvector`` stores as single lexemes, so searching
+"timeout" stops finding them. It also would not have fixed the sequential scan it was hoped to
+address: the search OR spans ``test_runs`` and a correlated EXISTS, so Postgres still applies a
+join filter and never uses the GIN index (18.8 ms versus 14.0 ms for the ILIKE form — slower).
+``pg_trgm``, already installed and already used by ``ix_test_cases_name_trgm`` and its
+siblings, is the right index for substring search here.
+
+The downgrade restores the column, function, trigger and index **and backfills existing rows** —
+a restored trigger only populates rows written after it, so without the backfill the recreated
+GIN index would index nothing.
+
+Two mutation-checked regression tests: a real-Postgres one asserting all four objects are absent
+(each probed separately — dropping the column does not drop the trigger function, and a
+half-removal leaves a function referencing a column that no longer exists), and a static one
+asserting the ORM no longer maps the column and no source file mentions it. Re-mapping the
+column on the model fails loudly at import with ``ConstraintColumnNotFoundError``.
+
+## 2026-08-26 — every keyword search sequentially scanned the whole step table
+
+Keyword search ORs five predicates. One is a correlated EXISTS over ``test_steps``, so that a
+failing step name or assertion message makes its test findable. Neither ``test_steps.name`` nor
+``test_steps.assertion_message`` had an index, so Postgres satisfied that operand by reading
+**every** step row — a cost paid by every search, whether or not the term had anything to do
+with steps.
+
+Measured on a 15,780-test-case / 60,360-step corpus (200 runs ingested through
+``POST /api/v1/ingest``), ``EXPLAIN ANALYZE`` of the search count query:
+
+| | before | after |
+|---|---:|---:|
+| the ``test_steps`` operand | ``Seq Scan`` 46.2 ms | ``BitmapOr`` over two GIN indexes, 0.8 ms |
+
+End-to-end, ``GET /api/v1/search`` at concurrency 1, three runs each:
+
+| | run 1 | run 2 | run 3 |
+|---|---:|---:|---:|
+| before — p50 | 101.8 ms | 127.1 ms | 123.6 ms |
+| after — p50 | 46.9 ms | 69.3 ms | 60.3 ms |
+| before — req/s | 6.0 | 7.0 | 7.4 |
+| after — req/s | 17.2 | 13.6 | 13.8 |
+
+Roughly **2x the throughput and half the median latency** on every keyword search, from a
+purely additive migration.
+
+**The write cost was measured, not assumed.** ``test_steps`` is a delete-and-reinsert snapshot
+per canonical test per ingest, so GIN indexes there are not free: ten cycles of 1,000 steps
+averaged 118.1 ms without them and 142.1 ms with, **+20%**. A thousand steps for one test is a
+deliberately harsh fixture — real tests carry tens — and that cost is paid once per canonical
+test per ingest, against a 2x win on every search.
+
+**What this does not fix.** The ``search_concurrent`` budget (20 req/s) still fails at ~13.8.
+The remaining cost is a sequential scan of ``test_cases``, forced by the single cross-table
+operand (``test_runs.primary_suite_name``) inside the OR: Postgres cannot turn a cross-table OR
+into a bitmap index scan, so it becomes a join filter over the whole table (38 ms of the paged
+query). Four rewrites were prototyped and **all were rejected on measurements**, because each
+regressed some class of term:
+
+| rewrite | best case | worst case |
+|---|---|---|
+| 5-branch ``UNION`` | ``zzzz`` 75 → 0.6 ms | ``step`` 37.7 → 55.0 ms, ``e`` 18.0 → 56.3 ms |
+| ``id IN (UNION …)`` | ``zzzz`` → 0.38 ms | ``checkout`` 26.9 → **642 ms** |
+| 3-branch ``UNION`` (join to steps) | ``zzzz`` → 4.4 ms | ``step`` → **8,363 ms**, ``e`` → **8,673 ms** |
+| 3-branch ``UNION`` + ``IN DISTINCT`` steps | ``test`` 16.0 → 8.4 ms | ``e`` 11.2 → 51.5 ms |
+
+Rewriting the OR is a real trade — large wins on selective terms, regressions on terms matching
+much of the corpus — and single-run EXPLAIN timings on this corpus vary by up to ±40%, which is
+too noisy to pick a winner on. Left unshipped rather than trading one latency problem for
+another.
+
+Also found and **not** acted on: ``test_cases.search_vector`` is a ``tsvector`` column with a
+GIN index, maintained by a ``BEFORE INSERT OR UPDATE`` trigger over test_name, suite_name,
+class_name and error_message — populated on all 15,780 rows and **read by no query in the
+codebase**. It is write cost on the ingestion hot path buying nothing today. Wiring search to it
+would fix the broad-term case too, but full-text matches lexemes where the current search
+matches substrings, so it changes which results users get — a product decision, not a
+refactor.
+
+Two regression tests, both mutation-checked. ``test_search_step_index_postgres.py`` (real
+Postgres, in the CI integration job) asserts the indexes exist with ``gin_trgm_ops`` **and**
+that one can actually serve an ILIKE — a ``Bitmap Index Scan`` with the predicate pushed down
+as an ``Index Cond``.
+
+That second assertion was wrong on the first attempt and is worth recording. It asserted the
+planner picks the index *naturally*, and deliberately avoided ``enable_seqscan = off`` on the
+reasoning that forcing it would make the result a foregone conclusion. It passed locally
+against a ``test_steps`` table that already held 60,360 rows of unrelated data, and failed in
+CI where the table was empty — correctly, because on a small table a sequential scan really is
+cheaper, so the test had been asserting a falsehood. Measured on the real table with a
+20,000-row fixture: seq scan 1157, forced bitmap 2659. The index only wins near the ~60k scale
+where the 46.2ms improvement was measured, and a 60k-row fixture is too heavy for every CI run.
+
+Whether the planner *chooses* the index is a cost decision about data volume; what needs
+pinning is that the index **can serve the predicate**, which is what breaks if the opclass,
+column or predicate form changes. Forcing seqscan off isolates exactly that, and is not
+vacuous — the setting only adds a cost penalty, it does not forbid the scan. Confirmed by
+dropping the index with seqscan still off: the plan falls back to ``Seq Scan`` at cost
+10000001157 rather than using any index. The mutation set now includes replacing
+``gin_trgm_ops`` with a plain btree index, which the test also catches.
+``test_search_filter_uses_step_columns.py`` asserts search still matches on step text at all;
+without it the indexes could quietly become pure write cost while both other tests stayed green.
+
+That integration job runs an explicit **list** of files rather than discovering them, so a new
+``*_postgres*.py`` file is not run by CI until someone adds it — and it fails no build while it
+sits there. ``test_postgres_integration_tests_are_in_ci.py`` now pins that (13 of 13 existing
+files were correctly listed, so it pins a healthy state rather than papering over a backlog).
+
 ## 2026-08-26 — running one test file on its own failed, while CI stayed green
 
 ``pytest tests/test_roi04_background_indexing.py`` failed two tests on main.
