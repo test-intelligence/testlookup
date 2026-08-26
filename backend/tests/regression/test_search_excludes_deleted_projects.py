@@ -11,12 +11,23 @@ from sqlalchemy.dialects import postgresql
 
 
 def _sql(statement) -> str:
-    return str(
-        statement.compile(
-            dialect=postgresql.dialect(),
-            compile_kwargs={"literal_binds": True},
-        )
-    ).lower()
+    """Render a statement for inspection.
+
+    ``literal_binds`` is attempted first because it reads better, but the
+    keyword-search statements are now built once per query shape with NAMED
+    bind parameters that carry no value until execution -- inlining those
+    raises. The assertions here are about structure (the projects join and the
+    is_active predicate), which survives either rendering.
+    """
+    try:
+        return str(
+            statement.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        ).lower()
+    except Exception:
+        return str(statement.compile(dialect=postgresql.dialect())).lower()
 
 
 def _assert_active_project_filter(statement) -> None:
@@ -35,7 +46,12 @@ async def test_keyword_search_filters_deleted_projects_in_results_and_count():
     count_result = MagicMock()
     count_result.scalar.return_value = 0
 
-    async def execute(statement):
+    async def execute(statement, params=None):
+        # ``params`` arrived when the statements became cached-and-reused: every
+        # value now travels as a bind parameter instead of being built into the
+        # statement. The fake has to accept it, but this test is unchanged in
+        # what it asserts -- both statements must still join projects and filter
+        # on is_active.
         captured.append(statement)
         return rows_result if len(captured) == 1 else count_result
 

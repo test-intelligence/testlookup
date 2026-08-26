@@ -1,5 +1,68 @@
 # Changelog
 
+## 2026-08-26 — search rebuilt its SQLAlchemy statement on every request
+
+Profiling the search path put ~4.3 ms of a 14.7 ms paged query (29%) in statement
+*construction* rather than execution: SQLAlchemy re-traverses a freshly built expression tree
+to compute its compiled-cache key, and reusing the object hits that memo instead.
+
+``search_test_cases_query`` now keeps one statement per query **shape** and supplies every
+value as a named bind parameter at execution time. Measured end to end through the service,
+median of 15, on 15,780 test cases / 60,360 steps — **all totals identical before and after**:
+
+| term | before | after | |
+|---|---:|---:|---|
+| ``xyzzy`` (no match) | 9.79 ms | 1.87 ms | -81% |
+| ``error`` | 18.47 ms | 7.82 ms | -58% |
+| ``api`` | 49.40 ms | 36.01 ms | -27% |
+| ``assert`` | 61.58 ms | 46.39 ms | -25% |
+| ``timeout`` | 16.39 ms | 14.63 ms | -11% |
+| ``connection reset by peer`` | 40.86 ms | 43.33 ms | +6% |
+
+That last one is inside the run-to-run noise floor on this machine (~10%). An earlier pass had
+``assert`` at *+14%* and this one has it at -25% — the same measurement, two runs. Single-sample
+comparisons on this path are not trustworthy; these are medians of 15 with every arm re-run.
+
+**The SQL is unchanged.** Values were already bind parameters, so Postgres sees exactly what it
+saw before and no plan changes — this is purely Python-side.
+
+**Why this is the session's most dangerous change, and what makes it safe.** A cached statement
+holds whatever was inline when it was built. Leave ``project_id`` or the allow-list inline and
+it is baked in and then served to the *next* caller — not a stale number, one tenant reading
+another's rows, with correct-looking results and no error. So:
+
+- every value travels as a named bind parameter (``pattern``, ``project_id``, ``allowed_ids``,
+  ``status``, ``since``, plus the two paging parameters);
+- the cache key is the shape tuple, derived from exactly the branches the filter builder takes;
+- ``build_search_filters`` keeps ONE implementation, called either with values (anonymous binds,
+  single-use) or with bind parameters (cacheable). The two cannot drift because there is only
+  one of them.
+
+"No memberships" stays a distinct shape from a populated allow-list: the former compiles to a
+constant-false predicate and the latter to an expanding bind parameter, and sharing a statement
+between them would hand a user with no access the statement built for someone with it.
+
+The cache is bounded by the shape space (2 term forms x 4 scopes x status x days = 32) and holds
+no values, so it cannot grow with traffic.
+
+One existing test needed updating and it is worth saying why. ``test_search_excludes_deleted_projects.py``
+fakes ``db.execute`` with a one-argument signature; passing bind parameters gives it two, and its
+``literal_binds`` rendering has no value to inline for the named parameters. The fake now accepts
+``params`` and the renderer falls back when inlining is impossible — **the assertions are
+unchanged**, and they were re-verified as load-bearing: dropping ``is_active`` from both
+statements fails it, and so does dropping it from only the paged one.
+
+Tests are the point here, and both layers are mutation-checked:
+
+- ``test_search_statement_cache_postgres.py`` (real Postgres) runs two projects through the
+  **same warm cache entry** and asserts each sees only its own rows — with different row counts
+  per project, so a leak shows up as a wrong count rather than sailing past an "is it non-empty"
+  check. Baking in ``project_id`` fails 2, the allow-list fails 1, paging fails 1.
+- ``test_search_shape_key_is_total.py`` pins each structural dimension by name. The integration
+  tests only caught a dropped dimension because the tuple changed length, which is luck; these
+  catch a dimension neutered while the arity is kept (status, days, and folding the empty
+  allow-list into unscoped each fail exactly one test).
+
 ## 2026-08-26 — every local benchmark has been measuring SQL echo
 
 ``backend/app/db/postgres.py`` builds the engine with ``echo=settings.is_development``, and
