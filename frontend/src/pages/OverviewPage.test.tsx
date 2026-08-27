@@ -43,13 +43,16 @@ vi.mock('@/hooks/useAnalyticsView', () => ({
   }),
 }))
 
-const runsState: { windowed: unknown[]; newest: unknown[] } = { windowed: [], newest: [] }
+const runsState: { windowed: unknown[]; newest: unknown[] | null } = { windowed: [], newest: [] }
 vi.mock('@/hooks/useRuns', () => ({
   // Two calls with different params: the windowed list and the single newest
   // run. Distinguished by `size`, exactly as the page does.
-  useRuns: vi.fn((params?: { size?: number }) => ({
-    data: { items: params?.size === 1 ? runsState.newest : runsState.windowed },
-  })),
+  useRuns: vi.fn((params?: { size?: number }) => {
+    const items = params?.size === 1 ? runsState.newest : runsState.windowed
+    // `null` models a fetch SWR has not resolved yet (`data: undefined`). That
+    // is not the same as an empty list, and the page must not read it as one.
+    return { data: items === null ? undefined : { items } }
+  }),
 }))
 
 vi.mock('@/store/projectStore', () => ({
@@ -883,7 +886,7 @@ describe('OverviewPage — first-run guide dismissal is scoped to the project', 
     }
   })
 
-  async function renderEmptyProject() {
+  async function renderEmptyProject(newest: unknown[] | null = []) {
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     mockDashboardData(useDashboardSummary, useTrendData)
     ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -900,7 +903,7 @@ describe('OverviewPage — first-run guide dismissal is scoped to the project', 
     })
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
     runsState.windowed = []
-    runsState.newest = []
+    runsState.newest = newest
     render(
       <MemoryRouter initialEntries={['/overview']}>
         <Routes>
@@ -921,6 +924,31 @@ describe('OverviewPage — first-run guide dismissal is scoped to the project', 
     // …and persisted under the project-scoped key, not the bare browser-wide one.
     expect(localStorage.getItem(firstRunDismissKey('proj-1'))).toBe('1')
     expect(localStorage.getItem(FIRST_RUN_DISMISS_KEY)).toBeNull()
+  })
+
+  it('stays hidden when the project has runs OUTSIDE the selected window', async () => {
+    // The reported bug: an established project whose last run predates the
+    // window was greeted with "Welcome to TestLookup - no test runs here yet",
+    // because the guide read the WINDOWED summary. Nothing about the project is
+    // new; the user just picked 24h.
+    await renderEmptyProject([{
+      id: 'r1',
+      created_at: new Date(Date.now() - 16 * 24 * 60 * 60 * 1000).toISOString(),
+    }])
+
+    // The window-empty banner is the right message here, and it appears...
+    expect(await screen.findByTestId('overview-empty-window')).toBeInTheDocument()
+    // ...instead of the onboarding guide, not stacked on top of it.
+    expect(screen.queryByText(/Welcome to TestLookup/i)).toBeNull()
+  })
+
+  it('stays hidden while the lifetime run fetch is still loading', async () => {
+    // `undefined` is "not answered yet", not "no runs". Reading it as empty
+    // flashes the guide at every established project on first paint.
+    await renderEmptyProject(null)
+
+    await screen.findAllByText(/Project One/i)
+    expect(screen.queryByText(/Welcome to TestLookup/i)).toBeNull()
   })
 
   it('stays hidden when THIS project was already dismissed', async () => {

@@ -1025,10 +1025,26 @@ export default function OverviewPage() {
     [summary, totalExecutions, days],
   )
 
-  // First-run: a project (or the whole instance) with no executions in the
-  // window and no recent runs gets a getting-started guide instead of a
-  // zeroed-out dashboard. Dismissible (persisted per browser).
-  const isFreshInstall = !summaryLoading && totalExecutions === 0 && recentRunItems.length === 0
+  // First-run: a project (or the whole instance) that has NEVER had a run gets
+  // a getting-started guide instead of a zeroed-out dashboard. Dismissible
+  // (persisted per browser).
+  //
+  // Gated on the window-independent newest-run fetch, never on the windowed
+  // summary. Those two disagree for any project whose last run predates the
+  // selected window, and reading the windowed one told an established project
+  // with months of history "Welcome to TestLookup — no test runs here yet"
+  // because nobody had pushed in 24 hours. The window-empty case already has
+  // its own banner (`overview-empty-window`), which names the age of the real
+  // data and offers a wider window; this guide would render on top of it,
+  // contradicting it.
+  //
+  // `undefined` means the fetch has not resolved, which is NOT "no runs" — so
+  // require it to have loaded. A failed fetch also stays undefined, hiding the
+  // guide rather than falsely welcoming someone to a project they have used
+  // for months.
+  const everHadRun = (newestRunPage?.items?.length ?? 0) > 0
+  const newestRunLoaded = newestRunPage !== undefined
+  const isFreshInstall = !summaryLoading && newestRunLoaded && !everHadRun
   const showFirstRunGuide = isFreshInstall && !guideDismissed
 
   // The caption under a KPI fills the slot the sparkline would have used, so it

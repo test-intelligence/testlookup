@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-08-27 — an established project was welcomed as a new one
+
+On /overview, selecting a window with no runs in it — 24h on a project whose last run was
+Tuesday — rendered the first-run onboarding guide:
+
+    Welcome to TestLookup — Checkout Service
+    No test runs here yet. Three steps to your first failure-intelligence signal.
+
+Nothing about the project is new. The user picked a narrow window.
+
+`isFreshInstall` was derived entirely from windowed data — `totalExecutions === 0` from the
+window-scoped summary, and an empty window-scoped run list. Both are zero for any project whose
+last run predates the selected window.
+
+The page already fetches the newest run *ignoring* the window (it feeds the
+`overview-empty-window` banner, which correctly says "No runs in the last 30 days · 16 days
+ago · Show last 90 days"). So the guide was rendering on top of a banner that contradicted it.
+The gate now reads that same window-independent fetch: the guide appears only when the project
+has never had a run.
+
+`undefined` is treated as "not answered yet", not "no runs" — otherwise the guide flashes on
+every established project during first paint, and a failed fetch welcomes someone to a project
+they have used for months.
+
+Three mutations, three killed: reverting to the windowed condition, dropping the loaded guard,
+and pinning the flag on. The test mock now models an unresolved fetch (`data: undefined`)
+distinctly from an empty one, which the loaded-guard mutation needs in order to fail.
 ## 2026-08-27 — a Redis outage reported three services down
 
 Follow-up to the health-routing fix above. Once `/health/details` was reachable during an
