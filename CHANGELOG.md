@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-27 — live probe for the first-run guide gate
+
+`frontend/tests/probe-first-run-guide.spec.ts` verifies the #881 fix against the running
+deployment, because that bug was only ever visible in a real browser against real data.
+
+On this deployment all four projects are subjects — every one has runs and none in the last
+24h — so the probe asserts its own preconditions before asserting the fix: the project must
+HAVE runs, and its 24h window must be empty. Without those it would pass on a project that is
+genuinely new.
+
+It also asserts the empty-window banner IS visible, not only that the guide is absent. A
+"text not present" check passes on a blank page; requiring the correct message to render is
+what stops this probe from passing when the page fails to load. Confirmed the guide's own
+string is present in the deployed chunk, so the negative assertion is meaningful rather than
+trivially true.
+
 ## 2026-08-27 — an established project was welcomed as a new one
 
 On /overview, selecting a window with no runs in it — 24h on a project whose last run was
