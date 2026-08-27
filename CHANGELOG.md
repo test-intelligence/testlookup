@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-27 — a failed CLI report download hid the server's reason
+
+``testlookup reports pdf`` goes through the shared client's ``download`` path, and that path
+threw away the error body: on a 4xx it called ``map_http_error(status)`` with **no detail**, so a
+wrong run id, a report asked for before its run completed, or a project the API key can't reach
+all surfaced as a bare ``Not found.`` / ``Permission denied.`` — the one line that says *why* was
+dropped. ``request`` (every other CLI call) had always read ``{"detail": …}`` from the body; only
+``download`` did not.
+
+Both paths now route their status-error handling through one ``_raise_for_status`` helper, so they
+can no longer drift — the server's ``detail`` reaches the user on a failed download exactly as it
+does on any other call, and a non-JSON error body falls back to an empty detail rather than
+raising. Regression tests assert the ``detail`` is surfaced on both ``request`` and ``download``,
+and that a body that is not JSON still maps to a clean ``CLIError`` instead of a raw ``ValueError``.
 ## 2026-08-26 — search ran its predicate twice to return zero rows
 
 ``keyword_search_long`` (``q=connection reset by peer``) was straddling its 20 req/s budget —

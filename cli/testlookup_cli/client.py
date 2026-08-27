@@ -6,6 +6,26 @@ from testlookup_cli.config import get_profile, save_profile
 from testlookup_cli.errors import CLIError, map_http_error, map_connection_error, EXIT_AUTH
 
 
+def _raise_for_status(resp: httpx.Response) -> None:
+    """Map a >=400 response to a ``CLIError``, surfacing the server's ``detail``.
+
+    Both ``request`` and ``download`` route their status-error path through this
+    one helper so they cannot drift. The ``detail`` is what turns a bare
+    ``Not found.`` into an actionable message — a wrong run id, a project the key
+    can't reach, a report asked for before its run completed — at exactly the
+    moment a self-hoster needs to know *why* the call failed. A non-JSON or
+    non-object error body just leaves ``detail`` empty rather than raising.
+    """
+    if resp.status_code < 400:
+        return
+    detail = ""
+    try:
+        detail = resp.json().get("detail", "")
+    except Exception:
+        pass
+    raise map_http_error(resp.status_code, str(detail))
+
+
 def _build_headers(profile: dict) -> dict[str, str]:
     """Build auth headers from the active profile."""
     auth_type = profile.get("auth_type", "jwt")
@@ -42,13 +62,7 @@ async def request(
                     headers = _build_headers(profile)
                     resp = await client.request(method, url, headers=headers, params=params, json=json_body)
 
-            if resp.status_code >= 400:
-                detail = ""
-                try:
-                    detail = resp.json().get("detail", "")
-                except Exception:
-                    pass
-                raise map_http_error(resp.status_code, str(detail))
+            _raise_for_status(resp)
 
             if resp.status_code == 204:
                 return None
@@ -76,8 +90,7 @@ async def download(
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.get(url, headers=headers, params=params)
-            if resp.status_code >= 400:
-                raise map_http_error(resp.status_code)
+            _raise_for_status(resp)
             return resp.content
     except httpx.RequestError as exc:
         raise map_connection_error(exc, base_url) from exc

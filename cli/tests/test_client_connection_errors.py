@@ -51,22 +51,38 @@ class _RaisingClient:
 
 
 class _Resp:
-    def __init__(self, status_code):
+    def __init__(self, status_code, body=None):
         self.status_code = status_code
         self.text = ""
+        # ``_RAISE`` models an error body that is not JSON (or not an object) —
+        # ``_raise_for_status`` must fall back to an empty detail, not crash.
+        self._body = {"detail": "nope"} if body is None else body
 
     def json(self):
-        return {"detail": "nope"}
+        if self._body is _RAISE:
+            raise ValueError("not json")
+        return self._body
+
+
+_RAISE = object()
 
 
 class _StatusClient(_RaisingClient):
-    """Returns a real HTTP response so the status-code path is exercised."""
+    """Returns a real HTTP response so the status-code path is exercised.
 
-    def __init__(self, status_code, **_kw):
+    Both ``request`` and ``get`` (the download path) return the same response so
+    a single fake drives either client method.
+    """
+
+    def __init__(self, status_code, body=None, **_kw):
         self._status = status_code
+        self._body = body
 
     async def request(self, *_a, **_kw):
-        return _Resp(self._status)
+        return _Resp(self._status, self._body)
+
+    async def get(self, *_a, **_kw):
+        return _Resp(self._status, self._body)
 
 
 def _isolate_config(monkeypatch, tmp_path):
@@ -142,6 +158,51 @@ def test_status_errors_still_flow_through_map_http_error(monkeypatch, tmp_path):
     with pytest.raises(CLIError) as ei:
         asyncio.run(client.request("GET", "/api/v1/projects/missing"))
     assert ei.value.exit_code == EXIT_NOT_FOUND
+
+
+# ── the server's ``detail`` reaches the user on both paths ─────────────────
+
+
+def test_request_surfaces_server_detail(monkeypatch, tmp_path):
+    """A status error carries the server's reason, not just the generic label."""
+    _isolate_config(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        httpx, "AsyncClient",
+        lambda **kw: _StatusClient(404, body={"detail": "Project not found"}, **kw),
+    )
+    with pytest.raises(CLIError) as ei:
+        asyncio.run(client.request("GET", "/api/v1/projects/missing"))
+    assert ei.value.exit_code == EXIT_NOT_FOUND
+    assert "Project not found" in str(ei.value)
+
+
+def test_download_surfaces_server_detail(monkeypatch, tmp_path):
+    """``download`` dropped the body before this fix, so a failed PDF export said
+    only 'Not found.' — the run id, access, or 'run not complete' reason was
+    lost. It must now read the ``detail`` exactly as ``request`` does."""
+    _isolate_config(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        httpx, "AsyncClient",
+        lambda **kw: _StatusClient(404, body={"detail": "Run not found"}, **kw),
+    )
+    with pytest.raises(CLIError) as ei:
+        asyncio.run(client.download("/api/v1/reports/runs/missing/pdf"))
+    assert ei.value.exit_code == EXIT_NOT_FOUND
+    assert "Run not found" in str(ei.value)
+
+
+def test_download_non_json_error_body_does_not_crash(monkeypatch, tmp_path):
+    """An error response whose body is not JSON must still map to a clean
+    CLIError with an empty detail — never a raw ``ValueError`` from ``json()``."""
+    _isolate_config(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        httpx, "AsyncClient",
+        lambda **kw: _StatusClient(500, body=_RAISE, **kw),
+    )
+    with pytest.raises(CLIError) as ei:
+        asyncio.run(client.download("/api/v1/reports/runs/x/pdf"))
+    assert ei.value.exit_code == EXIT_ERROR
+    assert "Server error (500)" in str(ei.value)
 
 
 # ── upload path ───────────────────────────────────────────────────────────
