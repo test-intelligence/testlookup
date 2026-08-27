@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-08-27 — diagnosis died with the thing it was meant to diagnose
+
+Follow-up to the fault injection above, and issue #878. The CLI change made the 503 legible;
+this makes there be something to ask.
+
+`/health/ready` treats Postgres, Mongo and Redis as equally critical, and that gate is right:
+token revocation fails closed by default, so with Redis down every authenticated request 503s
+anyway. But readiness is Service-wide. When Redis went, both replicas went NotReady, the
+endpoint list emptied, and *every* path behind that Service stopped answering — including
+`/health/details`, whose entire job is naming which dependency died. From outside the cluster a
+Redis outage and a Postgres outage were indistinguishable.
+
+The health prefix now routes to a second Service, `testlookup-backend-diagnostics`: same
+selector, same port, `publishNotReadyAddresses: true`. Serving traffic keeps the strict Service
+and still stops cleanly when a dependency is down. The kubelet's readiness probe is unaffected —
+it talks to the pod IP, never through a Service.
+
+**`publishNotReadyAddresses` alone did not work, and only the live retest showed it.** With the
+flag set the EndpointSlice reported `ready=true`, kube-proxy routed the ClusterIP correctly
+(verified from inside the cluster), and the ingress rule matched — yet Traefik still answered
+`no available server`. Traefik 3.6.10 builds its server list per-endpoint and those endpoints
+carry `serving=false`, so it matched the router and found a load balancer with zero servers:
+the original symptom, with the fix correctly in place. Adding
+`traefik.ingress.kubernetes.io/service.nativelb` makes Traefik target the ClusterIP as a single
+server and leave the filtering to kube-proxy, which honours the flag. Both mechanisms are in the
+manifest; controllers that key on `ready` (ingress-nginx, ALB) need only the flag and ignore the
+annotation.
+
+Measured on the homelab with Redis scaled to zero, before and after:
+
+| path | before | after |
+| --- | --- | --- |
+| `/health/details` | `503 no available server` | `200` naming `redis: Connection refused` |
+| `/health/ready` | `503 no available server` | `503` with the per-dependency `checks` object |
+| `/health/live` | `503 no available server` | `200` |
+| `/api/v1/*` | `503 no available server` | `503 no available server` (unchanged, by design) |
+
+`/health/ready` reaching the application also settles the CLI's other half: the body now carries
+`checks`, so the operator is told which dependency is down rather than that the server erred.
+
+Guarded by `backend/tests/regression/test_health_survives_the_readiness_gate.py`, which reads
+the manifests rather than asserting names — the Service under test is whatever the ingress
+routes health at. Six mutations, six killed: removing the flag, setting it false, pointing
+health back at the strict Service, drifting the diagnostics selector, and dropping or falsifying
+the nativelb annotation. The selector and annotation mutations matter most: each leaves a
+Service that looks correct and routes nothing, which is exactly the failure being fixed.
+
 ## 2026-08-27 — the CLI dropped the one line that explained a 503
 
 Found by fault injection against the live deployment, not by reading code. Scaling Redis to

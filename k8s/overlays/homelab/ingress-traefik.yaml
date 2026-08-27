@@ -49,11 +49,17 @@ spec:
                 name: testlookup-backend
                 port:
                   number: 8000
+          # Health goes to the diagnostics Service, which keeps NotReady pods
+          # in its endpoints. When a critical dependency is down every replica
+          # fails readiness and the normal Service empties, so this prefix would
+          # answer "no available server" -- hiding WHICH dependency died at
+          # exactly the moment that is the only thing worth knowing. Serving
+          # traffic above still uses the strict Service and still stops.
           - path: /health/
             pathType: Prefix
             backend:
               service:
-                name: testlookup-backend
+                name: testlookup-backend-diagnostics
                 port:
                   number: 8000
           - path: /metrics

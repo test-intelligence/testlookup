@@ -12,6 +12,56 @@ spec:
       targetPort: 8000
   type: ClusterIP
 ---
+# Diagnostics-only Service. Identical selector, but it keeps NotReady pods in
+# its endpoint list.
+#
+# Readiness is gated on /health/ready, which treats Postgres, Mongo and Redis as
+# equally critical. That gate is correct -- token revocation fails closed by
+# default (AUTH_REVOCATION_FAIL_OPEN=False), so with Redis down every
+# authenticated request would 503 anyway, and pulling the pods at least stops
+# routing traffic at them.
+#
+# The side effect was that /health/details -- the endpoint whose entire job is
+# naming WHICH dependency died -- went unreachable at the same moment, because
+# the normal Service had no endpoints left. Measured by scaling Redis to zero:
+# both replicas went 0/1, endpoints emptied, and every health URL returned the
+# proxy's "503 no available server". From outside the cluster a Redis outage and
+# a Postgres outage were indistinguishable.
+#
+# Serving traffic still uses the strict Service above and still stops when a
+# critical dependency is down. Only the health prefix is routed here, so
+# diagnosis survives the outage it is meant to describe. The kubelet's readiness
+# probe is unaffected: it talks to the pod IP directly, never through a Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: testlookup-backend-diagnostics
+  namespace: testlookup
+  annotations:
+    # publishNotReadyAddresses alone is NOT enough under Traefik, which is what
+    # the homelab runs. Measured on Traefik 3.6.10 with Redis scaled to zero:
+    # the flag makes the EndpointSlice report ready=true, kube-proxy routes the
+    # ClusterIP correctly (verified from inside the cluster), and the ingress
+    # rule matched -- but Traefik still answered "no available server", because
+    # it builds its server list per-endpoint and those endpoints carry
+    # serving=false. The router matched a load balancer with zero servers.
+    #
+    # nativeLB makes Traefik target the ClusterIP as a single server and leave
+    # the endpoint filtering to kube-proxy, which honours the flag. With both
+    # set, /health/details answered through the ingress mid-outage and named
+    # Redis. Controllers that key on ready (ingress-nginx, ALB) need only the
+    # flag and ignore this annotation, so both mechanisms belong here.
+    traefik.ingress.kubernetes.io/service.nativelb: "true"
+spec:
+  selector:
+    app: testlookup-backend
+  publishNotReadyAddresses: true
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
 apiVersion: v1
 kind: Service
 metadata:
