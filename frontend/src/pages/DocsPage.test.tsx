@@ -21,11 +21,12 @@
  */
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import DocsPage from './DocsPage'
 import { DOC_SOURCES } from '@/content/guide/sources'
 import { DOC_PAGES, DOC_GROUPS } from '@/content/guide/manifest'
+import { anchorIds } from '@/content/guide/slug'
 
 function renderDocs(path = '/docs') {
   // Real routes, not a bare render: `useParams` only populates inside a
@@ -101,6 +102,29 @@ describe('internal links', () => {
     }
     expect(broken, 'a link to a topic that does not exist is a dead end').toEqual([])
   })
+
+  it('every #fragment link lands on a heading that exists', () => {
+    // A cross-reference to `…#section` that names no rendered heading does not
+    // fail — it silently drops the reader at the TOP of the page, which reads
+    // as "the link is broken" for exactly the deep reference the author took
+    // the trouble to write. `anchorIds` computes the ids the same way DocsPage
+    // renders them, so this catches a heading rename that orphans a link.
+    const headings: Record<string, Set<string>> = {}
+    for (const [id, body] of Object.entries(DOC_SOURCES)) {
+      headings[id] = new Set(anchorIds(body))
+    }
+    const broken: string[] = []
+    for (const [id, body] of Object.entries(DOC_SOURCES)) {
+      // `](#frag)` is same-page; `](/docs/other#frag)` targets another topic.
+      for (const m of body.matchAll(/\]\((?:\/docs\/([a-z-]+))?#([a-z0-9-]+)\)/g)) {
+        const target = m[1] ?? id
+        if (!headings[target]?.has(m[2])) {
+          broken.push(`${id}.md -> ${m[1] ? `/docs/${m[1]}` : ''}#${m[2]}`)
+        }
+      }
+    }
+    expect(broken, 'a #fragment link with no matching heading dumps the reader at the top').toEqual([])
+  })
 })
 
 // ── Diagrams ────────────────────────────────────────────────────────────────
@@ -165,6 +189,52 @@ describe('rendering', () => {
     })
     expect(screen.getByRole('button', { name: /Flaky tests/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Administration$/i })).not.toBeInTheDocument()
+  })
+})
+
+// ── Cross-reference navigation ───────────────────────────────────────────────
+
+describe('in-content links', () => {
+  // jsdom leaves `scrollIntoView` undefined; the effect guards on that, so we
+  // install a spy where a test needs to observe the scroll and remove it after.
+  afterEach(() => {
+    // @ts-expect-error — restore jsdom's "not implemented" absence.
+    delete Element.prototype.scrollIntoView
+  })
+
+  it('follows a cross-topic link client-side, without a full reload', () => {
+    renderDocs('/docs/getting-started')
+    // A link in the prose to another topic — react-router should swap the
+    // content in place rather than the browser reloading the whole SPA.
+    fireEvent.click(screen.getByRole('link', { name: 'Administration' }))
+    expect(screen.getByText(/Settings that need/i)).toBeInTheDocument()
+  })
+
+  it('scrolls a deep-linked #fragment onto its heading once rendered', () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    renderDocs('/docs/ingestion#suite-name-resolution')
+    // The heading gains its id only after the Markdown renders — which is why
+    // the browser's own load-time scroll misses it and the effect is needed.
+    const heading = document.getElementById('suite-name-resolution')
+    expect(heading, 'ingestion renders a heading with this id').not.toBeNull()
+    expect(scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('lands a cross-page anchor click on the target section', () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    renderDocs('/docs/getting-started')
+    // Select by href, not text: the page links the same topic with and without
+    // a fragment, so only the href disambiguates the anchor variant under test.
+    const link = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === '/docs/ingestion#suite-name-resolution')
+    if (!link) throw new Error('getting-started must link the ingestion suite-name section')
+    fireEvent.click(link)
+    // Navigated to the ingestion topic AND scrolled to its #suite-name section.
+    expect(document.getElementById('suite-name-resolution')).not.toBeNull()
+    expect(scrollIntoView).toHaveBeenCalled()
   })
 })
 

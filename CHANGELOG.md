@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-26 (docs) — In-app doc cross-references now navigate client-side and land on the section
+
+The in-app documentation (`/docs/:docId`) rendered every Markdown link as a plain browser
+anchor. Two consequences, both worst for the self-hoster the in-app docs exist for:
+
+- A link to another topic (`/docs/administration`) or a same-page section did a **full document
+  load** — rebooting the whole SPA, re-running auth, and refetching everything — for a
+  cross-reference that never leaves the app. On an air-gapped self-host that is pure cost.
+- A **cross-page anchor** such as `/docs/ingestion#suite-name-resolution` (linked from
+  `getting-started`) dropped the reader at the **top** of the target page, never the section.
+  A plain load can't land it: the browser scrolls before React has rendered the Markdown, so the
+  heading has no id yet, and the browser never retries.
+
+Doc links now navigate through react-router, and a `#fragment` deep link is scrolled onto its
+heading once the content is in the DOM — which also fixes the cross-page case, since the fragment
+survives in `location.hash`. External links still open in a new isolated tab; modified clicks keep
+their native open-in-new-tab behavior. The heading-slug rule moved to `src/content/guide/slug.ts`
+so the page, its table of contents, and the tests all compute anchor ids the same way.
+
+Regression tests: every `#fragment` link in the docs resolves to a real heading (against the same
+slug the page renders, so a heading rename that orphans a link fails the build); a cross-topic
+link follows client-side without a reload; and a deep-linked / clicked cross-page anchor scrolls
+onto its target section.
 ## 2026-08-27 — a failed CLI report download hid the server's reason
 
 ``testlookup reports pdf`` goes through the shared client's ``download`` path, and that path

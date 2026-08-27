@@ -20,8 +20,8 @@
  * Routing: `/docs` shows the default page, `/docs/:docId` deep-links one. Both
  * are served by the SPA — the ingress sends the API reference to `/api-docs`.
  */
-import { isValidElement, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { isValidElement, useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ChevronRight, Search as SearchIcon } from 'lucide-react'
@@ -36,14 +36,7 @@ import {
   type DocPage,
 } from '@/content/guide/manifest'
 import { DOC_SOURCES } from '@/content/guide/sources'
-
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, '')
-    .trim()
-    .replace(/\s+/g, '-')
-}
+import { slugify } from '@/content/guide/slug'
 
 /** Headings for the on-page table of contents. */
 function headingsOf(markdown: string): { depth: number; text: string; id: string }[] {
@@ -59,6 +52,63 @@ function headingsOf(markdown: string): { depth: number; text: string; id: string
     if (m) out.push({ depth: m[1].length, text: m[2].trim(), id: slugify(m[2].trim()) })
   }
   return out
+}
+
+/**
+ * Anchor renderer for documentation Markdown.
+ *
+ * In-app links — another topic (`/docs/…`) or a same-page section
+ * (`#fragment`) — navigate client-side through react-router instead of the
+ * browser's default full document load. Two reasons this matters:
+ *
+ *  - A full reload reboots the whole SPA (re-runs auth, refetches everything)
+ *    for a link that never leaves the app. On an air-gapped self-host that is
+ *    pure cost for a cross-reference between two doc pages.
+ *  - A cross-page `#fragment` cannot land on its heading through a plain load:
+ *    the browser tries to scroll before React has rendered the Markdown, so
+ *    the id does not exist yet and the reader arrives at the top of the page.
+ *    Navigating client-side keeps the fragment in `location.hash`, which
+ *    `DocsPage`'s scroll effect resolves once the content is in the DOM.
+ *
+ * External links (anything with a scheme or protocol-relative host) open in a
+ * new isolated tab. Modified clicks (⌘/Ctrl/middle) keep their native
+ * open-in-new-tab behavior.
+ */
+function DocLink({ href, children }: { href?: string; children?: React.ReactNode }) {
+  const navigate = useNavigate()
+  const className = 'underline underline-offset-2'
+  const style = { color: 'var(--color-accent)' }
+  const internal = href != null && (href.startsWith('/') || href.startsWith('#'))
+  if (!internal) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" className={className} style={style}>
+        {children}
+      </a>
+    )
+  }
+  return (
+    <a
+      href={href}
+      className={className}
+      style={style}
+      onClick={(e) => {
+        if (
+          e.defaultPrevented ||
+          e.button !== 0 ||
+          e.metaKey ||
+          e.ctrlKey ||
+          e.shiftKey ||
+          e.altKey
+        ) {
+          return
+        }
+        e.preventDefault()
+        navigate(href)
+      }}
+    >
+      {children}
+    </a>
+  )
 }
 
 const MARKDOWN_COMPONENTS = {
@@ -129,13 +179,7 @@ const MARKDOWN_COMPONENTS = {
     <td className="px-3 py-2 text-[var(--color-text-muted)] align-top">{p.children}</td>
   ),
   a: (p: { href?: string; children?: React.ReactNode }) => (
-    <a
-      href={p.href}
-      className="underline underline-offset-2"
-      style={{ color: 'var(--color-accent)' }}
-    >
-      {p.children}
-    </a>
+    <DocLink href={p.href}>{p.children}</DocLink>
   ),
   // react-markdown renders a fenced block as <pre><code class="language-x">.
   // The BLOCK decides its own container here, rather than the inner <code>
@@ -182,11 +226,28 @@ const MARKDOWN_COMPONENTS = {
 export default function DocsPage() {
   const { docId } = useParams<{ docId?: string }>()
   const navigate = useNavigate()
+  const { hash } = useLocation()
   const [filter, setFilter] = useState('')
 
   const active: DocPage = findDocPage(docId) ?? findDocPage(DEFAULT_DOC_ID) ?? DOC_PAGES[0]
   const source = DOC_SOURCES[active.id] ?? ''
   const toc = useMemo(() => headingsOf(source), [source])
+
+  // Scroll a `#fragment` deep link onto its heading once the Markdown is in the
+  // DOM. This is what makes a cross-page anchor (e.g. a link to
+  // `/docs/ingestion#suite-name-resolution` from another topic) land on the
+  // section rather than the top of the page: the heading only gains its id
+  // after React renders the content, which is too late for the browser's own
+  // load-time scroll. Re-runs when the topic or the fragment changes, and stays
+  // a no-op in environments without `scrollIntoView` (jsdom).
+  useEffect(() => {
+    const id = decodeURIComponent(hash.replace(/^#/, ''))
+    if (!id) return
+    const el = document.getElementById(id)
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [hash, active.id, source])
 
   const matches = useMemo(() => {
     const q = filter.trim().toLowerCase()
