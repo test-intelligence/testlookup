@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-08-27 — the CLI dropped the one line that explained a 503
+
+Found by fault injection against the live deployment, not by reading code. Scaling Redis to
+zero made every backend replica fail its ``/health/ready`` probe; Kubernetes pulled both from
+the Service endpoints, and Traefik answered ``503 no available server``. The CLI reported:
+
+    ✗ Server error (503).
+
+The operator is told the server erred, but not that there was no server. ``_raise_for_status``
+read ``detail`` out of a JSON body, and a failure that never reached the application has no
+JSON body — nothing in the app produced it.
+
+A non-JSON error body now falls through to a trimmed snippet of the raw text:
+
+    ✗ Server error (503). no available server
+
+The application's own ``detail`` keeps precedence; this only fills a gap. HTML error pages are
+skipped, because dumping a proxy's page into a terminal is noise, and the text is collapsed and
+capped at 160 characters so a long body cannot swamp the message.
+
+``testlookup health`` additionally calls out the case explicitly: a 503 carrying **no**
+``checks`` object did not come from the application. Readiness is gated on that same endpoint,
+so a critical dependency going down takes every replica out of the Service. "A dependency is
+down" and "there is no server left to ask" both surface as 503, and those are a degradation and
+an outage respectively.
+
+**Two of the five mutations initially passed, and both were weak assertions of mine rather than
+weak code:**
+
+- The whitespace-collapse test put its messy whitespace *past* the 160-character cap, so
+  truncation removed it and the test passed with the collapse deleted. The body now puts the
+  newlines and double spaces inside the cap.
+- The precedence test asserted ``"Run not found." in message``. The raw JSON body
+  ``{"detail": "Run not found."}`` also contains that substring, so it passed even when the
+  fallback wrongly overrode the parsed detail. It now asserts the exact message.
+
+All five mutations fail now: removing the fallback, the HTML guard, the cap, the collapse, or
+the JSON precedence.
+
+**Not addressed here, and worth a separate decision:** whether Redis should be readiness-critical
+at all. ``/health/details`` kept answering ``degraded`` with full per-dependency detail while
+``/health/ready`` was failing — the application was alive and able to serve. Gating readiness on
+Redis converts a cache and broker outage into a total API outage. That may be deliberate (token
+revocation already fails closed, so a Redis outage is an auth outage), but it is a design
+decision better made explicitly than discovered during an incident.
+
 ## 2026-08-27 — `testlookup health` now names the dependency that is down
 
 ``testlookup health`` proxies ``GET /health/ready``, which answers **503** with a per-dependency

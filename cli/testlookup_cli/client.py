@@ -6,6 +6,38 @@ from testlookup_cli.config import get_profile, save_profile
 from testlookup_cli.errors import CLIError, map_http_error, map_connection_error, EXIT_AUTH
 
 
+_MAX_BODY_SNIPPET = 160
+
+
+def _error_body_snippet(resp: httpx.Response) -> str:
+    """A short, readable fragment of a non-JSON error body.
+
+    Errors that never reach the application have no ``detail`` field, because
+    nothing in the app produced them. A reverse proxy answers instead, in plain
+    text — and that text is usually the entire diagnosis.
+
+    Found by fault injection: scaling Redis to zero made every backend replica
+    fail its ``/health/ready`` probe, Kubernetes pulled them from the Service,
+    and Traefik answered ``503 no available server``. The CLI reported
+    ``Server error (503).`` and dropped the only words that explained it. The
+    operator is then told the server erred, but not that there was no server.
+
+    HTML pages are skipped — dumping a proxy's error page into a terminal is
+    noise, not information — and the text is collapsed and capped so a long
+    body cannot swamp the message.
+    """
+    try:
+        body = (resp.text or "").strip()
+    except Exception:  # a streamed/consumed body has no .text
+        return ""
+    if not body or body.startswith("<"):
+        return ""
+    body = " ".join(body.split())
+    if len(body) > _MAX_BODY_SNIPPET:
+        body = body[:_MAX_BODY_SNIPPET].rstrip() + "…"
+    return body
+
+
 def _raise_for_status(resp: httpx.Response) -> None:
     """Map a >=400 response to a ``CLIError``, surfacing the server's ``detail``.
 
@@ -14,15 +46,20 @@ def _raise_for_status(resp: httpx.Response) -> None:
     ``Not found.`` into an actionable message — a wrong run id, a project the key
     can't reach, a report asked for before its run completed — at exactly the
     moment a self-hoster needs to know *why* the call failed. A non-JSON or
-    non-object error body just leaves ``detail`` empty rather than raising.
+    non-object error body falls back to a trimmed snippet of the raw body
+    (:func:`_error_body_snippet`) — see there for why that matters.
     """
     if resp.status_code < 400:
         return
     detail = ""
     try:
-        detail = resp.json().get("detail", "")
+        payload = resp.json()
+        if isinstance(payload, dict):
+            detail = str(payload.get("detail", "") or "")
     except Exception:
         pass
+    if not detail:
+        detail = _error_body_snippet(resp)
     raise map_http_error(resp.status_code, str(detail))
 
 
