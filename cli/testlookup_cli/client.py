@@ -44,8 +44,20 @@ async def request(
     params: Optional[dict] = None,
     json_body: Optional[dict] = None,
     timeout: float = 30.0,
+    raise_for_status: bool = True,
 ) -> Any:
-    """Make an authenticated HTTP request to the TestLookup API."""
+    """Make an authenticated HTTP request to the TestLookup API.
+
+    ``raise_for_status`` defaults to ``True`` — a >=400 response maps to a
+    ``CLIError`` via :func:`_raise_for_status`. Pass ``False`` for an endpoint
+    whose error status carries a *body worth reading*: ``GET /health/ready``
+    answers ``503`` with a per-dependency ``checks`` object naming which of
+    PostgreSQL / MongoDB / Redis is down. Collapsing that to ``"Server error
+    (503)."`` throws away the one thing the caller needs, so ``health`` reads the
+    body instead and decides the exit code itself. A non-JSON error body (e.g. a
+    reverse proxy's HTML 502) still maps to a clean ``CLIError`` rather than
+    crashing on ``resp.json()``.
+    """
     profile = get_profile(profile_name)
     base_url = profile.get("url", "http://localhost:8000").rstrip("/")
     url = f"{base_url}{path}"
@@ -62,7 +74,17 @@ async def request(
                     headers = _build_headers(profile)
                     resp = await client.request(method, url, headers=headers, params=params, json=json_body)
 
-            _raise_for_status(resp)
+            if raise_for_status:
+                _raise_for_status(resp)
+            elif resp.status_code >= 400:
+                # Keep an expected error body (a 503 /health/ready naming the
+                # down dependency) instead of raising, but a non-JSON error body
+                # still becomes a clean CLIError rather than crashing below.
+                try:
+                    return resp.json()
+                except Exception:
+                    _raise_for_status(resp)
+                    raise
 
             if resp.status_code == 204:
                 return None

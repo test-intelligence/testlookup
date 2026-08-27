@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-27 — `testlookup health` now names the dependency that is down
+
+``testlookup health`` proxies ``GET /health/ready``, which answers **503** with a per-dependency
+``checks`` object (``postgres`` / ``mongo`` / ``redis``) the moment a critical dependency is down —
+the one payload an operator needs at that moment. But the command routed that 503 through the
+shared client's default status-error mapping, so ``map_http_error(503)`` collapsed the whole body
+to a bare ``Server error (503).`` and exited 1. The self-hoster whose database was down learned
+*that* something was wrong, never *which* service — from the command whose entire job is to say so.
+
+The command now requests with a new ``raise_for_status=False`` on the shared client, renders the
+``checks`` body (so the failing service and its error detail are visible, in table and ``-o json``
+alike), and still exits non-zero so it keeps working as a CI preflight. A ready server is
+unchanged (exit 0); a genuinely unreachable one still maps to the same actionable "Cannot reach
+the TestLookup server" error. A non-JSON error body (e.g. a reverse proxy's HTML 502) still maps to
+a clean ``CLIError`` rather than crashing on ``resp.json()``.
+
+Regression tests: the shared client returns a 503 ``/health/ready`` body when not raising (and still
+raises by default); ``health`` exits 1 and surfaces the failing ``postgres`` check on a degraded
+server, exits 0 when ready, and exits 1 when the server is unreachable.
+
 ## 2026-08-26 (docs) — In-app doc cross-references now navigate client-side and land on the section
 
 The in-app documentation (`/docs/:docId`) rendered every Markdown link as a plain browser
