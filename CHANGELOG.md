@@ -1,5 +1,60 @@
 # Changelog
 
+## 2026-08-26 — search ran its predicate twice to return zero rows
+
+``keyword_search_long`` (``q=connection reset by peer``) was straddling its 20 req/s budget —
+**4 PASS / 6 FAIL across 10 harness runs**, 15.1-22.3 req/s. The short-term scenario passed
+comfortably at ~41. The only difference between them is the search term.
+
+Three explanations were checked and two discarded:
+
+- **Trigram count.** Real — ``show_trgm`` gives 25 trigrams for the long phrase against 8 for
+  ``timeout`` — but not actionable; it is the user's term.
+- **Generic query plans.** Plausible, since caching the statement (previous entry) made server-side
+  plan reuse reachable. **Ruled out by measurement:** interleaved through the *same* cached
+  statement the two terms held distinct timings (8.8-21.8 ms vs 43.5-60.1 ms) instead of
+  converging, which is what a shared generic plan would produce.
+- **The sequential scan.** The long term does revert to ``Seq Scan on test_cases``
+  (``Rows Removed by Filter: 15780``) rather than using the trigram indexes. **The planner is
+  right:** scanning takes 17.9 ms, and forcing the index with ``enable_seqscan=off`` takes
+  **640 ms** — 36x worse. A 25-trigram pattern has to probe 25 posting lists per index.
+
+The actual cause is that the service issues **two** statements per search, and for an
+unanchored term the predicate *is* the cost — the COUNT is a second full evaluation of it, not
+a cheap addendum. ~18 ms twice, to return zero rows.
+
+The COUNT is now skipped when the page already determines the total. **This is exact, not an
+estimate.** A page shorter than ``size`` means the result set ended inside it, so the total is
+the offset plus what came back. It deliberately does **not** fire for an empty page past the
+first: ``?page=99`` of a five-row result says nothing about the total, and assuming
+``offset + 0`` there would report a total larger than the number of rows that exist.
+
+| | before | after |
+|---|---|---|
+| ``keyword_search_long`` | 4 PASS / 6 FAIL, 15.1-22.3 req/s | **6/6 PASS, 28.1-37.5 req/s** |
+| ``keyword_search`` | 10/10 PASS, ~41 req/s | 6/6 PASS, unchanged |
+| full budget report | 1 violation of 10 | **10 of 10 PASS, zero errors** |
+
+Mutation-checked, and the **control** is the informative one:
+
+| mutation | result |
+|---|---|
+| over-run guard dropped | 2 fail — exactly the over-run cases |
+| short-page guard dropped | 4 fail |
+| **shortcut disabled entirely** | **8 pass** |
+
+The tests assert the reported total against the COUNT they replace, so they still pass with the
+optimisation reverted. They guard correctness, not the speedup.
+
+``test_search_excludes_deleted_projects.py`` needed real work rather than a signature tweak: it
+fed an empty page, which now executes one statement instead of two, so its
+``len(captured) == 2`` assertion failed. That was the test correctly detecting a behaviour
+change. It now feeds a full page so both statements run and both are inspected, and a second
+test asserts the **skipped** COUNT statement still carries the ``is_active`` filter — otherwise
+a later change to when the shortcut fires could expose soft-deleted projects through a query
+nothing had checked. Both mutations (dropping ``is_active`` from both statements, or from only
+the paged one) now fail **two** tests each rather than one.
+
 ## 2026-08-26 — search rebuilt its SQLAlchemy statement on every request
 
 Profiling the search path put ~4.3 ms of a 14.7 ms paged query (29%) in statement

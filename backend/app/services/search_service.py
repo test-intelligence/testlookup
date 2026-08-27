@@ -434,7 +434,32 @@ async def search_test_cases_query(
         params["since"] = datetime.now(timezone.utc) - timedelta(days=days)
 
     rows = (await db.execute(query, params)).all()
-    total = (await db.execute(count_query, params)).scalar() or 0
+
+    # Skip the COUNT when the page itself already determines the total.
+    #
+    # Both statements apply the same predicate, and for an unanchored search the
+    # predicate is the whole cost — the count is not a cheap addendum, it is a
+    # second full evaluation. Measured on a 25-trigram term ("connection reset
+    # by peer"), which cannot use the trigram index at all and so scans: ~18ms
+    # per statement, ~36ms for the pair, to return zero rows.
+    #
+    # The shortcut is exact, not an estimate. A short page means the result set
+    # ended within it, so the total is the offset plus what came back:
+    #
+    #   len(rows) <  size and len(rows) > 0  -> ended here; total = offset + len
+    #   len(rows) == 0 and page == 1         -> nothing matched; total = 0
+    #
+    # It deliberately does NOT fire for an empty page beyond the first: an
+    # over-run page (?page=99 of a 5-row result) says nothing about the total,
+    # and assuming offset + 0 there would report a total larger than the number
+    # of rows that exist. A full page cannot rule out more rows either, so that
+    # still costs the COUNT.
+    offset = (page - 1) * size
+    if len(rows) < size and (rows or page == 1):
+        total = offset + len(rows)
+    else:
+        total = (await db.execute(count_query, params)).scalar() or 0
+
     items = []
     for row in rows:
         item = dict(row._mapping)

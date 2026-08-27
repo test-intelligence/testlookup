@@ -41,10 +41,18 @@ async def test_keyword_search_filters_deleted_projects_in_results_and_count():
     from app.services.search_service import search_test_cases_query
 
     captured = []
+    # A FULL page. search_test_cases_query skips the COUNT when the page it got
+    # back already determines the total (a short page means the result set ended
+    # there), so an empty page would execute one statement and this test would
+    # never see the count query at all. A full page cannot rule out more rows,
+    # so both statements run -- which is what this test is here to inspect.
+    page_size = 20
     rows_result = MagicMock()
-    rows_result.all.return_value = []
+    rows_result.all.return_value = [
+        SimpleNamespace(_mapping={"test_case_id": n}) for n in range(page_size)
+    ]
     count_result = MagicMock()
-    count_result.scalar.return_value = 0
+    count_result.scalar.return_value = page_size
 
     async def execute(statement, params=None):
         # ``params`` arrived when the statements became cached-and-reused: every
@@ -56,13 +64,32 @@ async def test_keyword_search_filters_deleted_projects_in_results_and_count():
         return rows_result if len(captured) == 1 else count_result
 
     db = SimpleNamespace(execute=execute)
-    assert await search_test_cases_query(db, q="login", page=1, size=20) == (
-        [],
-        0,
-        0,
+    items, total, _ = await search_test_cases_query(
+        db, q="login", page=1, size=page_size
     )
-    assert len(captured) == 2
+
+    assert len(items) == page_size
+    assert total == page_size
+    assert len(captured) == 2, (
+        "expected the results query AND the count query; got "
+        + str(len(captured))
+    )
     for statement in captured:
+        _assert_active_project_filter(statement)
+
+
+@pytest.mark.asyncio
+async def test_the_skipped_count_statement_still_filters_deleted_projects():
+    """The COUNT is skipped when a short page already gives the total, so the
+    test above cannot inspect it on that path. The statement still has to carry
+    the filter -- otherwise a later change to when the shortcut fires would
+    expose soft-deleted projects through a query nothing had checked."""
+    from app.services.search_service import search_shape, statements_for_shape
+
+    shape = search_shape("login", None, None, None, None)
+    results_stmt, count_stmt = statements_for_shape(shape)
+
+    for statement in (results_stmt, count_stmt):
         _assert_active_project_filter(statement)
 
 
