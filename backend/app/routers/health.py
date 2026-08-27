@@ -18,7 +18,9 @@ GET /health/version — Cheap build-identity probe: version + git revision +
 
 GET /health/details — Full dependency status report for operations dashboards.
                       Checks all services: PostgreSQL, MongoDB, Redis, MinIO, Ollama, ChromaDB.
-                      Not intended for K8s probes (too slow).
+                      Every probe is budgeted, so the response is bounded even
+                      when several dependencies are unreachable. Still not a
+                      K8s probe: it reports 200 while degraded by design.
 """
 import asyncio
 import logging
@@ -103,7 +105,7 @@ async def _check_minio() -> dict[str, Any]:
         from app.services.storage_config_service import get_effective_storage_config  # noqa: PLC0415
 
         # MinIO health endpoint — available without auth
-        config = await get_effective_storage_config()
+        config = await get_effective_storage_config(use_cache=False)
         endpoint = config["minio_endpoint"]
         scheme = "https" if config["minio_use_ssl"] else "http"
         client = get_http_client()
@@ -142,7 +144,7 @@ async def _check_chromadb() -> dict[str, Any]:
         from app.core.http_client import get_http_client  # noqa: PLC0415
         from app.services.storage_config_service import get_effective_storage_config  # noqa: PLC0415
 
-        config = await get_effective_storage_config()
+        config = await get_effective_storage_config(use_cache=False)
         client = get_http_client()
         resp = await client.get(
             f"http://{config['chroma_host']}:{config['chroma_port']}/api/v2/heartbeat",
@@ -153,6 +155,36 @@ async def _check_chromadb() -> dict[str, Any]:
         return {"status": "degraded", "detail": f"HTTP {resp.status_code}"}
     except Exception as exc:
         return {"status": "degraded", "detail": str(exc)[:200]}
+
+
+# Wall-clock budget for the three critical probes.
+#
+# Deliberately below the kubelet's readinessProbe timeoutSeconds (5s in
+# k8s/base/backend-deployment.yaml). The Redis client's own
+# socket_connect_timeout is exactly 5s, so an unreachable Redis made
+# /health/ready take ~5s -- a dead heat with the kubelet's own deadline.
+# Whichever won, the pod went NotReady; the difference is that on a kubelet
+# timeout there is no response body, so the answer to WHICH dependency died
+# was discarded. Measured during a Redis outage: the redis probe alone took
+# 5017ms.
+#
+# A timeout here reports ``error``, not ``degraded``: a critical dependency
+# that cannot answer within the budget is failing, and readiness must keep
+# failing closed on it.
+_CRITICAL_BUDGET_SECONDS = 3.0
+
+
+async def _critical(coro, label: str) -> dict[str, Any]:
+    """Run a critical probe under a budget, preserving a failure as a failure."""
+    try:
+        return await asyncio.wait_for(coro, timeout=_CRITICAL_BUDGET_SECONDS)
+    except asyncio.TimeoutError:
+        return {
+            "status": "error",
+            "detail": f"{label} probe timed out after {_CRITICAL_BUDGET_SECONDS}s",
+        }
+    except Exception as exc:  # noqa: BLE001 - a probe must not raise past itself
+        return {"status": "error", "detail": str(exc)[:200]}
 
 
 async def _with_budget(coro, label: str) -> dict[str, Any]:
@@ -212,9 +244,9 @@ async def readiness():
     Returns 503 if any of those is unavailable so the load balancer stops sending traffic.
     """
     pg, mongo, redis = await asyncio.gather(
-        _check_postgres(),
-        _check_mongo(),
-        _check_redis(),
+        _critical(_check_postgres(), "postgres"),
+        _critical(_check_mongo(), "mongo"),
+        _critical(_check_redis(), "redis"),
     )
     critical_ok = all(d["status"] == "ok" for d in (pg, mongo, redis))
     return JSONResponse(
@@ -263,16 +295,29 @@ async def health_details():
     Runs all checks concurrently; returns 200 even when non-critical services are degraded.
     Not intended for K8s probes — use /health/live and /health/ready instead.
 
-    Each optional (non-critical) probe runs inside ``_with_budget`` so a
-    hung or unreachable dependency can't stall the whole response beyond
-    the configured per-probe timeout. Critical checks (pg/mongo/redis)
-    are not wrapped because the readiness probe depends on their honest
-    result; if postgres is truly down we want the probe to expose that.
+    Every probe runs under a wall-clock budget, so no single dependency can
+    stall the whole response: optional ones via ``_with_budget`` (reported
+    ``degraded``), critical ones via ``_critical`` (reported ``error``, so
+    readiness still fails closed on them).
+
+    The critical probes were previously left unwrapped, on the reasoning that
+    the readiness probe needs their honest result. A timeout *is* an honest
+    failure, and leaving them unbounded cost more than it bought: an
+    unreachable Redis blocks for its 5s socket timeout, which made this
+    endpoint take 5.01s and put /health/ready in a dead heat with the
+    kubelet's own 5s deadline -- and a kubelet timeout discards the body that
+    says which dependency died.
+
+    The optional probes resolve their endpoints with ``use_cache=False``.
+    That cache is Redis-backed, and ``except Exception`` around it catches a
+    refusal but cannot shorten a hang, so a Redis outage used to time out the
+    MinIO and ChromaDB probes and report both ``degraded`` while both were
+    healthy.
     """
     pg, mongo, redis, minio, ollama, chroma = await asyncio.gather(
-        _check_postgres(),
-        _check_mongo(),
-        _check_redis(),
+        _critical(_check_postgres(), "postgres"),
+        _critical(_check_mongo(), "mongo"),
+        _critical(_check_redis(), "redis"),
         _with_budget(_check_minio(), "minio"),
         _with_budget(_check_ollama(), "ollama"),
         _with_budget(_check_chromadb(), "chromadb"),

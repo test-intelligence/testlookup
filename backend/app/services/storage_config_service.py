@@ -38,16 +38,29 @@ def _validated_config(candidate: dict[str, Any]) -> dict[str, Any]:
     return defaults
 
 
-async def get_effective_storage_config() -> dict[str, Any]:
-    """Resolve shared DB overrides with Redis caching and env fallback."""
-    try:
-        from app.db.redis_client import get_redis
+async def get_effective_storage_config(*, use_cache: bool = True) -> dict[str, Any]:
+    """Resolve shared DB overrides with Redis caching and env fallback.
 
-        cached = await get_redis().get(_CACHE_KEY)
-        if cached:
-            return _validated_config(dict(json.loads(cached)))
-    except Exception:  # noqa: BLE001 - Redis is an optional cache
-        pass
+    ``use_cache=False`` skips the Redis read *and* the write-back, resolving
+    from Postgres and the environment only. Health probes pass it, and the
+    reason is not speed but attribution: the cache calls are wrapped in
+    ``except Exception``, which catches a refusal but cannot shorten a
+    **hang**. An unreachable Redis blocks for ``socket_connect_timeout``
+    (5s), so the MinIO and ChromaDB probes -- which call this purely to learn
+    which endpoint to probe -- blew their 2s budget waiting on Redis and were
+    reported ``degraded`` while both were perfectly healthy. Measured during a
+    Redis outage: minio 2001.6ms, chromadb 2003.4ms, both false. An endpoint
+    whose job is naming the dependency that died implicated three.
+    """
+    if use_cache:
+        try:
+            from app.db.redis_client import get_redis
+
+            cached = await get_redis().get(_CACHE_KEY)
+            if cached:
+                return _validated_config(dict(json.loads(cached)))
+        except Exception:  # noqa: BLE001 - Redis is an optional cache
+            pass
 
     config = _environment_defaults()
     try:
@@ -62,12 +75,13 @@ async def get_effective_storage_config() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - env defaults keep storage available
         logger.warning("storage_config_db_load_failed", error=str(exc))
 
-    try:
-        from app.db.redis_client import get_redis
+    if use_cache:
+        try:
+            from app.db.redis_client import get_redis
 
-        await get_redis().setex(_CACHE_KEY, _CACHE_TTL_SECONDS, json.dumps(config))
-    except Exception:  # noqa: BLE001 - Redis is an optional cache
-        pass
+            await get_redis().setex(_CACHE_KEY, _CACHE_TTL_SECONDS, json.dumps(config))
+        except Exception:  # noqa: BLE001 - Redis is an optional cache
+            pass
     return config
 
 

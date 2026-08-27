@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-08-27 — a Redis outage reported three services down
+
+Follow-up to the health-routing fix above. Once `/health/details` was reachable during an
+outage, it took **5.01s** to answer and named the wrong dependencies. Timed per probe, with
+Redis scaled to zero:
+
+    redis      5017.1ms  UNBUDGETED  error     Timeout connecting to server
+    minio      2001.6ms  budgeted    degraded  minio probe timed out after 2.0s
+    chromadb   2003.4ms  budgeted    degraded  chromadb probe timed out after 2.0s
+
+**MinIO and ChromaDB were both healthy.** They call `get_effective_storage_config()` purely to
+learn which endpoint to probe, and that resolver's first act is a Redis GET. The call sits in
+`except Exception`, which catches a refusal but cannot shorten a **hang** — so an unreachable
+Redis consumed their entire 2s budget and both were reported degraded. The endpoint whose job
+is naming the dependency that died implicated three.
+
+Health probes now resolve config with `use_cache=False`, going to Postgres and the environment
+only. For a health probe that is also the more correct read: no stale cached endpoint.
+
+The 5017ms is the Redis client's own `socket_connect_timeout=5`. The critical probes were
+unbudgeted on the reasoning that readiness needs their honest result — but a timeout *is* an
+honest failure, and the kubelet's `readinessProbe.timeoutSeconds` is **also 5**, so
+`/health/ready` was in a dead heat with its own deadline. Whoever won, the pod went NotReady;
+the difference is that on a kubelet timeout there is no response body, so which dependency died
+was discarded. Critical probes now run under a 3s budget and report `error` on expiry, so
+readiness still fails closed.
+
+Also corrected two docstrings that documented the old behaviour, including one stating the
+critical probes are deliberately unwrapped.
+
+**Two of the first six mutations survived, and both were my tests, not the code.** The budget
+test called `_critical` directly, so it never proved the *endpoints* use it — removing
+`_critical` from both `asyncio.gather` sites passed. And the readiness test asserted 503 while
+Postgres and Mongo are unreachable in a local run, so it returned 503 regardless of Redis: it
+passed without ever depending on its own subject. Rewritten at endpoint level with every other
+probe stubbed healthy, so the subject is the only thing failing. Eight mutations, eight killed.
+
 ## 2026-08-27 — diagnosis died with the thing it was meant to diagnose
 
 Follow-up to the fault injection above, and issue #878. The CLI change made the 503 legible;
