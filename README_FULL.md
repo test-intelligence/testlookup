@@ -1592,9 +1592,9 @@ Cross-entity search across test cases, runs, suites, defects, flaky tests, and r
 
 ### 18. Customizable Analytics Widgets
 
-30+ visualization templates across 5 page categories with drag-and-drop layout, per-instance configuration, and server-persisted saved views.
+30+ visualization templates across 5 page categories, with per-page widget selection and server-persisted saved views. (Drag-and-drop layout and per-instance configuration were built but never wired to a page; those components were removed in 2026-08.)
 
-**New components:** `AnalyticsWidget`, `AnalyticsGrid`, `WidgetPicker`, `widgetRegistry`
+**New components:** `WidgetPicker`, `widgetRegistry`
 **New hook:** `useAnalyticsView`
 **New migration:** 0049 — saved_view page field
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-28 — the analytics grid no page ever rendered
+
+`AnalyticsGrid` had no importers, and `AnalyticsWidget` was imported only BY that dead grid.
+Both are deleted, closing the gap that deleting `VisualizationConfigModal` alone left open.
+
+The feature around them is not dead, which is why the README needed correcting rather than
+just trimming: `useAnalyticsView` (5 pages) and `WidgetPicker` (5 pages) are live, and pages
+render their chosen widgets **inline** — `activeWidgets.has(id)` against the saved view — not
+through the grid. So widget selection and server-persisted saved views work; the grid was a
+second, unused rendering path beside the one actually in use.
+
+What did not exist is what the README advertised. "Drag-and-drop layout" and "per-instance
+configuration" lived entirely in the deleted half — `AnalyticsWidget` even rendered an "Edit
+visualization" button behind `{onEdit && instance && …}`, and no page ever passed `onEdit`, so
+the button could not appear. That sentence now says what shipped.
+
+Left in place: `widgetRegistry` keeps `getWidgetDef`, `getInstanceLabel` and
+`getInstanceChartType`, which lost their last callers here, plus a `WIDGET_CATALOG` export only
+its own module reads. Trimming a registry's public surface is a separate call from removing
+unreachable components.
+
 ## 2026-08-28 — a modal no page could open
 
 Verifying the modal-role fix against the deployment turned up one id that was in the source
