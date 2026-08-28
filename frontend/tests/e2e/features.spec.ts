@@ -37,26 +37,28 @@ test.describe('Feature smoke tests', () => {
       await expect(searchInput).toBeVisible({ timeout: 10000 });
     });
 
-    test('typing a query updates the URL or triggers a fetch', async ({ page }) => {
-      await page.goto('/search');
-      const searchInput = page
-        .locator('input[type="search"], input[placeholder*="search" i], input[name*="q" i]')
-        .first();
-      await searchInput.fill('login');
+    test('submitting the global search navigates to /search with the query', async ({ page }) => {
+      // This test was unreliable for two compounding reasons, and it only
+      // showed on Firefox:
+      //
+      // 1. `input[placeholder*="search" i]` matches TWO inputs -- the TopBar
+      //    global search and SearchPage's own box -- and `.first()` took the
+      //    TopBar one. That input does nothing on `fill()`; its handler is
+      //    onKeyDown and fires only on Enter. So the action under test never
+      //    happened.
+      // 2. It then accepted "any /api/v1/search response within 5s" as proof.
+      //    /search auto-runs on mount (measured: 3 calls before any typing),
+      //    so the test could pass on a request the typing did not cause.
+      //
+      // Drive the real control and assert the real outcome instead.
+      await page.goto('/overview');
+      const globalSearch = page.getByPlaceholder(/search tests, runs, defects/i);
+      await expect(globalSearch).toBeVisible({ timeout: 10000 });
 
-      // Either the URL gets a ?q= param or an API call to /api/v1/search fires.
-      // We give it 5s and accept either signal.
-      const apiCall = page
-        .waitForResponse((r) => r.url().includes('/api/v1/search'), { timeout: 5000 })
-        .then(() => true)
-        .catch(() => false);
-      const urlChange = page
-        .waitForURL(/.*q=login/, { timeout: 5000 })
-        .then(() => true)
-        .catch(() => false);
+      await globalSearch.fill('login');
+      await globalSearch.press('Enter');
 
-      const triggered = (await Promise.race([apiCall, urlChange])) === true;
-      expect.soft(triggered).toBe(true);
+      await expect(page).toHaveURL(/\/search\?q=login/, { timeout: 10000 });
     });
   });
 
@@ -107,21 +109,37 @@ test.describe('Feature smoke tests', () => {
 
   // ── Chat / AI agent (route disabled) ─────────────────────────────────────
   //
-  // The /chat route was disabled in DefectsPage cleanup work — the route
-  // and the sidebar entry are commented out. These tests pin the disabled
-  // state so the route doesn't silently re-render without a sidebar entry
-  // and so the sidebar doesn't grow back a Chat link without re-enabling
-  // the route. Re-enable both checks if /chat is brought back.
+  // /chat was once fully disabled — route commented out — and this block
+  // pinned that. The route came back (US-2.1, Ask-AI chat): App.tsx registers
+  // it deliberately "so a direct URL renders the page's own 'switch mode'
+  // guidance instead of 404", while the SIDEBAR entry stays gated on the
+  // ask_ai_chat flag plus a non-rules AI mode.
+  //
+  // So the contract is now two-sided, and both halves are asserted below:
+  // reachable by URL, absent from the sidebar. The old redirect assertion
+  // failed against a deployment doing exactly what it was designed to do.
 
-  test.describe('Chat / AI agent (disabled)', () => {
-    test('navigating to /chat falls through to the auth shell only', async ({ page }) => {
+  test.describe('Chat / AI agent (route registered, sidebar gated)', () => {
+    test('navigating to /chat renders the page rather than redirecting', async ({ page }) => {
       await page.goto('/chat');
-      // App.tsx routes the unknown path to /overview or shows a not-found —
-      // either way the auth shell must stay and there must be no chat textarea.
-      await expect(page).toHaveURL(/.*\/overview/);
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 });
-      const textareaCount = await page.locator('textarea').count();
-      expect(textareaCount).toBe(0);
+      await expect(page).toHaveURL(/.*\/chat/);
+      // `.first()` is required: ChatPage renders its OWN <aside> (the
+      // conversation list), so a bare locator('aside') matches two elements
+      // and dies on strict mode. The nav shell is the first in the DOM.
+      await expect(page.locator('aside').first()).toBeVisible({ timeout: 10000 });
+      // In Rules mode the page explains itself instead of offering a prompt.
+      // Either state is valid; what must NOT happen is a 404 or a bounce.
+      //
+      // `.or()` rather than two `.count()` reads: count is a ONE-SHOT check,
+      // and ChatPage is a lazy chunk, so on WebKit both counts were taken
+      // before either had rendered. This retries until one appears.
+      const rendered = page
+        .getByText(/chat is unavailable in rules mode/i)
+        .or(page.locator('textarea'));
+      await expect(
+        rendered.first(),
+        '/chat rendered neither the composer nor the rules-mode guidance',
+      ).toBeVisible({ timeout: 15000 });
     });
 
     test('sidebar does not expose a Chat link', async ({ page }) => {

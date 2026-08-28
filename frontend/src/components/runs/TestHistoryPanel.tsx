@@ -65,7 +65,14 @@ export default function TestHistoryPanel({ runId, testId }: { runId?: string; te
     )
   }
 
-  if (!data) {
+  // `!data` alone was not enough. The body below dereferences `flakiness` and
+  // `metadata` unguarded -- `flakiness.classification?.` guards the property
+  // but not the object -- so a response that merely LACKS those sections threw
+  // "Cannot read properties of undefined (reading 'classification')" and took
+  // the whole test-case page into its error boundary ("Something went wrong
+  // loading this page"). A panel with no history to show should render its
+  // empty state, not destroy the page around it.
+  if (!data || !data.flakiness || !data.metadata) {
     return (
       <div className="card py-8 text-center text-sm text-[var(--color-text-muted)]">
         No cross-run history available for this test.

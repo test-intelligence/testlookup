@@ -52,11 +52,25 @@ test.describe('Auth — error & session flows', () => {
 
     await expect(page.getByRole('heading', { name: /set your password/i })).toBeVisible({ timeout: 10000 });
 
-    // Too-short password → client-side guard.
+    // Too-short password. Both inputs carry `required minLength={8}`, so the
+    // BROWSER refuses to submit and handleSubmit never runs -- the app's own
+    // `toast.error('Password must be at least 8 characters')` is unreachable
+    // from the UI for this input. The old assertion waited 8s for a toast that
+    // native validation had already made impossible. Assert the guard that is
+    // actually doing the work.
     await page.locator('#new-password').fill('short');
     await page.locator('#confirm-password').fill('short');
     await page.getByRole('button', { name: /set password/i }).click();
-    await expect(page.getByText('Password must be at least 8 characters')).toBeVisible({ timeout: 8000 });
+
+    const shortField = page.locator('#new-password');
+    await expect
+      .poll(
+        () => shortField.evaluate((el: HTMLInputElement) => el.validity.tooShort),
+        { message: 'a 5-character password was not rejected by the length constraint' },
+      )
+      .toBe(true);
+    // And it must not have navigated away or cleared the form.
+    await expect(page.getByRole('heading', { name: /set your password/i })).toBeVisible();
 
     // Long enough but mismatched → mismatch guard.
     await page.locator('#new-password').fill('a-strong-password');
@@ -69,10 +83,16 @@ test.describe('Auth — error & session flows', () => {
     await performRealLogin(page);
     await expect(page.locator('aside')).toBeVisible({ timeout: 10000 });
 
-    // The Sign out control lives in the top-bar profile dropdown (revealed on
-    // hover). It is always in the DOM; force the click to fire its handler.
-    const signOut = page.getByRole('button', { name: /sign out/i });
-    await signOut.click({ force: true });
+    // The Sign out control is inside the account menu, which TopBar renders
+    // only while `open` -- it is NOT always in the DOM, despite what this test
+    // used to claim, so force-clicking a hidden node found nothing. It also
+    // carries an explicit role="menuitem", which overrides the implicit button
+    // role, so getByRole('button') can never match it. Open the menu, then
+    // click the menuitem.
+    await page.getByRole('button', { name: /account menu/i }).click();
+    const signOut = page.getByRole('menuitem', { name: /sign out/i });
+    await expect(signOut).toBeVisible({ timeout: 8000 });
+    await signOut.click();
 
     await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
     // Auth state is cleared.

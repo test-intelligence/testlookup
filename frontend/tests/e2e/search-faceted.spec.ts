@@ -100,10 +100,16 @@ test.describe('Faceted search', () => {
     await mockSearch(page);
 
     await page.goto('/search');
-    await expect(page.getByText('Hybrid retrieval')).toBeVisible({ timeout: 10000 });
+    // `exact` matters: the page also carries an explainer paragraph beginning
+    // "Hybrid retrieval combines BM25 keyword matching with…", so a substring
+    // match resolves to two elements and dies on strict mode. The provenance
+    // footer this test is about is the <span> whose entire text is the label.
+    await expect(page.getByText('Hybrid retrieval', { exact: true }))
+      .toBeVisible({ timeout: 10000 });
 
     // Switch the retrieval mode chip Hybrid → Keyword.
     await page.getByRole('radio', { name: 'Keyword', exact: true }).click();
-    await expect(page.getByText('Keyword retrieval')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText('Keyword retrieval', { exact: true }))
+      .toBeVisible({ timeout: 8000 });
   });
 });

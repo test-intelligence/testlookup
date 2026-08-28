@@ -70,10 +70,22 @@ test.describe('Profile page interactions', () => {
     await expect(page.locator('aside')).toBeVisible();
 
     // Profile page renders the user's email or username somewhere on screen.
-    // We use the global match because the field could be in an input or a
-    // read-only display row depending on the implementation.
-    const bodyText = await page.locator('main, body').first().innerText();
-    expect.soft(bodyText.toLowerCase()).toMatch(/email|username|full name|admin@testlookup/);
+    // We match loosely because the field could be an input or a read-only
+    // display row depending on the implementation.
+    //
+    // `innerText` is a ONE-SHOT read, and the sidebar renders before the lazy
+    // profile chunk does -- so this snapshot could capture the shell alone and
+    // fail, which is what it did on WebKit while passing on Chromium. Poll so
+    // the read retries the way a locator assertion would.
+    await expect
+      .poll(
+        async () => (await page.locator('main, body').first().innerText()).toLowerCase(),
+        {
+          timeout: 15000,
+          message: 'the profile page never rendered an email/username/full-name field',
+        },
+      )
+      .toMatch(/email|username|full name|admin@testlookup/);
   });
 
   test('exposes change-password controls', async ({ page }) => {

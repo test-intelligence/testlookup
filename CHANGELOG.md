@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-08-28 — the 22 e2e failures: one app bug, one app crash, six stale tests
+
+With the fail-open skips gone (#885), 22 failures were visible. None of them were caught by
+anything else, and only one was a test that had simply drifted.
+
+**An unguarded destructure crashed a whole page.** `TestHistoryPanel` did
+`const { history, flakiness, metadata } = data` and then read `flakiness.classification?.` --
+the optional chain guards the PROPERTY, not the object. A response that merely lacked the
+section threw `Cannot read properties of undefined (reading 'classification')`, which the error
+boundary turned into "Something went wrong loading this page". A side panel with nothing to show
+destroyed the test-case view around it. It now falls back to the empty state it already had for
+a null response. Four unit tests, four mutations killed -- each half of the guard pinned
+separately, plus a positive case so over-guarding cannot pass.
+
+That crash was the whole reason `run-detail-drilldown` failed; the test needed no change.
+
+**Two tests asserted at a layer the browser never reaches.** `auth-flows` expected
+`toast.error('Password must be at least 8 characters')`, but both inputs carry
+`required minLength={8}`, so the browser refuses to submit and `handleSubmit` never runs -- the
+app's own check is unreachable from the UI for a short password. It now asserts
+`validity.tooShort`, the guard actually doing the work. And the Sign out control is
+`<button role="menuitem">` inside a menu rendered only while open: `getByRole('button')` could
+never match it, and the test's "it is always in the DOM" comment was false.
+
+**A test that could pass without doing anything.** The global-search test filled
+`input[placeholder*="search" i]`.first() -- which is the TopBar input, whose handler is
+`onKeyDown` and fires only on Enter, so `fill()` did nothing -- then accepted "any
+/api/v1/search response within 5s" as proof. `/search` auto-runs on mount (measured: 3 calls
+before any typing), so it could pass on a request the typing had not caused. It now presses
+Enter and asserts the URL becomes `/search?q=login`.
+
+Also: `Promise.race` resolves on the first SETTLED promise, not the first TRUE one, so a 5s
+`false` could beat a slower `true`; `/chat` was re-enabled (US-2.1) while a test still pinned the
+disabled state; Firefox and WebKit abort a navigation the app redirects away from
+(`NS_BINDING_ABORTED` / `Frame load interrupted`), failing the redirect they were provoking; and
+three more strict-mode ambiguities (`API Keys` vs `No API keys yet`, `Hybrid retrieval` vs its
+explainer paragraph, two `<aside>` elements).
+
+Suite against the homelab: **22 failed / 344 passed → 3 failed / 363 passed**, and every one of
+the remaining three passes in isolation. Three consecutive full runs produced 5, 2 and 3
+failures from a different Firefox subset each time -- residual browser flakiness in a
+384-test single-worker run, not a defect. Login rate limiting was checked and ruled out (no
+429s). Left visible rather than absorbed with a local `retries` setting; CI already retries
+twice.
+
 ## 2026-08-28 — e2e tests that skipped themselves when their subject was missing
 
 Eighteen tests across six spec files opted out at runtime when the control they existed to

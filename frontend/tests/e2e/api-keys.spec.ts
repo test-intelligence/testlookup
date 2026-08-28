@@ -40,7 +40,12 @@ test.describe('API Keys — management', () => {
     await mockJson(page, '**/api/v1/keys*', [KEY_ROW]);
 
     await page.goto('/settings/api-keys');
-    await expect(page.getByRole('heading', { name: /api keys/i })).toBeVisible({ timeout: 10000 });
+    // `exact` matters: the empty state renders <h3>No API keys yet</h3>, which
+    // also matches /api keys/i, so a loose name resolves to two headings and
+    // dies on strict mode whenever the list happens to be empty.
+    await expect(
+      page.getByRole('heading', { name: 'API Keys', exact: true }),
+    ).toBeVisible({ timeout: 10000 });
 
     if (await onManagementUi(page)) {
       await expect(page.getByText('ci-runner-prod')).toBeVisible({ timeout: 8000 });
@@ -67,7 +72,12 @@ test.describe('API Keys — management', () => {
     });
 
     await page.goto('/settings/api-keys');
-    await expect(page.getByRole('heading', { name: /api keys/i })).toBeVisible({ timeout: 10000 });
+    // `exact` matters: the empty state renders <h3>No API keys yet</h3>, which
+    // also matches /api keys/i, so a loose name resolves to two headings and
+    // dies on strict mode whenever the list happens to be empty.
+    await expect(
+      page.getByRole('heading', { name: 'API Keys', exact: true }),
+    ).toBeVisible({ timeout: 10000 });
 
     // Fail closed: the management UI not rendering is the failure this test
     // exists to catch, so it must not be the reason the test opts out.
@@ -110,7 +120,12 @@ test.describe('API Keys — management', () => {
     });
 
     await page.goto('/settings/api-keys');
-    await expect(page.getByRole('heading', { name: /api keys/i })).toBeVisible({ timeout: 10000 });
+    // `exact` matters: the empty state renders <h3>No API keys yet</h3>, which
+    // also matches /api keys/i, so a loose name resolves to two headings and
+    // dies on strict mode whenever the list happens to be empty.
+    await expect(
+      page.getByRole('heading', { name: 'API Keys', exact: true }),
+    ).toBeVisible({ timeout: 10000 });
 
     const revoke = page.getByRole('button', { name: /revoke/i });
     await expect(

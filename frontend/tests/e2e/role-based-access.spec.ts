@@ -30,18 +30,41 @@ async function mockRole(page: Page, role: string): Promise<void> {
   });
 }
 
+/** Navigate somewhere the app is expected to bounce us out of.
+ *
+ * Firefox reports NS_BINDING_ABORTED when a client-side redirect fires while
+ * the document load is still in flight -- which is exactly what these tests
+ * provoke, so the redirect under test was failing the navigation that
+ * triggered it. Chromium tolerates it, so this only ever failed on Firefox.
+ *
+ * The aborted load is not the assertion; the resulting URL is. Swallow the
+ * abort and let the toHaveURL check that follows decide the verdict -- it
+ * still fails if the redirect does not happen.
+ */
+const NAVIGATION_ABORTED =
+  /NS_BINDING_ABORTED|net::ERR_ABORTED|Frame load interrupted|NS_ERROR_ABORT/i;
+
+async function gotoTolerantOfRedirect(page: import('@playwright/test').Page, route: string) {
+  await page.goto(route, { waitUntil: 'commit' }).catch((err: Error) => {
+    if (!NAVIGATION_ABORTED.test(err.message)) throw err;
+  });
+}
+
 test.describe('Role-based access control', () => {
   test('VIEWER is redirected from management routes but can use normal pages', async ({ page }) => {
     await mockRole(page, 'VIEWER');
     await performRealLogin(page);
 
     for (const route of MANAGEMENT_ROUTES) {
-      await page.goto(route);
+      await gotoTolerantOfRedirect(page, route);
       await expect(page, `${route} should redirect a VIEWER`).toHaveURL(/\/overview/, { timeout: 8000 });
     }
 
-    // A non-management route stays put for any authenticated role.
-    await page.goto('/runs');
+    // A non-management route stays put for any authenticated role. This one
+    // aborts too -- not because IT redirects, but because the previous
+    // redirect is still settling when it starts. The toHaveURL below is the
+    // real check either way: if /runs bounced, it fails.
+    await gotoTolerantOfRedirect(page, '/runs');
     await expect(page).toHaveURL(/\/runs/, { timeout: 8000 });
   });
 
@@ -49,10 +72,10 @@ test.describe('Role-based access control', () => {
     await mockRole(page, 'QA_ENGINEER');
     await performRealLogin(page);
 
-    await page.goto('/projects');
+    await gotoTolerantOfRedirect(page, '/projects');
     await expect(page).toHaveURL(/\/overview/, { timeout: 8000 });
 
-    await page.goto('/users');
+    await gotoTolerantOfRedirect(page, '/users');
     await expect(page).toHaveURL(/\/overview/, { timeout: 8000 });
   });
 
