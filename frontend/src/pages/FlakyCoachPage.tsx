@@ -185,7 +185,8 @@ export default function FlakyCoachPage() {
     setRefreshing(true)
     try {
       const result = await testHealthService.refreshFlakyCoach(projectId)
-      toast.success(`Found ${result.flaky_tests_found} flaky tests`)
+      const found = result.flaky_tests_found
+      toast.success(`Found ${found} flaky test${found === 1 ? '' : 's'}`)
       await refresh()
     } catch {
       toast.error('Refresh failed — QA Engineer role required')
@@ -217,11 +218,16 @@ export default function FlakyCoachPage() {
   const entries = coach?.entries ?? []
   const filtered = filter ? entries.filter(e => e.quarantine_recommendation === filter) : entries
 
+  // Both counts are routinely 1 — a single flaky test is the common case — so the
+  // nouns have to agree rather than sit hardcoded plural ("1 flaky tests").
+  const flakyCount = coach?.total_flaky ?? 0
+  const candidateCount = coach?.quarantine_candidates ?? 0
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Flaky Coach"
-        subtitle={`${coach?.total_flaky ?? 0} flaky tests · ${coach?.quarantine_candidates ?? 0} quarantine candidates`}
+        subtitle={`${flakyCount} flaky test${flakyCount === 1 ? '' : 's'} · ${candidateCount} quarantine candidate${candidateCount === 1 ? '' : 's'}`}
         actions={
           <button
             onClick={handleRefresh}

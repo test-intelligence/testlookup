@@ -26,6 +26,28 @@ The regression test that matters is not the hook test — it is the one assertin
 `refreshedAt` a literal age. This was never a broken function; it was a string typed where a value
 belonged, and nothing stopped three separate pages from doing it. Mutation-verified: restoring
 TrendsPage's `'12m ago'` fails that test by name and file.
+## 2026-08-28 — "1 flaky tests · 1 quarantine candidates"
+
+Continued exploratory testing ingested three runs of the same suite where one test flipped
+fail → pass → fail. Flaky detection worked exactly as it should — `test_apply_expired_coupon`
+flagged at a 67% fail rate, correct for 2 failures in 3 runs — but the header announcing it read
+"1 flaky tests · 1 quarantine candidates".
+
+Both nouns were hardcoded plural, and the refresh toast ("Found 1 flaky tests") had the same
+problem. A single flaky test is the ordinary case, not an edge case, so this is the reading users
+get most often.
+
+This is a sibling of the earlier agreement fix but a different sub-shape: there the noun was
+pluralised by count and the verb was left plural, so the guard looks for a count-pluralised noun
+followed by a bare plural verb. Here the noun carried no pluralisation at all, which that guard
+cannot see — hence a rendering test pinning the singular case instead, asserting the plural forms
+are absent rather than only that the singular appears ("1 flaky test" is a substring of
+"1 flaky tests").
+
+A wider scan for the same shape found ~30 candidates, nearly all false positives: `${days} days`
+and friends already branch on the singular ("24 hours"). Only the two Flaky Coach sites were
+reachable with a count of 1 and wrong, so only those changed.
+
 ## 2026-08-28 — "1 failing run need investigation"
 
 Exploratory testing pointed a project with exactly one failing run at the app, and three
