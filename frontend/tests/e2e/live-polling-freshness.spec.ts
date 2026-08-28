@@ -40,38 +40,54 @@ function session(now: string, over: Record<string, unknown>) {
   };
 }
 
-/** First poll → one session; every later poll → two. Timestamps are stamped
- *  "now" at fulfil time so the sessions stay within the freshness window. */
+/** One session until the test asks for a second, then two. Timestamps are
+ *  stamped "now" at fulfil time so the sessions stay within the freshness
+ *  window.
+ *
+ *  Deliberately NOT keyed on a poll counter. Keying "one session" to the FIRST
+ *  request alone makes the single-run state a transient the test has to catch
+ *  inside one 5 s poll window: under suite load the first paint can slip past
+ *  that boundary, the hero goes straight to "2 active runs", and the run fails
+ *  having never observed a bug. Returning the caller a switch instead means the
+ *  second session cannot appear until the 1-run state has actually been seen,
+ *  so the transition under test is the only thing left that can vary. */
 async function mockActiveSessions(page: Page) {
-  let calls = 0;
+  const state = { secondSessionVisible: false };
   await page.route('**/api/v1/stream/active*', async (route) => {
-    calls += 1;
     const now = new Date().toISOString();
     const s1 = session(now, { run_id: 'live-sess-1', build_number: 'build-100', run_seq: 1 });
     const s2 = session(now, { run_id: 'live-sess-2', build_number: 'build-101', run_seq: 2, passed: 8, failed: 0 });
-    const sessions = calls === 1 ? [s1] : [s1, s2];
+    const sessions = state.secondSessionVisible ? [s1, s2] : [s1];
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ sessions, count: sessions.length }),
     });
   });
+  return state;
 }
 
 test.describe('Live execution — polling freshness', () => {
+  let activeSessions: { secondSessionVisible: boolean };
+
   test.beforeEach(async ({ page }) => {
     await performRealLogin(page);
     await seedActiveProject(page, PROJECT);
-    await mockActiveSessions(page);
+    activeSessions = await mockActiveSessions(page);
   });
 
   test('the active-runs hero refreshes from 1 → 2 via background polling', async ({ page }) => {
     await page.goto('/live');
 
-    // First poll: one running session.
+    // One running session, and it stays that way until this assertion has
+    // actually seen it — no poll can race past the state being asserted.
     await expect(page.getByText('1 active run', { exact: true })).toBeVisible({ timeout: 10000 });
 
-    // A later poll adds a second session — the hero updates WITHOUT a reload.
+    // Only NOW does a second session exist. Nothing reloads the page, so the
+    // hero can only reach "2 active runs" via background polling — which is
+    // the whole point of the test. 20 s covers two 5 s polls, and two 10 s
+    // polls in the slower cadence used while the WebSocket is open.
+    activeSessions.secondSessionVisible = true;
     await expect(page.getByText('2 active runs', { exact: true })).toBeVisible({ timeout: 20000 });
   });
 });

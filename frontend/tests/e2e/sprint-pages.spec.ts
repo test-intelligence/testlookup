@@ -189,7 +189,7 @@ test.describe('Sprint pages — smoke', () => {
 
       await page.goto('/my-failures')
       await expect(page).toHaveURL(/.*\/my-failures/)
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 })
 
       await expect(page.getByText('test_login_redirects_after_sso')).toBeVisible()
       await expect(page.getByText('test_payment_contract')).toBeVisible()
@@ -216,7 +216,7 @@ test.describe('Sprint pages — smoke', () => {
     test('renders My Failures page with time-window controls', async ({ page }) => {
       await page.goto('/my-failures')
       await expect(page).toHaveURL(/.*\/my-failures/)
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 })
 
       // Either the populated queue (table) or the "You're caught up"
       // EmptyState renders — both are valid landing states.
@@ -232,13 +232,13 @@ test.describe('Sprint pages — smoke', () => {
 
     test('switching the time window does not crash the page', async ({ page }) => {
       await page.goto('/my-failures')
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 })
 
       const sevenDay = page.getByRole('radio', { name: /^7d$/i })
       if (await sevenDay.isVisible().catch(() => false)) {
         await sevenDay.click()
         // Page stays mounted; sidebar still rendered.
-        await expect(page.locator('aside')).toBeVisible()
+        await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
       }
     })
   })
@@ -251,7 +251,7 @@ test.describe('Sprint pages — smoke', () => {
 
       await page.goto('/suites')
       await expect(page).toHaveURL(/.*\/suites/)
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 })
 
       await expect(page.getByText('AuthSuite')).toBeVisible()
       await expect(page.getByText('PaymentAPI')).toBeVisible()
@@ -270,7 +270,7 @@ test.describe('Sprint pages — smoke', () => {
     test('renders Value Metrics page', async ({ page }) => {
       await page.goto('/value-metrics')
       await expect(page).toHaveURL(/.*\/value-metrics/)
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 })
 
       const heading = page.locator('text=/Value Metrics|Select a project/i').first()
       await expect(heading).toBeVisible({ timeout: 10000 })
@@ -283,7 +283,7 @@ test.describe('Sprint pages — smoke', () => {
     test('renders AI Pipeline / Agents page', async ({ page }) => {
       await page.goto('/agents')
       await expect(page).toHaveURL(/.*\/agents/)
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 })
 
       // The page renders either the compute graph card list or an empty
       // state message. We only assert one of those is visible.
@@ -300,7 +300,7 @@ test.describe('Sprint pages — smoke', () => {
     test('renders policy list page', async ({ page }) => {
       await page.goto('/policies')
       await expect(page).toHaveURL(/.*\/policies/)
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 })
 
       // List view header is fixed string. "New Policy" CTA is present
       // for the admin user the e2e suite logs in as.
@@ -327,7 +327,7 @@ test.describe('Sprint pages — smoke', () => {
     test('renders ownership page', async ({ page }) => {
       await page.goto('/ownership')
       await expect(page).toHaveURL(/.*\/ownership/)
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 })
 
       // Either the editor or the read-only map view renders depending on
       // the page state — both share the "Service Ownership" prefix.
@@ -342,7 +342,7 @@ test.describe('Sprint pages — smoke', () => {
     test('renders Flaky Coach page', async ({ page }) => {
       await page.goto('/flaky-coach')
       await expect(page).toHaveURL(/.*\/flaky-coach/)
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 })
 
       // Header always renders; subtitle text differs based on whether a
       // project is selected. Tolerate both states.
@@ -362,7 +362,7 @@ test.describe('Sprint pages — smoke', () => {
     test('renders the getting-started flow', async ({ page }) => {
       await page.goto('/getting-started')
       await expect(page).toHaveURL(/.*\/getting-started/)
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 })
 
       // Page is built around stepped guidance — at least one
       // numbered/heading anchor must land.
@@ -376,7 +376,7 @@ test.describe('Sprint pages — smoke', () => {
     test('renders run-compare even with garbage query params', async ({ page }) => {
       await page.goto('/runs/compare?left=not-a-uuid&right=not-a-uuid')
       await expect(page).toHaveURL(/.*\/runs\/compare/)
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 })
       // Page must not crash to a blank screen with bad params.
       const signal = page
         .locator('text=/Run Compare|Pick two|select.*run/i')

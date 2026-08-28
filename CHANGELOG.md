@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-08-28 — the residual Firefox "flakiness" was two ordinary test defects
+
+Three consecutive full runs had failed 5, then 2, then 3 tests, a different Firefox subset each
+time, every one passing in isolation. That pattern reads as browser instability late in a long
+sequential run, and it was recorded as such. It was not.
+
+Running the Firefox project alone three times and recording each failure's ORDINAL POSITION in
+the run rather than just its name settled it: the failures land at position 37 and 51 of 128 —
+early, and at a *stable* position — not scattered toward the end. Nothing degrades. Two tests
+were simply asserting things they did not control.
+
+`locator('aside')` matched two elements on any page carrying a second `<aside>` —
+LiveExecutionPage's "Pipeline events" panel, ChatPage's conversation list — so it was a strict-
+mode violation exactly when the page under test had content, and passed only while the page was
+EMPTY. It failed for /live whenever a session happened to be running. This was never Firefox-
+specific; Chromium fails identically given the same page state, and CI's `retries: 2` had been
+hiding it. The sidebar's `<nav>` now carries `aria-label="Main navigation"` and all 38
+assertions across five spec files anchor on that landmark, replacing both the bare `aside`
+locator and the one `.first()` band-aid that had been applied to the same bug earlier.
+
+The polling-freshness test keyed "one active run" to the FIRST request to `/stream/active`,
+making the single-run state a transient it had to catch inside one 5 s poll window. Under suite
+load the first paint slips past that boundary, the hero goes straight to "2 active runs", and
+the assertion fails having found no bug — which is why it passed 5/5 in isolation while failing
+inside the full run, and why the two failing runs were the slow ones (193 s, 204 s) and the
+clean one was fast (137 s). The mock now returns a switch the test flips, so the second session
+cannot appear until the one-run state has actually been observed.
+
+A unit test pins the landmark's accessible name, so removing it fails in the fast suite rather
+than as 38 e2e failures far from the cause. Also corrected a stale comment claiming the live
+poll drops to 30 s while the WebSocket is open; it is 10 s.
+
 ## 2026-08-28 — a copy button on every command in the in-app guide
 
 The self-host guide is largely runnable commands — the getting-started page alone carries three

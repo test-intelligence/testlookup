@@ -14,7 +14,7 @@
  *
  * Data sources
  * ------------
- * - SWR polling GET /api/v1/stream/active (5 s interval, 30 s when WS open)
+ * - SWR polling GET /api/v1/stream/active (5 s interval, 10 s when WS open)
  * - WebSocket   /ws/live/{projectId} (push updates, merges into local state)
  */
 import { Fragment, useEffect, useState, useMemo, useCallback } from 'react'

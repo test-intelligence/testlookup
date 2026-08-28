@@ -81,7 +81,7 @@ test.describe('Auth — error & session flows', () => {
 
   test('sign out returns the user to /login', async ({ page }) => {
     await performRealLogin(page);
-    await expect(page.locator('aside')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 });
 
     // The Sign out control is inside the account menu, which TopBar renders
     // only while `open` -- it is NOT always in the DOM, despite what this test

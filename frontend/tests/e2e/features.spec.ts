@@ -29,7 +29,7 @@ test.describe('Feature smoke tests', () => {
     test('renders search page', async ({ page }) => {
       await page.goto('/search');
       await expect(page).toHaveURL(/.*\/search/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
       const searchInput = page
         .locator('input[type="search"], input[placeholder*="search" i], input[name*="q" i]')
@@ -68,7 +68,7 @@ test.describe('Feature smoke tests', () => {
     test('renders projects page with create affordance', async ({ page }) => {
       await page.goto('/projects');
       await expect(page).toHaveURL(/.*\/projects/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
       await expect(page.getByRole('heading', { name: /projects/i })).toBeVisible({ timeout: 10000 });
       await expect(page.getByRole('button', { name: /new project|create.*project/i })).toBeVisible();
@@ -81,7 +81,7 @@ test.describe('Feature smoke tests', () => {
     test('renders releases page', async ({ page }) => {
       await page.goto('/releases');
       await expect(page).toHaveURL(/.*\/releases/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
       const heading = page.getByRole('heading').first();
       await expect(heading).toBeVisible({ timeout: 10000 });
@@ -94,7 +94,11 @@ test.describe('Feature smoke tests', () => {
     test('renders live page', async ({ page }) => {
       await page.goto('/live');
       await expect(page).toHaveURL(/.*\/live/);
-      await expect(page.locator('aside')).toBeVisible();
+      // This assertion is why the landmark exists: /live renders a second
+      // <aside> (the "Pipeline events" panel) as soon as there is a session to
+      // show, so the old locator('aside') passed only while the page was EMPTY
+      // and threw a strict-mode violation whenever it had content.
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
       // Live page either shows running sessions or a "no live sessions" empty state.
       const haveContent = await page
@@ -123,10 +127,11 @@ test.describe('Feature smoke tests', () => {
     test('navigating to /chat renders the page rather than redirecting', async ({ page }) => {
       await page.goto('/chat');
       await expect(page).toHaveURL(/.*\/chat/);
-      // `.first()` is required: ChatPage renders its OWN <aside> (the
-      // conversation list), so a bare locator('aside') matches two elements
-      // and dies on strict mode. The nav shell is the first in the DOM.
-      await expect(page.locator('aside').first()).toBeVisible({ timeout: 10000 });
+      // Anchored on the named landmark, not `aside`: ChatPage renders its OWN
+      // <aside> (the conversation list), so a bare locator('aside') matched two
+      // elements and died on strict mode. `.first()` used to paper over that,
+      // but it silently depends on DOM order — the landmark names what we mean.
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 });
       // In Rules mode the page explains itself instead of offering a prompt.
       // Either state is valid; what must NOT happen is a 404 or a bounce.
       //
@@ -144,7 +149,7 @@ test.describe('Feature smoke tests', () => {
 
     test('sidebar does not expose a Chat link', async ({ page }) => {
       await page.goto('/overview');
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 });
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 });
       // No sidebar anchor should target /chat while the route is disabled.
       const chatLinkCount = await page.locator('aside a[href="/chat"]').count();
       expect(chatLinkCount).toBe(0);
@@ -157,7 +162,7 @@ test.describe('Feature smoke tests', () => {
     test('renders intelligence hub', async ({ page }) => {
       await page.goto('/intelligence');
       await expect(page).toHaveURL(/.*\/intelligence/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
       await expect(page.getByRole('heading').first()).toBeVisible({ timeout: 10000 });
     });
   });
@@ -168,7 +173,7 @@ test.describe('Feature smoke tests', () => {
     test('renders deep investigation page', async ({ page }) => {
       await page.goto('/deep-investigate');
       await expect(page).toHaveURL(/.*\/deep-investigate/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
       await expect(page.getByRole('heading').first()).toBeVisible({ timeout: 10000 });
     });
   });
@@ -179,7 +184,7 @@ test.describe('Feature smoke tests', () => {
     test('renders release gate page', async ({ page }) => {
       await page.goto('/release-gate');
       await expect(page).toHaveURL(/.*\/release-gate/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
       // Gate page either shows GO/NO_GO/AT_RISK/CONDITIONAL or a "select a
       // run" empty state. Tolerate either.
@@ -199,7 +204,7 @@ test.describe('Feature smoke tests', () => {
     test('renders coverage page', async ({ page }) => {
       await page.goto('/coverage');
       await expect(page).toHaveURL(/.*\/coverage/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
       await expect(page.getByRole('heading').first()).toBeVisible({ timeout: 10000 });
     });
   });
@@ -210,7 +215,7 @@ test.describe('Feature smoke tests', () => {
     test('renders trends page with charts container', async ({ page }) => {
       await page.goto('/trends');
       await expect(page).toHaveURL(/.*\/trends/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
       await expect(page.getByRole('heading').first()).toBeVisible({ timeout: 10000 });
     });
   });
@@ -227,6 +232,6 @@ test.describe('Unknown route', () => {
     await page.goto('/this-route-does-not-exist');
     // Either the app redirects to /overview or shows a not-found page —
     // both are acceptable, but the auth shell must remain.
-    await expect(page.locator('aside')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 });
   });
 });

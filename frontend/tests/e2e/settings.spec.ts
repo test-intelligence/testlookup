@@ -38,7 +38,7 @@ test.describe('Settings pages', () => {
       await expect(page).toHaveURL(new RegExp(route.path.replace(/\//g, '\\/')));
 
       // Sidebar must remain present (i.e. we are still inside the auth shell)
-      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 });
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 });
 
       // The page should render at least one heading or recognizable text.
       // Soft assertion — we tolerate the case where the page is in an
@@ -67,7 +67,7 @@ test.describe('Profile page interactions', () => {
   });
 
   test('shows current user details', async ({ page }) => {
-    await expect(page.locator('aside')).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
     // Profile page renders the user's email or username somewhere on screen.
     // We match loosely because the field could be an input or a read-only
@@ -89,7 +89,7 @@ test.describe('Profile page interactions', () => {
   });
 
   test('exposes change-password controls', async ({ page }) => {
-    await expect(page.locator('aside')).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
     await expect(page.getByRole('heading', { name: /change password/i })).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole('button', { name: /update password/i })).toBeVisible();
@@ -104,14 +104,14 @@ test.describe('User Management', () => {
 
   test('renders the users list page', async ({ page }) => {
     await expect(page).toHaveURL(/.*\/users/);
-    await expect(page.locator('aside')).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
     await expect(page.getByRole('heading', { name: /user management/i })).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole('button', { name: /add user|invite user/i }).first()).toBeVisible();
   });
 
   test('exposes invite or create user affordance for admins', async ({ page }) => {
-    await expect(page.locator('aside')).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
     // ADMIN-only buttons. The login fixture authenticates as admin via
     // dev-login (see realLoginHelper.ts). The buttons should be visible.

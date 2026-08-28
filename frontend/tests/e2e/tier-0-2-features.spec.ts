@@ -34,7 +34,7 @@ test.describe('Tier 0-2 feature pages', () => {
     test('renders feature flags settings page', async ({ page }) => {
       await page.goto('/settings/feature-flags');
       await expect(page).toHaveURL(/.*\/settings\/feature-flags/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
       // Either the "Feature Flags" header lands or (for a non-admin
       // user) the "Admin access required" gate. e2e runs as admin, so
@@ -52,7 +52,7 @@ test.describe('Tier 0-2 feature pages', () => {
     test('renders billing overview page', async ({ page }) => {
       await page.goto('/settings/billing');
       await expect(page).toHaveURL(/.*\/settings\/billing/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
       // Header renders even when no projects have quotas configured.
       const signal = page
@@ -68,7 +68,7 @@ test.describe('Tier 0-2 feature pages', () => {
     test('renders quarantine page', async ({ page }) => {
       await page.goto('/quarantine');
       await expect(page).toHaveURL(/.*\/quarantine/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
       // Header lands regardless of flag state. Empty-state tolerant:
       // "Nothing here" fires when no proposals exist.
@@ -89,7 +89,7 @@ test.describe('Tier 0-2 feature pages', () => {
       // covered by the frontend unit tests.
       await page.goto('/releases');
       await expect(page).toHaveURL(/.*\/releases/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
       await expect(page.getByRole('heading').first()).toBeVisible({ timeout: 10000 });
     });
   });
@@ -100,7 +100,7 @@ test.describe('Tier 0-2 feature pages', () => {
     test('renders GitHub integration settings page', async ({ page }) => {
       await page.goto('/settings/github');
       await expect(page).toHaveURL(/.*\/settings\/github/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
       const signal = page
         .locator('text=/GitHub Integration|github|Per-project GitHub/i')
@@ -115,7 +115,7 @@ test.describe('Tier 0-2 feature pages', () => {
     test('renders outbound webhooks settings page', async ({ page }) => {
       await page.goto('/settings/webhooks');
       await expect(page).toHaveURL(/.*\/settings\/webhooks/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
       // Two possible top-of-page states: the "select a project" empty
       // state when no project is active, or the real page with its
@@ -133,7 +133,7 @@ test.describe('Tier 0-2 feature pages', () => {
     test('renders run compare page', async ({ page }) => {
       await page.goto('/runs/compare');
       await expect(page).toHaveURL(/.*\/runs\/compare/);
-      await expect(page.locator('aside')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
       // Fresh state: empty "pick two runs" prompt. Also tolerate the
       // "Pick two different runs" message that lands when only one is

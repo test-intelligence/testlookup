@@ -141,4 +141,19 @@ describe('Sidebar', () => {
 
     expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument()
   })
+  // The e2e suite anchors ~38 'the app shell rendered' assertions on this
+  // landmark. It replaced a bare locator('aside'), which was a strict-mode
+  // violation on every page carrying a second <aside> (LiveExecutionPage's
+  // 'Pipeline events' panel, ChatPage's conversation list) — so those tests
+  // passed only while the page under test happened to be empty. Dropping the
+  // accessible name here would break all of them at once, far from the cause.
+  it('exposes the primary nav as a landmark with a stable accessible name', () => {
+    render(
+      <MemoryRouter>
+        <Sidebar />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('navigation', { name: 'Main navigation' })).toBeInTheDocument()
+  })
 })

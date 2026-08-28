@@ -214,7 +214,11 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-1">
+      {/* Named landmark: the app shell's <aside> is not the only one on screen
+          (LiveExecutionPage renders a "Pipeline events" <aside> beside it), so
+          a bare element locator is ambiguous. The accessible name gives tests
+          and screen readers one unmistakable handle on the primary nav. */}
+      <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-1" aria-label="Main navigation">
         {/* My Failures inbox — personal action queue. Sits above the group
             tree because it's user-specific work, not a project navigation
             target. Polls /api/v1/me/assigned-failures/count every 30s. */}
