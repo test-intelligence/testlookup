@@ -107,7 +107,8 @@ test.describe('Settings — form saves', () => {
     // The Save button (and editable radios) only render for ADMIN.
     const saveBtn = page.getByRole('button', { name: /save configuration/i });
     if (!(await saveBtn.isVisible().catch(() => false))) {
-      test.skip(true, 'AI config is read-only for a non-admin session in this env');
+      throw new Error('the AI config form is read-only; the suite runs as admin, '
+        + 'so a read-only form is a regression rather than an environment quirk');
       return;
     }
 

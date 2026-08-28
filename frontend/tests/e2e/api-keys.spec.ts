@@ -69,18 +69,26 @@ test.describe('API Keys — management', () => {
     await page.goto('/settings/api-keys');
     await expect(page.getByRole('heading', { name: /api keys/i })).toBeVisible({ timeout: 10000 });
 
+    // Fail closed: the management UI not rendering is the failure this test
+    // exists to catch, so it must not be the reason the test opts out.
+    await expect(
+      page.getByRole('button', { name: /generate streaming key/i }),
+      'the API-keys management UI did not render for a seeded admin session',
+    ).toBeVisible({ timeout: 10000 });
     const generate = page.getByRole('button', { name: /generate streaming key/i });
-    if (!(await onManagementUi(page)) || !(await generate.isVisible().catch(() => false))) {
-      test.skip(true, 'API keys management UI not available (project gate / non-admin) in this env');
-      return;
-    }
 
     await generate.click();
     await page.locator('input[placeholder="ci-runner-prod"]').fill('e2e-key');
     await page.getByRole('button', { name: /^generate$/i }).click();
 
     // The created-key modal shows the raw key once with a copy affordance.
-    await expect(page.getByText('tl_secret_raw_key_value_e2e')).toBeVisible({ timeout: 8000 });
+    // The raw key is shown in its own <code> element AND echoed into three
+    // ready-to-paste snippets, so an unanchored getByText matches 4 elements
+    // and dies on strict mode -- a product that got MORE helpful reading as a
+    // broken one. Assert the reveal element itself.
+    await expect(
+      page.getByText('tl_secret_raw_key_value_e2e', { exact: true }).first(),
+    ).toBeVisible({ timeout: 8000 });
     await expect(page.getByText(/copy the key now/i)).toBeVisible();
 
     // Dismiss the modal.
@@ -105,10 +113,10 @@ test.describe('API Keys — management', () => {
     await expect(page.getByRole('heading', { name: /api keys/i })).toBeVisible({ timeout: 10000 });
 
     const revoke = page.getByRole('button', { name: /revoke/i });
-    if (!(await onManagementUi(page)) || !(await revoke.isVisible().catch(() => false))) {
-      test.skip(true, 'API keys management UI not available (project gate / non-admin) in this env');
-      return;
-    }
+    await expect(
+      revoke.first(),
+      'the revoke control did not render for a seeded admin session',
+    ).toBeVisible({ timeout: 10000 });
 
     // First, dismiss the confirm() → no delete.
     page.once('dialog', (d) => d.dismiss());

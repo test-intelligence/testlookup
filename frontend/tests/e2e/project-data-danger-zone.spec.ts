@@ -32,14 +32,17 @@ test.describe('Project Data — danger zone', () => {
     await page.goto('/settings/project-data');
     await expect(page.getByRole('heading', { name: /project data/i })).toBeVisible({ timeout: 10000 });
 
+    // Fail closed. This used to skip when the control was missing, on the
+    // theory that the all-projects gate is a valid state -- but the gate is
+    // exactly what a broken project seeding looks like, so a regression that
+    // hid this control was indistinguishable from a green run.
     const trigger = await dangerButton(page);
-    if (!trigger) {
-      // Project seeding didn't engage (or non-admin) → the page shows the
-      // all-projects guard. Assert that valid state instead of false-failing.
-      await expect(page.getByText(/select a specific project/i)).toBeVisible({ timeout: 8000 });
-      test.skip(true, 'danger zone disabled (all-projects gate / non-admin) in this env');
-      return;
-    }
+    expect(
+      trigger,
+      'the danger-zone control is missing or disabled. seedActiveProject() should '
+      + 'have put an admin session on a concrete project; if the all-projects gate '
+      + 'is showing, the seeding regressed -- that is a failure, not a skip',
+    ).not.toBeNull();
 
     await trigger.click();
 
@@ -75,17 +78,22 @@ test.describe('Project Data — danger zone', () => {
     await expect(page.getByRole('heading', { name: /project data/i })).toBeVisible({ timeout: 10000 });
 
     const trigger = await dangerButton(page);
-    if (!trigger) {
-      test.skip(true, 'danger zone disabled (all-projects gate / non-admin) in this env');
-      return;
-    }
+    expect(trigger, 'the danger-zone control is missing or disabled').not.toBeNull();
 
     await trigger.click();
     const modal = page.locator('div.fixed.inset-0');
     await modal.locator('#reset-confirm-input').fill(PROJECT.name);
     await modal.getByRole('button', { name: /delete test runs/i }).click();
 
-    await expect(page.getByText(/reset complete/i)).toBeVisible({ timeout: 8000 });
+    // The app reports success twice -- a summary heading AND a toast -- so an
+    // unanchored /reset complete/i matches two elements and dies on strict
+    // mode. That failure reads like a broken reset; it is a working one
+    // reported thoroughly. Assert each surface on purpose.
+    await expect(
+      page.getByRole('heading', { name: /reset complete/i }),
+    ).toBeVisible({ timeout: 8000 });
+    await expect(page.getByRole('status').filter({ hasText: /reset complete/i }))
+      .toBeVisible();
     await expect(page.getByText(/test_runs/)).toBeVisible();
     // The typed name was forwarded to the backend for re-validation.
     expect(resetBody).toMatchObject({ mode: 'runs', confirmation_name: PROJECT.name });

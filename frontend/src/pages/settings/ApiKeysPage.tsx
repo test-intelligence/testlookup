@@ -221,8 +221,15 @@ asyncio.run(main())`,
   )
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-      <div className="card w-full max-w-2xl space-y-4 border-[var(--status-passed-bd)]/40">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+      {/* max-h + overflow-y-auto are load-bearing. This dialog grew three
+          ready-to-paste snippets, which pushed it past a 720px-tall viewport.
+          Centred with `items-center` and no scroll container of its own, the
+          overflow spilled off BOTH edges with nothing able to scroll it, so
+          the "Done" button became unclickable -- Playwright reported "element
+          is outside of the viewport" after scrolling. Found by making an e2e
+          test fail closed instead of skipping. */}
+      <div className="card w-full max-w-2xl space-y-4 border-[var(--status-passed-bd)]/40 max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-base font-semibold text-[var(--status-passed)]">API key generated</h3>

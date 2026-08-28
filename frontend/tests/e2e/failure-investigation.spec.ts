@@ -47,20 +47,17 @@ test.describe('Failure investigation — defect intake', () => {
     await page.goto('/defects');
     await expect(page.getByRole('heading').first()).toBeVisible({ timeout: 10000 });
 
+    // Fail closed. beforeEach seeds a concrete project, so the all-projects
+    // gate is not a state this test can legitimately reach -- and if it does,
+    // the seeding regressed, which is a defect rather than a reason to skip.
     const newDefectBtn = page.getByRole('button', { name: /^new defect$/i }).first();
-    if (!(await newDefectBtn.isVisible().catch(() => false))) {
-      test.skip(true, 'New defect CTA not rendered (all-projects gate in this env).');
-      return;
-    }
+    await expect(newDefectBtn, 'the New defect CTA did not render for a seeded project')
+      .toBeVisible({ timeout: 10000 });
     await newDefectBtn.click();
 
     const dialog = page.getByRole('dialog', { name: /new defect/i });
-    if (!(await dialog.waitFor({ state: 'visible', timeout: 4000 }).then(() => true).catch(() => false))) {
-      // All-projects mode toasts instead of opening — assert that valid state.
-      await expect(page.locator('text=/pick a single project/i').first()).toBeVisible({ timeout: 4000 });
-      test.skip(true, 'Defect modal did not open (all-projects mode).');
-      return;
-    }
+    await expect(dialog, 'the intake modal did not open for a seeded project')
+      .toBeVisible({ timeout: 8000 });
 
     // Investigate → categorise: title + severity (P0) + failure_category (FLAKY).
     await page.getByLabel(/^title/i).fill('Checkout 500 on submit');
@@ -136,10 +133,11 @@ test.describe('Failure investigation — reassignment', () => {
 
     // The Reassign control is QA_LEAD/ADMIN-only.
     const reassignBtn = page.getByRole('button', { name: 'Reassign', exact: true }).first();
-    if (!(await reassignBtn.isVisible().catch(() => false))) {
-      test.skip(true, 'Reassign control hidden — non-QA-lead session in this env.');
-      return;
-    }
+    await expect(
+      reassignBtn,
+      'the Reassign control is hidden. The suite logs in as admin, which '
+      + 'satisfies the QA_LEAD/ADMIN gate, so its absence is a regression',
+    ).toBeVisible({ timeout: 10000 });
     await reassignBtn.click();
 
     // Modal loads its options; the sole QA engineer is pre-selected.

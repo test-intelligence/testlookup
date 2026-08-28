@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-08-28 — e2e tests that skipped themselves when their subject was missing
+
+Eighteen tests across six spec files opted out at runtime when the control they existed to
+exercise was not on screen:
+
+    test.skip(true, 'New defect CTA not rendered - likely no project selected.')
+    test.skip(true, 'danger zone disabled (all-projects gate / non-admin) in this env')
+    test.skip(true, 'Approve action hidden - non-QA-lead session in this env.')
+
+A missing control is the failure these tests are for. A regression that hid the "New defect"
+CTA and a correctly-configured environment produced the same result: a skip, and a green run.
+
+All eighteen now fail closed. Where the precondition was genuinely absent it is established
+rather than tolerated — `defects-failures.spec.ts` seeds a concrete project in `beforeEach`
+instead of skipping when All-Projects mode hides the CTA. Its three previously-skipped tests
+now run and pass, which is the point: they were always passable.
+
+**Three real defects were behind the skips.** Two were ambiguous locators against an app that
+had grown *more* helpful — `getByText(/reset complete/i)` matched both a summary heading and a
+toast; `getByText('tl_secret_raw_key_value_e2e')` matched the reveal element plus three
+ready-to-paste snippets. Both died on strict mode, and both read as broken features.
+
+The third was an application bug. With the e2e test failing closed instead of skipping, the
+API-key dialog's **"Done" button turned out to be unclickable**: the modal is centred with
+`items-center` and had no `max-h` or `overflow-y-auto`, so once three snippet blocks were added
+it grew past a 720px viewport and spilled off both edges with nothing able to scroll it
+("element is outside of the viewport" after scrolling). Fixed with `max-h-[90vh]
+overflow-y-auto`.
+
+Suite against the homelab: **24 failed / 27 skipped / 333 passed → 22 failed / 18 skipped /
+344 passed.** The remaining 18 skips are three `test.describe.skip` stubs that are honestly and
+visibly disabled pending seeded fixtures, not silent self-skips. The 22 failures are
+pre-existing and untouched by this change.
+
 ## 2026-08-28 — two live probes were failing on a healthy deployment
 
 Post-deploy validation of `main` surfaced two probe failures. Neither was an application

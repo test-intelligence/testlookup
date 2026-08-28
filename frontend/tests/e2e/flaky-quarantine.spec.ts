@@ -86,7 +86,8 @@ test.describe('Flaky quarantine — review workflow', () => {
 
     const approveBtn = page.getByRole('button', { name: /approve/i });
     if (!(await approveBtn.isVisible().catch(() => false))) {
-      test.skip(true, 'Approve action hidden — non-QA-lead session in this env.');
+      throw new Error('the Approve action is hidden; the suite runs as admin, '
+        + 'which satisfies the QA_LEAD/ADMIN gate');
       return;
     }
     await approveBtn.click();
@@ -113,7 +114,8 @@ test.describe('Flaky quarantine — review workflow', () => {
 
     const rejectBtn = page.getByRole('button', { name: /reject/i });
     if (!(await rejectBtn.isVisible().catch(() => false))) {
-      test.skip(true, 'Reject action hidden — non-QA-lead session in this env.');
+      throw new Error('the Reject action is hidden; the suite runs as admin, '
+        + 'which satisfies the QA_LEAD/ADMIN gate');
       return;
     }
     await rejectBtn.click();
@@ -143,7 +145,8 @@ test.describe('Flaky quarantine — review workflow', () => {
 
     const releaseBtn = page.getByRole('button', { name: /release/i });
     if (!(await releaseBtn.isVisible().catch(() => false))) {
-      test.skip(true, 'Release action hidden — non-QA-lead session in this env.');
+      throw new Error('the Release action is hidden; the suite runs as admin, '
+        + 'which satisfies the QA_LEAD/ADMIN gate');
       return;
     }
     await releaseBtn.click();

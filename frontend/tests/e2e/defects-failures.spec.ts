@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { performRealLogin } from './realLoginHelper';
+import { seedActiveProject } from './apiMock';
 
 test.describe('Defects and Failure Analysis', () => {
 
@@ -36,6 +37,11 @@ test.describe('Defects and Failure Analysis', () => {
 test.describe('Defect Intake modal', () => {
   test.beforeEach(async ({ page }) => {
     await performRealLogin(page);
+    // Seed a concrete project. Every test below used to skip itself when the
+    // CTA was absent -- which is precisely what All-Projects mode looks like,
+    // and also what a regression that removed the CTA looks like. Establish
+    // the precondition instead of treating its absence as a reason to opt out.
+    await seedActiveProject(page);
     await page.goto('/defects');
     // Wait for either the page header or the EmptyState to land.
     await expect(page.getByRole('heading').first()).toBeVisible({ timeout: 10000 });
@@ -43,10 +49,8 @@ test.describe('Defect Intake modal', () => {
 
   test('opens the intake modal from the page header CTA', async ({ page }) => {
     const newDefectBtn = page.getByRole('button', { name: /^new defect$/i }).first();
-    const visible = await newDefectBtn.isVisible().catch(() => false);
-    if (!visible) {
-      test.skip(true, 'New defect CTA not rendered — likely no project selected.');
-    }
+    await expect(newDefectBtn, 'the New defect CTA did not render for a seeded project')
+      .toBeVisible({ timeout: 10000 });
     await newDefectBtn.click();
 
     // In All-Projects mode the click toasts and does NOT open the modal.
@@ -69,14 +73,12 @@ test.describe('Defect Intake modal', () => {
 
   test('disables the submit button until title meets the min-length rule', async ({ page }) => {
     const newDefectBtn = page.getByRole('button', { name: /^new defect$/i }).first();
-    if (!(await newDefectBtn.isVisible().catch(() => false))) {
-      test.skip(true, 'New defect CTA not rendered.');
-    }
+    await expect(newDefectBtn, 'the New defect CTA did not render for a seeded project')
+      .toBeVisible({ timeout: 10000 });
     await newDefectBtn.click();
     const dialog = page.getByRole('dialog', { name: /new defect/i });
-    if (!(await dialog.isVisible().catch(() => false))) {
-      test.skip(true, 'Modal did not open (All-Projects mode).');
-    }
+    await expect(dialog, 'the intake modal did not open for a seeded project')
+      .toBeVisible({ timeout: 8000 });
 
     const submit = page.getByRole('button', { name: /create defect/i });
     await expect(submit).toBeDisabled();
@@ -93,14 +95,12 @@ test.describe('Defect Intake modal', () => {
 
   test('rejects an invalid Jira URL inline', async ({ page }) => {
     const newDefectBtn = page.getByRole('button', { name: /^new defect$/i }).first();
-    if (!(await newDefectBtn.isVisible().catch(() => false))) {
-      test.skip(true, 'New defect CTA not rendered.');
-    }
+    await expect(newDefectBtn, 'the New defect CTA did not render for a seeded project')
+      .toBeVisible({ timeout: 10000 });
     await newDefectBtn.click();
     const dialog = page.getByRole('dialog', { name: /new defect/i });
-    if (!(await dialog.isVisible().catch(() => false))) {
-      test.skip(true, 'Modal did not open (All-Projects mode).');
-    }
+    await expect(dialog, 'the intake modal did not open for a seeded project')
+      .toBeVisible({ timeout: 8000 });
 
     await page.getByLabel(/^title/i).fill('Valid title here');
     await page.getByLabel(/jira ticket url/i).fill('not-a-url');
@@ -112,14 +112,12 @@ test.describe('Defect Intake modal', () => {
 
   test('closes the modal on Escape', async ({ page }) => {
     const newDefectBtn = page.getByRole('button', { name: /^new defect$/i }).first();
-    if (!(await newDefectBtn.isVisible().catch(() => false))) {
-      test.skip(true, 'New defect CTA not rendered.');
-    }
+    await expect(newDefectBtn, 'the New defect CTA did not render for a seeded project')
+      .toBeVisible({ timeout: 10000 });
     await newDefectBtn.click();
     const dialog = page.getByRole('dialog', { name: /new defect/i });
-    if (!(await dialog.isVisible().catch(() => false))) {
-      test.skip(true, 'Modal did not open (All-Projects mode).');
-    }
+    await expect(dialog, 'the intake modal did not open for a seeded project')
+      .toBeVisible({ timeout: 8000 });
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden({ timeout: 3000 });
   });
