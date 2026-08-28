@@ -33,7 +33,9 @@ export interface VisualizationInstance {
 /**
  * Full widget catalog. Widgets are filtered by page at render time.
  */
-export const WIDGET_CATALOG: WidgetDef[] = [
+// Module-private: every caller goes through getPageWidgets/getDefaultWidgetIds,
+// so the catalog itself is not part of this registry's public surface.
+const WIDGET_CATALOG: WidgetDef[] = [
   // ── Dashboard widgets ────────────────────────────────────────
   { id: 'pass_fail_trend',     label: 'Pass/Fail Trend',          description: 'Execution trend showing passed, failed, and skipped tests over time',              pages: ['dashboard', 'trends'], chartType: 'line',        dataSource: 'trends',   defaultEnabled: true },
   { id: 'execution_volume',    label: 'Test Volume Growth',       description: 'Cumulative test execution volume as area chart',                                   pages: ['dashboard', 'trends'], chartType: 'area',        dataSource: 'trends',   defaultEnabled: true },
@@ -85,11 +87,6 @@ export function getDefaultWidgetIds(page: string): string[] {
   return getPageWidgets(page).filter(w => w.defaultEnabled).map(w => w.id)
 }
 
-/** Look up a single widget definition by ID. */
-export function getWidgetDef(id: string): WidgetDef | undefined {
-  return WIDGET_CATALOG.find(w => w.id === id)
-}
-
 /**
  * crypto.randomUUID() only exists in secure contexts (HTTPS or localhost).
  * Homelab/plain-HTTP deployments (e.g. http://testlookup.local) don't expose
@@ -122,18 +119,6 @@ export function createInstance(
     templateId,
     ...overrides,
   }
-}
-
-/** Get the effective label for an instance (user title or template label). */
-export function getInstanceLabel(instance: VisualizationInstance): string {
-  if (instance.title) return instance.title
-  return getWidgetDef(instance.templateId)?.label ?? instance.templateId
-}
-
-/** Get the effective chart type for an instance. */
-export function getInstanceChartType(instance: VisualizationInstance): ChartType | undefined {
-  if (instance.chartType) return instance.chartType
-  return getWidgetDef(instance.templateId)?.chartType
 }
 
 /** Get default instances for a page (from defaultEnabled templates). */

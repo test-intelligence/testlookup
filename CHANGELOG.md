@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-28 — widgetRegistry stops exporting what nothing calls
+
+Removing the dead analytics components left three registry functions with no callers anywhere:
+`getWidgetDef`, `getInstanceLabel` and `getInstanceChartType` — the last two were the only
+callers of the first, so all three fell together. They are deleted.
+
+`WIDGET_CATALOG` is no longer exported. It is not dead — `getPageWidgets` and
+`getDefaultWidgetIds` read it — but every caller outside the module goes through those, so the
+catalog itself was never part of the public surface.
+
+`ChartType` stays exported despite having no named importer today. It types the public
+`WidgetDef.chartType` and `VisualizationInstance.chartType` fields, and un-exporting the
+vocabulary of a shape you do export makes that shape harder to consume rather than smaller.
+
+What remains is exactly what has a caller: `WidgetDef`, `getPageWidgets` and
+`getDefaultWidgetIds` (WidgetPicker); `VisualizationInstance`, `createInstance`,
+`getDefaultInstances` and `MAX_INSTANCES_PER_PAGE` (useAnalyticsView); plus `ChartType`.
+
 ## 2026-08-28 — the analytics grid no page ever rendered
 
 `AnalyticsGrid` had no importers, and `AnalyticsWidget` was imported only BY that dead grid.
