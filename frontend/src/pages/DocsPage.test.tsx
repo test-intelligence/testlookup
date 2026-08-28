@@ -19,7 +19,7 @@
  * Content lives in `src/content/docs/*.md`; these tests read the same sources
  * the page renders, so a claim cannot be "tested" in a file the UI never shows.
  */
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -27,6 +27,12 @@ import DocsPage from './DocsPage'
 import { DOC_SOURCES } from '@/content/guide/sources'
 import { DOC_PAGES, DOC_GROUPS } from '@/content/guide/manifest'
 import { anchorIds } from '@/content/guide/slug'
+import { copyTextToClipboard } from '@/utils/clipboard'
+
+// The copy control delegates to this util (real behavior — the async Clipboard
+// API with a <textarea>/execCommand fallback — is covered by its own tests).
+// Here we only assert the button hands it the block's text and reflects success.
+vi.mock('@/utils/clipboard', () => ({ copyTextToClipboard: vi.fn() }))
 
 function renderDocs(path = '/docs') {
   // Real routes, not a bare render: `useParams` only populates inside a
@@ -383,5 +389,53 @@ describe('markdown rendering', () => {
     const blocks = article?.querySelectorAll('pre') ?? []
     expect(blocks.length, 'the code blocks disappeared').toBeGreaterThan(0)
     expect(article?.textContent, 'the command text is missing').toContain('curl -X POST')
+  })
+})
+
+// ── Copy affordance on fenced code blocks ────────────────────────────────────
+
+describe('code block copy control', () => {
+  const mockCopy = vi.mocked(copyTextToClipboard)
+
+  afterEach(() => {
+    mockCopy.mockReset()
+    vi.useRealTimers()
+  })
+
+  it('gives every runnable command block a copy button', () => {
+    // The getting-started page carries three bash `curl` blocks; each must be
+    // copyable so a reader following it never has to re-type a multi-line
+    // command. The Mermaid flow diagram on the same page is not a code block
+    // and must not gain a copy button.
+    renderDocs('/docs/getting-started')
+    const bashBlocks = (DOC_SOURCES['getting-started'].match(/```bash/g) ?? []).length
+    expect(bashBlocks).toBeGreaterThan(0)
+    expect(screen.getAllByLabelText('Copy code')).toHaveLength(bashBlocks)
+  })
+
+  it('copies the block text and reflects success', async () => {
+    mockCopy.mockResolvedValue(true)
+    renderDocs('/docs/getting-started')
+
+    const button = screen.getAllByLabelText('Copy code')[0]
+    fireEvent.click(button)
+
+    await waitFor(() => expect(mockCopy).toHaveBeenCalledTimes(1))
+    // The first bash block is the JSON ingest call.
+    expect(mockCopy.mock.calls[0][0]).toContain('curl -X POST')
+    // The icon flips to the confirmed state, so the reader sees it landed.
+    await screen.findByLabelText('Copied')
+  })
+
+  it('does not claim success when the clipboard is unavailable', async () => {
+    // An http self-host is not a secure context and the fallback can still be
+    // blocked; the util returns false, and the button must not show "Copied".
+    mockCopy.mockResolvedValue(false)
+    renderDocs('/docs/getting-started')
+
+    fireEvent.click(screen.getAllByLabelText('Copy code')[0])
+
+    await waitFor(() => expect(mockCopy).toHaveBeenCalledTimes(1))
+    expect(screen.queryByLabelText('Copied')).toBeNull()
   })
 })

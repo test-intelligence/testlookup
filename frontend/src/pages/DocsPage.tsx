@@ -24,10 +24,12 @@ import { isValidElement, useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ChevronRight, Search as SearchIcon } from 'lucide-react'
+import { Check, ChevronRight, Copy, Search as SearchIcon } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 import PageHeader from '@/components/ui/PageHeader'
 import MermaidDiagram from '@/components/guide/MermaidDiagram'
+import { copyTextToClipboard } from '@/utils/clipboard'
 import {
   DOC_GROUPS,
   DOC_PAGES,
@@ -108,6 +110,67 @@ function DocLink({ href, children }: { href?: string; children?: React.ReactNode
     >
       {children}
     </a>
+  )
+}
+
+/**
+ * A fenced (non-Mermaid) code block, with a copy-to-clipboard control.
+ *
+ * The self-host guide is largely runnable commands — `curl` ingest calls,
+ * report-file uploads, environment exports. A reader following the getting-
+ * started page copies those verbatim, and re-typing a multi-line `curl` by hand
+ * is exactly the friction the in-app guide exists to remove. The button reuses
+ * `copyTextToClipboard`, which falls back to a `<textarea>` + `execCommand`
+ * path when the async Clipboard API is unavailable (an http self-host is not a
+ * secure context, so `navigator.clipboard` is absent there).
+ *
+ * The button sits in the padding of the block, not inside the scrolling `<pre>`,
+ * so it stays pinned to the corner while a wide command scrolls beneath it.
+ */
+function DocCodeBlock({ source }: { source: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    const ok = await copyTextToClipboard(source)
+    if (!ok) {
+      toast.error('Clipboard access denied — copy manually')
+      return
+    }
+    setCopied(true)
+    toast.success('Copied to clipboard')
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div className="relative mb-3">
+      <button
+        type="button"
+        onClick={handleCopy}
+        aria-label={copied ? 'Copied' : 'Copy code'}
+        className="absolute top-2 right-2 z-10 rounded-md border p-1.5 transition-colors"
+        style={{
+          borderColor: 'var(--color-border)',
+          background: 'var(--color-bg)',
+          color: 'var(--color-text-muted)',
+        }}
+      >
+        {copied ? (
+          <Check className="h-3.5 w-3.5 text-[var(--status-passed)]" aria-hidden="true" />
+        ) : (
+          <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+        )}
+      </button>
+      <pre
+        className="overflow-x-auto rounded-lg border p-3 pr-12 text-[12.5px] leading-relaxed"
+        style={{
+          borderColor: 'var(--color-border)',
+          background: 'var(--color-bg-secondary)',
+          color: 'var(--color-text)',
+        }}
+      >
+        <code>{source}</code>
+      </pre>
+    </div>
   )
 }
 
@@ -199,18 +262,7 @@ const MARKDOWN_COMPONENTS = {
 
     if (language === 'mermaid') return <MermaidDiagram source={source} />
 
-    return (
-      <pre
-        className="overflow-x-auto rounded-lg border p-3 mb-3 text-[12.5px] leading-relaxed"
-        style={{
-          borderColor: 'var(--color-border)',
-          background: 'var(--color-bg-secondary)',
-          color: 'var(--color-text)',
-        }}
-      >
-        <code>{source}</code>
-      </pre>
-    )
+    return <DocCodeBlock source={source} />
   },
   // Inline code only — a fenced block is handled by `pre` above.
   code: (p: { children?: React.ReactNode }) => (

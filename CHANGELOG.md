@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-28 — a copy button on every command in the in-app guide
+
+The self-host guide is largely runnable commands — the getting-started page alone carries three
+`curl` ingest calls, and other topics add more. A reader following it had to select a multi-line
+`curl` by hand and hope they caught every line; re-typing one is exactly the friction the in-app
+guide exists to remove. Every fenced non-Mermaid code block now renders a copy-to-clipboard
+button pinned to its corner, out of the scrolling region so it stays put while a wide command
+scrolls beneath it.
+
+It reuses the existing `copyTextToClipboard`, whose `<textarea>` + `execCommand` fallback covers
+the http self-host case where `navigator.clipboard` is absent (not a secure context). The button
+only shows its confirmed state when the copy actually succeeds — a blocked clipboard leaves the
+copy icon in place rather than claiming a success that did not happen.
+
+Three tests: every `bash` block on the getting-started page gets exactly one button (and the
+Mermaid diagram on that page gets none), a click hands the block's text to the clipboard util and
+flips the icon to confirmed, and a failed copy never shows the confirmed state.
+
 ## 2026-08-28 — the 22 e2e failures: one app bug, one app crash, six stale tests
 
 With the fail-open skips gone (#885), 22 failures were visible. None of them were caught by
