@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-28 — a modal no page could open
+
+Verifying the modal-role fix against the deployment turned up one id that was in the source
+and in no served chunk: `VisualizationConfigModal` had **zero importers**, so the bundler had
+tree-shaken it away. It is deleted.
+
+It was reachable from nothing: no page, no barrel, no dynamic import, no test — only a mention
+in `README_FULL.md`, updated here to match.
+
+Worth recording, because deleting this file does not fix the underlying gap: `AnalyticsGrid`
+has no importers either, and `AnalyticsWidget` is imported only BY that dead grid. So three of
+the five components listed under "Customizable Analytics Widgets" are unreachable, and the two
+capabilities that feature advertises — drag-and-drop layout and per-instance configuration —
+live entirely in the dead half. `WidgetPicker` (5 pages) and `widgetRegistry` are genuinely
+live. Only the file that was asked for is removed here; the other two are left in place
+deliberately, since dropping them decides the feature is abandoned rather than unfinished.
+
 ## 2026-08-28 — 14 modals a screen reader could not announce
 
 Measuring the accessibility gap that blocked live probes from using

@@ -1594,7 +1594,7 @@ Cross-entity search across test cases, runs, suites, defects, flaky tests, and r
 
 30+ visualization templates across 5 page categories with drag-and-drop layout, per-instance configuration, and server-persisted saved views.
 
-**New components:** `AnalyticsWidget`, `AnalyticsGrid`, `VisualizationConfigModal`, `WidgetPicker`, `widgetRegistry`
+**New components:** `AnalyticsWidget`, `AnalyticsGrid`, `WidgetPicker`, `widgetRegistry`
 **New hook:** `useAnalyticsView`
 **New migration:** 0049 — saved_view page field
 
