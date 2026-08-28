@@ -61,6 +61,8 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { useRuns } from '@/hooks/useRuns'
+import { useDataFreshness } from '@/hooks/useDataFreshness'
+import { shortAgo } from '@/utils/formatters'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
@@ -1547,6 +1549,9 @@ export default function TrendsPage() {
   const { options: suiteOptions } = useSuiteOptions(days)
 
   const { data: trendsData,   isLoading: trendsLoading   } = useTrendData(days, suiteFilter)
+  // Real arrival time of this view's payload. This provenance age used to be
+  // the literal '12m ago' for every project, however fresh the data was.
+  const fetchedAt = useDataFreshness(trendsData)
   const { data: dashSummary }                              = useDashboardSummary(days, suiteFilter)
   const { data: coverageData }                             = useCoverage(days, suiteFilter)
   const { data: flakyData }                                = useFlakyTests(days, suiteFilter)
@@ -1588,7 +1593,7 @@ export default function TrendsPage() {
   }
 
   const projectLabel = project?.name ?? 'All Projects'
-  const refreshedAt = '12m ago'
+  const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
   // Surface the most-recent run's suite in the header so users see which
   // suite the trend bars belong to without having to drill into a run.
   const latestRun = latestRuns?.items?.[0]

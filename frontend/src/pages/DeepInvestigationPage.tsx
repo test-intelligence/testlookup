@@ -69,7 +69,7 @@ import type { IntegrationStatus } from '@/services/integrationHealthService'
 import type { LlmQuotaRead, LlmUsageRead } from '@/services/llmBudgetService'
 import type { TestRun } from '@/types/runs'
 import SuiteBadge from '@/components/ui/SuiteBadge'
-import { formatRunWhen } from '@/utils/formatters'
+import { formatRunWhen, shortAgo } from '@/utils/formatters'
 
 // ── Verdict ──────────────────────────────────────────────────────────────
 type Verdict = 'READY' | 'NO_FAILURES' | 'NO_SOURCES' | 'RUNNING' | 'FAILED' | 'PENDING'
@@ -201,17 +201,6 @@ const GENERIC_PROVIDER_META: Omit<ProviderMeta, 'name' | 'description'> = {
   icon: Plug, toneBg: 'var(--color-bg-secondary)', toneFg: 'var(--color-text-muted)',
 }
 
-/** Compact relative age for the detail line, e.g. "2m ago" / "3h ago". */
-function shortAgo(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime()
-  if (!Number.isFinite(ms) || ms < 0) return 'just now'
-  const mins = Math.floor(ms / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
-}
 
 function toEvidenceSource(s: IntegrationStatus): EvidenceSource {
   const meta: ProviderMeta = PROVIDER_META[s.provider] ?? {

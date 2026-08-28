@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { dayTimeAgo, formatDuration, formatRunWhen } from './formatters'
+import { dayTimeAgo, formatDuration, formatRunWhen, shortAgo } from './formatters'
 
 describe('dayTimeAgo', () => {
   // Build day-only strings relative to the runner's LOCAL "today" so the
@@ -95,5 +95,39 @@ describe('formatDuration', () => {
     expect(formatDuration(60_000)).toBe('1m 0s')
     expect(formatDuration(90_000)).toBe('1m 30s')
     expect(formatDuration(125_000)).toBe('2m 5s')
+  })
+})
+
+describe('shortAgo', () => {
+  // Provenance rows on Coverage / Failure Analysis / Trends used to render a
+  // hardcoded age ('4h ago', '12m ago') regardless of the real one, so freshly
+  // ingested data claimed to be hours stale. These pin the real thresholds.
+  const agoMs = (ms: number) => new Date(Date.now() - ms)
+
+  it('reports sub-minute ages as "just now"', () => {
+    expect(shortAgo(agoMs(0))).toBe('just now')
+    expect(shortAgo(agoMs(59_000))).toBe('just now')
+  })
+
+  it('reports minutes, hours and days at their boundaries', () => {
+    expect(shortAgo(agoMs(60_000))).toBe('1m ago')
+    expect(shortAgo(agoMs(59 * 60_000))).toBe('59m ago')
+    expect(shortAgo(agoMs(60 * 60_000))).toBe('1h ago')
+    expect(shortAgo(agoMs(23 * 3_600_000))).toBe('23h ago')
+    expect(shortAgo(agoMs(24 * 3_600_000))).toBe('1d ago')
+    expect(shortAgo(agoMs(9 * 24 * 3_600_000))).toBe('9d ago')
+  })
+
+  it('never renders a negative age or Invalid Date', () => {
+    // A clock skew between client and server must not produce '-3h ago'.
+    expect(shortAgo(new Date(Date.now() + 3_600_000))).toBe('just now')
+    expect(shortAgo('not-a-date')).toBe('just now')
+  })
+
+  it('accepts the shapes callers actually hold', () => {
+    const t = Date.now() - 2 * 60_000
+    expect(shortAgo(new Date(t))).toBe('2m ago')
+    expect(shortAgo(t)).toBe('2m ago')
+    expect(shortAgo(new Date(t).toISOString())).toBe('2m ago')
   })
 })

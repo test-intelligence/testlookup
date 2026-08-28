@@ -55,6 +55,8 @@ import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useCoverage, useTrendData } from '@/hooks/useMetrics'
+import { useDataFreshness } from '@/hooks/useDataFreshness'
+import { shortAgo } from '@/utils/formatters'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { CoverageSuite, CoverageSummary } from '@/types/analytics'
@@ -1507,6 +1509,9 @@ export default function CoveragePage() {
   const { options: suiteOptions } = useSuiteOptions(days)
 
   const { data: coverageData, isLoading } = useCoverage(days, suiteFilter)
+  // Real arrival time of this view's payload — the provenance row below used
+  // to hardcode its age, so freshly ingested coverage claimed to be hours old.
+  const fetchedAt = useDataFreshness(coverageData)
   const { data: trendData } = useTrendData(days, suiteFilter)
 
   const summary: Partial<CoverageSummary> = useMemo(() => coverageData?.summary ?? {}, [coverageData])
@@ -1578,7 +1583,7 @@ export default function CoveragePage() {
   }
 
   const projectLabel = project?.name ?? 'All Projects'
-  const refreshedAt = trend.length > 0 ? '4h ago' : 'just now'   // backend doesn't expose snapshot age yet
+  const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
   const latestRun = latestRuns?.items?.[0]
   const totalEvidence = (summary.suite_count ?? 0) + suites.length + (model.untaggedRuns > 0 ? 1 : 0)
   // Deterministic composite coverage score — NOT an AI confidence (US-15.1).

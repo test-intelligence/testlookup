@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-08-28 — three pages told you their data was hours old when it was seconds old
+
+Exploratory testing uploaded a report and then read what the UI said about it. Coverage claimed
+"Updated 4h ago" for data ingested three minutes earlier. The age was a string literal:
+
+```
+const refreshedAt = trend.length > 0 ? '4h ago' : 'just now'   // backend doesn't expose snapshot age yet
+```
+
+Failure Analysis hardcoded `'4h ago'` unconditionally and Trends `'12m ago'` — six render sites
+across three pages, because each shows the value twice: once in the header and once in the
+`ProvenanceFooter`, the row whose entire job is telling the reader how far to trust the numbers
+above it ("coverage analyzer v1 · N evidence items · last refreshed X"). A fabricated age there is
+worse than no age at all.
+
+The backend genuinely does not expose a snapshot age, but it does not need to: these pages fetch
+live, so the honest answer is when this client last received the payload. `useDataFreshness` stamps
+that from the SWR payload — the value advances when a new object arrives, which is what "refreshed"
+means, and holds steady when a revalidation returns identical data. `shortAgo` (already written
+inside DeepInvestigationPage, matching the display style) moved to `utils/formatters` so there is
+one implementation; it now also refuses to render a negative age from clock skew.
+
+The regression test that matters is not the hook test — it is the one asserting no page assigns
+`refreshedAt` a literal age. This was never a broken function; it was a string typed where a value
+belonged, and nothing stopped three separate pages from doing it. Mutation-verified: restoring
+TrendsPage's `'12m ago'` fails that test by name and file.
+
 ## 2026-08-28 — widgetRegistry stops exporting what nothing calls
 
 Removing the dead analytics components left three registry functions with no callers anywhere:

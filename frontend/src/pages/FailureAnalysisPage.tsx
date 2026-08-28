@@ -75,6 +75,8 @@ import CorrectClassificationModal, {
 import { useJiraDefectMetadata } from '@/hooks/useJiraDefects'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useRuns } from '@/hooks/useRuns'
+import { useDataFreshness } from '@/hooks/useDataFreshness'
+import { shortAgo } from '@/utils/formatters'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { flakyQuarantineService } from '@/services/flakyQuarantineService'
 import { postData } from '@/services/http'
@@ -2324,6 +2326,10 @@ export default function FailureAnalysisPage() {
 
   const isLoading = flakyLoading || categoryLoading || topLoading || trendsLoading
 
+  // Real arrival time of this view's payload. This provenance age used to be
+  // the literal '4h ago' for every project, however fresh the data was.
+  const fetchedAt = useDataFreshness(isLoading ? undefined : model)
+
   // ── CTA handlers ─────────────────────────────────────────────────────────
   const [notifyingOwner, setNotifyingOwner] = useState(false)
 
@@ -2443,7 +2449,7 @@ export default function FailureAnalysisPage() {
   }
 
   const projectLabel = project?.name ?? 'All Projects'
-  const refreshedAt = '4h ago'
+  const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
 
   // Verdict summary headline
   const summaryNode: React.ReactNode = (() => {

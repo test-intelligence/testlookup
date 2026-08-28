@@ -5,6 +5,27 @@ export const formatDateTime = (d: string | Date) => format(new Date(d), 'MMM dd,
 export const fromNow = (d: string | Date) => formatDistanceToNow(new Date(d), { addSuffix: true })
 
 /**
+ * Compact relative age: 'just now' / '2m ago' / '3h ago' / '5d ago'.
+ *
+ * Distinct from `fromNow` (date-fns prose, e.g. 'about 2 hours ago') — this is
+ * the terse form the provenance "last refreshed" lines use, where the value sits
+ * inline in a dense metadata row.
+ *
+ * Future timestamps and unparseable input both collapse to 'just now' rather
+ * than rendering a negative age or 'Invalid Date'.
+ */
+export const shortAgo = (d: string | number | Date): string => {
+  const ms = Date.now() - new Date(d).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return 'just now'
+  const mins = Math.floor(ms / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
+/**
  * Compact, null-safe run timestamp for disambiguating runs that share a
  * human-readable number. "Run #1" repeats per (project, suite) and across
  * projects, so the same label can point at many different executions — pairing
