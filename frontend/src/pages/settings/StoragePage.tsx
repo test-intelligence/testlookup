@@ -6,6 +6,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { appSettingsService, type StorageConfigRead, type StorageConfigUpdate } from '@/services/appSettingsService'
 import { usePermissions } from '@/hooks/usePermissions'
+import Field from '@/components/ui/Field'
 
 export default function StoragePage() {
   const { isAdmin } = usePermissions()
@@ -94,24 +95,33 @@ export default function StoragePage() {
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Object Storage (MinIO / S3)</h3>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Backend</label>
-              <select value={form.storage_backend ?? ''} onChange={e => upd('storage_backend', e.target.value)} disabled={!isAdmin}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50">
-                <option value="minio">MinIO</option>
-                <option value="s3">S3</option>
-                <option value="local">Local</option>
-              </select>
+              <Field label="Backend" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <select id={id} value={form.storage_backend ?? ''} onChange={e => upd('storage_backend', e.target.value)} disabled={!isAdmin}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50">
+                    <option value="minio">MinIO</option>
+                    <option value="s3">S3</option>
+                    <option value="local">Local</option>
+                  </select>
+                )}
+              </Field>
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Endpoint</label>
-              <input value={form.minio_endpoint ?? ''} onChange={e => upd('minio_endpoint', e.target.value)} disabled={!isAdmin}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50"
-                placeholder="localhost:9000" />
+              <Field label="Endpoint" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <input id={id} value={form.minio_endpoint ?? ''} onChange={e => upd('minio_endpoint', e.target.value)} disabled={!isAdmin}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50"
+                    placeholder="localhost:9000" />
+                )}
+              </Field>
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Bucket Name</label>
-              <input value={form.minio_bucket_name ?? ''} onChange={e => upd('minio_bucket_name', e.target.value)} disabled={!isAdmin}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              <Field label="Bucket Name" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <input id={id} value={form.minio_bucket_name ?? ''} onChange={e => upd('minio_bucket_name', e.target.value)} disabled={!isAdmin}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                )}
+              </Field>
             </div>
             <div className="flex items-end pb-1">
               <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
@@ -129,21 +139,30 @@ export default function StoragePage() {
           <h3 className="text-sm font-semibold text-[var(--color-text)]">ChromaDB (Vector Store)</h3>
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Host</label>
-              <input value={form.chroma_host ?? ''} onChange={e => upd('chroma_host', e.target.value)} disabled={!isAdmin}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50"
-                placeholder="localhost" />
+              <Field label="Host" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <input id={id} value={form.chroma_host ?? ''} onChange={e => upd('chroma_host', e.target.value)} disabled={!isAdmin}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50"
+                    placeholder="localhost" />
+                )}
+              </Field>
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Port</label>
-              <input type="number" min="1" max="65535" value={form.chroma_port ?? 8001} disabled={!isAdmin}
-                onChange={e => upd('chroma_port', parseInt(e.target.value))}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              <Field label="Port" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <input id={id} type="number" min="1" max="65535" value={form.chroma_port ?? 8001} disabled={!isAdmin}
+                    onChange={e => upd('chroma_port', parseInt(e.target.value))}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                )}
+              </Field>
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Collection</label>
-              <input value={form.chroma_collection ?? ''} onChange={e => upd('chroma_collection', e.target.value)} disabled={!isAdmin}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              <Field label="Collection" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <input id={id} value={form.chroma_collection ?? ''} onChange={e => upd('chroma_collection', e.target.value)} disabled={!isAdmin}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                )}
+              </Field>
             </div>
           </div>
         </div>

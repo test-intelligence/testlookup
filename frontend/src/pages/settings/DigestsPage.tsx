@@ -19,6 +19,7 @@ import {
 import { useDigestSavedViews, useDigestSubscriptions } from '@/hooks/useDigestData';
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags';
 import { useProjectStore, ALL_PROJECTS_ID } from '../../store/projectStore';
+import Field from '@/components/ui/Field'
 
 type Tab = 'subscriptions' | 'saved-views' | 'preview';
 
@@ -171,49 +172,64 @@ export default function DigestsPage() {
             <div className="space-y-4">
               <div className="flex gap-2 items-end">
                 <div className="flex-1">
-                  <label className="text-xs text-[var(--color-text-muted)]">Digest Name</label>
-                  <input value={newSubName} onChange={e => setNewSubName(e.target.value)}
-                    placeholder="e.g., Weekly QA Summary"
-                    className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" />
+                  <Field label="Digest Name" labelClassName="text-xs text-[var(--color-text-muted)]">
+                    {id => (
+                      <input id={id} value={newSubName} onChange={e => setNewSubName(e.target.value)}
+                        placeholder="e.g., Weekly QA Summary"
+                        className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" />
+                    )}
+                  </Field>
                 </div>
                 <div>
-                  <label className="text-xs text-[var(--color-text-muted)]">Schedule</label>
-                  <select value={newSubSchedule} onChange={e => setNewSubSchedule(e.target.value as typeof newSubSchedule)}
-                    className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
-                    <option value="WEEKLY">Weekly</option>
-                    {retroEnabled && <option value="WEEKLY_RETRO">Weekly Retro</option>}
-                    <option value="DAILY">Daily</option>
-                    <option value="PER_RUN">Per Run</option>
-                    <option value="PER_RELEASE">Per Release</option>
-                    <option value="PER_SUITE">Per Suite</option>
-                  </select>
+                  <Field label="Schedule" labelClassName="text-xs text-[var(--color-text-muted)]">
+                    {id => (
+                      <select id={id} value={newSubSchedule} onChange={e => setNewSubSchedule(e.target.value as typeof newSubSchedule)}
+                        className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
+                        <option value="WEEKLY">Weekly</option>
+                        {retroEnabled && <option value="WEEKLY_RETRO">Weekly Retro</option>}
+                        <option value="DAILY">Daily</option>
+                        <option value="PER_RUN">Per Run</option>
+                        <option value="PER_RELEASE">Per Release</option>
+                        <option value="PER_SUITE">Per Suite</option>
+                      </select>
+                    )}
+                  </Field>
                 </div>
                 <div>
-                  <label className="text-xs text-[var(--color-text-muted)]">Channel</label>
-                  <select value={newSubChannel} onChange={e => setNewSubChannel(e.target.value as 'email' | 'slack' | 'teams')}
-                    className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
-                    <option value="email">Email</option>
-                    <option value="slack">Slack</option>
-                    <option value="teams">Teams</option>
-                  </select>
+                  <Field label="Channel" labelClassName="text-xs text-[var(--color-text-muted)]">
+                    {id => (
+                      <select id={id} value={newSubChannel} onChange={e => setNewSubChannel(e.target.value as 'email' | 'slack' | 'teams')}
+                        className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
+                        <option value="email">Email</option>
+                        <option value="slack">Slack</option>
+                        <option value="teams">Teams</option>
+                      </select>
+                    )}
+                  </Field>
                 </div>
                 {newSubSchedule === 'PER_RUN' && (
                   <div>
-                    <label className="text-xs text-[var(--color-text-muted)]">Trigger</label>
-                    <select value={newSubTriggerFilter} onChange={e => setNewSubTriggerFilter(e.target.value as typeof newSubTriggerFilter)}
-                      className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
-                      <option value="all">All Runs</option>
-                      <option value="failed_only">Failed Only</option>
-                      <option value="degraded_only">Degraded Only</option>
-                    </select>
+                    <Field label="Trigger" labelClassName="text-xs text-[var(--color-text-muted)]">
+                      {id => (
+                        <select id={id} value={newSubTriggerFilter} onChange={e => setNewSubTriggerFilter(e.target.value as typeof newSubTriggerFilter)}
+                          className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
+                          <option value="all">All Runs</option>
+                          <option value="failed_only">Failed Only</option>
+                          <option value="degraded_only">Degraded Only</option>
+                        </select>
+                      )}
+                    </Field>
                   </div>
                 )}
                 {newSubSchedule === 'PER_SUITE' && (
                   <div className="flex-1">
-                    <label className="text-xs text-[var(--color-text-muted)]">Suite Name</label>
-                    <input value={newSubScopeValue} onChange={e => setNewSubScopeValue(e.target.value)}
-                      placeholder="e.g., smoke-tests"
-                      className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" />
+                    <Field label="Suite Name" labelClassName="text-xs text-[var(--color-text-muted)]">
+                      {id => (
+                        <input id={id} value={newSubScopeValue} onChange={e => setNewSubScopeValue(e.target.value)}
+                          placeholder="e.g., smoke-tests"
+                          className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" />
+                      )}
+                    </Field>
                   </div>
                 )}
                 <button onClick={handleCreateSub} className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-[var(--color-bg-hover)] text-sm">

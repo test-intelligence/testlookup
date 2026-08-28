@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Bell, Mail, MessageSquare, Users, CheckCircle, XCircle, Send, Trash2, ChevronDown, ChevronUp, Server, Eye, EyeOff } from 'lucide-react'
 import toast from 'react-hot-toast'
+import Field from '@/components/ui/Field'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import {
@@ -246,10 +247,11 @@ function ChannelCard({
 
           {/* Webhook / Email field */}
           <div>
-            <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
+            <label htmlFor="channel-target" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
               {channel === 'email' ? 'Email address override' : 'Webhook URL'}
             </label>
             <input
+              id="channel-target"
               type={channel === 'email' ? 'email' : 'url'}
               value={webhookOrEmail}
               onChange={e => setWebhookOrEmail(e.target.value)}
@@ -275,11 +277,12 @@ function ChannelCard({
 
           {/* Failure rate threshold */}
           <div>
-            <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
+            <label htmlFor="failure-rate-threshold" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
               High failure rate threshold:{' '}
               <span className="text-[var(--color-text)] font-mono">{threshold}%</span>
             </label>
             <input
+              id="failure-rate-threshold"
               type="range"
               min={10}
               max={100}
@@ -465,53 +468,73 @@ function SmtpConfigCard() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {/* Host */}
               <div className="sm:col-span-2">
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">SMTP Host</label>
-                <input
-                  type="text"
-                  value={host}
-                  onChange={e => setHost(e.target.value)}
-                  placeholder="smtp.example.com"
-                  className="input w-full text-sm"
-                />
+                <Field label="SMTP Host" labelClassName="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
+                  {id => (
+                    <input
+                      id={id}
+                      type="text"
+                      value={host}
+                      onChange={e => setHost(e.target.value)}
+                      placeholder="smtp.example.com"
+                      className="input w-full text-sm"
+                    />
+                  )}
+                </Field>
               </div>
               {/* Port */}
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Port</label>
-                <input
-                  type="number"
-                  value={port}
-                  onChange={e => setPort(Number(e.target.value))}
-                  min={1}
-                  max={65535}
-                  className="input w-full text-sm"
-                />
+                <Field label="Port" labelClassName="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
+                  {id => (
+                    <input
+                      id={id}
+                      type="number"
+                      value={port}
+                      onChange={e => setPort(Number(e.target.value))}
+                      min={1}
+                      max={65535}
+                      className="input w-full text-sm"
+                    />
+                  )}
+                </Field>
               </div>
             </div>
 
             {/* Username */}
             <div>
-              <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
-                Username <span className="text-[var(--color-text-faint)]">(optional)</span>
-              </label>
-              <input
-                type="text"
-                value={user}
-                onChange={e => setUser(e.target.value)}
-                placeholder="smtp-user@example.com"
-                className="input w-full text-sm"
-              />
+              <Field
+                label="Username"
+                hint={<span className="text-[var(--color-text-faint)]"> (optional)</span>}
+                labelClassName="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
+              >
+                {id => (
+                  <input
+                    id={id}
+                    type="text"
+                    value={user}
+                    onChange={e => setUser(e.target.value)}
+                    placeholder="smtp-user@example.com"
+                    className="input w-full text-sm"
+                  />
+                )}
+              </Field>
             </div>
 
             {/* Password */}
             <div>
-              <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
-                Password{' '}
-                <span className="text-[var(--color-text-faint)]">
-                  {passwordSet && !clearPassword ? '(stored — leave blank to keep)' : '(optional)'}
-                </span>
-              </label>
+              <Field
+                label="Password"
+                hint={
+                  <span className="text-[var(--color-text-faint)]">
+                    {' '}
+                    {passwordSet && !clearPassword ? '(stored — leave blank to keep)' : '(optional)'}
+                  </span>
+                }
+                labelClassName="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
+              >
+                {id => (
               <div className="relative">
                 <input
+                  id={id}
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={e => {
@@ -529,6 +552,8 @@ function SmtpConfigCard() {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+                )}
+              </Field>
               {passwordSet && password === '' && (
                 <div className="mt-1.5">
                   {clearPassword ? (
@@ -558,14 +583,18 @@ function SmtpConfigCard() {
 
             {/* From address */}
             <div>
-              <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">From Address</label>
-              <input
-                type="email"
-                value={fromAddress}
-                onChange={e => setFromAddress(e.target.value)}
-                placeholder="noreply@testlookup.io"
-                className="input w-full text-sm"
-              />
+              <Field label="From Address" labelClassName="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
+                {id => (
+                  <input
+                    id={id}
+                    type="email"
+                    value={fromAddress}
+                    onChange={e => setFromAddress(e.target.value)}
+                    placeholder="noreply@testlookup.io"
+                    className="input w-full text-sm"
+                  />
+                )}
+              </Field>
             </div>
 
             {/* TLS / STARTTLS mode toggle */}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { ArrowLeft, Save } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
@@ -17,13 +17,17 @@ function Toggle({ label, checked, onChange, disabled }: { label: string; checked
   )
 }
 
+// The label is wired to the input by id. Without it every field this renders —
+// Jira URL, user, project key, and the token inputs — is an unnamed edit box to
+// a screen reader, however clear the visible text is.
 function Field({ label, value, onChange, disabled, placeholder, type = 'text' }: {
   label: string; value: string; onChange: (v: string) => void; disabled: boolean; placeholder?: string; type?: string
 }) {
+  const id = useId()
   return (
     <div>
-      <label className="block text-xs text-[var(--color-text-muted)] mb-1">{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} disabled={disabled} placeholder={placeholder}
+      <label htmlFor={id} className="block text-xs text-[var(--color-text-muted)] mb-1">{label}</label>
+      <input id={id} type={type} value={value} onChange={e => onChange(e.target.value)} disabled={disabled} placeholder={placeholder}
         className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
     </div>
   )
@@ -98,8 +102,8 @@ export default function IntegrationsPage() {
             <Field label="Email" value={form.jira_email ?? ''} onChange={v => upd('jira_email', v)} disabled={!isAdmin} placeholder="user@company.com" />
             <Field label="Default Project Key" value={form.jira_default_project_key ?? ''} onChange={v => upd('jira_default_project_key', v)} disabled={!isAdmin} placeholder="QA" />
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">API Token {config.jira_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input type="password" placeholder={config.jira_token_set ? '••••••••' : 'Enter token'} disabled={!isAdmin}
+              <label htmlFor="integration-secret-0" className="block text-xs text-[var(--color-text-muted)] mb-1">API Token {config.jira_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+              <input id="integration-secret-0" type="password" placeholder={config.jira_token_set ? '••••••••' : 'Enter token'} disabled={!isAdmin}
                 onChange={e => upd('jira_api_token', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
             </div>
@@ -115,8 +119,8 @@ export default function IntegrationsPage() {
           <div className="grid grid-cols-2 gap-3">
             <Field label="Base URL" value={form.splunk_base_url ?? ''} onChange={v => upd('splunk_base_url', v)} disabled={!isAdmin} placeholder="https://splunk.company.com:8089" />
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">API Token {config.splunk_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input type="password" placeholder={config.splunk_token_set ? '••••••••' : 'Enter token'} disabled={!isAdmin}
+              <label htmlFor="integration-secret-1" className="block text-xs text-[var(--color-text-muted)] mb-1">API Token {config.splunk_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+              <input id="integration-secret-1" type="password" placeholder={config.splunk_token_set ? '••••••••' : 'Enter token'} disabled={!isAdmin}
                 onChange={e => upd('splunk_api_token', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
             </div>
@@ -133,8 +137,8 @@ export default function IntegrationsPage() {
             <Field label="API URL" value={form.ocp_api_url ?? ''} onChange={v => upd('ocp_api_url', v)} disabled={!isAdmin} placeholder="https://api.cluster.example.com:6443" />
             <Field label="Default Namespace" value={form.ocp_default_namespace ?? ''} onChange={v => upd('ocp_default_namespace', v)} disabled={!isAdmin} placeholder="qa-testing" />
             <div className="col-span-2">
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Service Account Token {config.ocp_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input type="password" placeholder={config.ocp_token_set ? '••••••••' : 'Enter SA token'} disabled={!isAdmin}
+              <label htmlFor="integration-secret-2" className="block text-xs text-[var(--color-text-muted)] mb-1">Service Account Token {config.ocp_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+              <input id="integration-secret-2" type="password" placeholder={config.ocp_token_set ? '••••••••' : 'Enter SA token'} disabled={!isAdmin}
                 onChange={e => upd('ocp_sa_token', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
             </div>
@@ -168,8 +172,8 @@ export default function IntegrationsPage() {
           <div className="grid grid-cols-2 gap-3">
             <Field label="Repository" value={form.github_repo ?? ''} onChange={v => upd('github_repo', v)} disabled={!isAdmin} placeholder="org/repo" />
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Token {config.github_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input type="password" placeholder={config.github_token_set ? '••••••••' : 'ghp_...'} disabled={!isAdmin}
+              <label htmlFor="integration-secret-3" className="block text-xs text-[var(--color-text-muted)] mb-1">Token {config.github_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+              <input id="integration-secret-3" type="password" placeholder={config.github_token_set ? '••••••••' : 'ghp_...'} disabled={!isAdmin}
                 onChange={e => upd('github_token', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
             </div>

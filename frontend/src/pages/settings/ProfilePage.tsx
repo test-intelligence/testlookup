@@ -200,10 +200,10 @@ export default function ProfilePage() {
 
         {/* Full name */}
         <div>
-          <label className="block text-sm font-medium text-[var(--color-text)] mb-1">
+          <label htmlFor="profile-field-0" className="block text-sm font-medium text-[var(--color-text)] mb-1">
             Full Name
           </label>
-          <input
+          <input id="profile-field-0"
             type="text"
             className="input w-full"
             placeholder="Your display name"
@@ -216,10 +216,10 @@ export default function ProfilePage() {
         {/* Read-only fields */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-[var(--color-text-muted)] mb-1">
+            <label htmlFor="profile-field-1" className="block text-sm font-medium text-[var(--color-text-muted)] mb-1">
               Username <span className="text-[10px] font-normal">(read-only)</span>
             </label>
-            <input
+            <input id="profile-field-1"
               type="text"
               className="input w-full opacity-60 cursor-not-allowed"
               value={user.username}
@@ -227,10 +227,10 @@ export default function ProfilePage() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[var(--color-text-muted)] mb-1">
+            <label htmlFor="profile-field-2" className="block text-sm font-medium text-[var(--color-text-muted)] mb-1">
               Email <span className="text-[10px] font-normal">(read-only)</span>
             </label>
-            <input
+            <input id="profile-field-2"
               type="email"
               className="input w-full opacity-60 cursor-not-allowed"
               value={user.email}
@@ -268,11 +268,11 @@ export default function ProfilePage() {
 
         {/* Current password */}
         <div>
-          <label className="block text-sm font-medium text-[var(--color-text)] mb-1">
+          <label htmlFor="profile-field-3" className="block text-sm font-medium text-[var(--color-text)] mb-1">
             Current Password
           </label>
           <div className="relative">
-            <input
+            <input id="profile-field-3"
               type={showCur ? 'text' : 'password'}
               className="input w-full pr-10"
               placeholder="Enter current password"
@@ -293,11 +293,11 @@ export default function ProfilePage() {
 
         {/* New password */}
         <div>
-          <label className="block text-sm font-medium text-[var(--color-text)] mb-1">
+          <label htmlFor="profile-field-4" className="block text-sm font-medium text-[var(--color-text)] mb-1">
             New Password
           </label>
           <div className="relative">
-            <input
+            <input id="profile-field-4"
               type={showNew ? 'text' : 'password'}
               className="input w-full pr-10"
               placeholder="Enter new password"
@@ -343,11 +343,11 @@ export default function ProfilePage() {
 
         {/* Confirm password */}
         <div>
-          <label className="block text-sm font-medium text-[var(--color-text)] mb-1">
+          <label htmlFor="profile-field-5" className="block text-sm font-medium text-[var(--color-text)] mb-1">
             Confirm New Password
           </label>
           <div className="relative">
-            <input
+            <input id="profile-field-5"
               type={showConf ? 'text' : 'password'}
               className="input w-full pr-10"
               placeholder="Repeat new password"

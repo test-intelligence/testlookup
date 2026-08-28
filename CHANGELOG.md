@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-08-28 — 46 settings fields a screen reader could not name
+
+Exploratory testing tried to fill the SMTP form by its label and found nothing:
+`getByRole("textbox", { name: "SMTP Host" })` matched zero elements on a page with five
+textboxes. Every settings form wrote the pair as unconnected siblings —
+
+```tsx
+<label className="...">SMTP Host</label>   {/* no htmlFor */}
+<input type="text" value={host} … />       {/* no id, no aria-label */}
+```
+
+— so the field looked labelled and had no accessible name. **46 of 61** controls across the six
+settings pages were in that state, including every password and API-token input.
+
+A new `components/ui/Field` renders the pair with the wiring done, via `useId`. It returns a
+fragment rather than a wrapper element on purpose: these pairs already sit in grid containers
+whose classes carry the layout (`sm:col-span-2`), so adding a div would move things. Label and
+control stay exact siblings and the rendering is unchanged — verified against before/after
+screenshots. It imposes no label styling either, since the pages use eight different label
+classes.
+
+Two shapes did not fit and were wired directly: `IntegrationsPage` had its OWN local `Field`
+helper carrying the same bug, so one edit there fixed ten controls; and labels whose text is JSX
+(`API Token {set && <span>(set)</span>}`) keep their markup with `htmlFor`/`id` added.
+
+Two things the guard taught me while writing it. First, the live probe **undercounted**: it only
+sees mounted controls, so collapsed accordions and unvisited pages hid offenders a source scan
+found immediately. Second, its first version reported two files that were already correct — an
+opening tag with `htmlFor` on its own line, and a wrapping label whose input sat past a fixed
+line window. It now parses the tag properly, and deliberately accepts a wrapped control that
+names itself and a label preceding a component group (which wants `role="group"` +
+`aria-labelledby`, a different fix this guard does not claim).
+
 ## 2026-08-28 — the library-health panel disagreed with the list beside it
 
 Authoring a test case refreshed the paginated table but not the Library Health panel above it,

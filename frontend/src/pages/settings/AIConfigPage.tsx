@@ -13,6 +13,7 @@ import {
 } from '@/services/appSettingsService'
 import { usePermissions } from '@/hooks/usePermissions'
 import { activeTier, useAIModelStatus } from '@/hooks/useAIConfig'
+import Field from '@/components/ui/Field'
 
 // MUST stay in step with the LLM_PROVIDER Literal in backend/app/core/config.py.
 // A provider the backend accepts but this list omits is unreachable from the UI:
@@ -429,29 +430,41 @@ export default function AIConfigPage() {
           <h3 className="text-sm font-semibold text-[var(--color-text)]">LLM Provider</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Provider</label>
-              <select value={form.llm_provider ?? ''} onChange={e => upd('llm_provider', e.target.value)} disabled={!isAdmin}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50">
-                {LLM_PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
+              <Field label="Provider" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <select id={id} value={form.llm_provider ?? ''} onChange={e => upd('llm_provider', e.target.value)} disabled={!isAdmin}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50">
+                    {LLM_PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                )}
+              </Field>
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Model</label>
-              <input value={form.llm_model ?? ''} onChange={e => upd('llm_model', e.target.value)} disabled={!isAdmin}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50"
-                placeholder="e.g. qwen2.5:7b" />
+              <Field label="Model" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <input id={id} value={form.llm_model ?? ''} onChange={e => upd('llm_model', e.target.value)} disabled={!isAdmin}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50"
+                    placeholder="e.g. qwen2.5:7b" />
+                )}
+              </Field>
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Temperature (0.0 - 2.0)</label>
-              <input type="number" step="0.1" min="0" max="2" value={form.llm_temperature ?? 0.1} disabled={!isAdmin}
-                onChange={e => upd('llm_temperature', parseFloat(e.target.value))}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              <Field label="Temperature (0.0 - 2.0)" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <input id={id} type="number" step="0.1" min="0" max="2" value={form.llm_temperature ?? 0.1} disabled={!isAdmin}
+                    onChange={e => upd('llm_temperature', parseFloat(e.target.value))}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                )}
+              </Field>
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Max Tokens</label>
-              <input type="number" min="256" max="32768" value={form.llm_max_tokens ?? 4096} disabled={!isAdmin}
-                onChange={e => upd('llm_max_tokens', parseInt(e.target.value))}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              <Field label="Max Tokens" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <input id={id} type="number" min="256" max="32768" value={form.llm_max_tokens ?? 4096} disabled={!isAdmin}
+                    onChange={e => upd('llm_max_tokens', parseInt(e.target.value))}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                )}
+              </Field>
             </div>
           </div>
         </div>
@@ -461,14 +474,20 @@ export default function AIConfigPage() {
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Embedding</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Provider</label>
-              <input value={form.embedding_provider ?? ''} onChange={e => upd('embedding_provider', e.target.value)} disabled={!isAdmin}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              <Field label="Provider" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <input id={id} value={form.embedding_provider ?? ''} onChange={e => upd('embedding_provider', e.target.value)} disabled={!isAdmin}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                )}
+              </Field>
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Model</label>
-              <input value={form.embedding_model ?? ''} onChange={e => upd('embedding_model', e.target.value)} disabled={!isAdmin}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              <Field label="Model" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <input id={id} value={form.embedding_model ?? ''} onChange={e => upd('embedding_model', e.target.value)} disabled={!isAdmin}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                )}
+              </Field>
             </div>
           </div>
         </div>
@@ -478,16 +497,22 @@ export default function AIConfigPage() {
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Pipeline Settings</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Confidence Threshold (0-100)</label>
-              <input type="number" min="0" max="100" value={form.ai_confidence_threshold ?? 80} disabled={!isAdmin}
-                onChange={e => upd('ai_confidence_threshold', parseInt(e.target.value))}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              <Field label="Confidence Threshold (0-100)" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <input id={id} type="number" min="0" max="100" value={form.ai_confidence_threshold ?? 80} disabled={!isAdmin}
+                    onChange={e => upd('ai_confidence_threshold', parseInt(e.target.value))}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                )}
+              </Field>
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Timeout (seconds)</label>
-              <input type="number" min="30" max="1800" value={form.ai_timeout_seconds ?? 300} disabled={!isAdmin}
-                onChange={e => upd('ai_timeout_seconds', parseInt(e.target.value))}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+              <Field label="Timeout (seconds)" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {id => (
+                  <input id={id} type="number" min="30" max="1800" value={form.ai_timeout_seconds ?? 300} disabled={!isAdmin}
+                    onChange={e => upd('ai_timeout_seconds', parseInt(e.target.value))}
+                    className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                )}
+              </Field>
             </div>
           </div>
           <div className="flex flex-wrap gap-6">
@@ -573,26 +598,26 @@ export default function AIConfigPage() {
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Cloud API Keys</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">OpenAI API Key {config.openai_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input type="password" placeholder={config.openai_key_set ? '••••••••' : 'sk-...'} disabled={!isAdmin}
+              <label htmlFor="ai-secret-0" className="block text-xs text-[var(--color-text-muted)] mb-1">OpenAI API Key {config.openai_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+              <input id="ai-secret-0" type="password" placeholder={config.openai_key_set ? '••••••••' : 'sk-...'} disabled={!isAdmin}
                 onChange={e => upd('openai_api_key', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Google API Key {config.google_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input type="password" placeholder={config.google_key_set ? '••••••••' : 'AIza...'} disabled={!isAdmin}
+              <label htmlFor="ai-secret-1" className="block text-xs text-[var(--color-text-muted)] mb-1">Google API Key {config.google_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+              <input id="ai-secret-1" type="password" placeholder={config.google_key_set ? '••••••••' : 'AIza...'} disabled={!isAdmin}
                 onChange={e => upd('google_api_key', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Anthropic API Key {config.anthropic_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input type="password" placeholder={config.anthropic_key_set ? '••••••••' : 'sk-ant-...'} disabled={!isAdmin}
+              <label htmlFor="ai-secret-2" className="block text-xs text-[var(--color-text-muted)] mb-1">Anthropic API Key {config.anthropic_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+              <input id="ai-secret-2" type="password" placeholder={config.anthropic_key_set ? '••••••••' : 'sk-ant-...'} disabled={!isAdmin}
                 onChange={e => upd('anthropic_api_key', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">OpenRouter API Key {config.openrouter_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input type="password" placeholder={config.openrouter_key_set ? '••••••••' : 'sk-or-v1-...'} disabled={!isAdmin}
+              <label htmlFor="ai-secret-3" className="block text-xs text-[var(--color-text-muted)] mb-1">OpenRouter API Key {config.openrouter_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
+              <input id="ai-secret-3" type="password" placeholder={config.openrouter_key_set ? '••••••••' : 'sk-or-v1-...'} disabled={!isAdmin}
                 onChange={e => upd('openrouter_api_key', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
             </div>
