@@ -32,6 +32,13 @@ const CRASH = [
 ]
 
 test('post-merge: every primary page renders without crashing', async ({ page }) => {
+  // One test visits ~20 pages sequentially, each with its own settle wait, so
+  // it does not fit the config's 60s per-test default -- it took 2.6 minutes
+  // against the homelab. It was failing on the harness budget while every page
+  // it had reached was clean ("PAGES NEEDING INVESTIGATION: []"), which reads
+  // as a broken deployment and is the most expensive kind of false alarm.
+  test.setTimeout(300_000)
+
   const report: Record<string, unknown>[] = []
 
   await page.goto(`${BASE}/login`)

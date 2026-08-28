@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-28 — two live probes were failing on a healthy deployment
+
+Post-deploy validation of `main` surfaced two probe failures. Neither was an application
+defect, and both are the kind of false alarm that teaches people to ignore a suite.
+
+`probe-manual-upload` asserted the Upload control is **disabled** while the scope is All
+Projects. That behaviour was superseded: `RunsPage` gates the button on role only
+(`disabled={!isQaEngineer}`) and passes `projectId={null}`, and `UploadReportModal` then renders
+a required Project chooser — "a question to ask, not a reason to send the user away from the
+thing they just clicked". The probe now asserts that contract: the button is enabled, the modal
+opens, and it asks which project the report lands in. It also asserts the precondition the old
+one never checked — that the selector is actually on All Projects — since without it the test
+said nothing about which scope it measured.
+
+Noted while fixing it: the upload modal root is a plain `div` with no `role="dialog"`, so
+`getByRole('dialog')` finds nothing. The probe anchors on the heading instead. Left as an
+accessibility observation, not fixed here.
+
+`probe-uat-journey-sweep` visits ~20 pages in a single test and takes 2.6 minutes; the config's
+per-test default is 60s. It was failing on the harness budget while every page it had reached
+was clean (`PAGES NEEDING INVESTIGATION: []`) — a timeout that reads as a broken deployment.
+Given its own `test.setTimeout(300_000)`.
+
 ## 2026-08-28 — an instantaneous step read as "duration unknown"
 
 `formatDuration(0)` returned `—` — the same marker the UI uses for a *missing*
