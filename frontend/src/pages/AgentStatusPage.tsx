@@ -614,8 +614,8 @@ export default function AgentStatusPage() {
                 ``<suite> · #<build>`` so the user picks by attributes they
                 recognise, not the opaque run UUID. Selecting routes to
                 /agents/<id> so the page state and URL stay in sync. */}
-            <label className="text-xs text-[var(--color-text-muted)]">Test Suite &amp; Build:</label>
-            <select
+            <label htmlFor="agent-field-0" className="text-xs text-[var(--color-text-muted)]">Test Suite &amp; Build:</label>
+            <select id="agent-field-0"
               value={runId ?? ''}
               onChange={(e) => {
                 const id = e.target.value

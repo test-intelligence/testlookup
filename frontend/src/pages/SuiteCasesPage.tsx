@@ -64,8 +64,8 @@ function MoveModal({ canonical, currentSuiteId, candidates, onClose, onMoved }: 
         </p>
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <div>
-            <label className="text-sm text-[var(--color-text-muted)]">Target suite</label>
-            <select
+            <label htmlFor="suitecase-field-0" className="text-sm text-[var(--color-text-muted)]">Target suite</label>
+            <select id="suitecase-field-0"
               value={targetId}
               onChange={(e) => setTargetId(e.target.value)}
               required
@@ -173,8 +173,8 @@ function BulkMoveModal({
         </p>
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <div>
-            <label className="text-sm text-[var(--color-text-muted)]">Target suite</label>
-            <select
+            <label htmlFor="suitecase-field-1" className="text-sm text-[var(--color-text-muted)]">Target suite</label>
+            <select id="suitecase-field-1"
               value={targetId}
               onChange={(e) => setTargetId(e.target.value)}
               required

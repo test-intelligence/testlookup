@@ -129,6 +129,7 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex gap-2">
           <select
+            aria-label="Filter by role"
             value={filterRole}
             onChange={(e) => setFilterRole(e.target.value as UserRole | '')}
             className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-1.5"
@@ -137,6 +138,7 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
             {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
           <select
+            aria-label="Filter by status"
             value={filterActive}
             onChange={(e) => setFilterActive(e.target.value as 'all' | 'active' | 'inactive')}
             className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-1.5"
@@ -200,6 +202,7 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                 <td className="px-4 py-3">
                   {isAdmin ? (
                     <select
+                      aria-label={`Role for ${user.username}`}
                       value={user.role}
                       onChange={(e) => handleRoleChange(user.id, e.target.value as UserRole)}
                       className="bg-[var(--color-bg-hover)] border border-[var(--color-border-light)] text-[var(--color-text)] text-xs rounded px-2 py-1"
@@ -350,8 +353,8 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
         <form onSubmit={handleSave} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Email</label>
-              <input
+              <label htmlFor="user-field-0" className="block text-sm text-[var(--color-text-muted)] mb-1">Email</label>
+              <input id="user-field-0"
                 type="email"
                 required
                 value={email}
@@ -360,8 +363,8 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
               />
             </div>
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Username</label>
-              <input
+              <label htmlFor="user-field-1" className="block text-sm text-[var(--color-text-muted)] mb-1">Username</label>
+              <input id="user-field-1"
                 type="text"
                 required
                 value={username}
@@ -371,8 +374,8 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
             </div>
           </div>
           <div>
-            <label className="block text-sm text-[var(--color-text-muted)] mb-1">Full Name</label>
-            <input
+            <label htmlFor="user-field-2" className="block text-sm text-[var(--color-text-muted)] mb-1">Full Name</label>
+            <input id="user-field-2"
               type="text"
               value={fullName}
               onChange={e => setFullName(e.target.value)}
@@ -382,8 +385,8 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Role</label>
-              <select
+              <label htmlFor="user-field-3" className="block text-sm text-[var(--color-text-muted)] mb-1">Role</label>
+              <select id="user-field-3"
                 value={role}
                 onChange={e => setRole(e.target.value as UserRole)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
@@ -392,8 +395,8 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
               </select>
             </div>
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Status</label>
-              <select
+              <label htmlFor="user-field-4" className="block text-sm text-[var(--color-text-muted)] mb-1">Status</label>
+              <select id="user-field-4"
                 value={isActive ? 'active' : 'inactive'}
                 onChange={e => setIsActive(e.target.value === 'active')}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
@@ -431,6 +434,7 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
             {unassignedProjects.length > 0 && (
               <div className="flex items-center gap-2">
                 <select
+                  aria-label="Project to add"
                   value={assignProjectId}
                   onChange={e => setAssignProjectId(e.target.value)}
                   className="flex-1 bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-xs rounded px-2 py-1.5"
@@ -439,6 +443,7 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
                   {unassignedProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
                 <select
+                  aria-label="Role in project"
                   value={assignRole}
                   onChange={e => setAssignRole(e.target.value as UserRole)}
                   className="bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-xs rounded px-2 py-1.5"
@@ -559,6 +564,7 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
               {unassignedProjects.length > 0 && (
                 <div className="flex items-center gap-2">
                   <select
+                    aria-label="Project to add"
                     value={assignProjectId}
                     onChange={e => setAssignProjectId(e.target.value)}
                     className="flex-1 bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-xs rounded px-2 py-1.5"
@@ -567,6 +573,7 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
                     {unassignedProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                   <select
+                    aria-label="Role in project"
                     value={assignRole}
                     onChange={e => setAssignRole(e.target.value as UserRole)}
                     className="bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-xs rounded px-2 py-1.5"
@@ -606,26 +613,26 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Email address</label>
-              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
+              <label htmlFor="user-field-5" className="block text-sm text-[var(--color-text-muted)] mb-1">Email address</label>
+              <input id="user-field-5" type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
                 placeholder="user@company.com" />
             </div>
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Username</label>
-              <input type="text" required value={username} onChange={(e) => setUsername(e.target.value)}
+              <label htmlFor="user-field-6" className="block text-sm text-[var(--color-text-muted)] mb-1">Username</label>
+              <input id="user-field-6" type="text" required value={username} onChange={(e) => setUsername(e.target.value)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
                 placeholder="jdoe" />
             </div>
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Full name (optional)</label>
-              <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)}
+              <label htmlFor="user-field-7" className="block text-sm text-[var(--color-text-muted)] mb-1">Full name (optional)</label>
+              <input id="user-field-7" type="text" value={fullName} onChange={(e) => setFullName(e.target.value)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
                 placeholder="Jane Doe" />
             </div>
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Role</label>
-              <select value={role} onChange={(e) => setRole(e.target.value as UserRole)}
+              <label htmlFor="user-field-8" className="block text-sm text-[var(--color-text-muted)] mb-1">Role</label>
+              <select id="user-field-8" value={role} onChange={(e) => setRole(e.target.value as UserRole)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]">
                 {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
@@ -699,14 +706,14 @@ function InviteUserModal({ onClose }: { onClose: () => void }) {
         })() : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Email address</label>
-              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
+              <label htmlFor="user-field-9" className="block text-sm text-[var(--color-text-muted)] mb-1">Email address</label>
+              <input id="user-field-9" type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
                 placeholder="user@company.com" />
             </div>
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Role</label>
-              <select value={role} onChange={(e) => setRole(e.target.value as UserRole)}
+              <label htmlFor="user-field-10" className="block text-sm text-[var(--color-text-muted)] mb-1">Role</label>
+              <select id="user-field-10" value={role} onChange={(e) => setRole(e.target.value as UserRole)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]">
                 {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
@@ -853,13 +860,13 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Key name</label>
-              <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. GitHub Actions CI"
+              <label htmlFor="user-field-11" className="block text-sm text-[var(--color-text-muted)] mb-1">Key name</label>
+              <input id="user-field-11" required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. GitHub Actions CI"
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]" />
             </div>
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-2">Scopes (leave empty for full access)</label>
-              <div className="flex flex-wrap gap-2">
+              <span id="apikey-scopes" className="block text-sm text-[var(--color-text-muted)] mb-2">Scopes (leave empty for full access)</span>
+              <div role="group" aria-labelledby="apikey-scopes" className="flex flex-wrap gap-2">
                 {AVAILABLE_SCOPES.map((s) => (
                   <button key={s} type="button" onClick={() => toggleScope(s)}
                     className={`text-xs px-2 py-1 rounded border transition-colors ${scopes.includes(s) ? 'bg-white/10 border-[var(--color-border-light)] text-[var(--color-text-secondary)]' : 'bg-[var(--color-bg-hover)] border-[var(--color-border-light)] text-[var(--color-text-muted)] hover:border-[var(--color-border-light)]'}`}>
@@ -869,8 +876,8 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
               </div>
             </div>
             <div>
-              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Expiry (days, optional)</label>
-              <input type="number" min={1} max={365} value={expiresDays} onChange={(e) => setExpiresDays(e.target.value)} placeholder="Never expires"
+              <label htmlFor="user-field-12" className="block text-sm text-[var(--color-text-muted)] mb-1">Expiry (days, optional)</label>
+              <input id="user-field-12" type="number" min={1} max={365} value={expiresDays} onChange={(e) => setExpiresDays(e.target.value)} placeholder="Never expires"
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]" />
             </div>
             <div className="flex justify-end gap-2 pt-2">

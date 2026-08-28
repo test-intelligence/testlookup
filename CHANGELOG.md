@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-28 — the rest of the unnamed form controls
+
+The settings fix closed 46 controls; the same detection pointed at the rest of the app found
+**78 more across 11 files** — Test Management, the policy and ownership editors, User Management,
+Releases, and the defect and upload modals.
+
+Most were the same shape (label and control as unconnected siblings) and are wired by
+`htmlFor`/`id`. Three were **button groups** labelled by a `<label>` — Severity pickers and the
+API-key scope chips. A `<label>` cannot name a group of buttons, so those became a `<span>` id
+plus `role="group"` + `aria-labelledby` on the container, which is what actually names them.
+
+The larger miss was structural: a label-based scan can only find controls that HAVE a label. It
+reported User Management as 14 sites; the browser found **142 unlabelled controls** on that page
+— the per-row role `<select>`, rendered once per user, with no label element at all. Those now
+carry `aria-label={`Role for ${user.username}`}`, so each row names the user it belongs to
+instead of presenting 140 identical unnamed comboboxes. Static and runtime checks each saw
+something the other could not.
+
+The guard moves from settings-only to the whole of `pages/` and `components/`, strips comments
+first (an earlier version flagged its own doc comment), and gains a second assertion: every
+`htmlFor` and `aria-labelledby` must resolve to **exactly one** id. That one earned itself —
+the automated pass produced a label pointing at the wrong control (a trailing checkbox label
+claimed the number input below it), which is worse than no label at all.
+
+Measured after, in the browser: **202 controls, 0 unlabelled, no page errors.**
+
 ## 2026-08-28 — 46 settings fields a screen reader could not name
 
 Exploratory testing tried to fill the SMTP form by its label and found nothing:

@@ -744,10 +744,10 @@ function TriageStatusModal({
           ))}
         </div>
 
-        <label className="block text-[11px] text-[var(--color-text-muted)] mb-1">
+        <label htmlFor="myfail-field-0" className="block text-[11px] text-[var(--color-text-muted)] mb-1">
           Notes <span className="text-[var(--color-text-faint)]">(optional — defect link, rationale)</span>
         </label>
-        <textarea
+        <textarea id="myfail-field-0"
           value={notes}
           onChange={e => setNotes(e.target.value.slice(0, 2000))}
           rows={3}

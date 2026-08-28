@@ -182,21 +182,21 @@ function CreateCaseModal({ projectId, onClose, onCreated }: CreateCaseModalProps
     <ModalWrap onClose={onClose} title="New Test Case" width="max-w-3xl">
       <div className="space-y-4">
         <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">Title *</label>
-          <input className="input w-full" value={title} onChange={e => setTitle(e.target.value)} placeholder="Describe what this test verifies" />
+          <label htmlFor="tm-field-0" className="block text-xs text-[var(--color-text-muted)] mb-1">Title *</label>
+          <input id="tm-field-0" className="input w-full" value={title} onChange={e => setTitle(e.target.value)} placeholder="Describe what this test verifies" />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Test Type</label>
-            <select className="input w-full" value={testType} onChange={e => setTestType(e.target.value)}>
+            <label htmlFor="tm-field-1" className="block text-xs text-[var(--color-text-muted)] mb-1">Test Type</label>
+            <select id="tm-field-1" className="input w-full" value={testType} onChange={e => setTestType(e.target.value)}>
               {['functional','integration','e2e','regression','smoke','performance','security','usability','accessibility','api'].map(t => (
                 <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Priority</label>
-            <select className="input w-full" value={priority} onChange={e => setPriority(e.target.value)}>
+            <label htmlFor="tm-field-2" className="block text-xs text-[var(--color-text-muted)] mb-1">Priority</label>
+            <select id="tm-field-2" className="input w-full" value={priority} onChange={e => setPriority(e.target.value)}>
               {['critical','high','medium','low'].map(p => (
                 <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
               ))}
@@ -204,8 +204,8 @@ function CreateCaseModal({ projectId, onClose, onCreated }: CreateCaseModalProps
           </div>
         </div>
         <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">Assignee (optional)</label>
-          <select className="input w-full" value={assigneeId} onChange={e => setAssigneeId(e.target.value)}>
+          <label htmlFor="tm-field-3" className="block text-xs text-[var(--color-text-muted)] mb-1">Assignee (optional)</label>
+          <select id="tm-field-3" className="input w-full" value={assigneeId} onChange={e => setAssigneeId(e.target.value)}>
             <option value="">Unassigned</option>
             {(users as UserSummary[]).map((u) => (
               <option key={u.id} value={u.id}>
@@ -216,21 +216,21 @@ function CreateCaseModal({ projectId, onClose, onCreated }: CreateCaseModalProps
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Feature Area</label>
-            <input className="input w-full" value={featureArea} onChange={e => setFeatureArea(e.target.value)} placeholder="e.g. Authentication, Checkout" />
+            <label htmlFor="tm-field-4" className="block text-xs text-[var(--color-text-muted)] mb-1">Feature Area</label>
+            <input id="tm-field-4" className="input w-full" value={featureArea} onChange={e => setFeatureArea(e.target.value)} placeholder="e.g. Authentication, Checkout" />
           </div>
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Suite Name</label>
-            <input className="input w-full" value={suiteName} onChange={e => setSuiteName(e.target.value)} placeholder="e.g. LoginSuite, CheckoutTests" />
+            <label htmlFor="tm-field-5" className="block text-xs text-[var(--color-text-muted)] mb-1">Suite Name</label>
+            <input id="tm-field-5" className="input w-full" value={suiteName} onChange={e => setSuiteName(e.target.value)} placeholder="e.g. LoginSuite, CheckoutTests" />
           </div>
         </div>
         <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">Objective</label>
-          <textarea className="input w-full h-16 resize-none" value={objective} onChange={e => setObjective(e.target.value)} placeholder="What is the goal of this test?" />
+          <label htmlFor="tm-field-6" className="block text-xs text-[var(--color-text-muted)] mb-1">Objective</label>
+          <textarea id="tm-field-6" className="input w-full h-16 resize-none" value={objective} onChange={e => setObjective(e.target.value)} placeholder="What is the goal of this test?" />
         </div>
         <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">Preconditions</label>
-          <textarea className="input w-full h-16 resize-none" value={preconditions} onChange={e => setPreconditions(e.target.value)} placeholder="Required state before executing" />
+          <label htmlFor="tm-field-7" className="block text-xs text-[var(--color-text-muted)] mb-1">Preconditions</label>
+          <textarea id="tm-field-7" className="input w-full h-16 resize-none" value={preconditions} onChange={e => setPreconditions(e.target.value)} placeholder="Required state before executing" />
         </div>
 
         {/* Steps editor */}
@@ -270,17 +270,17 @@ function CreateCaseModal({ projectId, onClose, onCreated }: CreateCaseModalProps
         </div>
 
         <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">Overall Expected Result</label>
-          <textarea className="input w-full h-16 resize-none" value={expectedResult} onChange={e => setExpectedResult(e.target.value)} placeholder="Overall expected outcome" />
+          <label htmlFor="tm-field-8" className="block text-xs text-[var(--color-text-muted)] mb-1">Overall Expected Result</label>
+          <textarea id="tm-field-8" className="input w-full h-16 resize-none" value={expectedResult} onChange={e => setExpectedResult(e.target.value)} placeholder="Overall expected outcome" />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Test Data</label>
-            <textarea className="input w-full h-16 resize-none" value={testData} onChange={e => setTestData(e.target.value)} placeholder="Test data or data setup notes" />
+            <label htmlFor="tm-field-9" className="block text-xs text-[var(--color-text-muted)] mb-1">Test Data</label>
+            <textarea id="tm-field-9" className="input w-full h-16 resize-none" value={testData} onChange={e => setTestData(e.target.value)} placeholder="Test data or data setup notes" />
           </div>
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Estimated Duration (min)</label>
-            <input className="input w-full" type="number" min="1" step="1" value={estimatedDuration} onChange={e => setEstimatedDuration(e.target.value)} placeholder="e.g. 5" />
+            <label htmlFor="tm-field-10" className="block text-xs text-[var(--color-text-muted)] mb-1">Estimated Duration (min)</label>
+            <input id="tm-field-10" className="input w-full" type="number" min="1" step="1" value={estimatedDuration} onChange={e => setEstimatedDuration(e.target.value)} placeholder="e.g. 5" />
           </div>
         </div>
 
@@ -792,25 +792,25 @@ function CreatePlanModal({ projectId, onClose, onCreated }: CreatePlanModalProps
     <ModalWrap onClose={onClose} title="New Test Plan">
       <div className="space-y-4">
         <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">Plan Name *</label>
-          <input className="input w-full" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Sprint 42 Regression" />
+          <label htmlFor="tm-field-11" className="block text-xs text-[var(--color-text-muted)] mb-1">Plan Name *</label>
+          <input id="tm-field-11" className="input w-full" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Sprint 42 Regression" />
         </div>
         <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">Description</label>
-          <textarea className="input w-full h-20 resize-none" value={description} onChange={e => setDescription(e.target.value)} placeholder="What does this plan cover?" />
+          <label htmlFor="tm-field-12" className="block text-xs text-[var(--color-text-muted)] mb-1">Description</label>
+          <textarea id="tm-field-12" className="input w-full h-20 resize-none" value={description} onChange={e => setDescription(e.target.value)} placeholder="What does this plan cover?" />
         </div>
         <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">Objective</label>
-          <textarea className="input w-full h-16 resize-none" value={objective} onChange={e => setObjective(e.target.value)} placeholder="Goals for this test plan" />
+          <label htmlFor="tm-field-13" className="block text-xs text-[var(--color-text-muted)] mb-1">Objective</label>
+          <textarea id="tm-field-13" className="input w-full h-16 resize-none" value={objective} onChange={e => setObjective(e.target.value)} placeholder="Goals for this test plan" />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Planned Start</label>
-            <input type="date" className="input w-full" value={startDate} onChange={e => setStartDate(e.target.value)} />
+            <label htmlFor="tm-field-14" className="block text-xs text-[var(--color-text-muted)] mb-1">Planned Start</label>
+            <input id="tm-field-14" type="date" className="input w-full" value={startDate} onChange={e => setStartDate(e.target.value)} />
           </div>
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Planned End</label>
-            <input type="date" className="input w-full" value={endDate} onChange={e => setEndDate(e.target.value)} />
+            <label htmlFor="tm-field-15" className="block text-xs text-[var(--color-text-muted)] mb-1">Planned End</label>
+            <input id="tm-field-15" type="date" className="input w-full" value={endDate} onChange={e => setEndDate(e.target.value)} />
           </div>
         </div>
         <div className="flex justify-end gap-3 pt-2 border-t border-[var(--color-border)]">
@@ -858,12 +858,12 @@ function GenerateStrategyModal({ projectId, onClose }: GenerateStrategyModalProp
     <ModalWrap onClose={onClose} title="Generate Test Strategy with AI">
       <div className="space-y-4">
         <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">Strategy Name (optional)</label>
-          <input className="input w-full" value={strategyName} onChange={e => setStrategyName(e.target.value)} placeholder="e.g. v2.0 Release Strategy" />
+          <label htmlFor="tm-field-16" className="block text-xs text-[var(--color-text-muted)] mb-1">Strategy Name (optional)</label>
+          <input id="tm-field-16" className="input w-full" value={strategyName} onChange={e => setStrategyName(e.target.value)} placeholder="e.g. v2.0 Release Strategy" />
         </div>
         <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">Project Context *</label>
-          <textarea
+          <label htmlFor="tm-field-17" className="block text-xs text-[var(--color-text-muted)] mb-1">Project Context *</label>
+          <textarea id="tm-field-17"
             className="input w-full h-40 resize-none"
             value={context}
             onChange={e => setContext(e.target.value)}
@@ -3765,10 +3765,10 @@ function AddTestSuiteModal({
         </p>
         <div className="space-y-3">
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+            <label htmlFor="tm-field-18" className="block text-xs text-[var(--color-text-muted)] mb-1">
               Suite name <span className="text-[var(--status-failed)]">*</span>
             </label>
-            <input
+            <input id="tm-field-18"
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
@@ -3785,8 +3785,8 @@ function AddTestSuiteModal({
           </div>
 
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Description</label>
-            <textarea
+            <label htmlFor="tm-field-19" className="block text-xs text-[var(--color-text-muted)] mb-1">Description</label>
+            <textarea id="tm-field-19"
               value={description}
               onChange={e => setDescription(e.target.value)}
               placeholder="Optional. What does this suite cover?"
@@ -3797,13 +3797,14 @@ function AddTestSuiteModal({
           </div>
 
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Owner</label>
+            <label htmlFor="tm-suite-owner" className="block text-xs text-[var(--color-text-muted)] mb-1">Owner</label>
             {ownerCandidates.length === 0 ? (
               <p className="text-[11px] text-[var(--status-broken)] bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)] rounded px-2 py-1.5">
                 No project members have the QA_LEAD role yet. Leave unset to inherit the project's default QA lead, or add a QA_LEAD member first.
               </p>
             ) : (
               <select
+                id="tm-suite-owner"
                 value={ownerUserId}
                 onChange={e => setOwnerUserId(e.target.value)}
                 className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
@@ -3819,10 +3820,10 @@ function AddTestSuiteModal({
           </div>
 
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+            <label htmlFor="tm-field-20" className="block text-xs text-[var(--color-text-muted)] mb-1">
               Tags <span className="text-[var(--color-text-faint)]">(comma-separated)</span>
             </label>
-            <input
+            <input id="tm-field-20"
               type="text"
               value={tagsText}
               onChange={e => setTagsText(e.target.value)}

@@ -222,39 +222,39 @@ export default function OwnershipEditorPage() {
         <form onSubmit={handleCreate} className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs text-[var(--color-text-muted)]">Match Type *</label>
-              <select value={matchType} onChange={e => setMatchType(e.target.value)}
+              <label htmlFor="owner-field-0" className="text-xs text-[var(--color-text-muted)]">Match Type *</label>
+              <select id="owner-field-0" value={matchType} onChange={e => setMatchType(e.target.value)}
                 className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
                 {MATCH_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-xs text-[var(--color-text-muted)]">Match Pattern * <span className="text-[var(--color-text-muted)]">(glob supported)</span></label>
-              <input value={matchPattern} onChange={e => setMatchPattern(e.target.value)}
+              <label htmlFor="owner-field-1" className="text-xs text-[var(--color-text-muted)]">Match Pattern * <span className="text-[var(--color-text-muted)]">(glob supported)</span></label>
+              <input id="owner-field-1" value={matchPattern} onChange={e => setMatchPattern(e.target.value)}
                 placeholder="e.g., auth-* or com.app.payments.*"
                 className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" required />
             </div>
             <div>
-              <label className="text-xs text-[var(--color-text-muted)]">Service Name *</label>
-              <input value={serviceName} onChange={e => setServiceName(e.target.value)}
+              <label htmlFor="owner-field-2" className="text-xs text-[var(--color-text-muted)]">Service Name *</label>
+              <input id="owner-field-2" value={serviceName} onChange={e => setServiceName(e.target.value)}
                 placeholder="e.g., auth-service"
                 className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" required />
             </div>
             <div>
-              <label className="text-xs text-[var(--color-text-muted)]">Team Name *</label>
-              <input value={teamName} onChange={e => setTeamName(e.target.value)}
+              <label htmlFor="owner-field-3" className="text-xs text-[var(--color-text-muted)]">Team Name *</label>
+              <input id="owner-field-3" value={teamName} onChange={e => setTeamName(e.target.value)}
                 placeholder="e.g., Identity Team"
                 className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" required />
             </div>
             <div>
-              <label className="text-xs text-[var(--color-text-muted)]">Team Contact</label>
-              <input value={teamContact} onChange={e => setTeamContact(e.target.value)}
+              <label htmlFor="owner-field-4" className="text-xs text-[var(--color-text-muted)]">Team Contact</label>
+              <input id="owner-field-4" value={teamContact} onChange={e => setTeamContact(e.target.value)}
                 placeholder="e.g., #identity-team or team@example.com"
                 className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" />
             </div>
             <div>
-              <label className="text-xs text-[var(--color-text-muted)]">Priority <span className="text-[var(--color-text-muted)]">(higher = first)</span></label>
-              <input type="number" min="0" max="1000" value={priority} onChange={e => setPriority(parseInt(e.target.value) || 0)}
+              <label htmlFor="owner-field-5" className="text-xs text-[var(--color-text-muted)]">Priority <span className="text-[var(--color-text-muted)]">(higher = first)</span></label>
+              <input id="owner-field-5" type="number" min="0" max="1000" value={priority} onChange={e => setPriority(parseInt(e.target.value) || 0)}
                 className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" />
             </div>
           </div>

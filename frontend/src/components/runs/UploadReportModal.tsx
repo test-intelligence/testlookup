@@ -389,10 +389,10 @@ export default function UploadReportModal({
                   the user back to the header selector. */}
               {needsProjectChoice && (
                 <div>
-                  <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+                  <label htmlFor="upload-field-0" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
                     Project <span className="text-[var(--status-failed)]">*</span>
                   </label>
-                  <select
+                  <select id="upload-field-0"
                     value={chosenProjectId}
                     disabled={busy}
                     onChange={(e) => setChosenProjectId(e.target.value)}
@@ -413,8 +413,8 @@ export default function UploadReportModal({
 
               {/* Format */}
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">Format</label>
-                <select
+                <label htmlFor="upload-field-1" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">Format</label>
+                <select id="upload-field-1"
                   value={format}
                   disabled={busy}
                   onChange={(e) => setFormat(e.target.value as ReportFormat)}
@@ -563,8 +563,8 @@ function Field({
 }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">{label}</label>
-      <input
+      <label htmlFor="upload-field-2" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">{label}</label>
+      <input id="upload-field-2"
         type="text"
         value={value}
         placeholder={placeholder}

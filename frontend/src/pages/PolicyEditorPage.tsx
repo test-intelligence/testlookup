@@ -332,8 +332,8 @@ export default function PolicyEditorPage() {
             ['pass_rate_hard_floor_factor', 'Hard Floor Factor', 'Factor × min pass rate → force NO_GO'],
           ] as const).map(([key, label, hint]) => (
             <div key={key}>
-              <label className="text-xs text-[var(--color-text-muted)]">{label}</label>
-              <input type="number" step="0.1"
+              <label htmlFor="policy-field-0" className="text-xs text-[var(--color-text-muted)]">{label}</label>
+              <input id="policy-field-0" type="number" step="0.1"
                 value={doc.thresholds[key as keyof typeof doc.thresholds]}
                 onChange={e => setDoc(d => ({ ...d, thresholds: { ...d.thresholds, [key]: parseFloat(e.target.value) || 0 } }))}
                 className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" disabled={!isDraft} />
@@ -368,8 +368,8 @@ export default function PolicyEditorPage() {
             ['green_min',  'Green ≥ (%)',  'Range [yellow, green) → yellow; ≥ this → green'],
           ] as const).map(([key, label, hint]) => (
             <div key={key}>
-              <label className="text-xs text-[var(--color-text-muted)]">{label}</label>
-              <input type="number" step="0.1" min={0} max={100}
+              <label htmlFor="policy-field-1" className="text-xs text-[var(--color-text-muted)]">{label}</label>
+              <input id="policy-field-1" type="number" step="0.1" min={0} max={100}
                 value={(doc.pass_rate_bands ?? DEFAULT_PASS_RATE_BANDS)[key]}
                 onChange={e => setDoc(d => ({
                   ...d,
@@ -400,8 +400,8 @@ export default function PolicyEditorPage() {
             ['max_new_failures_24h', 'Max new failures (24h)', 'Failures created in the last 24h'],
           ] as const).map(([key, label, hint]) => (
             <div key={key}>
-              <label className="text-xs text-[var(--color-text-muted)]">{label}</label>
-              <input type="number" step="1" min={0}
+              <label htmlFor="policy-field-2" className="text-xs text-[var(--color-text-muted)]">{label}</label>
+              <input id="policy-field-2" type="number" step="1" min={0}
                 value={(doc.hard_caps ?? DEFAULT_HARD_CAPS)[key]}
                 onChange={e => setDoc(d => ({
                   ...d,
@@ -466,14 +466,14 @@ export default function PolicyEditorPage() {
                   {budget != null && (
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-[10px] text-[var(--color-text-muted)]">Max failures excused</label>
-                        <input type="number" step="1" min={0} value={budget.max_failures}
+                        <label htmlFor="policy-field-3" className="text-[10px] text-[var(--color-text-muted)]">Max failures excused</label>
+                        <input id="policy-field-3" type="number" step="1" min={0} value={budget.max_failures}
                           onChange={e => setBudget({ ...budget, max_failures: Math.max(0, parseInt(e.target.value, 10) || 0) })}
                           className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft} />
                       </div>
                       <div>
-                        <label className="text-[10px] text-[var(--color-text-muted)]">Downgrade NO-GO to</label>
-                        <select value={budget.downgrade_to}
+                        <label htmlFor="policy-field-4" className="text-[10px] text-[var(--color-text-muted)]">Downgrade NO-GO to</label>
+                        <select id="policy-field-4" value={budget.downgrade_to}
                           onChange={() => setBudget({ ...budget, downgrade_to: 'CONDITIONAL_GO' })}
                           className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft}>
                           <option value="CONDITIONAL_GO">CONDITIONAL_GO</option>
@@ -524,8 +524,8 @@ export default function PolicyEditorPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {DIMENSIONS.map(({ key, label }) => (
             <div key={key}>
-              <label className="text-xs text-[var(--color-text-muted)]">{label}</label>
-              <input type="number" step="0.01" min="0" max="1"
+              <label htmlFor="policy-field-5" className="text-xs text-[var(--color-text-muted)]">{label}</label>
+              <input id="policy-field-5" type="number" step="0.01" min="0" max="1"
                 value={doc.dimension_weights[key as keyof typeof doc.dimension_weights]}
                 onChange={e => setDoc(d => ({
                   ...d, dimension_weights: { ...d.dimension_weights, [key]: parseFloat(e.target.value) || 0 },
@@ -569,14 +569,14 @@ export default function PolicyEditorPage() {
               {rule.type === 'flaky_recurrence' && (
                 <>
                   <div>
-                    <label className="text-[10px] text-[var(--color-text-muted)]">Max Flaky Tests</label>
-                    <input type="number" value={rule.params.max_flaky_tests as number ?? 10}
+                    <label htmlFor="policy-field-6" className="text-[10px] text-[var(--color-text-muted)]">Max Flaky Tests</label>
+                    <input id="policy-field-6" type="number" value={rule.params.max_flaky_tests as number ?? 10}
                       onChange={e => updateRuleParam(idx, 'max_flaky_tests', parseInt(e.target.value) || 0)}
                       className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft} />
                   </div>
                   <div>
-                    <label className="text-[10px] text-[var(--color-text-muted)]">Action</label>
-                    <select value={rule.params.action as string ?? 'BLOCK'}
+                    <label htmlFor="policy-field-7" className="text-[10px] text-[var(--color-text-muted)]">Action</label>
+                    <select id="policy-field-7" value={rule.params.action as string ?? 'BLOCK'}
                       onChange={e => updateRuleParam(idx, 'action', e.target.value)}
                       className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft}>
                       <option value="BLOCK">BLOCK</option>
@@ -589,14 +589,14 @@ export default function PolicyEditorPage() {
               {rule.type === 'open_defect_limit' && (
                 <>
                   <div>
-                    <label className="text-[10px] text-[var(--color-text-muted)]">Max Open Defects</label>
-                    <input type="number" value={rule.params.max_open_defects as number ?? 5}
+                    <label htmlFor="policy-field-8" className="text-[10px] text-[var(--color-text-muted)]">Max Open Defects</label>
+                    <input id="policy-field-8" type="number" value={rule.params.max_open_defects as number ?? 5}
                       onChange={e => updateRuleParam(idx, 'max_open_defects', parseInt(e.target.value) || 0)}
                       className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft} />
                   </div>
                   <div>
-                    <label className="text-[10px] text-[var(--color-text-muted)]">Action</label>
-                    <select value={rule.params.action as string ?? 'BLOCK'}
+                    <label htmlFor="policy-field-9" className="text-[10px] text-[var(--color-text-muted)]">Action</label>
+                    <select id="policy-field-9" value={rule.params.action as string ?? 'BLOCK'}
                       onChange={e => updateRuleParam(idx, 'action', e.target.value)}
                       className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft}>
                       <option value="BLOCK">BLOCK</option>
@@ -609,22 +609,22 @@ export default function PolicyEditorPage() {
               {rule.type === 'dimension_ceiling' && (
                 <>
                   <div>
-                    <label className="text-[10px] text-[var(--color-text-muted)]">Dimension</label>
-                    <select value={rule.params.dimension as string ?? 'regression_likely'}
+                    <label htmlFor="policy-field-10" className="text-[10px] text-[var(--color-text-muted)]">Dimension</label>
+                    <select id="policy-field-10" value={rule.params.dimension as string ?? 'regression_likely'}
                       onChange={e => updateRuleParam(idx, 'dimension', e.target.value)}
                       className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft}>
                       {DIMENSIONS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] text-[var(--color-text-muted)]">Max Score</label>
-                    <input type="number" value={rule.params.max_score as number ?? 70}
+                    <label htmlFor="policy-field-11" className="text-[10px] text-[var(--color-text-muted)]">Max Score</label>
+                    <input id="policy-field-11" type="number" value={rule.params.max_score as number ?? 70}
                       onChange={e => updateRuleParam(idx, 'max_score', parseFloat(e.target.value) || 0)}
                       className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft} />
                   </div>
                   <div>
-                    <label className="text-[10px] text-[var(--color-text-muted)]">Action</label>
-                    <select value={rule.params.action as string ?? 'BLOCK'}
+                    <label htmlFor="policy-field-12" className="text-[10px] text-[var(--color-text-muted)]">Action</label>
+                    <select id="policy-field-12" value={rule.params.action as string ?? 'BLOCK'}
                       onChange={e => updateRuleParam(idx, 'action', e.target.value)}
                       className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft}>
                       <option value="BLOCK">BLOCK</option>
@@ -636,13 +636,13 @@ export default function PolicyEditorPage() {
               {rule.type === 'override_rules' && (
                 <>
                   <div className="flex items-center gap-2">
-                    <input type="checkbox" checked={rule.params.allow_override_to_go_from_no_go as boolean ?? true}
+                    <input id="policy-allow-override" type="checkbox" checked={rule.params.allow_override_to_go_from_no_go as boolean ?? true}
                       onChange={e => updateRuleParam(idx, 'allow_override_to_go_from_no_go', e.target.checked)} disabled={!isDraft} />
-                    <label className="text-[10px] text-[var(--color-text-muted)]">Allow NO_GO → GO override</label>
+                    <label htmlFor="policy-allow-override" className="text-[10px] text-[var(--color-text-muted)]">Allow NO_GO → GO override</label>
                   </div>
                   <div>
-                    <label className="text-[10px] text-[var(--color-text-muted)]">Min Reason Length</label>
-                    <input type="number" value={rule.params.require_reason_min_length as number ?? 0}
+                    <label htmlFor="policy-min-reason-length" className="text-[10px] text-[var(--color-text-muted)]">Min Reason Length</label>
+                    <input id="policy-min-reason-length" type="number" value={rule.params.require_reason_min_length as number ?? 0}
                       onChange={e => updateRuleParam(idx, 'require_reason_min_length', parseInt(e.target.value) || 0)}
                       className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft} />
                   </div>

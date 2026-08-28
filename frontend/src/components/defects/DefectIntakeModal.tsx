@@ -148,10 +148,10 @@ export default function DefectIntakeModal({
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+            <span id="defect-intake-severity" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
               Severity
-            </label>
-            <div className="grid grid-cols-4 gap-2">
+            </span>
+            <div role="group" aria-labelledby="defect-intake-severity" className="grid grid-cols-4 gap-2">
               {SEVERITIES.map((s) => (
                 <button
                   key={s.id}

@@ -146,8 +146,8 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <label className="text-sm text-[var(--color-text-muted)] whitespace-nowrap">Select Project:</label>
-        <select
+        <label htmlFor="member-field-0" className="text-sm text-[var(--color-text-muted)] whitespace-nowrap">Select Project:</label>
+        <select id="member-field-0"
           value={selectedProjectId}
           onChange={e => setSelectedProjectId(e.target.value)}
           className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)] flex-1 max-w-xs"
@@ -389,8 +389,8 @@ function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoadin
             )}
           </div>
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Project Role</label>
-            <select
+            <label htmlFor="member-field-1" className="block text-xs text-[var(--color-text-muted)] mb-1">Project Role</label>
+            <select id="member-field-1"
               value={role}
               onChange={e => setRole(e.target.value as UserRole)}
               className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border)]"

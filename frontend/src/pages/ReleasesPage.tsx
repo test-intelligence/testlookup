@@ -111,8 +111,8 @@ function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProp
         </div>
         <div className="space-y-3">
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Release Name *</label>
-            <input
+            <label htmlFor="release-field-0" className="block text-xs text-[var(--color-text-muted)] mb-1">Release Name *</label>
+            <input id="release-field-0"
               value={name} onChange={e => setName(e.target.value)}
               placeholder="e.g. v2.4.0 — Login Revamp"
               className="input w-full"
@@ -120,12 +120,12 @@ function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProp
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Version</label>
-              <input value={version} onChange={e => setVersion(e.target.value)} placeholder="e.g. 2.4.0" className="input w-full" />
+              <label htmlFor="release-field-1" className="block text-xs text-[var(--color-text-muted)] mb-1">Version</label>
+              <input id="release-field-1" value={version} onChange={e => setVersion(e.target.value)} placeholder="e.g. 2.4.0" className="input w-full" />
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Status</label>
-              <select value={status} onChange={e => setStatus(e.target.value)} className="input w-full">
+              <label htmlFor="release-field-2" className="block text-xs text-[var(--color-text-muted)] mb-1">Status</label>
+              <select id="release-field-2" value={status} onChange={e => setStatus(e.target.value)} className="input w-full">
                 <option value="planning">Planning</option>
                 <option value="in_progress">In Progress</option>
                 <option value="released">Released</option>
@@ -134,12 +134,12 @@ function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProp
             </div>
           </div>
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Planned Release Date</label>
-            <input type="date" value={plannedDate} onChange={e => setPlanned(e.target.value)} className="input w-full" />
+            <label htmlFor="release-field-3" className="block text-xs text-[var(--color-text-muted)] mb-1">Planned Release Date</label>
+            <input id="release-field-3" type="date" value={plannedDate} onChange={e => setPlanned(e.target.value)} className="input w-full" />
           </div>
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Description</label>
-            <textarea
+            <label htmlFor="release-field-4" className="block text-xs text-[var(--color-text-muted)] mb-1">Description</label>
+            <textarea id="release-field-4"
               value={description} onChange={e => setDescription(e.target.value)}
               rows={3}
               placeholder="What's included in this release?"
@@ -200,8 +200,8 @@ function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
         </div>
         <div className="space-y-3">
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Test Run</label>
-            <select value={selectedRun} onChange={e => setSelectedRun(e.target.value)} className="input w-full">
+            <label htmlFor="release-field-5" className="block text-xs text-[var(--color-text-muted)] mb-1">Test Run</label>
+            <select id="release-field-5" value={selectedRun} onChange={e => setSelectedRun(e.target.value)} className="input w-full">
               <option value="">— Select run —</option>
               {(runs as Array<{ id: string; build_number?: number; created_at: string }>).map(r => (
                 <option key={r.id} value={r.id}>
@@ -212,8 +212,8 @@ function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
           </div>
           {phases.length > 0 && (
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Phase (optional)</label>
-              <select value={selectedPhase} onChange={e => setSelectedPhase(e.target.value)} className="input w-full">
+              <label htmlFor="release-field-6" className="block text-xs text-[var(--color-text-muted)] mb-1">Phase (optional)</label>
+              <select id="release-field-6" value={selectedPhase} onChange={e => setSelectedPhase(e.target.value)} className="input w-full">
                 <option value="">— No phase —</option>
                 {phases.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
@@ -291,8 +291,8 @@ function AddPhaseRow({ releaseId, existingPhaseNames, onSaved }: {
     <div className="space-y-2 p-3 bg-[var(--color-bg-hover)]/50 rounded-lg border border-[var(--color-border)]">
       <div className="grid grid-cols-[1fr_auto] gap-2">
         <div>
-          <label className="block text-[10px] text-[var(--color-text-muted)] mb-1">Phase Name</label>
-          <input
+          <label htmlFor="release-field-7" className="block text-[10px] text-[var(--color-text-muted)] mb-1">Phase Name</label>
+          <input id="release-field-7"
             value={name}
             onChange={e => setName(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -302,8 +302,8 @@ function AddPhaseRow({ releaseId, existingPhaseNames, onSaved }: {
           />
         </div>
         <div>
-          <label className="block text-[10px] text-[var(--color-text-muted)] mb-1">Type</label>
-          <select
+          <label htmlFor="release-field-8" className="block text-[10px] text-[var(--color-text-muted)] mb-1">Type</label>
+          <select id="release-field-8"
             value={type}
             onChange={e => setType(e.target.value)}
             className="bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"

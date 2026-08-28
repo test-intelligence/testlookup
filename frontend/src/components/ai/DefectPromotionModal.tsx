@@ -221,10 +221,10 @@ export default function DefectPromotionModal({
 
               {/* Title */}
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+                <label htmlFor="defect-field-0" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
                   Title <span className="text-[var(--status-failed)]">*</span>
                 </label>
-                <input
+                <input id="defect-field-0"
                   type="text"
                   value={title}
                   onChange={e => setTitle(e.target.value)}
@@ -236,10 +236,10 @@ export default function DefectPromotionModal({
 
               {/* Severity */}
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+                <span id="defect-promotion-severity" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
                   Severity
-                </label>
-                <div className="flex gap-2 flex-wrap">
+                </span>
+                <div role="group" aria-labelledby="defect-promotion-severity" className="flex gap-2 flex-wrap">
                   {SEVERITY_OPTIONS.map(opt => (
                     <button
                       key={opt}
@@ -261,10 +261,10 @@ export default function DefectPromotionModal({
               {/* Component + Owner Team */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+                  <label htmlFor="defect-field-1" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
                     Component
                   </label>
-                  <input
+                  <input id="defect-field-1"
                     type="text"
                     value={component}
                     onChange={e => setComponent(e.target.value)}
@@ -273,10 +273,10 @@ export default function DefectPromotionModal({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+                  <label htmlFor="defect-field-2" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
                     Owner Team
                   </label>
-                  <input
+                  <input id="defect-field-2"
                     type="text"
                     value={ownerTeam}
                     onChange={e => setOwnerTeam(e.target.value)}
@@ -288,11 +288,11 @@ export default function DefectPromotionModal({
 
               {/* Labels */}
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+                <label htmlFor="defect-field-3" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
                   Labels{' '}
                   <span className="text-[var(--color-text-faint)] font-normal">(comma-separated)</span>
                 </label>
-                <input
+                <input id="defect-field-3"
                   type="text"
                   value={labelsInput}
                   onChange={e => setLabelsInput(e.target.value)}
@@ -303,10 +303,10 @@ export default function DefectPromotionModal({
 
               {/* Description */}
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+                <label htmlFor="defect-field-4" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
                   Description
                 </label>
-                <textarea
+                <textarea id="defect-field-4"
                   value={description}
                   onChange={e => setDescription(e.target.value)}
                   rows={4}
@@ -317,11 +317,11 @@ export default function DefectPromotionModal({
 
               {/* Jira project key (optional) */}
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+                <label htmlFor="defect-field-5" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
                   Jira Project Key{' '}
                   <span className="text-[var(--color-text-faint)] font-normal">(optional — leave blank for local draft)</span>
                 </label>
-                <input
+                <input id="defect-field-5"
                   type="text"
                   value={projectKey}
                   onChange={e => setProjectKey(e.target.value.toUpperCase())}
