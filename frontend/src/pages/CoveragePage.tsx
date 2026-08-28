@@ -598,7 +598,7 @@ function verdictAction(v: Verdict, model: ReturnType<typeof computeHealthModel>)
   if (v === 'PENDING') return 'awaiting executions'
   const failing = model.dimensions.filter(d => d.tone === 'bad').length
   if (v === 'BLOCKED') return failing > 0 ? `${failing} dimension${failing === 1 ? '' : 's'} below threshold` : 'critical issues blocking'
-  return failing > 0 ? `${failing} dimension${failing === 1 ? '' : 's'} need attention` : 'review the issues below'
+  return failing > 0 ? `${failing} dimension${failing === 1 ? '' : 's'} ${failing === 1 ? 'needs' : 'need'} attention` : 'review the issues below'
 }
 
 // ── Coverage comparison strip ─────────────────────────────────────────────

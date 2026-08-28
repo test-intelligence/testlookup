@@ -408,7 +408,7 @@ const VERDICT_STYLE: Record<VerdictState, {
     eyebrow:'var(--status-broken)',
     headlineWord: 'var(--status-broken)',
     headline: (c) => `${c.flaky || c.broken} ${c.flaky ? 'flaky' : 'broken'} signal${(c.flaky || c.broken) === 1 ? '' : 's'} to watch.`,
-    lede: (c, r) => `${c.total} run${c.total === 1 ? '' : 's'} ${r.toLowerCase()}. No outright failures — but ${c.flaky} flaky and ${c.broken} broken runs warrant a glance.`,
+    lede: (c, r) => `${c.total} run${c.total === 1 ? '' : 's'} ${r.toLowerCase()}. No outright failures — but ${c.flaky} flaky and ${c.broken} broken run${c.broken === 1 ? '' : 's'} warrant a glance.`,
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-glow), transparent 55%)',
   },
   'at-risk': {
@@ -417,7 +417,7 @@ const VERDICT_STYLE: Record<VerdictState, {
     pulse:  'var(--status-failed)',
     eyebrow:'var(--status-failed)',
     headlineWord: 'var(--status-failed)',
-    headline: (c) => `${c.failed} failing run${c.failed === 1 ? '' : 's'} need investigation.`,
+    headline: (c) => `${c.failed} failing run${c.failed === 1 ? '' : 's'} ${c.failed === 1 ? 'needs' : 'need'} investigation.`,
     lede: (c, r) => `${c.total} run${c.total === 1 ? '' : 's'} ${r.toLowerCase()}. ${c.failed} failed, ${c.flaky} flaky. Open the topmost failure to start triage.`,
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--alert-bg-soft), transparent 55%)',
   },

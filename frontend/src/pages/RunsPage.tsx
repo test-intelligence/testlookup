@@ -1453,7 +1453,8 @@ function LastGreenCallout({ model, onBisect }: { model: PipelineModel; onBisect:
       <p className="text-[12.5px] m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
         The last green Jenkins run is <code className="font-mono text-[11.5px]">#{model.lastGreen.build_number}</code>{' '}
         at SHA <code className="font-mono text-[11.5px]">{sha}</code>, {hours} hour{hours === 1 ? '' : 's'} ago.
-        {' '}{model.failedRuns} build{model.failedRuns === 1 ? '' : 's'} since have all failed. Bisect or revert from that SHA.
+        {' '}{model.failedRuns} build{model.failedRuns === 1 ? '' : 's'} since{' '}
+        {model.failedRuns === 1 ? 'has failed' : 'have all failed'}. Bisect or revert from that SHA.
       </p>
       <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
         <CalloutStat label="Last green" value={<span className="font-mono">{sha}</span>} tone="good" />

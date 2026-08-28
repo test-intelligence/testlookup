@@ -26,6 +26,30 @@ The regression test that matters is not the hook test — it is the one assertin
 `refreshedAt` a literal age. This was never a broken function; it was a string typed where a value
 belonged, and nothing stopped three separate pages from doing it. Mutation-verified: restoring
 TrendsPage's `'12m ago'` fails that test by name and file.
+## 2026-08-28 — "1 failing run need investigation"
+
+Exploratory testing pointed a project with exactly one failing run at the app, and three
+headlines disagreed with themselves in number:
+
+- `/intelligence` — "1 failing run **need** investigation."
+- `/coverage` — "1 dimension **need** attention"
+- `/runs` — "1 build since **have all failed**."
+
+Each pluralised the NOUN by count and left the VERB plural. The shape is easy to miss in review
+because it looks handled — the `${n === 1 ? '' : 's'}` is right there on the noun — and the singular path is
+the common one, so this is the reading most users get.
+
+The inline ternary idiom is kept rather than extracted into a helper: it appears 155 times across
+33 files and is the house style, so a helper introduced for three sites would read as the odd one
+out.
+
+A static test guards the class rather than the three strings, and is deliberately narrow — only
+verbs whose singular form differs — so it stays quiet on the other uses, which mostly follow the
+noun with a preposition ("2 runs with failures"). A compound subject legitimately takes a plural
+verb, so "1 flaky and 1 broken run warrant a glance" is left alone.
+
+The guard found the `/runs` instance itself; the manual grep that turned up the first two had
+missed it.
 
 ## 2026-08-28 — widgetRegistry stops exporting what nothing calls
 
