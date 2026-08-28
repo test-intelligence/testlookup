@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-28 — the library-health panel disagreed with the list beside it
+
+Authoring a test case refreshed the paginated table but not the Library Health panel above it,
+so the summary read "1 cases" next to a list showing two — for up to 60 seconds, until the
+background poll caught up.
+
+The panel reads its own `useTestCases({ page: 1, size: 200 })` roll, a **different SWR key** from
+the table, and `handleRefresh` only called the table's mutate. Two rolls, one refresh. A reload
+fixed it, which is exactly why it survived: any check that reloads cannot see it.
+
+Both rolls are revalidated now. The same line also said "1 cases"; the count is pluralised.
+
+The regression guard asserts the invariant statically — every `useTestCases` roll the page holds
+has its mutate captured, and each captured mutate is **invoked** inside `handleRefresh`. The
+first version of that guard was blind: it checked the alias appeared anywhere in the handler, and
+deleting `mutateHealthRoll()` from the callback leaves the name in the dependency array
+`[mutateCases, mutateHealthRoll]`, so the bug reintroduced cleanly with the test still green.
+Requiring an invocation fixes it — caught only by running the mutation check before trusting the
+guard.
+
 ## 2026-08-28 — three pages told you their data was hours old when it was seconds old
 
 Exploratory testing uploaded a report and then read what the UI said about it. Coverage claimed

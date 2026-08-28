@@ -953,10 +953,17 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
   // Wider read used to power Library Verdict + right-rail synthesis (review
   // queue, strategy gaps, coverage matrix). The /test-cases/health endpoint
   // the spec assumes (README §14 q1) doesn't exist yet, so we synthesise.
-  const { data: healthRoll } = useTestCases({ page: 1, size: 200 })
+  const { data: healthRoll, mutate: mutateHealthRoll } = useTestCases({ page: 1, size: 200 })
   const { data: auditRoll } = useAuditLog({ page: 1, size: 5, entity_type: 'test_case' })
 
-  const handleRefresh = useCallback(() => { void mutateCases() }, [mutateCases])
+  // Both rolls must be revalidated. The library-health panel reads its own
+  // `useTestCases({page:1,size:200})` roll, a DIFFERENT SWR key from the
+  // paginated table, so refreshing only the table left the panel asserting
+  // "1 cases" beside a list showing 2 until the 60 s background poll caught up.
+  const handleRefresh = useCallback(
+    () => { void mutateCases(); void mutateHealthRoll() },
+    [mutateCases, mutateHealthRoll],
+  )
 
   const casesRaw = data?.items ?? []
   const { sorted: cases } = useTableSort(casesRaw, 'updated_at', 'desc')
@@ -1388,7 +1395,7 @@ function LibraryVerdictRibbon(p: LibraryVerdictProps) {
               </span>
             </div>
             <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
-              <strong style={{ color: 'var(--color-text)' }}>{p.totalCases}</strong> cases · <strong style={{ color: 'var(--color-text)' }}>{p.reviewCount}</strong> awaiting review, <strong style={{ color: 'var(--color-text)' }}>{p.staleCount}</strong> stale drafts over 30 days, <strong style={{ color: 'var(--color-text)' }}>{p.deprecatedInActive}</strong> deprecated still in active suites.
+              <strong style={{ color: 'var(--color-text)' }}>{p.totalCases}</strong> case{p.totalCases === 1 ? '' : 's'} · <strong style={{ color: 'var(--color-text)' }}>{p.reviewCount}</strong> awaiting review, <strong style={{ color: 'var(--color-text)' }}>{p.staleCount}</strong> stale drafts over 30 days, <strong style={{ color: 'var(--color-text)' }}>{p.deprecatedInActive}</strong> deprecated still in active suites.
             </p>
           </>
         )}
