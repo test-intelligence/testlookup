@@ -153,10 +153,10 @@ export default function ProjectsPage() {
 
       {/* Create Project Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-[var(--color-bg)]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div role="dialog" aria-modal="true" aria-labelledby="new-project-title" className="fixed inset-0 bg-[var(--color-bg)]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl w-full max-w-md shadow-2xl">
             <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-              <h2 className="font-semibold text-[var(--color-text)]">New Project</h2>
+              <h2 id="new-project-title" className="font-semibold text-[var(--color-text)]">New Project</h2>
               <button onClick={() => setShowModal(false)} className="btn-ghost p-1"><X className="h-4 w-4" /></button>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
@@ -256,10 +256,10 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
   }
 
   return (
-    <div className="fixed inset-0 bg-[var(--color-bg)]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-labelledby="edit-project-title" className="fixed inset-0 bg-[var(--color-bg)]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-          <h2 className="font-semibold text-[var(--color-text)]">Edit Project</h2>
+          <h2 id="edit-project-title" className="font-semibold text-[var(--color-text)]">Edit Project</h2>
           <button onClick={onClose} className="btn-ghost p-1"><X className="h-4 w-4" /></button>
         </div>
         <form onSubmit={handleSave} className="p-6 space-y-4">

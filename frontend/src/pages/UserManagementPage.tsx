@@ -343,9 +343,9 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
   const unassignedProjects = projects.filter(p => !assignedProjects.some(a => a.project_id === p.id))
 
   return (
-    <div className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-labelledby="edit-user-title" className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50" onClick={onClose}>
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg w-full max-w-lg p-6 space-y-5 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <h2 className="text-lg font-semibold text-[var(--color-text)]">Edit User</h2>
+        <h2 id="edit-user-title" className="text-lg font-semibold text-[var(--color-text)]">Edit User</h2>
 
         <form onSubmit={handleSave} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
@@ -526,9 +526,9 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
   const unassignedProjects = projects.filter(p => !assignedProjects.includes(p.id))
 
   return (
-    <div className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50">
+    <div role="dialog" aria-modal="true" aria-labelledby="add-user-title" className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50">
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg w-full max-w-md p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-[var(--color-text)]">Add User</h2>
+        <h2 id="add-user-title" className="text-lg font-semibold text-[var(--color-text)]">Add User</h2>
         {result ? (
           <div className="space-y-4">
             <p className="text-sm text-[var(--color-text-secondary)]">
@@ -668,9 +668,9 @@ function InviteUserModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50">
+    <div role="dialog" aria-modal="true" aria-labelledby="invite-user-title" className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50">
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg w-full max-w-md p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-[var(--color-text)]">Invite User</h2>
+        <h2 id="invite-user-title" className="text-lg font-semibold text-[var(--color-text)]">Invite User</h2>
         {result ? (() => {
           const inviteUrl = buildInvitationUrl(result.invitation_link)
           return (
@@ -828,9 +828,9 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50">
+    <div role="dialog" aria-modal="true" aria-labelledby="generate-api-key-title" className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50">
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg w-full max-w-md p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-[var(--color-text)]">Generate API Key</h2>
+        <h2 id="generate-api-key-title" className="text-lg font-semibold text-[var(--color-text)]">Generate API Key</h2>
         {createdKey ? (
           <div className="space-y-3">
             <div className="flex items-center gap-2 p-3 bg-[var(--status-broken-bg)]/30 border border-[var(--status-broken-bd)]/50 rounded text-[var(--status-broken)] text-xs">

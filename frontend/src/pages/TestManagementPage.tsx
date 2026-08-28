@@ -107,10 +107,10 @@ function fmtDateTime(iso?: string) {
 interface ModalWrapProps { onClose: () => void; title: string; children: React.ReactNode; width?: string }
 function ModalWrap({ onClose, title, children, width = 'max-w-2xl' }: ModalWrapProps) {
   return (
-    <div className="fixed inset-0 bg-[var(--color-bg)]/60 z-50 flex items-center justify-center p-4">
+    <div role="dialog" aria-modal="true" aria-labelledby="tm-generic-modal-title" className="fixed inset-0 bg-[var(--color-bg)]/60 z-50 flex items-center justify-center p-4">
       <div className={clsx('bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl w-full shadow-2xl flex flex-col max-h-[90vh]', width)}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)] flex-shrink-0">
-          <h2 className="text-base font-semibold text-[var(--color-text)]">{title}</h2>
+          <h2 id="tm-generic-modal-title" className="text-base font-semibold text-[var(--color-text)]">{title}</h2>
           <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors text-xl leading-none">&times;</button>
         </div>
         <div className="overflow-y-auto flex-1 px-6 py-4">
@@ -434,13 +434,13 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
   }
 
   return (
-    <div className="fixed inset-0 bg-[var(--color-bg)]/60 z-50 flex items-start justify-end">
+    <div role="dialog" aria-modal="true" aria-labelledby="tm-case-detail-title" className="fixed inset-0 bg-[var(--color-bg)]/60 z-50 flex items-start justify-end">
       <div className="bg-[var(--color-bg-card)] border-l border-[var(--color-border)] h-full w-full max-w-2xl flex flex-col shadow-2xl">
         {/* Header */}
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex-shrink-0">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
-              <h2 className="text-base font-semibold text-[var(--color-text)] leading-snug">{caseItem.title}</h2>
+              <h2 id="tm-case-detail-title" className="text-base font-semibold text-[var(--color-text)] leading-snug">{caseItem.title}</h2>
               <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                 <StatusPill status={caseItem.status} map={STATUS_COLORS} />
                 <StatusPill status={caseItem.priority} map={PRIORITY_COLORS} />
@@ -2474,9 +2474,9 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-labelledby="tm-link-suite-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
       <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h2 className="text-base font-semibold text-[var(--color-text)] mb-1">Link Test Suite to Plan</h2>
+        <h2 id="tm-link-suite-title" className="text-base font-semibold text-[var(--color-text)] mb-1">Link Test Suite to Plan</h2>
         <p className="text-xs text-[var(--color-text-muted)] mb-4">Add all managed test cases from a suite to this test plan.</p>
         {loadingSuites ? (
           <div className="flex justify-center py-4"><LoadingSpinner size="md" /></div>
@@ -3744,7 +3744,7 @@ function AddTestSuiteModal({
   }
 
   return (
-    <div
+    <div role="dialog" aria-modal="true" aria-labelledby="tm-add-suite-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60"
       onClick={onClose}
     >
@@ -3752,7 +3752,7 @@ function AddTestSuiteModal({
         className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-lg shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
-        <h2 className="text-base font-semibold text-[var(--color-text)] mb-1">Add test suite</h2>
+        <h2 id="tm-add-suite-title" className="text-base font-semibold text-[var(--color-text)] mb-1">Add test suite</h2>
         <p className="text-xs text-[var(--color-text-muted)] mb-4">
           Author a new suite definition. The suite name must be unique within the project.
         </p>

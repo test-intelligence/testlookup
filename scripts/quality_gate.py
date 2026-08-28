@@ -1162,6 +1162,65 @@ def _frontend_clipboard_util() -> list[Violation]:
     return violations
 
 
+_MODAL_OVERLAY_MARK = "fixed inset-0"
+_MODAL_OPT_OUT = "not-a-dialog"
+_MODAL_OWNER_TAGS = ("<div", "<form", "<aside", "<section")
+_MODAL_LABELLEDBY_RE = re.compile(r'aria-labelledby="([^"]+)"')
+
+
+def _frontend_modal_dialog_role() -> list[Violation]:
+    """A full-screen ``fixed inset-0`` overlay is a modal. Without
+    ``role="dialog"`` it is invisible to ``getByRole('dialog')`` and to a
+    screen reader's dialog navigation, so tests fall back to anchoring on
+    heading text — which is exactly how 14 modals drifted without one. The
+    backdrop may instead carry ``role="presentation"`` when the dialog role
+    sits on the panel inside it; both shapes are in use here."""
+    violations: list[Violation] = []
+    root = REPO_ROOT / "frontend" / "src"
+    for path in iter_files(root, (".tsx",)):
+        if path.name.endswith(".test.tsx"):
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for idx, line in enumerate(lines):
+            if _MODAL_OVERLAY_MARK not in line:
+                continue
+            # The owning tag may sit several lines up when its attributes
+            # are formatted one per line.
+            start = idx if any(t in line for t in _MODAL_OWNER_TAGS) else None
+            if start is None:
+                for back in range(idx - 1, max(idx - 10, -1), -1):
+                    if any(t in lines[back] for t in _MODAL_OWNER_TAGS):
+                        start = back
+                        break
+            if start is None:
+                continue
+            window = chr(10).join(lines[start:idx + 7])
+            if _MODAL_OPT_OUT in window:
+                continue
+            if 'role="dialog"' in window or 'role="presentation"' in window:
+                continue
+            violations.append(Violation(
+                path, idx + 1,
+                'fixed inset-0 overlay without role="dialog" — '
+                "getByRole('dialog') cannot see it",
+            ))
+
+        # A dangling aria-labelledby is worse than none: the dialog role is
+        # present, the gate above is satisfied, and the dialog still has NO
+        # accessible name because the id it points at does not exist.
+        text = path.read_text(encoding="utf-8")
+        for ref in _MODAL_LABELLEDBY_RE.findall(text):
+            if ('id="' + ref + '"') in text:
+                continue
+            line_no = text[:text.index('aria-labelledby="' + ref + '"')].count(chr(10)) + 1
+            violations.append(Violation(
+                path, line_no,
+                'aria-labelledby="' + ref + '" matches no id in this file — '
+                "the dialog ends up with no accessible name",
+            ))
+    return violations
+
+
 _HEDGING_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _HEDGING_LINE_COMMENT_RE = re.compile(r"//.*$", re.MULTILINE)
 _HEDGING_JSX_COMMENT_RE = re.compile(r"\{\s*/\*.*?\*/\s*\}", re.DOTALL)
@@ -2853,6 +2912,22 @@ GUARDS: list[Guard] = [
             "genuinely needed, extend services/retention_service.py (the "
             "audit-clock deleter) rather than deleting inline — the model "
             "docstrings promise exactly that boundary."
+        ),
+    ),
+    Guard(
+        name="frontend.modal-dialog-role",
+        description=(
+            "A `fixed inset-0` modal overlay must carry role=\"dialog\" "
+            "(or role=\"presentation\" when the dialog role is on the panel "
+            "inside it) — otherwise getByRole('dialog') cannot see it."
+        ),
+        check=_frontend_modal_dialog_role,
+        fix_hint=(
+            "Add role=\"dialog\" aria-modal=\"true\" and name it with "
+            "aria-labelledby pointing at the modal heading's id — a static "
+            "aria-label goes stale when the title is dynamic. A full-screen "
+            "overlay that genuinely is not a dialog can opt out with a "
+            "`not-a-dialog` comment on the element."
         ),
     ),
     Guard(

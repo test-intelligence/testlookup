@@ -99,14 +99,14 @@ export default function DefectPromotionModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm">
+    <div role="dialog" aria-modal="true" aria-labelledby="defect-promotion-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm">
       <div className="relative w-full max-w-2xl mx-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)] shrink-0">
           <div className="flex items-center gap-3">
             <Shield className="h-5 w-5 text-[var(--color-text)]" />
             <div>
-              <h2 className="text-base font-semibold text-[var(--color-text)]">
+              <h2 id="defect-promotion-title" className="text-base font-semibold text-[var(--color-text)]">
                 Promote to Defect
               </h2>
               <p className="text-xs text-[var(--color-text-muted)] truncate max-w-[380px]">

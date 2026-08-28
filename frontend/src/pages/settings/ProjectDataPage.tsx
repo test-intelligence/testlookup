@@ -115,12 +115,12 @@ function ResetConfirmModal({ spec, projectId, projectName, onClose, onSuccess }:
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+    <div role="dialog" aria-modal="true" aria-labelledby="project-data-confirm-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
       <div className="w-full max-w-lg rounded-lg border border-[var(--status-failed-bd)]/50 bg-[var(--color-bg)] p-6 shadow-2xl">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-[var(--status-failed)]" />
-            <h2 className="text-lg font-semibold text-[var(--color-text)]">{spec.title}</h2>
+            <h2 id="project-data-confirm-title" className="text-lg font-semibold text-[var(--color-text)]">{spec.title}</h2>
           </div>
           <button
             type="button"

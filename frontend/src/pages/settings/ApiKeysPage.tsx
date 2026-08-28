@@ -221,7 +221,7 @@ asyncio.run(main())`,
   )
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+    <div role="dialog" aria-modal="true" aria-labelledby="api-key-generated-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
       {/* max-h + overflow-y-auto are load-bearing. This dialog grew three
           ready-to-paste snippets, which pushed it past a 720px-tall viewport.
           Centred with `items-center` and no scroll container of its own, the
@@ -232,7 +232,7 @@ asyncio.run(main())`,
       <div className="card w-full max-w-2xl space-y-4 border-[var(--status-passed-bd)]/40 max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 className="text-base font-semibold text-[var(--status-passed)]">API key generated</h3>
+            <h3 id="api-key-generated-title" className="text-base font-semibold text-[var(--status-passed)]">API key generated</h3>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
               Copy the key now — it won't be shown again. Store it in your CI secret manager.
             </p>

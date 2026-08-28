@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-08-28 — 14 modals a screen reader could not announce
+
+Measuring the accessibility gap that blocked live probes from using
+`getByRole('dialog')` turned up more than the one modal that surfaced it: **14 of the 26**
+overlay components carried no `role="dialog"` at all — 23 distinct overlays, since several
+files hold four. To a screen reader none of them were dialogs; to a test none of them were
+findable by role, which is why probes had been anchoring on heading text instead.
+
+All 23 now carry `role="dialog"`, `aria-modal="true"` and an accessible name. The name comes
+from `aria-labelledby` pointing at the modal heading rather than a hardcoded `aria-label`,
+because eight of these titles are computed at render time (`{spec.title}`, `{caseItem.title}`,
+`{initial ? 'Edit Release' : 'New Release'}`) and a static label would have gone stale the
+first time one changed.
+
+A new absolute quality gate, `frontend.modal-dialog-role`, keeps the 15th modal from landing
+without one. It checks two things, because the second failure mode is quieter than the first:
+a `fixed inset-0` overlay with no dialog role, and an `aria-labelledby` pointing at an id that
+does not exist — which satisfies any presence check while leaving the dialog with no
+accessible name at all. Both halves are mutation-verified. A full-screen overlay that
+genuinely is not a dialog opts out with a `not-a-dialog` comment.
+
+The gate is static, so it cannot prove the name actually computes; a render test on
+`UploadReportModal` — the modal whose missing role started this — asserts
+`getByRole('dialog', { name: 'Upload test report' })` resolves for real.
+
 ## 2026-08-28 — the residual Firefox "flakiness" was two ordinary test defects
 
 Three consecutive full runs had failed 5, then 2, then 3 tests, a different Firefox subset each

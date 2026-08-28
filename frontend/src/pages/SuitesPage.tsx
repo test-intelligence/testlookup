@@ -73,10 +73,10 @@ function CreateSuiteModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div role="dialog" aria-modal="true" aria-labelledby="new-suite-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="w-full max-w-md rounded-lg bg-[var(--color-bg)] p-6 ring-1 ring-[var(--color-border)]">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-[var(--color-text)]">New Test Suite</h2>
+          <h2 id="new-suite-title" className="text-lg font-semibold text-[var(--color-text)]">New Test Suite</h2>
           <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
             <X className="h-5 w-5" />
           </button>

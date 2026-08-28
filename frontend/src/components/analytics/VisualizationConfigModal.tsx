@@ -43,7 +43,7 @@ export default function VisualizationConfigModal({ instance, onSave, onClose }: 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-labelledby="visualization-config-title" className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/70" />
       <div
         className="relative bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
@@ -53,7 +53,7 @@ export default function VisualizationConfigModal({ instance, onSave, onClose }: 
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
           <div className="flex items-center gap-2">
             <Settings2 className="h-4 w-4 text-[var(--color-text-secondary)]" />
-            <h2 className="text-sm font-semibold text-[var(--color-text)]">Configure Visualization</h2>
+            <h2 id="visualization-config-title" className="text-sm font-semibold text-[var(--color-text)]">Configure Visualization</h2>
           </div>
           <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] p-1 rounded hover:bg-[var(--color-bg-card)]/50">
             <X className="h-4 w-4" />

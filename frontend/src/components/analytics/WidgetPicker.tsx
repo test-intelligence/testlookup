@@ -49,7 +49,7 @@ export default function WidgetPicker({ page, enabledIds, onSave, onClose }: Prop
   const groups = groupByType(available)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-labelledby="widget-picker-title" className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       {/* Backdrop — solid dark overlay */}
       <div className="absolute inset-0 bg-black/70" />
       {/* Modal panel — solid opaque background */}
@@ -61,7 +61,7 @@ export default function WidgetPicker({ page, enabledIds, onSave, onClose }: Prop
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#334155] bg-[#0f172a]">
           <div className="flex items-center gap-2">
             <LayoutGrid className="h-4 w-4 text-[var(--color-text-secondary)]" />
-            <h2 className="text-sm font-semibold text-[var(--color-text)]">Customize Widgets</h2>
+            <h2 id="widget-picker-title" className="text-sm font-semibold text-[var(--color-text)]">Customize Widgets</h2>
           </div>
           <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors p-1 rounded hover:bg-[var(--color-bg-card)]/50">
             <X className="h-4 w-4" />

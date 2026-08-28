@@ -166,4 +166,14 @@ describe('UploadReportModal', () => {
     const { unzipSync } = await import('fflate')
     expect(Object.keys(unzipSync(bytes)).sort()).toEqual(['2-dup.xml', 'dup.xml'])
   })
+  // The static quality gate (frontend.modal-dialog-role) proves the attributes
+  // are present; only a render proves the accessible NAME actually computes —
+  // an aria-labelledby pointing at a missing id would satisfy the gate and
+  // still leave the dialog nameless. This modal is the one that sent live
+  // probes to anchor on heading text because getByRole("dialog") found nothing.
+  it('exposes itself as a named dialog', () => {
+    setup()
+
+    expect(screen.getByRole('dialog', { name: 'Upload test report' })).toBeInTheDocument()
+  })
 })

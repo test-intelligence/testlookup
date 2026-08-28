@@ -265,14 +265,14 @@ export default function UploadReportModal({
   }, [files, busy, effectiveProjectId, buildNumber, format, branch, commitHash, releaseName, runAi])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm">
+    <div role="dialog" aria-modal="true" aria-labelledby="upload-report-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm">
       <div className="relative w-full max-w-xl mx-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)] shrink-0">
           <div className="flex items-center gap-3">
             <UploadCloud className="h-5 w-5 text-[var(--color-text)]" />
             <div>
-              <h2 className="text-base font-semibold text-[var(--color-text)]">Upload test report</h2>
+              <h2 id="upload-report-title" className="text-base font-semibold text-[var(--color-text)]">Upload test report</h2>
               <p className="text-xs text-[var(--color-text-muted)]">
                 JUnit · TestNG · Allure · Playwright · Cypress · Robot · Cucumber · NUnit · TRX · xUnit
               </p>

@@ -360,9 +360,9 @@ function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoadin
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-labelledby="add-member-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
       <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h2 className="text-base font-semibold text-[var(--color-text)] mb-1">Add Member to {projectName}</h2>
+        <h2 id="add-member-title" className="text-base font-semibold text-[var(--color-text)] mb-1">Add Member to {projectName}</h2>
         <p className="text-xs text-[var(--color-text-muted)] mb-4">Assign a user to this project with a specific role.</p>
         <div className="space-y-3">
           <div>
