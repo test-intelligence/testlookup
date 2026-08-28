@@ -44,8 +44,16 @@ export const dayTimeAgo = (dayOnly?: string | null): string => {
   return `${days} d ago`
 }
 
+/**
+ * Human duration for a millisecond count. '—' means *no value* (missing, NaN,
+ * or an invalid negative from clock skew); a genuine zero renders '0ms', not
+ * '—'. A test step that ran in under a millisecond has a KNOWN, instantaneous
+ * duration — collapsing it into the same dash used for "unknown" told the
+ * reader the step wasn't timed when it was (the old `if (!ms)` guard treated
+ * `0` as falsy).
+ */
 export const formatDuration = (ms?: number | null): string => {
-  if (!ms) return '—'
+  if (ms == null || Number.isNaN(ms) || ms < 0) return '—'
   if (ms < 1000) return `${ms}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
   return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`

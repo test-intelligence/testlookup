@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-28 — an instantaneous step read as "duration unknown"
+
+`formatDuration(0)` returned `—` — the same marker the UI uses for a *missing*
+value — because the guard was `if (!ms)`, and `0` is falsy. A test step that ran
+in under a millisecond (rounded to `0` by the parser) therefore rendered as
+though it had never been timed, in the run step list (`TestStepsPanel`) and the
+per-test history panel.
+
+Zero is now distinguished from absent: a genuine `0` renders `0ms`, while only
+`null`/`undefined`/`NaN` — and an invalid negative from clock skew, which used
+to render `-5ms` — collapse to `—`. Added the util's first regression tests
+(it previously had none) covering the zero case, the missing/invalid cases, and
+each formatting band.
+
 ## 2026-08-27 — live probe for the first-run guide gate
 
 `frontend/tests/probe-first-run-guide.spec.ts` verifies the #881 fix against the running

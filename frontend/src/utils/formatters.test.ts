@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { dayTimeAgo, formatRunWhen } from './formatters'
+import { dayTimeAgo, formatDuration, formatRunWhen } from './formatters'
 
 describe('dayTimeAgo', () => {
   // Build day-only strings relative to the runner's LOCAL "today" so the
@@ -59,5 +59,41 @@ describe('formatRunWhen', () => {
 
   it('returns "" for an unparseable date instead of "Invalid Date"', () => {
     expect(formatRunWhen('not-a-date')).toBe('')
+  })
+})
+
+describe('formatDuration', () => {
+  it('renders a genuine 0ms as "0ms", not the "—" used for unknown', () => {
+    // Regression: the old `if (!ms)` guard treated a real zero-length duration
+    // (a sub-millisecond step that rounds to 0) as missing, so an instantaneous
+    // step showed the same dash as one that was never timed.
+    expect(formatDuration(0)).toBe('0ms')
+  })
+
+  it('returns "—" for missing values (null / undefined)', () => {
+    expect(formatDuration(null)).toBe('—')
+    expect(formatDuration(undefined)).toBe('—')
+  })
+
+  it('returns "—" for NaN and invalid negatives (clock skew), not "NaNms"/"-5ms"', () => {
+    expect(formatDuration(NaN)).toBe('—')
+    expect(formatDuration(-5)).toBe('—')
+  })
+
+  it('renders sub-second durations in milliseconds', () => {
+    expect(formatDuration(1)).toBe('1ms')
+    expect(formatDuration(999)).toBe('999ms')
+  })
+
+  it('renders sub-minute durations in seconds to one decimal', () => {
+    expect(formatDuration(1000)).toBe('1.0s')
+    expect(formatDuration(1500)).toBe('1.5s')
+    expect(formatDuration(59_000)).toBe('59.0s')
+  })
+
+  it('renders a minute or more as "Xm Ys"', () => {
+    expect(formatDuration(60_000)).toBe('1m 0s')
+    expect(formatDuration(90_000)).toBe('1m 30s')
+    expect(formatDuration(125_000)).toBe('2m 5s')
   })
 })
