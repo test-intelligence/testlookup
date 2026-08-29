@@ -19,7 +19,7 @@
  * Content lives in `src/content/docs/*.md`; these tests read the same sources
  * the page renders, so a claim cannot be "tested" in a file the UI never shows.
  */
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -414,17 +414,43 @@ describe('code block copy control', () => {
   })
 
   it('copies the block text and reflects success', async () => {
+    // Fake timers, because the confirmed state CLEARS ITSELF after 2 s
+    // (`setTimeout(() => setCopied(false), 2000)` in DocCodeBlock). The original
+    // version awaited a `waitFor` and only then looked for "Copied", so under a
+    // loaded full-suite run the reset had already fired, `findByLabelText` then
+    // burned its own 5 s timeout, and the test failed having found no bug.
+    // Holding the clock makes the window unmissable instead of merely wide.
+    vi.useFakeTimers()
     mockCopy.mockResolvedValue(true)
     renderDocs('/docs/getting-started')
 
     const button = screen.getAllByLabelText('Copy code')[0]
     fireEvent.click(button)
 
-    await waitFor(() => expect(mockCopy).toHaveBeenCalledTimes(1))
+    // Flush the awaited clipboard promise inside handleCopy.
+    await act(async () => { await Promise.resolve() })
+
+    expect(mockCopy).toHaveBeenCalledTimes(1)
     // The first bash block is the JSON ingest call.
     expect(mockCopy.mock.calls[0][0]).toContain('curl -X POST')
     // The icon flips to the confirmed state, so the reader sees it landed.
-    await screen.findByLabelText('Copied')
+    expect(screen.getByLabelText('Copied')).toBeInTheDocument()
+  })
+
+  it('returns to the copy icon after the confirmation window', async () => {
+    // The reset was never asserted — only its 2 s race made the test above
+    // flaky. Now it is pinned behaviour rather than an ambient hazard.
+    vi.useFakeTimers()
+    mockCopy.mockResolvedValue(true)
+    renderDocs('/docs/getting-started')
+
+    fireEvent.click(screen.getAllByLabelText('Copy code')[0])
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByLabelText('Copied')).toBeInTheDocument()
+
+    await act(async () => { vi.advanceTimersByTime(2000) })
+    expect(screen.queryByLabelText('Copied')).toBeNull()
+    expect(screen.getAllByLabelText('Copy code').length).toBeGreaterThan(0)
   })
 
   it('does not claim success when the clipboard is unavailable', async () => {

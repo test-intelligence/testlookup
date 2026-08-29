@@ -25,6 +25,29 @@ the automated pass produced a label pointing at the wrong control (a trailing ch
 claimed the number input below it), which is worse than no label at all.
 
 Measured after, in the browser: **202 controls, 0 unlabelled, no page errors.**
+## 2026-08-28 — the copy-button test asserted a state that clears itself
+
+`DocsPage.test.tsx > "copies the block text and reflects success"` failed in every full local
+suite run and passed in isolation — three sightings across the day before I stopped treating it
+as noise.
+
+The confirmed state clears itself: `DocCodeBlock` does `setCopied(true)` and then
+`setTimeout(() => setCopied(false), 2000)`. The test awaited a `waitFor` on the clipboard mock
+and only THEN looked for "Copied", so under a loaded suite the 2 s reset had already fired,
+`findByLabelText` burned its own 5 s timeout, and the run failed having found no bug. The
+observed durations (5.7 s, 8.0 s) are that second timeout, not slow work.
+
+This is the same shape as the polling-freshness fix earlier today: asserting an intermediate
+state whose lifetime is governed by a timer the test does not control. Holding the clock with
+fake timers makes the window unmissable rather than merely wide.
+
+The reset itself was never asserted — only its race made anything fail — so it is now pinned as
+behaviour: advance 2 s and the icon must return. Both assertions are mutation-verified, and the
+new one fails on its own mutation (removing the `setTimeout`), which the old suite missed
+entirely.
+
+Verified by two consecutive clean full runs (1121 passed) where every previous full run on this
+machine failed.
 
 ## 2026-08-28 — 46 settings fields a screen reader could not name
 
