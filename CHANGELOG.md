@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-29 — the first-run ingest `curl` passed CI even when the upload was rejected
+
+The dashboard's first-run guide hands a fresh self-hoster a copy-paste `curl`
+for wiring their CI straight at the ingest API. It was a bare `curl -X POST` —
+and bare `curl` exits **0** on an HTTP 4xx/5xx. So a runner that fat-fingered
+its API key (401), pointed at the wrong project id (404), or shipped an
+unparseable report (400) got a **green** pipeline step while nothing was
+ingested: the operator's dashboard stays empty and the CI says everything's
+fine. That is the same silent "your CI thinks it worked when it didn't" trap
+the CLI's local `--format` validation already closes on the other ingest path.
+
+The command now leads with `curl -sS --fail-with-body`. `--fail-with-body`
+makes curl exit non-zero on any HTTP ≥ 400 **and** print the backend's error
+body, so the step turns red and says *why* it was rejected; `-sS`
+(`--silent --show-error`) drops the progress meter from CI logs while still
+surfacing transport errors. Scoped to the guide's ingest snippet; the copy in
+`getting-started.md` and the streaming-ingest example on the API Keys page are
+separate surfaces left for their own follow-ups.
+
 ## 2026-08-29 — the CLI accepted any `--format`, then let the server say no
 
 `testlookup upload file` and `upload dir` forwarded whatever `--format` you
