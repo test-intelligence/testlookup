@@ -1204,7 +1204,7 @@ export default function OverviewPage() {
       )}
 
       {/* Top row — Verdict + Workflow ribbon */}
-      <div className="grid grid-cols-1 xl:[grid-template-columns:1fr_1.55fr] gap-4">
+      <div className="grid grid-cols-1 xl:[grid-template-columns:minmax(0,1fr)_minmax(0,1.55fr)] gap-4">
         {summaryLoading && !summary ? (
           <div className="card flex items-center justify-center min-h-[260px]">
             <LoadingSpinner />

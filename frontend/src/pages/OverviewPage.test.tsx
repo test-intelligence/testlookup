@@ -327,6 +327,10 @@ describe('OverviewPage', () => {
     // dashboard widget header, so use getAllByText for the presence check.
     expect((await screen.findAllByText(/Quality workflow/i)).length).toBeGreaterThan(0)
     expect(screen.getByText(/^Dashboard$/i)).toBeInTheDocument()
+    const workflowHeading = screen.getByRole('heading', { name: 'Quality workflow', level: 3 })
+    expect(workflowHeading.closest('.card')?.parentElement).toHaveClass(
+      'xl:[grid-template-columns:minmax(0,1fr)_minmax(0,1.55fr)]',
+    )
     // The page renders the verdict via ``gateLabel`` — ``GREEN`` readiness
     // maps to "Go". Match the rendered label rather than the raw backend
     // colour to stay aligned with the verdict-led redesign.
