@@ -1,0 +1,7 @@
+{"event":"sync","result":"passed","detail":"Fast-forwarded origin/main to 30f2e979"}
+{"event":"defect","id":"TL-2026-08-29-02-001","priority":"P1","result":"fixed","detail":"Explicit non-checkout repo_path no longer walks into parent checkout"}
+{"event":"tests","suite":"frontend","result":"passed","detail":"164 files, 1123 tests"}
+{"event":"tests","suite":"cli-sdk","result":"passed","detail":"254 tests"}
+{"event":"tests","suite":"commit-range","result":"passed","detail":"161 tests"}
+{"event":"tests","suite":"backend","result":"partial","detail":"7445 passed, 58 skipped; Windows shell/toolchain failures documented"}
+{"event":"uat","result":"deferred","detail":"Docker unavailable; state-changing journeys not executed"}
