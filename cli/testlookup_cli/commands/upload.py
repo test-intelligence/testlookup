@@ -14,6 +14,36 @@ from testlookup_cli.errors import map_connection_error
 
 upload_app = typer.Typer(name="upload", help="Upload test result files")
 
+# Canonical set of formats the ingest endpoint accepts. Mirrors the backend's
+# own gate (`_SUPPORTED_FORMATS` in backend/app/routers/ingest.py), which
+# rejects anything else with a 400. Kept here as the single source for BOTH
+# upload commands' `--format` help and client-side validation, so the two can
+# neither drift from each other nor silently under-advertise a format the
+# backend actually parses.
+SUPPORTED_UPLOAD_FORMATS = (
+    "auto", "junit", "testng", "allure", "cypress", "playwright", "pytest",
+    "robot", "cucumber", "nunit", "trx", "xunit",
+)
+
+_FORMAT_HELP = "File format: " + " | ".join(SUPPORTED_UPLOAD_FORMATS)
+
+
+def _validate_format(value: str) -> str:
+    """Reject an unknown ``--format`` locally, before any network call.
+
+    Without this the value is only checked server-side: a typo (``--format
+    juint``) costs a round-trip to come back as an opaque 400, and for
+    ``upload dir`` that is one wasted POST per file. A ``BadParameter`` renders
+    as a clear CLI usage error naming the valid choices instead. Case-sensitive
+    to match the backend gate exactly (it too compares against lowercase keys).
+    """
+    if value not in SUPPORTED_UPLOAD_FORMATS:
+        raise typer.BadParameter(
+            f"'{value}' is not a supported format. "
+            f"Choose one of: {', '.join(SUPPORTED_UPLOAD_FORMATS)}."
+        )
+    return value
+
 
 @upload_app.command("file")
 def upload_file(
@@ -40,7 +70,8 @@ def upload_file(
         "auto",
         "--format",
         "-f",
-        help="File format: auto|junit|testng|allure|cypress|playwright|pytest|robot|cucumber|nunit|trx|xunit",
+        help=_FORMAT_HELP,
+        callback=_validate_format,
     ),
     profile_name: Optional[str] = typer.Option(None, "--profile"),
     output_format: str = typer.Option("table", "--output", "-o"),
@@ -120,7 +151,8 @@ def upload_dir(
     ),
     format: str = typer.Option(
         "auto", "--format", "-f",
-        help="File format: auto|junit|testng|allure|cypress|playwright|pytest|robot|cucumber|nunit|trx|xunit",
+        help=_FORMAT_HELP,
+        callback=_validate_format,
     ),
     profile_name: Optional[str] = typer.Option(None, "--profile"),
     output_format: str = typer.Option("table", "--output", "-o"),

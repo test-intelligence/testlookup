@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-29 — the CLI accepted any `--format`, then let the server say no
+
+`testlookup upload file` and `upload dir` forwarded whatever `--format` you
+typed straight to the ingest endpoint. A typo (`--format juint`) was only
+caught server-side, coming back as an opaque HTTP 400 after a full round-trip
+— and for `upload dir` that was one wasted POST **per file** before the run
+failed. A self-hoster on a slow or air-gapped link paid that latency to learn
+they'd mistyped a word.
+
+The accepted set now lives in one constant, `SUPPORTED_UPLOAD_FORMATS`, that
+both commands derive their `--format` help **and** validation from. An unknown
+format is rejected locally with a `BadParameter` that names the valid choices,
+before any network call. Two knock-on wins: the two commands can no longer
+drift from each other (they shared the format list only as duplicated help
+prose before), and the constant mirrors the backend's own `_SUPPORTED_FORMATS`
+gate — so the CLI can't silently under-advertise a format the server actually
+parses, the same class of "your CI is unsupported when it isn't" bug the
+first-run guide's exhaustive format map already guards against on the web side.
+
 ## 2026-08-28 — the rest of the unnamed form controls
 
 The settings fix closed 46 controls; the same detection pointed at the rest of the app found
