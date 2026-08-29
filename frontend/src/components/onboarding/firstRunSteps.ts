@@ -124,11 +124,23 @@ export const DEFAULT_INGEST_URL = 'http://localhost:8000/api/v1/ingest/file'
  * backend at (see {@link backendUrl} in `services/api.ts`). Passing it makes the
  * copy-paste command work on any self-host served behind an ingress, instead of
  * the hardcoded `localhost:8000` that is unreachable off the dev machine.
+ *
+ * The command leads with `-sS --fail-with-body` because it is meant to run
+ * unattended in a CI step. Plain `curl` exits 0 even when the ingest endpoint
+ * REJECTS the upload (a bad API key → 401, a wrong project id → 404, an
+ * unparseable report → 400), so a self-hoster who wires the bare command into
+ * their pipeline sees a green step while nothing was ingested — the same silent
+ * "your CI thinks it worked when it didn't" failure the CLI's local `--format`
+ * validation already guards against. `--fail` makes curl exit non-zero on any
+ * HTTP >= 400; the `-with-body` variant additionally prints the backend's error
+ * response so the operator can see WHY it was rejected (curl 7.76+, 2021).
+ * `-sS` (`--silent --show-error`) drops the progress meter from CI logs while
+ * still surfacing transport errors.
  */
 export function ingestApiCommand(projectId?: string, ingestUrl: string = DEFAULT_INGEST_URL): string {
   const p = projectId && projectId.trim() ? projectId : '<project-id>'
   return (
-    `curl -X POST ${ingestUrl} ` +
+    `curl -sS --fail-with-body -X POST ${ingestUrl} ` +
     `-H "X-API-Key: $TL_API_KEY" ` +
     `-F file=@results.xml -F project_id=${p} -F build_number=<build> -F format=auto`
   )

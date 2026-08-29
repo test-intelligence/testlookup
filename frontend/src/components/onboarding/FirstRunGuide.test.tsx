@@ -218,7 +218,9 @@ describe('FirstRunGuide', () => {
   it('copies the ingest-API curl verbatim', async () => {
     const id = '6783f331-9f51-4b0b-a27a-acc31e117b21'
     renderGuide({ projectId: id })
-    fireEvent.click(screen.getByRole('button', { name: /copy command: curl -x post/i }))
+    fireEvent.click(
+      screen.getByRole('button', { name: /copy command: curl -ss --fail-with-body -x post/i }),
+    )
     await waitFor(() =>
       // The rendered curl targets the deployment's own backend origin (resolved
       // the same way the axios client resolves requests), not the hardcoded
@@ -239,7 +241,9 @@ describe('FirstRunGuide', () => {
     renderGuide()
     const resolved = backendUrl('/api/v1/ingest/file')
     expect(
-      screen.getByText(content => content.includes(`curl -X POST ${resolved} `)),
+      screen.getByText(content =>
+        content.includes(`curl -sS --fail-with-body -X POST ${resolved} `),
+      ),
     ).toBeInTheDocument()
   })
 
@@ -260,7 +264,7 @@ describe('FirstRunGuide', () => {
 
   describe('ingestApiCommand', () => {
     const base =
-      'curl -X POST http://localhost:8000/api/v1/ingest/file ' +
+      'curl -sS --fail-with-body -X POST http://localhost:8000/api/v1/ingest/file ' +
       '-H "X-API-Key: $TL_API_KEY" -F file=@results.xml -F project_id='
 
     it('uses the placeholder for undefined, empty, and whitespace-only ids', () => {
@@ -285,10 +289,22 @@ describe('FirstRunGuide', () => {
       const url = 'https://tl.example.com/api/v1/ingest/file'
       const cmd = ingestApiCommand('abc-123', url)
       expect(cmd).toBe(
-        `curl -X POST ${url} -H "X-API-Key: $TL_API_KEY" ` +
+        `curl -sS --fail-with-body -X POST ${url} -H "X-API-Key: $TL_API_KEY" ` +
           `-F file=@results.xml -F project_id=abc-123 -F build_number=<build> -F format=auto`,
       )
       expect(cmd).not.toContain('localhost:8000')
+    })
+
+    it('fails the CI step (non-zero exit) when the ingest endpoint rejects the upload', () => {
+      // A bare `curl -X POST` exits 0 even on an HTTP 4xx rejection (bad API
+      // key, wrong project id, unparseable report), so a self-hoster who wires
+      // it into a pipeline sees a green step while nothing was ingested. The
+      // command must lead with the fail-on-error flags so the CI step turns red
+      // and prints the backend's reason. --fail-with-body implies --fail's
+      // non-zero exit on HTTP >= 400 while also echoing the error body.
+      const cmd = ingestApiCommand('abc-123')
+      expect(cmd).toContain('--fail-with-body')
+      expect(cmd).toMatch(/^curl -sS --fail-with-body /)
     })
 
     it('authenticates the CI curl with a project API key, not a login bearer token', () => {
