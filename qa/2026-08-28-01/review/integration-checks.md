@@ -24,15 +24,16 @@ Result: PASS. No serializer, route, UI, or deployment configuration mismatch fou
 
 Result: PASS.
 
-## Deployment readiness
+## Deployment and verification
 
 - Existing homelab: healthy and Ready; health endpoints return HTTP 200.
-- New image build: BLOCKED because no local container engine is installed or discoverable.
-- Remote build fallback: BLOCKED because SSH reaches the homelab but no usable key is available and the session reaches password authentication.
-- Current deployed image provenance: `/health/version` reports revision/date `unknown`.
+- New images built and pushed with Podman under `build-20260829-015431`.
+- All application and infrastructure workloads reached Ready; frontend registry digest matched the deployed image.
+- `/health/live`, `/health/ready`, `/health/details`, `/api-docs/openapi.json`, and frontend smoke checks returned success.
+- Current deployed image provenance: `/health/version` reports revision/date `unknown`; this is a follow-up release-engineering item, not a changed-code failure.
 
-Result: BLOCKED before deployment. No apply, hot patch, or merge was performed.
+Result: PASS for deployment and verification. GitHub merge remains gated on remote publication and required checks.
 
 ## Review verdict
 
-APPROVED FOR DEPLOYMENT/VERIFICATION, subject to the deployment precondition. The source diffs themselves have no remaining P0–P2 review findings. They are not approved for merge until the cumulative image is built, deployed, and verified.
+APPROVED FOR PUBLICATION/VERIFICATION. The source diffs have no remaining P0–P2 findings; homelab deployment and verification passed. Merge remains gated only on the GitHub PR checks and repository branch protection.
