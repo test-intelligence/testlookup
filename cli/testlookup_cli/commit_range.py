@@ -676,6 +676,23 @@ def diagnose_commit_range(
         return _outcome(None, REASON_DISABLED, "collection disabled")
 
     try:
+        # ``git -C <path>`` searches parent directories when ``<path>`` is
+        # merely a directory inside a checkout.  That is useful for normal
+        # git commands, but unsafe here: an explicitly supplied repo_path is
+        # the checkout the caller asked us to inspect.  Require its own git
+        # metadata so a temp/plain directory nested under another checkout
+        # cannot accidentally report the parent repository's history.
+        if repo_path is not None:
+            path = os.fspath(repo_path)
+            if not os.path.isdir(path) or not os.path.exists(
+                os.path.join(path, ".git")
+            ):
+                return _outcome(
+                    None,
+                    REASON_NO_CHECKOUT,
+                    f"repo path {path!r} is not a git checkout root",
+                )
+
         head = _rev_parse_result("HEAD", repo_path=repo_path)
         if not head.ok:
             # Nothing has proven git usable here yet: a missing binary, a
