@@ -7,7 +7,7 @@ import os as _os
 from functools import lru_cache
 from typing import List, Literal, Optional
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Belt-and-suspenders: disable ChromaDB's anonymous telemetry via env var.
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     BUILD_DATE: str = ""
     CORS_ORIGINS_RAW: str = Field(
         default="http://localhost:3000,http://localhost:5173",
-        alias="CORS_ORIGINS",
+        validation_alias=AliasChoices("CORS_ORIGINS_RAW", "CORS_ORIGINS"),
     )
     # Externally-reachable base URL for the dashboard. Used to build links
     # rendered in Jira tickets, Slack/Teams notifications, and emails. Should

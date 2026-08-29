@@ -150,6 +150,11 @@ async def probe_slack(config: dict | None = None) -> ProbeResult:
 
     start = time.monotonic()
     try:
+        # Runtime DB configuration is authoritative for global integrations.
+        # A stale environment bot-token placeholder must not shadow a webhook
+        # that was resolved from the encrypted settings store.
+        if webhook_url:
+            return ProbeResult("slack", "healthy", 0, "Webhook URL configured (no live test for webhooks)", None, None)
         if settings.SLACK_BOT_TOKEN:
             client = get_http_client()
             resp = await client.post(
@@ -162,8 +167,6 @@ async def probe_slack(config: dict | None = None) -> ProbeResult:
             if data.get("ok"):
                 return ProbeResult("slack", "healthy", ms, f"Team: {data.get('team', 'OK')}", True, True)
             return ProbeResult("slack", "auth_error", ms, data.get("error", "unknown"), False)
-        elif webhook_url:
-            return ProbeResult("slack", "healthy", 0, "Webhook URL configured (no live test for webhooks)", None, None)
         return ProbeResult("slack", "down", 0, "No bot token or webhook URL configured")
     except Exception as exc:
         return ProbeResult("slack", "down", 0, str(exc)[:300])
