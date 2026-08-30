@@ -1,5 +1,98 @@
 # Changelog
 
+## 2026-08-29 - eight shipped links 404 for everyone who clones, and nine claims were stale
+
+`docs/` and `ROADMAP.md` are gitignored **on purpose** - they are local working
+notes, not shipped documentation. The shipped docs linked into them anyway, and
+the failure is invisible on the machine that wrote it: the files exist locally,
+so every link resolves for the author and 404s for everyone else.
+
+`CONTRIBUTING.md` opened with *"step 1: Read the roadmap"* pointing at
+`ROADMAP.md`, so a new contributor's very first instruction was a dead link.
+That one could never self-heal - the file is ignored at `.gitignore:125`, so
+writing it does not fix the link. Eight distinct targets were dead: `ROADMAP.md`
+(from four docs), `CLAUDE.md` (from three), and six files under `docs/`. Each
+now points at something that ships: the Kustomize overlays under `k8s/`, the
+`Jenkinsfile`, `docker-compose.gcp-vm.yml`, or - for the feature-flag inventory
+- the running instance's own **Settings -> Feature Flags** page, which is the
+real source of truth anyway.
+
+Nine factual claims were also wrong, all verified against the code:
+
+- **`GET /health` and `GET /health/full` do not exist.** `main.py:270` records
+  that the legacy shim was retired deliberately; the docs were never updated.
+  The real contract is `/health/live`, `/health/ready`, `/health/version`,
+  `/health/details` and `/health/ingestion`.
+- **`DEEP_CLUSTER_THRESHOLD` and `DEEP_MAX_CLUSTERS_PER_RUN` were removed on
+  2026-08-08** - `config.py:471` says so, and says they "read as live tuning
+  knobs and did nothing". They were still documented in two places as live
+  knobs with defaults, so an operator could set them in `.env`, see nothing
+  change, and have no way to tell why.
+- **Jaeger, Prometheus and Grafana are not in `docker-compose.yml`.** Three of
+  the eight URLs in the "After startup" table refused connection after
+  `make dev`, and `README.md` listed observability as a core capability. They
+  live in `docker-compose.monitoring.yml`, which nothing pointed at.
+- **MinIO console credentials were listed as `admin / password123`.** Compose
+  uses `${MINIO_ACCESS_KEY:?}` / `${MINIO_SECRET_KEY:?}`, which
+  `gen-dev-env.sh` randomises - so the documented login always fails. Flower
+  was listed as needing no credentials while compose forces basic auth.
+- **`make demo` was marked "Coming in v0.1.0"** with a note to follow Mode 1
+  instead. It has been fully implemented at `Makefile:356` for some time, and
+  `README.md` sells `make quickstart` (which is `demo`) as the starred path.
+- **The CLI has 12 command groups**, not the 10 or 11 variously claimed.
+- **`OTEL_EXPORTER_OTLP_ENDPOINT` has no default** - it is
+  `Optional[str] = None` and unset in every shipped compose file, so traces
+  never flow. The docs promised `http://jaeger:4317` as a default.
+- **Alembic head is 0139**, not the documented "0001-0055" - about 85
+  revisions behind.
+
+The guard asks **git** what is tracked rather than the filesystem what exists,
+because the filesystem is exactly what made this invisible. It distinguishes
+"exists locally but is not tracked" from "does not exist at all", since the
+fixes differ. Verified by reverting the four doc files: it names all seven dead
+links by file and line. It also caught a bug in itself during development -
+`lstrip("./")` strips a character *set*, which turned `.env.example` into
+`env.example`; fixed and noted in place.
+
+## 2026-08-29 - the GCP runbook could never have worked, and `make dev` printed a 404 as its success message
+
+Two first-run defects, both found by walking the shipped instructions against
+the code rather than reading them.
+
+**`cp .env.gcp-vm.example .env` produced a `.env` Compose refuses to parse.**
+`deploymentsteps.md` and `installation.md` both hand a new self-hoster that
+command and then `docker compose up`. The template defined 32 keys and omitted
+`MONGO_PASSWORD` and `FLOWER_PASSWORD`, both declared `${VAR:?}` in
+`docker-compose.yml`. `:?` fires at **config-parse** time, so Compose aborted
+before starting a single container:
+
+    error while interpolating services.mongo... MONGO_PASSWORD is required
+
+Nothing after that step in either runbook was reachable, and profile-gating
+flower would not have saved it. `.env.example` carries all five required keys,
+which is precisely why this survived: the common path worked and only the GCP
+path was dead, so nobody walking the default install ever hit it.
+
+**The Swagger URL 404s, and the build system prints it.** `main.py` sets
+`docs_url="/api-docs"`, but `make dev`, `make dev-lite`, `make demo`, both
+local-setup scripts and the seeder all echoed
+`http://localhost:8000/docs` **on success** - handing the user a 404 as their
+reward for a working stack. Six tracked docs repeated it while
+`GETTING_STARTED.md` and `CONTRIBUTING.md` had it right, so the docs
+contradicted each other and reading them could not settle which was true. All
+twelve sites now point at the path the app actually serves.
+
+Also fixed: two of the three CLI examples in `GETTING_STARTED.md` step 5 do not
+exist. `runs list --limit 5` fails with `No such option: --limit` (the options
+are `--page`/`--size`), and `intelligence get <run-id>` fails with
+`No such command 'get'` (the commands are `show` and `refresh`).
+
+The guard derives both rules from the code, not from a hardcoded list: it reads
+every `${VAR:?}` out of `docker-compose.yml` and asserts each committed
+`.env*.example` defines it, and it reads `docs_url` out of `main.py` and asserts
+nothing advertises a different one. Verified by reverting each fix - the env
+omission fails 1 test, the dead URL fails 1.
+
 ## 2026-08-29 - six more by-id test-management routes were reachable across tenants
 
 Same class as the agent and digest holes, same day, different module. Five

@@ -148,6 +148,4 @@ infra/                            -- monitoring (Prometheus rules, Grafana)
 
 - [README.md](README.md) -- product overview and quick start
 - [README_FULL.md](README_FULL.md) -- full feature documentation (SDK setup, ingestion options, CLI reference, etc.)
-- [CLAUDE.md](CLAUDE.md) -- coding conventions, architectural rules, known pitfalls
 - [CONTRIBUTING.md](CONTRIBUTING.md) -- development setup and PR process
-- [ROADMAP.md](ROADMAP.md) -- what's planned and how to influence it

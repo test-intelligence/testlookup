@@ -49,7 +49,7 @@ dev: .env ## Start core stack without local LLM (Ollama/ChromaDB excluded)
 	@echo ""
 	@echo "Stack started (no local LLM — AI falls back to rules/ML engine)."
 	@echo "  Dashboard  -> http://localhost:3000"
-	@echo "  API Docs   -> http://localhost:8000/docs"
+	@echo "  API Docs   -> http://localhost:8000/api-docs"
 	@echo "  MinIO      -> http://localhost:9001  (credentials from .env)"
 	@echo "  Flower     -> http://localhost:5555"
 	@echo ""
@@ -63,7 +63,7 @@ dev-llm: .env ## Start full stack including local LLM (Ollama + ChromaDB)
 	@echo ""
 	@echo "Stack started with local LLM enabled."
 	@echo "  Dashboard  -> http://localhost:3000"
-	@echo "  API Docs   -> http://localhost:8000/docs"
+	@echo "  API Docs   -> http://localhost:8000/api-docs"
 	@echo "  Ollama     -> http://localhost:11434"
 	@echo "  ChromaDB   -> http://localhost:8001"
 	@echo ""
@@ -79,7 +79,7 @@ dev-setup: .env ## First-time full setup with local LLM: start stack + pull LLM 
 
 dev-lite: .env ## Start minimal stack (no Ollama/ChromaDB) — for low-resource machines
 	docker compose -f docker-compose.dev-lite.yml up -d --build
-	@echo "Lite stack started. Dashboard: http://localhost:3000 | API: http://localhost:8000/docs"
+	@echo "Lite stack started. Dashboard: http://localhost:3000 | API: http://localhost:8000/api-docs"
 
 dev-lite-stop: ## Stop lite stack
 	docker compose -f docker-compose.dev-lite.yml down
@@ -375,7 +375,7 @@ asyncio.run((lambda: httpx.AsyncClient(base_url='http://localhost:8000', timeout
 	@echo ""
 	@echo "==> Demo ready!"
 	@echo "    Dashboard:  http://localhost:3000"
-	@echo "    API docs:   http://localhost:8000/docs"
+	@echo "    API docs:   http://localhost:8000/api-docs"
 	@echo "    MCP SSE:    http://localhost:8002/sse"
 	@echo ""
 	@echo "    Default login: use the dev-login endpoint or register via the API."

@@ -534,7 +534,7 @@ async def main(reset: bool = False) -> None:
         print(f"  {str(u['role']):<16} {u['email']:<28} {u['password']}")
     print()
     print("  Dashboard → http://localhost:3000")
-    print("  API Docs  → http://localhost:8000/docs")
+    print("  API Docs  → http://localhost:8000/api-docs")
     print("=" * 62)
 
 

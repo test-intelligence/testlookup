@@ -1,7 +1,7 @@
 # TestLookup — GCP Deployment Guide
 ### For Beginners | 2-Developer Team | Lowest Cost (~$2–3/month)
 
-> This document is the **VM-based deployment runbook**. For Kubernetes/OpenShift and multi-cloud strategies, also review `deployment_and_testing_strategy.md`, `installation.md`, and `docs/cloud-run-cloud-sql.md`.
+> This document is the **VM-based deployment runbook**. For Kubernetes/OpenShift, see `installation.md` and the Kustomize overlays under `k8s/overlays/`.
 
 ---
 

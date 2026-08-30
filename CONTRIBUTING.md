@@ -4,7 +4,7 @@ Thanks for your interest in contributing. TestLookup is pre-1.0 open-source soft
 
 ## Before you start
 
-1. **Read the roadmap.** `ROADMAP.md` lists what we're actively working on, what's planned, and what's on hold.
+1. **Check what's already in flight.** The issue tracker is the live list of what's being worked on, planned, and on hold.
 2. **Check for existing issues.** Before filing a new bug or feature request, search existing issues.
 3. **Small PRs ship faster.** If you're considering a large change, open a discussion issue first.
 4. **Security issues go through a different channel.** See `SECURITY.md`.
@@ -132,7 +132,7 @@ Every user-facing feature is labelled:
 - **Experimental** -- in-repo but flag-off by default. May change or be removed.
 - **Enterprise / future** -- not accepting external contributions yet.
 
-The canonical list: `docs/features/FEATURE_FLAG_INVENTORY.md`.
+The canonical list is the running instance itself: **Settings -> Feature Flags**.
 
 ## Licensing (DCO)
 

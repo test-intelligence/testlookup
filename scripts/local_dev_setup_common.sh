@@ -192,7 +192,7 @@ TestLookup local ${STACK_LABEL} developer stack is ready.
 
 Useful URLs:
   - Dashboard:      http://localhost:3000
-  - API Docs:       http://localhost:8000/docs
+  - API Docs:       http://localhost:8000/api-docs
   - Health:         http://localhost:8000/health/details
   - Flower:         http://localhost:5555
   - MinIO Console:  http://localhost:9001

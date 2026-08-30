@@ -84,10 +84,10 @@ pip install -e /app/cli/
 testlookup projects list
 
 # List recent runs
-testlookup runs list --project $PROJECT --limit 5
+testlookup runs list --project $PROJECT --size 5
 
 # Get intelligence for a run
-testlookup intelligence get <run-id>
+testlookup intelligence show <run-id>
 ```
 
 ## Step 6 -- Try the MCP server
@@ -136,7 +136,7 @@ make clean          # stops + deletes all volumes (fresh start)
 
 - **Enable AI-assisted triage:** `make dev-llm` + `docker compose exec ollama ollama pull qwen2.5:7b`, then set `ANALYSIS_MODE=llm` in Settings
 - **Connect your CI pipeline:** see `samples/README.md` for format examples, or the [SDK setup guide](README_FULL.md)
-- **Explore experimental features:** see [ROADMAP.md](ROADMAP.md) and the feature flag inventory
+- **Explore experimental features:** open **Settings -> Feature Flags** -- experimental features ship flag-off and are listed there with their defaults
 - **Contribute:** see [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Tested on

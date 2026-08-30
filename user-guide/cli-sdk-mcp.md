@@ -80,4 +80,4 @@ Typical assistant workflows: "why did last night's run fail?" (runs + analysis t
 - **CI pipeline step** → CLI (or plain `curl` against the REST API).
 - **Want live progress and per-test streaming** → SDK reporter.
 - **Human asking questions in natural language** → MCP through your AI assistant.
-- **Custom integrations** → the REST API directly (interactive docs at `http://localhost:8000/docs`).
+- **Custom integrations** → the REST API directly (interactive docs at `http://localhost:8000/api-docs`).

@@ -15,7 +15,7 @@ This guide reflects the current platform architecture and deployment options:
 - **Local/dev:** `docker compose` with optional `worker`, `beat`, `ollama`, `chromadb`
 - **Kubernetes:** `k8s/overlays/dev`, `k8s/overlays/staging`, `k8s/overlays/prod`
 - **OpenShift:** `k8s/overlays/openshift` (Route based exposure)
-- **Managed cloud path:** `docs/cloud-run-cloud-sql.md` for GCP
+- **Managed cloud path:** `docker-compose.gcp-vm.yml` and `.github/workflows/deploy-gke.yml` for GCP
 - **CI/CD:** GitHub Actions and Jenkins pipeline in `Jenkinsfile`
 
 ---
@@ -197,7 +197,7 @@ Important: Cloud Run cannot host stateful local services like MongoDB/MinIO/Redi
 - S3-compatible object storage: Cloud Storage S3 interoperability endpoint or external S3-compatible provider
 - MCP Server: Cloud Run service (SSE transport, `--no-allow-unauthenticated` recommended)
 
-Use `docs/cloud-run-cloud-sql.md` for full steps.
+Use `docker-compose.gcp-vm.yml` with the runbook in `deploymentsteps.md` for full steps.
 
 ---
 
@@ -301,10 +301,9 @@ docker compose exec mcp python -c "import httpx; import asyncio; print(asyncio.r
 
 ## 10) Multi-cloud deployment references
 
-- `deployment_and_testing_strategy.md` - environment-level deployment/testing strategy
 - `deploymentsteps.md` - beginner-friendly GCP VM runbook
-- `docs/cloud-run-cloud-sql.md` - managed GCP service path
-- `docs/MULTI_CLOUD_DEPLOYMENT_STRATEGY.md` - AWS/GCP/Azure/private cloud platform mapping
-- `docs/JENKINS_PIPELINE.md` - Jenkins CI/CD reference
+- `k8s/overlays/` - AWS EKS / GCP GKE / Azure AKS / OpenShift / homelab Kustomize overlays
+- `.github/workflows/deploy-*.yml` - the deployment pipelines those overlays are driven by
+- `Jenkinsfile` and `jenkins/` - Jenkins CI/CD reference
 - `README.md` - architecture and system diagram
 

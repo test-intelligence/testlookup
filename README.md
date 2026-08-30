@@ -4,7 +4,7 @@
 
 Turn raw automated test results into actionable failure intelligence and release-risk signals -- locally, offline, and through API / CLI / UI / MCP.
 
-> 📖 **This README is the short, evaluator-facing pitch.** For the deep marketing/product walkthrough (architecture diagrams, full feature inventory, framework matrix, integrations), see [`README_FULL.md`](README_FULL.md). Contributors should also read [`CLAUDE.md`](CLAUDE.md) and the subdirectory guides under `backend/` and `frontend/`.
+> 📖 **This README is the short, evaluator-facing pitch.** For the deep marketing/product walkthrough (architecture diagrams, full feature inventory, framework matrix, integrations), see [`README_FULL.md`](README_FULL.md). Contributors should also read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](https://python.org)
@@ -41,7 +41,7 @@ make quickstart          # generates .env (random local secrets) + loads demo da
 
 That's it — no manual secret editing. `make quickstart` / `make dev` run `scripts/gen-dev-env.sh`, which fills every required secret in `.env` with a random value and keeps `DATABASE_URL` / `MONGO_URI` in sync, so the stack starts on the first try. Prefer to configure by hand? `cp .env.example .env`, edit the secrets, then `make dev`.
 
-Dashboard: http://localhost:3000 | API docs: http://localhost:8000/docs | MCP SSE: http://localhost:8002/sse
+Dashboard: http://localhost:3000 | API docs: http://localhost:8000/api-docs | MCP SSE: http://localhost:8002/sse
 
 Prerequisites: Docker + Compose v2. Core mode: 4 GB RAM / 2 vCPU. Full mode: 8 GB / 4 vCPU.
 
@@ -100,14 +100,14 @@ Every feature is labelled **Core** (on by default in OSS), **Experimental** (in-
 | Two-run compare | Side-by-side diff with classification (new failures, regressions, duration spikes, renamed tests) |
 | Flaky quarantine | Detection, QA Lead approval, active quarantine, nightly recheck, release/re-quarantine state machine |
 | Perf regression | Per-test duration baselines (Welford algorithm) with 3-sigma spike detection at release-gate time |
-| CLI | 11 command groups, multi-profile auth, table/JSON/YAML output |
+| CLI | 12 command groups, multi-profile auth, table/JSON/YAML output |
 | MCP server | 48 tools, 9 resources, 6 prompts -- query test health from IDE or CI agents ([reference](mcp/README.md)) |
 | Dashboards | 30+ customizable analytics widgets, drag-and-drop layout |
 | Live streaming | Real-time WebSocket dashboard during test execution via Redis Streams |
 | User management | RBAC (VIEWER / TESTER / QA_ENGINEER / QA_LEAD / ADMIN), JWT + API key auth |
 | PII redaction | Auto-scrub at all system boundaries (persistence, logging, LLM prompts, reports) |
 | Email notifications | Async SMTP with daily/weekly digest subscriptions |
-| Observability | OpenTelemetry traces (Jaeger), Prometheus metrics, Grafana dashboards, deep health checks |
+| Observability | Deep health checks and Prometheus metrics built in; OpenTelemetry traces, Jaeger, Prometheus and Grafana ship in `docker-compose.monitoring.yml` (opt-in) |
 | Feature flags | Per-project / per-role / rollout-percent gates with audit history |
 | Global search | Multi-entity keyword search across runs, tests, suites, defects |
 
@@ -137,7 +137,7 @@ Every feature is labelled **Core** (on by default in OSS), **Experimental** (in-
 | Project-scoped API keys | Admin-only creation for CI service accounts |
 | Report share links | Public token-authenticated PDF/evidence downloads |
 
-See `docs/features/FEATURE_FLAG_INVENTORY.md` for the full flag inventory with defaults, owners, and graduation criteria.
+The running instance is the source of truth for flags: **Settings -> Feature Flags** lists every flag with its default, current value and rollout percentage.
 
 ## Architecture
 
@@ -157,14 +157,13 @@ For the full architecture diagram, component descriptions, and deployment matrix
 |----------|-------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture, component diagram, deployment matrix |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, code style, PR process, DCO |
-| [ROADMAP.md](ROADMAP.md) | What's in progress, planned, and on hold |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting and disclosure policy |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant v2.1 |
 | [GETTING_STARTED.md](GETTING_STARTED.md) | Step-by-step walkthrough: clone to first failure clustered in under 15 minutes |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Data flow, offline guarantees, auth boundaries, PII redaction scope |
 | [benchmarks/](benchmarks/) | Classification accuracy + throughput benchmarks with methodology (`make benchmark`) |
 | [README_FULL.md](README_FULL.md) | Full feature documentation (SDK setup, ingestion options, MCP config, CLI reference, etc.) |
-| [docs/deployment/](docs/deployment/) | Multi-cloud deployment guides (AWS EKS / GCP GKE / Azure AKS / self-hosted K8s) — start with [docs/deployment/README.md](docs/deployment/README.md) |
+| [k8s/](k8s/) | Kustomize base and per-cloud overlays (AWS EKS / GCP GKE / Azure AKS / OpenShift / self-hosted K3s) |
 
 ## License
 

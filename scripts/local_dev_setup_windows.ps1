@@ -157,7 +157,7 @@ try {
     Write-Host ""
     Write-Host "Useful URLs:"
     Write-Host "  - Dashboard:      http://localhost:3000"
-    Write-Host "  - API Docs:       http://localhost:8000/docs"
+    Write-Host "  - API Docs:       http://localhost:8000/api-docs"
     Write-Host "  - Health:         http://localhost:8000/health/details"
     Write-Host "  - Flower:         http://localhost:5555"
     Write-Host "  - MinIO Console:  http://localhost:9001"

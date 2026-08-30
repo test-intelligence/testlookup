@@ -2,7 +2,7 @@
 > **360° AI-Powered Software Testing Intelligence Platform**
 > Local-LLM capable · Multi-framework · OpenShift/Kubernetes native · MCP-enabled
 
-> 📖 **This is the long-form, product-walkthrough README.** For the short evaluator pitch and quick-start, see [`README.md`](README.md). Contributor patterns live in [`CLAUDE.md`](CLAUDE.md).
+> 📖 **This is the long-form, product-walkthrough README.** For the short evaluator pitch and quick-start, see [`README.md`](README.md). Contributor patterns live in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](https://python.org)
@@ -37,7 +37,7 @@ It also ships a first-class **MCP (Model Context Protocol) server** so AI assist
 | **Async Processing** | Celery priority queues (`critical` → `ingestion` → `ai_analysis` → `default`) + beat scheduler |
 | **User Management** | Role-based team management (VIEWER → TESTER → QA_ENGINEER → QA_LEAD → ADMIN) · admin direct-create with temp password · email invitation flow · user profile with avatar |
 | **API Key Management** | Scoped personal access tokens (PATs) · SHA-256 hashing · per-user key lifecycle (create / list / revoke) · dual JWT/API key auth |
-| **CLI Tool** | Full command-line interface (Typer + Rich) · 10 command groups · multi-profile auth · table/JSON/YAML output |
+| **CLI Tool** | Full command-line interface (Typer + Rich) · 12 command groups · multi-profile auth · table/JSON/YAML output |
 | **Email Notifications** | Async SMTP delivery · HTML templates for 6 event types · digest subscriptions (daily/weekly/per-run/per-release) |
 | **PII Redaction** | Automatic sensitive data scrubbing at all system boundaries (persistence, logging, LLM prompts, reports) · 37 key patterns + 13 regex patterns |
 | **Test Case Tagging** | Automatic + custom tags on tests, runs, suites · 13 system tags · AI-derived signal tags after analysis |
@@ -55,7 +55,7 @@ It also ships a first-class **MCP (Model Context Protocol) server** so AI assist
 
 ### What's new — Tier 0-2 batch (2026-04)
 
-Every capability below ships behind a feature flag (see `docs/features/FEATURE_FLAG_INVENTORY.md`) and honours the `AI_OFFLINE_MODE` kill switch on every outbound network call. Walkthroughs, enable steps, and troubleshooting per feature live in **`docs/TESTLOOKUP_USER_GUIDE_TIER_0_2.md`**.
+Every capability below ships behind a feature flag and honours the `AI_OFFLINE_MODE` kill switch on every outbound network call. The running instance is the source of truth for flags: **Settings -> Feature Flags** lists each one with its default, current value and rollout percentage.
 
 | Domain | Capability |
 |--------|-----------|
@@ -181,7 +181,7 @@ graph TD
         Jaeger[Jaeger Tracing port 16686]
         Prometheus[Prometheus Metrics port 9090]
         Grafana[Grafana Dashboards port 3001]
-        HealthCheck[Deep Health Checks /health/full]
+        HealthCheck[Deep Health Checks /health/details]
     end
 
     subgraph AI_Intelligence_Layer [AI and Intelligence]
@@ -357,7 +357,7 @@ cp .env.example .env           # edit secrets + passwords before starting
 make dev                       # boots postgres + mongo + redis + minio + backend + frontend
 ```
 
-Open http://localhost:3000 for the dashboard and http://localhost:8000/docs for the Swagger API.
+Open http://localhost:3000 for the dashboard and http://localhost:8000/api-docs for the Swagger API.
 
 Switch to ML mode in **Settings > AI Configuration** once you've ingested enough runs to train a classifier (minimum 200 labelled samples).
 
@@ -377,13 +377,12 @@ The `make dev-llm` target applies the `local-llm` Docker Compose profile which s
 
 ### Mode 3 -- Demo (fastest way to see the product)
 
-> Coming in v0.1.0. Starts the core stack, loads sample test results, and opens the dashboard on a pre-ingested run. No LLM required.
+> Starts the core stack, loads sample test results, and opens the dashboard on a pre-ingested run. No LLM required.
 
 ```bash
 make demo                      # boots the stack + loads sample data
 ```
 
-Until the demo target ships, follow **Mode 1** above and ingest some of your own test results.
 
 ### After startup
 
@@ -392,10 +391,20 @@ Database migrations run automatically when the backend container starts (`alembi
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | Dashboard | http://localhost:3000 | Register via API Docs first |
-| API Docs | http://localhost:8000/docs | -- |
-| MinIO Console | http://localhost:9001 | admin / password123 |
-| Flower (Celery) | http://localhost:5555 | -- |
+| API Docs | http://localhost:8000/api-docs | -- |
+| MinIO Console | http://localhost:9001 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` from your `.env` |
+| Flower (Celery) | http://localhost:5555 | `FLOWER_USER` / `FLOWER_PASSWORD` from your `.env` |
 | MCP SSE Server | http://localhost:8002/sse | -- |
+
+The three observability services below are **not** part of `make dev`. They live in
+`docker-compose.monitoring.yml` and must be started explicitly:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+```
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
 | Jaeger UI | http://localhost:16686 | -- |
 | Prometheus | http://localhost:9090 | -- |
 | Grafana | http://localhost:3001 | admin / admin |
@@ -719,7 +728,7 @@ testlookup/
 │   │   └── worker/             # Celery background tasks
 │   │       ├── tasks.py                 # Ingestion + analysis + pipeline tasks
 │   │       └── training_tasks.py        # Export · trigger-check · fine-tune pipeline
-│   ├── migrations/             # Alembic migrations (0001–0055)
+│   ├── migrations/             # Alembic migrations (0001–0139)
 │   ├── tests/                  # pytest test suite
 │   │   └── test_user_management.py  # 16 unit tests for user/API key management
 │   ├── requirements.txt
@@ -745,7 +754,7 @@ testlookup/
 │   └── Dockerfile
 ├── cli/                        # TestLookup CLI tool (Typer + Rich)
 │   ├── testlookup_cli/         # CLI source code
-│   │   ├── app.py              # Root app with 10 command groups
+│   │   ├── app.py              # Root app with 12 command groups
 │   │   ├── client.py           # Async HTTP client (JWT + API key auth)
 │   │   ├── config.py           # Multi-profile config (~/.config/testlookup/)
 │   │   └── output.py           # Rich table, JSON, YAML output
@@ -815,10 +824,9 @@ make k8s-rollout-async-prod
 ## Deployment Documentation
 
 - `installation.md` - installation + deployment entry points (local, GCP VM, Cloud Run)
-- `deployment_and_testing_strategy.md` - validation and release strategy by environment
 - `deploymentsteps.md` - detailed GCP VM operational runbook
-- `docs/cloud-run-cloud-sql.md` - managed GCP deployment path
-- `docs/JENKINS_PIPELINE.md` - Jenkins CI/CD pipeline usage
+- `docker-compose.gcp-vm.yml` + `.github/workflows/deploy-gke.yml` - GCP deployment paths
+- `Jenkinsfile` and `jenkins/` - Jenkins CI/CD pipeline
 
 ## MCP Server
 
@@ -920,8 +928,6 @@ ingestion → (parallel) anomaly_detection
 ```bash
 DEEP_INVESTIGATION_ENABLED=true      # Enable/disable the deep pipeline
 RELEASE_PASS_RATE_THRESHOLD=90.0     # % below which NO_GO fast-path triggers
-DEEP_CLUSTER_THRESHOLD=0.75          # Jaccard similarity threshold for clustering
-DEEP_MAX_CLUSTERS_PER_RUN=20         # Cap on clusters per deep investigation
 PROMETHEUS_URL=http://prometheus:9090 # Optional — enables fetch_app_metrics tool
 GITHUB_TOKEN=ghp_...                  # Optional — enables fetch_build_changes tool
 GITHUB_REPO=yourorg/yourrepo         # Required when GITHUB_TOKEN is set
@@ -1124,14 +1130,17 @@ Grafana dashboards at `http://localhost:3001` (default credentials: `admin / adm
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /health` | Basic liveness probe |
-| `GET /health/full` | Deep health: PostgreSQL, MongoDB, Redis, MinIO, Ollama connectivity |
+| `GET /health/live` | Liveness probe — is the process alive? |
+| `GET /health/ready` | Readiness probe — are critical dependencies up? |
+| `GET /health/version` | Build identity — version, revision, build date |
+| `GET /health/details` | Full dependency status: PostgreSQL, MongoDB, Redis, MinIO, Ollama |
+| `GET /health/ingestion` | Ingestion backpressure, queue depths, DLQ counts |
 
 ### Configuration
 
 ```bash
 OTEL_ENABLED=true                        # Enable OpenTelemetry tracing (default: true)
-OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317  # OTLP gRPC endpoint
+OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317  # OTLP gRPC endpoint (no default — unset means no traces)
 METRICS_ENABLED=true                     # Enable Prometheus /metrics endpoint (default: true)
 PROMETHEUS_URL=http://prometheus:9090    # Prometheus URL for fetch_app_metrics tool
 ```
@@ -1685,8 +1694,6 @@ Key variables:
 **Deep Investigation**
 - `DEEP_INVESTIGATION_ENABLED` — `true` (default) to enable the deep LangGraph pipeline
 - `RELEASE_PASS_RATE_THRESHOLD` — pass rate % below which NO_GO fast-path triggers without calling the LLM (default: 90.0)
-- `DEEP_CLUSTER_THRESHOLD` — Jaccard similarity threshold for failure grouping (default: 0.75)
-- `DEEP_MAX_CLUSTERS_PER_RUN` — maximum failure clusters investigated per run (default: 20)
 - `PROMETHEUS_URL` — Prometheus base URL (optional); enables `fetch_app_metrics` tool
 - `GITHUB_TOKEN` — GitHub personal access token (optional); enables `fetch_build_changes` tool
 - `GITHUB_REPO` — `owner/repo` slug (required when `GITHUB_TOKEN` is set)
@@ -1718,7 +1725,7 @@ Key variables:
 
 **Observability**
 - `OTEL_ENABLED` — `true` (default) to enable OpenTelemetry tracing
-- `OTEL_EXPORTER_OTLP_ENDPOINT` — OTLP gRPC endpoint (default: `http://jaeger:4317`)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` — OTLP gRPC endpoint. **No default**: unset (as it is in every shipped compose file), so traces are not exported until you set it.
 - `METRICS_ENABLED` — `true` (default) to expose Prometheus `/metrics` endpoint
 
 ## License

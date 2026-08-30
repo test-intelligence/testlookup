@@ -1133,7 +1133,7 @@ async def main(reset: bool = False, wipe_only: bool = False) -> None:
     print("   without a password — no credentials required in dev mode)")
     print()
     print("  Dashboard -> http://localhost:3000")
-    print("  API Docs  -> http://localhost:8000/docs")
+    print("  API Docs  -> http://localhost:8000/api-docs")
     print("=" * 62)
 
 
