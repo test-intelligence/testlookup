@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-08-30 — the repair sweep's skip conditions are the load-bearing part
+
+Coverage slice 4, finishing `services/live_run_recovery_service.py`: the
+module's second sweep, `repair_clobbered_primary_suite_names`, was the
+remaining 32%. **The module is now at 100%.**
+
+That sweep re-stamps `TestRun.primary_suite_name` from the authoritative
+`LiveSession.suite_name`. It exists because `finalize_run` used to recompute
+the label from the dominant per-event `suite_name`, which the TestNG listener
+stamped to the test *class* name — so a run the user labelled "API Regression
+Multi-Class" surfaced as `com.example.OrderApiRegressionTests`.
+
+Unlike its sibling, **this one writes to rows**, which makes its skip
+conditions the part that matters: a sweep that repairs too eagerly overwrites a
+label the user chose. All three are now pinned —
+
+- **Idempotency.** The docstring promises "when the two already match, the row
+  is left alone". Without it the sweep rewrites every live run on every hourly
+  beat. Dropping the check fails three tests.
+- **Whitespace is not a difference.** Both sides are stripped before comparison,
+  so `"  Smoke  "` and `"Smoke"` are the same label and not worth a write.
+- **A blank session label must never clobber a real one.** `"   "` from the
+  session must not replace `"Smoke"` with nothing — the sweep exists to restore
+  a label, not erase one. Removing the strip/blank guard fails that test.
+
+Also pinned: the "never fail the beat task" contract on the join (the `CAST` is
+dialect-dependent between sqlite and postgres, and the code says to log and
+bail rather than raise), and the no-commit rule — this sweep stages real
+`UPDATE`s, so committing an injected session would end the caller's unit of
+work mid-sweep.
+
+**One asymmetry documented rather than changed.** The per-row `except` logs and
+continues, but this sweep's counts have no `errors` key — unlike its sibling
+`auto_recover_completed_runs`, which returns one. So a row that fails to repair
+is visible only in the log: the return value reports "candidates 2, repaired 1"
+and nothing distinguishes a failure from a deliberate skip. Pinned in a test
+named for it so the next reader meets it as a choice rather than a surprise.
+
+Module coverage **0% → 100%** across slices 3 and 4. Mutation-verified four
+times in total.
+
 ## 2026-08-30 — the service that repairs silent data loss had no test of its own
 
 Coverage slice 3. `services/live_run_recovery_service.py` measured **0%** — one

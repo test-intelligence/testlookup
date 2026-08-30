@@ -292,3 +292,161 @@ class TestTheTransactionContract:
 
         db.commit.assert_not_called()
         db.rollback.assert_not_called()
+
+
+# ── The second sweep in this module ──────────────────────────────────────────
+#
+# ``repair_clobbered_primary_suite_names`` re-stamps ``TestRun.primary_suite_name``
+# from the authoritative ``LiveSession.suite_name``. It exists because
+# finalize_run used to recompute the label from the dominant per-event
+# suite_name, which the TestNG listener stamped to the test CLASS name — so a
+# run the user labelled "API Regression Multi-Class" surfaced as
+# ``com.example.OrderApiRegressionTests``.
+#
+# It writes to rows, unlike its sibling, which makes its skip conditions the
+# load-bearing part: a sweep that repairs too eagerly overwrites a label the
+# user chose.
+
+
+def _rows_db(rows, *, execute_error: Exception | None = None):
+    """The repair sweep reads ``.all()`` tuples, not ``.scalars()``."""
+    db = AsyncMock()
+    result = MagicMock()
+    result.all.return_value = rows
+    if execute_error is not None:
+        db.execute = AsyncMock(side_effect=execute_error)
+    else:
+        db.execute = AsyncMock(return_value=result)
+    return db
+
+
+class TestSuiteNameRepairSkips:
+    """What it declines to touch. Each of these would overwrite a good label."""
+
+    @pytest.mark.asyncio
+    async def test_a_matching_label_is_left_alone(self):
+        """The docstring's idempotency claim: "when the two already match, the
+        row is left alone". Without this the sweep rewrites every live run on
+        every hourly beat."""
+        db = _rows_db([(uuid.uuid4(), "Smoke", "Smoke")])
+
+        counts = await svc.repair_clobbered_primary_suite_names(db)
+
+        assert counts == {"candidates": 1, "repaired": 0}
+        assert db.execute.await_count == 1, "only the SELECT should have run"
+
+    @pytest.mark.asyncio
+    async def test_labels_differing_only_by_whitespace_are_the_same_label(self):
+        """Both sides are stripped before comparison, so padding is not a
+        difference worth a write."""
+        db = _rows_db([(uuid.uuid4(), "  Smoke  ", "Smoke")])
+
+        counts = await svc.repair_clobbered_primary_suite_names(db)
+
+        assert counts["repaired"] == 0
+        assert db.execute.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_blank_session_label_never_clobbers_a_real_one(self):
+        """`LiveSession.suite_name` of "   " must not replace "Smoke" with
+        nothing — the sweep exists to restore a label, not to erase one."""
+        db = _rows_db([(uuid.uuid4(), "Smoke", "   ")])
+
+        counts = await svc.repair_clobbered_primary_suite_names(db)
+
+        assert counts["repaired"] == 0
+        assert db.execute.await_count == 1
+
+
+class TestSuiteNameRepairWrites:
+    @pytest.mark.asyncio
+    async def test_a_clobbered_label_is_restored_from_the_session(self):
+        """The reported bug, in one row: the run shows the test class name and
+        the session holds what the user actually chose."""
+        db = _rows_db([(
+            uuid.uuid4(),
+            "com.example.OrderApiRegressionTests",
+            "API Regression Multi-Class",
+        )])
+
+        counts = await svc.repair_clobbered_primary_suite_names(db)
+
+        assert counts == {"candidates": 1, "repaired": 1}
+        assert db.execute.await_count == 2, "SELECT then UPDATE"
+
+    @pytest.mark.asyncio
+    async def test_a_run_with_no_label_yet_gets_one(self):
+        db = _rows_db([(uuid.uuid4(), None, "Smoke")])
+
+        counts = await svc.repair_clobbered_primary_suite_names(db)
+
+        assert counts["repaired"] == 1
+
+    @pytest.mark.asyncio
+    async def test_it_repairs_each_differing_row_and_skips_the_rest(self):
+        db = _rows_db([
+            (uuid.uuid4(), "wrong", "right"),
+            (uuid.uuid4(), "same", "same"),
+            (uuid.uuid4(), None, "also-right"),
+        ])
+
+        counts = await svc.repair_clobbered_primary_suite_names(db)
+
+        assert counts == {"candidates": 3, "repaired": 2}
+
+    @pytest.mark.asyncio
+    async def test_it_does_not_commit(self):
+        """Same contract as its sibling: the caller owns the transaction. This
+        one stages real UPDATEs, so committing here would end the caller's unit
+        of work mid-sweep."""
+        db = _rows_db([(uuid.uuid4(), "wrong", "right")])
+
+        await svc.repair_clobbered_primary_suite_names(db)
+
+        db.commit.assert_not_called()
+        db.rollback.assert_not_called()
+
+
+class TestSuiteNameRepairNeverFailsTheBeat:
+    @pytest.mark.asyncio
+    async def test_a_broken_join_returns_counts_instead_of_raising(self):
+        """The CAST in the join is dialect-dependent (sqlite vs postgres), and
+        the code says so: "never fail the beat task here — log and bail". The
+        caller is an hourly beat that also runs the other sweep."""
+        db = _rows_db([], execute_error=RuntimeError("no such function: CAST"))
+
+        counts = await svc.repair_clobbered_primary_suite_names(db)
+
+        assert counts == {"candidates": 0, "repaired": 0}
+
+    @pytest.mark.asyncio
+    async def test_one_failing_update_does_not_stop_the_others(self):
+        """DOCUMENTED ASYMMETRY, pinned so it is a choice rather than a
+        surprise. The per-row `except` here logs and continues, but this
+        sweep's counts have no `errors` key — unlike its sibling
+        `auto_recover_completed_runs`, which returns one. So a row that fails
+        to repair is visible only in the log: the return value reports
+        "candidates 2, repaired 1" and nothing says the difference was a
+        failure rather than a skip.
+        """
+        first, second = uuid.uuid4(), uuid.uuid4()
+        db = AsyncMock()
+        result = MagicMock()
+        result.all.return_value = [(first, "wrong", "right"), (second, "wrong2", "right2")]
+
+        calls = {"n": 0}
+
+        async def _execute(stmt):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return result          # the SELECT
+            if calls["n"] == 2:
+                raise RuntimeError("update blew up")
+            return MagicMock()
+        db.execute = _execute
+
+        counts = await svc.repair_clobbered_primary_suite_names(db)
+
+        assert counts["candidates"] == 2
+        assert counts["repaired"] == 1, "the second row must still be attempted"
+        assert "errors" not in counts
