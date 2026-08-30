@@ -118,7 +118,7 @@ pytest-asyncio==1.4.0
 # In-memory async SQLite for tests that need a real session against the real
 # ORM models (auth/MFA flows) without a live Postgres. Test-only.
 aiosqlite==0.20.0
-pytest-cov==6.0.0
+pytest-cov==7.1.0
 pytest-mock==3.14.0
 anyio==4.14.1
 factory-boy==3.3.1
