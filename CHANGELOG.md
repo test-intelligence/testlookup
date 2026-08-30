@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-30 — the upload dropdown and `/ingest/file` could drift apart silently
+
+The formats a self-hoster can pick in the upload UI
+(`reportUploadService.ts::SUPPORTED_FORMATS`) and the formats the endpoint will
+actually accept (`routers/ingest.py::_SUPPORTED_FORMATS`) are two hand-kept
+lists on opposite sides of the frontend/backend language boundary. Nothing
+coupled them. They happen to match today (twelve formats each, including the
+`auto` detection mode), but a one-sided edit was a silent adoption defect
+waiting to happen, in either direction:
+
+- **UI ahead of backend** — the dropdown offers a format `/ingest/file` rejects.
+  The user selects it, uploads, and gets a `400` for a format the product told
+  them it supported. The first-run guide derives its advertised-format list from
+  the same array, so the promise is made twice.
+- **Backend ahead of UI** — a new parser lands server-side but never appears in
+  the dropdown or onboarding copy. A real capability stays invisible and
+  under-advertised.
+
+A new quality-gate guard, `frontend.ingest-formats-match-backend`, parses both
+registries and fails CI if the two sets differ, naming the offending format and
+the side that is out of step. It ships at zero with no baseline — an absolute
+rule, not a ratchet — and no-ops (rather than firing a false positive) if either
+registry is refactored out of the shape it parses; paired unit tests in
+`scripts/test_quality_gate.py` pin the current shape and both drift directions.
+`architecture/DEVELOPER_GUIDE.md`'s guard tables and counts are updated to match.
+
 ## 2026-08-30 — an outage rendered as "you have no data"
 
 The frontend twin of the `/health/ingestion` fix: six surfaces answered a

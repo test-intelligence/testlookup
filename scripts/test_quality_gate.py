@@ -245,6 +245,86 @@ def test_base_agent_subclass_flags_standalone_class(monkeypatch: pytest.MonkeyPa
     assert "rogue.py" in violations[0].file.as_posix()
 
 
+# ── Guard: frontend.ingest-formats-match-backend ─────────────────────────────
+
+
+def _write_ingest_registries(
+    tmp_path: Path, *, backend: list[str], frontend: list[str]
+) -> None:
+    """Craft the two registry files the parity guard reads: the backend
+    ``_SUPPORTED_FORMATS`` set in ``routers/ingest.py`` and the frontend
+    ``SUPPORTED_FORMATS`` array in ``reportUploadService.ts``."""
+    backend_body = ", ".join(f'"{f}"' for f in backend)
+    _write(tmp_path / "backend" / "app" / "routers" / "ingest.py", f"""
+        _SUPPORTED_FORMATS = {{
+            {backend_body},
+        }}
+    """)
+    frontend_rows = "\n".join(
+        f"  {{ value: '{f}', label: '{f}' }}," for f in frontend
+    )
+    _write(tmp_path / "frontend" / "src" / "services" / "reportUploadService.ts", f"""
+        export type ReportFormat = 'auto'
+        export const SUPPORTED_FORMATS: ReadonlyArray<{{ value: ReportFormat; label: string }}> = [
+        {frontend_rows}
+        ]
+    """)
+
+
+def test_ingest_formats_match_when_aligned(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    fmts = ["auto", "junit", "allure", "playwright"]
+    _write_ingest_registries(tmp_path, backend=fmts, frontend=fmts)
+    assert qg._ingest_formats_match_ui() == []
+
+
+def test_ingest_formats_flags_ui_advertising_unaccepted_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write_ingest_registries(
+        tmp_path,
+        backend=["auto", "junit"],
+        frontend=["auto", "junit", "cypress"],
+    )
+    violations = qg._ingest_formats_match_ui()
+    assert [v.file.name for v in violations] == ["reportUploadService.ts"]
+    assert "cypress" in violations[0].message
+
+
+def test_ingest_formats_flags_backend_accepting_unadvertised_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write_ingest_registries(
+        tmp_path,
+        backend=["auto", "junit", "robot"],
+        frontend=["auto", "junit"],
+    )
+    violations = qg._ingest_formats_match_ui()
+    assert [v.file.name for v in violations] == ["ingest.py"]
+    assert "robot" in violations[0].message
+
+
+def test_ingest_formats_no_op_when_a_registry_is_unparseable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The backend file exists but its registry was refactored away — the guard
+    # goes quiet rather than firing a false positive against the whole UI list.
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "routers" / "ingest.py", """
+        SUPPORTED = ("auto", "junit")  # renamed, no _SUPPORTED_FORMATS anchor
+    """)
+    _write(tmp_path / "frontend" / "src" / "services" / "reportUploadService.ts", """
+        export const SUPPORTED_FORMATS: ReadonlyArray<{ value: string; label: string }> = [
+          { value: 'auto', label: 'Auto-detect' },
+        ]
+    """)
+    assert qg._ingest_formats_match_ui() == []
+
+
 # ── Guard: homelab.build-tag-placeholder ─────────────────────────────────────
 
 

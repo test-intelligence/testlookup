@@ -1526,6 +1526,94 @@ def _backend_cloud_providers_are_priced() -> list[Violation]:
     return violations
 
 
+_INGEST_ROUTER_PATH = Path("backend") / "app" / "routers" / "ingest.py"
+_UPLOAD_SERVICE_PATH = Path("frontend") / "src" / "services" / "reportUploadService.ts"
+_BACKEND_INGEST_FORMATS_RE = re.compile(
+    r"_SUPPORTED_FORMATS\s*=\s*\{(?P<body>[^}]*)\}", re.DOTALL
+)
+_FRONTEND_INGEST_FORMATS_RE = re.compile(
+    r"SUPPORTED_FORMATS\s*:[^=]*=\s*\[(?P<body>.*?)\]", re.DOTALL
+)
+
+
+def _backend_ingest_formats() -> set[str] | None:
+    path = REPO_ROOT / _INGEST_ROUTER_PATH
+    if not path.exists():
+        return None
+    m = _BACKEND_INGEST_FORMATS_RE.search(path.read_text(encoding="utf-8", errors="ignore"))
+    if not m:
+        return None
+    formats = set(re.findall(r'"([a-z0-9_]+)"', m.group("body")))
+    return formats or None
+
+
+def _frontend_ingest_formats() -> set[str] | None:
+    path = REPO_ROOT / _UPLOAD_SERVICE_PATH
+    if not path.exists():
+        return None
+    m = _FRONTEND_INGEST_FORMATS_RE.search(path.read_text(encoding="utf-8", errors="ignore"))
+    if not m:
+        return None
+    formats = set(re.findall(r"value:\s*'([a-z0-9_]+)'", m.group("body")))
+    return formats or None
+
+
+def _ingest_formats_match_ui() -> list[Violation]:
+    """The formats the upload UI advertises must equal what ``/ingest/file``
+    accepts.
+
+    ``routers/ingest.py::_SUPPORTED_FORMATS`` is the authority on what the
+    endpoint will 202 rather than 400; ``reportUploadService.ts::SUPPORTED_FORMATS``
+    is the dropdown a self-hoster picks from (and what the first-run guide
+    derives its advertised-format list from). The two are hand-maintained on
+    opposite sides of a language boundary, so nothing but this check couples
+    them.
+
+    A drift is a silent adoption defect in either direction:
+
+    * a value the UI offers but the backend rejects → the user picks it, uploads,
+      and gets a 400 for a format we told them we support;
+    * a parser the backend gains but the UI never lists → a real capability that
+      is invisible in the product and under-advertised in onboarding.
+
+    Both files must parse to a non-empty set; if either registry cannot be read
+    (a structural refactor moved it) the check no-ops rather than firing a false
+    positive — the paired unit tests pin the current shape.
+    """
+    violations: list[Violation] = []
+    backend = _backend_ingest_formats()
+    frontend = _frontend_ingest_formats()
+    if backend is None or frontend is None:
+        return violations
+
+    ui_path = REPO_ROOT / _UPLOAD_SERVICE_PATH
+    router_path = REPO_ROOT / _INGEST_ROUTER_PATH
+    ui_line = next(
+        (ln for ln, _ in grep_lines(ui_path, re.compile(r"SUPPORTED_FORMATS\s*:"))),
+        1,
+    )
+    router_line = next(
+        (ln for ln, _ in grep_lines(router_path, re.compile(r"_SUPPORTED_FORMATS\s*="))),
+        1,
+    )
+
+    for fmt in sorted(frontend - backend):
+        violations.append(Violation(
+            ui_path, ui_line,
+            f"upload UI advertises format '{fmt}', but /ingest/file rejects it "
+            f"(not in routers/ingest.py::_SUPPORTED_FORMATS) — the user gets a 400 "
+            f"for a format we told them we support",
+        ))
+    for fmt in sorted(backend - frontend):
+        violations.append(Violation(
+            router_path, router_line,
+            f"/ingest/file accepts format '{fmt}', but the upload UI never offers "
+            f"it (not in reportUploadService.ts::SUPPORTED_FORMATS) — a real "
+            f"capability invisible in the product and under-advertised in onboarding",
+        ))
+    return violations
+
+
 def _backend_settings_are_consumed() -> list[Violation]:
     """Every Settings field must be read somewhere.
 
@@ -2968,6 +3056,17 @@ GUARDS: list[Guard] = [
         description="Every non-self-hosted LLM provider has price-table entries.",
         check=_backend_cloud_providers_are_priced,
         fix_hint="Add a (provider, model-regex, ModelPrice) row to services/llm_pricing.py PRICE_TABLE.",
+    ),
+    Guard(
+        name="frontend.ingest-formats-match-backend",
+        description="The upload UI's advertised formats equal what /ingest/file accepts.",
+        check=_ingest_formats_match_ui,
+        fix_hint=(
+            "Add or remove the format on BOTH sides so they match: "
+            "reportUploadService.ts::SUPPORTED_FORMATS (value + label, and the "
+            "ReportFormat union) and routers/ingest.py::_SUPPORTED_FORMATS. A new "
+            "backend parser also needs its detection wired in _detect_format."
+        ),
     ),
     Guard(
         name="backend.settings-are-consumed",
