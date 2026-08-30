@@ -1,5 +1,60 @@
 # Changelog
 
+## 2026-08-29 - two endpoints that answered confidently without looking
+
+**`/health/ingestion` reported `status: "ok"` while Redis was unreachable.**
+Redis *is* the subject of that endpoint - the ingest and reject counters, the
+memory snapshot, the queue depths, the live-session count and the DLQ depth all
+live there. Every one of those signals initialised to an all-clear value inside
+a swallowing `try/except`, and `status` was then computed from exactly those
+defaults. With Redis down, live-stream ingestion dead and both admission gates
+failing open, on-call received:
+
+    {"status":"ok","redis":{"used_pct":0.0},"reject_count_this_minute":0,
+     "dlq_persist_count":0,"degraded_projects":0}
+
+Every number there is the most reassuring value it could hold, and each one
+means "we could not look". `0.0%` reads as headroom; `dlq: 0` reads as "nothing
+has permanently failed". The endpoint exists, per its own docstring, for
+"support / on-call humans when a customer reports my runs are slow / 429ing" -
+it answered the one question it exists to answer with a confident lie.
+
+It already knew how to express uncertainty: queue depths were `None` per queue.
+The three fields that actually drove `status` were not. Now a `redis_reachable`
+flag is tracked, every unreadable signal is `None` rather than `0`, and the
+status becomes `unknown`. Two helpers that returned `0` on any exception
+(`get_dlq_count`, `get_degraded_project_count`) return `None`, and
+`get_redis_memory_snapshot(force_refresh=True)` no longer hands back a
+minutes-old cached number dressed as current - the admission gate, which calls
+without `force_refresh`, still gets the cache, because there a slightly stale
+number beats failing open.
+
+**`/search`'s retrieval-mode control was inert and its provenance footer stated
+five things that are not true.** The Hybrid/Keyword/Semantic chips never reached
+the API: `runSearch` used the mode only to write a URL param and a recents
+entry. Meanwhile the footer claimed `embed model nomic-embed-text`, `ranker v1`,
+`k=20` and `semantic ratio 0.5` - global search is pure SQL `ILIKE`
+(`global_search_service.py`, no BM25, no embeddings, no re-ranker), and `k=20`
+contradicted the page's own `RESULTS_PAGE_SIZE` of 25. The hero explainer
+repeated the fiction. A user getting poor results would click Keyword to rule
+out embedding noise, watch the label flip, see identical results, and blame
+their corpus.
+
+The footer now reports only what the request did, taking its retrieval label
+from the server's own `search_type` rather than asserting one, and citing the
+real page size and match count. Hybrid and Semantic are marked unavailable with
+an explanation instead of looking selectable: `/api/v1/search` does implement
+all three, but only over test cases, so pointing this page at it would silently
+drop runs, suites, defects, flaky tests and releases from every result -
+narrowing the search would be a worse bug than the label.
+
+The e2e test named *"the mode facet updates the retrieval provenance footer"*
+asserted **only** that the label changed when the chip changed. It passed on
+every run, and in passing it pinned all five false claims in place - the "a test
+can pass having done nothing" class, guarding the wrong thing. It now asserts
+the footer names no retrieval machinery that is not there, and that a mode
+global search cannot run is not offered as selectable.
+
 ## 2026-08-29 - the last two IDORs, and the ratchet that could not see any of them
 
 **`POST /feedback/{analysis_id}`** had no role gate at all - just an

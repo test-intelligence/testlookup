@@ -59,11 +59,21 @@ import type {
 type RetrievalMode = SearchType                                   // 'hybrid' | 'keyword' | 'semantic'
 type EntityScope = 'all' | 'tests' | 'runs' | 'suites' | 'defects' | 'flaky' | 'releases'
 
-const MODES: { id: RetrievalMode; label: string }[] = [
-  { id: 'hybrid',   label: 'Hybrid' },
-  { id: 'keyword',  label: 'Keyword' },
-  { id: 'semantic', label: 'Semantic' },
+// Global search runs ONE retrieval strategy: SQL ILIKE substring matching
+// (see global_search_service.py -- no BM25, no embeddings, no re-ranker). The
+// Hybrid and Semantic chips never reached the API, so selecting one changed
+// the label and nothing else, while the provenance footer went on naming an
+// embedding model and a ranker version that are not involved. Marked
+// unavailable rather than deleted: /api/v1/search does implement all three,
+// but only over test cases, so pointing this page at it would silently drop
+// runs, suites, defects, flaky tests and releases from every result.
+const MODES: { id: RetrievalMode; label: string; available: boolean; why?: string }[] = [
+  { id: 'keyword',  label: 'Keyword',  available: true },
+  { id: 'hybrid',   label: 'Hybrid',   available: false, why: 'Hybrid retrieval is not available for global search — it spans six entity types and only keyword matching covers all of them.' },
+  { id: 'semantic', label: 'Semantic', available: false, why: 'Semantic retrieval is not available for global search — it spans six entity types and only keyword matching covers all of them.' },
 ]
+
+const RESULTS_PAGE_SIZE = 25
 
 const SCOPES: { id: EntityScope; label: string; entityKey: SearchEntityType | null }[] = [
   { id: 'all',      label: 'All',      entityKey: null },
@@ -275,7 +285,9 @@ function SearchCommandBar({
               role="radio"
               ariaChecked={mode === m.id}
               active={mode === m.id}
-              onClick={() => onModeChange(m.id)}
+              disabled={!m.available}
+              title={m.why}
+              onClick={() => { if (m.available) onModeChange(m.id) }}
             >
               {m.label}
             </Chip>
@@ -315,28 +327,34 @@ function SearchCommandBar({
 }
 
 function Chip({
-  children, active, onClick, role, ariaChecked,
+  children, active, onClick, role, ariaChecked, disabled, title,
 }: {
   children: React.ReactNode
   active: boolean
   onClick: () => void
   role?: 'radio'
   ariaChecked?: boolean
+  disabled?: boolean
+  title?: string
 }) {
   return (
     <button
       type="button"
       role={role}
       aria-checked={ariaChecked}
+      disabled={disabled}
+      title={title}
       onClick={onClick}
       className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
       style={{
         background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
         borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
         color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
+        opacity: disabled ? 0.45 : 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
       }}
-      onMouseEnter={(e) => { if (!active) e.currentTarget.style.borderColor = 'var(--color-border-light)' }}
-      onMouseLeave={(e) => { if (!active) e.currentTarget.style.borderColor = 'var(--color-border)' }}
+      onMouseEnter={(e) => { if (!active && !disabled) e.currentTarget.style.borderColor = 'var(--color-border-light)' }}
+      onMouseLeave={(e) => { if (!active && !disabled) e.currentTarget.style.borderColor = 'var(--color-border)' }}
     >
       {children}
     </button>
@@ -406,8 +424,9 @@ function VerdictRibbon({
           {Intl.NumberFormat().format(totalItems)} item{totalItems === 1 ? '' : 's'} indexed across {typeCount} entity type{typeCount === 1 ? '' : 's'}
         </h2>
         <p className="text-[13px] m-0" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5, maxWidth: '64ch' }}>
-          Hybrid retrieval combines BM25 keyword matching with semantic embeddings (nomic-embed-text).
-          {' '}Filters apply before ranking. Use <code className="font-mono text-[11.5px]">field:value</code> syntax to scope, e.g.{' '}
+          Global search matches your text against names, titles and error messages across every
+          entity type, case-insensitively.
+          {' '}Filters apply before matching. Use <code className="font-mono text-[11.5px]">field:value</code> syntax to scope, e.g.{' '}
           <code className="font-mono text-[11.5px]">status:failed owner:@team-pay last:7d</code>.
         </p>
       </div>
@@ -946,22 +965,31 @@ function IndexHealthCard({ rows }: { rows: EntityHealth[] }) {
 }
 
 // ── Provenance footer ───────────────────────────────────────────────────
-function ProvenanceFooter({ mode }: { mode: RetrievalMode }) {
+// Every claim this used to make was false. It named an embedding model
+// (nomic-embed-text), a ranker version, a k of 20 and a semantic ratio of 0.5,
+// none of which exist: global search is SQL ILIKE. `k=20` also contradicted the
+// page's own RESULTS_PAGE_SIZE of 25. A provenance row exists to tell the
+// reader how much to trust the results above it, so a fabricated one is worse
+// than none. It now states only what the request actually did.
+function ProvenanceFooter(
+  { resultCount, typeCount, searchType }:
+  { resultCount: number; typeCount: number; searchType?: string },
+) {
   return (
     <div
       className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
       style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
     >
       <span className="flex items-center gap-1.5 flex-wrap">
-        <span>{mode === 'hybrid' ? 'Hybrid retrieval' : mode === 'keyword' ? 'Keyword retrieval' : 'Semantic retrieval'}</span>
+        <span>{searchType ? `${searchType} retrieval` : 'Keyword retrieval'}</span>
         <span aria-hidden>·</span>
-        <span>embed model <code className="font-mono text-[11.5px]">nomic-embed-text</code></span>
+        <span>case-insensitive substring match</span>
         <span aria-hidden>·</span>
-        <span>ranker v1</span>
+        <span>{typeCount} entity type{typeCount === 1 ? '' : 's'}</span>
         <span aria-hidden>·</span>
-        <span>k=20</span>
+        <span>{Intl.NumberFormat().format(resultCount)} match{resultCount === 1 ? '' : 'es'}</span>
         <span aria-hidden>·</span>
-        <span>semantic ratio 0.5</span>
+        <span>page size {RESULTS_PAGE_SIZE}</span>
       </span>
       <button
         type="button"
@@ -1038,7 +1066,6 @@ export default function SearchPage() {
   // user with 84 tests had no way to see anything beyond the first
   // batch. Pagination now flows through runSearch(...,page) and the
   // adapters bump their per-type cap when narrowed.
-  const RESULTS_PAGE_SIZE = 25
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null)
   // Project-scoped totals from /api/v1/search/entity-counts — the
   // fallback for the chip + Index Health counts when no query is
@@ -1462,7 +1489,11 @@ export default function SearchPage() {
       )}
 
       {/* Provenance footer always rendered */}
-      <ProvenanceFooter mode={mode} />
+      <ProvenanceFooter
+        resultCount={response?.total ?? 0}
+        typeCount={scope === 'all' ? 6 : 1}
+        searchType={response?.search_type}
+      />
 
       {isSearching && (
         <div className="fixed bottom-4 right-4 z-20 inline-flex items-center gap-2 px-3 py-2 rounded-md text-[12px] text-[var(--color-text-secondary)] bg-[var(--color-bg-card)] border border-[var(--color-border)] shadow-lg">

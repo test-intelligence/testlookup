@@ -96,20 +96,37 @@ test.describe('Faceted search', () => {
     await expect(page).toHaveURL(new RegExp(`/runs/${RID}$`), { timeout: 8000 });
   });
 
-  test('the mode facet updates the retrieval provenance footer', async ({ page }) => {
+  test('the provenance footer describes the retrieval that actually ran', async ({ page }) => {
     await mockSearch(page);
-
     await page.goto('/search');
-    // `exact` matters: the page also carries an explainer paragraph beginning
-    // "Hybrid retrieval combines BM25 keyword matching with…", so a substring
-    // match resolves to two elements and dies on strict mode. The provenance
-    // footer this test is about is the <span> whose entire text is the label.
-    await expect(page.getByText('Hybrid retrieval', { exact: true }))
+
+    // This test used to assert only that the footer's LABEL changed when the
+    // mode chip changed -- which it did, while the request was identical every
+    // time. It passed, and in passing it pinned five false claims in place:
+    // an embedding model, a ranker version, k=20 and a semantic ratio, none of
+    // which global search uses (it is SQL ILIKE), plus a k that contradicted
+    // the page's own page size. Assert the substance, not the label.
+    await expect(page.getByText('Keyword retrieval', { exact: true }))
       .toBeVisible({ timeout: 10000 });
 
-    // Switch the retrieval mode chip Hybrid → Keyword.
-    await page.getByRole('radio', { name: 'Keyword', exact: true }).click();
-    await expect(page.getByText('Keyword retrieval', { exact: true }))
-      .toBeVisible({ timeout: 8000 });
+    for (const fiction of ['nomic-embed-text', 'ranker v1', 'k=20', 'semantic ratio']) {
+      await expect(page.getByText(fiction, { exact: false }))
+        .toHaveCount(0);
+    }
+  });
+
+  test('a retrieval mode global search cannot run is not offered as selectable', async ({ page }) => {
+    await mockSearch(page);
+    await page.goto('/search');
+
+    // Hybrid and Semantic never reached the API. A chip that looks selectable
+    // and changes nothing is worse than no chip: the user rules out embedding
+    // noise, sees identical results, and blames the corpus.
+    await expect(page.getByRole('radio', { name: 'Keyword', exact: true }))
+      .toBeEnabled({ timeout: 10000 });
+    for (const inert of ['Hybrid', 'Semantic']) {
+      await expect(page.getByRole('radio', { name: inert, exact: true }))
+        .toBeDisabled();
+    }
   });
 });

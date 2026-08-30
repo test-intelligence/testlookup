@@ -117,13 +117,22 @@ async def list_recent_failures(kind: str = "persist_live_session", limit: int = 
     return out
 
 
-async def get_dlq_count(kind: str = "persist_live_session") -> int:
-    """Return the current DLQ depth. Used by ``/health/ingestion`` so
-    the dashboard can surface "12 ingestion tasks have permanently
-    failed in the last 7 days" without polling for the entries."""
+async def get_dlq_count(kind: str = "persist_live_session") -> int | None:
+    """Return the current DLQ depth, or ``None`` when it could not be read.
+
+    Used by ``/health/ingestion`` so the dashboard can surface "12 ingestion
+    tasks have permanently failed in the last 7 days" without polling for the
+    entries.
+
+    This returned ``0`` on any error, which on an on-call dashboard reads as
+    *nothing has permanently failed* -- the most reassuring possible answer to
+    give when the truth is *we could not look*. ``None`` forces the caller to
+    render "unknown".
+    """
     try:
         from app.db.redis_client import get_redis
         redis = get_redis()
         return int(await redis.llen(_DLQ_KEY.format(kind=kind)))
-    except Exception:
-        return 0
+    except Exception as exc:
+        logger.warning("dlq_count_unavailable", kind=kind, error=str(exc))
+        return None

@@ -92,6 +92,16 @@ async def get_redis_memory_snapshot(*, force_refresh: bool = False) -> Optional[
     snapshot = await _read_memory_snapshot()
     if snapshot is not None:
         _CACHE = snapshot
+        return snapshot
+    if force_refresh:
+        # The caller explicitly asked for a *fresh* reading and there isn't
+        # one. Returning ``_CACHE`` here handed ``/health/ingestion`` a
+        # minutes-old number with no indication of its age, so a dashboard
+        # showing 41% memory could be describing a Redis that has since become
+        # unreachable. The admission gate (which calls without force_refresh)
+        # still gets the cache, because there a slightly stale number is far
+        # better than failing open.
+        return None
     return _CACHE
 
 

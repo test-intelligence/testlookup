@@ -179,9 +179,17 @@ async def test_get_dlq_count_returns_llen(enabled):
 
 
 @pytest.mark.asyncio
-async def test_get_dlq_count_fails_to_zero_on_redis_error(enabled):
+async def test_get_dlq_count_reports_unknown_on_redis_error(enabled):
+    """Was ``test_get_dlq_count_fails_to_zero_on_redis_error``, asserting ``0``.
+
+    Failing to zero is not a safe default here. This count is rendered on
+    ``/health/ingestion`` as "N tasks have permanently failed", so ``0`` reads
+    as *nothing has permanently failed* -- the most reassuring answer available,
+    returned at the exact moment the store that knows is unreachable. ``None``
+    forces the caller to render "unknown" instead.
+    """
     from app.services.ingestion_dlq import get_dlq_count
 
     redis = SimpleNamespace(llen=AsyncMock(side_effect=ConnectionError("down")))
     with patch("app.db.redis_client.get_redis", return_value=redis):
-        assert await get_dlq_count() == 0
+        assert await get_dlq_count() is None

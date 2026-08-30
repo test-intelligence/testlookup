@@ -333,9 +333,14 @@ async def flush_pending(
     }
 
 
-async def get_degraded_project_count() -> int:
+async def get_degraded_project_count() -> int | None:
     """Count projects currently in the degraded LLM-budget state.
-    Used by ``/health/ingestion`` to surface the operator signal."""
+
+    Returns ``None`` when the count could not be read. It used to return ``0``,
+    which reads as *no project is degraded* -- indistinguishable from *the
+    store that knows is unreachable*, and wrong in the direction that stops an
+    operator looking further.
+    """
     try:
         from app.db.redis_client import get_redis
         redis = get_redis()
@@ -345,5 +350,6 @@ async def get_degraded_project_count() -> int:
         ):
             count += 1
         return count
-    except Exception:
-        return 0
+    except Exception as exc:
+        logger.warning("degraded_project_count_unavailable", error=str(exc))
+        return None

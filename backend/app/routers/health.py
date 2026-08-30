@@ -377,8 +377,20 @@ async def health_ingestion() -> dict:
     # Per-bucket ingest counter: sum across every project's bucket key.
     # This is O(K) where K = number of projects with ingest in the last
     # minute. Bounded by project count, fine.
-    ingest_count = 0
-    project_count = 0
+    # ``redis_reachable`` is the whole point of this endpoint's honesty. Every
+    # signal below used to initialise to an all-clear value inside a swallowing
+    # try/except, and ``status`` was then computed from exactly those defaults
+    # -- so with Redis down, live-stream ingestion dead and both admission
+    # gates failing open, on-call got:
+    #     {"status":"ok","redis":{"used_pct":0.0},"reject_count_this_minute":0,
+    #      "dlq_persist_count":0,"degraded_projects":0}
+    # 0.0% reads as headroom and dlq 0 reads as "nothing permanently failed".
+    # The endpoint already knew how to say "unknown" -- queue depths use None --
+    # but the three fields driving ``status`` did not.
+    redis_reachable = True
+
+    ingest_count: int | None = 0
+    project_count: int | None = 0
     try:
         async for key in redis.scan_iter(match=f"testlookup:rate:ingest:*:{bucket}", count=200):
             project_count += 1
@@ -389,14 +401,19 @@ async def health_ingestion() -> dict:
                 continue
     except Exception as exc:
         logger.warning("health_ingestion_scan_failed: %s", exc)
+        redis_reachable = False
+        ingest_count = None
+        project_count = None
 
     # Global reject counter for this minute.
-    reject_count = 0
+    reject_count: int | None = 0
     try:
         val = await redis.get(f"testlookup:rate:reject:{bucket}")
         reject_count = int(val or 0)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("health_ingestion_reject_read_failed: %s", exc)
+        redis_reachable = False
+        reject_count = None
 
     # Celery queue depths. Each queue lives as a Redis List under its
     # routing key — ``LLEN`` is O(1). Falls back to None on error so
@@ -415,12 +432,15 @@ async def health_ingestion() -> dict:
 
     # Active live sessions — count of state-key hashes. Same pattern as
     # the per-project scan; bounded by live-run count.
-    active_sessions = 0
+    active_sessions: int | None = 0
     try:
         async for _ in redis.scan_iter(match="testlookup:live:state:*", count=200):
             active_sessions += 1
     except Exception:
-        active_sessions = -1  # surface "unknown"
+        # Was ``-1`` for "unknown", which every other field in this payload
+        # spells ``None``. Nothing consumes the numeric sentinel.
+        active_sessions = None
+        redis_reachable = False
 
     # Phase 3 — AI pipeline debouncer state. ``pending`` = runs waiting
     # in the SortedSet; ``degraded_projects`` = projects currently
@@ -444,7 +464,12 @@ async def health_ingestion() -> dict:
     # but we're not over the memory threshold (i.e. one project is
     # being rate-limited, but global memory is fine).
     over_threshold = False
-    used_pct = 0.0
+    used_pct: float | None = None
+    if snapshot is None:
+        # ``get_redis_memory_snapshot(force_refresh=True)`` returns None when it
+        # could not take a fresh reading -- it no longer hands back a stale
+        # cache dressed as current.
+        redis_reachable = False
     if snapshot is not None:
         used_pct = round(snapshot.used_pct, 1)
         if snapshot.max_bytes > 0 and snapshot.used_pct >= settings.INGEST_REDIS_MEMORY_THRESHOLD_PCT:
@@ -455,15 +480,21 @@ async def health_ingestion() -> dict:
         ):
             over_threshold = True
 
-    if over_threshold:
+    if not redis_reachable:
+        # "unknown" is the only honest answer: Redis IS the subject of this
+        # endpoint, so an unreachable Redis means the questions were not
+        # answered, not that the answers were reassuring.
+        status_flag = "unknown"
+    elif over_threshold:
         status_flag = "overload"
-    elif reject_count > 0:
+    elif reject_count:
         status_flag = "degraded"
     else:
         status_flag = "ok"
 
     return {
         "status": status_flag,
+        "redis_reachable": redis_reachable,
         "redis": {
             "used_bytes": snapshot.used_bytes if snapshot else None,
             "max_bytes": snapshot.max_bytes if snapshot else None,
