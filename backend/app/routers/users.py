@@ -507,7 +507,20 @@ async def update_project_member_role(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project membership not found")
 
     member, user = row
+    # Captured BEFORE the mutation: `member` is a live ORM object, so reading
+    # `member.role` after the assignment would record the new value as the old
+    # one and the audit row would show a change from X to X.
+    previous_role = member.role
     member.role = _normalize_user_role(payload.role).value
+    logger.info("updating_project_member_role", project_id=str(project_id), user_id=str(user_id),
+                before=previous_role, after=member.role, by=str(current_user.id))
+    # A privilege change inside a project was not audited at all, while the
+    # grant beside it was. An admin could escalate a member to a higher project
+    # role and the access trail showed only the original, lower grant.
+    await log_access_change(db, "member_role_changed", current_user, target_user_id=user_id,
+                            project_id=project_id,
+                            before_value={"role": previous_role},
+                            after_value={"role": member.role})
     await db.commit()
     await db.refresh(member)
 
@@ -536,6 +549,19 @@ async def remove_project_member(
     member = result.scalar_one_or_none()
     if not member:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project membership not found")
+    # Read the role off the row before it is deleted -- afterwards there is
+    # nothing left to say WHAT was revoked, only that something was.
+    revoked_role = member.role
+    logger.info("removing_project_member", project_id=str(project_id), user_id=str(user_id),
+                role=revoked_role, by=str(current_user.id))
+    # Revocation was the one membership event with no audit row. The trail
+    # recorded who was granted access and never who lost it, so it could show a
+    # user as a current member of a project they had been removed from -- the
+    # exact question an access review asks.
+    await log_access_change(db, "member_removed", current_user, target_user_id=user_id,
+                            project_id=project_id,
+                            before_value={"role": revoked_role},
+                            after_value=None)
     await db.delete(member)
     await db.commit()
 

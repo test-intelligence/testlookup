@@ -94,20 +94,50 @@ class TestAccessAuditService:
 
 
 class TestAuditActions:
-    """Verify the audit action types are consistent."""
+    """Verify the audit action types are consistent.
 
-    def test_action_types(self):
-        valid_actions = [
-            "role_changed",
-            "status_changed",
-            "member_added",
-            "member_removed",
-            "member_role_changed",
-            "profile_updated",
-        ]
-        for action in valid_actions:
-            assert isinstance(action, str)
-            assert len(action) <= 50
+    CORRECTED 2026-08-30. ``test_action_types`` used to build a list of six
+    action strings and assert, of each, ``isinstance(action, str)`` and
+    ``len(action) <= 50``. Both hold for any string literal, so the test could
+    not fail and verified nothing about the code -- while reading, from its
+    name and its list, as coverage of the audit vocabulary.
+
+    It listed ``member_removed`` and ``member_role_changed``. **Neither was
+    emitted anywhere.** Project-membership revocation and role changes wrote no
+    audit row at all, though the grant beside them did. So the intended design
+    was recorded here, a test appeared to cover it, and the emitters were never
+    written -- see [[feedback_a_test_can_pass_having_done_nothing]].
+
+    These now assert against the router source instead of against string
+    literals.
+    """
+
+    def test_every_declared_action_is_actually_emitted(self):
+        import inspect
+        import re
+
+        from app.routers import users
+
+        source = inspect.getsource(users)
+        emitted = set(re.findall(r'log_access_change\(\s*db,\s*"([a-z_]+)"', source))
+        for action in ("member_added", "member_removed", "member_role_changed",
+                       "role_changed", "status_changed"):
+            assert action in emitted, (
+                f"{action} is a declared audit action that routers/users.py "
+                f"never emits. Emitted: {sorted(emitted)}"
+            )
+
+    def test_every_action_fits_the_column(self):
+        """``AccessAuditLog.action`` is String(50)."""
+        import inspect
+        import re
+
+        from app.routers import users
+
+        for action in re.findall(
+            r'log_access_change\(\s*db,\s*"([a-z_]+)"', inspect.getsource(users)
+        ):
+            assert len(action) <= 50, action
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

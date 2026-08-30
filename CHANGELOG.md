@@ -1,5 +1,53 @@
 # Changelog
 
+## 2026-08-30 — the access log recorded who was granted access, never who lost it
+
+`POST /projects/{id}/members` wrote an audit row. Its two siblings did not:
+
+- `PATCH /projects/{id}/members/{user_id}` — a privilege change *inside* a
+  project — wrote nothing.
+- `DELETE /projects/{id}/members/{user_id}` — revocation — wrote nothing.
+
+For an **access** audit trail that is the worst asymmetry available. The log
+recorded every grant and no revocation, so an access review reading it would
+see a user as a current member of a project they had been removed from months
+earlier. And an admin escalating a member's project role left the original,
+lower grant standing as the only record of what that person could do.
+
+Both now emit, with before/after values: `member_role_changed` carries
+`{"role": old}` → `{"role": new}`, and `member_removed` carries the revoked
+role as `before_value` — read *before* the delete, because afterwards there is
+nothing left to say **what** was revoked, only that something was. The previous
+role in the PATCH is likewise captured before the assignment: `member` is a
+live ORM object, so reading it afterwards would record a change from X to X —
+an audit row that is present and useless.
+
+**The design already knew about both.** `tests/test_epic6_admin_scalability.py`
+had a `TestAuditActions::test_action_types` listing all six action names,
+including `member_removed` and `member_role_changed`. Its entire body was:
+
+```python
+for action in valid_actions:
+    assert isinstance(action, str)
+    assert len(action) <= 50
+```
+
+Both hold for any string literal. The test could not fail, verified nothing
+about the code, and read — from its name, its class, and its list — as coverage
+of the audit vocabulary. So the intended design was recorded, a test appeared
+to check it, and the emitters were never written. It now asserts against the
+router's source: every declared action must actually appear in a
+`log_access_change` call.
+
+Verified by reverting: 4 of the 5 new endpoint tests fail against the old code,
+and the corrected vocabulary test fails with `member_removed is a declared
+audit action that routers/users.py never emits`. The fifth passes in both
+states on purpose — a 404 must audit nothing, or the trail fills with
+revocations that never happened.
+
+Quality gate 31/31, ruff clean, 85 related tests pass.
+
+
 ## 2026-08-30 — `citation_validity` passed reports it had not read
 
 The decision-report evaluator's `citation_validity` check reported **"pass"**
