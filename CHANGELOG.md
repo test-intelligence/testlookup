@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-08-30 — `citation_validity` passed reports it had not read
+
+The decision-report evaluator's `citation_validity` check reported **"pass"**
+for any report with no material claims — an empty report, or one whose claims
+failed to parse. `_citation_metrics` returns `citation_validity: None` in that
+case, and the caller evaluated:
+
+```python
+"fail" if invalid_claims or (citation_value is not None and citation_value < MIN) else "pass"
+```
+
+With no claims, `invalid_claims` is `[]` and the second operand short-circuits
+to `False`, so the expression yields `"pass"`. Not "we could not check" — a
+clean bill of health, from a check that never ran.
+
+That matters more here than for most metrics, because this is the one the
+module treats as a **hard failure**: its own docstring says "Citation/reference
+failures and explicit policy contradictions are hard failures". The check that
+exists to stop an ungrounded report from shipping was the check that waved an
+unreadable one through.
+
+The two sibling metrics computed from the very same dict — `groundedness` and
+`contradiction_rate` — already handled `None` correctly, reporting
+`not_evaluated` and adding themselves to `unavailable_metrics`. That asymmetry
+is what makes this an oversight rather than a deliberate choice, and the fix is
+simply to make the third behave like the other two. Since the aggregate reads
+`not_evaluated` as `warn`, an unmeasurable report now surfaces as warn with
+`citation_validity` named in `unavailable_metrics`, instead of a quiet pass.
+
+Verified by reverting: 5 of the 8 new tests fail against the old code. Three
+pass in both states on purpose — a correctly cited claim must still pass, an
+unauthorized citation must still be a hard failure, and the aggregate was
+already non-`pass` for an empty report via its siblings. A fix that simply
+turned the check off would trade one silence for another, so those are pinned
+too.
+
+Backend: 308 decision-report/eval tests pass, quality gate 31/31, ruff clean.
+
 ## 2026-08-30 — twelve Prometheus metrics that nothing ever incremented
 
 `core/metrics.py` declared 49 metrics. **Twelve of them had no emitter

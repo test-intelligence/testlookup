@@ -224,11 +224,33 @@ def evaluate_decision_report_quality(
         unavailable: list[str] = []
 
         citation_value = citation.get("citation_validity")
-        checks.append(ReportEvalCheck(
-            name="citation_validity",
-            status=("fail" if invalid_claims or (citation_value is not None and citation_value < REPORT_EVAL_THRESHOLDS["citation_validity_min"]) else "pass"),
-            detail={"invalid_claim_ids": invalid_claims, **citation},
-        ))
+        if citation_value is None and not invalid_claims:
+            # `citation_validity` is None only when the report has NO material
+            # claims -- an empty report, or one whose claims did not parse.
+            # This branch used to fall through to the ternary below, where
+            # `invalid_claims or (None is not None and ...)` collapses to
+            # False, so the check reported "pass": a clean bill of health from
+            # a check that never ran, on the one metric this evaluator treats
+            # as a HARD failure.
+            #
+            # Its two siblings immediately below (groundedness,
+            # contradiction_rate) already do this correctly, which is what
+            # makes the omission unambiguous rather than a design choice. The
+            # aggregate reads `not_evaluated` as "warn" and names the metric in
+            # `unavailable_metrics`, so an unmeasurable report is now visibly
+            # unmeasured instead of quietly green.
+            unavailable.append("citation_validity")
+            checks.append(ReportEvalCheck(
+                name="citation_validity",
+                status="not_evaluated",
+                detail={"invalid_claim_ids": invalid_claims, **citation},
+            ))
+        else:
+            checks.append(ReportEvalCheck(
+                name="citation_validity",
+                status=("fail" if invalid_claims or (citation_value is not None and citation_value < REPORT_EVAL_THRESHOLDS["citation_validity_min"]) else "pass"),
+                detail={"invalid_claim_ids": invalid_claims, **citation},
+            ))
         groundedness = citation.get("groundedness")
         if groundedness is None:
             unavailable.append("groundedness")
