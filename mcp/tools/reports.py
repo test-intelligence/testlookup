@@ -50,7 +50,7 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         data = await api.post(
             f"/api/v1/reports/runs/{run_id}/share",
-            json_body={"expires_days": expires_days, "layout": layout},
+            json_body={"expiry_days": expires_days, "layout": layout},
         )
         return (
             f"Share link created for run {run_id}.\n"

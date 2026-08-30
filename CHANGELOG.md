@@ -1,5 +1,225 @@
 # Changelog
 
+## 2026-08-29 - six more by-id test-management routes were reachable across tenants
+
+Same class as the agent and digest holes, same day, different module. Five
+routes fetched by primary key behind nothing but `get_current_active_user`:
+
+- `GET /plans/{plan_id}/export/word` and `/export/pdf`
+- `GET /strategies/{strategy_id}/export/word` and `/export/pdf`
+- `GET` and `PUT /strategies/{strategy_id}`
+
+The exports are the worst of these in practice: they join through to every
+linked case and render its title, steps and expected result into a Word or PDF
+file, so this was a bulk cross-tenant read with a convenient output format.
+`PUT /strategies/{id}` is worse than a read - it overwrites another tenant's
+strategy, and `update_strategy` passes `project_id` to `audit_event`, so the
+audit row lands in the **victim's** project naming the attacker as actor.
+
+None of this needed a new mechanism. `require_plan_access` sits in
+`test_management_shared` for exactly this class, and its docstring already says
+so: "without this every by-id endpoint was a cross-tenant IDOR".
+`test_management_plans.py` applies it to all seven of its routes; the export
+module applied it to none. Every sibling of the two strategy routes calls
+`resolve_project_scope`; those two did not.
+
+A sixth, `GET /suites/{suite_name}/deleted`, treated `project_id` as an
+optional **filter** rather than a scope check - omit it and you got every
+tenant's membership rows (`test_fingerprint`, `test_name`, `class_name`,
+`status`, `review_tag`, run ids). Suite names like `api`, `smoke` and
+`regression` collide across tenants by construction, so the leak is not
+hypothetical. Both of its immediate siblings resolve scope properly and one
+carries a comment calling this "the third recurrence of the class" - it is now
+the fourth, and the last one in that file.
+
+The new guard asserts each by-id handler both calls `resolve_project_scope`
+**and** passes it the `project_id` of the row it just loaded - a check against
+the wrong object would otherwise read as a fix - and that the check precedes
+the first use of the row, since a check after the document is rendered still
+rendered the document. Verified: 14 of the 15 tests fail against the pre-fix
+routers.
+
+## 2026-08-29 - the #893 freshness fix left three sites behind, and its guard could not see them
+
+Three provenance rows still rendered a hardcoded freshness claim:
+`<span>refreshed just now</span>` twice in `RunsPage` (its `ProvenanceFooter`
+and its page header) and `<span>knowledge graph rebuilt just now</span>` in
+`TestManagementPage`. Coverage, Failure Analysis and Trends were correctly
+moved onto `useDataFreshness` + `shortAgo`; these three were missed.
+
+A tab left open overnight therefore read "refreshed just now" above numbers
+fourteen hours old -- inside the element whose entire job is telling the reader
+how much to trust what is above it. That is the original #893 defect, unchanged.
+The TestManagement one is worse than stale: nothing on that page rebuilds a
+knowledge graph, so it named an event the page cannot observe. It now reports
+the one fact the client actually knows -- when the payload arrived -- as
+"library refreshed X".
+
+The regression test written to prevent exactly this could not match any of
+them. It required an assignment to a variable named `refreshedAt` **and** a
+numeric age (`/refreshedAt\s*=\s*[^=]*['"`]\s*\d+\s*[smhd]\s+ago/`). Both
+conditions were wrong: a hardcoded claim need not be assigned to anything, and
+"just now" is a freshness claim with no digits in it. A second check now scans
+page JSX for any freshness verb followed by a literal age, "just now"
+included, and skips comment text so prose about the bug does not trip it.
+Verified by reverting both pages: it names all three sites with file and line.
+
+## 2026-08-29 - three cross-tenant authorization holes the ratchet was structurally unable to see
+
+All three were role-gated and never scope-gated: a check on *what the caller
+is*, never on *what the caller may touch*.
+
+**`POST /api/v1/agents/regression-watch`** took `run_id` and `project_id` as
+query params behind a bare `require_role(QA_ENGINEER)`. It loads that run's
+failure clusters and returns their classifications synchronously -- so any
+QA_ENGINEER on the install could read another tenant's clusters with a single
+request and no write.
+
+**`POST /api/v1/agents/defect-command`** is the same shape but worse: it loads
+the cluster and its AI analyses, generates a Jira-ready description from that
+failure text, and persisted a `Defect` row into whatever `project_id` the
+caller typed. That copies another tenant's failure data *across* the boundary,
+after which correctly-scoped endpoints serve it back quite legitimately --
+so hardening the read endpoints alone would not have contained it.
+
+Both now derive the project from the run rather than trusting the caller, and
+reject a `project_id` that does not own the run.
+
+**`POST /api/v1/digests/subscriptions`** checked the `project_id` it was
+*given* and never the case where none was given. A NULL `project_id` is not
+"no project to check": `generate_digest` applies no project filter at all when
+it is None, so the row is a standing instruction to mail **every project on
+the install** -- runs, cluster labels, `ReleaseDecision` blocking-issue text,
+recommendations and risk scores, plus the HTML analysis report when
+`report_attachment` is set. Nothing re-checks membership at delivery, so one
+POST from any authenticated user leaked the whole workspace on a schedule,
+indefinitely. `preview_digest`, in the same file, already refuses to widen for
+a non-admin naming no project ("rather than quietly widening scope to
+everything") -- the write path simply never got the same rule. It does now,
+and there is a matching send-time guard in the worker because rows created
+before this fix are still on disk.
+
+**Why nothing caught them.** `tests/test_architectural_authorization.py`
+matches scoped **path** params and declares a route with none of them protected
+by default, so all three sat in its blind spot while the gate stayed green.
+Worse, the obvious fix for the two agent routes would have done nothing:
+`require_run_access()` reads `run_id` from `request.path_params` and returns
+the caller **unchanged** when it is absent, so attaching it to a query-param
+route is a silent no-op that *looks* like protection. A test now pins that trap
+so nobody applies it.
+
+The digest hole was actively enshrined: `test_a_global_subscription_needs_no_
+project` asserted the vulnerable behaviour under the docstring "no project
+means no project to check", while its own fixture was named "all my projects"
+-- the intent was the user's projects, not the workspace's. That test has been
+corrected rather than deleted, and an admin-still-allowed case added so the
+capability is restricted, not removed.
+
+Every guard was verified by reverting the fix: 9 of the 10 new agent-scope
+tests fail against the pre-fix router, and the corrected digest test fails
+with the router guard removed.
+
+## 2026-08-29 - the CLI and MCP server are API clients too, and nobody checked their wire
+
+The UI's contract with the backend is exercised constantly. The other two
+clients are not, and all five of these had drifted apart from the server with
+nothing failing loudly.
+
+**`testlookup tests list` had never worked.** It called
+`GET /api/v1/runs/{run_id}/test-cases`; the runs router serves `/{run_id}/tests`
+and there is no `test-cases` sub-path under that prefix. Every invocation 404'd,
+was mapped to `Not found.` and exited 5.
+
+**`reports share --expires 30` silently ignored the flag.** The CLI and the MCP
+`create_share_link` both sent `{"expires_days": N}`; `CreateShareLinkRequest`
+declares **`expiry_days`**, and Pydantic v2 ignores extra keys, so the value was
+dropped and every link expired in the default 7 days while the command printed
+the link and exited 0. The frontend sends `expiry_days` correctly, which is
+exactly why the drift was invisible from the UI.
+
+**The MCP `list_test_runs` tool declared a `days` argument and never sent it.**
+FastAPI ignores undeclared query params, so every call silently used the
+backend's 30-day default. A model asking "what ran in the last day?" got a
+month of runs, reasoned over them as if they were 24 hours old, and nothing in
+the response contradicted it. (The docstring's "1-90" was wrong too; the
+backend accepts 0-365, 0 meaning all time.)
+
+**MCP `list_defects` rendered six fields the endpoint never returns.** It read
+`severity`, `title`, `summary`, `description`, `test_case_id` and `cluster_id`;
+`analytics_service.list_defects` selects none of them. Every row came out as
+`**Untitled** severity **?**` -- and the model had no signal the field was
+absent rather than merely unset. It now renders what is actually on the wire
+(test name, failure category, AI confidence, Jira link, dates). The sibling
+tool reading the same endpoint had it right all along, which is how this
+survived.
+
+**The pytest plugin dropped every setup-phase result.** It listened only to
+`report.when == "call"`. pytest emits three reports per test, and a test that
+errors in a fixture produces a failed **setup** report and no `call` report at
+all -- so a conftest fixture raising (DB unreachable, missing env var) made
+pytest exit 1 with "50 errors" while TestLookup received a session containing
+**zero** results. The run showed 0 tests and no failures, so the pass rate and
+the release-risk signal read "nothing wrong" rather than "everything broke" --
+this repo's own "absence is not health" class, arriving through the SDK.
+`@pytest.mark.skip` resolves in setup too, so skip counts were always 0. All
+three phases are now handled, de-duplicated per nodeid, with a teardown failure
+recorded as its own `BROKEN` entry rather than overwriting the test's verdict.
+
+The guards matter more than the five fixes. `backend/tests/regression/
+test_cli_and_mcp_wire_contract.py` asks the **assembled FastAPI application**
+for its route table and asserts every literal `/api/v1/...` in `cli/` and
+`mcp/tools/` resolves against it; that it is a backend test is deliberate,
+since `sdk-cli-test` installs only `client/` and `cli/` and `mcp-test` runs
+with the MCP requirements alone -- neither job can see a route table, which is
+why the existing `mcp/tests/test_mcp_endpoint_paths_exist.py` could only catch
+a bare router prefix. Three more guards generalise the rest: request-body keys
+must be fields the Pydantic model declares, no MCP tool may declare an argument
+it never references, and no renderer may read a field its endpoint does not
+select. Every guard was verified by re-introducing the original bug and
+confirming it fails: the 404 path fails 2, each dropped body key 1, the dropped
+`days` 2, and the phantom defect fields 1. The 11 SDK tests fail 5-of-11
+against the old plugin.
+
+## 2026-08-29 — the two utilities that exist only to be a safety net had no tests
+
+`utils/safeUrl.ts` and `utils/clipboard.ts` are both pure defensive helpers,
+and both shipped at effectively zero coverage: safeUrl at 7.1% statements and
+**0% branches**, clipboard at a flat 0%. Neither had a test file at all.
+
+That is the worst place in the frontend to have no tests. `isSafeExternalUrl`
+is the only thing between a compromised backend (or a hostile SAML IdP
+metadata payload) and `window.location.href = data.redirect_url` on the login
+page — every branch that rejects `javascript:`, a control character smuggled
+into a scheme, or a plain-`http:` downgrade in production was unexecuted by the
+suite. `copyTextToClipboard` exists *because* `navigator.clipboard` is
+unavailable on HTTP origins, which is exactly the homelab and air-gapped
+install; a quality gate (`frontend.clipboard-util`) forces all 16 copy call
+sites through it, so its untested `execCommand` fallback is the only copy path
+those deployments ever take.
+
+Adds three colocated suites — 74 tests over safeUrl (44), clipboard (8) and
+`suiteFilters.ts` (22, previously 31.8%). They are pinned to behaviour, not to
+the current implementation: every one was mutation-verified, and all 13
+mutations were killed. Among them, deleting safeUrl's control-character screen
+fails 7 tests, allowing `javascript:` into the scheme allowlist fails 4, and
+dropping the production `http:` guard fails 1; on the clipboard side, ignoring
+`window.isSecureContext` fails 1 and leaking the staged textarea (which holds
+the copied API key) fails 2. `suiteFilters` gets the rule that has regressed
+repeatedly in this repo: `runHasSuite` must consult **both**
+`primary_suite_name` and `suite_names`, because the TestNG listener leaves the
+primary null for session inheritance — narrowing it to the primary alone fails
+2 tests.
+
+No production code changed; this is coverage only.
+
+Also gitignores `frontend/coverage/`. `.gitignore` covered the Python coverage
+artifacts (`.coverage`, `coverage.xml`, `htmlcov/`) but not vitest's v8 HTML
+reporter, so running the documented coverage command left ~370 generated files
+untracked and one `git add -A` away from being committed. The pattern is
+repo-anchored (`/frontend/coverage/`) rather than a bare `coverage/`, which
+would match at every depth — the failure mode `repo.no-gitignored-source`
+exists to catch.
+
 ## 2026-08-29 — the first-run ingest `curl` passed CI even when the upload was rejected
 
 The dashboard's first-run guide hands a fresh self-hoster a copy-paste `curl`

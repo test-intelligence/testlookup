@@ -2978,7 +2978,7 @@ def dispatch_scheduled_digests(self):
         from sqlalchemy import select, update
 
         from app.db.postgres import AsyncSessionLocal
-        from app.models.postgres import DigestSubscription, NotificationLog, User
+        from app.models.postgres import DigestSubscription, NotificationLog, User, UserRole
         from app.services.digest_content_service import generate_digest, render_digest_html
 
         now = datetime.now(timezone.utc)
@@ -3105,7 +3105,36 @@ def dispatch_scheduled_digests(self):
                         and not bool(send_when_unchanged)
                     )
 
-                    if skip_unchanged:
+                    # ``generate_digest`` applies NO project filter when
+                    # ``project_id`` is None -- runs, cluster labels, blocking
+                    # issues and risk scores are aggregated across EVERY
+                    # project on the install. The create endpoint only checked
+                    # the project_id it was *given*, so a non-admin could store
+                    # a null-project row and be mailed the whole workspace on a
+                    # schedule. The router now refuses to create one; this is
+                    # the matching send-time guard, because nothing else
+                    # re-checks membership at delivery and rows created before
+                    # the fix are still on disk.
+                    from app.core.deps import _normalize_user_role
+
+                    blocked_global = (
+                        project_id is None
+                        and _normalize_user_role(user.role) != UserRole.ADMIN
+                    )
+
+                    if blocked_global:
+                        status = "skipped"
+                        error_detail = (
+                            "workspace-wide digest requires ADMIN; "
+                            "subscription is scoped to no project"
+                        )
+                        logger.warning(
+                            "Digest for subscription %s skipped — non-admin "
+                            "owner on a workspace-wide (project_id IS NULL) "
+                            "subscription",
+                            sub_id,
+                        )
+                    elif skip_unchanged:
                         status = "skipped"
                         logger.info(
                             "Digest for subscription %s skipped — zero-change window",

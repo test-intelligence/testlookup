@@ -229,8 +229,18 @@ class TestSubscriptionCannotBindAnotherTenantsProject:
         assert db.add.called, "a member was blocked from subscribing to their own project"
 
     @pytest.mark.asyncio
-    async def test_a_global_subscription_needs_no_project(self):
-        """``project_id`` is optional — no project means no project to check."""
+    async def test_a_non_admin_cannot_subscribe_to_every_project(self):
+        """A NULL project_id is not "no project to check" — it is *all* projects.
+
+        This test previously asserted the opposite, under the name
+        ``test_a_global_subscription_needs_no_project`` and the docstring "no
+        project means no project to check". That is wrong:
+        ``generate_digest`` applies no project filter at all when
+        ``project_id`` is None, so the row is a standing instruction to mail
+        every project on the install — and its own fixture name, "all my
+        projects", shows the intent was the user's projects, not the
+        workspace's. The test held the hole open.
+        """
         payload = MagicMock()
         payload.project_id = None
         payload.saved_view_id = None
@@ -246,7 +256,37 @@ class TestSubscriptionCannotBindAnotherTenantsProject:
         with patch(
             "app.core.deps.get_accessible_project_ids", AsyncMock(return_value={_MINE})
         ):
+            with pytest.raises(HTTPException) as excinfo:
+                await digests_router.create_subscription(
+                    payload=payload, db=db, current_user=_user()
+                )
+
+        assert excinfo.value.status_code == 403
+        assert not db.add.called, (
+            "a workspace-wide digest row was persisted for a non-admin; the "
+            "delivery task never re-checks membership, so it would mail every "
+            "project on the install on a schedule"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_admin_may_still_subscribe_to_every_project(self):
+        """The capability is restricted, not removed."""
+        payload = MagicMock()
+        payload.project_id = None
+        payload.saved_view_id = None
+        payload.name = "whole install"
+        payload.schedule = "WEEKLY"
+        payload.channel = "email"
+        payload.send_when_unchanged = True
+        payload.report_attachment = False
+
+        db = AsyncMock()
+        db.add = MagicMock()
+
+        with patch(
+            "app.core.deps.get_accessible_project_ids", AsyncMock(return_value=None)
+        ):
             await digests_router.create_subscription(
-                payload=payload, db=db, current_user=_user()
+                payload=payload, db=db, current_user=_user(role="ADMIN")
             )
-        assert db.add.called
+        assert db.add.called, "an admin was blocked from a workspace-wide digest"

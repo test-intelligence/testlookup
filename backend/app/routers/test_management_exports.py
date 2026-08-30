@@ -13,7 +13,7 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user
+from app.core.deps import get_current_active_user, resolve_project_scope
 from app.db.postgres import get_db
 from app.models.postgres import ManagedTestCase, TestPlan, TestPlanItem, TestStrategy, User
 
@@ -258,6 +258,13 @@ async def export_test_plan_word(
     plan = (await db.execute(select(TestPlan).where(TestPlan.id == plan_id))).scalar_one_or_none()
     if not plan:
         raise HTTPException(status_code=404, detail="Test plan not found")
+    # Fetched by primary key alone, behind nothing but an authenticated
+    # session -- so this export was a cross-tenant IDOR that rendered the
+    # whole document (every case title, step and expected result) into a
+    # downloadable file. ``require_plan_access`` in test_management_shared
+    # exists for exactly this class and says so; the plans router applies
+    # it to all seven of its routes, this module applied it to none.
+    await resolve_project_scope(db, current_user, str(plan.project_id))
 
     items_result = await db.execute(
         select(TestPlanItem, ManagedTestCase)
@@ -349,6 +356,13 @@ async def export_test_plan_pdf(
     plan = (await db.execute(select(TestPlan).where(TestPlan.id == plan_id))).scalar_one_or_none()
     if not plan:
         raise HTTPException(status_code=404, detail="Test plan not found")
+    # Fetched by primary key alone, behind nothing but an authenticated
+    # session -- so this export was a cross-tenant IDOR that rendered the
+    # whole document (every case title, step and expected result) into a
+    # downloadable file. ``require_plan_access`` in test_management_shared
+    # exists for exactly this class and says so; the plans router applies
+    # it to all seven of its routes, this module applied it to none.
+    await resolve_project_scope(db, current_user, str(plan.project_id))
 
     items_result = await db.execute(
         select(TestPlanItem, ManagedTestCase)
@@ -445,6 +459,13 @@ async def export_test_strategy_word(
     strategy = (await db.execute(select(TestStrategy).where(TestStrategy.id == strategy_id))).scalar_one_or_none()
     if not strategy:
         raise HTTPException(status_code=404, detail="Test strategy not found")
+    # Fetched by primary key alone, behind nothing but an authenticated
+    # session -- so this export was a cross-tenant IDOR that rendered the
+    # whole document (every case title, step and expected result) into a
+    # downloadable file. ``require_plan_access`` in test_management_shared
+    # exists for exactly this class and says so; the plans router applies
+    # it to all seven of its routes, this module applied it to none.
+    await resolve_project_scope(db, current_user, str(strategy.project_id))
 
     logger.info("exporting_strategy_word", strategy_id=str(strategy_id))
 
@@ -553,6 +574,13 @@ async def export_test_strategy_pdf(
     strategy = (await db.execute(select(TestStrategy).where(TestStrategy.id == strategy_id))).scalar_one_or_none()
     if not strategy:
         raise HTTPException(status_code=404, detail="Test strategy not found")
+    # Fetched by primary key alone, behind nothing but an authenticated
+    # session -- so this export was a cross-tenant IDOR that rendered the
+    # whole document (every case title, step and expected result) into a
+    # downloadable file. ``require_plan_access`` in test_management_shared
+    # exists for exactly this class and says so; the plans router applies
+    # it to all seven of its routes, this module applied it to none.
+    await resolve_project_scope(db, current_user, str(strategy.project_id))
 
     logger.info("exporting_strategy_pdf", strategy_id=str(strategy_id))
 
@@ -1299,6 +1327,17 @@ async def get_suite_deleted(
 ):
     """Return deleted/needs_review members from the <suite>-deleted bucket."""
     from app.models.postgres import SuiteMembership
+
+    # ``project_id`` here is an optional *filter*, not a scope check -- omitting
+    # it returned every tenant's rows (test_fingerprint, test_name, class_name,
+    # status, review_tag, run ids). Suite names like "api" and "smoke" collide
+    # across tenants by construction. Both immediate siblings resolve scope and
+    # carry a comment calling this "the third recurrence of the class".
+    scoped_project_id, allowed = await resolve_project_scope(
+        db, current_user, str(project_id) if project_id else None
+    )
+    if scoped_project_id is None and allowed is not None:
+        return []
 
     deleted_bucket = f"{suite_name}-deleted"
     stmt = select(SuiteMembership).where(

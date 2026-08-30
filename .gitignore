@@ -49,6 +49,9 @@ build/
 .coverage
 coverage.xml
 htmlcov/
+# vitest/v8 HTML coverage output (frontend/coverage/) — ~370 generated files
+# that `git add -A` would otherwise sweep into a commit after `vitest --coverage`.
+/frontend/coverage/
 .venv/
 venv/
 homelabsetup/

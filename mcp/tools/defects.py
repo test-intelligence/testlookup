@@ -65,22 +65,44 @@ def register(mcp) -> None:  # noqa: ANN001
             + (f" ({resolution_status})" if resolution_status else ""),
             f"_Showing {len(items)} of {data.get('total', len(items))}_\n",
         ]
+        # Render only fields ``/api/v1/analytics/defects`` actually returns.
+        # This block previously read severity/title/summary/description/
+        # test_case_id/cluster_id -- none of which appear in that endpoint's
+        # SELECT list -- so every row rendered "Untitled · severity ?" and the
+        # model had no signal the field was absent rather than merely unset.
         for d in items:
-            severity = d.get("severity", "?")
-            status = d.get("resolution_status", "?")
-            jira = d.get("jira_ticket_id") or d.get("jira_key")
-            jira_note = f" · Jira: `{jira}`" if jira else ""
+            status = d.get("resolution_status") or "OPEN"
+            category = d.get("failure_category") or "UNKNOWN"
+            jira = d.get("jira_ticket_id")
+            jira_url = d.get("jira_ticket_url")
+            if jira and jira_url:
+                jira_note = f" · Jira: [{jira}]({jira_url})"
+            elif jira:
+                jira_note = f" · Jira: `{jira}`"
+            else:
+                jira_note = " · Jira: unlinked"
             lines.append(
-                f"- **{d.get('title') or d.get('summary') or 'Untitled'}** "
-                f"· severity **{severity}** · status `{status}`{jira_note}"
+                f"- **{d.get('test_name') or 'Unlinked defect'}** "
+                f"· {category} · status `{status}`{jira_note}"
             )
-            if d.get("description"):
-                desc = d["description"][:200]
-                lines.append(f"  - {desc}")
-            if d.get("test_case_id"):
-                lines.append(f"  - Test case: `{d['test_case_id'][:8]}`")
-            if d.get("cluster_id"):
-                lines.append(f"  - Cluster: `{d['cluster_id']}`")
+            detail = []
+            if d.get("suite_name"):
+                detail.append(f"suite `{d['suite_name']}`")
+            confidence = d.get("ai_confidence_score")
+            if confidence is not None:
+                detail.append(f"AI confidence {confidence}%")
+            if d.get("created_at"):
+                detail.append(f"opened {str(d['created_at'])[:10]}")
+            if d.get("resolved_at"):
+                detail.append(f"resolved {str(d['resolved_at'])[:10]}")
+            if d.get("release_name"):
+                detail.append(f"release `{d['release_name']}`")
+            if d.get("jira_status"):
+                detail.append(f"Jira status `{d['jira_status']}`")
+            if d.get("external_status_conflict"):
+                detail.append("Jira status conflicts with TestLookup")
+            if detail:
+                lines.append("  - " + " · ".join(detail))
         return "\n".join(lines)
 
     # ── Write path (PMF US-14.1) ───────────────────────────────────────────

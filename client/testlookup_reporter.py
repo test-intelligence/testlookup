@@ -1454,6 +1454,9 @@ class _TestLookupPytestPlugin:
         self._launch_name = launch_name
         self._live: Optional[LiveSession] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        #: nodeids already streamed, so a test is recorded once even
+        #: though pytest emits a report for setup, call and teardown.
+        self._recorded: set = set()
 
     # ── pytest hooks ──────────────────────────────────────────────────────
 
@@ -1469,34 +1472,87 @@ class _TestLookupPytestPlugin:
         logger.info("TestLookup live session started: %s", self._live.session_id)
 
     def pytest_runtest_logreport(self, report):
-        if report.when != "call" or self._live is None or self._loop is None:
+        """Stream a result for every test, whichever phase decided its fate.
+
+        pytest emits three reports per test -- ``setup``, ``call`` and
+        ``teardown``. Listening only to ``call`` silently dropped two whole
+        classes of outcome:
+
+        * A test that errors in a fixture produces a failed ``setup`` report
+          and **no** ``call`` report at all. A conftest fixture raising (DB
+          unreachable, missing env var) made pytest exit 1 with "50 errors"
+          while TestLookup received a session containing zero results -- so the
+          pass rate and the release-risk signal read "nothing wrong" rather
+          than "everything broke".
+        * ``@pytest.mark.skip`` resolves during ``setup`` too, so skip counts
+          were always 0 and the ``elif report.skipped`` branch below was
+          reachable only for an imperative ``pytest.skip()`` mid-test.
+
+        A teardown failure is recorded as its own ``BROKEN`` entry, mirroring
+        pytest's own "1 passed, 1 error" duality -- the test really did pass,
+        and the cleanup really did fail.
+        """
+        if self._live is None or self._loop is None:
+            return
+        if report.when not in ("setup", "call", "teardown"):
             return
 
-        status = "PASSED"
+        nodeid = report.nodeid
+        suffix = ""
+
+        if report.when == "setup":
+            if report.failed:
+                # An exception in a fixture: pytest calls this an *error*, and
+                # the test body never ran. BROKEN, not FAILED.
+                status = "BROKEN"
+            elif report.skipped:
+                status = "SKIPPED"
+            else:
+                return  # setup passed -- wait for the call report
+        elif report.when == "call":
+            if report.failed:
+                status = "FAILED"
+            elif report.skipped:
+                status = "SKIPPED"
+            else:
+                status = "PASSED"
+        else:  # teardown
+            if not report.failed:
+                return
+            # The call phase already recorded the test's own outcome; report
+            # the cleanup failure separately rather than overwriting it.
+            status = "BROKEN"
+            suffix = " (teardown)"
+
+        key = nodeid + suffix
+        if key in self._recorded:
+            return
+        self._recorded.add(key)
+
         error: Optional[str] = None
         stack: Optional[str] = None
-
-        if report.failed:
-            status = "FAILED"
-            if report.longrepr:
-                full = str(report.longrepr)
-                # First line as short error; full repr as stack trace
-                lines = full.splitlines()
-                error = lines[-1] if lines else "Test failed"
-                stack = full
+        if report.failed and report.longrepr:
+            full = str(report.longrepr)
+            # First line as short error; full repr as stack trace
+            lines = full.splitlines()
+            error = lines[-1] if lines else "Test failed"
+            stack = full
         elif report.skipped:
-            status = "SKIPPED"
+            # ``longrepr`` for a skip is (path, lineno, "Skipped: reason").
+            longrepr = getattr(report, "longrepr", None)
+            if isinstance(longrepr, tuple) and len(longrepr) == 3:
+                error = str(longrepr[2])
 
         duration_ms = int(getattr(report, "duration", 0) * 1_000)
 
         # Derive suite name from node id (file path part)
-        parts = report.nodeid.split("::")
+        parts = nodeid.split("::")
         suite = parts[0] if len(parts) > 1 else ""
-        test_name = "::".join(parts[1:]) if len(parts) > 1 else report.nodeid
+        test_name = "::".join(parts[1:]) if len(parts) > 1 else nodeid
 
         self._loop.run_until_complete(
             self._live.record(
-                test_name=test_name,
+                test_name=test_name + suffix,
                 status=status,
                 duration_ms=duration_ms,
                 suite_name=suite,

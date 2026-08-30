@@ -130,7 +130,7 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             project_id: Project UUID (from list_projects).
             status: Filter by run status: PASSED, FAILED, IN_PROGRESS, or STOPPED.
-            days: How far back to look (1-90, default 7).
+            days: How far back to look (0-365, 0 = all time; default 7).
             page: Page number (default 1).
             size: Results per page (1-100, default 20).
         """
@@ -139,6 +139,7 @@ def register(mcp) -> None:  # noqa: ANN001
             params={
                 "project_id": project_id,
                 "status": status,
+                "days": days,
                 "page": page,
                 "size": size,
             },

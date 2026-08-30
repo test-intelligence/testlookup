@@ -37,7 +37,7 @@ def share(
     try:
         data = asyncio.run(client.request(
             "POST", f"/api/v1/reports/runs/{run_id}/share",
-            json_body={"expires_days": expires_days, "layout": layout},
+            json_body={"expiry_days": expires_days, "layout": layout},
             profile_name=profile_name,
         ))
         output.render(data, output_format)

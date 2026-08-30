@@ -55,6 +55,28 @@ async def create_subscription(
 
     if payload.project_id is not None:
         await resolve_project_scope(db, current_user, str(payload.project_id))
+    else:
+        # A NULL project_id is not "no project to check" -- ``generate_digest``
+        # applies no project filter at all when it is None, so the row is a
+        # standing instruction to mail **every project on the install**: runs,
+        # cluster labels, ReleaseDecision blocking-issue text, recommendations
+        # and risk scores, plus the HTML analysis report when
+        # ``report_attachment`` is set. Nothing re-checks membership at send
+        # time, so an unvalidated row leaks on a schedule, forever.
+        #
+        # ``preview_digest`` in this same file already refuses to widen for a
+        # non-admin naming no project ("rather than quietly widening scope to
+        # everything"); this is the same rule on the write path.
+        _, allowed = await resolve_project_scope(db, current_user, None)
+        if allowed is not None:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "A digest with no project covers every project on this "
+                    "install and is restricted to administrators. Name a "
+                    "project_id to subscribe."
+                ),
+            )
 
     now = datetime.now(timezone.utc)
     delta = timedelta(days=1) if payload.schedule == "DAILY" else timedelta(weeks=1)

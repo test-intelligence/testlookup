@@ -86,4 +86,33 @@ describe('no page hardcodes a data-freshness age', () => {
 
     expect(offenders, 'a provenance age must come from useDataFreshness + shortAgo').toEqual([])
   })
+
+  it('renders no literal freshness claim in JSX', () => {
+    // The assignment check above requires a variable named `refreshedAt` AND a
+    // numeric age, so it could not see the three sites that survived the #893
+    // fix: `<span>refreshed just now</span>` twice in RunsPage and
+    // `<span>knowledge graph rebuilt just now</span>` in TestManagementPage.
+    // Both conditions were wrong: a hardcoded claim need not be assigned to
+    // anything, and "just now" is a freshness claim with no digits in it.
+    const CLAIM =
+      /(refreshed|rebuilt|updated|synced|indexed|generated)\s+(just now|\d+\s*[smhd]\s+ago)/i
+    const offenders: string[] = []
+
+    for (const [file, src] of Object.entries(pageSources)) {
+      src.split(/\r?\n/).forEach((line, i) => {
+        // Only flag text destined for the DOM, not prose in a comment.
+        const stripped = line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '')
+        if (stripped.trim().startsWith('*')) return
+        if (CLAIM.test(stripped)) {
+          offenders.push(`${file}:${i + 1}: ${line.trim()}`)
+        }
+      })
+    }
+
+    expect(
+      offenders,
+      'a freshness claim rendered as a literal is a fabricated fact -- derive ' +
+        'it from useDataFreshness + shortAgo',
+    ).toEqual([])
+  })
 })

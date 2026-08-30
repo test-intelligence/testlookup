@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import useSWR from 'swr'
+import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useNow } from '@/hooks/useNow'
+import { shortAgo } from '@/utils/formatters'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   ClipboardList, Plus, Sparkles, ChevronDown, ChevronRight,
@@ -950,6 +952,11 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
   }, [page, status, testType, priority, search, ownerFilter, suiteFilter, includeAutomation])
 
   const { data, isLoading, mutate: mutateCases } = useTestCases(params)
+  // Was a hardcoded "knowledge graph rebuilt just now" -- a fabricated
+  // freshness claim (#893) about an event this page cannot observe. Report
+  // when the payload actually arrived instead.
+  const fetchedAt = useDataFreshness(data)
+  const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
   // Wider read used to power Library Verdict + right-rail synthesis (review
   // queue, strategy gaps, coverage matrix). The /test-cases/health endpoint
   // the spec assumes (README §14 q1) doesn't exist yet, so we synthesise.
@@ -1250,7 +1257,7 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
           <span aria-hidden>·</span>
           <code className="font-mono text-[11.5px]">main@HEAD</code>
           <span aria-hidden>·</span>
-          <span>knowledge graph rebuilt just now</span>
+          <span>library refreshed {refreshedAt}</span>
         </span>
         <button
           type="button"

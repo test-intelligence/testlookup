@@ -82,7 +82,14 @@ async def get_strategy(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return row(await get_strategy_or_404(db, strategy_id), TestStrategyResponse)
+    # ``get_strategy_or_404`` is a bare ``db.get`` by primary key. Every other
+    # route in this file resolves project scope; these two did not, so GET read
+    # and PUT overwrote another tenant's strategy -- and ``update_strategy``
+    # passes ``project_id`` to ``audit_event``, so the audit row landed in the
+    # victim's project naming the attacker as actor.
+    strategy = await get_strategy_or_404(db, strategy_id)
+    await resolve_project_scope(db, current_user, str(strategy.project_id))
+    return row(strategy, TestStrategyResponse)
 
 
 @router.put("/strategies/{strategy_id}", response_model=TestStrategyResponse)
@@ -92,6 +99,8 @@ async def update_strategy(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    existing = await get_strategy_or_404(db, strategy_id)
+    await resolve_project_scope(db, current_user, str(existing.project_id))
     strategy = await update_strategy_model(db, strategy_id, payload, current_user)
     await db.commit()
     await db.refresh(strategy)

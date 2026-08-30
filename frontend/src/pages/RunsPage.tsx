@@ -52,6 +52,7 @@ import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import UploadReportModal from '@/components/runs/UploadReportModal'
+import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -60,6 +61,7 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import agentService from '@/services/agentService'
 import type { TestRun } from '@/types/runs'
+import { shortAgo } from '@/utils/formatters'
 import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
 
 // ── Window picker ──────────────────────────────────────────────────────────
@@ -1649,7 +1651,10 @@ function RecActionRow({ rec }: { rec: RecRow }) {
 }
 
 // ── Provenance footer ────────────────────────────────────────────────────
-function ProvenanceFooter({ totalEvidence, signature }: { totalEvidence: number; signature: string | null }) {
+function ProvenanceFooter(
+  { totalEvidence, signature, refreshedAt }:
+  { totalEvidence: number; signature: string | null; refreshedAt: string },
+) {
   return (
     <div
       className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
@@ -1662,7 +1667,7 @@ function ProvenanceFooter({ totalEvidence, signature }: { totalEvidence: number;
         <span aria-hidden>·</span>
         <span>{totalEvidence} evidence items · 3 tools</span>
         <span aria-hidden>·</span>
-        <span>refreshed just now</span>
+        <span>refreshed {refreshedAt}</span>
         {signature && (
           <>
             <span aria-hidden>·</span>
@@ -1796,6 +1801,13 @@ export default function RunsPage() {
     ...(statusFilter && { status: statusFilter }),
     ...(selectedSuite && { suite_name: selectedSuite }),
   })
+  // Provenance rows must report when this client actually received the
+  // payload. Both of this page's rows previously rendered a hardcoded
+  // "refreshed just now", so a tab left open overnight still claimed the
+  // numbers above it were seconds old -- the #893 defect, in the element whose
+  // entire job is trustworthiness.
+  const fetchedAt = useDataFreshness(data)
+  const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
   const runs = useMemo<TestRun[]>(() => (data?.items ?? []) as TestRun[], [data?.items])
   // Client-side sort by run datetime (created_at). The backend already returns
   // desc order, so 'desc' here is a no-op until the user clicks. Sorting is
@@ -2072,7 +2084,7 @@ export default function RunsPage() {
             <span aria-hidden>·</span>
             <span>{model.totalRuns} build{model.totalRuns === 1 ? '' : 's'} in window</span>
             <span aria-hidden>·</span>
-            <span>refreshed just now</span>
+            <span>refreshed {refreshedAt}</span>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -2276,7 +2288,7 @@ export default function RunsPage() {
         </div>
       </div>
 
-      <ProvenanceFooter totalEvidence={model.totalRuns + model.failedRuns + (model.primaryCluster ? 7 : 0)} signature={sigLabel} />
+      <ProvenanceFooter totalEvidence={model.totalRuns + model.failedRuns + (model.primaryCluster ? 7 : 0)} signature={sigLabel} refreshedAt={refreshedAt} />
 
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.

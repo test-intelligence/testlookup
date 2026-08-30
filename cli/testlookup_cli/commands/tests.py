@@ -28,7 +28,7 @@ def list_tests(
         params["suite"] = suite
 
     try:
-        data = asyncio.run(client.request("GET", f"/api/v1/runs/{run_id}/test-cases", params=params, profile_name=profile_name))
+        data = asyncio.run(client.request("GET", f"/api/v1/runs/{run_id}/tests", params=params, profile_name=profile_name))
         items = data.get("items", []) if isinstance(data, dict) else data
         output.render(
             items, output_format,

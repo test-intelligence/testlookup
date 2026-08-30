@@ -20,6 +20,7 @@ from app.core.deps import (
     get_current_active_user,
     require_role,
     require_run_access,
+    resolve_project_scope,
 )
 from app.db.postgres import get_db
 from app.models.postgres import (
@@ -28,6 +29,7 @@ from app.models.postgres import (
     AgentStageResult,
     Project,
     TestRun,
+    User,
     UserRole,
 )
 from app.models.schemas import (
@@ -852,12 +854,58 @@ async def get_run_summary(
     return fallback
 
 
+async def _authorize_run_and_project(
+    db: AsyncSession,
+    current_user: User,
+    run_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> uuid.UUID:
+    """Verify the caller may act on ``run_id``, and that it lives in ``project_id``.
+
+    These two endpoints take ``run_id`` and ``project_id`` as **query** params,
+    which defeats both of the usual guards:
+
+    * ``require_run_access()`` reads ``run_id`` from ``request.path_params`` and
+      returns the caller unchanged when it is absent -- so attaching it here
+      would be a silent no-op, not a check.
+    * ``tests/test_architectural_authorization.py`` matches scoped **path**
+      params, so it declares a route with none of them protected by default.
+
+    So both routes ran on a bare ``require_role(QA_ENGINEER)``: a role check,
+    never a membership check. Any QA_ENGINEER could pass another tenant's
+    ``run_id`` and have the agent load that run's failure clusters -- returning
+    their classifications directly (``/regression-watch``), or generating a
+    defect from their failure text and persisting it into a project of the
+    caller's choosing (``/defect-command``), which copies the data across the
+    tenant boundary where correctly-scoped endpoints will then serve it.
+
+    The project is derived from the run rather than trusted from the caller;
+    a mismatch is rejected instead of silently honoured.
+    """
+    result = await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
+    owning_project_id = result.scalar_one_or_none()
+    if owning_project_id is None:
+        raise HTTPException(status_code=404, detail="Test run not found")
+
+    # Raises 403 for a non-member; ADMIN passes through.
+    await resolve_project_scope(db, current_user, str(owning_project_id))
+
+    if owning_project_id != project_id:
+        raise HTTPException(
+            status_code=400,
+            detail="project_id does not match the project that owns this run",
+        )
+    return owning_project_id
+
+
 @router.post("/defect-command", status_code=200)
 async def defect_command(
     cluster_id: str,
     run_id: uuid.UUID,
     project_id: uuid.UUID,
     project_key: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
     _: Any = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     """
@@ -865,11 +913,15 @@ async def defect_command(
     Scores the cluster on 7 criticality dimensions, generates a Jira-ready
     defect description, and optionally creates a Jira ticket.
     """
+    scoped_project_id = await _authorize_run_and_project(
+        db, current_user, run_id, project_id
+    )
+
     from app.agents.defect_commander import run_defect_commander
     result = await run_defect_commander(
         cluster_id=cluster_id,
         test_run_id=str(run_id),
-        project_id=str(project_id),
+        project_id=str(scoped_project_id),
         project_key=project_key,
     )
     return result
@@ -879,6 +931,8 @@ async def defect_command(
 async def regression_watch(
     run_id: uuid.UUID,
     project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
     _: Any = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     """
@@ -886,9 +940,13 @@ async def regression_watch(
     Returns classification of each failure cluster as:
       - new_regression | known_flaky_recurrence | environmental_anomaly
     """
+    scoped_project_id = await _authorize_run_and_project(
+        db, current_user, run_id, project_id
+    )
+
     from app.agents.regression_watchman import run_regression_watchman
     result = await run_regression_watchman(
         test_run_id=str(run_id),
-        project_id=str(project_id),
+        project_id=str(scoped_project_id),
     )
     return {"run_id": str(run_id), "classifications": result}
