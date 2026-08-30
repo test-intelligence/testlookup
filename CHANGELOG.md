@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-08-30 — the service that repairs silent data loss had no test of its own
+
+Coverage slice 3. `services/live_run_recovery_service.py` measured **0%** — one
+of only four backend modules with nothing at all, and the one where that
+matters most, because of what it is for.
+
+It is the belt-and-braces for the `close_session → persist_live_session`
+handoff. When that handoff fails — a swallowed `apply_async`, queue
+backpressure, a worker restart mid-dispatch — the `TestRun` row keeps its final
+aggregates while `test_cases` stays empty, and the user sees `[ingestion gap …]`
+placeholders instead of their test names. This sweep finds those runs and
+re-queues persistence from `event_archive`.
+
+**A recovery mechanism with no tests fails in the worst possible way:** silently,
+and only at the moment you need it, *after* the primary path has already failed.
+Nothing would have caught it, because a broken sweep and "no runs needed
+recovery" produce the same output — zero.
+
+13 tests now cover the decisions the sweep makes, rather than the plumbing
+around them:
+
+- **The double-insert guard.** `persist_live_session` reads the same Redis list
+  this sweep would `RPUSH` into, so staging the archive on top of a
+  still-populated buffer doubles every row. The code has a comment explaining
+  it; nothing checked it.
+- **The staging TTL.** The worker `LRANGE`s the list and never deletes it, so
+  without the 1h `expire` every recovered run leaks a key.
+- **Per-run error isolation.** One bad row must not abort the sweep — a sweep
+  that dies on its first failure leaves every later run unrecovered and, since
+  the caller is an hourly beat task, retries the whole thing instead.
+- **Aggregate fallbacks.** `passed_tests or 0` etc. matter because
+  `persist_live_session` does arithmetic on them; `None` would raise inside the
+  worker, where the failure is a retry loop rather than a visible 500.
+- **The transaction contract.** The docstring promises "Caller owns the
+  transaction. The function does not commit."
+
+Coverage **0% → 68%**. Verified by mutation twice: forcing the buffer check to
+`False` fails the double-insert test, and adding a `raise` to the per-run
+`except` fails both isolation tests.
+
 ## 2026-08-30 — a test that said "the SAME dispatch" was a copy of it
 
 Coverage slice 2, aimed at `app/worker/tasks.py` — the largest single gap in

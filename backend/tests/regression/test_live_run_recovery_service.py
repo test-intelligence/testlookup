@@ -1,0 +1,294 @@
+"""The service that repairs silent data loss had no test of its own.
+
+``services/live_run_recovery_service.py`` measured **0% coverage** — one of
+only four modules in the backend with nothing at all, and the one that matters
+most, because of what it is for.
+
+It exists as belt-and-braces for the ``close_session -> persist_live_session``
+handoff. When that handoff fails (a swallowed ``apply_async``, queue
+backpressure, a worker restart mid-dispatch) the ``TestRun`` row keeps its
+final aggregates while ``test_cases`` stays empty, and the user sees
+``[ingestion gap …]`` placeholder rows instead of their test names. This sweep
+finds those runs and re-queues persistence from ``event_archive``.
+
+A recovery mechanism with no tests fails in the worst possible way: silently,
+and only at the moment you need it — after the primary path has *already*
+failed. Nothing would have caught it, because the symptom is identical to "no
+runs needed recovery".
+
+The cases below are the decisions the sweep makes, not the plumbing around
+them: which runs it declines, when it must not re-stage, and whether one bad
+run can take the sweep down with it.
+"""
+from __future__ import annotations
+
+import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from app.services import live_run_recovery_service as svc
+
+pytestmark = pytest.mark.regression
+
+
+class _FakeRedis:
+    """Records rpush/expire calls; ``llen`` is scripted per key."""
+
+    def __init__(self, lengths: dict[str, int] | None = None):
+        self._lengths = lengths or {}
+        self.pushed: list[tuple[str, str]] = []
+        self.expires: list[tuple[str, int]] = []
+
+    async def llen(self, key):
+        return self._lengths.get(key, 0)
+
+    async def rpush(self, key, value):
+        self.pushed.append((key, value))
+        return len(self.pushed)
+
+    async def expire(self, key, ttl):
+        self.expires.append((key, ttl))
+        return True
+
+
+def _run(**overrides):
+    """A live_stream TestRun row shaped the way the sweep reads it."""
+    base = dict(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        build_number="42",
+        branch="main",
+        commit_hash="abc123",
+        event_archive=[{"test": "a"}, {"test": "b"}],
+        passed_tests=1,
+        failed_tests=1,
+        skipped_tests=0,
+        broken_tests=0,
+        total_tests=2,
+        primary_suite_name="Smoke",
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _db(candidates):
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = candidates
+    db.execute = AsyncMock(return_value=result)
+    return db
+
+
+@pytest.fixture
+def dispatched(monkeypatch):
+    """Capture every persist_live_session.apply_async call."""
+    calls: list[dict] = []
+    task = MagicMock()
+    task.apply_async = MagicMock(side_effect=lambda **kw: calls.append(kw))
+
+    tasks_mod = SimpleNamespace(persist_live_session=task)
+    routing_mod = SimpleNamespace(queue_for_project=lambda pid: "ingestion.shard.0")
+    monkeypatch.setitem(__import__("sys").modules, "app.worker.tasks", tasks_mod)
+    monkeypatch.setitem(__import__("sys").modules, "app.worker.ingestion_routing", routing_mod)
+    return calls
+
+
+class TestWhatItDeclines:
+    @pytest.mark.asyncio
+    async def test_no_candidates_reports_zeroes_rather_than_failing(self, monkeypatch, dispatched):
+        monkeypatch.setattr(svc, "get_redis", lambda: _FakeRedis())
+
+        counts = await svc.auto_recover_completed_runs(_db([]))
+
+        assert counts == {"candidates": 0, "recovered": 0, "errors": 0}
+        assert dispatched == []
+
+    @pytest.mark.asyncio
+    async def test_a_run_with_an_empty_archive_is_counted_but_not_recovered(
+        self, monkeypatch, dispatched
+    ):
+        """`event_archive_at` is set but the column holds nothing — there are no
+        real names to restore, so it is left to the placeholder backfill rather
+        than dispatched into a no-op."""
+        redis = _FakeRedis()
+        monkeypatch.setattr(svc, "get_redis", lambda: redis)
+
+        counts = await svc.auto_recover_completed_runs(_db([_run(event_archive=[])]))
+
+        assert counts["candidates"] == 1
+        assert counts["recovered"] == 0
+        assert dispatched == []
+        assert redis.pushed == [], "nothing should be staged for an empty archive"
+
+    @pytest.mark.asyncio
+    async def test_a_null_archive_is_treated_like_an_empty_one(self, monkeypatch, dispatched):
+        monkeypatch.setattr(svc, "get_redis", lambda: _FakeRedis())
+
+        counts = await svc.auto_recover_completed_runs(_db([_run(event_archive=None)]))
+
+        assert counts["recovered"] == 0
+        assert dispatched == []
+
+
+class TestTheDoubleInsertGuard:
+    """The rule with a real hazard behind it: ``persist_live_session`` reads the
+    same Redis list this sweep would RPUSH into. Staging the archive on top of a
+    still-populated buffer doubles every row."""
+
+    @pytest.mark.asyncio
+    async def test_a_populated_buffer_is_used_instead_of_re_staging(
+        self, monkeypatch, dispatched
+    ):
+        run = _run()
+        key = svc.LIVE_TESTCASES_KEY.format(run_id=str(run.id))
+        redis = _FakeRedis({key: 7})
+        monkeypatch.setattr(svc, "get_redis", lambda: redis)
+
+        counts = await svc.auto_recover_completed_runs(_db([run]))
+
+        assert counts["recovered"] == 1
+        assert redis.pushed == [], (
+            "the archive was re-staged on top of a live buffer — every test row "
+            "would be persisted twice"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_empty_buffer_is_restaged_from_the_archive(
+        self, monkeypatch, dispatched
+    ):
+        run = _run(event_archive=[{"test": "a"}, {"test": "b"}, {"test": "c"}])
+        redis = _FakeRedis()  # llen -> 0
+        monkeypatch.setattr(svc, "get_redis", lambda: redis)
+
+        counts = await svc.auto_recover_completed_runs(_db([run]))
+
+        assert counts["recovered"] == 1
+        assert len(redis.pushed) == 3, "every archived event must be staged"
+        expected_key = svc.LIVE_TESTCASES_KEY.format(run_id=str(run.id))
+        assert {k for k, _ in redis.pushed} == {expected_key}
+
+    @pytest.mark.asyncio
+    async def test_the_staging_key_gets_a_ttl_so_it_cannot_leak(
+        self, monkeypatch, dispatched
+    ):
+        """The worker LRANGEs the list and does not delete it. Without the TTL
+        every recovered run leaves a staging key in Redis for ever."""
+        run = _run()
+        redis = _FakeRedis()
+        monkeypatch.setattr(svc, "get_redis", lambda: redis)
+
+        await svc.auto_recover_completed_runs(_db([run]))
+
+        expected_key = svc.LIVE_TESTCASES_KEY.format(run_id=str(run.id))
+        assert redis.expires == [(expected_key, 3600)]
+
+
+class TestTheDispatch:
+    @pytest.mark.asyncio
+    async def test_the_final_state_carries_the_run_aggregates(self, monkeypatch, dispatched):
+        """The aggregates survived the failed handoff; they are what makes the
+        recovered run reconcile with what the user already saw."""
+        run = _run(passed_tests=5, failed_tests=2, skipped_tests=1, broken_tests=3, total_tests=11)
+        monkeypatch.setattr(svc, "get_redis", lambda: _FakeRedis())
+
+        await svc.auto_recover_completed_runs(_db([run]))
+
+        assert len(dispatched) == 1
+        kwargs = dispatched[0]["kwargs"]
+        assert kwargs["final_state"] == {
+            "passed": 5, "failed": 2, "skipped": 1, "broken": 3, "total": 11,
+        }
+        assert kwargs["run_id"] == str(run.id)
+        assert kwargs["project_id"] == str(run.project_id)
+
+    @pytest.mark.asyncio
+    async def test_missing_aggregates_become_zero_not_none(self, monkeypatch, dispatched):
+        """`persist_live_session` does arithmetic on these. None would raise
+        inside the worker, where the failure is a retry loop, not a 500."""
+        run = _run(passed_tests=None, failed_tests=None, skipped_tests=None,
+                   broken_tests=None, total_tests=None)
+        monkeypatch.setattr(svc, "get_redis", lambda: _FakeRedis())
+
+        await svc.auto_recover_completed_runs(_db([run]))
+
+        assert dispatched[0]["kwargs"]["final_state"] == {
+            "passed": 0, "failed": 0, "skipped": 0, "broken": 0, "total": 0,
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_missing_build_number_falls_back_to_the_run_id(
+        self, monkeypatch, dispatched
+    ):
+        run = _run(build_number=None)
+        monkeypatch.setattr(svc, "get_redis", lambda: _FakeRedis())
+
+        await svc.auto_recover_completed_runs(_db([run]))
+
+        assert dispatched[0]["kwargs"]["build_number"] == str(run.id)
+
+    @pytest.mark.asyncio
+    async def test_it_routes_to_the_project_shard(self, monkeypatch, dispatched):
+        """Routing is the producer's decision, not the broker's."""
+        monkeypatch.setattr(svc, "get_redis", lambda: _FakeRedis())
+
+        await svc.auto_recover_completed_runs(_db([_run()]))
+
+        assert dispatched[0]["queue"] == "ingestion.shard.0"
+
+
+class TestErrorIsolation:
+    @pytest.mark.asyncio
+    async def test_one_failing_run_does_not_abort_the_sweep(self, monkeypatch, dispatched):
+        """A sweep that dies on its first bad row leaves every later run
+        unrecovered — and reports success, because the exception is the only
+        signal and nobody is reading it."""
+        good_a, bad, good_b = _run(), _run(), _run()
+        bad_key = svc.LIVE_TESTCASES_KEY.format(run_id=str(bad.id))
+
+        class _Redis(_FakeRedis):
+            async def llen(self, key):
+                if key == bad_key:
+                    raise RuntimeError("redis went away")
+                return 0
+
+        monkeypatch.setattr(svc, "get_redis", lambda: _Redis())
+
+        counts = await svc.auto_recover_completed_runs(_db([good_a, bad, good_b]))
+
+        assert counts["candidates"] == 3
+        assert counts["recovered"] == 2, "the runs either side of the failure must still go"
+        assert counts["errors"] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_dispatch_failure_is_counted_not_raised(self, monkeypatch, dispatched):
+        """The caller is an hourly beat task. Raising turns a partial sweep into
+        a retry of the whole thing."""
+        task = MagicMock()
+        task.apply_async = MagicMock(side_effect=RuntimeError("broker down"))
+        monkeypatch.setitem(
+            __import__("sys").modules, "app.worker.tasks",
+            SimpleNamespace(persist_live_session=task),
+        )
+        monkeypatch.setattr(svc, "get_redis", lambda: _FakeRedis())
+
+        counts = await svc.auto_recover_completed_runs(_db([_run()]))
+
+        assert counts == {"candidates": 1, "recovered": 0, "errors": 1}
+
+
+class TestTheTransactionContract:
+    @pytest.mark.asyncio
+    async def test_it_never_commits(self, monkeypatch, dispatched):
+        """Documented contract: "Caller owns the transaction. The function does
+        not commit." A service that commits an injected session ends the
+        caller's unit of work early — the transaction-boundary rule this repo
+        enforces in `test_architectural_transaction_boundaries.py`."""
+        monkeypatch.setattr(svc, "get_redis", lambda: _FakeRedis())
+        db = _db([_run()])
+
+        await svc.auto_recover_completed_runs(db)
+
+        db.commit.assert_not_called()
+        db.rollback.assert_not_called()
