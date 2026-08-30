@@ -10,6 +10,7 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import type { ApiKey, ApiKeyCreatedResponse } from '@/types/apiKey'
+import { streamIngestCommand } from './apiKeysCurl'
 
 const STREAM_WRITE_SCOPE = 'stream:write'
 
@@ -181,21 +182,7 @@ testlookup.launch=Smoke suite
   )
 
   const curlSnippet = useMemo(
-    () =>
-      `# Send test results AND a final run_complete event so the run finalises
-# (creates the TestRun row + triggers AI analysis). Without run_complete
-# the session stays active and the run won't appear in Runs / Overview.
-curl -X POST ${baseUrl}/api/v1/stream/ingest \\
-  -H "X-API-Key: ${created.raw_key}" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "run_id": "ci-build-1",
-    "meta": {"launch_name": "Smoke suite"},
-    "events": [
-      {"event_type":"test_result","test_name":"smoke","status":"PASSED","duration_ms":15},
-      {"event_type":"run_complete"}
-    ]
-  }'`,
+    () => streamIngestCommand(created.raw_key, baseUrl),
     [created.raw_key, baseUrl],
   )
 

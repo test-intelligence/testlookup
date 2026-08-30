@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-30 — the API Keys page's streaming-ingest `curl` also passed CI on a rejected batch
+
+When you generate a key on the API Keys page, the dialog offers a copy-paste
+`curl` that POSTs a batch to `/api/v1/stream/ingest`. Like the first-run guide's
+snippet before it, this one was a bare `curl -X POST` — and bare `curl` exits
+**0** on an HTTP 4xx/5xx. So a runner that fat-fingered its key (401), pointed
+at a wrong project id (404), or shipped a malformed event payload (422) got a
+**green** pipeline step while nothing was ingested: the dashboard stays empty
+and CI says everything's fine. This is the second of the three ingest `curl`
+surfaces flagged when the first-run guide's copy was fixed; the
+`getting-started.md` copy is the remaining follow-up.
+
+The command now leads with `curl -sS --fail-with-body`. `--fail-with-body`
+makes curl exit non-zero on any HTTP >= 400 **and** print the backend's error
+body, so the step turns red and says *why* it was rejected; `-sS`
+(`--silent --show-error`) drops the progress meter from CI logs while still
+surfacing transport errors. The snippet moved into a non-component module
+(`apiKeysCurl.ts`, mirroring how the guide keeps `ingestApiCommand` in
+`firstRunSteps.ts`) so the safety flags are covered by a unit test.
+
 ## 2026-08-29 - two endpoints that answered confidently without looking
 
 **`/health/ingestion` reported `status: "ok"` while Redis was unreachable.**
