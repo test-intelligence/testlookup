@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-08-30 — "Never returns END" was a docstring, not a test
+
+Coverage slice 5, aimed at `agents/workflow.py` — 54.6% covered, **381 missed
+statements**, the third-largest gap in the backend. Per function the shape is
+by now familiar: `run_offline_pipeline`, `run_deep_pipeline` and the lifecycle
+writers each show one executed line. Their bodies have never run.
+
+Those need the whole LangGraph, a DB session and a Mongo client to exercise,
+and tests built that way assert the mock. The **routers** need none of it —
+they are plain functions of workflow state returning the name of the next node.
+They are also where a silent defect does the most damage: a wrong answer does
+not raise, it just means a stage never runs and the pipeline reports success
+having done less.
+
+`_route_after_summary_deep` carries this in its own docstring:
+
+> *"Never returns END so all specialist stages are guaranteed to run."*
+
+Its offline twin **does** return END on the same input. Two functions with
+nearly identical bodies and opposite answers for the no-triage case, and
+nothing checked either. Returning END from the deep router would silently skip
+the entire flaky_sentinel → test_health → release_risk chain — the deep
+pipeline quietly doing the offline pipeline's work, and reporting success.
+
+25 tests now cover both routers, the shared triageable filter (flaky analyses
+excluded regardless of confidence; `>=` at the threshold boundary; a missing
+score treated as zero rather than confident), and the decision record that
+`_mark_pipeline_done` persists — including that it survives having no event
+loop, which is the case the emitter's own comment calls out. All four routing
+functions go to **zero missed statements**.
+
+**The mutation testing caught a flaw in the new tests, not the code.**
+`AI_CONFIDENCE_THRESHOLD` is a 0–100 score (it is 80), not a 0–1 fraction. The
+flaky fixtures were written as `1.0`, which sits far *below* the gate — so
+those tests passed whether or not the `is_flaky` exclusion existed. Deleting
+the exclusion from both routers failed nothing. With the fixtures corrected to
+`THRESHOLD + 10`, the same mutation fails both. The scale is now documented at
+the top of the file so the next reader does not repeat it.
+
+Verified by mutation twice: returning `END` from the deep router fails **six**
+tests; removing the `is_flaky` exclusion fails **two**.
+
 ## 2026-08-30 — the repair sweep's skip conditions are the load-bearing part
 
 Coverage slice 4, finishing `services/live_run_recovery_service.py`: the
