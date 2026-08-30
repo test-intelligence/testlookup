@@ -1,5 +1,89 @@
 # Changelog
 
+## 2026-08-30 — the helpers that decide what lands in an exported document had never run
+
+Backend coverage measured at **71%** (56,193 statements, 16,467 missed). Ranked
+by *missed statements* rather than percentage — a 0%-covered 20-line module is a
+rounding error, a 40%-covered 900-line service is where defects live —
+`routers/test_management_exports.py` stands out: **19.6% covered, 401 missed**,
+and it is the module that held **five of the nine cross-tenant IDORs** fixed in
+#905.
+
+Reading the coverage data per endpoint showed why. All five document exports —
+Excel, plan Word/PDF, strategy Word/PDF — report exactly **one executed line
+each: the `def`**. Their bodies have never run. Nothing has ever exercised the
+code that turns a stored plan into the file a human downloads and believes.
+
+The module's existing guard is deliberately source-level and says so: it pins
+that each by-id handler resolves project scope, because "a mocked request test
+would assert the mock". That is right for the authorization half and leaves the
+rendering half untouched.
+
+This covers the five pure helpers that are the whole rendering vocabulary of
+that path — `_safe`, `_list_to_str`, `_pdf_text`, `_normalize_list`,
+`_normalize_dict_list`. They need no request and no mock, and their failures are
+silent: a mangled field does not raise, it produces a document that quietly says
+something else. `_normalize_list` alone has ten branches for "best-effort
+normalization of AI-generated JSON fields", none previously executed.
+
+`_pdf_text` is the one with teeth. It escapes free text before a reportlab
+`Paragraph`, which parses a mini-markup, and the strings it escapes are
+AI-generated plan content — so an unescaped `<` is both a corrupt document and
+an injection into a renderer. The order matters too (escape, *then* insert
+`<br/>`); reversing it neuters the line breaks into visible text.
+
+**One defect found and pinned rather than fixed.** `_list_to_str` guards with
+`if not items`, so `0` and `False` take the empty branch and vanish from the
+document — while its sibling `_safe(0)` correctly renders `"0"`. A reader cannot
+tell "the value was zero" from "there was no value": the same absence-vs-zero
+confusion fixed twice already this week, in `/health/ingestion` and the Library
+Health panel. Blast radius is low today because every call site passes a
+list-shaped field, so this is documented in a test named for it rather than
+changed blind — a fix should be a deliberate decision by someone who knows
+which fields can arrive scalar.
+
+Coverage of the module moved **401 → 363 missed statements (20% → 27%)** from
+31 tests. Verified by mutation, twice: dropping the escape fails three tests,
+and reversing the escape/`<br/>` order fails two.
+
+## 2026-08-30 — the SPA was the one API client whose wire nobody checked
+
+`test_cli_and_mcp_wire_contract.py` guards the CLI and the MCP server, and says
+why it stops there: *"The UI's contract with the backend is exercised
+constantly."* That is an assumption, not a check — and it is the same
+assumption that let the other two clients drift into 404s and silently-dropped
+request fields. `testlookup tests list` called `/runs/{run_id}/test-cases`, a
+path the runs router never served; *"the command had never worked."*
+
+Measured before writing the guard: **313 distinct `/api/v1/...` paths** across
+`frontend/src/services` and `frontend/src/hooks`, checked against the **388
+routes** on the assembled FastAPI app. Every one resolves. **The SPA's route
+contract is clean today** — this finds nothing, and that is worth stating
+plainly rather than presenting a guard as a fix.
+
+It is worth having anyway, because "exercised constantly" is true of a handful
+of paths and false of most. The frontend service layer measures **18.7%
+statement / 7.7% function coverage**; `apiKeyService`, `authService`,
+`chatService`, `digestService`, `fixerService` and a dozen more are at literal
+**0%**. A renamed route would reach production as a 404 on a page no test
+opens.
+
+Deliberately *not* done: 45 mock-axios unit tests asserting that each service
+calls the URL it was written to call. That would move the service layer's
+coverage number a long way while checking nothing — the modules are one-line
+`getData<T>('/api/v1/…')` wrappers, and the one thing that can silently break
+in a wrapper is the path, which this guard now covers in a single assertion.
+`http.ts` (10% covered) is five `.then(({ data }) => data)` unwrappers with no
+branches, and is left alone for the same reason.
+
+Verified by mutation: renaming `/api/v1/keys` to `/api/v1/api-keys` in
+`apiKeyService.ts` fails the guard and names the file. Two further tests pin
+the guard against scanning nothing — an empty file list or an empty route table
+would otherwise pass every path — and a third requires the single excluded
+literal (`/api/v1/auth/mfa/`, a refresh-exclusion prefix in `api.ts`, not a
+request path) to keep *not* resolving, so the exclusion list cannot quietly
+start hiding a real route.
+
 ## 2026-08-30 — the access log recorded who was granted access, never who lost it
 
 `POST /projects/{id}/members` wrote an audit row. Its two siblings did not:

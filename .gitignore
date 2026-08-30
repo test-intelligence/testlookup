@@ -49,6 +49,12 @@ build/
 .coverage
 coverage.xml
 htmlcov/
+# pytest-cov JSON report — a ~2.8 MB generated file that `git add -A` would
+# sweep in after `pytest --cov-report=json`, which is how the coverage gaps in
+# this repo get analysed. Its siblings above (.coverage, coverage.xml) were
+# already ignored; this format was not.
+backend/coverage.json
+
 # vitest/v8 HTML coverage output (frontend/coverage/) — ~370 generated files
 # that `git add -A` would otherwise sweep into a commit after `vitest --coverage`.
 /frontend/coverage/
