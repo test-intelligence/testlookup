@@ -53,6 +53,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
@@ -1523,7 +1524,11 @@ export default function DefectsPage() {
   }
 
   // Pull all statuses up-front so we can drive the verdict + counts.
-  const { data: allDefectsData, isLoading } = useDefects(1, undefined)
+  // `error` is read alongside `data`: a failed fetch leaves `allDefects`
+  // empty, which the verdict below reads as PENDING and renders as
+  // "queue empty" -- an all-clear produced by never having looked.
+  const { data: allDefectsData, isLoading, error: defectsError, mutate: retryDefects } =
+    useDefects(1, undefined)
   const allDefects = useMemo<DefectItem[]>(() => allDefectsData?.items ?? [], [allDefectsData])
   // Categories — used by the workflow ribbon for evidence-count flavor.
   useFailureCategories(30)
@@ -1544,6 +1549,15 @@ export default function DefectsPage() {
   }
   if (isLoading && allDefects.length === 0) {
     return <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
+  }
+  if (defectsError && !allDefectsData) {
+    return (
+      <DataUnavailable
+        error={defectsError}
+        onRetry={() => void retryDefects()}
+        testId="defects-data-unavailable"
+      />
+    )
   }
 
   const projectLabel = project?.name ?? 'All Projects'

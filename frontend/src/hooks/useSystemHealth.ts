@@ -38,18 +38,17 @@ export interface HealthDetails {
 // banner should surface; shorter blips don't deserve a UI flash.
 const REFRESH_INTERVAL_MS = 60_000
 
-async function fetchSystemHealth(): Promise<HealthDetails | null> {
-  try {
-    const { data } = await axios.get<HealthDetails>(`${API_BASE}/health/details`, {
-      timeout: 8000,
-    })
-    return data
-  } catch {
-    // Don't blow up the UI if the health endpoint itself is unreachable —
-    // the banner just won't render. The rest of the SPA continues to use
-    // its own per-endpoint error handling.
-    return null
-  }
+async function fetchSystemHealth(): Promise<HealthDetails> {
+  // This used to swallow the failure and return null, so `checks` was absent,
+  // `unavailable` was [] and `isDegraded` was false — the degraded banner went
+  // SILENT in the one situation it exists for: the backend itself unreachable,
+  // which is strictly worse than any single dependency being down. Silence and
+  // "everything is fine" looked identical. Let it throw; SWR records the error
+  // and `isUnreachable` below turns it into a banner that says so.
+  const { data } = await axios.get<HealthDetails>(`${API_BASE}/health/details`, {
+    timeout: 8000,
+  })
+  return data
 }
 
 // Statuses the backend emits that do NOT mean something is wrong.
@@ -72,13 +71,17 @@ export interface SystemHealth {
   data: HealthDetails | null
   unavailable: string[]   // names of checks reporting a genuine problem
   isDegraded: boolean
+  /** The health poll itself failed — we know nothing, rather than nothing being wrong. */
+  isUnreachable: boolean
 }
 
 export function useSystemHealth(): SystemHealth {
-  const { data } = useSWR<HealthDetails | null>('system-health', fetchSystemHealth, {
+  const { data, error } = useSWR<HealthDetails>('system-health', fetchSystemHealth, {
     refreshInterval: REFRESH_INTERVAL_MS,
     revalidateOnFocus: false,
     revalidateOnReconnect: true,
+    // No retry storm on error: `refreshInterval` still re-polls every 60s, so
+    // the banner clears itself one poll after the backend comes back.
     shouldRetryOnError: false,
   })
 
@@ -92,5 +95,6 @@ export function useSystemHealth(): SystemHealth {
     data: data ?? null,
     unavailable,
     isDegraded: unavailable.length > 0,
+    isUnreachable: Boolean(error),
   }
 }

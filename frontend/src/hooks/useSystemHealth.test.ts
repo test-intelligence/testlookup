@@ -96,12 +96,45 @@ describe('useSystemHealth', () => {
     expect(result.current.isDegraded).toBe(true)
   })
 
-  it('renders nothing rather than a false alarm when health is unreachable', async () => {
+  // CORRECTED 2026-08-30. This case previously read "renders nothing rather
+  // than a false alarm when health is unreachable" and asserted only
+  // `isDegraded === false`, which the hook satisfied by swallowing the error
+  // and returning null. It therefore PINNED the defect: with the backend
+  // unreachable the hook reported exactly what it reports when every
+  // dependency is healthy, and the banner stayed silent through the one
+  // outage it exists to announce.
+  //
+  // Silence was never the right answer here -- "we could not look" is not "a
+  // false alarm". `isDegraded` stays false (we have no check results to call
+  // degraded), and `isUnreachable` carries the fact instead.
+  it('reports unreachable -- not healthy -- when the health poll fails', async () => {
     vi.mocked(axios.get).mockRejectedValue(new Error('network down'))
 
     const { result } = renderHook(() => useSystemHealth(), { wrapper })
-    await waitFor(() => expect(result.current.data).toBeNull())
+    await waitFor(() => expect(result.current.isUnreachable).toBe(true))
 
+    expect(result.current.data).toBeNull()
+    // No per-check results exist, so there is no dependency list to show...
+    expect(result.current.unavailable).toEqual([])
     expect(result.current.isDegraded).toBe(false)
+    // ...but the state is still distinguishable from a healthy system, which
+    // is the whole point.
+  })
+
+  it('is not unreachable when the poll succeeds', async () => {
+    vi.mocked(axios.get).mockResolvedValue(healthPayload({ postgres: { status: 'ok' } }))
+
+    const { result } = renderHook(() => useSystemHealth(), { wrapper })
+    await waitFor(() => expect(result.current.data).not.toBeNull())
+
+    expect(result.current.isUnreachable).toBe(false)
+  })
+
+  it('a degraded dependency and an unreachable backend are different states', async () => {
+    // Guards the pair against collapsing back into one flag.
+    vi.mocked(axios.get).mockResolvedValue(healthPayload({ minio: { status: 'error' } }))
+    const { result: degraded } = renderHook(() => useSystemHealth(), { wrapper })
+    await waitFor(() => expect(degraded.current.isDegraded).toBe(true))
+    expect(degraded.current.isUnreachable).toBe(false)
   })
 })

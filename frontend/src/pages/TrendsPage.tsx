@@ -56,6 +56,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteBadge from '@/components/ui/SuiteBadge'
@@ -1548,7 +1549,11 @@ export default function TrendsPage() {
   const suiteFilter = selectedSuite || null
   const { options: suiteOptions } = useSuiteOptions(days)
 
-  const { data: trendsData,   isLoading: trendsLoading   } = useTrendData(days, suiteFilter)
+  // `error` is read alongside `data`: a failed fetch leaves `trend` empty,
+  // and every band, verdict and recommendation below is computed from that
+  // empty array -- a full page of conclusions drawn from no measurement.
+  const { data: trendsData,   isLoading: trendsLoading, error: trendsError, mutate: retryTrends } =
+    useTrendData(days, suiteFilter)
   // Real arrival time of this view's payload. This provenance age used to be
   // the literal '12m ago' for every project, however fresh the data was.
   const fetchedAt = useDataFreshness(trendsData)
@@ -1590,6 +1595,16 @@ export default function TrendsPage() {
 
   if (trendsLoading && trend.length === 0) {
     return <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
+  }
+
+  if (trendsError && !trendsData) {
+    return (
+      <DataUnavailable
+        error={trendsError}
+        onRetry={() => void retryTrends()}
+        testId="trends-data-unavailable"
+      />
+    )
   }
 
   const projectLabel = project?.name ?? 'All Projects'

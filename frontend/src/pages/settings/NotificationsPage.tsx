@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Bell, Mail, MessageSquare, Users, CheckCircle, XCircle, Send, Trash2, ChevronDown, ChevronUp, Server, Eye, EyeOff } from 'lucide-react'
+import { Bell, Mail, MessageSquare, Users, CheckCircle, XCircle, Send, Trash2, ChevronDown, ChevronUp, Server, Eye, EyeOff, AlertTriangle } from 'lucide-react'
+import { describeLoadError } from '@/utils/loadError'
 import toast from 'react-hot-toast'
 import Field from '@/components/ui/Field'
 import PageHeader from '@/components/ui/PageHeader'
@@ -340,11 +341,55 @@ function ChannelCard({
 
 // ── SMTP configuration card ───────────────────────────────────
 
-function SmtpConfigCard() {
+/**
+ * Shown INSTEAD of the SMTP form when its config could not be read.
+ *
+ * The form's initial state is a set of placeholders, not the deployment's
+ * settings. Rendering it after a failed GET presented those placeholders as
+ * the current configuration and left Save armed -- so an admin who opened this
+ * page during a backend blip could silently replace a working mail server with
+ * `localhost:587`, disabled. Hiding the fields is the point: there is nothing
+ * safe to edit until we know what is actually stored.
+ */
+function SmtpLoadFailure({ error }: { error: unknown }) {
+  const info = describeLoadError(error)
+  return (
+    <div
+      role="alert"
+      data-testid="smtp-config-unavailable"
+      className="flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm"
+      style={{
+        borderColor: 'var(--status-broken-bd)',
+        background: 'var(--status-broken-bg)',
+        color: 'var(--status-broken)',
+      }}
+    >
+      <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden />
+      <div>
+        <strong className="font-semibold">{info.title}.</strong>{' '}
+        <span className="text-[var(--color-text-secondary)]">
+          {info.kind === 'unauthorized'
+            ? info.message
+            : `${info.message} The form is hidden rather than shown at its placeholder ` +
+              'defaults, which would overwrite the stored server on save.'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+export function SmtpConfigCard() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+
+  // A failed GET must not leave the form editable at its constructor defaults.
+  // Those defaults (localhost:587, noreply@testlookup.io, disabled) are not the
+  // deployment's config -- they are placeholders -- and Save posts the whole
+  // object, so one click would overwrite a working production SMTP setup with
+  // fiction. When we could not read the config, we do not offer to write it.
+  const [loadError, setLoadError] = useState<unknown>(null)
 
   const [enabled, setEnabled] = useState(false)
   const [host, setHost] = useState('localhost')
@@ -367,7 +412,7 @@ function SmtpConfigCard() {
         setImplicitTls(cfg.implicit_tls)
         setPasswordSet(cfg.password_set)
       })
-      .catch(() => {/* insufficient role — card stays at defaults */})
+      .catch((err: unknown) => setLoadError(err ?? new Error('SMTP config unavailable')))
       .finally(() => setLoading(false))
   }, [])
 
@@ -446,6 +491,8 @@ function SmtpConfigCard() {
       <div className="p-4 space-y-5">
         {loading ? (
           <div className="flex justify-center py-4"><LoadingSpinner size="sm" /></div>
+        ) : loadError ? (
+          <SmtpLoadFailure error={loadError} />
         ) : (
           <>
             {/* Enable toggle */}

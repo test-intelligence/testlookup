@@ -46,6 +46,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteBadge from '@/components/ui/SuiteBadge'
@@ -1508,7 +1509,11 @@ export default function CoveragePage() {
   const suiteFilter = selectedSuite || null
   const { options: suiteOptions } = useSuiteOptions(days)
 
-  const { data: coverageData, isLoading } = useCoverage(days, suiteFilter)
+  // `error` is read alongside `data`: without it a failed fetch renders the
+  // "No coverage data yet" empty state, which tells an operator mid-outage to
+  // upload results they have already uploaded.
+  const { data: coverageData, isLoading, error: coverageError, mutate: retryCoverage } =
+    useCoverage(days, suiteFilter)
   // Real arrival time of this view's payload — the provenance row below used
   // to hardcode its age, so freshly ingested coverage claimed to be hours old.
   const fetchedAt = useDataFreshness(coverageData)
@@ -1686,6 +1691,12 @@ export default function CoveragePage() {
 
       {isLoading && !coverageData ? (
         <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
+      ) : coverageError && !coverageData ? (
+        <DataUnavailable
+          error={coverageError}
+          onRetry={() => void retryCoverage()}
+          testId="coverage-data-unavailable"
+        />
       ) : suites.length === 0 ? (
         <EmptyState
           icon={<ShieldCheck className="h-8 w-8" />}

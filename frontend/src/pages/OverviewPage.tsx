@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
@@ -945,7 +946,11 @@ export default function OverviewPage() {
   const analyticsView = useAnalyticsView('dashboard')
 
   const suiteFilter = selectedSuite || null
-  const { data: summary, isLoading: summaryLoading } = useDashboardSummary(days, suiteFilter)
+  // `error` is read, not just `data`/`isLoading`: without it a failed fetch is
+  // indistinguishable from an empty window, and the page below asserts the
+  // latter in so many words ("widening the time window will not help").
+  const { data: summary, isLoading: summaryLoading, error: summaryError, mutate: retrySummary } =
+    useDashboardSummary(days, suiteFilter)
   const { data: trends,  isLoading: trendsLoading  } = useTrendData(days, suiteFilter)
   // Failure-kind triad (US-9.2): the by-kind aggregation ships on the same
   // failure-categories payload /failures uses, so this KPI is one SWR-cached
@@ -1075,6 +1080,19 @@ export default function OverviewPage() {
         <p className="text-[var(--color-text-muted)] font-medium">Select a project to view the dashboard</p>
         <p className="text-[var(--color-text-muted)] text-sm mt-1">Use the project selector in the top bar</p>
       </div>
+    )
+  }
+
+  // A failed summary fetch must not fall through to the empty-window notice
+  // below, which would tell an operator mid-outage that they have never
+  // ingested a run and that widening the window will not help.
+  if (summaryError && !summary) {
+    return (
+      <DataUnavailable
+        error={summaryError}
+        onRetry={() => void retrySummary()}
+        testId="overview-data-unavailable"
+      />
     )
   }
 

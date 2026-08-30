@@ -1,5 +1,82 @@
 # Changelog
 
+## 2026-08-30 — an outage rendered as "you have no data"
+
+The frontend twin of the `/health/ingestion` fix: six surfaces answered a
+question they had never managed to ask, and every one of them answered
+reassuringly.
+
+**Four analytics pages read `data` and `isLoading` from SWR, and never
+`error`.** Overview, Coverage, Trends and Defects all fetch through
+`useProjectScopedSWR`, whose services contain no `catch` at all — so a failed
+request rejects and `error` is populated, sitting there unread. During a
+backend outage `isLoading` went false, `data` stayed `undefined`, and each page
+fell straight through to its empty state:
+
+    Overview   "No test runs yet for <project>. Ingest a run and the dashboard
+                fills in — widening the time window will not help."
+    Coverage   "No coverage data yet — Upload test results or run a workflow…"
+    Defects    verdict PENDING → "queue empty"
+    Trends     every band, verdict and recommendation computed over []
+
+Each is a positive claim about the user's data, made from a measurement that
+never happened. The Overview copy is the worst of them: it does not merely
+mislead, it pre-emptively rules out the correct next step. A QA lead whose
+dashboard went blank mid-release was told, in so many words, that they had
+never ingested a run and that adjusting the window would not help — while the
+actual cause was a backend they could have restarted in a minute.
+
+All four now read `error` and render a new `DataUnavailable` panel instead of
+their empty state. It is deliberately *not* an `EmptyState` variant: an empty
+state is a claim about the data, this is a claim about the request, and
+conflating the two is the whole defect. Copy comes from a new
+`utils/loadError.ts`, which follows the rule already written down in
+`utils/mfaErrors.ts` — never let an infrastructure failure read as a user
+mistake. A response-less failure says "nothing below is a statement about your
+test results"; a 5xx says "this is a server-side failure, not a gap in your
+data" and prints the status; 401/403/404 say retrying will not help and offer
+no retry button.
+
+**The degraded banner went silent during the outage it exists for.**
+`useSystemHealth`'s fetcher wrapped its request in `try { … } catch { return
+null }`. With the backend unreachable there were no `checks`, so `unavailable`
+was `[]` and `isDegraded` was `false` — the identical value it holds when every
+dependency is green. A total outage and a perfectly healthy system produced the
+same empty UI. The fetcher now throws, the hook exposes `isUnreachable`, and
+`DegradedBanner` checks it *first* (there are no per-dependency results to list
+in that state, so the existing banner would have rendered nothing) and says
+"Health status is unknown, not healthy".
+
+**A failed SMTP GET left a savable form full of placeholders.**
+`SmtpConfigCard` initialises to `localhost`, port 587, `noreply@testlookup.io`,
+disabled, then overwrites those from `getSmtpConfig()`. Its load `.catch` was
+empty, with a comment assuming the only possible failure was an insufficient
+role. Any other failure left the placeholders on screen, presented as the
+current configuration, with Save armed — and Save POSTs the whole object. One
+click during a backend blip would have replaced a working production mail
+server with `localhost:587, disabled`: a destructive write derived entirely
+from a read that never happened. The form is now hidden behind an explicit
+notice, because there is nothing safe to edit until we know what is stored. A
+403 is still reported as a permissions problem rather than an outage.
+
+One existing test was pinning a defect rather than catching it:
+`useSystemHealth.test.ts`'s "renders nothing rather than a false alarm when
+health is unreachable" asserted only `isDegraded === false`, which the hook
+satisfied by swallowing the error. Silence was never the right answer — "we
+could not look" is not "a false alarm" — so the case is corrected, and its
+three sibling tests (which pin the shared health-status vocabulary against
+`backend/tests/regression/test_health_status_vocabulary_is_shared.py`) are
+untouched.
+
+Verified by reverting: all four page fixes fail their new tests against the old
+code, and a probe confirmed the old Overview really did render
+`overview-empty-window` with "No test runs yet" on a failed fetch, and the old
+SMTP card really did leave `value="localhost"` in the DOM. The success paths
+still pass unmodified, so the tests target the defect and not the import.
+
+Frontend 172 files / 1223 passed / 0 failed, quality gate 30/30, tsc clean,
+eslint 0 errors (18 warnings, unchanged from main).
+
 ## 2026-08-30 — the API Keys page's streaming-ingest `curl` also passed CI on a rejected batch
 
 When you generate a key on the API Keys page, the dialog offers a copy-paste
