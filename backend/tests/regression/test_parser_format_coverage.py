@@ -140,31 +140,30 @@ CUCUMBER = """[{"id": "p", "name": "ProbeSuite", "uri": "p.feature", "keyword": 
     "error_message": "boom"}}]}]}]"""
 
 
-def _parse(fmt: str, content: str):
-    """Route through the SAME dispatch the ingest worker uses."""
-    from app.services.cucumber_parser import parse_cucumber_json
-    from app.services.cypress_parser import parse_cypress_json
-    from app.services.nunit_parser import parse_nunit_xml
-    from app.services.playwright_parser import parse_playwright_json
-    from app.services.pytest_parser import parse_pytest_json
-    from app.services.robot_parser import parse_robot_xml
-    from app.services.testng_parser import parse_testng_xml
-    from app.services.trx_parser import parse_trx_xml
-    from app.services.xunit_parser import parse_xunit_xml
+def _parse(fmt: str, content: str, filename: str = "report.xml"):
+    """Route through the dispatch the ingest worker actually uses.
 
-    run_id = str(uuid.uuid4())
-    return {
-        "testng": parse_testng_xml,
-        "junit": parse_testng_xml,
-        "robot": parse_robot_xml,
-        "nunit": parse_nunit_xml,
-        "trx": parse_trx_xml,
-        "xunit": parse_xunit_xml,
-        "pytest": parse_pytest_json,
-        "cypress": parse_cypress_json,
-        "playwright": parse_playwright_json,
-        "cucumber": parse_cucumber_json,
-    }[fmt](content, run_id)
+    CORRECTED 2026-08-30. This helper's docstring already said "route through
+    the SAME dispatch the ingest worker uses" — but its body was a *copy* of
+    that dispatch, a local dict literal mapping format to parser. So the two
+    halves this file guards (detection returns the right format string; each
+    parser handles its own fixture) were both real, and the connector between
+    them was not covered by anything: ``worker/tasks._parse_file_to_results``
+    was at 23 uncovered statements, and its only caller,
+    ``ingest_uploaded_file``, has never executed.
+
+    Routing ``trx`` to the xUnit parser in the worker would have left every
+    test here green while every TRX upload produced zero results behind a 202
+    — the exact shape of the TestNG defect this file was written for, one seam
+    further along.
+
+    Now it calls the production function, so the dispatch table cannot drift
+    away from the tests that claim to cover it. See
+    [[feedback_two_modules_one_rule]].
+    """
+    from app.worker.tasks import _parse_file_to_results
+
+    return _parse_file_to_results(content, fmt, filename, str(uuid.uuid4()))
 
 
 # (format, fixture, filename used for detection)
@@ -191,7 +190,7 @@ def test_every_detectable_format_parses_to_something(fmt, fixture, filename):
 
     This is the assertion that would have caught TestNG.
     """
-    parsed = _parse(fmt, fixture)
+    parsed = _parse(fmt, fixture, filename)
     assert len(parsed) > 0, f"{fmt} parsed a representative file to ZERO results"
 
 

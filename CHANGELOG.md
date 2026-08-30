@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-08-30 — a test that said "the SAME dispatch" was a copy of it
+
+Coverage slice 2, aimed at `app/worker/tasks.py` — the largest single gap in
+the backend at **1,309 missed statements (28.8% covered)**, 8% of every missed
+statement in the codebase.
+
+Reading it per task explained the number: almost every Celery task shows
+`hit=2`, which is the `@celery_app.task` decorator and the `def`. **The task
+bodies have never executed.** The 28.8% is module-level code plus two helpers.
+
+The one place that reaches into a task from an existing test turned out to be
+guarding less than it claimed. `test_parser_format_coverage.py` pins two real
+halves — `_detect_format` returns the right format string, and each parser
+handles its own fixture — through a helper whose docstring reads *"Route
+through the SAME dispatch the ingest worker uses."* Its body was a **local dict
+literal**: a copy of `worker/tasks._parse_file_to_results`, not that function.
+
+So the two halves were checked and the connector between them was not. Routing
+`trx` to the xUnit parser in the worker would leave every test in that file
+green while every TRX upload produced **zero results behind a 202** — the exact
+shape of the TestNG defect the file was written for, one seam further along,
+and invisible for the same reason: the uploader is told it worked.
+
+The helper now calls the production function. Verified both directions on the
+same mutation (`fmt == "trx"` → `parse_xunit_xml`):
+
+- old helper, misrouted dispatch → **28 passed**
+- corrected helper, same mutation → fails with *"trx parsed a representative
+  file to ZERO results"*
+
+`_parse_file_to_results` goes from **23 missed statements to 13**, with every
+format branch executed. No production behaviour changed: the real dispatch and
+the copy agree today for all ten formats — this makes them unable to diverge
+tomorrow. See [[feedback_two_modules_one_rule]].
+
 ## 2026-08-30 — the helpers that decide what lands in an exported document had never run
 
 Backend coverage measured at **71%** (56,193 statements, 16,467 missed). Ranked
