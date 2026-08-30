@@ -1335,7 +1335,12 @@ async def test_feedback_service_submit_feedback_backpropagates_incorrect_correct
 
     db.commit = AsyncMock(side_effect=fake_commit)
 
-    result = await feedback_service.submit_feedback(db, analysis.id, body, current_user)
+    # See the note in tests/test_analysis_corrections.py: the tenant check
+    # added to ``submit_feedback`` issues a second query that this single-result
+    # fake cannot serve. Authorization has its own tests; this one asserts the
+    # correction back-propagates.
+    with patch.object(feedback_service, "_require_analysis_access", new=AsyncMock()):
+        result = await feedback_service.submit_feedback(db, analysis.id, body, current_user)
 
     assert result["feedback_id"]
     assert analysis.failure_category == "PRODUCT_BUG"

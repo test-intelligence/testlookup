@@ -216,3 +216,232 @@ def test_known_exempt_is_only_a_backlog() -> None:
         f"KNOWN_EXEMPT has {len(KNOWN_EXEMPT)} entries (cap={cap}). "
         "Remove entries by adding guards rather than raising the cap."
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Scoped ids that arrive OUTSIDE the path
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Everything above matches ``{param}`` in the path template. That left a blind
+# spot the size of nine confirmed cross-tenant holes: ``_route_is_protected``
+# returns ``True`` when it finds no scoped **path** param, so a route taking
+# ``project_id``/``run_id`` as a **query param or body field** was auto-declared
+# safe and the gate stayed green.
+#
+# ``POST /api/v1/agents/defect-command`` was the worst of them: ``cluster_id``,
+# ``run_id`` and ``project_id`` all arrived as query params behind a bare
+# ``require_role(QA_ENGINEER)``. It read another tenant's failure clusters,
+# generated a defect from their failure text, and persisted it into whatever
+# project the caller named.
+#
+# The trap that makes this class hard to fix: ``require_run_access()`` reads
+# ``run_id`` from ``request.path_params`` and returns the caller UNCHANGED when
+# it is absent. Attaching it to a query-param route is a silent no-op that looks
+# exactly like protection. The check has to run inside the handler (or a service
+# it calls), which is why the evidence below is gathered from source rather than
+# from the dependency tree alone.
+
+import ast  # noqa: E402
+import inspect  # noqa: E402
+
+#: Ids that identify a tenant-owned object, wherever they arrive.
+SCOPED_IDS: frozenset[str] = frozenset({
+    "project_id", "run_id", "test_run_id", "release_id", "defect_id",
+    "analysis_id", "cluster_id", "plan_id", "strategy_id", "case_id",
+    "session_id", "link_id", "key_id", "source_id", "batch_id", "rule_id",
+    "report_id", "suite_name", "project_key",
+    # Plurals and prefixed forms. Their absence is not hypothetical: it hid
+    # ``/agents/pipelines/bulk-trigger`` (``run_ids``, up to 2000 per call)
+    # and ``/integrations/jira`` (``test_case_id``) from this scan while both
+    # were live cross-tenant holes, found only by triaging the backlog by hand.
+    "run_ids", "test_run_ids", "project_ids", "test_case_id", "test_case_ids",
+    "defect_ids", "case_ids", "cluster_ids",
+})
+
+#: Any of these appearing in a handler — or in a function it calls — is accepted
+#: as evidence that the caller's access to the named object was verified.
+#: Membership calls, ownership filters and project-bound API-key contexts all
+#: count: they are different shapes of the same guarantee.
+_SCOPE_EVIDENCE: tuple[str, ...] = (
+    # canonical membership resolution
+    "resolve_project_scope", "get_accessible_project_ids",
+    # dependency guards
+    "require_project_access", "require_run_access", "require_release_access",
+    "require_session_access", "require_live_session_access", "require_link_access",
+    "require_api_key_owner", "require_knowledge_source_access",
+    "require_generation_batch_access", "require_plan_access", "require_case_access",
+    "require_attempt_access", "require_investigation_access",
+    # local helpers defined in routers/services
+    "_assert_project_access", "_check_project_access", "_enforce_project_access",
+    "_require_accessible_project", "_require_case_project_access",
+    "_require_pipeline_access", "_require_valid_project_id",
+    "_authorize_run_and_project", "_require_analysis_access",
+    "assert_user_is_qa_lead_on_project",
+    # project-bound API key: the server derives project_id from the key itself
+    "get_streaming_api_key_context", "StreamingApiKeyContext",
+    "get_api_key_context", "_api_key_bound_project", "bound_project_id",
+    # ownership filter — scoping to the caller's own rows
+    "current_user.id", "current_user.username",
+)
+
+#: Routes carrying a scoped id outside the path where this scan finds no check.
+#: Each was read by hand when the section was added; the note says what was
+#: found. Split into two groups so the second cannot quietly become permanent.
+NONPATH_KNOWN_EXEMPT: frozenset[tuple[str, str]] = frozenset({
+    # ── Reviewed and genuinely fine ──────────────────────────────────────
+    # ADMIN-only. A caller who is already an administrator of the whole
+    # deployment naming a project_id is filtering, not escalating.
+    ("GET",  "/api/v1/audit-dashboard/export"),
+    ("GET",  "/api/v1/onboarding/events"),
+    # The project is derived server-side from ``X-Session-Token`` via
+    # ``resolve_project_id_for_session`` -- the caller cannot name one.
+    ("POST", "/api/v1/stream/events/batch"),
+    # Returns one boolean (is this flag on for me?) and is deliberately open
+    # to any authenticated user so the SPA can render without ADMIN. Documented
+    # as such on the handler.
+    ("GET",  "/api/v1/feature-flags/{key}/status"),
+
+    # The three entries that sat here as "suspected, needs triage" were all
+    # triaged and all three were real cross-tenant holes. They are fixed, not
+    # exempted. Triaging them also surfaced a fourth
+    # (``/agents/pipelines/bulk-trigger``) that this scan had missed because
+    # ``run_ids`` was not in SCOPED_IDS -- see the note there.
+})
+
+
+def _non_path_scoped_ids(route: APIRoute) -> set[str]:
+    """Scoped ids the route accepts as a query param or body field."""
+    found: set[str] = set()
+    for field in list(route.dependant.query_params) + list(route.dependant.body_params):
+        if field.name in SCOPED_IDS:
+            found.add(field.name)
+        model_fields = getattr(getattr(field, "type_", None), "model_fields", None)
+        if model_fields:
+            found |= {n for n in model_fields if n in SCOPED_IDS}
+    return found
+
+
+def _called_targets(func) -> list:
+    """``(qualifier, name)`` for every call in the handler, to follow one level down.
+
+    A handler that delegates to ``create_test_plan(db, payload, current_user)``
+    — or to ``svc.list_sources(...)`` where ``svc`` is an imported *module* —
+    is protected if that callee resolves the scope. Reading only the handler
+    body reports both as unprotected, which is how a guard earns a reputation
+    for false alarms and then gets ignored. Both shapes are resolved: a bare
+    name against the router module, and ``alias.name`` against whatever
+    ``alias`` is bound to there.
+    """
+    try:
+        tree = ast.parse(inspect.getsource(func).lstrip())
+    except (OSError, TypeError, SyntaxError, IndentationError):
+        return []
+    targets: list = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        if isinstance(fn, ast.Name):
+            targets.append((None, fn.id))
+        elif isinstance(fn, ast.Attribute):
+            qualifier = fn.value.id if isinstance(fn.value, ast.Name) else None
+            targets.append((qualifier, fn.attr))
+    return targets
+
+
+def _authorization_evidence(route: APIRoute) -> str:
+    """Dependency names + handler source + the source of what the handler calls."""
+    parts = list(_walk_deps(route.dependant))
+    endpoint = route.endpoint
+    try:
+        parts.append(inspect.getsource(endpoint))
+    except (OSError, TypeError):
+        pass
+
+    module = inspect.getmodule(endpoint)
+    if module is not None:
+        for qualifier, name in _called_targets(endpoint):
+            owner = module if qualifier is None else getattr(module, qualifier, None)
+            if owner is None:
+                continue
+            target = getattr(owner, name, None)
+            if target is None or not callable(target):
+                continue
+            try:
+                parts.append(inspect.getsource(target))
+            except (OSError, TypeError):
+                continue
+    return "\n".join(parts)
+
+
+def _list_unscoped_nonpath_routes() -> list[tuple[str, str]]:
+    offenders: set[tuple[str, str]] = set()
+    for route in _collect_api_routes():
+        if not route.path.startswith("/api/v1"):
+            continue
+        # Handled by the path-param ratchet above.
+        if _scoped_params_in_path(route.path):
+            continue
+        if not _non_path_scoped_ids(route):
+            continue
+        if any(marker in _authorization_evidence(route) for marker in _SCOPE_EVIDENCE):
+            continue
+        for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
+            offenders.add((method, route.path))
+    return sorted(offenders)
+
+
+def test_the_nonpath_scan_actually_inspects_routes() -> None:
+    """A scan that matched nothing would pass forever — the original failure."""
+    carriers = [
+        r for r in _collect_api_routes()
+        if r.path.startswith("/api/v1")
+        and not _scoped_params_in_path(r.path)
+        and _non_path_scoped_ids(r)
+    ]
+    assert len(carriers) >= 40, (
+        "expected many routes taking a scoped id outside the path, found "
+        f"{len(carriers)} — the extractor is probably broken"
+    )
+
+
+def test_a_scoped_id_outside_the_path_is_still_checked() -> None:
+    """The blind spot that hid nine cross-tenant holes.
+
+    A route may satisfy this with any shape of check — a dependency guard, a
+    ``resolve_project_scope`` call in the handler or a service it calls, an
+    ownership filter, or a project-bound API key. What it may not do is accept
+    a tenant-owned id and never look at who is asking.
+    """
+    offenders = set(_list_unscoped_nonpath_routes())
+
+    unexpected = sorted(offenders - NONPATH_KNOWN_EXEMPT)
+    stale = sorted(NONPATH_KNOWN_EXEMPT - offenders)
+
+    errors: list[str] = []
+    if unexpected:
+        errors.append(
+            "A route accepts a tenant-owned id as a query param or body field "
+            "and never verifies the caller may touch it. NOTE: attaching "
+            "require_run_access() will NOT fix this — it reads path_params and "
+            "returns the caller unchanged when the id is not in the path. "
+            "Resolve the owning project inside the handler instead:\n  "
+            + "\n  ".join(f"{m:6s} {p}" for m, p in unexpected)
+        )
+    if stale:
+        errors.append(
+            "These NONPATH_KNOWN_EXEMPT entries now check their scope (or the "
+            "route is gone). Delete them — the backlog only shrinks:\n  "
+            + "\n  ".join(f"{m:6s} {p}" for m, p in stale)
+        )
+    assert not errors, "\n\n".join(errors)
+
+
+def test_the_nonpath_backlog_only_shrinks() -> None:
+    """Every remaining entry has been read and is genuinely fine. The cap keeps
+    it that way: a new entry means someone chose exemption over a check."""
+    cap = 4
+    assert len(NONPATH_KNOWN_EXEMPT) <= cap, (
+        f"NONPATH_KNOWN_EXEMPT has {len(NONPATH_KNOWN_EXEMPT)} entries "
+        f"(cap={cap}). Add the missing check rather than raising the cap."
+    )

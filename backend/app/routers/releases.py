@@ -20,6 +20,7 @@ from app.core.deps import (
     require_release_access,
     require_role,
     require_run_access,
+    resolve_project_scope,
 )
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
@@ -129,8 +130,16 @@ async def get_release(
 async def create_release(
     body: ReleaseIn,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
 ):
+    # ``require_role(QA_LEAD)`` gates by ROLE, never by project membership, and
+    # ``project_id`` arrives in the BODY -- which the architectural ratchet
+    # matched only in the path, so this route was auto-declared protected. A QA
+    # lead of one project could therefore create a release, with its phases,
+    # inside any other project on the deployment. Note the sibling
+    # ``PUT /{release_id}`` immediately below already carries
+    # ``require_release_access()``: create was the odd one out.
+    await resolve_project_scope(db, current_user, str(body.project_id))
     release = await release_service.create_release(db, body)
     await db.commit()
     return await release_service.serialize_created_release(db, release)

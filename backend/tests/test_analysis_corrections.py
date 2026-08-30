@@ -175,7 +175,13 @@ async def test_submit_feedback_invalidates_cache_on_incorrect_correction():
     )
     user = SimpleNamespace(id=uuid.uuid4())
 
-    with patch.object(fs, "_invalidate_analysis_cache_for", new=AsyncMock()) as inv:
+    # ``submit_feedback`` now resolves the analysis' owning project and checks
+    # membership before mutating it. That is a second ``db.execute`` -- and this
+    # mock returns the same canned value for every query -- so the tenant check
+    # is stubbed out here. It has its own coverage in
+    # ``tests/regression/test_remaining_idors_closed.py``; this test is about
+    # the correction back-propagating, not about authorization.
+    with patch.object(fs, "_require_analysis_access", new=AsyncMock()),          patch.object(fs, "_invalidate_analysis_cache_for", new=AsyncMock()) as inv:
         await fs.submit_feedback(db, analysis.id, body, user)
 
     inv.assert_awaited_once()

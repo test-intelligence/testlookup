@@ -16,6 +16,7 @@ from app.core.deps import (
     get_current_active_user,
     require_role,
     require_run_access,
+    resolve_project_scope,
 )
 from app.db.postgres import AsyncSessionLocal, get_db
 from app.models.postgres import (
@@ -347,6 +348,23 @@ async def review_defect(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Rejection reason is required.",
         )
+
+    # ``require_role(QA_LEAD)`` gates by ROLE, never by project membership, and
+    # ``approve_action``/``reject_action`` update by id alone -- so a QA lead of
+    # one project could flip another project's pending defect to APPROVED or
+    # REJECTED with their own name recorded as the approver, and use the
+    # 200-vs-404 split as an existence oracle for defect ids.
+    #
+    # The sibling ``list_pending_defects`` below already documents this exact
+    # class and was fixed for reads; the endpoint that WRITES those rows was
+    # not. ``defects.project_id`` is indexed (``ix_defects_project_id``).
+    target = await db.get(Defect, defect_id)
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Defect not found or not in pending_review status.",
+        )
+    await resolve_project_scope(db, current_user, str(target.project_id))
 
     if body.action == "approve":
         success = await approve_action(

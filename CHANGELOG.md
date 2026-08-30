@@ -1,5 +1,91 @@
 # Changelog
 
+## 2026-08-29 - the last two IDORs, and the ratchet that could not see any of them
+
+**`POST /feedback/{analysis_id}`** had no role gate at all - just an
+authenticated session - and selected `AIAnalysis` by primary key. A
+`rating=INCORRECT` submission overwrites another tenant's `failure_category`
+and `root_cause_summary`, clears their `requires_human_review` flag, and evicts
+their semantic-cache entry, so the next reader is served the attacker's verdict.
+`AIAnalysis` carries no project of its own; the join that resolves the owner
+(`TestCase -> TestRun.project_id`) already existed **one function away** in
+`_invalidate_analysis_cache_for`. An analysis whose run has been purged now
+fails closed rather than passing an unresolvable owner.
+
+**`POST /deep-investigate/defects/{defect_id}/review`** ran on
+`require_role(QA_LEAD)` alone while `approve_action`/`reject_action` update by
+id, so a QA lead of one project could flip another project's pending defect to
+APPROVED or REJECTED with their own name recorded as approver - and use the
+200-vs-404 split as an existence oracle. The sibling `list_pending_defects` in
+the same file already documents this exact class and was fixed for **reads**;
+the endpoint that *writes* those rows was not.
+
+## Widening the ratchet
+
+`test_architectural_authorization.py` matched `{param}` in the **path** and
+returned "protected" when it found none - so a route taking `project_id` or
+`run_id` as a **query param or body field** was auto-declared safe. That is
+where all nine of this sweep's cross-tenant holes lived while the gate stayed
+green.
+
+Three things made this hard to do honestly:
+
+1. **A dependency cannot fix these routes.** `require_run_access()` reads
+   `run_id` from `request.path_params` and returns the caller *unchanged* when
+   it is absent, so attaching it to a query-param route is a silent no-op that
+   looks exactly like protection. The check has to run inside the handler,
+   which is why the new scan reads source rather than only the dependency tree.
+2. **Handlers delegate.** Reading only the handler body reported
+   `create_test_plan`, `svc.list_sources` and a dozen others as unprotected
+   when the service they call resolves scope properly. The scan follows one
+   level down, resolving both bare names and `alias.func()` against whatever
+   the alias is bound to. Without that it produced a 26-entry list that was
+   mostly noise - and a guard that cries wolf gets ignored, which is how the
+   original blind spot survived.
+3. **Scope has several legitimate shapes.** A membership call, an ownership
+   filter (`WHERE user_id == current_user.id`), and a project-bound API key
+   that derives `project_id` server-side are all real checks. A *role* check is
+   not, and is deliberately excluded.
+
+The scan settles at **4 backlog entries**, each read and confirmed fine: two
+ADMIN-only, one deriving its project from a session token, one returning a
+single boolean by design.
+
+It initially parked three more as *suspected, needs triage* rather than
+baselining them as approved. **All three were real**, and are fixed here:
+
+- **`POST /reports/email-trends`** is the worst hole found in this whole sweep.
+  The caller supplies both `project_id` **and** `recipient_email`, and nothing
+  checked either - so any authenticated user could have another tenant's trend
+  report mailed to an address of their choosing. Unlike every other hole in
+  this class the data leaves the system, so no later access control contains it.
+- **`POST /agents/pipelines/trigger`** verified only that the run *exists*, then
+  started the agent pipeline on it - spending another tenant's LLM budget and
+  writing agent results into their project.
+- **`POST /integrations/jira`** fetched a `TestCase` by primary key and filed
+  its failure text and AI analysis into a Jira project the caller names.
+
+Chasing those three surfaced a **fourth the scan had missed**:
+`POST /agents/pipelines/bulk-trigger`, the same hole as `trigger` but for up to
+2000 run ids in one call, filtered on none of them. It was invisible because
+`SCOPED_IDS` listed `run_id` and `case_id` but not the plural `run_ids` or the
+prefixed `test_case_id` - so the guard written to catch this class walked past
+two live instances of it. The plural and prefixed forms are now in the set.
+
+That is the argument against baselining a backlog you have not read: three of
+three "suspects" were real, and the triage that confirmed them is what exposed
+the gap in the guard itself.
+
+It found one new defect on the way in: **`POST /releases`** took `project_id`
+in the body behind `require_role(QA_LEAD)`, letting a QA lead create a release
+and its phases inside any project on the deployment - while the sibling
+`PUT /{release_id}` immediately below already carried `require_release_access()`.
+
+Verified by reverting the fix on `/agents/defect-command` and
+`/agents/regression-watch`: the widened ratchet flags both, where the old one
+declared them protected. The two IDOR fixes fail 9 of their 10 tests when
+reverted.
+
 ## 2026-08-29 - eight shipped links 404 for everyone who clones, and nine claims were stale
 
 `docs/` and `ROADMAP.md` are gitignored **on purpose** - they are local working

@@ -15,6 +15,7 @@ from app.core.deps import (
     get_current_active_user,
     require_link_access,
     require_run_access,
+    resolve_project_scope,
 )
 from app.db.postgres import get_db
 from app.models.postgres import AccessAuditLog, ReportShareLink, TestRun, User
@@ -39,8 +40,15 @@ class EmailTrendsRequest(BaseModel):
 async def email_trends_report(
     body: EmailTrendsRequest = Body(...),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Generate and email a trends report for the specified project and period."""
+    # The caller supplies BOTH the project and the destination address, and
+    # nothing checked either -- so any authenticated user could have another
+    # tenant's trend report mailed to an address of their choosing. Unlike the
+    # other holes in this class the data leaves the system entirely, so no
+    # later access control can contain it.
+    await resolve_project_scope(db, current_user, body.project_id)
     return await report_service.email_trends_report(db, body)
 
 

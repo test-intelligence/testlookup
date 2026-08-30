@@ -18,6 +18,16 @@ async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
     if not analysis:
         raise HTTPException(404, detail="Analysis not found")
 
+    # ``AIAnalysis`` carries no project of its own; it is reached through
+    # ``TestCase -> TestRun.project_id``. Without this the endpoint was a
+    # cross-tenant WRITE behind nothing but an authenticated session (no role
+    # gate at all): a ``rating=INCORRECT`` submission overwrites another
+    # tenant's ``failure_category`` and ``root_cause_summary``, clears their
+    # ``requires_human_review`` flag, and evicts their semantic-cache entry.
+    # ``_invalidate_analysis_cache_for`` below already performs exactly this
+    # join -- the scope was one line away the whole time.
+    await _require_analysis_access(db, analysis, current_user)
+
     feedback = AIFeedback(
         analysis_id=analysis_id,
         test_case_id=analysis.test_case_id,
@@ -43,6 +53,28 @@ async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
 
     # stage-only: router handler commits
     return {"feedback_id": str(feedback.id), "message": "Feedback recorded — thank you!"}
+
+
+async def _require_analysis_access(db: AsyncSession, analysis, current_user) -> None:
+    """Verify the caller may act on the project that owns ``analysis``.
+
+    An analysis with no reachable test case (the test run was purged) is
+    treated as not found rather than silently allowed -- failing closed, since
+    an unreachable owner cannot be checked against.
+    """
+    from app.core.deps import resolve_project_scope
+    from app.models.postgres import TestCase
+
+    project_id = (
+        await db.execute(
+            select(TestRun.project_id)
+            .join(TestCase, TestCase.test_run_id == TestRun.id)
+            .where(TestCase.id == analysis.test_case_id)
+        )
+    ).scalar_one_or_none()
+    if project_id is None:
+        raise HTTPException(404, detail="Analysis not found")
+    await resolve_project_scope(db, current_user, str(project_id))
 
 
 async def _invalidate_analysis_cache_for(db: AsyncSession, test_case_id) -> None:

@@ -282,17 +282,23 @@ async def get_pipeline(
 async def trigger_pipeline(
     payload: TriggerPipelineRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
     _: Any = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     """
     Manually trigger the agent pipeline for an existing test run.
     Returns 202 Accepted — pipeline runs asynchronously via Celery.
     """
-    # Verify the run exists
+    # Verify the run exists AND that the caller may act on its project.
+    # ``require_role(QA_ENGINEER)`` gates by role, never by membership, so
+    # without this a QA engineer of one project could start the agent pipeline
+    # on another project's run -- spending that tenant's LLM budget and writing
+    # agent results into their project.
     run_result = await db.execute(select(TestRun).where(TestRun.id == payload.test_run_id))
     run = run_result.scalar_one_or_none()
     if not run:
         raise HTTPException(404, detail="TestRun not found")
+    await resolve_project_scope(db, current_user, str(run.project_id))
 
     from app.worker.tasks import run_agent_pipeline
     task = run_agent_pipeline.delay(
@@ -323,6 +329,7 @@ class BulkTriggerResponse(BaseModel):
 async def bulk_trigger_pipelines(
     payload: BulkTriggerRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
     _: Any = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     """Queue the agent pipeline for many runs in one HTTP call.
@@ -340,10 +347,19 @@ async def bulk_trigger_pipelines(
     # One DB roundtrip to resolve every run + reject unknown ids.
     # Returning the not-found list lets the UI tell the user *which* IDs
     # were skipped vs which actually queued.
-    result = await db.execute(
-        select(TestRun.id, TestRun.project_id, TestRun.build_number)
-        .where(TestRun.id.in_(payload.run_ids))
+    # Scope BEFORE fanning out. The single-run sibling above checks membership;
+    # this one accepted up to 2000 ids and filtered on none of them, so one call
+    # could queue pipelines across every project on the deployment. A run the
+    # caller cannot access is reported as not-found rather than as forbidden --
+    # the response already carries a not_found list, and distinguishing the two
+    # would turn it into an existence oracle.
+    accessible = await get_accessible_project_ids(db, current_user)
+    stmt = select(TestRun.id, TestRun.project_id, TestRun.build_number).where(
+        TestRun.id.in_(payload.run_ids)
     )
+    if accessible is not None:
+        stmt = stmt.where(TestRun.project_id.in_(accessible))
+    result = await db.execute(stmt)
     found = list(result.all())
     found_ids = {row[0] for row in found}
     not_found_ids = [str(rid) for rid in payload.run_ids if rid not in found_ids]

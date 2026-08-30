@@ -6,9 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import require_role
+from app.core.deps import get_current_active_user, require_role, resolve_project_scope
 from app.db.postgres import get_db
-from app.models.postgres import AIAnalysis, Defect, TestCase, UserRole
+from app.models.postgres import AIAnalysis, Defect, TestCase, TestRun, User, UserRole
 from app.models.schemas import JiraIssueRequest, JiraIssueResponse
 from app.services.action_policy import (
     ActionStatus,
@@ -27,6 +27,7 @@ router = APIRouter(prefix="/api/v1/integrations", tags=["Integrations"])
 async def create_jira_defect(
     request: JiraIssueRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Create a Jira Bug ticket from AI triage analysis output."""
     # Fetch test case and AI analysis
@@ -36,6 +37,20 @@ async def create_jira_defect(
     tc = tc_result.scalar_one_or_none()
     if not tc:
         raise HTTPException(status_code=404, detail="Test case not found")
+
+    # ``TestCase`` is fetched by primary key and carries no project of its own;
+    # the owner is ``TestCase -> TestRun.project_id``. Behind only
+    # ``require_role(QA_ENGINEER)`` this filed another tenant's failure text and
+    # AI analysis into a Jira project of the caller's choosing -- the same
+    # copy-across-the-boundary shape as ``/agents/defect-command``.
+    owning_project_id = (
+        await db.execute(
+            select(TestRun.project_id).where(TestRun.id == tc.test_run_id)
+        )
+    ).scalar_one_or_none()
+    if owning_project_id is None:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    await resolve_project_scope(db, current_user, str(owning_project_id))
 
     ai_result = await db.execute(
         select(AIAnalysis).where(AIAnalysis.test_case_id == tc.id)
