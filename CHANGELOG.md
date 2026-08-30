@@ -38,6 +38,41 @@ too.
 
 Backend: 308 decision-report/eval tests pass, quality gate 31/31, ruff clean.
 
+## 2026-08-30 — three supported formats that no buyer could discover
+
+TestLookup reads **NUnit3**, **xUnit.net** and **Visual Studio TRX**. The
+parsers exist (`nunit_parser.py`, `xunit_parser.py`, `trx_parser.py`),
+`_detect_format` sniffs each from file content, `_SUPPORTED_FORMATS` accepts
+them, and `tests/regression/test_parser_format_coverage.py` proves a
+representative file of each actually parses to non-zero results.
+
+None of them was named in the repo's front door. `README.md` advertised "JUnit
+XML, TestNG, Allure JSON, Cypress, Playwright, pytest, Robot Framework,
+Cucumber" and stopped; `README_FULL.md`'s two upload sections listed only
+"JUnit XML, TestNG XML, or Allure JSON"; the user guide named NUnit and xUnit
+but not TRX. A .NET shop evaluating TestLookup reads exactly those files and
+concludes it cannot read `dotnet test` output — working support, invisible at
+the moment it decides an adoption.
+
+The in-app guide and `architecture/README.md` already listed all three, which
+is the tell: the list was kept current where contributors edit and left to rot
+where buyers read.
+
+Fixed in all three documents, and pinned by a new guard,
+`test_supported_formats_are_documented.py`, which reads `_SUPPORTED_FORMATS`
+from the router itself and fails if any format it accepts goes unnamed in the
+front-door docs. It is the inverse of the existing
+`test_parser_format_coverage.py`: that one guards "everything advertised
+actually works", this one guards "everything that works is actually
+advertised". The guard also asserts the authoritative list is still where it
+expects it, because a guard that reads an empty set passes while guarding
+nothing.
+
+Verified by reverting the doc edits: the guard names exactly the gap —
+`README.md does not mention ['nunit', 'trx', 'xunit']` and the user guide
+`['trx']`. The in-app guide passes in both states, so the guard is not merely
+asserting that some file changed.
+
 ## 2026-08-30 — twelve Prometheus metrics that nothing ever incremented
 
 `core/metrics.py` declared 49 metrics. **Twelve of them had no emitter

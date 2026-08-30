@@ -68,7 +68,7 @@ Promote Defects → Make Release Decision → Track Trends Over Time
 
 ### Supported Test Frameworks
 
-TestLookup ingests results from: Allure, JUnit XML, TestNG XML, Cucumber JSON, pytest, Robot Framework, NUnit, xUnit, Mocha, Jest, Cypress, Playwright, and any framework that produces JUnit-compatible XML.
+TestLookup ingests results from: Allure, JUnit XML, TestNG XML, Cucumber JSON, pytest, Robot Framework, NUnit3, xUnit.net, Visual Studio TRX, Mocha, Jest, Cypress, Playwright, and any framework that produces JUnit-compatible XML.
 
 ---
 

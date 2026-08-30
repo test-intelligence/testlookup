@@ -16,7 +16,7 @@ Turn raw automated test results into actionable failure intelligence and release
 
 ## What it does
 
-1. **Ingest test results** from JUnit, pytest, TestNG, Allure, Cypress, Playwright, and more
+1. **Ingest test results** from JUnit, pytest, TestNG, Allure, Cypress, Playwright, NUnit, xUnit, TRX, and more
 2. **Cluster failures** and surface regressions vs flaky recurrences vs infra anomalies
 3. **Explain likely root causes** using rules, ML classifiers, or a local LLM (Ollama) -- no cloud calls required
 4. **Provide release-risk signals** -- GO / CONDITIONAL_GO / NO_GO with reasons and override audit trail
@@ -90,7 +90,7 @@ Every feature is labelled **Core** (on by default in OSS), **Experimental** (in-
 
 | Feature | Description |
 |---------|-------------|
-| Multi-framework ingestion | JUnit XML, TestNG, Allure JSON, Cypress, Playwright, pytest, Robot Framework, Cucumber |
+| Multi-framework ingestion | JUnit XML, TestNG, Allure JSON, Cypress, Playwright, pytest, Robot Framework, Cucumber, NUnit3, xUnit.net, Visual Studio TRX, and zipped archives -- format is detected from the file's content, not its extension |
 | Analysis modes | Rules (pattern match, ~0.2ms) / ML (HistGradientBoosting, ~2ms) / LLM (Ollama ReAct, ~300ms) / Auto (smart fallback) |
 | Run Intelligence | Single-pane summary: failure clusters, regression diff, risk score, role actions |
 | Release gate | GO / CONDITIONAL_GO / NO_GO with explainable reasons and QA Lead override audit |

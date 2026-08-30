@@ -606,7 +606,10 @@ try (TestLookupReporter.LiveSession session = reporter.startSession(
 
 #### Option C — File upload (post-execution)
 
-Upload JUnit XML, TestNG XML, or Allure JSON files after tests complete:
+Upload a report your suite already produces after tests complete -- JUnit XML,
+TestNG XML, Allure JSON, Cypress, Playwright, pytest, Robot Framework, Cucumber,
+NUnit3, xUnit.net, Visual Studio TRX, or a zipped archive of them. The format is
+detected from the file's content, not its extension:
 
 ```bash
 # Single file
@@ -1636,7 +1639,7 @@ Client SDK download endpoints for Python, Java, JavaScript, and Go with interact
 
 ### 26. Unified Ingestion API & Client SDK Configuration
 
-Consolidated test data ingestion via `POST /api/v1/ingest` (JSON batch) and `POST /api/v1/ingest/file` (file upload: JUnit XML, TestNG XML, Allure JSON). Both return 202 Accepted with async Celery processing. Post-ingestion pipeline handles run creation, test case upsert, suite sync, auto-tagging, and AI analysis triggering.
+Consolidated test data ingestion via `POST /api/v1/ingest` (JSON batch) and `POST /api/v1/ingest/file` (file upload: JUnit XML, TestNG, Allure JSON, Cypress, Playwright, pytest, Robot Framework, Cucumber, NUnit3, xUnit.net, Visual Studio TRX, or a zipped archive; the format is sniffed from the content). Both return 202 Accepted with async Celery processing. Post-ingestion pipeline handles run creation, test case upsert, suite sync, auto-tagging, and AI analysis triggering.
 
 All client SDKs (Python, Java) share a unified `testlookup.yaml` configuration model with consistent environment variable support (`TESTLOOKUP_URL`, `TESTLOOKUP_API_KEY`, etc.). Java SDK uses `ConfigLoader` with builder pattern, auto-discovers JUnit 5 / TestNG listeners via `META-INF/services/` ServiceLoader. Fat JAR built via Maven shade plugin with relocated Jackson.
 
