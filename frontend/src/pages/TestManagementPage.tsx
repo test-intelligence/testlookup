@@ -32,7 +32,7 @@ import {
   testManagementService,
 } from '@/services/testManagementService'
 import type { UserSummary, SuiteReviewItem, SuiteReviewState } from '@/services/testManagementService'
-import { deriveTestManagementTotals } from '@/utils/testManagementTotals'
+import { deriveTestManagementTotals, describeStatBasis } from '@/utils/testManagementTotals'
 import KnowledgeGenerationTab from '@/pages/test-management/KnowledgeGenerationTab'
 import type {
   AIReviewResult,
@@ -1066,11 +1066,19 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
     if (id === 'unautomated') { setStatus(''); setPriority(''); setTestType(''); setSuiteFilter(''); setOwnerFilter(''); /* automation flag — Phase 2 server-side filter */ }
   }
 
-  // ── Coverage matrix synthesis ───────────────────────────────────────
+  // ── Automation split ────────────────────────────────────────────────
+  // There used to be a third bucket here, `coverageUncov`, defined as 15% of
+  // the case count. It was not a measurement: TestLookup has no requirements
+  // entity, no requirements table and no req-coverage endpoint, so nothing
+  // anywhere could know how many requirements are uncovered. Worse, it made
+  // the headline percentage a CONSTANT — covered / total reduced to
+  // N / 1.15N = 87% for every project, every day, forever — which a QA lead
+  // could reasonably have reported to management as a coverage figure.
+  //
+  // What the page can honestly say is how many authored cases are automated,
+  // which it already knows from the rows themselves.
   const coverageAuto    = automatedCount
   const coverageManual  = fullList.length - automatedCount
-  const coverageUncov   = Math.max(0, Math.round(fullList.length * 0.15))   // 15% requirements estimate uncovered until req-coverage endpoint lands
-  const coverageTotal   = coverageAuto + coverageManual + coverageUncov
 
   // ── Strategy gaps synthesis ─────────────────────────────────────────
   const suiteCounts = new Map<string, number>()
@@ -1115,9 +1123,9 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
         oldestReviewDays={oldestReviewDays}
         activeCount={activeCount}
         automatedPct={automatedPct}
-        coveragePct={coverageTotal > 0 ? Math.round(((coverageAuto + coverageManual) / coverageTotal) * 100) : 0}
         avgAgeDays={avgAgeDays}
         olderThan180Pct={olderThan180Pct}
+        statBasis={describeStatBasis(fullList.length, authoredTotal)}
       />
 
       {/* Filter bar */}
@@ -1221,11 +1229,10 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
             )}
           </div>
 
-          {/* Coverage matrix */}
-          <CoverageMatrixCard
+          {/* Automation split of the authored catalog */}
+          <AutomationCoverageCard
             auto={coverageAuto}
             manual={coverageManual}
-            uncovered={coverageUncov}
           />
         </div>
 
@@ -1235,12 +1242,11 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
             rows={reviewQueue.slice(0, 5)}
             onPick={(tc) => setSelectedCase(tc)}
           />
-          <GenerateCasesCard
-            onPathClick={() => projectId && setShowAiGen(true)}
-            uncoveredReqs={Math.max(0, Math.round(fullList.length * 0.15))}
-            untestedBranches={Math.max(0, Math.round(fullList.length * 0.08))}
-            defectsWithoutRegression={Math.max(0, Math.round(staleCount * 0.5))}
-          />
+          {/* The three counts that used to be passed here were 15%, 8% and 50%
+              of numbers already on the page. Besides being invented, they were
+              wired to `disabled={count === 0}`, so a small library silently
+              greyed out working generation entry points. */}
+          <GenerateCasesCard onPathClick={() => projectId && setShowAiGen(true)} />
           <StrategyGapsCard gaps={strategyGaps} />
           <RecentActivityCard events={auditEvents} />
         </div>
@@ -1251,13 +1257,14 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
         className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
         style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
       >
+        {/* This row used to read "Library indexed against prd:current ·
+            main@HEAD". Neither ref exists: nothing indexes a PRD, and the page
+            has no git revision for the catalog. Both were fixed strings, so
+            they said the same thing on every deployment of every project. The
+            refresh time is real (it comes from useDataFreshness), so it is
+            what remains. */}
         <span className="flex items-center gap-1.5 flex-wrap">
-          <span>Library indexed against</span>
-          <code className="font-mono text-[11.5px]">prd:current</code>
-          <span aria-hidden>·</span>
-          <code className="font-mono text-[11.5px]">main@HEAD</code>
-          <span aria-hidden>·</span>
-          <span>library refreshed {refreshedAt}</span>
+          <span>Library refreshed {refreshedAt}</span>
         </span>
         <button
           type="button"
@@ -1307,9 +1314,10 @@ interface LibraryVerdictProps {
   oldestReviewDays: number
   activeCount: number
   automatedPct: number
-  coveragePct: number
   avgAgeDays: number
   olderThan180Pct: number
+  /** Set when the rates below describe a capped sample rather than the catalog. */
+  statBasis: string | null
 }
 
 function LibraryVerdictRibbon(p: LibraryVerdictProps) {
@@ -1427,7 +1435,7 @@ function LibraryVerdictRibbon(p: LibraryVerdictProps) {
       </div>
 
       {isEmptyCatalog ? (
-        // Empty stats grid would just show "0 / 0% / 0% / 0d" four times,
+        // Empty stats grid would just show "0 / 0% / 0d" three times,
         // which reads exactly like a broken data fetch. Replace with a
         // single helper card pointing the user to where they can author
         // a case so the panel does something useful.
@@ -1446,13 +1454,25 @@ function LibraryVerdictRibbon(p: LibraryVerdictProps) {
       ) : (
         <div
           className="grid items-stretch"
-          style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}
+          style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}
         >
           <VerdictStat label="Active"        value={p.activeCount}                  sub={null} isFirst />
           <VerdictStat label="Automated"     value={`${p.automatedPct}%`}            sub="target 60%" />
-          <VerdictStat label="Req coverage"  value={`${p.coveragePct}%`}             sub="of tracked" />
+          {/* A fourth stat, "Req coverage", stood here reading a constant 87%
+              for every project. It is gone rather than replaced: there is no
+              requirements data to compute a real one from, and an invented
+              number is worse than an absent one. */}
           <VerdictStat label="Avg age"       value={`${p.avgAgeDays}d`}              sub={`${p.olderThan180Pct}% >180d`} isLast />
         </div>
+      )}
+      {p.statBasis && (
+        <p
+          className="text-[11px] m-0 text-[var(--color-text-muted)]"
+          style={{ padding: '0 16px 12px' }}
+          data-testid="library-health-stat-basis"
+        >
+          {p.statBasis}
+        </p>
       )}
     </section>
   )
@@ -1989,55 +2009,54 @@ function EmptyStateBlock({
   )
 }
 
-// ── Coverage matrix card ────────────────────────────────────────────────
-function CoverageMatrixCard({ auto, manual, uncovered }: { auto: number; manual: number; uncovered: number }) {
-  const total = auto + manual + uncovered || 1
-  const pct = (n: number) => Math.round((n / total) * 100)
+// ── Automation coverage card ────────────────────────────────────────────
+//
+// Was "Coverage by requirement", reading "<N> requirements tracked · <M>
+// covered (87%)". TestLookup has no requirements: N was the test-case count
+// relabelled, and the uncovered bucket it was measured against was 15% of that
+// same count, invented in the page body. The percentage could therefore never
+// be anything but 87%, and the card named a domain the product does not model.
+//
+// Automated-vs-manual is the split the rows actually carry, so that is what
+// this card now reports, under a title that says so.
+function AutomationCoverageCard({ auto, manual }: { auto: number; manual: number }) {
+  const total = auto + manual
+  const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0)
   return (
-    <CasesCardShell
-      title="Coverage by requirement"
-      rightSlot={
-        <button
-          type="button"
-          onClick={() => toast('Coverage matrix viewer — coming in Phase 2', { icon: '🪪' })}
-          className="hover:underline"
-          style={{ color: 'var(--color-accent)' }}
-        >
-          Coverage matrix →
-        </button>
-      }
-    >
+    <CasesCardShell title="Automation coverage">
       <div className="px-4 py-3.5">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3">
-          <strong className="text-[var(--color-text)] font-semibold">{total}</strong> requirements tracked · <strong className="text-[var(--color-text)] font-semibold">{auto + manual}</strong> covered (<strong className="text-[var(--color-text)] font-semibold">{pct(auto + manual)}%</strong>)
-        </p>
-        <div
-          className="flex h-7 rounded-md overflow-hidden border"
-          style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
-          role="img"
-          aria-label={`Coverage: ${auto} automated, ${manual} manual, ${uncovered} uncovered`}
-        >
-          {auto > 0 && (
-            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: auto, background: 'color-mix(in srgb, var(--status-passed) 55%, transparent)', color: 'white' }}>
-              {auto} auto
+        {total === 0 ? (
+          <p className="text-[12px] text-[var(--color-text-muted)] m-0">
+            No authored cases yet — nothing to split.
+          </p>
+        ) : (
+          <>
+            <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3">
+              <strong className="text-[var(--color-text)] font-semibold">{total}</strong> authored case{total === 1 ? '' : 's'} · <strong className="text-[var(--color-text)] font-semibold">{auto}</strong> automated (<strong className="text-[var(--color-text)] font-semibold">{pct(auto)}%</strong>)
+            </p>
+            <div
+              className="flex h-7 rounded-md overflow-hidden border"
+              style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
+              role="img"
+              aria-label={`Automation coverage: ${auto} automated, ${manual} manual`}
+            >
+              {auto > 0 && (
+                <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: auto, background: 'color-mix(in srgb, var(--status-passed) 55%, transparent)', color: 'white' }}>
+                  {auto} auto
+                </div>
+              )}
+              {manual > 0 && (
+                <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: manual, background: 'color-mix(in srgb, var(--color-accent) 50%, transparent)', color: 'white' }}>
+                  {manual} manual
+                </div>
+              )}
             </div>
-          )}
-          {manual > 0 && (
-            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: manual, background: 'color-mix(in srgb, var(--color-accent) 50%, transparent)', color: 'white' }}>
-              {manual} manual
+            <div className="flex flex-wrap gap-3 mt-2 text-[11px] text-[var(--color-text-muted)]">
+              <Legend color="color-mix(in srgb, var(--status-passed) 55%, transparent)" label={`Automated · ${pct(auto)}%`} />
+              <Legend color="color-mix(in srgb, var(--color-accent) 50%, transparent)" label={`Manual · ${pct(manual)}%`} />
             </div>
-          )}
-          {uncovered > 0 && (
-            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: uncovered, background: 'rgba(120,113,108,0.30)', color: 'var(--color-text-secondary)' }}>
-              {uncovered} uncovered
-            </div>
-          )}
-        </div>
-        <div className="flex flex-wrap gap-3 mt-2 text-[11px] text-[var(--color-text-muted)]">
-          <Legend color="color-mix(in srgb, var(--status-passed) 55%, transparent)" label={`Automated · ${pct(auto)}%`} />
-          <Legend color="color-mix(in srgb, var(--color-accent) 50%, transparent)" label={`Manual · ${pct(manual)}%`} />
-          <Legend color="rgba(120,113,108,0.30)" label={`Uncovered · ${pct(uncovered)}%`} />
-        </div>
+          </>
+        )}
       </div>
     </CasesCardShell>
   )
@@ -2108,14 +2127,16 @@ function ReviewQueueCard({ rows, onPick }: { rows: ManagedTestCase[]; onPick: (c
   )
 }
 
-function GenerateCasesCard({
-  onPathClick, uncoveredReqs, untestedBranches, defectsWithoutRegression,
-}: {
-  onPathClick: () => void
-  uncoveredReqs: number
-  untestedBranches: number
-  defectsWithoutRegression: number
-}) {
+/**
+ * Entry points into AI case generation.
+ *
+ * Each path used to carry a backlog count and a source ref (`prd:current`,
+ * `main`). None of it was measured: the counts were percentages of unrelated
+ * numbers, and the page has no PRD or branch-coverage data to point at. The
+ * paths are prompts for the generator, so they are described as prompts —
+ * without asserting a backlog nobody counted.
+ */
+function GenerateCasesCard({ onPathClick }: { onPathClick: () => void }) {
   return (
     <div
       className="overflow-hidden rounded-xl"
@@ -2136,24 +2157,21 @@ function GenerateCasesCard({
       </div>
       <div className="px-4 py-3 flex flex-col gap-2">
         <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-1">
-          Three paths fed by the same knowledge graph. All generated cases land as drafts in your review queue.
+          Pick what to generate from. All generated cases land as drafts in your review queue.
         </p>
         <GeneratePath
           title="From requirements"
-          sub={<>uncovered requirements in <code className="font-mono text-[11px]">prd:current</code></>}
-          count={uncoveredReqs}
+          sub="describe the requirement to cover"
           onClick={onPathClick}
         />
         <GeneratePath
           title="From code paths"
-          sub={<>untested branches in <code className="font-mono text-[11px]">main</code></>}
-          count={untestedBranches}
+          sub="point the generator at a module or path"
           onClick={onPathClick}
         />
         <GeneratePath
           title="From recent defects"
-          sub="defects without a regression case"
-          count={defectsWithoutRegression}
+          sub="write regression cases for a defect"
           onClick={onPathClick}
         />
       </div>
@@ -2161,15 +2179,17 @@ function GenerateCasesCard({
   )
 }
 
-function GeneratePath({ title, sub, count, onClick }: { title: string; sub: React.ReactNode; count: number; onClick: () => void }) {
+// No `count` prop, and therefore no `disabled={count === 0}`: the counts were
+// invented, and gating a working button on an invented number meant a library
+// of 6 cases could not reach "From code paths" at all (round(6 * 0.08) === 0).
+function GeneratePath({ title, sub, onClick }: { title: string; sub: React.ReactNode; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={count === 0}
-      className="grid items-center gap-2.5 rounded-md border text-left transition-colors hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
+      className="grid items-center gap-2.5 rounded-md border text-left transition-colors hover:bg-[var(--color-bg-hover)]"
       style={{
-        gridTemplateColumns: '30px 1fr auto',
+        gridTemplateColumns: '30px 1fr',
         padding: '8px 12px',
         background: 'var(--color-bg)',
         borderColor: 'var(--color-border)',
@@ -2180,14 +2200,8 @@ function GeneratePath({ title, sub, count, onClick }: { title: string; sub: Reac
       </span>
       <div className="min-w-0">
         <div className="text-[12.5px] font-medium text-[var(--color-text)]">{title}</div>
-        <div className="text-[11px] text-[var(--color-text-muted)] truncate">{count} {sub}</div>
+        <div className="text-[11px] text-[var(--color-text-muted)] truncate">{sub}</div>
       </div>
-      <span
-        className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-mono tabular-nums"
-        style={{ background: 'color-mix(in srgb, var(--status-flaky) 12%, transparent)', color: 'var(--status-flaky)', border: '1px solid color-mix(in srgb, var(--status-flaky) 25%, transparent)' }}
-      >
-        {count}
-      </span>
     </button>
   )
 }

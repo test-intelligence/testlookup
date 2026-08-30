@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { deriveTestManagementTotals } from './testManagementTotals'
+import { deriveTestManagementTotals, describeStatBasis } from './testManagementTotals'
 
 describe('deriveTestManagementTotals', () => {
   it('pins the regression that produced "Cases 25 of 0"', () => {
@@ -82,5 +82,32 @@ describe('deriveTestManagementTotals', () => {
     })
     expect(totals.casesTotal).toBe(3)
     expect(totals.authoredTotal).toBe(0)
+  })
+})
+
+describe('describeStatBasis', () => {
+  // The Library Health panel computes every rate from `healthRoll.items`, a
+  // page capped at size: 200, while printing `healthRoll.total` beside them.
+  // Past 200 authored cases those rates describe a slice, not the catalog.
+  it('says nothing when the sample IS the catalog', () => {
+    expect(describeStatBasis(42, 42)).toBeNull()
+  })
+
+  it('says nothing when the server reports fewer than we hold', () => {
+    // Can happen mid-delete; a note claiming a sample would be wrong.
+    expect(describeStatBasis(200, 12)).toBeNull()
+  })
+
+  it('names both numbers when the roll is truncated', () => {
+    const note = describeStatBasis(200, 1340)
+    expect(note).toContain('200 of 1340')
+    // It must say the rates are NOT the whole catalog -- that is the point.
+    expect(note).toMatch(/not the whole catalog/i)
+  })
+
+  it('says nothing for an empty or nonsensical sample', () => {
+    expect(describeStatBasis(0, 1340)).toBeNull()
+    expect(describeStatBasis(Number.NaN, 10)).toBeNull()
+    expect(describeStatBasis(10, Number.NaN)).toBeNull()
   })
 })

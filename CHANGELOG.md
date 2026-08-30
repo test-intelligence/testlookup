@@ -1,5 +1,68 @@
 # Changelog
 
+## 2026-08-30 — "Req coverage 87%" was a constant, and four other numbers were invented
+
+The Test Management page's right rail reported five figures that no
+measurement stood behind. They were rendered in the same type, beside the same
+borders, as the real counts next to them — which is what made them dangerous.
+
+**"Req coverage 87%".** The verdict ribbon's fourth stat divided covered cases
+by a total it built as `covered + round(covered * 0.15)`. That reduces to
+`N / 1.15N` — **86.96%, for every project, on every deployment, forever.** It
+moved only through rounding. TestLookup has no requirements entity, no
+requirements table and no requirements endpoint, so nothing in the system could
+have known a requirement coverage figure; the 15% was a placeholder someone
+left behind a comment reading "until req-coverage endpoint lands". A QA lead
+could reasonably have carried that 87% into a release review. The stat is gone
+rather than replaced: there is no data to compute a real one from, and an
+invented number is worse than an absent one.
+
+**"N requirements tracked".** The card beneath it, titled "Coverage by
+requirement", printed the test-case count relabelled as requirements and
+measured it against the same fabricated 15% bucket. It is now
+**"Automation coverage"**, reporting the automated-vs-manual split that the
+rows actually carry.
+
+**Three invented backlogs.** The Generate-test-cases card showed
+`uncoveredReqs`, `untestedBranches` and `defectsWithoutRegression` — 15%, 8%
+and 50% of numbers already on the page — captioned "uncovered requirements in
+`prd:current`" and "untested branches in `main`", neither of which this page can
+see. Worse, each count fed `disabled={count === 0}`: a library of six cases
+made `round(6 * 0.08) === 0`, so "From code paths" was **greyed out** — a
+working button disabled by a number nobody measured. The counts and the false
+source refs are gone and the paths are always clickable.
+
+**A provenance row that named two things that do not exist.** The footer read
+"Library indexed against `prd:current` · `main@HEAD`". Both were string
+literals: nothing indexes a PRD, and the page holds no git revision for the
+catalog. They said the same thing on every project. The refresh time beside
+them is real (it comes from `useDataFreshness`), so that is what remains.
+
+**Library Health rates described a 200-row sample.** Every percentage in the
+panel — automated share, average age, the >180d share, the stale and
+deprecated scores — is computed over `useTestCases({ size: 200 })`, while
+`healthRoll.total`, the true server count, is printed in the same sentence.
+Past 200 authored cases the rates silently describe an arbitrary slice. They
+still do — reading the whole catalog to render a summary is the wrong fix — but
+the panel now says so: *"Rates below cover 200 of 1340 cases — the library-health
+sample, not the whole catalog."* The new `describeStatBasis` helper lives beside
+`deriveTestManagementTotals`, which already owns the question of which total
+means what, and is unit-tested there.
+
+The regression guard is a source-level spec, matching the convention of this
+page's sibling specs (the page is ~4k lines with a large hook surface). It
+fails if any identifier naming a count is multiplied by a literal ratio, if the
+words "requirements tracked" / "Req coverage" / `prd:current` reappear, if a
+generation button is gated on a count again, or if the sample disclosure is
+dropped — and it also asserts the automation split is still reported, so a
+"fix" that deleted the card wholesale would not pass. Written to strip comments
+first, so the prose above (which quotes the removed strings) cannot satisfy it.
+
+Verified by reverting: all six guards fail against the old code.
+
+Frontend 173 files / 1233 passed / 0 failed, quality gate 30/30, tsc clean,
+eslint 0 errors (18 warnings, unchanged from main).
+
 ## 2026-08-30 — an outage rendered as "you have no data"
 
 The frontend twin of the `/health/ingestion` fix: six surfaces answered a

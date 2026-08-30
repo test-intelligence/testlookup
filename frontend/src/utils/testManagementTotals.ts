@@ -33,6 +33,24 @@ export interface CasesTotals {
   casesTotal: number
 }
 
+/**
+ * What the Library Health percentages are actually computed over.
+ *
+ * The panel derives every rate (automated %, avg age, >180d share, stale and
+ * deprecated scores) from `healthRoll.items`, a page capped at `size: 200` —
+ * while rendering `healthRoll.total`, the true server count, in the same
+ * sentence. Past 200 authored cases those percentages silently describe an
+ * arbitrary 200-row slice presented as a statement about the library.
+ *
+ * Returning `null` when nothing is truncated keeps the common case clean; the
+ * caller renders the note only when the two numbers really disagree.
+ */
+export function describeStatBasis(sampleSize: number, authoredTotal: number): string | null {
+  if (!Number.isFinite(sampleSize) || !Number.isFinite(authoredTotal)) return null
+  if (sampleSize <= 0 || authoredTotal <= sampleSize) return null
+  return `Rates below cover ${sampleSize} of ${authoredTotal} cases — the library-health sample, not the whole catalog.`
+}
+
 export function deriveTestManagementTotals(args: {
   /** Wider read fetched WITHOUT include_automation — the managed-only
    * snapshot driving Library Health. */
