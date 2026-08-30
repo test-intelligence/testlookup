@@ -228,6 +228,37 @@ async def _store_supplied_commit_range(
         )
 
 
+def _count_ingested_cases(framework: Optional[str], results: list[dict]) -> None:
+    """Record ingested cases by framework and outcome. Never raises.
+
+    ``ingestion_test_cases_total`` was declared and never emitted, so the
+    Grafana overview's "test cases ingested by framework" panel has been empty
+    since it was written. An operator reading it during an ingestion stall saw
+    the same picture as a quiet afternoon.
+
+    Counted from the collapsed ``results`` list, so a retry framework that
+    reports a failed attempt and its passing retry contributes ONE case with
+    the worst outcome -- matching what is persisted, rather than double-counting
+    the raw document.
+    """
+    try:
+        from collections import Counter as _Counter
+
+        from app.core.metrics import ingestion_test_cases_total
+
+        label = (framework or "unknown").strip().lower() or "unknown"
+        by_status = _Counter(
+            str(case.get("status") or "unknown").strip().lower() or "unknown"
+            for case in results
+        )
+        for status_label, n in by_status.items():
+            ingestion_test_cases_total.labels(
+                framework=label, status=status_label
+            ).inc(n)
+    except Exception:  # noqa: BLE001 -- metrics must never break ingestion
+        pass
+
+
 async def ingest_test_results(
     db: AsyncSession,
     run: TestRun,
@@ -336,6 +367,8 @@ async def ingest_test_results(
                 ingested=count,
                 failed=failed,
             )
+
+    _count_ingested_cases(getattr(run, "framework", None), results)
     return count
 
 

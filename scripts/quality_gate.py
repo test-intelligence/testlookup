@@ -1582,6 +1582,79 @@ def _backend_settings_are_consumed() -> list[Violation]:
     return violations
 
 
+_METRIC_DECL_RE = re.compile(
+    r"^(\w+)\s*=\s*(?:Counter|Gauge|Histogram|Summary)\(", re.M
+)
+
+
+def _backend_metrics_are_emitted() -> list[Violation]:
+    """Every declared Prometheus metric must be emitted from production code.
+
+    A declared-but-never-incremented metric is worse than a missing one. An
+    unlabelled counter is exported as a confident ``0.0``, which reads as a
+    measured zero: "no ingestion failures", "no release blocked". A labelled
+    one exports no series at all, so every dashboard panel and alert rule
+    written against it is silently, permanently empty -- and an empty panel
+    looks like a quiet system, not a broken instrument.
+
+    Found twelve at once, three of them backing live panels on the Grafana
+    overview dashboard (test cases ingested by framework, release decisions by
+    recommendation, and LLM request latency p50/p95). The same class had
+    already been fixed twice by hand, for ``celery_queue_length`` and
+    ``celery_tasks_total``, each time after an alert was found unable to fire.
+    This guard is what stops the third time.
+
+    Tests do not count as emitters: a metric exercised only by its own unit
+    test is still zero in production, which is exactly the state this catches.
+    """
+    violations: list[Violation] = []
+    metrics_path = REPO_ROOT / "backend" / "app" / "core" / "metrics.py"
+    if not metrics_path.exists():
+        return violations
+
+    raw = metrics_path.read_text(encoding="utf-8", errors="ignore")
+    body = re.sub(r"(?m)^\s*#.*$", "", raw)
+    names = sorted(set(_METRIC_DECL_RE.findall(body)))
+    if not names:
+        return violations
+
+    blobs: list[str] = []
+    for sub in ("backend/app", "cli", "mcp"):
+        d = REPO_ROOT / sub
+        if not d.exists():
+            continue
+        for path in iter_files(d, (".py",)):
+            sp = path.as_posix()
+            if "/tests/" in sp or sp.endswith("app/core/metrics.py"):
+                continue
+            blobs.append(path.read_text(encoding="utf-8", errors="ignore"))
+    hay = chr(10).join(blobs)
+
+    for ln, line in grep_lines(metrics_path, _METRIC_DECL_RE):
+        m = _METRIC_DECL_RE.search(line)
+        if not m:
+            continue
+        name = m.group(1)
+        if name not in names:
+            continue
+        # The leading \b matters: `_` is a word character, so without it
+        # ``uploads_total`` would count ``report_uploads_total.labels(...)`` as
+        # its own emitter and the dead metric would pass.
+        if re.search(
+            r"\b" + re.escape(name) + r"\s*\.\s*(inc|observe|set|labels|dec|time|set_to_current_time)\b",
+            hay,
+        ):
+            continue
+        violations.append(Violation(
+            metrics_path, ln,
+            f"{name} is declared but never emitted from production code. An "
+            f"unlabelled metric then exports a confident 0.0 and a labelled "
+            f"one exports nothing at all, so any panel or alert reading it is "
+            f"permanently empty. Wire an emitter, or delete the declaration.",
+        ))
+    return violations
+
+
 def _frontend_single_axios() -> list[Violation]:
     """One Axios instance owns auth refresh + 401 queue. A second
     instance silently bypasses the refresh interceptor, so 401s
@@ -2968,6 +3041,21 @@ GUARDS: list[Guard] = [
         description="Every non-self-hosted LLM provider has price-table entries.",
         check=_backend_cloud_providers_are_priced,
         fix_hint="Add a (provider, model-regex, ModelPrice) row to services/llm_pricing.py PRICE_TABLE.",
+    ),
+    Guard(
+        name="backend.metrics-are-emitted",
+        description=(
+            "Every declared Prometheus metric is emitted from production code "
+            "— a declared-but-unincremented metric exports a confident 0.0 (or "
+            "no series at all), so its dashboard panel and alert rule are "
+            "permanently empty."
+        ),
+        check=_backend_metrics_are_emitted,
+        fix_hint=(
+            "Increment/observe it at the code path it describes (wrapped in a "
+            "try/except so telemetry cannot break the request), or delete the "
+            "declaration. Tests do not count as emitters."
+        ),
     ),
     Guard(
         name="backend.settings-are-consumed",

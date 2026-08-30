@@ -33,10 +33,10 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **30 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **31 guards**.
 15 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 15 ship at zero with **no baseline file at all** — those are
+fail CI. The other 16 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -62,6 +62,7 @@ and `scripts/test_quality_gate.py` fails if the two drift apart.
 | `backend.streaming-body-not-rebound` † | `async with response["Body"] as X` — the `as` rebinds `X` to the bare `aiohttp.ClientResponse`, dropping aiobotocore's `StreamingBody` proxy | Bind first: `body = response["Body"]`, then `async with body:` and use `body`. Entering the context is still required (it releases the connection); only the `as` is wrong. This made S3 `stream_object` raise `TypeError` on **every call it ever made** (#824), and no behavioural test can catch it — a no-argument `read()` works on `ClientResponse` too, so the sibling `get_object_content` used the same shape and returned correct bytes |
 | `backend.cloud-providers-are-priced` † | a non-self-hosted LLM provider with no price-table entry | Add a `(provider, model-regex, ModelPrice)` row to `PRICE_TABLE` in `services/llm_pricing.py` |
 | `backend.settings-are-consumed` † | a `Settings` field nothing reads — a dead config knob | Reference it in code (or a compose/k8s/env surface), or delete the field |
+| `backend.metrics-are-emitted` † | a Prometheus metric declared in `core/metrics.py` that no production code increments | Emit it at the code path it describes (inside a `try/except` so telemetry cannot break the request), or delete the declaration. An unlabelled dead metric exports a confident `0.0` and a labelled one exports no series at all, so its Grafana panel and alert rule are permanently empty — twelve were found at once, three of them backing live panels. Tests do not count as emitters |
 
 **`backend.audit-write-discipline` — why it exists.** `settings_audit_log`,
 `access_audit_logs`, `test_case_audit_logs` and `identity_events` are

@@ -860,6 +860,87 @@ def test_committed_baselines_are_all_fingerprints() -> None:
                 )
 
 
+# -- Guard: backend.metrics-are-emitted ---------------------------------------
+#
+# A declared-but-never-incremented Prometheus metric is worse than a missing
+# one: an unlabelled counter exports a confident ``0.0`` (which reads as a
+# measured zero) and a labelled one exports no series at all, so every panel
+# and alert written against it is silently, permanently empty.
+
+
+def _metrics_repo(tmp_path: Path, decls: str, emitters: str = "") -> None:
+    _write(tmp_path / "backend" / "app" / "core" / "metrics.py", decls)
+    if emitters:
+        _write(tmp_path / "backend" / "app" / "services" / "thing.py", emitters)
+
+
+def test_metrics_are_emitted_flags_a_declared_but_dead_metric(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _metrics_repo(tmp_path, """
+        from prometheus_client import Counter
+        widgets_total = Counter("widgets_total", "Widgets", ["status"])
+    """)
+    violations = qg._backend_metrics_are_emitted()
+    assert [v.line for v in violations] == [2]
+    assert "widgets_total" in violations[0].message
+
+
+def test_metrics_are_emitted_passes_when_production_code_emits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _metrics_repo(tmp_path, """
+        from prometheus_client import Counter
+        widgets_total = Counter("widgets_total", "Widgets", ["status"])
+    """, """
+        from app.core.metrics import widgets_total
+        def f():
+            widgets_total.labels(status="ok").inc()
+    """)
+    assert qg._backend_metrics_are_emitted() == []
+
+
+def test_metrics_are_emitted_does_not_accept_a_test_only_emitter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A metric exercised only by its own unit test is still zero in
+    production -- which is exactly the state this guard exists to catch."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _metrics_repo(tmp_path, """
+        from prometheus_client import Counter
+        widgets_total = Counter("widgets_total", "Widgets", ["status"])
+    """)
+    _write(tmp_path / "backend" / "tests" / "test_widgets.py", """
+        from app.core.metrics import widgets_total
+        def test_it():
+            widgets_total.labels(status="ok").inc()
+    """)
+    assert len(qg._backend_metrics_are_emitted()) == 1
+
+
+def test_metrics_are_emitted_does_not_credit_a_longer_neighbour(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``_`` is a word character, so without a leading \b the emitter search
+    for ``uploads_total`` would match ``report_uploads_total.inc()`` and pass a
+    genuinely dead metric."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _metrics_repo(tmp_path, """
+        from prometheus_client import Counter
+        uploads_total = Counter("uploads_total", "Uploads")
+        report_uploads_total = Counter("report_uploads_total", "Report uploads")
+    """, """
+        from app.core.metrics import report_uploads_total
+        def f():
+            report_uploads_total.inc()
+    """)
+    violations = qg._backend_metrics_are_emitted()
+    assert len(violations) == 1
+    assert "uploads_total is declared" in violations[0].message
+
+
 # ── DEVELOPER_GUIDE.md sync ───────────────────────────────────────────────
 #
 # The guide's section 1 is hand-maintained prose over an auto-listable

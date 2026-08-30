@@ -4,6 +4,7 @@ Switch between Ollama (offline), OpenAI, Gemini, or any compatible provider
 by changing the LLM_PROVIDER environment variable — no agent code changes needed.
 """
 import logging
+import time
 from typing import Optional
 
 from langchain_core.language_models import BaseChatModel
@@ -77,17 +78,63 @@ class BudgetedLLM:
         if isinstance(output_tokens, int) and output_tokens >= 0:
             context["observed_output_tokens"] = int(context.get("observed_output_tokens") or 0) + output_tokens
 
+    def _observe(self, status: str, elapsed: float) -> None:
+        """Record one provider call. Never raises -- telemetry is not the call.
+
+        ``llm_requests_total`` and ``llm_request_duration_seconds`` were both
+        declared and never emitted; the latency histogram backs two panels on
+        the Grafana overview dashboard (p50 and p95 by provider), which have
+        therefore been empty since they were written. This wrapper is the one
+        place every provider and every graph call site passes through, and it
+        already knows the provider, so it is where the emission belongs.
+        """
+        try:
+            from app.core.metrics import (
+                llm_request_duration_seconds,
+                llm_requests_total,
+            )
+
+            llm_requests_total.labels(provider=self._provider, status=status).inc()
+            # Latency is observed for failures too: a provider that times out
+            # at 120s is exactly the signal these panels exist to show, and
+            # dropping it would make an outage look like reduced traffic.
+            llm_request_duration_seconds.labels(provider=self._provider).observe(elapsed)
+        except Exception:  # noqa: BLE001 -- metrics must never break inference
+            pass
+
+    @staticmethod
+    def _status_for(exc: BaseException) -> str:
+        # The declared vocabulary is success|failure|timeout. asyncio.TimeoutError
+        # is an alias of the builtin from 3.11, so one check covers both.
+        return "timeout" if isinstance(exc, TimeoutError) else "failure"
+
     async def ainvoke(self, *args, **kwargs):
+        # _check() raises PipelineBudgetExceeded BEFORE any provider call, so
+        # it is deliberately outside the timed region: no request was made, and
+        # counting it as a failed LLM call would blame the provider for a
+        # budget decision taken here.
         self._check()
         args, kwargs = self._prepare_invocation(args, kwargs)
-        result = await self._inner.ainvoke(*args, **kwargs)
+        started = time.perf_counter()
+        try:
+            result = await self._inner.ainvoke(*args, **kwargs)
+        except BaseException as exc:
+            self._observe(self._status_for(exc), time.perf_counter() - started)
+            raise
+        self._observe("success", time.perf_counter() - started)
         self._record_usage(result)
         return result
 
     def invoke(self, *args, **kwargs):
         self._check()
         args, kwargs = self._prepare_invocation(args, kwargs)
-        result = self._inner.invoke(*args, **kwargs)
+        started = time.perf_counter()
+        try:
+            result = self._inner.invoke(*args, **kwargs)
+        except BaseException as exc:
+            self._observe(self._status_for(exc), time.perf_counter() - started)
+            raise
+        self._observe("success", time.perf_counter() - started)
         self._record_usage(result)
         return result
 

@@ -114,6 +114,27 @@ async def _get_or_create_collection():
     )
 
 
+async def _publish_index_size(collection) -> None:
+    """Publish the collection's document count. Never raises.
+
+    ``search_index_documents`` was declared and never emitted, so the gauge sat
+    at 0 whether the index held a million documents or had never been built --
+    the number an operator checks first when semantic search returns nothing.
+
+    Read from ``collection.count()`` rather than accumulated from the per-run
+    upsert counts: the gauge is the SIZE of the index, and an incremental run
+    that upserts 12 rows has not made the index 12 documents large. Off-thread,
+    like every other Chroma call here, because the client is synchronous.
+    """
+    try:
+        from app.core.metrics import search_index_documents
+
+        total = await asyncio.to_thread(collection.count)
+        search_index_documents.set(int(total))
+    except Exception as exc:  # noqa: BLE001 -- telemetry must never break indexing
+        logger.debug("Could not publish search index size: %s", exc)
+
+
 def _doc_text(
     test_name: str,
     suite_name: Optional[str],
@@ -231,6 +252,7 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
     _update_cursor(rows, project_id)
 
     logger.info("Full-indexed %d test cases into ChromaDB collection '%s'", count, _COLLECTION_NAME)
+    await _publish_index_size(collection)
     return count
 
 
@@ -303,6 +325,7 @@ async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) 
         logger.warning("Incremental indexing skipped — embeddings unavailable: %s", exc)
         return 0
     logger.info("Incrementally indexed %d new test cases", count)
+    await _publish_index_size(collection)
     return count
 
 

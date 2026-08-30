@@ -79,11 +79,31 @@ class ConnectionManager:
         await websocket.accept()
         return True
 
+    def _publish_active_total(self) -> None:
+        """Republish the live socket count. Never raises.
+
+        ``websocket_connections_active`` was declared and never emitted, so the
+        gauge read a flat 0 whether the live page had a thousand watchers or
+        none. Set from the authoritative structure rather than incremented and
+        decremented: a dropped socket that skips ``disconnect`` would otherwise
+        leak the gauge upward for the life of the process, and a gauge that
+        only ever climbs is worse than no gauge.
+        """
+        try:
+            from app.core.metrics import websocket_connections_active
+
+            websocket_connections_active.set(
+                sum(len(channel) for channel in self._channels.values())
+            )
+        except Exception:  # noqa: BLE001 -- telemetry must never break the socket
+            pass
+
     def register(self, project_id: str, websocket: WebSocket) -> None:
         """Register an already-accepted, authenticated socket in the broadcast channel."""
         if project_id not in self._channels:
             self._channels[project_id] = set()
         self._channels[project_id].add(websocket)
+        self._publish_active_total()
         logger.info(f"WS connect: project={project_id} total={len(self._channels[project_id])}")
 
     def disconnect(self, project_id: str, websocket: WebSocket) -> None:
@@ -91,6 +111,7 @@ class ConnectionManager:
         channel.discard(websocket)
         if not channel:
             self._channels.pop(project_id, None)
+        self._publish_active_total()
         logger.info(f"WS disconnect: project={project_id}")
 
     async def broadcast(self, project_id: str, message: dict) -> None:

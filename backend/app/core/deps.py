@@ -10,7 +10,7 @@ from typing import Callable, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError
+from jose import ExpiredSignatureError, JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -130,6 +130,27 @@ def _enforce_api_key_project_binding(
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail=detail)
 
 
+def _count_auth_failure(reason: str) -> None:
+    """Best-effort ``auth_failures_total`` increment. Never raises.
+
+    The counter declared four reasons -- expired_token, invalid_token,
+    insufficient_role, inactive_user -- and emitted none of them: its only call
+    site was token_revocation._count, which emits two entirely different
+    labels. Every dashboard or alert written against the documented vocabulary
+    therefore matched zero series, permanently, while the rejections an
+    operator most wants to see (a spike of expired tokens after a deploy, a
+    burst of insufficient_role probing) were never counted at all.
+
+    Mirrors token_revocation._count: telemetry must never break auth.
+    """
+    try:
+        from app.core.metrics import auth_failures_total
+
+        auth_failures_total.labels(reason=reason).inc()
+    except Exception:  # noqa: BLE001 -- telemetry is not load-bearing
+        pass
+
+
 async def get_current_user(
     db: AsyncSession = Depends(get_db),
     token: str = Depends(oauth2_scheme),
@@ -151,19 +172,31 @@ async def get_current_user(
         payload = decode_token(token)
         user_id: str | None = payload.get("sub")
         if user_id is None:
+            _count_auth_failure("invalid_token")
             raise credentials_exception
         if payload.get("type") != "access":
+            _count_auth_failure("invalid_token")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token type — use an access token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+    except ExpiredSignatureError:
+        # Caught before the generic JWTError below (it is a subclass): an
+        # expired token is the ordinary end of a session, and telling it
+        # apart from a malformed or forged one is the whole reason the
+        # counter is labelled. Folding both into invalid_token would hide a
+        # credential attack inside everyday expiry traffic.
+        _count_auth_failure("expired_token")
+        raise credentials_exception
     except JWTError:
+        _count_auth_failure("invalid_token")
         raise credentials_exception
 
     try:
         uid = uuid.UUID(user_id)
     except ValueError:
+        _count_auth_failure("invalid_token")
         raise credentials_exception
 
     # Revocation checks. Fail-CLOSED when the revocation store is unreachable:
@@ -184,8 +217,10 @@ async def get_current_user(
         iat_int = int(iat)
     try:
         if jti and await is_jti_revoked(str(jti)):
+            _count_auth_failure("invalid_token")
             raise credentials_exception
         if await is_token_before_cutoff(uid, iat_int):
+            _count_auth_failure("invalid_token")
             raise credentials_exception
     except RevocationUnavailable:
         raise HTTPException(
@@ -202,6 +237,8 @@ async def get_current_user(
     user = result.scalar_one_or_none()
 
     if user is None:
+        # A well-formed token for a user row that no longer exists.
+        _count_auth_failure("inactive_user")
         raise credentials_exception
 
     return _bind_credential_kind(_bind_api_key_project(user, None), CREDENTIAL_KIND_JWT)
@@ -226,16 +263,20 @@ async def _validate_api_key(db: AsyncSession, raw_key: str) -> ApiKeyContext:
     api_key = result.scalar_one_or_none()
 
     if not api_key:
+        _count_auth_failure("invalid_token")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
     if not api_key.is_active:
+        _count_auth_failure("inactive_user")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key is inactive")
     if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
+        _count_auth_failure("expired_token")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key has expired")
 
     # Load the owning user
     user_result = await db.execute(select(User).where(User.id == api_key.user_id))
     user = user_result.scalar_one_or_none()
     if not user or not user.is_active:
+        _count_auth_failure("inactive_user")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key owner account is inactive")
 
     # Touch last_used_at on the injected session WITHOUT committing here —
@@ -327,6 +368,7 @@ async def get_current_active_user(
 ) -> User:
     """Return the current user from JWT or API key, raising 403 if disabled."""
     if not current_user.is_active:
+        _count_auth_failure("inactive_user")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Inactive user account",
@@ -377,10 +419,13 @@ async def get_streaming_api_key_context(
         await db.execute(select(ApiKey).where(ApiKey.key_hash == key_hash))
     ).scalar_one_or_none()
     if not api_key:
+        _count_auth_failure("invalid_token")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
     if not api_key.is_active:
+        _count_auth_failure("inactive_user")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key is inactive")
     if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
+        _count_auth_failure("expired_token")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key has expired")
     if api_key.project_id is None:
         raise HTTPException(
@@ -471,11 +516,13 @@ def require_role(min_role: UserRole) -> Callable:
         try:
             user_idx = _ROLE_ORDER.index(_normalize_user_role(current_user.role))
         except ValueError:
+            _count_auth_failure("insufficient_role")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions",
             )
         if user_idx < min_idx:
+            _count_auth_failure("insufficient_role")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Requires at least {min_role.value} role",

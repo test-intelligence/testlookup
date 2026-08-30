@@ -1,5 +1,92 @@
 # Changelog
 
+## 2026-08-30 — twelve Prometheus metrics that nothing ever incremented
+
+`core/metrics.py` declared 49 metrics. **Twelve of them had no emitter
+anywhere in production code** — and three of those back live panels on the
+Grafana overview dashboard:
+
+| metric | panel it backs |
+| --- | --- |
+| `testlookup_ingestion_test_cases_total` | "test cases ingested by framework" |
+| `testlookup_release_decisions_total` | "release decisions by recommendation" |
+| `testlookup_llm_request_duration_seconds` | LLM latency p50 / p95 by provider |
+
+A declared-but-dead metric is worse than a missing one. An unlabelled counter
+is exported as a confident `0.0`, which reads as a *measured* zero — "no
+ingestion failures", "nothing in the DLQ". A labelled one exports no series at
+all, so its panel renders "No data", which looks like a quiet system rather
+than a broken instrument. Either way the operator is reading the gauge, not
+the engine.
+
+This class had already been fixed by hand twice, for `celery_queue_length` and
+`celery_tasks_total`, each time after an alert was found structurally unable to
+fire (both comments in the tree say so, and one records "verified live, 0
+samples"). So the centrepiece of this change is not the wiring — it is the new
+**`backend.metrics-are-emitted` quality gate**, which fails if any declared
+metric has no production call site. Tests deliberately do not count as
+emitters: a metric exercised only by its own unit test is still zero in
+production, which is exactly the state being caught.
+
+Wired at the choke point each metric describes:
+
+- **`llm_requests_total` / `llm_request_duration_seconds`** — `BudgetedLLM`
+  in `llm_factory`, the single wrapper every provider and every graph call site
+  passes through, which already knows the provider. Failures are timed too: a
+  provider timing out at 120s is the signal those panels exist to show, and
+  dropping it would make an outage look like reduced traffic. A
+  `PipelineBudgetExceeded` refusal is *not* counted — it is raised before any
+  request is made, and blaming the provider for a budget decision taken here
+  would be a new lie.
+- **`release_decisions_total`** — `evaluate_policy`, excluding simulator runs
+  (`policy_level == "simulated"`). Counting those would let a user inflate the
+  NO_GO series by dragging a slider in the policy editor.
+- **`ingestion_test_cases_total`** — counted from the *collapsed* result list,
+  so a retry framework reporting a failed attempt beside its passing retry
+  contributes one case at the worst outcome, matching what is persisted.
+- **`ingestion_runs_total` / `ingestion_duration_seconds`**, **`ai_analysis_duration_seconds`**,
+  **`feature_flag_evaluations_total`**, **`secret_read_failures_total`**,
+  **`websocket_connections_active`**, **`search_index_documents`** — each at
+  its own natural site. The socket gauge is `set()` from the channel map rather
+  than incremented and decremented: a dropped socket that skips `disconnect`
+  would leak it upward for the life of the process, and a gauge that only
+  climbs is worse than no gauge. The search gauge reads `collection.count()`
+  rather than accumulating per-run upserts — it is the *size* of the index, and
+  an incremental run that upserts 12 rows has not made the index 12 documents
+  large.
+
+**`celery_task_duration_seconds` was deleted, not wired.** It duplicated
+`celery_task_runtime_seconds`, which measures the same wall-clock time, carries
+a `queue_name` label as well, is emitted from the worker's `task_postrun`
+signal, and backs `TestLookupTaskLatencyHigh`. Two names for one measurement is
+how the emitted one gets wired and the declared one is forgotten.
+
+**`auth_failures_total` emitted only labels outside its own vocabulary.** It
+documented `expired_token | invalid_token | insufficient_role | inactive_user`
+and emitted none of them: its only call site was `token_revocation._count`,
+which emits `revocation_unavailable` and `revocation_write_failed`. So an alert
+filtering on `reason="expired_token"` matched zero series, permanently, while
+the four reasons an operator most wants to see — a spike of expired tokens
+after a deploy, a burst of `insufficient_role` probing — went uncounted
+entirely. Same class as the existing `backend.status-enum-vocab` gate. All four
+are now emitted from the dependency that actually rejects the request, with
+`ExpiredSignatureError` caught *before* the generic `JWTError` so ordinary
+session expiry cannot hide a credential attack inside it; the two revocation
+reasons are now documented rather than undeclared.
+
+The guard is pinned by four self-tests, including one that would pass without
+the leading `\b` in its emitter search — `_` is a word character, so
+`uploads_total` would otherwise be credited to `report_uploads_total.inc()`.
+The runtime behaviour is pinned separately by 23 regression tests that drive
+each emitter and read the counter back, because a static check cannot tell a
+real `.inc()` from one that never runs.
+
+The gate earned itself immediately: mid-change it caught `search_index_documents`
+losing its emitter when a file was left out of a restore.
+
+Backend 7429 passed / 0 failed / 14 skipped, quality gate 31/31 (30 before this
+change), the gate's own self-test 59 passed, ruff clean.
+
 ## 2026-08-30 — "Req coverage 87%" was a constant, and four other numbers were invented
 
 The Test Management page's right rail reported five figures that no

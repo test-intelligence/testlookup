@@ -167,12 +167,13 @@ celery_tasks_total = Counter(
     ["task_name", "status"],  # status: success|failure|retry
 )
 
-celery_task_duration_seconds = Histogram(
-    "testlookup_celery_task_duration_seconds",
-    "Celery task wall-clock execution time",
-    ["task_name"],
-    buckets=[1, 5, 15, 30, 60, 300, 600],
-)
+# ``celery_task_duration_seconds`` stood here and was never emitted. It was a
+# duplicate of ``celery_task_runtime_seconds`` below, which measures the same
+# wall-clock execution time, carries a queue_name label as well, is emitted
+# from the worker's task_postrun signal, and backs the TestLookupTaskLatencyHigh
+# alert. Two names for one measurement is how the emitted one gets wired and
+# the declared one is forgotten. Removed rather than wired: a second series
+# with the same meaning would only invite the next reader to pick the wrong one.
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 
@@ -247,10 +248,25 @@ release_overrides_total = Counter(
 
 # ── Launch Hardening (Epic 8) ─────────────────────────────────────────────────
 
+# The declared vocabulary here used to read
+#   expired_token | invalid_token | insufficient_role | inactive_user
+# and NONE of those four was ever emitted. The counter's only call site is
+# ``token_revocation._count``, which emits ``revocation_unavailable`` and
+# ``revocation_write_failed`` — both outside the documented set. So a dashboard
+# or alert filtering on reason="expired_token" matched zero series, for ever,
+# while the four reasons an operator most wants to see went uncounted. Same
+# class as the `backend.status-enum-vocab` gate: a consumer filtering against a
+# vocabulary the producer never emits is silently, permanently empty.
+#
+# The four authentication reasons are now emitted from the dependency that
+# actually rejects the request (`app/core/auth.py`), and the two revocation
+# reasons are documented here rather than left undeclared.
 auth_failures_total = Counter(
     "testlookup_auth_failures_total",
     "Total authentication/authorization failures",
-    ["reason"],  # expired_token | invalid_token | insufficient_role | inactive_user
+    # expired_token | invalid_token | insufficient_role | inactive_user
+    # | revocation_unavailable | revocation_write_failed
+    ["reason"],
 )
 
 secret_read_failures_total = Counter(

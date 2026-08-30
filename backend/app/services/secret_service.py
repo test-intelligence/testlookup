@@ -206,6 +206,23 @@ async def store_secret(
     return masked
 
 
+def _count_secret_read_failure(scope: str) -> None:
+    """Record a secret that could not be decrypted. Never raises.
+
+    ``secret_read_failures_total`` was declared and never emitted. This is the
+    one failure in this module that is invisible to the caller: ``read_secret``
+    returns ``None`` for "no such secret" and for "the stored ciphertext will
+    not decrypt" alike, so an integration silently stops authenticating after a
+    key rotation and the only trace is one ERROR line per attempt.
+    """
+    try:
+        from app.core.metrics import secret_read_failures_total
+
+        secret_read_failures_total.labels(scope=scope or "unknown").inc()
+    except Exception:  # noqa: BLE001 -- telemetry must never break a secret read
+        pass
+
+
 async def read_secret(
     db: AsyncSession,
     scope: str,
@@ -245,6 +262,7 @@ async def read_secret(
         "Secret %s/%s failed to decrypt (tampered or key-rotated without re-encryption) — returning None",
         scope, key_name,
     )
+    _count_secret_read_failure(scope)
     return None
 
 

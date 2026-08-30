@@ -167,6 +167,31 @@ def _evaluate(
     return _rollout_bucket(flag["key"], bucket_input) < rollout
 
 
+def _counted(key: str, value: bool, result: Optional[str] = None) -> bool:
+    """Count one flag evaluation and return the value unchanged. Never raises.
+
+    ``feature_flag_evaluations_total`` was declared and never emitted. Without
+    it there is no way to tell a flag that is off from a flag nothing asks
+    about -- which is the question you have when a feature "does not work" and
+    the flag row says enabled.
+
+    ``result`` defaults to enabled/disabled from the value; pass "default"
+    explicitly for the paths where no flag row existed and the answer came from
+    the legacy env fallback or the hardcoded False, because "disabled" would
+    imply somebody turned it off.
+    """
+    try:
+        from app.core.metrics import feature_flag_evaluations_total
+
+        feature_flag_evaluations_total.labels(
+            flag_key=key,
+            result=result or ("enabled" if value else "disabled"),
+        ).inc()
+    except Exception:  # noqa: BLE001 -- telemetry must never gate a feature
+        pass
+    return value
+
+
 async def is_enabled(
     key: str,
     *,
@@ -190,8 +215,11 @@ async def is_enabled(
     if redis_flag is not None:
         if redis_flag.get("__none__"):
             fallback = _legacy_env_fallback(key)
-            return bool(fallback) if fallback is not None else False
-        return _evaluate(redis_flag, project_id=project_id, user=user)
+            value = bool(fallback) if fallback is not None else False
+            return _counted(key, value, "default")
+        return _counted(
+            key, _evaluate(redis_flag, project_id=project_id, user=user)
+        )
 
     # Postgres is authoritative on a shared-cache miss.
     if db is None:
@@ -212,10 +240,10 @@ async def is_enabled(
                 env_var=LEGACY_ENV_VAR_MAP.get(key),
                 value=fallback,
             )
-            return fallback
-        return False
+            return _counted(key, fallback, "default")
+        return _counted(key, False, "default")
 
-    return _evaluate(flag_dict, project_id=project_id, user=user)
+    return _counted(key, _evaluate(flag_dict, project_id=project_id, user=user))
 
 
 async def invalidate_flag_cache(key: str) -> None:

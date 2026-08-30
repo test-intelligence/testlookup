@@ -399,6 +399,30 @@ def _apply_kind_rules(
     return recommendation, evals, breakdown, applied, counterfactual
 
 
+def _count_release_decision(recommendation: str, level: str) -> None:
+    """Record one release-gate decision. Never raises.
+
+    ``release_decisions_total`` was declared and never emitted, so the Grafana
+    overview's "release decisions by recommendation" panel has been empty since
+    it was written -- indistinguishable from a week in which no release was
+    gated at all.
+
+    Simulator runs are deliberately excluded. ``policy_override`` is how the
+    policy editor answers "what would this policy have decided?", and level is
+    "simulated" for exactly those calls. Counting them would let a user inflate
+    the NO_GO series by dragging a slider, which is the opposite of what an
+    operator reading this panel needs.
+    """
+    if level == "simulated":
+        return
+    try:
+        from app.core.metrics import release_decisions_total
+
+        release_decisions_total.labels(recommendation=recommendation or "unknown").inc()
+    except Exception:  # noqa: BLE001 -- metrics must never break the gate
+        pass
+
+
 async def evaluate_policy(
     project_id: uuid.UUID | str | None,
     dim_scores: dict[str, float],
@@ -492,6 +516,8 @@ async def evaluate_policy(
     policy_document["thresholds"] = deepcopy(thresholds)
     policy_document["dimension_weights"] = deepcopy(weights)
     policy_document.setdefault("rules", [])
+
+    _count_release_decision(recommendation, level)
 
     return PolicyEvaluationResult(
         policy_id=str(policy.id) if policy and policy.id else None,

@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import random
+import time
 import uuid
 from typing import Any, cast
 
@@ -183,6 +184,48 @@ async def _release_duplicate_lock(key: str, owner: str) -> None:
         existing = existing.decode("utf-8", errors="ignore")
     if existing == owner:
         await redis.delete(key)
+
+
+def _count_ingestion_run(status: str, elapsed: float) -> None:
+    """Record one run-ingestion outcome and its wall-clock time. Never raises.
+
+    ``ingestion_runs_total`` and ``ingestion_duration_seconds`` were both
+    declared and never emitted, so there was no way to see ingestion failing or
+    slowing down except by reading task logs.
+
+    A duplicate-suppressed attempt still counts as a success: it did what it was
+    asked to do (ensure the prefix is ingested) and the alternative -- counting
+    it as a failure -- would make ordinary webhook redelivery look like an
+    outage.
+    """
+    try:
+        from app.core.metrics import (
+            ingestion_duration_seconds,
+            ingestion_runs_total,
+        )
+
+        ingestion_runs_total.labels(status=status).inc()
+        ingestion_duration_seconds.observe(elapsed)
+    except Exception:  # noqa: BLE001 -- metrics must never break the task
+        pass
+
+
+def _observe_pipeline_duration(workflow_type: str, elapsed: float) -> None:
+    """Record end-to-end AI pipeline wall-clock time. Never raises.
+
+    ``ai_analysis_duration_seconds`` was declared and never emitted. It is not
+    a duplicate of ``pipeline_stage_duration_seconds``: that one is per stage,
+    and summing stages misses queue waits and orchestration between them, which
+    is exactly where a slow pipeline usually is.
+    """
+    try:
+        from app.core.metrics import ai_analysis_duration_seconds
+
+        ai_analysis_duration_seconds.labels(
+            workflow_type=workflow_type or "unknown"
+        ).observe(elapsed)
+    except Exception:  # noqa: BLE001 -- metrics must never break the task
+        pass
 
 
 def _count_pipeline(workflow_type: str, status: str) -> None:
@@ -711,9 +754,11 @@ def ingest_test_run(self, sentinel_dict: dict, minio_prefix: str):
         await process_sentinel(sentinel, minio_prefix)
 
     logger.info("[Task %s] Starting ingestion: %s", self.request.id, minio_prefix)
+    _ingest_started = time.perf_counter()
     try:
         _run_async(_run())
         logger.info("[Task %s] Ingestion complete", self.request.id)
+        _count_ingestion_run("success", time.perf_counter() - _ingest_started)
 
         # ROI-04: Trigger incremental search indexing after ingestion
         try:
@@ -722,6 +767,7 @@ def ingest_test_run(self, sentinel_dict: dict, minio_prefix: str):
             pass  # Non-blocking — indexing will catch up on the next hourly beat
     except Exception as exc:
         logger.error("[Task %s] Ingestion failed: %s", self.request.id, exc, exc_info=True)
+        _count_ingestion_run("failure", time.perf_counter() - _ingest_started)
         _release_dedup_for_retry(dedup_key, dedup_owner, self.request.id)
         countdown = _exponential_backoff(self.request.retries)
         raise self.retry(exc=exc, countdown=countdown)
@@ -1523,6 +1569,7 @@ def run_agent_pipeline(
         "[Task %s] Starting agent pipeline run=%s build=%s type=%s",
         self.request.id, test_run_id, build_number, workflow_type,
     )
+    _pipeline_started = time.perf_counter()
     try:
         final_state = _run_async(_run())
         stages_done = final_state.get("completed_stages", [])
@@ -1533,6 +1580,12 @@ def run_agent_pipeline(
         # would inflate the success rate with runs that never executed.
         if not final_state.get("duplicate"):
             _count_pipeline(workflow_type, "success")
+            # Same reasoning as the counter above: a dedup short-circuit did no
+            # work, and timing it would drag the latency distribution toward
+            # zero with runs that never executed a stage.
+            _observe_pipeline_duration(
+                workflow_type, time.perf_counter() - _pipeline_started
+            )
         logger.info(
             "[Task %s] Pipeline complete. stages=%s errors=%d",
             self.request.id, stages_done, len(errors),
@@ -1575,6 +1628,9 @@ def run_agent_pipeline(
     except Exception as exc:
         safe_error = f"{type(exc).__name__}: agent pipeline failed"
         _count_pipeline(workflow_type, "failure")
+        _observe_pipeline_duration(
+            workflow_type, time.perf_counter() - _pipeline_started
+        )
         logger.error(
             "[Task %s] Pipeline failed (%s)",
             self.request.id,
