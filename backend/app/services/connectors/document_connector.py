@@ -133,6 +133,10 @@ def _extract_docx(file_bytes: bytes) -> str:
     """Extract text from DOCX using python-docx."""
     try:
         from docx import Document
+        from docx.oxml.table import CT_Tbl
+        from docx.oxml.text.paragraph import CT_P
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
     except ImportError:
         raise ConnectorFetchError(
             "python-docx is not installed — required for DOCX extraction (pip install python-docx)"
@@ -141,31 +145,35 @@ def _extract_docx(file_bytes: bytes) -> str:
     doc = Document(io.BytesIO(file_bytes))
     parts: list[str] = []
 
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if not text:
-            continue
+    # Walk the document body rather than ``doc.paragraphs`` followed by
+    # ``doc.tables``. The latter groups all tables after all paragraphs, which
+    # changes the source order before the text is chunked and embedded.
+    for child in doc.element.body.iterchildren():
+        if isinstance(child, CT_P):
+            para = Paragraph(child, doc)
+            text = para.text.strip()
+            if not text:
+                continue
 
-        style_name = (para.style.name or "").lower() if para.style else ""
-        if "heading 1" in style_name:
-            parts.append(f"# {text}")
-        elif "heading 2" in style_name:
-            parts.append(f"## {text}")
-        elif "heading 3" in style_name:
-            parts.append(f"### {text}")
-        elif "list" in style_name:
-            parts.append(f"- {text}")
-        else:
-            parts.append(text)
-
-    # Extract tables
-    for table in doc.tables:
-        table_rows: list[str] = []
-        for row in table.rows:
-            cells = [cell.text.strip() for cell in row.cells]
-            table_rows.append("| " + " | ".join(cells) + " |")
-        if table_rows:
-            parts.append("\n".join(table_rows))
+            style_name = (para.style.name or "").lower() if para.style else ""
+            if "heading 1" in style_name:
+                parts.append(f"# {text}")
+            elif "heading 2" in style_name:
+                parts.append(f"## {text}")
+            elif "heading 3" in style_name:
+                parts.append(f"### {text}")
+            elif "list" in style_name:
+                parts.append(f"- {text}")
+            else:
+                parts.append(text)
+        elif isinstance(child, CT_Tbl):
+            table = Table(child, doc)
+            table_rows: list[str] = []
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells]
+                table_rows.append("| " + " | ".join(cells) + " |")
+            if table_rows:
+                parts.append("\n".join(table_rows))
 
     return "\n\n".join(parts)
 

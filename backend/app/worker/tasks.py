@@ -2798,7 +2798,11 @@ def deliver_webhook(self, delivery_id: str) -> dict:
                 "[Task %s] deliver_webhook unhandled error: %s",
                 self.request.id, exc,
             )
-            return {"error": str(exc), "retry": False}
+            # The delivery row may still be PENDING when a transient DB,
+            # secret-store, or setup failure occurs before ``deliver`` can
+            # persist an outcome. Route through the task's bounded retry path
+            # instead of acknowledging and permanently stranding the row.
+            return {"error": str(exc), "retry": True}
 
     result = cast(dict, _run_async(_run()))
 

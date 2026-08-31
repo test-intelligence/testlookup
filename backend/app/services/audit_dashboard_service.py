@@ -6,6 +6,8 @@ sensitive values before returning results.
 """
 from __future__ import annotations
 
+import csv
+import io
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -286,9 +288,24 @@ async def export_audit_csv(
         db, project_id=project_id, category=category, days=days,
         page=1, page_size=5000, redact=True,
     )
-    lines = ["source,action,actor_name,project_id,created_at"]
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(["source", "action", "actor_name", "project_id", "created_at"])
     for item in result["items"]:
-        lines.append(
-            f"{item['source']},{item['action']},{item.get('actor_name', '')},{item.get('project_id', '')},{item.get('created_at', '')}"
-        )
-    return "\n".join(lines)
+        values = [
+            item["source"],
+            item["action"],
+            item.get("actor_name", ""),
+            item.get("project_id", ""),
+            item.get("created_at", ""),
+        ]
+        writer.writerow([_csv_text(value) for value in values])
+    return output.getvalue()
+
+
+def _csv_text(value: object) -> str:
+    """Keep exported audit values structurally valid and spreadsheet-inert."""
+    text = str(value or "")
+    if text.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + text
+    return text

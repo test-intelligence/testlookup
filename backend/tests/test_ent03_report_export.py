@@ -266,6 +266,34 @@ class TestPdfRenderer:
         assert "<script>" not in result
         assert "&lt;script&gt;" in result
 
+    def test_safe_truncates_before_escaping(self):
+        from app.services.report_pdf_renderer import _safe
+
+        result = _safe("x" * 99 + "<script>", max_len=100)
+        assert result.endswith("&lt;..."), (
+            "truncating escaped text split the &lt; entity into a bare ampersand"
+        )
+
+    @pytest.mark.parametrize(
+        "field", ["status_signal", "baseline_classification", "provenance_source"]
+    )
+    def test_report_pdf_escapes_generated_paragraph_metadata(self, field):
+        from app.services.report_pdf_renderer import render_report_pdf
+
+        report = self._make_report("executive")
+        if field == "status_signal":
+            report.executive_panel = {
+                "headline": "Release headline",
+                "status_signal": "<b>",
+            }
+        elif field == "baseline_classification":
+            report.baseline_diff["regression_classification"] = "<b>"
+        else:
+            report.provenance["sources_used"] = ["<b>"]
+
+        pdf_bytes = render_report_pdf(report)
+        assert pdf_bytes[:5] == b"%PDF-"
+
 
 # ── HTML Renderer Tests ──────────────────────────────────────────────────────
 
@@ -315,6 +343,29 @@ class TestHtmlRenderer:
 
         html = render_report_html(self._make_report())
         assert "User Impact" in html
+
+    def test_html_escapes_executive_panel_status_signal(self):
+        from app.services.report_html_renderer import render_report_html
+
+        report = self._make_report()
+        report.executive_panel = {"status_signal": '<script>alert("xss")</script>'}
+        html = render_report_html(report)
+
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
+
+    def test_html_escapes_release_signal_and_provenance_sources(self):
+        from app.services.report_html_renderer import render_report_html
+
+        report = self._make_report()
+        report.release_recommendation = '<script>alert("signal")</script>'
+        report.provenance = {"sources_used": ['<img src=x onerror=alert("source")>']}
+        html = render_report_html(report)
+
+        assert "<script>" not in html
+        assert "<img" not in html
+        assert "&lt;script&gt;" in html
+        assert "&lt;img" in html
 
 
 # ── Evidence Bundle Tests ────────────────────────────────────────────────────

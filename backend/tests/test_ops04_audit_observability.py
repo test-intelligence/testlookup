@@ -10,7 +10,9 @@ Covers:
 """
 from __future__ import annotations
 
+import csv
 import importlib.util
+import io
 import sys
 import types
 import uuid
@@ -120,6 +122,34 @@ class TestRedaction:
 
 
 # ── Audit categories ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_audit_csv_quotes_rows_and_neutralizes_formulas(monkeypatch):
+    from app.services import audit_dashboard_service as service
+
+    actor_name = '=HYPERLINK("https://example.invalid", "click")\nInjected'
+
+    async def fake_query(*_args, **_kwargs):
+        return {
+            "items": [
+                {
+                    "source": "access",
+                    "action": "role_changed",
+                    "actor_name": actor_name,
+                    "project_id": "project-1",
+                    "created_at": "2026-08-31T00:00:00Z",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(service, "query_unified_audit", fake_query)
+    payload = await service.export_audit_csv(db=object())
+    rows = list(csv.reader(io.StringIO(payload, newline="")))
+
+    assert len(rows) == 2, "embedded newline escaped into a second audit row"
+    assert len(rows[1]) == 5, "embedded commas changed the audit CSV schema"
+    assert rows[1][2] == "'" + actor_name
 
 
 class TestAuditCategories:

@@ -146,7 +146,7 @@ def test_a_skip_is_not_treated_as_a_failure():
     )
 
 
-def test_the_stale_prometheus_series_is_dropped():
+def test_the_stale_prometheus_series_is_scheduled_for_drop():
     """The gauge has no value meaning 'not monitored'.
 
     Its documented scale is 1=healthy / 0.5=degraded / 0=down, so a skipped
@@ -155,7 +155,7 @@ def test_the_stale_prometheus_series_is_dropped():
     honest answer.
     """
     branch = _skipped_branch()
-    assert "integration_health_gauge.remove" in branch, (
+    assert "metric_updates.append((r.provider, None))" in branch, (
         "the Prometheus series for a skipped provider is left at its last "
         "value, which is the same stale-verdict bug one layer over"
     )

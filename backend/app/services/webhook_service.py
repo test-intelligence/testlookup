@@ -151,6 +151,28 @@ def compute_signature(secret: str, body: bytes) -> str:
     ).hexdigest()
 
 
+def _has_retry_budget(attempt_count: int, max_retries: Optional[int]) -> bool:
+    """Return whether another attempt is allowed without treating zero as unset."""
+    attempt_limit = 5 if max_retries is None else max_retries
+    return attempt_limit > 0 and attempt_count < attempt_limit
+
+
+async def _mark_delivery_failed(
+    db: AsyncSession,
+    delivery: WebhookDelivery,
+    error: str,
+    subscription: Optional[WebhookSubscription] = None,
+) -> None:
+    """Persist a terminal delivery failure, with subscription diagnostics."""
+    delivery.status = "FAILED"
+    delivery.error = error
+    if subscription is not None:
+        subscription.last_failure_at = datetime.now(timezone.utc)
+        subscription.last_error = error[:2000]
+        subscription.failure_count = int(subscription.failure_count or 0) + 1
+    await db.commit()
+
+
 # ── Subscription CRUD ──────────────────────────────────────────────────────
 
 
@@ -370,6 +392,25 @@ async def replay_delivery(
             delivery_id=str(new_id),
             error=str(exc),
         )
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(WebhookDelivery).where(WebhookDelivery.id == new_id)
+                )
+                failed_delivery = result.scalar_one_or_none()
+                if failed_delivery is not None:
+                    await _mark_delivery_failed(
+                        db,
+                        failed_delivery,
+                        "webhook replay enqueue failed",
+                    )
+        except Exception as persist_exc:  # noqa: BLE001 — preserve original failure
+            logger.warning(
+                "webhook replay enqueue failure state could not be persisted",
+                delivery_id=str(new_id),
+                error=str(persist_exc),
+            )
+        return None
 
     logger.info(
         "webhook_delivery_replayed",
@@ -472,36 +513,46 @@ async def emit_event(
     except (TypeError, ValueError):
         return 0
 
-    matched: list[WebhookSubscription] = []
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(WebhookSubscription).where(
-                WebhookSubscription.project_id == pid,
-                WebhookSubscription.enabled.is_(True),
+    try:
+        matched: list[WebhookSubscription] = []
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(WebhookSubscription).where(
+                    WebhookSubscription.project_id == pid,
+                    WebhookSubscription.enabled.is_(True),
+                )
             )
-        )
-        for sub in result.scalars().all():
-            events = sub.events or []
-            if event_type in events:
-                matched.append(sub)
+            for sub in result.scalars().all():
+                events = sub.events or []
+                if event_type in events:
+                    matched.append(sub)
 
-        # Create one pending delivery row per match before enqueueing so the
-        # celery task has a stable id to update. Under Celery backpressure,
-        # rows may sit at PENDING for a few seconds — that's fine.
-        deliveries: list[tuple[uuid.UUID, uuid.UUID]] = []
-        for sub in matched:
-            delivery = WebhookDelivery(
-                subscription_id=sub.id,
-                event_type=event_type,
-                event_payload=payload,
-                status="PENDING",
-                attempt_count=0,
-            )
-            db.add(delivery)
-            await db.flush()
-            deliveries.append((delivery.id, sub.id))
-        if deliveries:
-            await db.commit()
+            # Create one pending delivery row per match before enqueueing so the
+            # celery task has a stable id to update. Under Celery backpressure,
+            # rows may sit at PENDING for a few seconds — that's fine.
+            deliveries: list[tuple[uuid.UUID, uuid.UUID]] = []
+            for sub in matched:
+                delivery = WebhookDelivery(
+                    subscription_id=sub.id,
+                    event_type=event_type,
+                    event_payload=payload,
+                    status="PENDING",
+                    attempt_count=0,
+                )
+                db.add(delivery)
+                await db.flush()
+                deliveries.append((delivery.id, sub.id))
+            if deliveries:
+                await db.commit()
+    except Exception as exc:  # noqa: BLE001 — webhook fan-out is best-effort
+        logger.warning(
+            "webhook emit persistence failed",
+            event_type=event_type,
+            project_id=str(pid),
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        return 0
 
     # Enqueue outside the session so celery errors don't roll back the
     # delivery rows — we'd rather have a PENDING row with no enqueued
@@ -509,10 +560,20 @@ async def emit_event(
     if deliveries:
         try:
             from app.worker.tasks import deliver_webhook as _deliver
-            for delivery_id, _sub_id in deliveries:
-                _deliver.delay(delivery_id=str(delivery_id))
         except Exception as exc:
             logger.warning("webhook dispatch failed", event_type=event_type, error=str(exc))
+        else:
+            for delivery_id, sub_id in deliveries:
+                try:
+                    _deliver.delay(delivery_id=str(delivery_id))
+                except Exception as exc:
+                    logger.warning(
+                        "webhook delivery enqueue failed",
+                        event_type=event_type,
+                        delivery_id=str(delivery_id),
+                        subscription_id=str(sub_id),
+                        error=str(exc),
+                    )
 
     logger.info(
         "webhook emit",
@@ -562,9 +623,9 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
         # Feature flag / offline re-check — an admin may have disabled
         # webhooks between enqueue and delivery.
         if not await _post_allowed():
-            delivery.status = "FAILED"
-            delivery.error = "webhooks disabled or offline mode"
-            await db.commit()
+            await _mark_delivery_failed(
+                db, delivery, "webhooks disabled or offline mode"
+            )
             return {"error": "gated"}
 
         # SSRF guard at the egress boundary. create/update validate too, but a
@@ -592,6 +653,19 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
             hmac_secret = await secret_service.read_secret(
                 db, SECRET_SCOPE, _secret_key(subscription.id),
             )
+            if not hmac_secret:
+                await _mark_delivery_failed(
+                    db,
+                    delivery,
+                    "configured signing secret unavailable",
+                    subscription,
+                )
+                from app.core.metrics import webhook_delivery_attempts_total
+                webhook_delivery_attempts_total.labels(
+                    event_type=delivery.event_type,
+                    result="failure",
+                ).inc()
+                return {"error": "signing_secret_unavailable"}
 
         # Build the body and sign.
         envelope = {
@@ -623,11 +697,10 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
                 )
         except Exception as exc:
             delivery.error = f"{type(exc).__name__}: {str(exc)[:1800]}"
-            delivery.status = (
-                "DLQ"
-                if delivery.attempt_count >= (subscription.max_retries or 5)
-                else "PENDING"
+            should_retry = _has_retry_budget(
+                delivery.attempt_count, subscription.max_retries
             )
+            delivery.status = "PENDING" if should_retry else "DLQ"
             subscription.last_failure_at = datetime.now(timezone.utc)
             subscription.last_error = delivery.error[:2000]
             subscription.failure_count = int(subscription.failure_count or 0) + 1
@@ -635,9 +708,9 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
             from app.core.metrics import webhook_delivery_attempts_total
             webhook_delivery_attempts_total.labels(
                 event_type=delivery.event_type,
-                result="retry" if delivery.status == "PENDING" else "failure",
+                result="retry" if should_retry else "failure",
             ).inc()
-            return {"retry": delivery.status == "PENDING", "error": str(exc)}
+            return {"retry": should_retry, "error": str(exc)}
 
         delivery.http_status = resp.status_code
         delivery.response_preview = (resp.text or "")[:2000]
@@ -665,7 +738,9 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
         subscription.last_error = delivery.error[:2000]
         subscription.failure_count = int(subscription.failure_count or 0) + 1
 
-        if retryable and delivery.attempt_count < (subscription.max_retries or 5):
+        if retryable and _has_retry_budget(
+            delivery.attempt_count, subscription.max_retries
+        ):
             delivery.status = "PENDING"  # Celery task will retry with backoff
             await db.commit()
             from app.core.metrics import webhook_delivery_attempts_total
@@ -675,7 +750,7 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
             ).inc()
             return {"retry": True, "http_status": resp.status_code}
 
-        delivery.status = "DLQ" if delivery.attempt_count >= (subscription.max_retries or 5) else "FAILED"
+        delivery.status = "DLQ" if retryable else "FAILED"
         await db.commit()
         from app.core.metrics import webhook_delivery_attempts_total
         webhook_delivery_attempts_total.labels(

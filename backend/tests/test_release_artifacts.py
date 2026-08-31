@@ -125,4 +125,33 @@ def _resolve_bash() -> str | None:
     override = os.environ.get("TL_TEST_BASH")
     if override:
         return override
-    return shutil.which("bash")
+
+    candidates: list[str] = []
+    # On Windows, `bash` commonly resolves to the WSL shim in System32.  That
+    # executable can exist while WSL is disabled, making the syntax check fail
+    # before it ever reads install.sh.  Prefer the native Git Bash paired with
+    # the Git executable when it is available.
+    if os.name == "nt":
+        git = shutil.which("git")
+        if git:
+            git_bash = Path(git).resolve().parents[1] / "bin" / "bash.exe"
+            if git_bash.exists():
+                candidates.append(str(git_bash))
+
+    resolved = shutil.which("bash")
+    if resolved:
+        candidates.append(resolved)
+
+    for candidate in candidates:
+        try:
+            probe = subprocess.run(
+                [candidate, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode == 0:
+            return candidate
+    return None

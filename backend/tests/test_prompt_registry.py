@@ -256,6 +256,70 @@ def test_failed_verdict_fails(tmp_path):
     assert any("not PASS" in p for p in problems)
 
 
+# ── Attestation CLI behavior ────────────────────────────────────────────────
+
+
+def test_offline_attest_writes_a_complete_passing_attestation(tmp_path, monkeypatch):
+    attestation_path = tmp_path / "prompt_manifest_eval.json"
+    manifest = {"prompts": {"prompt-a": {"version": 1, "content_hash": "abc123"}}}
+    versions = {"prompt-a": "v1:abc123"}
+    gate_results = [{"task_type": "classification", "status": "PASS"}]
+    messages: list[str] = []
+
+    monkeypatch.setattr(pr, "ATTESTATION_PATH", attestation_path)
+    monkeypatch.setattr(pr, "check_manifest", lambda: [])
+    monkeypatch.setattr(pr, "load_manifest", lambda: manifest)
+    monkeypatch.setattr(pr, "registry_versions", lambda: versions)
+    monkeypatch.setattr(pr, "_offline_gate_results", lambda: ("PASS", gate_results))
+    monkeypatch.setattr(pr, "_echo", messages.append)
+
+    assert pr._attest("change-42", offline=True, notes="coverage slice") == 0
+
+    payload = json.loads(attestation_path.read_text(encoding="utf-8"))
+    assert payload["change_id"] == "change-42"
+    assert payload["verdict"] == "PASS"
+    assert payload["mode"] == "offline_golden"
+    assert payload["eval_gate_run_id"] is None
+    assert payload["gate_results"] == gate_results
+    assert payload["prompt_versions"] == versions
+    assert payload["manifest_digest"] == pr.manifest_digest(manifest["prompts"])
+    assert payload["notes"] == "coverage slice"
+    assert messages and "verdict=PASS" in messages[-1]
+
+
+def test_attest_refuses_manifest_drift_without_overwriting_file(tmp_path, monkeypatch):
+    attestation_path = tmp_path / "prompt_manifest_eval.json"
+    attestation_path.write_text("existing-attestation\n", encoding="utf-8")
+    messages: list[str] = []
+
+    monkeypatch.setattr(pr, "ATTESTATION_PATH", attestation_path)
+    monkeypatch.setattr(pr, "check_manifest", lambda: ["prompt-a hash drifted"])
+    monkeypatch.setattr(pr, "_echo", messages.append)
+
+    assert pr._attest("change-43", offline=True, notes="") == 1
+    assert attestation_path.read_text(encoding="utf-8") == "existing-attestation\n"
+    assert any("out of sync" in message for message in messages)
+    assert any("prompt-a hash drifted" in message for message in messages)
+
+
+def test_online_attest_failure_does_not_replace_existing_attestation(tmp_path, monkeypatch):
+    attestation_path = tmp_path / "prompt_manifest_eval.json"
+    attestation_path.write_text("existing-attestation\n", encoding="utf-8")
+    messages: list[str] = []
+
+    async def fail_gate(_change_id: str):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(pr, "ATTESTATION_PATH", attestation_path)
+    monkeypatch.setattr(pr, "check_manifest", lambda: [])
+    monkeypatch.setattr(pr, "_online_gate_result", fail_gate)
+    monkeypatch.setattr(pr, "_echo", messages.append)
+
+    assert pr._attest("change-44", offline=False, notes="") == 1
+    assert attestation_path.read_text(encoding="utf-8") == "existing-attestation\n"
+    assert any("retry with --offline" in message for message in messages)
+
+
 # ── Quality-gate mirror (scripts/quality_gate.py) ────────────────────────────
 
 

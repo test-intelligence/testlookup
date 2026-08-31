@@ -291,6 +291,36 @@ class TestURLConnectorInternals:
 
 
 class TestDocumentConnectorInternals:
+    def test_extract_docx_preserves_mixed_block_order_and_formatting(self):
+        from io import BytesIO
+
+        from docx import Document
+
+        from app.services.connectors.document_connector import _extract_docx
+
+        doc = Document()
+        doc.add_paragraph("Overview", style="Heading 1")
+        doc.add_paragraph("Run this first", style="List Bullet")
+        doc.add_paragraph("Before the table")
+        table = doc.add_table(rows=2, cols=2)
+        table.cell(0, 0).text = "A"
+        table.cell(0, 1).text = "B"
+        table.cell(1, 0).text = "C"
+        table.cell(1, 1).text = "D"
+        doc.add_paragraph("After the table")
+
+        output = BytesIO()
+        doc.save(output)
+        result = _extract_docx(output.getvalue())
+
+        assert result.split("\n\n") == [
+            "# Overview",
+            "- Run this first",
+            "Before the table",
+            "| A | B |\n| C | D |",
+            "After the table",
+        ]
+
     def test_extract_text_routing_pdf(self):
         from app.services.connectors.document_connector import _extract_text
         with pytest.raises(ConnectorFetchError, match="pypdf"):
@@ -799,6 +829,96 @@ class TestStalenessModels:
         assert batch.cases_accepted == 0
         assert batch.cases_rejected == 0
         assert batch.status == "pending"
+
+
+class TestStalenessService:
+    async def test_mark_cases_stale_for_source_propagates_to_cases(self):
+        from app.services.rag_staleness_service import mark_cases_stale_for_source
+
+        source_id = uuid.uuid4()
+        case_id = uuid.uuid4()
+        citation = SimpleNamespace(
+            case_id=case_id,
+            is_stale=False,
+            stale_detected_at=None,
+            source_content_hash_at_generation="old-hash",
+        )
+        source_result = SimpleNamespace(scalar_one_or_none=lambda: "new-hash")
+        citations_result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [citation]))
+        db = AsyncMock()
+        db.execute.side_effect = [source_result, citations_result, AsyncMock()]
+
+        marked = await mark_cases_stale_for_source(db, source_id)
+
+        assert marked == 1
+        assert citation.is_stale is True
+        assert citation.stale_detected_at is not None
+        source_query = db.execute.await_args_list[1].args[0]
+        assert "!=" in str(source_query)
+        update_stmt = db.execute.await_args_list[2].args[0]
+        assert "managed_test_cases" in str(update_stmt)
+        assert "stale_reason" in str(update_stmt)
+        db.flush.assert_awaited_once()
+
+    async def test_mark_cases_stale_for_source_is_idempotent(self):
+        from app.services.rag_staleness_service import mark_cases_stale_for_source
+
+        citation = SimpleNamespace(
+            case_id=uuid.uuid4(),
+            is_stale=False,
+            stale_detected_at=None,
+            source_content_hash_at_generation="same-hash",
+        )
+        source_result = SimpleNamespace(scalar_one_or_none=lambda: "same-hash")
+        citations_result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+        db = AsyncMock()
+        db.execute.side_effect = [source_result, citations_result]
+
+        assert await mark_cases_stale_for_source(db, uuid.uuid4()) == 0
+        assert citation.is_stale is False
+        db.flush.assert_not_awaited()
+
+    async def test_check_batch_staleness_marks_only_changed_citations(self):
+        from app.services.rag_staleness_service import check_batch_staleness
+
+        stale = SimpleNamespace(
+            case_id=uuid.uuid4(),
+            source_id=uuid.uuid4(),
+            is_stale=False,
+            stale_detected_at=None,
+            source_content_hash_at_generation="old",
+        )
+        fresh = SimpleNamespace(
+            case_id=uuid.uuid4(),
+            source_id=uuid.uuid4(),
+            is_stale=False,
+            stale_detected_at=None,
+            source_content_hash_at_generation="same",
+        )
+        already_stale = SimpleNamespace(
+            case_id=uuid.uuid4(),
+            source_id=uuid.uuid4(),
+            is_stale=True,
+            stale_detected_at=datetime.now(timezone.utc),
+            source_content_hash_at_generation="old",
+        )
+        results = [
+            SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [stale, fresh, already_stale])),
+            SimpleNamespace(scalar_one_or_none=lambda: "new"),
+            SimpleNamespace(scalar_one_or_none=lambda: "same"),
+            SimpleNamespace(scalar_one_or_none=lambda: "new"),
+        ]
+        db = AsyncMock()
+        db.execute.side_effect = results
+
+        report = await check_batch_staleness(db, uuid.uuid4())
+
+        assert [item["marked_stale"] for item in report] == [True, False, False]
+        assert report[0]["was_already_stale"] is False
+        assert report[2]["was_already_stale"] is True
+        assert stale.is_stale is True
+        assert fresh.is_stale is False
+        db.flush.assert_awaited_once()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

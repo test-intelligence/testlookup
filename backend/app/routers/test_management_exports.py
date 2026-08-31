@@ -150,22 +150,22 @@ async def export_test_cases_excel(
             )
         tags_text = ", ".join(tc.tags) if tc.tags else ""
 
-        ws.cell(row=row_idx, column=1, value=tc.title)
-        ws.cell(row=row_idx, column=2, value=tc.status)
-        ws.cell(row=row_idx, column=3, value=tc.test_type)
-        ws.cell(row=row_idx, column=4, value=tc.priority)
-        ws.cell(row=row_idx, column=5, value=tc.severity)
-        ws.cell(row=row_idx, column=6, value=tc.feature_area or "")
-        ws.cell(row=row_idx, column=7, value=tc.objective or "")
-        ws.cell(row=row_idx, column=8, value=tc.preconditions or "")
-        ws.cell(row=row_idx, column=9, value=steps_text)
-        ws.cell(row=row_idx, column=10, value=tc.expected_result or "")
+        ws.cell(row=row_idx, column=1, value=_excel_text(tc.title))
+        ws.cell(row=row_idx, column=2, value=_excel_text(tc.status))
+        ws.cell(row=row_idx, column=3, value=_excel_text(tc.test_type))
+        ws.cell(row=row_idx, column=4, value=_excel_text(tc.priority))
+        ws.cell(row=row_idx, column=5, value=_excel_text(tc.severity))
+        ws.cell(row=row_idx, column=6, value=_excel_text(tc.feature_area or ""))
+        ws.cell(row=row_idx, column=7, value=_excel_text(tc.objective or ""))
+        ws.cell(row=row_idx, column=8, value=_excel_text(tc.preconditions or ""))
+        ws.cell(row=row_idx, column=9, value=_excel_text(steps_text))
+        ws.cell(row=row_idx, column=10, value=_excel_text(tc.expected_result or ""))
         ws.cell(row=row_idx, column=11, value="Yes" if tc.is_automated else "No")
-        ws.cell(row=row_idx, column=12, value=tc.automation_status)
+        ws.cell(row=row_idx, column=12, value=_excel_text(tc.automation_status))
         ws.cell(row=row_idx, column=13, value="Yes" if tc.ai_generated else "No")
         ws.cell(row=row_idx, column=14, value=tc.ai_quality_score)
-        ws.cell(row=row_idx, column=15, value=tc.last_execution_status or "")
-        ws.cell(row=row_idx, column=16, value=tags_text)
+        ws.cell(row=row_idx, column=15, value=_excel_text(tc.last_execution_status or ""))
+        ws.cell(row=row_idx, column=16, value=_excel_text(tags_text))
         ws.cell(row=row_idx, column=17, value=tc.version)
         ws.cell(row=row_idx, column=18, value=tc.created_at.strftime("%Y-%m-%d") if tc.created_at else "")
 
@@ -185,6 +185,13 @@ async def export_test_cases_excel(
 
 
 # ── Word/PDF export helpers ───────────────────────────────────────────────────
+
+def _excel_text(value: str) -> str:
+    """Force formula-looking stored text to remain inert workbook data."""
+    if value.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + value
+    return value
+
 
 def _safe(value) -> str:
     if value is None:
@@ -383,16 +390,29 @@ async def export_test_plan_pdf(
     body_style = styles["Normal"]
 
     story = [
-        Paragraph(_safe(plan.name), heading_style),
-        Paragraph(f"Status: {_safe(plan.status)} | Total Cases: {plan.total_cases}", body_style),
+        Paragraph(_pdf_text(plan.name), heading_style),
+        Paragraph(
+            _pdf_text(
+                f"Status: {_safe(plan.status)} | Total Cases: {plan.total_cases}"
+            ),
+            body_style,
+        ),
         Spacer(1, 6*mm),
     ]
 
     if plan.description:
-        story += [Paragraph("Description", heading2_style), Paragraph(_safe(plan.description), body_style), Spacer(1, 4*mm)]
+        story += [
+            Paragraph("Description", heading2_style),
+            Paragraph(_pdf_text(plan.description), body_style),
+            Spacer(1, 4*mm),
+        ]
 
     if plan.objective:
-        story += [Paragraph("Objective", heading2_style), Paragraph(_safe(plan.objective), body_style), Spacer(1, 4*mm)]
+        story += [
+            Paragraph("Objective", heading2_style),
+            Paragraph(_pdf_text(plan.objective), body_style),
+            Spacer(1, 4*mm),
+        ]
 
     # Execution summary
     story += [

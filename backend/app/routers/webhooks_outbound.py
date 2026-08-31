@@ -280,7 +280,8 @@ async def replay_webhook_delivery(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
                 "Webhook replay is unavailable — outbound_webhooks is "
-                "disabled or AI_OFFLINE_MODE is enabled."
+                "disabled, AI_OFFLINE_MODE is enabled, or the delivery "
+                "could not be queued."
             ),
         )
     return WebhookDeliveryReplayResponse(delivery_id=new_id, status="PENDING")

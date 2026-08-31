@@ -42,6 +42,34 @@ async def test_run_all_probes_isolates_a_raising_probe():
 
 
 @pytest.mark.asyncio
+async def test_notification_config_failure_does_not_sink_unrelated_probes():
+    class _BrokenSession:
+        async def __aenter__(self):
+            raise RuntimeError("configuration database unavailable")
+
+        async def __aexit__(self, *_args):
+            return False
+
+    async def _slack(_config):
+        pytest.fail("Slack probe must not fall back to environment configuration")
+
+    async def _ok():
+        return svc.ProbeResult("ok_provider", "healthy", 5, "fine")
+
+    with patch.object(
+        svc,
+        "ALL_PROBES",
+        {"slack": _slack, "ok_provider": _ok},
+    ), patch("app.db.postgres.AsyncSessionLocal", _BrokenSession):
+        results = await svc.run_all_probes()
+
+    by = {r.provider: r for r in results}
+    assert by["slack"].status == "down"
+    assert "configuration unavailable" in by["slack"].message
+    assert by["ok_provider"].status == "healthy"
+
+
+@pytest.mark.asyncio
 async def test_probe_ollama_skipped_when_online():
     with patch.object(settings, "AI_OFFLINE_MODE", False):
         result = await svc.probe_ollama()
