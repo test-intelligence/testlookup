@@ -1,5 +1,182 @@
 # Changelog
 
+## 2026-08-31 — preserve and neutralize audit CSV fields
+
+Audit CSV exports now use the standard CSV writer so commas, quotes, and
+embedded newlines cannot alter record boundaries. Formula-looking values are
+also serialized as inert spreadsheet text. A parser round-trip regression
+pins structural integrity and formula safety.
+
+## 2026-08-31 — neutralize formulas in test-case Excel exports
+
+Test-case Excel exports now serialize formula-looking stored text as inert
+cell data. User- or AI-authored titles, objectives, preconditions, expected
+results, feature areas, tags, and related text can no longer become executable
+workbook formulas when another user opens the generated XLSX file. A real
+openpyxl round-trip regression verifies every affected column.
+
+## 2026-08-31 — harden release-report PDF paragraph inputs
+
+Release-report PDFs now escape generated status signals, baseline
+classifications, and provenance source names before ReportLab parses them.
+Malformed stored metadata no longer turns exports into 500 responses or
+injects document markup. The shared PDF sanitizer now truncates before HTML
+escaping so it cannot split an entity at the length boundary.
+
+## 2026-08-31 — escape plan text in PDF exports
+
+Test-plan PDF exports now escape the plan name, status, description, and
+objective before passing them to ReportLab's paragraph parser. Stored text
+containing malformed markup no longer turns an authorized export into a 500,
+and valid ReportLab tags cannot alter the generated document. An end-to-end
+renderer regression covers every free-text paragraph.
+
+## 2026-08-31 — publish integration-health metrics after persistence
+
+Integration probe results now update or remove their Prometheus gauge series
+only after the matching database transaction commits. A failed commit no
+longer leaves dashboards advertising a health verdict that the status API
+never persisted. Regression coverage pins both normal updates and skipped-
+provider series removal at the transaction boundary.
+
+## 2026-08-31 — reject unknown on-demand probe providers
+
+The integration-health probe endpoint now returns 422 with the supported
+provider list when a requested provider is unknown. A typo no longer falls
+through to the all-provider branch, triggering every configured external probe
+and persisting unrelated results. A regression test pins zero probe/persistence
+calls on invalid input.
+
+## 2026-08-31 — isolate notification probe configuration failures
+
+`run_all_probes` no longer aborts every integration health check when encrypted
+Slack/Teams configuration cannot be loaded. Those two probes report `down`
+without falling back to environment secrets, while independent probes still
+run concurrently. A regression test injects a configuration database outage
+and pins sibling-probe completion.
+
+## 2026-08-31 — use runtime webhook settings for on-demand health probes
+
+Single-provider Slack and Teams health probes now resolve encrypted,
+database-authoritative global webhook settings through the request session,
+matching scheduled and batch probes. They no longer fall back to stale process
+environment values while actual notification delivery uses the database. A
+router-level regression test pins configuration resolution and probe arguments.
+
+## 2026-08-31 — report webhook replay enqueue failures accurately
+
+A replay whose Celery enqueue is rejected no longer returns a false successful
+`PENDING` response. The newly committed audit row is marked `FAILED`, the
+service returns failure, and the API responds with an accurate 503 indicating
+that queueing may have failed. A regression test pins the durable state and
+service result.
+
+## 2026-08-31 — fail closed when a webhook signing secret is unavailable
+
+Webhook delivery no longer sends an unsigned request when a subscription is
+marked `has_secret=true` but its secret row is missing or undecryptable. The
+delivery is marked `FAILED`, subscription diagnostics and failure metrics are
+updated, and no HTTP egress occurs. A regression test pins the no-egress
+boundary.
+
+## 2026-08-31 — retry transient webhook worker failures
+
+The outbound webhook Celery task now routes unhandled service failures through
+its bounded exponential retry policy. Transient database, secret-store, or
+delivery-setup errors no longer get acknowledged with `retry=False` while the
+committed delivery row remains permanently `PENDING`. A task-level regression
+test pins the retry request and initial 30-second delay.
+
+## 2026-08-31 — isolate outbound webhook enqueue failures
+
+Webhook fan-out now catches Celery enqueue errors per committed delivery. A
+broker rejection for one subscription no longer prevents later subscriptions
+from being enqueued and leaving their delivery rows stuck in `PENDING` without
+a task. A two-subscription regression test pins continued dispatch.
+
+## 2026-08-31 — isolate webhook fan-out persistence failures
+
+`emit_event` now upholds its best-effort contract when the webhook database
+session, subscription query, delivery flush, or commit fails. The fault is
+logged without payload data and returns zero instead of escaping into primary
+ingestion, quarantine, quota, or defect workflows. A regression test pins the
+database-unavailable boundary.
+
+## 2026-08-31 — honor zero-retry outbound webhook subscriptions
+
+Outbound webhook delivery no longer replaces an explicit `max_retries=0`
+with the default limit of five. Network errors and retryable HTTP responses now
+stop after the initial attempt when retries are disabled, while non-retryable
+4xx responses remain `FAILED`. Regression tests cover all three outcomes.
+
+## 2026-08-31 — keep optional tracing failures from blocking startup
+
+OpenTelemetry initialization now degrades cleanly when resource, exporter, or
+provider configuration fails instead of raising during `app.main` import and
+preventing the API from starting. OTLP HTTP endpoints that already end in
+`/v1/traces` are also accepted without duplicating the signal path; collector
+base URLs retain their existing behavior. Focused tests pin both boundaries.
+
+## 2026-08-31 — harden the Prometheus investigation tool boundary
+
+`fetch_app_metrics` now rejects malformed model-generated JSON shapes instead
+of raising, bounds the query window and custom-expression count/size, escapes
+service names before placing them in PromQL label matchers, and interprets a
+timezone-free `timestamp_utc` as UTC rather than host-local time. Focused tests
+pin graceful validation, query escaping, UTC windows, and pre-network limits.
+
+## 2026-08-31 — make quickstart environment generation portable
+
+`gen-dev-env.sh` now selects the first available Python runtime among
+`python3`, `python`, `python.exe`, and Windows `py.exe -3`, with an explicit
+`TL_PYTHON_BIN` override for constrained environments. This keeps the
+documented local setup path working from Git Bash without changing Linux
+behavior.
+
+The prompt-attestation CLI now has behavior-level regression coverage for a
+successful offline attestation, manifest-drift refusal without overwriting the
+existing gate record, and online eval-gate failure without corrupting the
+current attestation.
+
+## 2026-08-31 — make release-artifact bash detection portable on Windows
+
+The release-artifact syntax test now prefers a usable native Git Bash when
+Windows resolves `bash` to an unavailable WSL shim, while retaining the normal
+PATH lookup and explicit `TL_TEST_BASH` override. This removes a false-negative
+local test failure without weakening the `install.sh` syntax assertion.
+
+The RAG staleness service now has behavior-level regression coverage for hash
+change detection, propagation to generated cases, idempotent no-op behavior,
+and batch citation reporting; the previous tests only checked model fields.
+
+## 2026-08-31 — preserve source order during DOCX knowledge ingestion
+
+`_extract_docx` previously collected every paragraph and then every table,
+moving tables away from the paragraphs that surround them before the content
+was chunked and embedded. Mixed prose/table documents could therefore produce
+misordered retrieval context. The extractor now walks the DOCX body in source
+order while preserving heading, list, paragraph, and Markdown-table formatting;
+the regression test uses a real in-memory DOCX and pins the complete sequence.
+
+Shared HTML reports and executive-panel email notifications now escape the
+`status_signal` badge text as well as the other user-controlled panel fields.
+The signal controls a safe, allow-listed color but its displayed label was
+previously interpolated raw, leaving a malformed persisted panel able to inject
+HTML into a report or email body. The standalone report also now escapes its
+release signal and provenance source labels, and the shared release-signal
+email helper applies the same protection. Regression tests cover all renderers.
+
+## 2026-08-31 — make the documentation copy-reset regression deterministic
+
+The `DocsPage` copy-control regression test could time out in the full
+frontend collection even though it passed alone. Its fake-clock advance used
+the synchronous timer helper, which can leave the `setCopied(false)` React
+update queued under a loaded or coverage-instrumented run. The test now uses
+Vitest's async timer advance inside `act()`, so the timer callback and the
+resulting render are both flushed before the assertion. This removes the
+known timeout without weakening the production behavior or increasing the
+suite timeout.
+
 ## 2026-08-30 — the HTML→text conversion that feeds RAG had never executed
 
 Coverage slice 8. `ConfluenceKnowledgeConnector._soup_to_text` walks a

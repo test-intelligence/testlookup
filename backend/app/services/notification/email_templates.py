@@ -52,7 +52,7 @@ def render_executive_panel_email(panel: dict) -> str:
       <tr>
         <td>
           <span style="display:inline-block;background:{signal_bg};color:{signal_colour};border:1px solid {signal_colour};padding:4px 10px;border-radius:6px;font-size:12px;font-weight:700;">
-            {signal.replace('_', ' ')}
+            {_e(str(signal).replace('_', ' '))}
           </span>
           {risk_html}
         </td>
@@ -159,10 +159,11 @@ def render_action_items_email(actions: list[str]) -> str:
 
 def render_release_signal_email(recommendation: str, risk_score: int | None = None) -> str:
     """Render release recommendation badge."""
+    recommendation = str(recommendation)
     colour = _SIGNAL_COLOURS.get(recommendation, "#D97706")
     bg = _SIGNAL_BG.get(recommendation, "#78350f")
     risk_html = f" · Risk {risk_score}/100" if risk_score is not None else ""
     return f"""
     <span style="display:inline-block;background:{bg};color:{colour};border:1px solid {colour};padding:4px 10px;border-radius:6px;font-size:12px;font-weight:700;">
-      {recommendation.replace('_', ' ')}{risk_html}
+      {_e(recommendation.replace('_', ' '))}{risk_html}
     </span>"""

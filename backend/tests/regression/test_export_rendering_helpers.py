@@ -25,8 +25,13 @@ an injection into a renderer.
 """
 from __future__ import annotations
 
+import io
+import uuid
+from types import SimpleNamespace
+
 import pytest
 
+from app.routers import test_management_exports
 from app.routers.test_management_exports import (
     _list_to_str,
     _normalize_dict_list,
@@ -36,6 +41,34 @@ from app.routers.test_management_exports import (
 )
 
 pytestmark = pytest.mark.regression
+
+
+class _ExportResult:
+    def __init__(self, *, scalar=None, rows=None):
+        self._scalar = scalar
+        self._rows = rows or []
+
+    def scalar_one_or_none(self):
+        return self._scalar
+
+    def all(self):
+        return self._rows
+
+
+class _PlanExportDB:
+    def __init__(self, plan):
+        self._results = [_ExportResult(scalar=plan), _ExportResult(rows=[])]
+
+    async def execute(self, _statement):
+        return self._results.pop(0)
+
+
+class _CaseExportDB:
+    def __init__(self, test_case):
+        self._result = _ExportResult(rows=[test_case])
+
+    async def execute(self, _statement):
+        return self._result
 
 
 class TestSafe:
@@ -106,6 +139,87 @@ class TestPdfText:
 
     def test_none_is_empty_rather_than_the_word_none(self):
         assert _pdf_text(None) == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["name", "status", "description", "objective"])
+async def test_plan_pdf_escapes_every_free_text_paragraph(monkeypatch, field):
+    """Stored plan text must not be parsed as ReportLab paragraph markup."""
+    pytest.importorskip("reportlab")
+
+    plan = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        name="Plan",
+        status="draft",
+        description="Description",
+        objective="Objective",
+        total_cases=0,
+        executed_cases=0,
+        passed_cases=0,
+        failed_cases=0,
+        blocked_cases=0,
+    )
+    setattr(plan, field, "<b>")
+
+    async def allow_scope(*_args, **_kwargs):
+        return plan.project_id, None
+
+    monkeypatch.setattr(test_management_exports, "resolve_project_scope", allow_scope)
+    response = await test_management_exports.export_test_plan_pdf(
+        plan.id,
+        db=_PlanExportDB(plan),
+        current_user=object(),
+    )
+
+    assert response.media_type == "application/pdf"
+
+
+@pytest.mark.asyncio
+async def test_excel_export_serializes_stored_text_as_data_not_formulas(monkeypatch):
+    """Opening an export must not execute formula-looking test-case content."""
+    openpyxl = pytest.importorskip("openpyxl")
+    from app.core import deps
+
+    formula = '=HYPERLINK("https://example.invalid", "click")'
+    test_case = SimpleNamespace(
+        title=formula,
+        status="draft",
+        test_type="functional",
+        priority="medium",
+        severity="major",
+        feature_area=formula,
+        objective=formula,
+        preconditions=formula,
+        expected_result=formula,
+        is_automated=False,
+        automation_status="not_automated",
+        ai_generated=False,
+        ai_quality_score=None,
+        last_execution_status=None,
+        tags=[formula],
+        steps=None,
+        version=1,
+        created_at=None,
+    )
+    project_id = uuid.uuid4()
+
+    async def allow_scope(*_args, **_kwargs):
+        return project_id, None
+
+    monkeypatch.setattr(deps, "resolve_project_scope", allow_scope)
+    response = await test_management_exports.export_test_cases_excel(
+        project_id=project_id,
+        db=_CaseExportDB(test_case),
+        current_user=object(),
+    )
+
+    workbook = openpyxl.load_workbook(io.BytesIO(response.body), data_only=False)
+    sheet = workbook["Test Cases"]
+    for column in (1, 6, 7, 8, 10, 16):
+        cell = sheet.cell(row=2, column=column)
+        assert cell.data_type != "f", f"column {column} exported executable formula"
+        assert cell.value == "'" + formula
 
 
 class TestNormalizeList:

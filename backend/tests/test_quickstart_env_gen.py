@@ -14,13 +14,16 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from tests.shell_utils import bash_environment
+
 
 def _resolve_bash() -> str | None:
-    """Return a bash that actually *runs*, or None.
+    """Return a bash with the utilities required by the generator, or None.
 
     ``shutil.which("bash")`` was the old check, and it is not enough on
     Windows: it finds the WSL shim at ``System32/bash.exe``, which exists,
@@ -38,9 +41,6 @@ def _resolve_bash() -> str | None:
     if override:
         candidates.append(override)  # explicit choice wins, working or not
     else:
-        found = shutil.which("bash")
-        if found:
-            candidates.append(found)
         # Git for Windows ships both: bin/ is a small wrapper, usr/bin/ the
         # real shell. Either passes the probe; list both so a trimmed install
         # still resolves.
@@ -49,10 +49,20 @@ def _resolve_bash() -> str | None:
             r"C:\Program Files\Git\usr\bin\bash.exe",
             r"C:\Program Files (x86)\Git\bin\bash.exe",
         ]
+        found = shutil.which("bash")
+        if found:
+            candidates.append(found)
     for candidate in candidates:
         try:
             probe = subprocess.run(
-                [candidate, "-c", "exit 0"], capture_output=True, timeout=30
+                [candidate, "-c", (
+                    "command -v python3 >/dev/null 2>&1 || "
+                    "command -v python >/dev/null 2>&1 || "
+                    "command -v python.exe >/dev/null 2>&1 || "
+                    "command -v py.exe >/dev/null 2>&1"
+                )],
+                capture_output=True, timeout=30,
+                env=bash_environment(candidate),
             )
         except (OSError, subprocess.SubprocessError):
             continue
@@ -118,9 +128,16 @@ def _run_generator(workdir: Path) -> None:
     (workdir / "scripts").mkdir(exist_ok=True)
     shutil.copy(_SCRIPT, workdir / "scripts" / "gen-dev-env.sh")
     shutil.copy(_EXAMPLE, workdir / ".env.example")
+    env = bash_environment(_BASH)
+    if os.name == "nt":
+        # The test runner already has a known-good interpreter; pass its
+        # Windows path explicitly because the host may expose stale Python
+        # shims ahead of the active installation.
+        env["TL_PYTHON_BIN"] = sys.executable.replace("\\", "/")
     res = subprocess.run(
         [_BASH, "scripts/gen-dev-env.sh"],
         cwd=workdir, capture_output=True, text=True, timeout=60,
+        env=env,
     )
     assert res.returncode == 0, f"generator failed (rc={res.returncode}): {res.stderr}"
 
@@ -167,6 +184,9 @@ def test_idempotent_when_env_exists(tmp_path: Path):
     _run_generator(tmp_path)
     first = (tmp_path / ".env").read_text(encoding="utf-8")
     # Re-running must not mutate an existing .env.
+    env = bash_environment(_BASH)
+    if os.name == "nt":
+        env["TL_PYTHON_BIN"] = sys.executable.replace("\\", "/")
     subprocess.run([_BASH, "scripts/gen-dev-env.sh"], cwd=tmp_path, check=True,
-                   capture_output=True, timeout=60)
+                   capture_output=True, timeout=60, env=env)
     assert (tmp_path / ".env").read_text(encoding="utf-8") == first, "second run mutated existing .env"

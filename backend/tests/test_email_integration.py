@@ -72,6 +72,15 @@ class TestEmailTemplateRendering:
         assert render_executive_panel_email({}) == ""
         assert render_executive_panel_email(None) == ""
 
+    def test_executive_panel_escapes_status_signal(self):
+        html = render_executive_panel_email({
+            "status_signal": '<script>alert("xss")</script>',
+            "headline": "Build 1",
+        })
+
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
+
     def test_metrics_strip_renders_values(self):
         html = render_metrics_strip_email({
             "pass_rate": 85.5, "total_tests": 200, "failed": 15,
@@ -101,6 +110,12 @@ class TestEmailTemplateRendering:
     def test_release_signal_no_go(self):
         html = render_release_signal_email("NO_GO")
         assert "NO GO" in html
+
+    def test_release_signal_escapes_recommendation(self):
+        html = render_release_signal_email('<script>alert("xss")</script>')
+
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
 
     def test_html_escaping(self):
         panel = {

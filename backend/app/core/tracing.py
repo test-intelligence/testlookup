@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 _initialised = False
 
 
+def _otlp_trace_endpoint(endpoint: str) -> str:
+    """Return the signal-specific OTLP/HTTP trace endpoint exactly once."""
+    endpoint = endpoint.rstrip("/")
+    if endpoint.endswith("/v1/traces"):
+        return endpoint
+    return f"{endpoint}/v1/traces"
+
+
 def setup_tracing(
     service_name: str,
     service_version: str,
@@ -49,40 +57,43 @@ def setup_tracing(
         logger.warning("opentelemetry-sdk not installed — tracing disabled")
         return
 
-    resource = Resource.create(
-        {
-            "service.name": service_name,
-            "service.version": service_version,
-            "deployment.environment": environment,
-            "service.namespace": "testlookup",
-        }
-    )
+    try:
+        resource = Resource.create(
+            {
+                "service.name": service_name,
+                "service.version": service_version,
+                "deployment.environment": environment,
+                "service.namespace": "testlookup",
+            }
+        )
 
-    provider = TracerProvider(resource=resource)
+        provider = TracerProvider(resource=resource)
 
-    if otlp_endpoint:
-        try:
-            from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-                OTLPSpanExporter,
-            )
+        if otlp_endpoint:
+            try:
+                from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+                    OTLPSpanExporter,
+                )
 
-            exporter = OTLPSpanExporter(
-                endpoint=f"{otlp_endpoint.rstrip('/')}/v1/traces",
-                timeout=10,
-            )
-            provider.add_span_processor(BatchSpanProcessor(exporter))
-            logger.info("OTEL tracing enabled → %s/v1/traces", otlp_endpoint)
-        except ImportError:
-            logger.warning(
-                "opentelemetry-exporter-otlp-proto-http not installed; "
-                "falling back to ConsoleSpanExporter"
-            )
+                trace_endpoint = _otlp_trace_endpoint(otlp_endpoint)
+                exporter = OTLPSpanExporter(endpoint=trace_endpoint, timeout=10)
+                provider.add_span_processor(BatchSpanProcessor(exporter))
+                logger.info("OTEL tracing enabled → %s", trace_endpoint)
+            except ImportError:
+                logger.warning(
+                    "opentelemetry-exporter-otlp-proto-http not installed; "
+                    "falling back to ConsoleSpanExporter"
+                )
+                provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+        else:
+            logger.info("OTEL_EXPORTER_OTLP_ENDPOINT not set — writing spans to stdout")
             provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-    else:
-        logger.info("OTEL_EXPORTER_OTLP_ENDPOINT not set — writing spans to stdout")
-        provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
 
-    trace.set_tracer_provider(provider)
+        trace.set_tracer_provider(provider)
+    except Exception as exc:  # noqa: BLE001 — tracing must not block app startup
+        logger.warning("OTEL tracing initialization failed; tracing disabled: %s", exc)
+        return
+
     _initialised = True
 
     _apply_auto_instrumentors()

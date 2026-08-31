@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +44,7 @@ async def get_all_status(
 async def trigger_probe(
     provider: Optional[str] = None,
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    db: AsyncSession = Depends(get_db),
 ):
     """Trigger an on-demand health probe for all or a specific provider (QA_LEAD+)."""
     from app.services.integration_probe_service import (
@@ -51,8 +52,25 @@ async def trigger_probe(
         persist_probe_results,
     )
 
+    if provider and provider not in ALL_PROBES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Unknown integration provider: {provider}. "
+                f"Supported: {', '.join(sorted(ALL_PROBES))}"
+            ),
+        )
+
     if provider and provider in ALL_PROBES:
-        results = [await ALL_PROBES[provider]()]
+        if provider in ("slack", "teams"):
+            from app.services.integration_config_service import (
+                resolve_global_notification_webhooks,
+            )
+
+            notification_cfg = await resolve_global_notification_webhooks(db)
+            results = [await ALL_PROBES[provider](notification_cfg)]
+        else:
+            results = [await ALL_PROBES[provider]()]
     else:
         from app.services.integration_probe_service import run_all_probes
         results = await run_all_probes()

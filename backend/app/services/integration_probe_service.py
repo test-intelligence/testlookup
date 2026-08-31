@@ -274,17 +274,39 @@ async def run_all_probes() -> list[ProbeResult]:
     import asyncio
 
     notification_cfg = None
+    notification_cfg_error: Exception | None = None
     if "slack" in ALL_PROBES or "teams" in ALL_PROBES:
         from app.db.postgres import AsyncSessionLocal
         from app.services.integration_config_service import resolve_global_notification_webhooks
-        async with AsyncSessionLocal() as db:
-            notification_cfg = await resolve_global_notification_webhooks(db)
+
+        try:
+            async with AsyncSessionLocal() as db:
+                notification_cfg = await resolve_global_notification_webhooks(db)
+        except Exception as exc:  # noqa: BLE001 — isolate config from other probes
+            notification_cfg_error = exc
+            logger.warning(
+                "Notification integration probe configuration unavailable: %s",
+                exc,
+            )
+
+    async def _run_probe(provider, fn):
+        if provider in ("slack", "teams"):
+            if notification_cfg_error is not None:
+                return ProbeResult(
+                    provider,
+                    "down",
+                    0,
+                    (
+                        "Notification configuration unavailable: "
+                        f"{type(notification_cfg_error).__name__}: "
+                        f"{str(notification_cfg_error)[:240]}"
+                    ),
+                )
+            return await fn(notification_cfg)
+        return await fn()
 
     results = await asyncio.gather(
-        *[
-            fn(notification_cfg) if provider in ("slack", "teams") else fn()
-            for provider, fn in ALL_PROBES.items()
-        ],
+        *[_run_probe(provider, fn) for provider, fn in ALL_PROBES.items()],
         return_exceptions=True,
     )
     out: list[ProbeResult] = []
@@ -307,6 +329,7 @@ async def persist_probe_results(
     from app.models.postgres import IntegrationHealthCheck, IntegrationProbeResult
 
     now = datetime.now(timezone.utc)
+    metric_updates: list[tuple[str, float | None]] = []
 
     async with AsyncSessionLocal() as db:
         for r in results:
@@ -347,17 +370,15 @@ async def persist_probe_results(
                 hc.message = r.message
                 hc.response_ms = None
 
-                # Drop the Prometheus series too. The gauge is documented as
+                # Stage removal of the Prometheus series too. The gauge is documented as
                 # 1=healthy / 0.5=degraded / 0=down and has no value meaning
                 # "not monitored", so a skipped provider previously kept its
                 # last reading forever — ollama sat pinned at 1.0 for five
                 # days. An absent series is the honest answer; 0.0 would read
                 # as "down" and 1.0 is a lie. Nothing in infra/ alerts on this
-                # gauge today, so removing the series breaks no rule.
-                try:
-                    integration_health_gauge.remove(r.provider)
-                except KeyError:
-                    pass  # never had a series in this process — nothing to drop
+                # gauge today, so removing the series breaks no rule. Apply it
+                # only after commit so metrics cannot advertise unpersisted state.
+                metric_updates.append((r.provider, None))
                 continue
 
             # Insert history record
@@ -390,11 +411,20 @@ async def persist_probe_results(
             else:
                 hc.consecutive_failures = (hc.consecutive_failures or 0) + 1
 
-            # Update Prometheus gauge
+            # Stage the Prometheus gauge update until the transaction commits.
             gauge_value = 1.0 if r.status == "healthy" else 0.5 if r.status == "degraded" else 0.0
-            integration_health_gauge.labels(provider=r.provider).set(gauge_value)
+            metric_updates.append((r.provider, gauge_value))
 
         await db.commit()
+
+    for provider, gauge_value in metric_updates:
+        if gauge_value is None:
+            try:
+                integration_health_gauge.remove(provider)
+            except KeyError:
+                pass  # never had a series in this process — nothing to drop
+        else:
+            integration_health_gauge.labels(provider=provider).set(gauge_value)
 
     # Check for alerts
     await _check_alerts(results)

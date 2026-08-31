@@ -15,6 +15,21 @@
 #   scripts/gen-dev-env.sh --force    # overwrite an existing .env
 set -euo pipefail
 
+if [[ -n "${TL_PYTHON_BIN:-}" ]]; then
+  PYTHON_CMD=("$TL_PYTHON_BIN")
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_CMD=(python3)
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_CMD=(python)
+elif command -v python.exe >/dev/null 2>&1; then
+  PYTHON_CMD=(python.exe)
+elif command -v py.exe >/dev/null 2>&1; then
+  PYTHON_CMD=(py.exe -3)
+else
+  echo "error: python3, python, or py.exe is required" >&2
+  exit 1
+fi
+
 cd "$(dirname "$0")/.."
 
 ENV_FILE=".env"
@@ -68,7 +83,7 @@ cp "$EXAMPLE" "$ENV_FILE"
 
 # set_kv KEY VALUE — replace `KEY=...` in place (portable: rewrite via python).
 set_kv() {
-  ENV_FILE="$ENV_FILE" python3 - "$1" "$2" <<'PY'
+  ENV_FILE="$ENV_FILE" "${PYTHON_CMD[@]}" - "$1" "$2" <<'PY'
 import os, re, sys
 key, val = sys.argv[1], sys.argv[2]
 p = os.environ["ENV_FILE"]
@@ -109,7 +124,7 @@ set_kv APP_DEBUG "true"
 set_kv DEV_AUTO_LOGIN_ENABLED "true"
 
 # Stamp a clear local-only banner at the top.
-python3 - "$ENV_FILE" <<'PY'
+"${PYTHON_CMD[@]}" - "$ENV_FILE" <<'PY'
 import sys
 p = sys.argv[1]
 banner = (

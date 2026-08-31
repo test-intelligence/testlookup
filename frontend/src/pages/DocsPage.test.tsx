@@ -448,7 +448,11 @@ describe('code block copy control', () => {
     await act(async () => { await Promise.resolve() })
     expect(screen.getByLabelText('Copied')).toBeInTheDocument()
 
-    await act(async () => { vi.advanceTimersByTime(2000) })
+    // Flush the timer and the React update it schedules. The synchronous
+    // helper can leave the state transition queued under a loaded/covered
+    // collection, making this test time out while the assertion waits for a
+    // render that has not been committed yet.
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
     expect(screen.queryByLabelText('Copied')).toBeNull()
     expect(screen.getAllByLabelText('Copy code').length).toBeGreaterThan(0)
   })

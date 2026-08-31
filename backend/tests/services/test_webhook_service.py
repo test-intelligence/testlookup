@@ -10,6 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import sys
+import uuid
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -146,3 +150,327 @@ async def test_emit_event_ignores_unknown_event_type():
             payload={},
         )
     assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_emit_event_database_failure_is_best_effort(monkeypatch):
+    """Webhook persistence failure must not escape into the primary operation."""
+
+    class _BrokenSession:
+        async def __aenter__(self):
+            raise RuntimeError("webhook database unavailable")
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _BrokenSession)
+    monkeypatch.setattr(svc, "_post_allowed", AsyncMock(return_value=True))
+
+    count = await svc.emit_event(
+        "defect.create_requested",
+        project_id=uuid.uuid4(),
+        payload={"summary": "primary operation must survive"},
+    )
+
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_emit_event_dispatches_later_subscriptions_after_enqueue_failure(
+    monkeypatch,
+):
+    subscriptions = [
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            events=["run.completed"],
+        )
+        for _ in range(2)
+    ]
+
+    class _Scalars:
+        def all(self):
+            return subscriptions
+
+    class _Result:
+        def scalars(self):
+            return _Scalars()
+
+    class _Session:
+        def __init__(self):
+            self.pending = None
+
+        async def execute(self, _statement):
+            return _Result()
+
+        def add(self, row):
+            self.pending = row
+
+        async def flush(self):
+            self.pending.id = uuid.uuid4()
+
+        async def commit(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    attempted = []
+
+    def delay(**kwargs):
+        attempted.append(kwargs["delivery_id"])
+        if len(attempted) == 1:
+            raise RuntimeError("first enqueue rejected")
+
+    worker_tasks = ModuleType("app.worker.tasks")
+    worker_tasks.deliver_webhook = SimpleNamespace(delay=delay)
+    monkeypatch.setitem(sys.modules, "app.worker.tasks", worker_tasks)
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _Session)
+    monkeypatch.setattr(svc, "_post_allowed", AsyncMock(return_value=True))
+
+    count = await svc.emit_event(
+        "run.completed",
+        project_id=uuid.uuid4(),
+        payload={"run_id": str(uuid.uuid4())},
+    )
+
+    assert count == 2
+    assert len(attempted) == 2
+
+
+@pytest.mark.asyncio
+async def test_replay_enqueue_failure_marks_new_delivery_failed(monkeypatch):
+    original = SimpleNamespace(
+        id=uuid.uuid4(),
+        subscription_id=uuid.uuid4(),
+        event_type="run.completed",
+        event_payload={"run_id": str(uuid.uuid4())},
+        status="FAILED",
+    )
+    created = []
+
+    class _Result:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class _Session:
+        def __init__(self, replay_lookup=False):
+            self.replay_lookup = replay_lookup
+
+        async def execute(self, _statement):
+            return _Result(created[0] if self.replay_lookup else original)
+
+        def add(self, row):
+            created.append(row)
+
+        async def flush(self):
+            created[0].id = uuid.uuid4()
+
+        async def commit(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    sessions = iter((_Session(), _Session(replay_lookup=True)))
+    worker_tasks = ModuleType("app.worker.tasks")
+    worker_tasks.deliver_webhook = SimpleNamespace(
+        delay=Mock(side_effect=RuntimeError("broker unavailable"))
+    )
+    monkeypatch.setitem(sys.modules, "app.worker.tasks", worker_tasks)
+    monkeypatch.setattr(svc, "AsyncSessionLocal", lambda: next(sessions))
+    monkeypatch.setattr(svc, "_post_allowed", AsyncMock(return_value=True))
+
+    replay_id = await svc.replay_delivery(original.id)
+
+    assert replay_id is None
+    assert created[0].status == "FAILED"
+    assert created[0].error == "webhook replay enqueue failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("http_status", "expected_status"),
+    [
+        (None, "DLQ"),  # network exception
+        (503, "DLQ"),
+        (400, "FAILED"),
+    ],
+)
+async def test_deliver_respects_zero_retry_budget(
+    monkeypatch, http_status, expected_status,
+):
+    """An explicit zero must never be replaced by the default retry limit."""
+    subscription = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        enabled=True,
+        has_secret=False,
+        target_url="https://hooks.example.test/testlookup",
+        max_retries=0,
+        last_delivered_at=None,
+        last_failure_at=None,
+        last_error=None,
+        failure_count=0,
+        total_delivered=0,
+    )
+    delivery = SimpleNamespace(
+        id=uuid.uuid4(),
+        subscription_id=subscription.id,
+        event_type="run.completed",
+        event_payload={"ok": True},
+        status="PENDING",
+        attempt_count=0,
+        error=None,
+        http_status=None,
+        response_preview=None,
+        delivered_at=None,
+    )
+
+    class _Result:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class _Session:
+        calls = 0
+
+        async def execute(self, _statement):
+            self.calls += 1
+            return _Result(delivery if self.calls == 1 else subscription)
+
+        async def commit(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class _Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, *_args, **_kwargs):
+            if http_status is None:
+                raise OSError("receiver unavailable")
+            return SimpleNamespace(status_code=http_status, text="receiver response")
+
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _Session)
+    monkeypatch.setattr(svc, "_post_allowed", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        svc.asyncio,
+        "to_thread",
+        AsyncMock(return_value=(True, "public target")),
+    )
+    monkeypatch.setattr(svc.httpx, "AsyncClient", _Client)
+
+    result = await svc.deliver(delivery.id)
+
+    assert result.get("retry") is not True
+    assert delivery.attempt_count == 1
+    assert delivery.status == expected_status
+
+
+@pytest.mark.asyncio
+async def test_deliver_does_not_send_unsigned_when_configured_secret_is_missing(
+    monkeypatch,
+):
+    from app.services import secret_service
+
+    subscription = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        enabled=True,
+        has_secret=True,
+        target_url="https://hooks.example.test/testlookup",
+        max_retries=5,
+        last_failure_at=None,
+        last_error=None,
+        failure_count=0,
+        last_delivered_at=None,
+        total_delivered=0,
+    )
+    delivery = SimpleNamespace(
+        id=uuid.uuid4(),
+        subscription_id=subscription.id,
+        event_type="run.completed",
+        event_payload={"ok": True},
+        status="PENDING",
+        attempt_count=0,
+        error=None,
+    )
+
+    class _Result:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class _Session:
+        calls = 0
+
+        async def execute(self, _statement):
+            self.calls += 1
+            return _Result(delivery if self.calls == 1 else subscription)
+
+        async def commit(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    post = AsyncMock(
+        return_value=SimpleNamespace(status_code=200, text="unexpected success")
+    )
+
+    class _Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return await post(*args, **kwargs)
+
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _Session)
+    monkeypatch.setattr(svc, "_post_allowed", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        svc.asyncio,
+        "to_thread",
+        AsyncMock(return_value=(True, "public target")),
+    )
+    monkeypatch.setattr(secret_service, "read_secret", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc.httpx, "AsyncClient", _Client)
+
+    result = await svc.deliver(delivery.id)
+
+    post.assert_not_awaited()
+    assert result == {"error": "signing_secret_unavailable"}
+    assert delivery.status == "FAILED"
+    assert "signing secret unavailable" in delivery.error

@@ -42,6 +42,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.shell_utils import bash_environment
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEPLOY_SCRIPT = REPO_ROOT / "homelabsetup" / "deploy-homelab.sh"
 
@@ -128,6 +130,7 @@ def _run(tmp_path: Path, *, get_ok: bool, apply_ok: bool) -> subprocess.Complete
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
+        env=bash_environment(BASH),
         timeout=60,
     )
 

@@ -13,6 +13,14 @@ from app.core.http_client import get_http_client
 logger = logging.getLogger("tools.fetch_app_metrics")
 
 _PROMETHEUS_URL = getattr(settings, "PROMETHEUS_URL", None)
+_MAX_WINDOW_MINUTES = 24 * 60
+_MAX_CUSTOM_METRICS = 8
+_MAX_METRIC_LENGTH = 2_000
+
+
+def _promql_label_value(value: str) -> str:
+    """Escape a string for a PromQL label matcher."""
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
 async def _query_prometheus(metric: str, start: float, end: float, step: str = "30s") -> list[dict]:
@@ -76,10 +84,43 @@ async def fetch_app_metrics(params_json: str) -> str:
     except (json.JSONDecodeError, AttributeError) as exc:
         return json.dumps({"error": f"Invalid JSON: {exc}"})
 
-    service: str = params.get("service_name", "")
-    timestamp_str: str = params.get("timestamp_utc", "")
-    window_min: int = int(params.get("window_minutes", 15))
-    custom_metrics: list[str] = params.get("metrics", [])
+    if not isinstance(params, dict):
+        return json.dumps({"error": "Input JSON must be an object"})
+
+    service_raw = params.get("service_name", "")
+    timestamp_raw = params.get("timestamp_utc", "")
+    window_raw = params.get("window_minutes", 15)
+    metrics_raw = params.get("metrics", [])
+
+    if not isinstance(service_raw, str):
+        return json.dumps({"error": "service_name must be a string"})
+    if not isinstance(timestamp_raw, str):
+        return json.dumps({"error": "timestamp_utc must be a string"})
+    if isinstance(window_raw, bool):
+        return json.dumps({"error": "window_minutes must be an integer"})
+    try:
+        window_min = int(window_raw)
+    except (TypeError, ValueError):
+        return json.dumps({"error": "window_minutes must be an integer"})
+    if not 1 <= window_min <= _MAX_WINDOW_MINUTES:
+        return json.dumps({
+            "error": f"window_minutes must be between 1 and {_MAX_WINDOW_MINUTES}",
+        })
+    if not isinstance(metrics_raw, list):
+        return json.dumps({"error": "metrics must be a list of PromQL strings"})
+    if len(metrics_raw) > _MAX_CUSTOM_METRICS:
+        return json.dumps({"error": f"metrics must contain at most {_MAX_CUSTOM_METRICS} expressions"})
+
+    custom_metrics: list[str] = []
+    for metric in metrics_raw:
+        if not isinstance(metric, str) or not metric.strip():
+            return json.dumps({"error": "metrics must contain non-empty PromQL strings"})
+        if len(metric) > _MAX_METRIC_LENGTH:
+            return json.dumps({"error": f"each metric must be at most {_MAX_METRIC_LENGTH} characters"})
+        custom_metrics.append(metric.strip())
+
+    service = service_raw.strip()
+    timestamp_str = timestamp_raw.strip()
 
     if not _PROMETHEUS_URL:
         return json.dumps({
@@ -93,18 +134,23 @@ async def fetch_app_metrics(params_json: str) -> str:
 
     try:
         ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-    except (ValueError, TypeError):
+    except ValueError:
         ts = datetime.now(timezone.utc)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    else:
+        ts = ts.astimezone(timezone.utc)
 
     start_ts = (ts - timedelta(minutes=window_min)).timestamp()
     end_ts = (ts + timedelta(minutes=2)).timestamp()
 
     # Default metrics to check if none specified
+    service_label = _promql_label_value(service)
     default_metrics = [
-        f'rate(http_server_requests_seconds_count{{service="{service}",status=~"5.."}}[1m])',
-        f'container_memory_working_set_bytes{{container="{service}"}}',
-        f'rate(container_cpu_usage_seconds_total{{container="{service}"}}[1m])',
-        f'histogram_quantile(0.99, rate(http_server_requests_seconds_bucket{{service="{service}"}}[1m]))',
+        f'rate(http_server_requests_seconds_count{{service="{service_label}",status=~"5.."}}[1m])',
+        f'container_memory_working_set_bytes{{container="{service_label}"}}',
+        f'rate(container_cpu_usage_seconds_total{{container="{service_label}"}}[1m])',
+        f'histogram_quantile(0.99, rate(http_server_requests_seconds_bucket{{service="{service_label}"}}[1m]))',
     ]
     metrics_to_query = custom_metrics if custom_metrics else default_metrics
 
