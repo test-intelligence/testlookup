@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-08-30 — the HTML→text conversion that feeds RAG had never executed
+
+Coverage slice 8. `ConfluenceKnowledgeConnector._soup_to_text` walks a
+BeautifulSoup tree and produces the structured text that becomes a knowledge
+chunk — which is then embedded, retrieved, and handed to the LLM as grounding.
+It had **one executed line, the `def`**, across ~17 tag branches.
+
+The placement is what makes it worth covering. A defect here does not raise and
+surfaces as no error anywhere: it produces a *slightly wrong document*, which is
+indexed, retrieved and cited. Losing the `href` from a link leaves an answer
+referencing a page it can no longer point to; flattening a table turns `c1 | c2`
+into `c1c2`, embedded as a single token. The only symptom is an AI that is
+vaguely less useful, which nothing alerts on.
+
+37 tests take both converters to **zero missed statements**:
+
+- **Structure** — all six heading levels map to their own depth; paragraphs keep
+  the blank line a chunker splits on; list items become one bullet per line.
+- **Inline** — bold/italic variants (`strong`/`b`, `em`/`i`), inline code, and
+  fenced `pre` blocks. A code block that loses its fence gets chunked and
+  embedded as prose, which is how a config snippet ends up cited as a sentence.
+- **Links** — text *and* target, plus the no-`href` case Confluence emits for
+  internal artefacts, where the text must survive rather than the node being
+  dropped.
+- **Tables** — cells pipe-separated, rows newline-terminated, `th` treated like
+  `td`.
+- **Unknown tags** — the catch-all passes children through, because silent
+  content loss is the worst outcome for an ingester. Confluence's
+  `ac:structured-macro` yields its body. Deep nesting is still reached.
+- **The defensive branch** — a node that is neither `Tag` nor `NavigableString`
+  returns empty rather than raising; an ingester that raises on one unexpected
+  node loses the whole page instead of one element.
+
+`_regex_strip_html`, the fallback used when BeautifulSoup is unavailable, is
+covered too. It is the offline/air-gapped path, so it is the one most likely to
+be running where nobody is watching: block tags become newlines rather than
+running together, every `<br>` spelling is handled, blank-line runs are
+collapsed, and — the point of a fallback — no angle brackets survive into an
+embedding.
+
+Every expected value was read off the real implementation before being
+asserted, not assumed.
+
+Verified by mutation twice: dropping the `href` from links fails two tests;
+removing the table cell separator fails two more.
+
 ## 2026-08-30 — the WebSocket auth handshake had never executed
 
 Coverage slice 7, and the highest-risk one so far. `routers/live.py::_authenticate_ws`
