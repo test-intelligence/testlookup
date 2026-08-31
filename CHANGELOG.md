@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026-08-30 — the Run Intelligence numbers and prose a human reads
+
+Coverage slice 6: `services/run_intelligence_service.py`, 33.6% covered with
+**261 missed statements**. Per function, the same shape as every slice before
+it — `get_run_mode_summary`, `_generate_and_cache_mode_variant` and
+`_build_and_persist_defect_candidates` each show one executed line. Their
+bodies need a DB session, a Mongo client and an LLM, and tests built that way
+assert the mock.
+
+The pure functions need none of that, and they are the ones whose output a
+person actually reads. 27 tests, all three to **zero missed statements**:
+
+- **`_criticality_from_cluster_size`** labels a failure cluster LOW / MEDIUM /
+  HIGH / CRITICAL from three thresholds. Both sides of every boundary are now
+  pinned, because "20 or more is critical" and "more than 20 is critical" are a
+  one-character difference no type checker sees — and the answer goes on a
+  release call. Plus a monotonicity check: a bigger cluster can never be
+  assigned a *lower* criticality, which guards a reordered `if`-chain where an
+  early `>= 4` would swallow every larger case.
+- **`_build_dimension_scores`** builds the weighted risk breakdown on the run
+  page. The invariant worth having: **the dimension weights sum to exactly
+  1.0**, which is what makes the weighted total a percentage. If they drift,
+  every composite score silently changes scale and no single dimension looks
+  wrong. Also pinned: an absent score dict yields *no* breakdown rather than a
+  full row of zeroes — "never scored" is not "scored zero", the same
+  distinction as `/health/ingestion` and the Library Health panel.
+- **`_variant_to_markdown`** turns a stored variant into the document handed to
+  a developer or a manager. Pinned: section ordering, that an absent field
+  leaves no empty heading, that a blank line separates sections (without it
+  markdown swallows the next heading into the previous paragraph), and that
+  developer detail does not leak into the manager document — the modes exist to
+  show different people different things.
+
+**One behaviour documented rather than changed:** an unrecognised mode renders
+an empty string rather than raising. Neither branch matches, so a typo'd or
+newly-added mode produces a blank document with nothing to explain it. Safe as
+a renderer failure, but worth knowing before blaming the model for an empty
+summary.
+
+Verified by mutation twice: changing the CRITICAL boundary from `>= 20` to
+`> 20` fails exactly the `size == 20` case; dropping the weight from
+`contribution` fails two tests, including the weights-sum-to-one consequence.
+
 ## 2026-08-30 — "Never returns END" was a docstring, not a test
 
 Coverage slice 5, aimed at `agents/workflow.py` — 54.6% covered, **381 missed
