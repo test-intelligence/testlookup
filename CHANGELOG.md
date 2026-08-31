@@ -1,5 +1,56 @@
 # Changelog
 
+## 2026-08-30 — the WebSocket auth handshake had never executed
+
+Coverage slice 7, and the highest-risk one so far. `routers/live.py::_authenticate_ws`
+validates the post-connect handshake for `/ws/...`: the client's first frame
+must be `{"type": "auth", "token": "<JWT>"}`. It returns a `WsSession` on
+success and closes the socket on every failure.
+
+**It had one executed line — the `def`.** The live stream's security boundary
+had never been run by a test.
+
+Every branch in it is a *reject* path, which is the worst place for untested
+code: a rejection that accidentally returns a session puts an unauthenticated
+client on a project's live test stream, and nothing raises. 15 tests now cover
+all six, plus the success path, taking the function to **zero missed
+statements**:
+
+| input | outcome |
+| --- | --- |
+| no frame within the auth window | closed 4401 "Auth timeout" |
+| malformed JSON | closed 4400 |
+| wrong message type | closed 4400 |
+| missing or non-string token | closed 4400, validator never called |
+| non-UUID `project_id` | closed 4400, validator never called |
+| validator rejects | closed with **its** code (4403 ≠ 4401) |
+| valid handshake | `WsSession`, socket left open |
+
+Three of those are contracts rather than incidental behaviour. The close codes
+are an SDK contract — 4401 tells a client its credentials are the problem, 4400
+tells it the frame was malformed and retrying with the same token will not
+help, and collapsing 4403 into 4401 would send a non-member into a retry loop
+it can never win. The type and UUID checks run *before* the validator, so junk
+input cannot spend a token lookup. And the disconnect branch deliberately does
+**not** close: the socket is already gone, and closing it would raise inside
+the auth path.
+
+Only the socket is faked. That is not a mock standing in for the subject — the
+frame the client sends *is* the input and closing *is* the observable
+behaviour. Token validation is stubbed at its own seam, which has its own
+tests.
+
+Verified by mutation twice, both auth bypasses: dropping the token type check
+fails six tests; ignoring the validator's rejection fails the close-code
+passthrough.
+
+Method note: this target came from ranking uncovered functions by *testability*
+rather than by size — no collaborator in the signature **and** none constructed
+in the body. The first pass at that filter only read signatures and kept
+surfacing functions that open their own `AsyncSessionLocal`. The corrected
+filter reports **201 such functions with 2,219 missed statements** still
+outstanding, so the pure-logic seam is nowhere near exhausted.
+
 ## 2026-08-30 — the Run Intelligence numbers and prose a human reads
 
 Coverage slice 6: `services/run_intelligence_service.py`, 33.6% covered with
