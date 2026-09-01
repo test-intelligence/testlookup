@@ -122,6 +122,31 @@ class ProjectStorageResponse(BaseModel):
     fully_measured: bool = True
 
 
+class DeletedProjectStorageEntry(BaseModel):
+    project_id: str
+    name: str
+    #: True when the nightly beat would eventually sweep this project anyway.
+    #: The beat selects on `ProjectRetentionPolicy.enabled` alone and does NOT
+    #: filter `is_active`, so a project that opted in before deletion is still
+    #: reachable. One that never opted in — the default — is not.
+    reachable_by_retention: bool
+    footprint: ProjectStorageResponse
+
+
+class DeletedProjectsStorageResponse(BaseModel):
+    computed_at: datetime
+    projects_total: int
+    projects_measured: int
+    #: True when `limit` cut the scan short. A capped total that did not say so
+    #: would understate the very figure this endpoint exists to surface.
+    truncated: bool = False
+    projects: List[DeletedProjectStorageEntry] = Field(default_factory=list)
+    total_bytes: Optional[int] = None
+    total_is_estimate: bool = False
+    #: Deleted projects that no retention policy will ever reach — the headline.
+    unreachable_by_retention: int = 0
+
+
 class UIDismissalCreate(BaseModel):
     """Dismiss a UI prompt for the authenticated user.
 

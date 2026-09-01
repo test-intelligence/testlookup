@@ -293,3 +293,124 @@ def test_payload_renames_bytes_field_for_the_wire():
 
     assert payload["bytes"] == 5
     assert "bytes_" not in payload
+
+
+# ── deleted projects: the data nothing will ever reclaim ─────────────────────
+
+
+def _deleted_rows_db(mocker, deleted_rows, run_rows=None):
+    """Session stub: first execute returns the deleted-project rows, then each
+    per-project footprint call returns the run rows and its two scalar counts."""
+    db = mocker.AsyncMock()
+    deleted_result = mocker.MagicMock()
+    deleted_result.all.return_value = deleted_rows
+    run_result = mocker.MagicMock()
+    run_result.all.return_value = run_rows or []
+    db.execute.side_effect = [deleted_result] + [run_result] * len(deleted_rows)
+    db.scalar.side_effect = [0, 0] * len(deleted_rows)
+    return db
+
+
+@pytest.mark.asyncio
+async def test_a_project_that_never_opted_in_is_flagged_unreachable(mocker):
+    """The default case, and the whole point of the endpoint.
+
+    `enabled` defaults False, and the nightly beat selects on `enabled` alone.
+    So a project deleted without retention on is purged by nothing, ever —
+    while one that opted in before deletion is still swept, because the beat
+    does NOT filter `is_active`.
+    """
+    opted_in, never = uuid.uuid4(), uuid.uuid4()
+    db = _deleted_rows_db(
+        mocker,
+        [(opted_in, "Swept", True), (never, "Stranded", None)],
+    )
+
+    report = await svc.deleted_project_footprints(
+        db, mongo=_FakeMongo(0, 0), storage=_FakeStorage({})
+    )
+
+    by_name = {p.name: p for p in report.projects}
+    assert by_name["Swept"].reachable_by_retention is True
+    assert by_name["Stranded"].reachable_by_retention is False
+    assert report.unreachable_by_retention == 1
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_policy_row_is_still_unreachable(mocker):
+    """A policy row that exists but is switched off reaches nothing.
+
+    `enabled=False` and "no row at all" are different states in the project
+    list, but identical to the beat — neither is ever swept.
+    """
+    db = _deleted_rows_db(mocker, [(uuid.uuid4(), "Disabled", False)])
+
+    report = await svc.deleted_project_footprints(
+        db, mongo=_FakeMongo(0, 0), storage=_FakeStorage({})
+    )
+
+    assert report.projects[0].reachable_by_retention is False
+    assert report.unreachable_by_retention == 1
+
+
+@pytest.mark.asyncio
+async def test_a_capped_scan_says_so_rather_than_understating(mocker):
+    """A silently truncated total would understate the number this endpoint
+    exists to surface — which is the failure it is meant to prevent."""
+    rows = [(uuid.uuid4(), f"P{i}", None) for i in range(5)]
+    db = _deleted_rows_db(mocker, rows[:2])
+    # The service sees 5 total but is asked to measure 2.
+    deleted_result = mocker.MagicMock()
+    deleted_result.all.return_value = rows
+    run_result = mocker.MagicMock()
+    run_result.all.return_value = []
+    db.execute.side_effect = [deleted_result] + [run_result] * 2
+    db.scalar.side_effect = [0, 0] * 2
+
+    report = await svc.deleted_project_footprints(
+        db, limit=2, mongo=_FakeMongo(0, 0), storage=_FakeStorage({})
+    )
+
+    assert report.projects_total == 5
+    assert len(report.projects) == 2
+    assert report.truncated is True
+
+
+@pytest.mark.asyncio
+async def test_no_deleted_projects_is_not_truncated(mocker):
+    db = _deleted_rows_db(mocker, [])
+
+    report = await svc.deleted_project_footprints(
+        db, mongo=_FakeMongo(0, 0), storage=_FakeStorage({})
+    )
+
+    assert report.projects_total == 0
+    assert report.truncated is False
+    assert report.unreachable_by_retention == 0
+    assert report.total_bytes is None, "nothing measured must not total to zero"
+
+
+@pytest.mark.asyncio
+async def test_the_scan_actually_filters_on_deleted_projects(mocker):
+    """Assert the predicate, not just the rows the mock hands back.
+
+    Caught by mutation: flipping ``is_active.is_(False)`` to ``is_(True)`` —
+    scanning ACTIVE projects and calling them deleted — passed every other test
+    in this file. A mocked session returns its canned rows whatever the WHERE
+    clause says, so nothing above can see the filter at all.
+
+    Compiling the statement is the cheap way to see it. The alternative is a
+    real-database integration test, which is worth having and is not this.
+    """
+    db = _deleted_rows_db(mocker, [])
+
+    await svc.deleted_project_footprints(
+        db, mongo=_FakeMongo(0, 0), storage=_FakeStorage({})
+    )
+
+    stmt = db.execute.await_args_list[0].args[0]
+    compiled = str(stmt.compile(compile_kwargs={"literal_binds": True})).lower()
+    assert "is_active" in compiled
+    assert "is_active = false" in compiled or "is_active is false" in compiled, (
+        f"the scan must select DELETED projects; compiled WHERE was: {compiled}"
+    )

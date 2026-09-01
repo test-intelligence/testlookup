@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.mongo import Collections, get_mongo_db
 from app.db.storage import get_storage_provider
-from app.models.postgres import TestCase, TestRun
+from app.models.postgres import Project, ProjectRetentionPolicy, TestCase, TestRun
 
 logger = structlog.get_logger(__name__)
 
@@ -283,6 +283,137 @@ async def _mongo_footprint(
 #: tree still gives the bulk of the figure; the alternative is an unbounded
 #: number of LIST calls on a large project.
 MAX_RUN_PREFIXES = 2000
+
+
+#: How many deleted projects one call will actually measure. Each footprint
+#: costs at least one paginated object-store listing, so this is bounded and
+#: the response says when it truncated — a silently capped total would
+#: understate the very number this endpoint exists to surface.
+MAX_DELETED_PROJECTS_SCANNED = 25
+
+
+@dataclass
+class DeletedProjectFootprint:
+    project_id: str
+    name: str
+    #: True when the nightly beat would eventually purge this project anyway.
+    #: The beat selects on ``ProjectRetentionPolicy.enabled`` **alone** and does
+    #: not filter ``is_active``, so a deleted project that opted in before
+    #: deletion still gets swept. One that never opted in — the default, since
+    #: ``enabled`` defaults False — is purged by nothing, ever.
+    reachable_by_retention: bool
+    footprint: ProjectStorageFootprint
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "project_id": self.project_id,
+            "name": self.name,
+            "reachable_by_retention": self.reachable_by_retention,
+            "footprint": self.footprint.as_payload(),
+        }
+
+
+@dataclass
+class DeletedProjectsReport:
+    computed_at: datetime
+    projects_total: int
+    projects: list[DeletedProjectFootprint] = field(default_factory=list)
+
+    @property
+    def truncated(self) -> bool:
+        return self.projects_total > len(self.projects)
+
+    @property
+    def total_bytes(self) -> Optional[int]:
+        parts = [
+            p.footprint.total_bytes
+            for p in self.projects
+            if p.footprint.total_bytes is not None
+        ]
+        return sum(parts) if parts else None
+
+    @property
+    def total_is_estimate(self) -> bool:
+        return any(p.footprint.total_is_estimate for p in self.projects)
+
+    @property
+    def unreachable_by_retention(self) -> int:
+        """Deleted projects nothing will ever purge — the headline number."""
+        return sum(1 for p in self.projects if not p.reachable_by_retention)
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "computed_at": self.computed_at,
+            "projects_total": self.projects_total,
+            "projects_measured": len(self.projects),
+            "truncated": self.truncated,
+            "projects": [p.as_payload() for p in self.projects],
+            "total_bytes": self.total_bytes,
+            "total_is_estimate": self.total_is_estimate,
+            "unreachable_by_retention": self.unreachable_by_retention,
+        }
+
+
+async def deleted_project_footprints(
+    db: AsyncSession,
+    *,
+    limit: int = MAX_DELETED_PROJECTS_SCANNED,
+    mongo: Any = None,
+    storage: Any = None,
+    now: Optional[datetime] = None,
+) -> DeletedProjectsReport:
+    """What deleted projects are still costing, and what will never reclaim it.
+
+    Deleting a project sets ``is_active = False`` and revokes its credentials.
+    Nothing then reconciles the data, and the three retention paths disagree
+    about it: the nightly beat does not check ``is_active`` (so it sweeps a
+    deleted project **if it opted in**), the manual purge does check and 404s,
+    and preview does not check and works. Since ``enabled`` defaults to False,
+    the default case — delete a project that never turned retention on — is
+    purged by nothing, ever, across all five stores, and is invisible on every
+    screen in the product.
+
+    Measured in this codebase already: ``purge_project_documents``'s own
+    docstring records 49,380 search-index documents against 600 belonging to
+    active projects — 98.8% was deleted projects' embeddings.
+
+    There is no ``projects.deleted_at`` column, so this cannot report **when**
+    a project was deleted, only that it was. Ageing a reclamation policy needs
+    that column first.
+    """
+    computed_at = now or datetime.now(timezone.utc)
+
+    # One query for the deleted projects and their retention posture — the
+    # per-project lookup this endpoint exists to avoid is the object-store
+    # listing, not this.
+    rows = (
+        await db.execute(
+            select(Project.id, Project.name, ProjectRetentionPolicy.enabled)
+            .outerjoin(
+                ProjectRetentionPolicy,
+                ProjectRetentionPolicy.project_id == Project.id,
+            )
+            .where(Project.is_active.is_(False))
+            .order_by(Project.name)
+        )
+    ).all()
+
+    report = DeletedProjectsReport(
+        computed_at=computed_at, projects_total=len(rows)
+    )
+    for project_id, name, enabled in rows[:limit]:
+        footprint = await project_storage_footprint(
+            db, project_id, mongo=mongo, storage=storage, now=computed_at
+        )
+        report.projects.append(
+            DeletedProjectFootprint(
+                project_id=str(project_id),
+                name=name,
+                reachable_by_retention=bool(enabled),
+                footprint=footprint,
+            )
+        )
+    return report
 
 
 async def project_storage_footprint(

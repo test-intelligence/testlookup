@@ -14,6 +14,49 @@ test mocks `op`, so it never saw the datatype mismatch). The Postgres
 migration-postconditions integration test also had its expected head bumped
 from `0144` to `0145` — it was masked while the broken `0145` upgrade aborted
 before that assertion could run.
+## 2026-09-01 — the data deleted projects leave behind, and what will never reclaim it
+
+Deleting a project sets `is_active = False` and revokes its credentials.
+Nothing then reconciles the data, and the three retention paths disagree about
+what happens next: the nightly beat selects on
+`ProjectRetentionPolicy.enabled` **alone** and does not filter `is_active`, so
+it sweeps a deleted project *if it opted in*; the manual purge does check and
+404s; preview does not check and works. Since `enabled` defaults to `false`,
+the default case — delete a project that never turned retention on — is purged
+by **nothing, ever**, across all five stores, and is invisible on every screen.
+
+This is already measured in the codebase. `purge_project_documents`'s own
+docstring records 49,380 search-index documents against 600 belonging to active
+projects: **98.8% of the index was deleted projects' embeddings.**
+
+`GET /api/v1/admin/storage/deleted-projects` reports every inactive project
+with its footprint per store and, for each, whether any retention policy will
+ever reach it. `unreachable_by_retention` is the headline — the count of
+deleted projects holding data nothing will reclaim.
+
+It lives on its own router rather than on `retention.py`, which is mounted at
+`/api/v1/projects`: any literal segment added there is matched against the
+`{project_id}` UUID converter first and 422s.
+
+Bounded by `limit`, because each footprint costs at least one paginated
+object-store listing. `truncated` and `projects_measured` say when the answer
+is partial — a silently capped total would understate the very number this
+endpoint exists to surface.
+
+Read-only. It reports what is stranded; it does not delete it. Reclamation
+needs a `projects.deleted_at` column that does not exist yet (so this cannot
+report *when* a project was deleted), a grace window, and a decision about
+which of the three inconsistent `is_active` behaviours is correct — that is its
+own change.
+
+Tests: `backend/tests/test_storage_accounting.py` (16, up from 11). One of them
+exists because mutation testing found a hole: flipping the scan from
+`is_active = false` to `true` — reporting ACTIVE projects as deleted — passed
+every other test in the file, because a mocked session returns its canned rows
+whatever the WHERE clause says. The predicate is now asserted against the
+compiled statement.
+
+
 ## 2026-09-01 — a failed reindex reported as "indexed nothing"
 
 Same defect class as the retention purge fix above, on the indexing surface.
