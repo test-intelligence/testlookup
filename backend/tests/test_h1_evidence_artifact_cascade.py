@@ -24,6 +24,22 @@ def _ondelete(column: str) -> str | None:
     return next(iter(EvidenceArtifact.__table__.c[column].foreign_keys)).ondelete
 
 
+def _purge_source() -> str:
+    """The whole purge implementation, wherever its halves currently live.
+
+    S2a split ``run_purge`` into a resolution phase and ``execute_candidates``.
+    These guards read source, so a naive ``getsource(run_purge)`` silently stops
+    seeing the code it is meant to protect the moment anything moves — the
+    assertion does not fail, it just finds nothing and passes.
+
+    Concatenated in EXECUTION order (resolve, then execute) so the ordering
+    assertion below stays meaningful across the split.
+    """
+    return inspect.getsource(retention_service.run_purge) + inspect.getsource(
+        retention_service.execute_candidates
+    )
+
+
 def test_evidence_artifact_run_link_detaches_rather_than_cascades():
     """The whole defect in one assertion.
 
@@ -58,7 +74,7 @@ def test_project_scope_is_stamped_before_the_run_delete_not_after():
     have created another. Stamping after the delete would be too late, and
     would still pass a test that only checked the stamp exists.
     """
-    source = inspect.getsource(retention_service.run_purge)
+    source = _purge_source()
 
     stamp = source.find("update(EvidenceArtifact)")
     run_delete = source.find("delete(TestRun)")
@@ -73,8 +89,10 @@ def test_project_scope_is_stamped_before_the_run_delete_not_after():
 
 def test_the_stamp_only_fills_missing_scope():
     """It must not overwrite a project_id a writer already set."""
-    source = inspect.getsource(retention_service.run_purge)
-    stamp_block = source.split("update(EvidenceArtifact)", 1)[1][:400]
+    source = _purge_source()
+    parts = source.split("update(EvidenceArtifact)", 1)
+    assert len(parts) == 2, "the EvidenceArtifact stamp is gone — this guard found nothing"
+    stamp_block = parts[1][:400]
 
     assert "project_id.is_(None)" in stamp_block, (
         "the stamp must be conditional on project_id being NULL; an "

@@ -503,6 +503,8 @@ jobs:
           tests/integration/test_search_count_shortcut_postgres.py
           tests/integration/test_test_case_lifecycle_postgres.py
           tests/integration/test_decision_report_supersession_postgres_mongo.py
+          tests/integration/test_protected_artifact_cascade_postgres.py
+          tests/integration/test_purge_executor_against_real_postgres.py
           tests/regression/test_notification_history_schema.py
 
   # ─────────────────────────────────────────────────────────────
