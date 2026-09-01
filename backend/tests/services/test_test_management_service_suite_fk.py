@@ -176,6 +176,10 @@ def _existing_case(project_id: uuid.UUID, **overrides) -> SimpleNamespace:
         title="old",
         description=None,
         steps=None,
+        # Rich-detail authored parameter definitions. The update path
+        # snapshots this onto the new TestCaseVersion, so the stub must
+        # carry the attribute exactly as the real ManagedTestCase model does.
+        parameters=None,
         expected_result=None,
         status="draft",
         version=1,
@@ -267,3 +271,32 @@ async def test_update_unrelated_field_preserves_fk(monkeypatch):
     assert result.title == "Brand new title"
     assert result.test_suite_id == pinned_fk
     db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_snapshots_parameters_into_version(monkeypatch):
+    """The version row written on update must snapshot the case's rich-detail
+    ``parameters``. Regression: the update path reads ``test_case.parameters``,
+    so a case (or stub) lacking that attribute crashes the whole update."""
+    project_id = uuid.uuid4()
+    authored_params = [{"name": "env", "value": "staging", "sensitive": False}]
+    existing = _existing_case(
+        project_id, suite_name="Regression", test_suite_id=uuid.uuid4(),
+        parameters=authored_params,
+    )
+
+    monkeypatch.setattr(svc, "get_test_case_or_404", AsyncMock(return_value=existing))
+    monkeypatch.setattr(svc, "audit_event", AsyncMock())
+
+    added: list = []
+    db = AsyncMock()
+    db.execute = AsyncMock()  # unrelated field → resolver not called
+    db.flush = AsyncMock()
+    db.add = added.append
+
+    payload = ManagedTestCaseUpdate(title="Renamed")
+    await svc.update_managed_test_case(db, existing.id, payload, _fake_user())
+
+    version_rows = [o for o in added if type(o).__name__ == "TestCaseVersion"]
+    assert version_rows, "update must write a TestCaseVersion snapshot"
+    assert version_rows[-1].parameters == authored_params

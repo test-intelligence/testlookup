@@ -8,6 +8,8 @@ Covers:
   - Sensitive key expansion
   - Dict redaction with PII in nested values
 """
+import json
+
 from app.services.redaction_service import (
     redact_text,
     redact_dict,
@@ -276,22 +278,26 @@ class TestRedactionEdgeCases:
         assert result["logs"][1]["kept"] == "safe"
         assert result["logs"][2] == 42  # non-string non-dict pass-through
 
-    def test_redact_dict_max_recursion_depth_returns_subtree_unchanged(self):
-        """Past the depth limit, the subtree is returned as-is and a warning
-        is logged. The value still needs to be safe enough for callers to
-        handle — they should pre-flatten before calling."""
+    def test_redact_dict_max_recursion_depth_fails_closed(self):
+        """Past the depth limit the redactor fails closed: the capped subtree
+        is replaced with ``REDACTED`` and a warning is logged. A depth cap must
+        never return an unredacted subtree, so a sensitive value buried below
+        the limit can never leak through."""
         # Build an 11-deep nesting (exceeds _MAX_RECURSION_DEPTH = 10).
         deep: dict = {"password": "leaked"}
         for _ in range(11):
             deep = {"nested": deep}
         result = redact_dict(deep)
-        # Walk down 10 levels — outer levels are processed normally.
-        cursor = result
-        for _ in range(10):
+        # Walk down the outer levels — they are processed normally — until the
+        # value stops being a dict, which is where the depth cap kicked in.
+        cursor: object = result
+        while isinstance(cursor, dict):
+            assert "password" not in cursor  # the leaf never survived intact
             cursor = cursor["nested"]
-        # The bottom subtree comes back unchanged. This is the documented
-        # depth-limit fallback — callers shouldn't pass cycles into the redactor.
-        assert cursor == {"password": "leaked"} or cursor.get("nested") is not None
+        # The capped subtree is the fail-closed sentinel, not the raw payload.
+        assert cursor == REDACTED
+        # And the secret never appears anywhere in the redacted output.
+        assert "leaked" not in json.dumps(result)
 
     def test_redact_dict_none_passthrough(self):
         # ``not data`` covers None and {} — both return as-is so callers
