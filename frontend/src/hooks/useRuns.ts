@@ -41,7 +41,18 @@ export function useTestCases(runId?: string, params?: Record<string, unknown>) {
 export function useTestCase(runId?: string, testId?: string) {
   return useSWR(
     runId && testId ? ['test-case', runId, testId] : null,
-    () => runsService.getTest(runId as string, testId as string)
+    async () => {
+      try {
+        return await runsService.getEnrichedTest(runId as string, testId as string)
+      } catch (error) {
+        // Older deployments do not expose the additive endpoint yet. Only
+        // fall back for endpoint absence; a real authorization/server error
+        // must remain visible to the caller.
+        const status = (error as { response?: { status?: unknown } })?.response?.status
+        if (status === 404 || status === 405) return runsService.getTest(runId as string, testId as string)
+        throw error
+      }
+    },
   )
 }
 

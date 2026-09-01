@@ -469,6 +469,24 @@ class TestCase(Base):
     is_flaky_run: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     stack_trace: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     step_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Source identity/provenance for enriched test-detail reads (migration
+    # 0140). These are intentionally nullable: not every producer has stable
+    # external identifiers or reports its framework version.
+    source_uuid: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    source_history_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    source_test_case_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    parser_format: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    parser_version: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    source_parameters: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    source_links: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    source_labels: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    source_extensions: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    service_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    component_names: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # Explicitly distinguishes a producer that supplied usable top-level steps
+    # from a sparse/malformed report. It is non-null so clients never need to
+    # infer presence from the legacy nullable ``step_count`` field.
+    steps_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     # S3 reference
     minio_s3_prefix: Mapped[Optional[str]] = mapped_column(String(1000))
@@ -2084,6 +2102,9 @@ class ManagedTestCase(Base):
         ForeignKey("test_suites.id", ondelete="SET NULL"), nullable=True
     )
     tags: Mapped[Optional[list]] = mapped_column(JSON)              # list[str]
+    # Optional authored parameter definitions. Values are masked at the rich
+    # detail boundary when the author marks them sensitive.
+    parameters: Mapped[Optional[list]] = mapped_column(JSON)
 
     # Lifecycle state machine
     # draft → review_requested → under_review → approved → active → deprecated
@@ -2155,6 +2176,7 @@ class TestCaseVersion(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     steps: Mapped[Optional[list]] = mapped_column(JSON)
+    parameters: Mapped[Optional[list]] = mapped_column(JSON)
     expected_result: Mapped[Optional[str]] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
 

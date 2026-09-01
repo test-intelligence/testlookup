@@ -477,10 +477,37 @@ async def _upsert_test_case(
     from app.services.privacy_service import sanitize_for_persistence as _sanitize  # noqa: PLC0415
     _safe_error = _sanitize(case_data.get("error_message") or "")
 
+    def _bounded_source_metadata(value):
+        """Redact and cap source metadata before persistence/indexing."""
+        if not isinstance(value, (list, dict)):
+            return None
+        from app.services.redaction_service import redact_dict  # noqa: PLC0415
+        bounded = value[:100] if isinstance(value, list) else dict(list(value.items())[:100])
+        return _redact_dict_or_list(bounded, redact_dict)
+
     if existing:
         existing.status = status
         existing.duration_ms = case_data.get("duration_ms")
         existing.error_message = _safe_error
+        source_uuid = case_data.get("source_uuid") or case_data.get("allure_uuid")
+        if source_uuid is not None:
+            existing.source_uuid = str(source_uuid)[:255]
+        for field in ("source_history_id", "source_test_case_id"):
+            value = case_data.get(field)
+            if value is not None:
+                setattr(existing, field, str(value)[:255])
+        parser_version = case_data.get("parser_version")
+        if parser_version is not None:
+            existing.parser_version = str(parser_version)[:100]
+        parser_format = case_data.get("parser_format") or case_data.get("framework")
+        if parser_format is not None:
+            existing.parser_format = str(parser_format)[:100]
+        for field in ("source_parameters", "source_links", "source_labels", "source_extensions", "component_names"):
+            value = case_data.get(field)
+            if value is not None:
+                setattr(existing, field, _bounded_source_metadata(value))
+        if case_data.get("service_name") is not None:
+            existing.service_name = str(case_data["service_name"])[:255]
         tc = existing
     else:
         tc = TestCase(
@@ -502,6 +529,22 @@ async def _upsert_test_case(
             error_message=_safe_error,
             minio_s3_prefix=case_data.get("minio_s3_prefix"),
             has_attachments=bool(case_data.get("attachments")),
+            source_uuid=(str(case_data.get("source_uuid") or case_data.get("allure_uuid"))[:255]
+                         if (case_data.get("source_uuid") or case_data.get("allure_uuid")) is not None else None),
+            source_history_id=(str(case_data["source_history_id"])[:255]
+                               if case_data.get("source_history_id") is not None else None),
+            source_test_case_id=(str(case_data["source_test_case_id"])[:255]
+                                 if case_data.get("source_test_case_id") is not None else None),
+            parser_format=(str(case_data.get("parser_format") or case_data.get("framework"))[:100]
+                           if (case_data.get("parser_format") or case_data.get("framework")) is not None else None),
+            parser_version=(str(case_data["parser_version"])[:100]
+                            if case_data.get("parser_version") is not None else None),
+            source_parameters=_bounded_source_metadata(case_data.get("source_parameters")),
+            source_links=_bounded_source_metadata(case_data.get("source_links")),
+            source_labels=_bounded_source_metadata(case_data.get("source_labels")),
+            source_extensions=_bounded_source_metadata(case_data.get("source_extensions")),
+            service_name=(str(case_data["service_name"])[:255] if case_data.get("service_name") is not None else None),
+            component_names=_bounded_source_metadata(case_data.get("component_names")),
         )
         db.add(tc)
 
@@ -540,13 +583,32 @@ async def _upsert_test_case(
         ))
 
     # ── Per-run granular metadata + latest-run-only step/attachment snapshot ──
-    raw_steps = case_data.get("steps") or []
-    raw_attachments = case_data.get("attachments") or []
+    raw_steps = case_data.get("steps")
+    # Producer payloads are untrusted. Missing, null, scalar, or mixed values
+    # are sparse report data, not an ingestion error. Keep only node dicts so
+    # counts and persistence cannot be inflated by malformed values.
+    raw_steps = (
+        [node for node in raw_steps if isinstance(node, dict)]
+        if isinstance(raw_steps, list)
+        else []
+    )
+    raw_attachments = case_data.get("attachments")
+    raw_attachments = (
+        [att for att in raw_attachments if isinstance(att, dict)]
+        if isinstance(raw_attachments, list)
+        else []
+    )
     tc.retry_count = case_data.get("retry_count")
     tc.is_flaky_run = case_data.get("is_flaky") if case_data.get("is_flaky") is not None else None
     tc.stack_trace = _sanitize(case_data.get("stack_trace") or "") or None
-    tc.step_count = len(raw_steps) if raw_steps else (0 if "steps" in case_data else None)
+    tc.step_count = len(raw_steps) if "steps" in case_data else None
+    tc.steps_present = bool(raw_steps)
+    tc.has_attachments = bool(raw_attachments)
 
+    # Preserve the existing snapshot semantics: a sparse report does not erase
+    # a previously captured canonical snapshot. The per-run row still records
+    # the explicit false/zero availability above, so callers can distinguish
+    # sparse current data from a populated report without a destructive write.
     if raw_steps or raw_attachments:
         await _persist_step_snapshot(
             db, run, fingerprint, case_data, tc,
@@ -748,16 +810,39 @@ async def _insert_step(
             await _insert_step(db, canonical_id, run_id, child, step_id, depth + 1, counter)
 
 
-def _redact_dict_or_list(value, redact_dict):
+def _redact_dict_or_list(value, redact_dict, *, _depth: int = 0):
     """Redact a step ``parameters`` value (Allure = list[{name,value}]; pytest /
     others may use a dict). ``redact_dict`` only takes a dict, so wrap a list:
-    redact each dict item, leave non-dict items as-is (mirrors redact_dict's own
-    list branch)."""
+    redact each dict item and free-form string item. Nested lists are bounded
+    by the same recursion limit as the shared redaction helper."""
+    if _depth >= 10:
+        return "[REDACTED]"
     if isinstance(value, dict):
-        return redact_dict(value)
+        redacted = redact_dict(value, _depth=_depth)
+        if not isinstance(redacted, dict):
+            return redacted
+        mode = str(redacted.get("mode") or "").lower()
+        if redacted.get("masked") is True or mode in {"masked", "hidden"}:
+            if "value" in redacted:
+                redacted["value"] = None
+            redacted["masked"] = True
+        return redacted
     if isinstance(value, list):
-        return [redact_dict(item) if isinstance(item, dict) else item for item in value]
+        return [
+            _redact_dict_or_list(item, redact_dict, _depth=_depth + 1)
+            if isinstance(item, (dict, list))
+            else _redact_scalar(item, redact_dict, _depth + 1)
+            if isinstance(item, str)
+            else item
+            for item in value[:100]
+        ]
     return value
+
+
+def _redact_scalar(value: str, redact_dict, depth: int):
+    """Redact free-form list values without assuming depth returns a dict."""
+    wrapped = redact_dict({"value": value}, _depth=depth)
+    return wrapped.get("value") if isinstance(wrapped, dict) else wrapped
 
 
 def _map_step_status(raw) -> str:

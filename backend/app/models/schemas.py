@@ -446,6 +446,7 @@ class TestAttachmentResponse(BaseModel):
     """Index-only attachment metadata (Phase 1 stores refs, not bytes)."""
     id: uuid.UUID
     test_step_id: Optional[uuid.UUID] = None
+    source_test_run_id: Optional[uuid.UUID] = None
     name: str
     source_ref: Optional[str] = None
     media_type: Optional[str] = None
@@ -471,7 +472,10 @@ class TestStepResponse(BaseModel):
     assertion_trace: Optional[str] = None
     expected_value: Optional[str] = None
     actual_value: Optional[str] = None
-    parameters: Optional[Dict[str, Any]] = None
+    # Allure commonly emits a list of {name, value} objects; other producers
+    # emit a mapping. Values are intentionally Any so one malformed parameter
+    # cannot turn an otherwise valid test-detail response into a 500.
+    parameters: Optional[Union[Dict[str, Any], List[Any]]] = None
     created_at: datetime
     steps: List["TestStepResponse"] = Field(default_factory=list)
     attachments: List[TestAttachmentResponse] = Field(default_factory=list)
@@ -479,6 +483,98 @@ class TestStepResponse(BaseModel):
 
 
 TestStepResponse.model_rebuild()
+
+
+class TestCaseIdentitySection(BaseModel):
+    """Stable and source-native identifiers for one executed test result."""
+
+    test_case_id: uuid.UUID
+    test_run_id: uuid.UUID
+    canonical_test_case_id: Optional[uuid.UUID] = None
+    test_fingerprint: str
+    test_name: str
+    full_name: Optional[str] = None
+    source_uuid: Optional[str] = None
+    source_history_id: Optional[str] = None
+    source_test_case_id: Optional[str] = None
+    history_id: Optional[str] = None
+    fingerprint: Optional[str] = None
+    display_name: Optional[str] = None
+
+
+class TestCaseClassificationSection(BaseModel):
+    """Classification fields supplied by the report or existing catalog."""
+
+    suite_name: Optional[str] = None
+    class_name: Optional[str] = None
+    package_name: Optional[str] = None
+    severity: Optional[str] = None
+    feature: Optional[str] = None
+    story: Optional[str] = None
+    epic: Optional[str] = None
+    owner: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    # Ownership is nullable in this MVP; reports must not invent it.
+    service_name: Optional[str] = None
+    component_name: Optional[str] = None
+    suite: Optional[Dict[str, Optional[str]]] = None
+    service: Optional[Dict[str, Any]] = None
+    components: List[Dict[str, Any]] = Field(default_factory=list)
+    file_path: Optional[str] = None
+    framework: Optional[str] = None
+    language: Optional[str] = None
+    labels: List[Dict[str, str]] = Field(default_factory=list)
+
+
+class TestCaseExecutionSection(BaseModel):
+    """Outcome and bounded execution metadata for the result snapshot."""
+
+    status: TestStatus
+    duration_ms: Optional[int] = None
+    retry_count: Optional[int] = None
+    is_flaky_run: Optional[bool] = None
+    step_count: Optional[int] = None
+    steps_present: bool = False
+    has_attachments: bool = False
+    failure_category: Optional[str] = None
+    error_message: Optional[str] = None
+    stack_trace: Optional[str] = None
+    parameters: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class TestCaseProvenanceSection(BaseModel):
+    """Where the current normalized detail came from."""
+
+    source_test_run_id: Optional[uuid.UUID] = None
+    parser_format: Optional[str] = None
+    parser_version: Optional[str] = None
+    minio_s3_prefix: Optional[str] = None
+    format: Optional[str] = None
+    source_file: Optional[str] = None
+    field_sources: Dict[str, str] = Field(default_factory=dict)
+    warnings: List[str] = Field(default_factory=list)
+
+
+class EnrichedTestCaseDetailResponse(TestCaseDetail):
+    """Versioned additive contract for an executed test case.
+
+    Inherited flat fields intentionally remain present for existing clients.
+    Structured sections provide stable extension points for richer metadata.
+    """
+
+    contract: Literal["test-case-detail"] = "test-case-detail"
+    schema_version: int = 1
+    contract_version: Literal["1"] = "1"
+    identity: TestCaseIdentitySection
+    classification: TestCaseClassificationSection
+    execution: TestCaseExecutionSection
+    provenance: TestCaseProvenanceSection
+    steps_present: bool = False
+    steps: List[TestStepResponse] = Field(default_factory=list)
+    attachments: List[TestAttachmentResponse] = Field(default_factory=list)
+    definition: Optional[Dict[str, Any]] = None
+    links: List[Dict[str, Optional[str]]] = Field(default_factory=list)
+    extensions: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Duplicate authored-test-case detection (Phase 4, migration 0094) ──────
@@ -1692,9 +1788,18 @@ class SendMessageResponse(BaseModel):
 # ── Test Case Management Schemas ──────────────────────────────────────────────
 
 class TestCaseStepSchema(BaseModel):
-    step_number: int
-    action: str
-    expected_result: str
+    """Authored step shape; expected outcomes are optional by design."""
+    step_number: int = Field(..., ge=1)
+    action: str = Field(..., min_length=1, max_length=MAX_LONG_TEXT)
+    expected_result: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+
+
+class TestCaseParameterSchema(BaseModel):
+    """Optional authored input metadata; sensitive values are never required."""
+    name: str = Field(..., min_length=1, max_length=255)
+    value: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    mode: Optional[str] = Field(None, max_length=30)
+    masked: bool = False
 
 
 class ManagedTestCaseCreate(BaseModel):
@@ -1703,7 +1808,8 @@ class ManagedTestCaseCreate(BaseModel):
     description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     preconditions: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
-    steps: Optional[List[dict]] = None
+    steps: Optional[List[TestCaseStepSchema]] = None
+    parameters: Optional[List[TestCaseParameterSchema]] = None
     expected_result: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     test_data: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     test_type: str = "functional"
@@ -1726,7 +1832,8 @@ class ManagedTestCaseUpdate(BaseModel):
     description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     preconditions: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
-    steps: Optional[List[dict]] = None
+    steps: Optional[List[TestCaseStepSchema]] = None
+    parameters: Optional[List[TestCaseParameterSchema]] = None
     expected_result: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     test_data: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     test_type: Optional[str] = None
@@ -1754,7 +1861,8 @@ class ManagedTestCaseResponse(BaseModel):
     description: Optional[str] = None
     objective: Optional[str] = None
     preconditions: Optional[str] = None
-    steps: Optional[List[dict]] = None
+    steps: Optional[List[TestCaseStepSchema]] = None
+    parameters: Optional[List[TestCaseParameterSchema]] = None
     expected_result: Optional[str] = None
     test_data: Optional[str] = None
     test_type: str
@@ -1801,7 +1909,8 @@ class TestCaseVersionResponse(BaseModel):
     version: int
     title: str
     description: Optional[str] = None
-    steps: Optional[List[dict]] = None
+    steps: Optional[List[TestCaseStepSchema]] = None
+    parameters: Optional[List[TestCaseParameterSchema]] = None
     expected_result: Optional[str] = None
     status: str
     changed_by_id: Optional[uuid.UUID] = None

@@ -1,6 +1,5 @@
 import type {
   RunStepFlips,
-  RunTestCase,
   RunTestCaseListResponse,
   TestCaseHistory,
   TestRun,
@@ -8,6 +7,7 @@ import type {
   TestStepFlips,
   TestStepsTree,
 } from '@/types/runs'
+import type { TestCaseDetailResponse } from '@/types/test-case-detail'
 import type { RunAttributionResponse } from '@/types/attribution'
 import { getData, postData } from './http'
 
@@ -24,7 +24,10 @@ export const runsService = {
     getData<RunTestCaseListResponse>(`/api/v1/runs/${runId}/tests`, { params }),
 
   getTest: (runId: string, testId: string) =>
-    getData<RunTestCase>(`/api/v1/runs/${runId}/tests/${testId}`),
+    getData<TestCaseDetailResponse>(`/api/v1/runs/${runId}/tests/${testId}`),
+
+  getEnrichedTest: (runId: string, testId: string) =>
+    getData<TestCaseDetailResponse>(`/api/v1/runs/${runId}/tests/${testId}/rich-detail`),
 
   /**
    * Per-failure attribution verdicts for a run (roadmap Phase 4).

@@ -5,7 +5,14 @@ export type { PaginatedResponse }
 export interface TestStep {
   step_number: number
   action: string
-  expected_result: string
+  expected_result?: string
+}
+
+export interface TestCaseParameter {
+  name: string
+  value?: string
+  mode?: string
+  masked?: boolean
 }
 
 export interface AIReviewIssue {
@@ -49,6 +56,7 @@ export interface ManagedTestCase {
   objective?: string
   preconditions?: string
   steps?: TestStep[]
+  parameters?: TestCaseParameter[]
   expected_result?: string
   test_data?: string
   test_type: string
@@ -82,6 +90,7 @@ export interface TestCaseVersion {
   title: string
   description?: string
   steps?: TestStep[]
+  parameters?: TestCaseParameter[]
   expected_result?: string
   status: string
   changed_by_id?: string

@@ -8,8 +8,10 @@ import AIAnalysisPanel from '@/components/ai/AIAnalysisPanel'
 import TestStepsPanel from '@/components/runs/TestStepsPanel'
 import TestHistoryPanel from '@/components/runs/TestHistoryPanel'
 import StepFlipPanel from '@/components/runs/StepFlipPanel'
+import TestCaseDetailSummary from '@/components/runs/TestCaseDetailSummary'
 import { useTestCase } from '@/hooks/useRuns'
 import { formatDuration, formatDateTime } from '@/utils/formatters'
+import { normalizeTestCaseDetail } from '@/utils/testCaseDetail'
 import { useProjectStore } from '@/store/projectStore'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 
@@ -23,6 +25,7 @@ export default function TestCasePage() {
   if (isLoading) return <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
   if (!tc) return <div className="text-[var(--color-text-muted)] text-center py-20">Test case not found</div>
 
+  const detail = normalizeTestCaseDetail(tc)
   const isFailed = ['FAILED', 'BROKEN'].includes(tc.status)
 
   return (
@@ -69,6 +72,8 @@ export default function TestCasePage() {
           ))}
         </div>
       )}
+
+      <TestCaseDetailSummary detail={detail} />
 
       {/* Split pane: log + AI */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -120,7 +125,7 @@ export default function TestCasePage() {
         {/* Granular step timeline (latest-run-only snapshot) */}
         <div className="space-y-3">
           <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Steps</h3>
-          <TestStepsPanel runId={runId} testId={testId} />
+          <TestStepsPanel runId={runId} testId={testId} detail={detail} />
         </div>
       </div>
 
