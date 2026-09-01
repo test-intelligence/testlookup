@@ -53,7 +53,7 @@ async function mockSearch(page: Page): Promise<() => string | null> {
         items,
         total: items.length,
         query: url.searchParams.get('q') ?? '',
-        search_type: 'hybrid',
+        search_type: 'keyword',
         entity_counts: COUNTS,
         page: 1, size: 25, pages: 1,
       }),
@@ -123,7 +123,7 @@ test.describe('Faceted search', () => {
     // and changes nothing is worse than no chip: the user rules out embedding
     // noise, sees identical results, and blames the corpus.
     await expect(page.getByRole('radio', { name: 'Keyword', exact: true }))
-      .toBeEnabled({ timeout: 10000 });
+      .toBeChecked({ timeout: 10000 });
     for (const inert of ['Hybrid', 'Semantic']) {
       await expect(page.getByRole('radio', { name: inert, exact: true }))
         .toBeDisabled();

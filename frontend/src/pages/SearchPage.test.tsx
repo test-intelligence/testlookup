@@ -1,5 +1,7 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  MemoryRouter, Route, Routes, useLocation, useNavigate,
+} from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SearchPage from './SearchPage'
@@ -70,7 +72,7 @@ function makeResponse(items: GlobalSearchResult[]): GlobalSearchResponse {
     items,
     total: items.length,
     query: 'loads',
-    search_type: 'hybrid',
+    search_type: 'keyword',
     entity_counts: { test_case: items.length, test_run: 0, suite: 0, defect: 0, flaky_test: 0, release: 0 },
     page: 1,
     size: 25,
@@ -78,22 +80,41 @@ function makeResponse(items: GlobalSearchResult[]): GlobalSearchResponse {
   }
 }
 
-function searchTree(url: string) {
+function SearchNavigationHarness() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  return (
+    <>
+      <button type="button" onClick={() => navigate('/search?q=second&mode=hybrid&scope=runs')}>
+        Navigate to legacy search
+      </button>
+      <button type="button" onClick={() => navigate(-1)}>Go back</button>
+      <output aria-label="Current search params">{location.search}</output>
+      <SearchPage />
+    </>
+  )
+}
+
+function searchTree(url: string, withNavigationHarness = false) {
   return (
     <MemoryRouter initialEntries={[url]}>
       <Routes>
-        <Route path="/search" element={<SearchPage />} />
+        <Route
+          path="/search"
+          element={withNavigationHarness ? <SearchNavigationHarness /> : <SearchPage />}
+        />
       </Routes>
     </MemoryRouter>
   )
 }
 
-function renderAt(url: string) {
-  return render(searchTree(url))
+function renderAt(url: string, withNavigationHarness = false) {
+  return render(searchTree(url, withNavigationHarness))
 }
 
 describe('SearchPage', () => {
   beforeEach(() => {
+    localStorage.clear()
     mockProjectState.activeProjectId = 'proj-1'
     mockGlobalSearch.mockReset()
     mockGetIndexStatus.mockReset()
@@ -109,7 +130,7 @@ describe('SearchPage', () => {
     // the response shape still need a resolvable Promise so the page
     // doesn't crash on ``response.items.length``.
     mockGlobalSearch.mockResolvedValue({
-      items: [], total: 0, query: '', search_type: 'hybrid',
+      items: [], total: 0, query: '', search_type: 'keyword',
       entity_counts: {}, page: 1, size: 25, pages: 0,
     } as unknown as GlobalSearchResponse)
   })
@@ -169,6 +190,83 @@ describe('SearchPage', () => {
     ).toBeGreaterThan(0)
     // Hero search input is the stable signal that controls rendered.
     expect(screen.getByPlaceholderText(/Search tests, runs, suites/i)).toBeInTheDocument()
+  })
+
+  it('normalizes disabled retrieval modes to the available keyword mode', async () => {
+    renderAt('/search?mode=hybrid&scope=all', true)
+
+    expect(await screen.findByRole('radio', { name: 'Keyword' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: 'Hybrid' })).not.toBeChecked()
+    await waitFor(() => {
+      expect(screen.getByLabelText('Current search params'))
+        .toHaveTextContent('mode=keyword')
+    })
+  })
+
+  it('synchronizes same-route navigation and browser history with the latest search', async () => {
+    renderAt('/search?q=first&mode=keyword&scope=tests', true)
+
+    await waitFor(() => {
+      expect(mockGlobalSearch).toHaveBeenLastCalledWith({
+        q: 'first', project_id: 'proj-1', entity_types: ['test_case'], page: 1, size: 25,
+      })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Navigate to legacy search' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Search across the workspace' }))
+        .toHaveValue('second')
+      expect(screen.getByRole('radio', { name: /^Runs/ })).toBeChecked()
+      expect(screen.getByRole('radio', { name: 'Keyword' })).toBeChecked()
+      expect(screen.getByLabelText('Current search params'))
+        .toHaveTextContent('mode=keyword')
+      expect(mockGlobalSearch).toHaveBeenLastCalledWith({
+        q: 'second', project_id: 'proj-1', entity_types: ['test_run'], page: 1, size: 25,
+      })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go back' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Search across the workspace' }))
+        .toHaveValue('first')
+      expect(screen.getByRole('radio', { name: /^Tests/ })).toBeChecked()
+      expect(mockGlobalSearch).toHaveBeenLastCalledWith({
+        q: 'first', project_id: 'proj-1', entity_types: ['test_case'], page: 1, size: 25,
+      })
+    })
+  })
+
+  it('migrates legacy stored modes and replays recent searches as keyword', async () => {
+    localStorage.setItem('tl.search.recent', JSON.stringify([{
+      id: 'legacy-recent', query: 'legacy checkout', mode: 'hybrid', scope: 'all',
+      resultCount: 7, ts: Date.now(),
+    }]))
+    localStorage.setItem('tl.search.saved', JSON.stringify([{
+      id: 'legacy-saved', label: 'Legacy saved', query: 'saved checkout', mode: 'semantic',
+      scope: 'tests', resultCount: 3, slot: 1,
+    }]))
+
+    renderAt('/search', true)
+
+    const recentButton = await screen.findByRole('button', { name: /legacy checkout/i })
+    expect(recentButton.parentElement).toHaveTextContent('keyword')
+    expect(recentButton.parentElement).not.toHaveTextContent('hybrid')
+    expect(JSON.parse(localStorage.getItem('tl.search.recent') ?? '[]')[0].mode).toBe('keyword')
+    expect(JSON.parse(localStorage.getItem('tl.search.saved') ?? '[]')[0].mode).toBe('keyword')
+
+    fireEvent.click(recentButton)
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Search across the workspace' }))
+        .toHaveValue('legacy checkout')
+      expect(screen.getByLabelText('Current search params'))
+        .toHaveTextContent('mode=keyword')
+      expect(mockGlobalSearch).toHaveBeenLastCalledWith({
+        q: 'legacy checkout', project_id: 'proj-1', entity_types: undefined, page: 1, size: 25,
+      })
+    })
   })
 
   it('renders result rows when the API returns items for a query', async () => {
@@ -330,7 +428,7 @@ describe('SearchPage', () => {
     // chip for Tests should still read 84, not 0 (it wasn't searched).
     mockGlobalSearch.mockResolvedValue({
       items: [], total: 6,
-      query: '', search_type: 'hybrid',
+      query: '', search_type: 'keyword',
       entity_counts: { suite: 6 } as Record<string, number>,
       page: 1, size: 25, pages: 1,
     } as unknown as GlobalSearchResponse)

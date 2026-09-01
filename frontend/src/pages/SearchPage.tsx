@@ -73,6 +73,11 @@ const MODES: { id: RetrievalMode; label: string; available: boolean; why?: strin
   { id: 'semantic', label: 'Semantic', available: false, why: 'Semantic retrieval is not available for global search — it spans six entity types and only keyword matching covers all of them.' },
 ]
 
+function normalizeRetrievalMode(mode: RetrievalMode | null | undefined): RetrievalMode {
+  const requested = MODES.find(candidate => candidate.id === mode)
+  return requested?.available ? requested.id : 'keyword'
+}
+
 const RESULTS_PAGE_SIZE = 25
 
 const SCOPES: { id: EntityScope; label: string; entityKey: SearchEntityType | null }[] = [
@@ -84,6 +89,12 @@ const SCOPES: { id: EntityScope; label: string; entityKey: SearchEntityType | nu
   { id: 'flaky',    label: 'Flaky',    entityKey: 'flaky_test' },
   { id: 'releases', label: 'Releases', entityKey: 'release' },
 ]
+
+function normalizeEntityScope(scope: unknown): EntityScope {
+  return typeof scope === 'string' && SCOPES.some(candidate => candidate.id === scope)
+    ? scope as EntityScope
+    : 'all'
+}
 
 interface RecentSearch {
   id: string
@@ -116,12 +127,61 @@ const RECENT_KEY = 'tl.search.recent'
 const SAVED_KEY  = 'tl.search.saved'
 const MAX_RECENT = 8
 
+function isStorageRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function normalizeRecentSearch(value: unknown): RecentSearch | null {
+  if (!isStorageRecord(value)
+    || typeof value.id !== 'string'
+    || typeof value.query !== 'string'
+    || typeof value.resultCount !== 'number'
+    || !Number.isFinite(value.resultCount)
+    || typeof value.ts !== 'number'
+    || !Number.isFinite(value.ts)) return null
+
+  return {
+    id: value.id,
+    query: value.query,
+    mode: normalizeRetrievalMode(value.mode as RetrievalMode | undefined),
+    scope: normalizeEntityScope(value.scope),
+    resultCount: value.resultCount,
+    ts: value.ts,
+  }
+}
+
+function normalizeSavedSearch(value: unknown): SavedSearch | null {
+  if (!isStorageRecord(value)
+    || typeof value.id !== 'string'
+    || typeof value.query !== 'string'
+    || ![1, 2, 3].includes(value.slot as number)) return null
+
+  const resultCount = typeof value.resultCount === 'number' && Number.isFinite(value.resultCount)
+    ? value.resultCount
+    : undefined
+  return {
+    id: value.id,
+    label: typeof value.label === 'string' ? value.label : value.query,
+    query: value.query,
+    mode: normalizeRetrievalMode(value.mode as RetrievalMode | undefined),
+    scope: normalizeEntityScope(value.scope),
+    resultCount,
+    slot: value.slot as 1 | 2 | 3,
+  }
+}
+
 function readRecents(): RecentSearch[] {
   try {
     const raw = localStorage.getItem(RECENT_KEY)
     if (!raw) return []
-    const parsed = JSON.parse(raw) as RecentSearch[]
-    return Array.isArray(parsed) ? parsed.slice(0, MAX_RECENT) : []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    const normalized = parsed
+      .map(normalizeRecentSearch)
+      .filter((row): row is RecentSearch => row !== null)
+      .slice(0, MAX_RECENT)
+    writeRecents(normalized)
+    return normalized
   } catch { return [] }
 }
 
@@ -133,8 +193,14 @@ function readSaved(): SavedSearch[] {
   try {
     const raw = localStorage.getItem(SAVED_KEY)
     if (!raw) return []
-    const parsed = JSON.parse(raw) as SavedSearch[]
-    return Array.isArray(parsed) ? parsed.slice(0, 3) : []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    const normalized = parsed
+      .map(normalizeSavedSearch)
+      .filter((row): row is SavedSearch => row !== null)
+      .slice(0, 3)
+    writeSaved(normalized)
+    return normalized
   } catch { return [] }
 }
 
@@ -509,7 +575,7 @@ function buildRibbon(hasQuery: boolean, isSearching: boolean): RibbonStage[] {
     },
     {
       num: 2, name: 'Retrieval mode',
-      description: 'Hybrid by default · BM25 + embeddings.',
+      description: 'Keyword substring match across entity types.',
       status: hasQuery ? (isSearching ? 'active' : 'done') : 'pending',
       Icon: ListChecks,
     },
@@ -1051,14 +1117,10 @@ export default function SearchPage() {
 
   // URL-driven state (deep-linkable)
   const [query, setQuery] = useState(() => searchParams.get('q') ?? '')
-  const [mode, setMode] = useState<RetrievalMode>(() => {
-    const m = (searchParams.get('mode') ?? 'hybrid') as RetrievalMode
-    return MODES.some(x => x.id === m) ? m : 'hybrid'
-  })
-  const [scope, setScope] = useState<EntityScope>(() => {
-    const s = (searchParams.get('scope') ?? 'all') as EntityScope
-    return SCOPES.some(x => x.id === s) ? s : 'all'
-  })
+  const [mode, setMode] = useState<RetrievalMode>(() =>
+    normalizeRetrievalMode(searchParams.get('mode') as RetrievalMode | null),
+  )
+  const [scope, setScope] = useState<EntityScope>(() => normalizeEntityScope(searchParams.get('scope')))
   const [isSearching, setIsSearching] = useState(false)
   const [response, setResponse] = useState<GlobalSearchResponse | null>(null)
   // 2026-05-15: the Results card previously sliced response.items down
@@ -1077,6 +1139,8 @@ export default function SearchPage() {
 
   const inputRef = useRef<HTMLInputElement>(null)
   const searchRequestIdRef = useRef(0)
+  const selfWrittenSearchParamsRef = useRef<string | null>(null)
+  const lastObservedSearchParamsRef = useRef<string | null>(null)
 
   // ALL_PROJECTS_ID is a frontend sentinel — omit it from API requests so
   // the backend resolves the caller's accessible project set.
@@ -1110,11 +1174,14 @@ export default function SearchPage() {
   const runSearch = useCallback(async (q: string, m: RetrievalMode, s: EntityScope, page: number = 1) => {
     const requestId = ++searchRequestIdRef.current
     const trimmed = q.trim()
+    const effectiveMode = normalizeRetrievalMode(m)
+    if (effectiveMode !== m) setMode(effectiveMode)
     setSearchParams(prev => {
       const np = new URLSearchParams(prev)
       if (trimmed) np.set('q', trimmed); else np.delete('q')
-      np.set('mode', m)
+      np.set('mode', effectiveMode)
       np.set('scope', s)
+      selfWrittenSearchParamsRef.current = np.toString()
       return np
     }, { replace: true })
 
@@ -1129,10 +1196,9 @@ export default function SearchPage() {
     try {
       const entityKey = s === 'all' ? null : (SCOPES.find(x => x.id === s)?.entityKey ?? null)
       // `globalSearch` accepts an array of entity types and doesn't expose a
-      // mode parameter — the backend always runs hybrid retrieval. When the
-      // server-side mode switch lands, route through the keyword-only
-      // /api/v1/search endpoint for `mode==='keyword'`; for now the mode
-      // chip is informational only and feeds the provenance footer.
+      // mode parameter: it spans all six entity types with keyword retrieval.
+      // Disabled legacy modes are normalized above until the global endpoint
+      // gains a real server-side mode switch.
       const data = await searchService.globalSearch({
         q: trimmed,
         project_id: scopedProjectId,
@@ -1147,7 +1213,7 @@ export default function SearchPage() {
       if (trimmed) {
         setRecents(prev => {
           const next: RecentSearch[] = [
-            { id: `${Date.now()}`, query: trimmed, mode: m, scope: s, resultCount: data.total, ts: Date.now() },
+            { id: `${Date.now()}`, query: trimmed, mode: effectiveMode, scope: s, resultCount: data.total, ts: Date.now() },
             ...prev.filter(r => r.query !== trimmed || r.scope !== s),
           ].slice(0, MAX_RECENT)
           writeRecents(next)
@@ -1163,16 +1229,31 @@ export default function SearchPage() {
     }
   }, [scopedProjectId, setSearchParams])
 
-  // ── Auto-run on mount ────────────────────────────────────────────────
-  // Always fire on first mount — empty queries browse the most-recent
-  // rows so a freshly loaded /search page (any scope, including ``all``)
-  // shows real data instead of a blank slate.
-  const initialRanRef = useRef(false)
+  // ── URL synchronization + initial search ─────────────────────────────
+  // React Router can keep this component mounted when another control
+  // navigates to /search or when the user moves through browser history.
+  // Treat those URL changes as new searches. Updates written by runSearch
+  // are marked so their resulting render does not feed back into a second
+  // request. This effect also owns the initial browse/search request.
+  const searchParamsKey = searchParams.toString()
   useEffect(() => {
-    if (initialRanRef.current) return
-    initialRanRef.current = true
-    void runSearch(query, mode, scope)
-  }, [query, mode, scope, runSearch])
+    if (selfWrittenSearchParamsRef.current === searchParamsKey) {
+      selfWrittenSearchParamsRef.current = null
+      lastObservedSearchParamsRef.current = searchParamsKey
+      return
+    }
+    if (lastObservedSearchParamsRef.current === searchParamsKey) return
+    lastObservedSearchParamsRef.current = searchParamsKey
+
+    const params = new URLSearchParams(searchParamsKey)
+    const nextQuery = params.get('q') ?? ''
+    const nextMode = normalizeRetrievalMode(params.get('mode') as RetrievalMode | null)
+    const nextScope = normalizeEntityScope(params.get('scope'))
+    setQuery(nextQuery)
+    setMode(nextMode)
+    setScope(nextScope)
+    void runSearch(nextQuery, nextMode, nextScope)
+  }, [searchParamsKey, runSearch])
 
   // A project switch must refresh the result rows as well as the counts and
   // index-health panels above. Keep the previous scope separately so the
@@ -1444,7 +1525,7 @@ export default function SearchPage() {
               <>
                 <p className="m-0 mb-2">Nothing matched <code className="font-mono text-[12px]">{query}</code>.</p>
                 <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
-                  Try a different mode (Hybrid casts the widest net), broaden the scope, or check the syntax guide on the right.
+                  Broaden the scope, simplify the query, or check the syntax guide on the right.
                 </p>
               </>
             ) : (
@@ -1479,7 +1560,7 @@ export default function SearchPage() {
               onUnsave={handleUnsave}
               onManage={() => toast('Saved-search manager — coming in Phase 2', { icon: '⭐' })}
             />
-            <SuggestedList rows={suggested} onPick={(r) => handlePick(r.query, 'hybrid', 'all')} />
+            <SuggestedList rows={suggested} onPick={(r) => handlePick(r.query, 'keyword', 'all')} />
           </div>
           <div className="flex flex-col gap-3.5 min-w-0">
             <QuerySyntaxCard />
