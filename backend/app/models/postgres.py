@@ -3137,7 +3137,19 @@ class EvidenceArtifact(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
+    # Migration 0145 (H1) — was CASCADE + NOT NULL, which silently undid the
+    # retention purge's own artifact protection: the purge deliberately spares
+    # artifacts cited by a published decision report, and then the run DELETE
+    # cascaded them away anyway. It also made the artifacts clock behave as
+    # min(artifacts_days, runs_days), so an artifact younger than its own
+    # retention window died with its run.
+    #
+    # SET NULL keeps the row; ``project_id`` is stamped before the link
+    # detaches (retention_service step 3.6's pattern) so the row stays scoped
+    # and remains purgeable by the artifacts clock later.
+    run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=True,
     )
