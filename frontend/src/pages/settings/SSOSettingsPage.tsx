@@ -12,6 +12,7 @@ import {
   updateSSOConfig,
 } from '../../services/ssoService';
 import { type SSOTab, useSSOTabData } from '../../hooks/useSSOTabData';
+import { formatCompactDateTime } from '@/utils/formatters'
 
 export default function SSOSettingsPage() {
   const [tab, setTab] = useState<SSOTab>('config');
@@ -292,7 +293,7 @@ export default function SSOSettingsPage() {
                   </div>
                   {config.last_test_at && (
                     <p className="text-xs text-[var(--color-text-muted)]">
-                      Last test: {new Date(config.last_test_at).toLocaleString()} —{' '}
+                      Last test: {formatCompactDateTime(config.last_test_at)} —{' '}
                       <span className={config.last_test_success ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]'}>
                         {config.last_test_success ? 'Passed' : `Failed: ${config.last_test_error}`}
                       </span>
@@ -346,7 +347,7 @@ export default function SSOSettingsPage() {
                       <span className="text-[var(--color-text)] text-sm font-medium">{token.name}</span>
                       <span className="text-[var(--color-text-muted)] text-xs ml-2">{token.token_hint}</span>
                       {token.last_used_at && (
-                        <span className="text-[var(--color-text-muted)] text-xs ml-2">Last used: {new Date(token.last_used_at).toLocaleString()}</span>
+                        <span className="text-[var(--color-text-muted)] text-xs ml-2">Last used: {formatCompactDateTime(token.last_used_at)}</span>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
@@ -384,7 +385,7 @@ export default function SSOSettingsPage() {
                     </div>
                     <div className="flex items-center gap-3">
                       {event.ip_address && <span className="text-[var(--color-text-muted)] text-xs">{event.ip_address}</span>}
-                      <span className="text-[var(--color-text-muted)] text-xs">{new Date(event.created_at).toLocaleString()}</span>
+                      <span className="text-[var(--color-text-muted)] text-xs">{formatCompactDateTime(event.created_at)}</span>
                     </div>
                   </div>
                 ))}
@@ -432,7 +433,7 @@ export default function SSOSettingsPage() {
                           <span className={`w-1.5 h-1.5 rounded-full ${event.success ? 'bg-[var(--status-passed-bg)]' : 'bg-[var(--status-failed-bg)]'}`} />
                           <span className="text-[var(--color-text-secondary)] font-mono">{event.event_type}</span>
                         </div>
-                        <span className="text-[var(--color-text-muted)]">{new Date(event.created_at).toLocaleString()}</span>
+                        <span className="text-[var(--color-text-muted)]">{formatCompactDateTime(event.created_at)}</span>
                       </div>
                     ))}
                   </div>

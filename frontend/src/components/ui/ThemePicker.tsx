@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
 import { THEMES, useThemeStore } from '@/store/themeStore'
+import { HeaderPopover } from '@/components/ui/HeaderPopover'
 
 /**
  * Color-theme picker. A dropdown listing every theme in the registry with a
@@ -12,27 +13,13 @@ export default function ThemePicker() {
   const theme = useThemeStore((s) => s.theme)
   const setTheme = useThemeStore((s) => s.setTheme)
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const active = THEMES.find((t) => t.id === theme) ?? THEMES[0]
 
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [])
-
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-2 h-9 px-3 rounded-full text-xs font-semibold border transition-colors"
@@ -59,13 +46,15 @@ export default function ThemePicker() {
         <ChevronDown className="w-3.5 h-3.5" style={{ color: 'var(--color-text-muted)' }} />
       </button>
 
-      {open && (
-        <div
-          role="listbox"
-          aria-label="Color theme"
-          className="absolute right-0 top-11 w-64 p-1.5 rounded-xl border shadow-2xl z-50"
-          style={{ background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}
-        >
+      <HeaderPopover
+        anchorRef={triggerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        width={256}
+        role="listbox"
+        ariaLabel="Color theme"
+      >
+        <div className="p-1.5">
           <div
             className="px-2.5 py-2 text-[9.5px] font-mono uppercase tracking-[.14em]"
             style={{ color: 'var(--color-text-muted)' }}
@@ -114,7 +103,7 @@ export default function ThemePicker() {
             )
           })}
         </div>
-      )}
+      </HeaderPopover>
     </div>
   )
 }

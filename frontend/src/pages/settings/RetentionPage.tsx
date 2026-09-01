@@ -49,6 +49,7 @@ import {
   type RetentionPolicyWrite,
   type RetentionPreview,
 } from '@/types/retention'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 /** Copy for the four day-count fields — label + what the class covers. */
 const DAY_FIELDS: Array<{ field: RetentionDayField; label: string; help: string }> = [
@@ -561,7 +562,7 @@ export default function RetentionPage() {
                 >
                   <span className="text-[var(--color-text-muted)]">{label}: </span>
                   <span className="font-mono text-[var(--color-text)]">
-                    {new Date(cutoff).toLocaleString()}
+                    {formatCompactDateTime(cutoff)}
                   </span>
                 </div>
               ))}
@@ -638,7 +639,7 @@ export default function RetentionPage() {
             <p className="text-[var(--color-text-muted)]">
               Last purge:{' '}
               <span className="text-[var(--color-text)]">
-                {new Date(policy.last_purge.at).toLocaleString()}
+                {formatCompactDateTime(policy.last_purge.at)}
               </span>{' '}
               <span className="text-[var(--color-text-faint)]">({policy.last_purge.mode})</span>
             </p>

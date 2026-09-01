@@ -54,6 +54,7 @@ import PageShell from '@/components/layout/PageShell'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import { TimingCell } from '@/components/ui/TimingCell'
 import { formatRunWhen } from '@/utils/formatters'
 import { suiteMatchesValue } from '@/utils/suiteFilters'
 import { isActivelyRunning, isStaleRunning } from '@/utils/liveSessionFreshness'
@@ -1071,21 +1072,20 @@ export default function LiveExecutionPage() {
                 >
                   <span className="flex items-center justify-end gap-1">Failed {sortIcon('failed')}</span>
                 </th>
-                <th className="px-3 py-2.5 text-left font-medium" style={{ width: 200 }}>Outcome</th>
+                <th className="px-3 py-2.5 text-left font-medium" style={{ width: 140 }}>Outcome</th>
                 <th className="px-3 py-2.5 text-left font-medium">Release</th>
                 <th
                   className="px-5 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
                   onClick={() => handleSort('started_at')}
                 >
-                  <span className="flex items-center justify-end gap-1">Started {sortIcon('started_at')}</span>
+                  <span className="flex items-center justify-end gap-1">Timing {sortIcon('started_at')}</span>
                 </th>
-                <th className="px-5 py-2.5 text-right font-medium">End</th>
               </tr>
             </thead>
             <tbody>
               {(showRawSessions ? visibleSessions : dedupedSessions).length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-5 py-10 text-center text-[var(--color-text-muted)]">
+                  <td colSpan={9} className="px-5 py-10 text-center text-[var(--color-text-muted)]">
                     {suiteScopedSessions.length === 0
                       ? 'No active execution sessions. Start a test run with the client SDK.'
                       : 'No sessions match the current filter.'}
@@ -1188,23 +1188,15 @@ export default function LiveExecutionPage() {
                         <span className="text-[var(--color-text-faint)]">—</span>
                       )}
                     </td>
-                    {/* Started — kept sortable via the same column that previously
-                        held the (now misleadingly labelled) "Completed" cell. */}
-                    <td className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px] whitespace-nowrap tabular-nums">
-                      {s.started_at ? new Date(s.started_at).toLocaleString() : '—'}
-                    </td>
-                    {/* End — completed_at when the session has closed; otherwise
-                        last_event_at gives the "still running, last seen" hint. */}
-                    <td
-                      className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px] whitespace-nowrap tabular-nums"
-                      title={!s.completed_at && s.last_event_at ? `Still running · last event ${new Date(s.last_event_at).toLocaleString()}` : undefined}
-                    >
-                      {s.completed_at
-                        ? new Date(s.completed_at).toLocaleString()
-                        : s.last_event_at
-                          ? `${new Date(s.last_event_at).toLocaleString()} (live)`
-                          : '—'}
-                    </td>
+                    {/* Timing — Started/End merged. When the session has not
+                        closed, `end` carries last_event_at under `live`, so the
+                        "still running, last seen" hint survives the merge. */}
+                    <TimingCell
+                      started={s.started_at}
+                      end={s.completed_at ?? s.last_event_at}
+                      live={!s.completed_at}
+                      className="px-5 py-3 font-mono text-[11px]"
+                    />
                   </tr>
                 )
               })}

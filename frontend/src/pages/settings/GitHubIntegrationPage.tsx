@@ -15,6 +15,7 @@ import {
   type GitHubIntegrationWrite,
   type PrCommentMode,
 } from '@/services/githubIntegrationService'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 const PR_COMMENT_MODES: { value: PrCommentMode; label: string }[] = [
   { value: 'off', label: 'Off — never comment on PRs' },
@@ -283,7 +284,7 @@ export default function GitHubIntegrationPage() {
             <strong>Last error:</strong> {existing.last_error}
             {existing.last_error_at && (
               <span className="text-[var(--color-text-faint)] ml-1">
-                ({new Date(existing.last_error_at).toLocaleString()})
+                ({formatCompactDateTime(existing.last_error_at)})
               </span>
             )}
           </div>
@@ -291,7 +292,7 @@ export default function GitHubIntegrationPage() {
 
         {existing?.last_posted_at && (
           <div className="text-xs text-[var(--color-text-faint)]">
-            Last posted: {new Date(existing.last_posted_at).toLocaleString()}
+            Last posted: {formatCompactDateTime(existing.last_posted_at)}
           </div>
         )}
 

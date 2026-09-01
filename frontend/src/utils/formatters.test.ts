@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { dayTimeAgo, formatDuration, formatRunWhen, shortAgo } from './formatters'
+import {
+  dayTimeAgo,
+  formatCompactDateTime,
+  formatDuration,
+  formatRunWhen,
+  formatTimingRange,
+  isoTooltip,
+  shortAgo,
+} from './formatters'
 
 describe('dayTimeAgo', () => {
   // Build day-only strings relative to the runner's LOCAL "today" so the
@@ -129,5 +137,67 @@ describe('shortAgo', () => {
     expect(shortAgo(new Date(t))).toBe('2m ago')
     expect(shortAgo(t)).toBe('2m ago')
     expect(shortAgo(new Date(t).toISOString())).toBe('2m ago')
+  })
+})
+
+describe('formatCompactDateTime', () => {
+  it('renders a narrow local stamp instead of a full toLocaleString()', () => {
+    // Regression (UX audit issue 1): two ~200px `toLocaleString()` columns under
+    // `whitespace-nowrap` pushed End + Actions out of the scroll wrapper.
+    expect(formatCompactDateTime(new Date(2026, 7, 28, 14, 32))).toBe('Aug 28, 14:32')
+  })
+
+  it('does not zero-pad a single-digit day', () => {
+    expect(formatCompactDateTime(new Date(2026, 7, 8, 9, 5))).toBe('Aug 8, 09:05')
+  })
+
+  it("renders '—' for missing or unparseable input, never 'Invalid Date'", () => {
+    expect(formatCompactDateTime(null)).toBe('—')
+    expect(formatCompactDateTime(undefined)).toBe('—')
+    expect(formatCompactDateTime('not-a-date')).toBe('—')
+  })
+})
+
+describe('formatTimingRange', () => {
+  it('collapses a same-day range so the date is not repeated', () => {
+    expect(
+      formatTimingRange(new Date(2026, 7, 28, 14, 32), new Date(2026, 7, 28, 14, 46)),
+    ).toBe('Aug 28, 14:32 → 14:46')
+  })
+
+  it('REPEATS the date when the run crosses midnight', () => {
+    // Without this an overnight run reads as ending ~24h before it started.
+    expect(
+      formatTimingRange(new Date(2026, 7, 28, 23, 50), new Date(2026, 7, 29, 0, 12)),
+    ).toBe('Aug 28, 23:50 → Aug 29, 00:12')
+  })
+
+  it('marks a still-running range rather than inventing an end', () => {
+    expect(formatTimingRange(new Date(2026, 7, 28, 14, 32), null)).toBe('Aug 28, 14:32 → …')
+    expect(formatTimingRange(new Date(2026, 7, 28, 14, 32), 'garbage')).toBe('Aug 28, 14:32 → …')
+  })
+
+  it("renders '—' when there is no usable start", () => {
+    expect(formatTimingRange(null, new Date(2026, 7, 28))).toBe('—')
+    expect(formatTimingRange('garbage', null)).toBe('—')
+  })
+})
+
+describe('isoTooltip', () => {
+  it('carries full ISO instants so the compact cell loses no precision', () => {
+    const t = isoTooltip('2026-08-28T14:32:05.000Z', '2026-08-28T14:46:11.000Z')
+    expect(t).toContain('2026-08-28T14:32:05.000Z')
+    expect(t).toContain('2026-08-28T14:46:11.000Z')
+  })
+
+  it('calls the second instant of a live session a LAST EVENT, not an end', () => {
+    // Asserting a finish time for a running session would be a false claim.
+    const t = isoTooltip('2026-08-28T14:32:05.000Z', '2026-08-28T14:40:00.000Z', true)
+    expect(t).toContain('Still running')
+    expect(t).not.toContain('Ended')
+  })
+
+  it('reports an unfinished run instead of a fabricated end', () => {
+    expect(isoTooltip('2026-08-28T14:32:05.000Z', null)).toContain('not finished')
   })
 })

@@ -49,6 +49,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import { TimingCell } from '@/components/ui/TimingCell'
 import { useProjectQuota, useProjectUsage } from '@/hooks/useLlmBudget'
 import { useMostRecentRun, useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
@@ -136,15 +137,6 @@ function computeHealth(runs: TestRun[], rangeLabel: string): HealthSummary {
     counts: { passed, flaky, failed, broken, total },
     rangeLabel,
   }
-}
-
-function formatDuration(ms?: number | null) {
-  if (!ms || ms <= 0) return '—'
-  const s = Math.round(ms / 1000)
-  const m = Math.floor(s / 60)
-  const rem = s % 60
-  if (m === 0) return `${s}s`
-  return `${m}m ${rem.toString().padStart(2, '0')}s`
 }
 
 const AVATAR_PALETTE = [
@@ -716,22 +708,23 @@ function RunsTable({
               <thead>
                 <tr className="bg-[var(--color-bg-secondary)] text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
                   <Th>Build</Th>
-                  <Th>Test Suite</Th>
+                  <Th>Suite</Th>
                   <Th>Status</Th>
-                  <Th>Duration</Th>
                   {/* US-15.1 honesty fix: this column has always rendered the
                       run's pass rate. It was labelled "AI confidence", which
                       it never was — no AI confidence is wired here. */}
                   <Th>Pass rate</Th>
+                  {/* Timing is the SORT KEY here. It was previously two
+                      `hidden md:table-cell` columns, so below 768px the table
+                      dropped the field it was ordered by. Merged and always
+                      visible — see TimingCell. */}
                   <Th
                     align="right"
-                    className="hidden md:table-cell"
                     onClick={onToggleDatetimeSort}
                     sortDir={datetimeSortDir === 'desc' ? '↓' : '↑'}
                   >
-                    Started
+                    Timing
                   </Th>
-                  <Th align="right" className="hidden md:table-cell">End</Th>
                 </tr>
               </thead>
               <tbody>
@@ -787,7 +780,7 @@ function RunRow({
       onClick={() => onOpen(run.id)}
       className="cursor-pointer hover:bg-[var(--color-bg-hover)] transition-colors border-b border-[var(--color-border)] last:border-b-0"
     >
-      <td className="px-3.5 py-2.5 min-w-[260px]">
+      <td className="px-3.5 py-2.5 min-w-0">
         <div className="flex items-baseline gap-2">
           {/* Prefer the per-(project, suite) human-readable Run #N — server-
               computed via ROW_NUMBER() so the same value appears on
@@ -797,7 +790,7 @@ function RunRow({
           <span className="font-mono text-[13px] font-semibold text-[var(--color-text)] whitespace-nowrap">
             {run.run_seq != null ? `Run #${run.run_seq}` : `#${String(run.build_number)}`}
           </span>
-          <span className="text-[13px] font-medium text-[var(--color-text)] truncate max-w-[300px]">
+          <span className="text-[13px] font-medium text-[var(--color-text)] truncate" title={run.jenkins_job || undefined}>
             {run.jenkins_job || ''}
           </span>
         </div>
@@ -828,26 +821,16 @@ function RunRow({
         />
       </td>
       <td className="px-3.5 py-2.5"><RunStatusPill run={run} /></td>
-      <td className="px-3.5 py-2.5 tabular-nums text-[var(--color-text-secondary)] whitespace-nowrap">
-        {formatDuration(run.duration_ms)}
-      </td>
       <td className="px-3.5 py-2.5">
         {passRatePct != null
           ? <PassRateMeter pct={passRatePct} />
           : <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>}
       </td>
-      <td
-        className="px-3.5 py-2.5 text-right text-[var(--color-text-muted)] whitespace-nowrap hidden md:table-cell tabular-nums"
-        title={fromNow(run.start_time ?? run.created_at)}
-      >
-        {new Date(run.start_time ?? run.created_at).toLocaleString()}
-      </td>
-      <td
-        className="px-3.5 py-2.5 text-right text-[var(--color-text-muted)] whitespace-nowrap hidden md:table-cell tabular-nums"
-        title={run.end_time ? fromNow(run.end_time) : 'Run has not finished yet'}
-      >
-        {run.end_time ? new Date(run.end_time).toLocaleString() : '—'}
-      </td>
+      <TimingCell
+        started={run.start_time ?? run.created_at}
+        end={run.end_time}
+        durationMs={run.duration_ms}
+      />
     </tr>
   )
 }

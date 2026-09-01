@@ -1,4 +1,4 @@
-import { formatDistanceToNow, format } from 'date-fns'
+import { formatDistanceToNow, format, isSameDay } from 'date-fns'
 
 export const formatDate = (d: string | Date) => format(new Date(d), 'MMM dd, yyyy')
 export const formatDateTime = (d: string | Date) => format(new Date(d), 'MMM dd, HH:mm')
@@ -104,4 +104,81 @@ export const confidenceColor = (score: number): string => {
   if (score >= 80) return 'text-[var(--status-passed)]'
   if (score >= 60) return 'text-[var(--status-broken)]'
   return 'text-[var(--status-failed)]'
+}
+
+/**
+ * Compact wall-clock stamp for dense table cells: 'Aug 28, 14:32'.
+ *
+ * Distinct from `formatDateTime` ('MMM dd') — this uses a non-padded day so the
+ * cell stays narrow for single-digit dates ('Aug 8', not 'Aug 08'). Full-length
+ * `toLocaleString()` values were what pushed the Started/End columns off-screen
+ * on /intelligence, /runs and /live; callers pair this with `isoTooltip` so the
+ * exact instant is still one hover away.
+ *
+ * Missing/unparseable input returns the em-dash placeholder rather than
+ * 'Invalid Date'.
+ */
+export const formatCompactDateTime = (d?: string | Date | null): string => {
+  if (!d) return '—'
+  const date = new Date(d)
+  if (Number.isNaN(date.getTime())) return '—'
+  return format(date, 'MMM d, HH:mm')
+}
+
+/**
+ * Collapsed start→end range for a single "Timing" cell.
+ *
+ * Same calendar day  → 'Aug 28, 14:32 → 14:46' (the date is not repeated).
+ * Spanning midnight  → 'Aug 28, 23:50 → Aug 29, 00:12' (it MUST repeat, or an
+ *                      overnight run reads as a 23-hour-negative duration).
+ * Still running      → 'Aug 28, 14:32 → …'
+ * No start at all    → '—'
+ *
+ * The same-day collapse is what frees the ~240px that the two separate
+ * nowrap columns consumed.
+ */
+export const formatTimingRange = (
+  start?: string | Date | null,
+  end?: string | Date | null,
+): string => {
+  if (!start) return '—'
+  const from = new Date(start)
+  if (Number.isNaN(from.getTime())) return '—'
+
+  const head = format(from, 'MMM d, HH:mm')
+  if (!end) return `${head} → …`
+
+  const to = new Date(end)
+  if (Number.isNaN(to.getTime())) return `${head} → …`
+
+  return isSameDay(from, to)
+    ? `${head} → ${format(to, 'HH:mm')}`
+    : `${head} → ${format(to, 'MMM d, HH:mm')}`
+}
+
+/**
+ * Full-precision ISO text for a Timing cell's `title` tooltip.
+ *
+ * The compact cell is deliberately lossy (no seconds, no year, no timezone), so
+ * the tooltip carries the unabbreviated instants — otherwise shortening the
+ * column would destroy information rather than relocate it.
+ */
+export const isoTooltip = (
+  start?: string | Date | null,
+  end?: string | Date | null,
+  live = false,
+): string => {
+  const label = (d?: string | Date | null): string => {
+    if (!d) return 'not finished'
+    const date = new Date(d)
+    return Number.isNaN(date.getTime()) ? 'unknown' : date.toISOString()
+  }
+  if (!start) return 'No start time recorded'
+  // A live session's second instant is the LAST EVENT SEEN, not an end. Calling
+  // it "Ended" would assert the run finished at a moment it is still running.
+  const tail = live
+    ? `Still running · last event ${label(end)}`
+    : `Ended ${label(end)}`
+  return `Started ${label(start)}
+${tail}`
 }

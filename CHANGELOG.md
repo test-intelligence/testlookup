@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-09-01 — restore data visibility in dense tables and header menus
+
+A full-app rendering audit of all 27 routes found three repeating patterns
+behind the reports of missing data. Most pages were already clean; the fixes
+below are shared rather than per-page.
+
+Run timing no longer scrolls off-screen. `/intelligence`, `/runs` and `/live`
+each rendered Started and End as two separate full-`toLocaleString()` columns
+under `whitespace-nowrap`, inside an `overflow-x-auto` wrapper — roughly 400px
+of fixed width that pushed the trailing columns, including Actions, out of view
+with no scrollbar cue. Below 768px `hidden md:table-cell` removed them outright,
+which on `/intelligence` silently dropped the column the table was sorted by. A
+shared `TimingCell` now merges start, end and duration into one ~158px cell
+(same-day ranges collapse to `Aug 28, 14:32 → 14:46`; ranges crossing midnight
+keep both dates), and is never breakpoint-hidden. Full ISO instants moved to the
+cell tooltip, so precision was relocated rather than discarded. `/live` keeps
+its "still running, last seen" semantics: an unfinished session reports its last
+event as a last event, never as a finish time. The `/runs` table minimum width
+drops from 1180px to 980px accordingly.
+
+The Test Management cases table is now title-first. Seven fixed columns plus the
+title's `minWidth: 280` demanded ~940px inside a panel shared with the filters,
+so the title collapsed to a few characters while Last run and the row menu
+scrolled out of reach. ID, Priority and Automation moved into a meta line
+beneath the title, leaving five columns with the title as the only flexible one;
+all three demoted fields are still rendered, and the full title is available as
+a tooltip once it truncates.
+
+Header menus no longer paint underneath page content. The TopBar sets
+`backdrop-blur`, which creates a stacking context, so the theme picker, account
+menu and notification popover could never outrank a page panel from inside the
+header regardless of their `z-50`. All three now render through a shared
+`HeaderPopover` that portals to `document.body`, positions from the trigger's
+bounding rect, tracks it on scroll and resize, and caps its height at 70vh. The
+header also carries `relative z-40` as a fallback. Dismissal moved into the
+popover itself: once portaled the panel is no longer a DOM descendant of its
+trigger, so the previous `ref.contains(event.target)` checks would have treated
+every click inside an open menu as an outside click.
+
+Narrow event lists across `/settings/*` (audit, SSO, retention, notifications,
+integrations, GitHub/GitLab) adopt the same compact `formatCompactDateTime()`
+stamp with an exact-time tooltip, replacing 14 full-length datetimes that
+wrapped awkwardly in small panels.
+
+
 ## 2026-09-01 — govern authored test-case lifecycle and automation evidence
 
 Authored test cases now move through one row-locked lifecycle with explicit

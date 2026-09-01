@@ -1812,7 +1812,8 @@ function SelectChip({
 }
 
 // ── Cases table body + footer ─────────────────────────────────────────
-function CasesTableBody({
+// Exported for isolated column-structure tests (same precedent as OwnerCell).
+export function CasesTableBody({
   cases, onRowClick, onDeprecate, onPromoted, lifecycleV2,
 }: {
   cases: ManagedTestCase[]
@@ -1826,13 +1827,14 @@ function CasesTableBody({
       <table className="w-full text-[12.5px]" role="table">
         <thead>
           <tr style={{ background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)' }}>
-            <Th label="ID"         width={78} />
-            <Th label="Title" />
-            <Th label="Status"     width={108} />
-            <Th label="Priority"   width={90} />
-            <Th label="Owner"      width={132} />
-            <Th label="Automation" width={104} />
-            <Th label="Last run"   width={108} />
+            {/* ID, Priority and Automation lost their fixed columns — they now
+                ride the meta line under the title. Seven fixed widths (660px)
+                plus Title's minWidth:280 demanded ~940px, so Title collapsed to
+                a few characters and Last run + actions scrolled out of view. */}
+            <Th label="Test case" />
+            <Th label="Status"     width={100} />
+            <Th label="Owner"      width={122} />
+            <Th label="Last run"   width={110} align="right" />
             <Th label="" align="right" width={40} />
           </tr>
         </thead>
@@ -1886,18 +1888,20 @@ function CaseRow({
   lifecycleV2: boolean
 }) {
   const deprecateAllowed = lifecycleV2 ? tc.allowed_actions?.includes('deprecate') === true : true
+  // Only emit the type/suite/tags tail when there is something in it — otherwise
+  // the leading separator renders as an orphaned '·'.
+  const hasTail = Boolean(
+    (tc.test_type ?? '').trim() || tc.suite_name || (tc.tags && tc.tags.length > 0),
+  )
   return (
     <tr
       style={{ borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}
       className="transition-colors hover:bg-[var(--color-bg-hover)]"
       onClick={() => onRowClick(tc)}
     >
-      <td className="font-mono text-[11px] text-[var(--color-text-muted)]" style={{ padding: '10px 12px' }}>
-        TC-{tc.id.slice(0, 6).toUpperCase()}
-      </td>
-      <td style={{ padding: '10px 12px', minWidth: 280 }}>
+      <td style={{ padding: '9px 12px' }} className="min-w-0">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[12.5px] font-medium text-[var(--color-text)] truncate">{tc.title}</span>
+          <span className="text-[12.5px] font-medium text-[var(--color-text)] truncate" title={tc.title}>{tc.title}</span>
           {tc.ai_generated && <Sparkles className="h-3 w-3 text-[var(--status-flaky)] flex-shrink-0" aria-label="AI generated" />}
           {tc.source === 'automation' && (
             <span
@@ -1909,33 +1913,43 @@ function CaseRow({
             </span>
           )}
         </div>
-        <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
-          {(tc.test_type ?? '').replace(/_/g, ' ')}
-          {tc.suite_name ? <> · suite: <span className="text-[var(--color-text-secondary)]">{tc.suite_name}</span></> : null}
-          {tc.tags && tc.tags.length > 0 ? <> · tags: <span className="text-[var(--color-text-secondary)]">{tc.tags.slice(0, 3).join(', ')}</span></> : null}
+        <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)] mt-0.5 min-w-0">
+          <span className="font-mono flex-shrink-0">TC-{tc.id.slice(0, 6).toUpperCase()}</span>
+          <span aria-hidden className="flex-shrink-0">·</span>
+          <span className="flex-shrink-0"><CasePriorityTag priority={tc.priority} /></span>
+          <span aria-hidden className="flex-shrink-0">·</span>
+          <span className="inline-flex items-center gap-1 flex-shrink-0">
+            <i
+              aria-hidden
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 999,
+                background: tc.is_automated ? 'var(--status-passed)' : 'var(--color-text-muted)',
+              }}
+            />
+            {tc.is_automated ? 'Automated' : 'Manual'}
+          </span>
+          {hasTail && (
+            <span className="truncate">
+              <span aria-hidden>· </span>
+              {(tc.test_type ?? '').replace(/_/g, ' ')}
+              {tc.suite_name ? <> · suite: <span className="text-[var(--color-text-secondary)]">{tc.suite_name}</span></> : null}
+              {tc.tags && tc.tags.length > 0 ? <> · tags: <span className="text-[var(--color-text-secondary)]">{tc.tags.slice(0, 3).join(', ')}</span></> : null}
+            </span>
+          )}
         </div>
       </td>
       <td style={{ padding: '10px 12px' }}>
         <CaseStatusPill status={tc.status} />
       </td>
-      <td style={{ padding: '10px 12px' }}>
-        <CasePriorityTag priority={tc.priority} />
-      </td>
-      <td style={{ padding: '10px 12px' }}>
+      <td style={{ padding: '9px 12px' }} className="min-w-0">
         <OwnerCell owner={tc.owner ?? null} userId={tc.assignee_id ?? tc.author_id ?? null} />
       </td>
-      <td style={{ padding: '10px 12px' }}>
-        {tc.is_automated ? (
-          <span className="inline-flex items-center gap-1 text-[11.5px]" style={{ color: 'var(--status-passed)' }}>
-            <CheckCircle2 className="h-3 w-3" /> Auto
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1 text-[11.5px] text-[var(--color-text-muted)]">
-            <User className="h-3 w-3" /> Manual
-          </span>
-        )}
-      </td>
-      <td style={{ padding: '10px 12px' }}>
+      <td
+        style={{ padding: '9px 12px', textAlign: 'right' }}
+        title={tc.last_executed_at ? new Date(tc.last_executed_at).toISOString() : undefined}
+      >
         <LastRunCell status={tc.last_execution_status} at={tc.last_executed_at} />
       </td>
       <td style={{ padding: '10px 12px', textAlign: 'right' }}>

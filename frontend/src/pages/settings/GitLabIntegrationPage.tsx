@@ -28,6 +28,7 @@ import {
   type GitLabConnectionTest,
   type MrCommentMode,
 } from '@/types/gitlab'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 // Exhaustiveness-checked against the MrCommentMode union: adding a mode to the
 // type without a label here is a compile error.
@@ -416,7 +417,7 @@ export default function GitLabIntegrationPage() {
             <strong>Integration health — last error:</strong> {config.last_error}
             {config.last_error_at && (
               <span className="text-[var(--color-text-faint)] ml-1">
-                ({new Date(config.last_error_at).toLocaleString()})
+                ({formatCompactDateTime(config.last_error_at)})
               </span>
             )}
           </div>

@@ -11,6 +11,7 @@ import {
   refreshIntegrationHealth,
 } from '@/hooks/useIntegrationHealth';
 import { triggerProbe } from '../../services/integrationHealthService';
+import { formatCompactDateTime } from '@/utils/formatters'
 
 const STATUS_COLORS: Record<string, string> = {
   healthy: 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]',
@@ -109,7 +110,7 @@ export default function IntegrationHealthPage() {
                     {s.consecutive_failures > 0 && (
                       <p className="text-[var(--status-failed)]">Consecutive failures: {s.consecutive_failures}</p>
                     )}
-                    {s.last_checked_at && <p>Last checked: {new Date(s.last_checked_at).toLocaleString()}</p>}
+                    {s.last_checked_at && <p>Last checked: {formatCompactDateTime(s.last_checked_at)}</p>}
                   </div>
                   <button onClick={() => handleProbe(s.provider)} disabled={probing}
                     className="mt-2 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)]">
@@ -165,7 +166,7 @@ export default function IntegrationHealthPage() {
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="text-[var(--color-text-muted)] text-xs truncate max-w-64">{h.message}</span>
-                    <span className="text-[var(--color-text-muted)] text-xs">{h.checked_at ? new Date(h.checked_at).toLocaleString() : '—'}</span>
+                    <span className="text-[var(--color-text-muted)] text-xs">{h.checked_at ? formatCompactDateTime(h.checked_at) : '—'}</span>
                   </div>
                 </div>
               ))}

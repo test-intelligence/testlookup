@@ -21,6 +21,7 @@ import type {
   NotificationPreference,
   NotificationPreferencePayload,
 } from '@/types/notifications'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 // ── Config ────────────────────────────────────────────────────
 
@@ -753,7 +754,7 @@ function HistoryPanel() {
                 <p className="text-sm text-[var(--color-text)] font-medium truncate">{log.title}</p>
                 <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
                   {log.channel.toUpperCase()} · {log.event_type.replace(/_/g, ' ')} ·{' '}
-                  {new Date(log.created_at).toLocaleString()}
+                  {formatCompactDateTime(log.created_at)}
                 </p>
               </div>
               {!log.is_read && (

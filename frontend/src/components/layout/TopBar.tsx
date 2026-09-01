@@ -8,6 +8,8 @@ import { LogOut } from 'lucide-react'
 import { useUnreadCount, useNotificationHistory, invalidateNotifications } from '@/hooks/useNotifications'
 import { notificationService } from '@/services/notificationService'
 import ThemePicker from '@/components/ui/ThemePicker'
+import { HeaderPopover } from '@/components/ui/HeaderPopover'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 const AVATAR_BG: Record<string, string> = {
   slate: 'bg-[var(--color-bg-hover)]', red: 'bg-[var(--status-failed-bg)]', orange: 'bg-[var(--status-broken-bg)]',
@@ -38,33 +40,18 @@ function UserProfileDropdown() {
   const fullName = useAuthStore(s => s.user?.full_name ?? null)
 
   const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement>(null)
-
-  // Close on outside click / Esc — same pattern as the notification bell.
-  useEffect(() => {
-    if (!open) return
-    const onMouseDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', onMouseDown)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', onMouseDown)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [open])
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  // Dismissal lives in HeaderPopover: once portaled, the panel is not a DOM
+  // descendant of this subtree, so a rootRef.contains() test would read clicks
+  // inside the menu as outside clicks.
 
   const initials = getInitials(fullName, username)
   const bgClass = AVATAR_BG[avatarColor] ?? AVATAR_BG['blue']
 
   return (
-    <div ref={rootRef} className="relative border-l pl-4 h-full flex items-center" style={{ borderColor: 'var(--color-border)' }}>
+    <div className="relative border-l pl-4 h-full flex items-center" style={{ borderColor: 'var(--color-border)' }}>
       <button
+        ref={triggerRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -83,8 +70,14 @@ function UserProfileDropdown() {
         </div>
       </button>
 
-      {open && (
-        <div role="menu" aria-label="Account" className="absolute right-0 top-12 mt-2 w-48 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-md shadow-lg py-1 z-50">
+      <HeaderPopover
+        anchorRef={triggerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        width={192}
+        ariaLabel="Account"
+      >
+        <div className="py-1">
           <div className="px-4 py-2 border-b border-[var(--color-border)]">
             <p className="text-sm text-[var(--color-text-secondary)] font-medium">{userEmail}</p>
           </div>
@@ -97,7 +90,7 @@ function UserProfileDropdown() {
             Sign out
           </button>
         </div>
-      )}
+      </HeaderPopover>
     </div>
   )
 }
@@ -113,7 +106,7 @@ export default function TopBar() {
   const refreshProjects = useProjectStore(s => s.refreshProjects)
   const [searchVal, setSearchVal] = useState('')
   const [bellOpen, setBellOpen] = useState(false)
-  const bellRef = useRef<HTMLDivElement>(null)
+  const bellTriggerRef = useRef<HTMLButtonElement>(null)
   const { isAdmin } = usePermissions()
 
   const { data: unreadData } = useUnreadCount()
@@ -135,17 +128,6 @@ export default function TopBar() {
     }).catch(() => {})
   }, [isAdmin, setActiveProject, refreshProjects])
 
-  // Close bell dropdown when clicking outside
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (bellRef.current && !bellRef.current.contains(e.target as Node)) {
-        setBellOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
   const handleSearch = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && searchVal.trim()) {
       navigate(`/search?q=${encodeURIComponent(searchVal.trim())}`)
@@ -160,7 +142,7 @@ export default function TopBar() {
   }
 
   return (
-    <header className="h-14 border-b backdrop-blur flex items-center px-6 gap-4 flex-shrink-0" style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}>
+    <header className="relative z-40 h-14 border-b backdrop-blur flex items-center px-6 gap-4 flex-shrink-0" style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}>
       {/* Global search */}
       <div className="flex-1 max-w-md relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-muted)] pointer-events-none" />
@@ -202,8 +184,9 @@ export default function TopBar() {
           / profile menu bunch up mid-header on a wide screen — which put the
           theme picker's 16rem ``right-0`` panel over page content instead of
           against the edge, where the other menus sit. */}
-      <div ref={bellRef} className="relative ml-auto">
+      <div className="relative ml-auto">
         <button
+          ref={bellTriggerRef}
           onClick={() => setBellOpen(v => !v)}
           className="relative p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
           aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}
@@ -216,8 +199,15 @@ export default function TopBar() {
           )}
         </button>
 
-        {bellOpen && (
-          <div className="absolute right-0 top-full mt-2 w-80 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-2xl z-50 overflow-hidden">
+        <HeaderPopover
+          anchorRef={bellTriggerRef}
+          open={bellOpen}
+          onClose={() => setBellOpen(false)}
+          width={320}
+          ariaLabel="Notifications"
+          role="dialog"
+        >
+          <div className="overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
               <span className="font-semibold text-[var(--color-text)] text-sm">Notifications</span>
               <div className="flex items-center gap-3">
@@ -265,8 +255,11 @@ export default function TopBar() {
                         <p className={`text-sm truncate ${!log.is_read ? 'text-[var(--color-text)] font-medium' : 'text-[var(--color-text-muted)]'}`}>
                           {log.title}
                         </p>
-                        <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                          {log.channel.toUpperCase()} · {new Date(log.created_at).toLocaleString()}
+                        <p
+                          className="text-xs text-[var(--color-text-muted)] mt-0.5"
+                          title={new Date(log.created_at).toISOString()}
+                        >
+                          {log.channel.toUpperCase()} · {formatCompactDateTime(log.created_at)}
                         </p>
                       </div>
                       {!log.is_read && (
@@ -288,7 +281,7 @@ export default function TopBar() {
               </Link>
             </div>
           </div>
-        )}
+        </HeaderPopover>
       </div>
 
       {/* Color-theme picker */}

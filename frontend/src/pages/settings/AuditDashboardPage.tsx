@@ -12,6 +12,7 @@ import {
 } from '@/hooks/useAuditDashboard';
 import { useProjectStore, ALL_PROJECTS_ID } from '../../store/projectStore';
 import { snapToAllowed, useTimeWindowStore } from '../../store/timeWindowStore';
+import { formatCompactDateTime } from '@/utils/formatters'
 
 type Tab = 'events' | 'observability';
 
@@ -127,7 +128,7 @@ export default function AuditDashboardPage() {
                     <span className="text-[var(--color-text-secondary)] font-mono text-xs">{ev.action}</span>
                     {ev.actor_name && <span className="text-[var(--color-text-muted)] text-xs">by {ev.actor_name}</span>}
                   </div>
-                  <span className="text-[var(--color-text-muted)] text-xs">{ev.created_at ? new Date(ev.created_at).toLocaleString() : '—'}</span>
+                  <span className="text-[var(--color-text-muted)] text-xs">{ev.created_at ? formatCompactDateTime(ev.created_at) : '—'}</span>
                 </div>
               ))}
             </div>

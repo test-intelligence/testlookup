@@ -29,6 +29,7 @@ import {
   type WebhookSubscriptionRead,
   type WebhookSubscriptionWrite,
 } from '@/services/outboundWebhookService'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 const EMPTY_FORM: WebhookSubscriptionWrite = {
   name: '',
@@ -493,7 +494,7 @@ function DeliveryHistoryPanel({
               {d.http_status ? `HTTP ${d.http_status}` : d.status}
             </span>
             <span className="text-[var(--color-text-faint)] ml-auto">
-              attempt {d.attempt_count} · {new Date(d.created_at).toLocaleString()}
+              attempt {d.attempt_count} · {formatCompactDateTime(d.created_at)}
             </span>
             {d.error && (
               <span

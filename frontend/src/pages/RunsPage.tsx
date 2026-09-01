@@ -51,6 +51,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import { TimingCell } from '@/components/ui/TimingCell'
 import UploadReportModal from '@/components/runs/UploadReportModal'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useRuns } from '@/hooks/useRuns'
@@ -1157,7 +1158,7 @@ function RunsTable({
           scroll kicks in cleanly on narrow viewports instead of columns
           getting squeezed and clipped to the right of the visible area. */}
       <div className="overflow-x-auto">
-        <table className="text-[12.5px]" style={{ minWidth: 1180, width: '100%' }}>
+        <table className="text-[12.5px]" style={{ minWidth: 980, width: '100%' }}>
           <thead>
             <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
               <th style={{ width: 32, padding: '8px 12px' }}>
@@ -1176,19 +1177,18 @@ function RunsTable({
               <Th label="Tests" />
               <ThSort label="Pass rate" />
               <ThSort
-                label="Started"
+                label="Timing"
                 sortDir={datetimeSortDir === 'desc' ? '↓' : '↑'}
                 active
                 onClick={onToggleDatetimeSort}
               />
-              <Th label="End" />
               <Th label="Actions" align="right" />
             </tr>
           </thead>
           <tbody>
             {runs.length === 0 && (
               <tr>
-                <td colSpan={10} className="text-center py-10 text-[var(--color-text-muted)]">
+                <td colSpan={9} className="text-center py-10 text-[var(--color-text-muted)]">
                   No runs in the window. Try a longer window or check your reporter.
                 </td>
               </tr>
@@ -1297,20 +1297,11 @@ function RunsTable({
                       {Number(r.pass_rate ?? 0).toFixed(1)}%
                     </span>
                   </td>
-                  <td
-                    className="text-[var(--color-text-muted)] whitespace-nowrap tabular-nums"
-                    style={{ padding: '8px 12px' }}
-                    title={relativeTime(r.start_time ?? r.created_at)}
-                  >
-                    {new Date(r.start_time ?? r.created_at).toLocaleString()}
-                  </td>
-                  <td
-                    className="text-[var(--color-text-muted)] whitespace-nowrap tabular-nums"
-                    style={{ padding: '8px 12px' }}
-                    title={r.end_time ? relativeTime(r.end_time) : 'Run has not finished yet'}
-                  >
-                    {r.end_time ? new Date(r.end_time).toLocaleString() : '—'}
-                  </td>
+                  <TimingCell
+                    started={r.start_time ?? r.created_at}
+                    end={r.end_time}
+                    durationMs={r.duration_ms}
+                  />
                   <td style={{ padding: '8px 12px', textAlign: 'right' }}>
                     <div className="inline-flex items-center gap-1.5">
                       <Link
@@ -1411,18 +1402,6 @@ function ThSort({
       {label} <span aria-hidden className="ml-1">{sortDir ?? '↕'}</span>
     </th>
   )
-}
-
-function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime()
-  if (Number.isNaN(ms) || ms < 0) return '—'
-  const m = Math.floor(ms / 60000)
-  if (m < 1) return 'just now'
-  if (m < 60) return `${m} min ago`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
-  const d = Math.floor(h / 24)
-  return `${d}d ago`
 }
 
 // ── Last green callout ─────────────────────────────────────────────────────
