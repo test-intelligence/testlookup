@@ -208,6 +208,52 @@ def test_s1_migration_upgrade_body_executes(mocker):
     assert isinstance(module._FLAG_ID, uuid.UUID)
 
 
+def test_s1_migration_casts_seeded_flag_id_to_uuid(mocker):
+    """The seeded ``feature_flags`` row binds a stable string id into a uuid
+    column. asyncpg sends a bare str as character varying, so Postgres rejects
+    the statement — ``column "id" is of type uuid but expression is of type
+    character varying`` — and the whole upgrade (and the downgrade DELETE, which
+    compares the same id) aborts. That took the Backend PostgreSQL upgrade job
+    red for every branch.
+
+    ``test_s1_migration_upgrade_body_executes`` cannot catch this: it mocks
+    ``op``, so ``op.execute`` never reaches a database and a datatype mismatch is
+    invisible. Assert on the SQL text the migration actually hands ``op`` — both
+    the INSERT and the DELETE must cast the id, exactly as the sibling 0144 flag
+    seed does.
+    """
+    import importlib.util
+
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "versions"
+        / "0145_user_ui_dismissals.py"
+    )
+    spec = importlib.util.spec_from_file_location("_mig_0145_cast", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    mocker.patch.object(module, "op", mocker.MagicMock())
+
+    module.upgrade()
+    upgrade_sql = " ".join(
+        str(call.args[0]) for call in module.op.execute.call_args_list if call.args
+    )
+    assert "feature_flags" in upgrade_sql
+    assert "CAST(:id AS uuid)" in upgrade_sql
+    # The bare, uncast bind is exactly what asyncpg rejects.
+    assert "(:id," not in upgrade_sql.replace(" ", "")
+
+    module.op.reset_mock()
+    module.downgrade()
+    downgrade_sql = " ".join(
+        str(call.args[0]) for call in module.op.execute.call_args_list if call.args
+    )
+    assert "CAST(:id AS uuid)" in downgrade_sql
+    assert "id=:id" not in downgrade_sql.replace(" ", "")
+
+
 def test_s1_migration_does_not_touch_the_policy_table_at_all():
     """0145 adds a dismissal store and a flag. It must not reach further.
 

@@ -67,11 +67,16 @@ def upgrade() -> None:
     # Enabled by default: the prompt is the whole point of S1, and it is
     # advisory — it asks, it never acts. ON CONFLICT keeps upgrade
     # non-destructive if an operator already created this key by hand.
+    # ``feature_flags.id`` is a uuid column; ``_FLAG_ID`` is a Python str, which
+    # asyncpg binds as character varying. Without an explicit cast Postgres
+    # rejects the INSERT ("column \"id\" is of type uuid but expression is of
+    # type character varying") and the whole upgrade aborts. Cast the bind, the
+    # same way the sibling flag seed in 0144 does.
     op.execute(
         sa.text(
             "INSERT INTO feature_flags "
             "(id, key, description, enabled_global, rollout_percent, created_at, updated_at) "
-            "VALUES (:id, :key, :description, true, 100, now(), now()) "
+            "VALUES (CAST(:id AS uuid), :key, :description, true, 100, now(), now()) "
             "ON CONFLICT (key) DO NOTHING"
         ).bindparams(id=_FLAG_ID, key=_FLAG_KEY, description=_FLAG_DESCRIPTION)
     )
@@ -81,9 +86,9 @@ def downgrade() -> None:
     # Only remove the flag row this migration owns — an operator-created row
     # with the same key keeps its own id and survives.
     op.execute(
-        sa.text("DELETE FROM feature_flags WHERE key = :key AND id = :id").bindparams(
-            key=_FLAG_KEY, id=_FLAG_ID
-        )
+        sa.text(
+            "DELETE FROM feature_flags WHERE key = :key AND id = CAST(:id AS uuid)"
+        ).bindparams(key=_FLAG_KEY, id=_FLAG_ID)
     )
     op.drop_index("ix_uuid_user", table_name="user_ui_dismissals")
     op.drop_table("user_ui_dismissals")

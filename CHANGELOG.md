@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-01 — cast the seeded flag id so migration 0145 upgrades
+
+Migration `0145` seeded its `feature_flags` row by binding a stable string id
+straight into the uuid `id` column. asyncpg sends a bare Python string as
+`character varying`, so Postgres rejected the INSERT (`column "id" is of type
+uuid but expression is of type character varying`) and the whole alembic
+upgrade aborted — taking the Backend PostgreSQL/rollback CI job red on `main`
+and every branch cut from it. Both the upgrade INSERT and the downgrade DELETE
+now `CAST(:id AS uuid)`, matching the sibling flag seed in 0144. A regression
+test asserts on the SQL the migration hands `op` (the existing execute-body
+test mocks `op`, so it never saw the datatype mismatch). The Postgres
+migration-postconditions integration test also had its expected head bumped
+from `0144` to `0145` — it was masked while the broken `0145` upgrade aborted
+before that assertion could run.
+
 ## 2026-09-01 — retention shipped inert; ask the operator to turn it on
 
 Data retention has worked for some time: a per-project policy with four
