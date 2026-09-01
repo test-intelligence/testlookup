@@ -137,6 +137,17 @@ For this first compatibility release only, a missing DELETE body is accepted as
 `(no reason supplied)`, logged, and counted; it becomes a validation error when
 the announced two-release window closes. Existing QA engineers may still
 approve another author's case, preserving the previous default approver set.
+## 2026-09-01 — unbreak main: refresh two stale tests after the rich-detail merge
+
+Two unit tests still encoded the pre-merge behavior of the "rich test case
+detail" change and had been failing CI on `main`. The managed-case suite-FK
+tests now give their stubbed case the `parameters` attribute the update path
+snapshots onto each `TestCaseVersion`, and a new assertion pins that the
+authored parameters propagate into that snapshot. The redaction depth-cap test
+now verifies the hardened fail-closed behavior — a subtree past the recursion
+limit is replaced with the `[REDACTED]` sentinel and a buried secret never
+leaks — instead of the old, insecure "returns subtree unchanged" expectation.
+No production code changed.
 
 ## 2026-08-31 — preserve and neutralize audit CSV fields
 
