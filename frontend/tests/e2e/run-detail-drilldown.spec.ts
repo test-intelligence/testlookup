@@ -76,7 +76,17 @@ async function mockRuns(page: import('@playwright/test').Page) {
     const p = url.pathname;
     let body: unknown;
 
-    if (p.endsWith(`/tests/${FAIL_ID}`)) {
+    if (p.endsWith(`/tests/${FAIL_ID}/rich-detail`)) {
+      // Exercise the compatibility path used against deployments that do not
+      // expose the additive rich-detail contract yet. A 404 is the only
+      // response that should trigger the legacy detail request.
+      await route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Rich detail is not available' }),
+      });
+      return;
+    } else if (p.endsWith(`/tests/${FAIL_ID}`)) {
       body = FAIL_DETAIL;
     } else if (p === `/api/v1/runs/${RUN_ID}/tests`) {
       // Honour the status filter so the filter UI is testable.
