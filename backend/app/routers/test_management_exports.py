@@ -4,6 +4,7 @@ from __future__ import annotations
 import html
 import io
 import json
+import re
 import uuid
 from typing import Any, Optional
 
@@ -186,8 +187,25 @@ async def export_test_cases_excel(
 
 # ── Word/PDF export helpers ───────────────────────────────────────────────────
 
+# XML 1.0 permits only tab, newline, and carriage return out of the C0 control
+# range; every other control byte is forbidden. python-docx (via lxml) and
+# openpyxl both reject them outright — a single stray control character in
+# stored plan/case/strategy text (a bad import, mangled AI output) turned an
+# authorized Word or Excel export into a 500. That is the same "malformed
+# stored metadata must not break the download the reader believes" class
+# already hardened for the PDF exporters; drop the offending bytes so the
+# document still renders. Tab/newline/CR are legal and preserved.
+_XML_INVALID_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _strip_control_chars(text: str) -> str:
+    return _XML_INVALID_CONTROL_CHARS.sub("", text)
+
+
 def _excel_text(value: str) -> str:
-    """Force formula-looking stored text to remain inert workbook data."""
+    """Force formula-looking stored text to remain inert workbook data, and
+    drop XML-invalid control characters openpyxl rejects outright."""
+    value = _strip_control_chars(value)
     if value.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")):
         return "'" + value
     return value
@@ -196,7 +214,7 @@ def _excel_text(value: str) -> str:
 def _safe(value) -> str:
     if value is None:
         return ""
-    return str(value)
+    return _strip_control_chars(str(value))
 
 
 def _list_to_str(items) -> str:
