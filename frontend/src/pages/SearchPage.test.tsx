@@ -287,6 +287,9 @@ describe('SearchPage', () => {
 
     expect(await screen.findByText('dashboardLoads')).toBeInTheDocument()
     expect(await screen.findByText('order_history_loads')).toBeInTheDocument()
+    // Assert after result rows settle so this cannot pass against the
+    // pre-response fallback and then regress when `search_type` is applied.
+    expect(screen.getByText('Keyword retrieval', { exact: true })).toBeInTheDocument()
     expect(mockGlobalSearch).toHaveBeenCalledWith(
       expect.objectContaining({ q: 'loads', page: 1, size: 25 }),
     )

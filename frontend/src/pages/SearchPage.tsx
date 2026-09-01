@@ -1041,13 +1041,17 @@ function ProvenanceFooter(
   { resultCount, typeCount, searchType }:
   { resultCount: number; typeCount: number; searchType?: string },
 ) {
+  const normalizedSearchType = searchType?.trim().toLowerCase()
+  const retrievalLabel = normalizedSearchType
+    ? `${normalizedSearchType.charAt(0).toUpperCase()}${normalizedSearchType.slice(1)}`
+    : 'Keyword'
   return (
     <div
       className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
       style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
     >
       <span className="flex items-center gap-1.5 flex-wrap">
-        <span>{searchType ? `${searchType} retrieval` : 'Keyword retrieval'}</span>
+        <span>{retrievalLabel} retrieval</span>
         <span aria-hidden>·</span>
         <span>case-insensitive substring match</span>
         <span aria-hidden>·</span>
