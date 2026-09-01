@@ -11,6 +11,7 @@ function testCase(overrides: Partial<ManagedTestCase> = {}): ManagedTestCase {
     test_type: 'automation',
     priority: 'medium',
     severity: 'major',
+    test_suite_id: null,
     status: 'active',
     version: 1,
     is_automated: true,
@@ -39,7 +40,14 @@ describe('getTestManagementCaseDetailPath', () => {
     }))).toBeNull()
   })
 
-  it('falls back safely when an older API omits latest execution identity', () => {
+  it('falls back to canonical detail when the latest execution identity is absent', () => {
+    expect(getTestManagementCaseDetailPath(testCase({
+      source: 'automation',
+      canonical_test_case_id: 'canonical / 1',
+    }))).toBe('/canonical-test-cases/canonical%20%2F%201')
+  })
+
+  it('fails closed when an automation row has no stable identity', () => {
     expect(getTestManagementCaseDetailPath(testCase({ source: 'automation' }))).toBeNull()
   })
 })

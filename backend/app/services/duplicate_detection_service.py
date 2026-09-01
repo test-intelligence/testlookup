@@ -63,6 +63,7 @@ from difflib import SequenceMatcher
 from typing import Any, Optional
 
 import structlog
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -71,9 +72,21 @@ from app.models.postgres import (
     DismissedDuplicatePair,
     DuplicateTestCaseCandidate,
     ManagedTestCase,
+    TestCaseLifecycleState,
+    User,
+    UserRole,
 )
+from app.services.test_case_lifecycle_service import LifecycleAction, transition
 
 logger = structlog.get_logger("services.duplicate_detection")
+
+DUPLICATE_ELIGIBLE_STATES = (
+    TestCaseLifecycleState.DRAFT.value,
+    TestCaseLifecycleState.REJECTED.value,
+    TestCaseLifecycleState.APPROVED.value,
+    TestCaseLifecycleState.ACTIVE.value,
+    TestCaseLifecycleState.NEEDS_UPDATE.value,
+)
 
 
 # ── Tuning knobs ─────────────────────────────────────────────────────────────
@@ -638,7 +651,7 @@ async def _semantic_neighbours(
 # ── Loading + suppression ────────────────────────────────────────────────────
 
 async def _load_cases(db: AsyncSession, project_id: uuid.UUID) -> tuple[list[ManagedTestCase], bool]:
-    """Load authored cases for a project (excluding deprecated).
+    """Load authored cases currently eligible for duplicate disposition.
 
     Returns ``(cases, sampled)``. Above ``_MAX_CASES_PER_PROJECT`` we load the
     oldest N (deterministic) and flag ``sampled``.
@@ -647,7 +660,7 @@ async def _load_cases(db: AsyncSession, project_id: uuid.UUID) -> tuple[list[Man
         select(ManagedTestCase)
         .where(
             ManagedTestCase.project_id == project_id,
-            ManagedTestCase.status != "deprecated",
+            ManagedTestCase.status.in_(DUPLICATE_ELIGIBLE_STATES),
         )
         .order_by(ManagedTestCase.created_at.asc())
         .limit(_MAX_CASES_PER_PROJECT + 1)
@@ -926,13 +939,27 @@ async def dismiss_candidate(
 ) -> DuplicateTestCaseCandidate:
     """Dismiss a candidate: flip status to ``dismissed`` + record the suppression.
 
-    STAGE-ONLY. Idempotent — re-dismissing is a no-op on the suppression row.
+    STAGE-ONLY. A replay or competing disposition returns 409.
     Raises ``ValueError`` if the candidate is missing or belongs to another
     project (the router maps this to 404 after its own IDOR check).
     """
-    cand = await db.get(DuplicateTestCaseCandidate, candidate_id)
-    if cand is None or cand.project_id != project_id:
+    cand = (
+        await db.execute(
+            select(DuplicateTestCaseCandidate)
+            .where(
+                DuplicateTestCaseCandidate.id == candidate_id,
+                DuplicateTestCaseCandidate.project_id == project_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if cand is None:
         raise ValueError("duplicate candidate not found in project")
+    if cand.status != "open":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Duplicate candidate is already {cand.status}",
+        )
 
     cand.status = "dismissed"
 
@@ -964,7 +991,8 @@ async def merge_candidate(
     project_id: uuid.UUID,
     candidate_id: uuid.UUID,
     keep_case_id: uuid.UUID,
-    deprecate_loser: bool = True,
+    actor: User,
+    deprecate_loser: bool = False,
 ) -> tuple[DuplicateTestCaseCandidate, Optional[uuid.UUID]]:
     """NON-DESTRUCTIVE merge: flip status to ``merged``; optionally soft-deprecate
     the losing case. NEVER deletes a case or redirects a fingerprint this phase.
@@ -973,25 +1001,99 @@ async def merge_candidate(
     Raises ``ValueError`` (router → 404/400) on a missing candidate, a
     cross-project candidate, or a ``keep_case_id`` not part of the pair.
     """
-    cand = await db.get(DuplicateTestCaseCandidate, candidate_id)
-    if cand is None or cand.project_id != project_id:
+    if actor is None:
+        raise ValueError("a governed actor is required to merge duplicate cases")
+    actor_role = actor.role.value if hasattr(actor.role, "value") else str(actor.role)
+    if actor_role not in {
+        UserRole.QA_ENGINEER.value,
+        UserRole.QA_LEAD.value,
+        UserRole.ADMIN.value,
+    }:
+        raise HTTPException(status_code=403, detail="Duplicate review requires QA_ENGINEER or higher")
+    if deprecate_loser and actor_role not in {
+        UserRole.QA_LEAD.value,
+        UserRole.ADMIN.value,
+    }:
+        raise HTTPException(
+            status_code=403,
+            detail="Deprecating a duplicate merge loser requires QA_LEAD or ADMIN",
+        )
+
+    cand = (
+        await db.execute(
+            select(DuplicateTestCaseCandidate)
+            .where(
+                DuplicateTestCaseCandidate.id == candidate_id,
+                DuplicateTestCaseCandidate.project_id == project_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if cand is None:
         raise ValueError("duplicate candidate not found in project")
+    if cand.status != "open":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Duplicate candidate is already {cand.status}",
+        )
     if keep_case_id not in (cand.case_a_id, cand.case_b_id):
         raise ValueError("keep_case_id must be one of the candidate's two cases")
 
-    cand.status = "merged"
-
     deprecated_id: Optional[uuid.UUID] = None
-    if deprecate_loser:
-        loser_id = cand.case_b_id if keep_case_id == cand.case_a_id else cand.case_a_id
-        loser = await db.get(ManagedTestCase, loser_id)
-        if loser is not None and loser.status != "deprecated":
-            loser.status = "deprecated"
-            loser.is_stale = True
-            loser.stale_reason = (
-                f"soft-deprecated as a duplicate of {keep_case_id} "
-                f"(candidate {candidate_id})"
+    loser_id = cand.case_b_id if keep_case_id == cand.case_a_id else cand.case_a_id
+    # Lock both participants in deterministic order.  The keeper is just as
+    # much part of the resolution contract as the loser: retaining a terminal
+    # case would mark the candidate merged while leaving no visible winner.
+    participants = list(
+        (
+            await db.execute(
+                select(ManagedTestCase)
+                .where(
+                    ManagedTestCase.id.in_((cand.case_a_id, cand.case_b_id)),
+                    ManagedTestCase.project_id == project_id,
+                )
+                .order_by(ManagedTestCase.id.asc())
+                .with_for_update()
             )
-            deprecated_id = loser_id
+        ).scalars().all()
+    )
+    by_id = {case.id: case for case in participants}
+    if len(by_id) != 2:
+        raise HTTPException(
+            status_code=409,
+            detail="One or more duplicate candidate cases no longer exist",
+        )
+    keeper = by_id[keep_case_id]
+    loser = by_id[loser_id]
+    if keeper.status not in DUPLICATE_ELIGIBLE_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Duplicate merge keeper is not eligible from state {keeper.status}",
+        )
+    if loser.status not in DUPLICATE_ELIGIBLE_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Duplicate merge loser is not eligible from state {loser.status}",
+        )
+
+    if deprecate_loser:
+        lifecycle_result = await transition(
+            db,
+            loser.id,
+            LifecycleAction.DEPRECATE,
+            actor,
+            reason=(
+                f"Merged duplicate candidate {candidate_id}; "
+                f"kept test case {keep_case_id}"
+            ),
+        )
+        loser = lifecycle_result.case
+        loser.is_stale = True
+        loser.stale_reason = (
+            f"soft-deprecated as a duplicate of {keep_case_id} "
+            f"(candidate {candidate_id})"
+        )
+        deprecated_id = loser_id
+    cand.status = "merged"
     await db.flush()
     return cand, deprecated_id

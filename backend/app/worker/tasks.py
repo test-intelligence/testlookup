@@ -2400,10 +2400,18 @@ def generate_ai_test_cases_task(self, requirements: str, project_id: str, author
 
     async def _persist(result: dict) -> int:
         from app.db.postgres import AsyncSessionLocal
-        from app.models.postgres import ManagedTestCase, TestCaseVersion
+        from app.models.postgres import ManagedTestCase, User
+        from app.services.test_case_lifecycle_service import stage_test_case_snapshot
+        from app.services.test_management_audit_service import audit_event
+        from app.services.test_management_metrics_service import (
+            emit_staged_test_management_metrics,
+        )
 
         saved = 0
         async with AsyncSessionLocal() as db:
+            actor = await db.get(User, _uuid.UUID(author_id))
+            if actor is None:
+                raise ValueError("AI generation author no longer exists")
             for tc_data in result.get("test_cases", []):
                 tc = ManagedTestCase(
                     project_id=_uuid.UUID(project_id),
@@ -2428,21 +2436,31 @@ def generate_ai_test_cases_task(self, requirements: str, project_id: str, author
                 )
                 db.add(tc)
                 await db.flush()
-                ver = TestCaseVersion(
-                    test_case_id=tc.id,
-                    version=1,
-                    title=tc.title,
-                    description=tc.description,
-                    steps=tc.steps,
-                    expected_result=tc.expected_result,
-                    status="draft",
-                    changed_by_id=_uuid.UUID(author_id),
+                stage_test_case_snapshot(
+                    db,
+                    tc,
+                    actor_id=_uuid.UUID(author_id),
                     change_summary="AI generated",
                     change_type="created",
+                    changed_fields=[
+                        "title", "description", "objective", "preconditions",
+                        "steps", "expected_result", "test_data", "test_type",
+                        "priority", "severity", "feature_area", "tags",
+                        "estimated_duration_minutes", "status",
+                    ],
                 )
-                db.add(ver)
+                await audit_event(
+                    db,
+                    "test_case",
+                    tc.id,
+                    tc.project_id,
+                    "ai_generated",
+                    actor,
+                    details=f"AI generated from requirements: {requirements[:100]}",
+                )
                 saved += 1
             await db.commit()
+            await emit_staged_test_management_metrics(db)
         return saved
 
     logger.info("[Task %s] AI generate test cases project=%s", self.request.id, project_id)
@@ -3793,6 +3811,11 @@ def reconcile_canonical_deletions(self) -> dict:
                 try:
                     result = await _reconcile(project_db, project_id)
                     await project_db.commit()
+                    from app.services.test_management_metrics_service import (
+                        emit_staged_test_management_metrics,
+                    )
+
+                    await emit_staged_test_management_metrics(project_db)
                     totals["projects_scanned"] += 1
                     totals["deleted"] += int(result.get("deleted", 0))
                 except Exception as exc:

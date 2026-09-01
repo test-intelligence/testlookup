@@ -25,6 +25,8 @@ import structlog
 from app.services.knowledge_source_service import require_rag_enabled_async
 from app.services.async_utils import await_if_needed
 from app.services.rag_retrieval_service import RetrievedChunk, retrieve_chunks
+from app.services.test_management_audit_service import audit_event
+from app.services.test_case_lifecycle_service import stage_test_case_snapshot
 
 logger = structlog.get_logger(__name__)
 
@@ -305,7 +307,7 @@ async def _persist_cases(
     chunks: list[RetrievedChunk],
     user: User,
 ) -> list[str]:
-    """Create ManagedTestCase rows in pending_review status + GenerationCaseSource rows."""
+    """Create draft ManagedTestCase rows plus generation-source evidence."""
     created_ids = []
 
     # Get content hash snapshot for each source
@@ -328,7 +330,8 @@ async def _persist_cases(
             test_type=case_data.get("test_type", "functional"),
             priority=case_data.get("priority", "medium"),
             severity=case_data.get("severity", "major"),
-            status="pending_review",
+            status="draft",
+            version=1,
             author_id=user.id,
             ai_generated=True,
             ai_generation_prompt=batch.prompt_text[:1000] if batch.prompt_text else None,
@@ -374,6 +377,27 @@ async def _persist_cases(
                 case_id=str(case.id),
                 error=str(exc)[:200],
             )
+
+        stage_test_case_snapshot(
+            db,
+            case,
+            actor_id=user.id,
+            change_type="created",
+            change_summary="Created by grounded generation",
+            changed_fields=[
+                "title", "description", "steps", "test_type", "priority",
+                "severity", "status",
+            ],
+        )
+        await audit_event(
+            db,
+            "test_case",
+            case.id,
+            case.project_id,
+            "created",
+            user,
+            details=f"Created by generation batch {batch.id}",
+        )
 
         # Create citation links
         for chunk in chunks[:MAX_CITATIONS_PER_CASE]:

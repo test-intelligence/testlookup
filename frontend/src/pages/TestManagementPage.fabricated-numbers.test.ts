@@ -27,10 +27,11 @@
 import { describe, expect, it } from 'vitest'
 
 import source from './TestManagementPage.tsx?raw'
+import evidenceSource from '@/components/testManagement/EvidenceGapLists.tsx?raw'
 
 /** Source with `//` and block comments stripped, so the prose ABOUT the removed
  *  fabrications (which deliberately quotes them) cannot satisfy a check. */
-const code = source
+const code = `${source}\n${evidenceSource}`
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .split('\n')
   .filter((line) => !line.trim().startsWith('//'))

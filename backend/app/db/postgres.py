@@ -202,8 +202,18 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         try:
             yield session
             await session.commit()
+            from app.services.test_management_metrics_service import (
+                emit_staged_test_management_metrics,
+            )
+
+            await emit_staged_test_management_metrics(session)
         except Exception:
             await session.rollback()
+            from app.services.test_management_metrics_service import (
+                discard_staged_test_management_metrics,
+            )
+
+            discard_staged_test_management_metrics(session)
             raise
         finally:
             await session.close()

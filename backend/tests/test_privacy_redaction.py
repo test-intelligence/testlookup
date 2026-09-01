@@ -276,10 +276,12 @@ class TestRedactionEdgeCases:
         assert result["logs"][1]["kept"] == "safe"
         assert result["logs"][2] == 42  # non-string non-dict pass-through
 
-    def test_redact_dict_max_recursion_depth_returns_subtree_unchanged(self):
-        """Past the depth limit, the subtree is returned as-is and a warning
-        is logged. The value still needs to be safe enough for callers to
-        handle — they should pre-flatten before calling."""
+    def test_redact_dict_max_recursion_depth_fails_closed(self):
+        """Past the depth limit, the complete subtree is redacted.
+
+        Depth bounding must not turn deeply nested input into a route around
+        the persistence/privacy boundary.
+        """
         # Build an 11-deep nesting (exceeds _MAX_RECURSION_DEPTH = 10).
         deep: dict = {"password": "leaked"}
         for _ in range(11):
@@ -289,9 +291,8 @@ class TestRedactionEdgeCases:
         cursor = result
         for _ in range(10):
             cursor = cursor["nested"]
-        # The bottom subtree comes back unchanged. This is the documented
-        # depth-limit fallback — callers shouldn't pass cycles into the redactor.
-        assert cursor == {"password": "leaked"} or cursor.get("nested") is not None
+        assert cursor == REDACTED
+        assert "leaked" not in str(result)
 
     def test_redact_dict_none_passthrough(self):
         # ``not data`` covers None and {} — both return as-is so callers

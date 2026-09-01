@@ -1,7 +1,11 @@
 import useSWR from 'swr'
 import { testManagementService, usersService } from '@/services/testManagementService'
 import type { UserSummary } from '@/services/testManagementService'
-import type { DuplicateBand, DuplicateCandidateStatus } from '@/types/test-management'
+import type {
+  DuplicateBand,
+  DuplicateCandidateStatus,
+  TestCaseEvidenceGapKind,
+} from '@/types/test-management'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useActiveProjectId, useProjectScopedSWR } from './useProjectScopedSWR'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
@@ -44,6 +48,23 @@ export function useTestCaseComments(id?: string) {
     id ? ['tm-case-comments', id] : null,
     () => testManagementService.getCaseComments(id as string),
     { refreshInterval: REFRESH_INTERVALS.POLLING }
+  )
+}
+
+export function useAllowedTestCaseTransitions(id?: string) {
+  return useSWR(
+    id ? ['tm-case-allowed-transitions', id] : null,
+    () => testManagementService.getAllowedTransitions(id as string),
+    { refreshInterval: 0, shouldRetryOnError: false },
+  )
+}
+
+export function useTestCaseEvidenceGaps(kind: TestCaseEvidenceGapKind) {
+  return useProjectScopedSWR(
+    'tm-case-evidence-gaps',
+    (projectId) => testManagementService.getEvidenceGaps(projectId, kind),
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
+    [kind],
   )
 }
 

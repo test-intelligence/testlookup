@@ -1839,6 +1839,241 @@ def _backend_model_imports_resolve() -> list[Violation]:
     return violations
 
 
+# ── Managed-test lifecycle single writer (TCL-S0) ───────────────────────────
+#
+# ``ManagedTestCase.status`` is a state machine, not a CRUD field. Before the
+# lifecycle-governance work it had five independent writers (review CRUD, RAG
+# accept/reject, duplicate merge, seed code, and a generic ``setattr`` helper).
+# That made every new invariant advisory: a sibling writer could skip the
+# reason/role checks, audit row, immutable version and transition metric.
+#
+# The service below is the one production owner. Constructors may set the
+# initial state, but an existing row may not be transitioned anywhere else.
+_MANAGED_LIFECYCLE_OWNER = "backend/app/services/test_case_lifecycle_service.py"
+_MANAGED_CASE_NAME_HINTS = frozenset({
+    "case", "managed", "managed_case", "test_case", "loser",
+})
+_MANAGED_CASE_GETTERS = frozenset({
+    "get_test_case_or_404", "get_managed_test_case_or_404",
+    "require_case_access",
+})
+
+
+def _unwrap_call(node: ast.AST) -> Optional[ast.Call]:
+    while isinstance(node, (ast.Await, ast.Expr)):
+        node = node.value
+    return node if isinstance(node, ast.Call) else None
+
+
+def _assigned_names(target: ast.AST) -> set[str]:
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        out: set[str] = set()
+        for item in target.elts:
+            out |= _assigned_names(item)
+        return out
+    return set()
+
+
+def _annotation_mentions_managed(annotation: Optional[ast.AST]) -> bool:
+    return bool(
+        annotation
+        and any(
+            isinstance(node, ast.Name) and node.id == "ManagedTestCase"
+            for node in ast.walk(annotation)
+        )
+    )
+
+
+def _scope_blocks_dynamic_status(scope: ast.AST, field_name: str) -> bool:
+    """Whether a generic setter explicitly excludes ``status``.
+
+    Both ``if field == 'status': continue`` and
+    ``if field not in (..., 'status')`` count. The guard is deliberately not a
+    control-flow prover; it only accepts a visible deny-list in the same scope.
+    """
+    for node in ast.walk(scope):
+        if not isinstance(node, ast.Compare):
+            continue
+        names = {
+            item.id for item in ast.walk(node)
+            if isinstance(item, ast.Name)
+        }
+        strings = {
+            item.value for item in ast.walk(node)
+            if isinstance(item, ast.Constant) and isinstance(item.value, str)
+        }
+        if field_name in names and "status" in strings:
+            return True
+    return False
+
+
+def _managed_case_names(scope: ast.AST) -> set[str]:
+    """Conservative local data-flow for variables holding ManagedTestCase."""
+    names: set[str] = set()
+    args = getattr(scope, "args", None)
+    if args is not None:
+        for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
+            if _annotation_mentions_managed(arg.annotation):
+                names.add(arg.arg)
+
+    selected_managed = any(
+        isinstance(node, ast.Call)
+        and _audit_call_name(node.func) == "select"
+        and "ManagedTestCase" in _audit_referenced_names(node)
+        for node in ast.walk(scope)
+    )
+
+    # A small fixed-point handles ``managed = await getter(); case = managed``.
+    for _ in range(3):
+        before = len(names)
+        for node in ast.walk(scope):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            assigned = set().union(*(_assigned_names(target) for target in targets))
+            value = node.value
+            if value is None:
+                continue
+            if isinstance(value, ast.Name) and value.id in names:
+                names |= assigned
+                continue
+            call = _unwrap_call(value)
+            if call is None:
+                continue
+            terminal = _audit_call_name(call.func)
+            referenced = _audit_referenced_names(call)
+            is_db_get = terminal == "get" and "ManagedTestCase" in referenced
+            is_getter = terminal in _MANAGED_CASE_GETTERS
+            is_selected_scalar = (
+                selected_managed
+                and terminal in {"scalar_one_or_none", "scalar_one", "first"}
+                and bool(assigned & _MANAGED_CASE_NAME_HINTS)
+            )
+            if is_db_get or is_getter or is_selected_scalar:
+                names |= assigned
+        if len(names) == before:
+            break
+    return names
+
+
+def _backend_managed_test_case_status_single_writer() -> list[Violation]:
+    """Only the lifecycle service may transition ``ManagedTestCase.status``."""
+    violations: list[Violation] = []
+    seen: set[tuple[str, int]] = set()
+    root = REPO_ROOT / "backend" / "app"
+    for path in iter_files(root, (".py",)):
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        if rel == _MANAGED_LIFECYCLE_OWNER:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+            tree = ast.parse(text)
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+        if "ManagedTestCase" not in text:
+            continue
+
+        scopes = [
+            node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        for scope in scopes:
+            managed_names = _managed_case_names(scope)
+            for node in ast.walk(scope):
+                targets: list[ast.AST] = []
+                if isinstance(node, ast.Assign):
+                    targets = node.targets
+                elif isinstance(node, ast.AnnAssign):
+                    targets = [node.target]
+                elif isinstance(node, ast.AugAssign):
+                    targets = [node.target]
+                for target in targets:
+                    if not (
+                        isinstance(target, ast.Attribute)
+                        and target.attr == "status"
+                        and isinstance(target.value, ast.Name)
+                        and (
+                            target.value.id in managed_names
+                            or target.value.id in _MANAGED_CASE_NAME_HINTS
+                        )
+                    ):
+                        continue
+                    key = (rel, target.lineno)
+                    if key not in seen:
+                        seen.add(key)
+                        violations.append(Violation(
+                            path,
+                            target.lineno,
+                            "writes ManagedTestCase.status outside the lifecycle "
+                            "service — call transition() so role/reason checks, "
+                            "audit, versioning and metrics stay atomic",
+                        ))
+
+                if not isinstance(node, ast.Call):
+                    continue
+                terminal = _audit_call_name(node.func)
+
+                # ``setattr(case, 'status', ...)`` and status-capable generic
+                # setters are the path a grep-only guard misses.
+                if terminal == "setattr" and len(node.args) >= 2:
+                    target, field = node.args[0], node.args[1]
+                    if not isinstance(target, ast.Name):
+                        continue
+                    target_is_managed = (
+                        target.id in managed_names
+                        or target.id in _MANAGED_CASE_NAME_HINTS
+                        or scope.name == "apply_model_updates"
+                    )
+                    if not target_is_managed:
+                        continue
+                    constant_status = (
+                        isinstance(field, ast.Constant) and field.value == "status"
+                    )
+                    dynamic_field = isinstance(field, ast.Name)
+                    explicitly_blocked = (
+                        dynamic_field
+                        and _scope_blocks_dynamic_status(scope, field.id)
+                    )
+                    if constant_status or (dynamic_field and not explicitly_blocked):
+                        key = (rel, node.lineno)
+                        if key not in seen:
+                            seen.add(key)
+                            violations.append(Violation(
+                                path,
+                                node.lineno,
+                                "status-capable setattr() can bypass the managed "
+                                "test-case lifecycle owner — explicitly deny the "
+                                "'status' field or call transition()",
+                            ))
+
+                # SQLAlchemy Core/bulk writes can bypass ORM attribute checks.
+                if terminal in {"values", "update"}:
+                    has_status_kw = any(k.arg == "status" for k in node.keywords)
+                    has_status_dict = any(
+                        isinstance(arg, ast.Dict)
+                        and any(
+                            isinstance(key, ast.Constant) and key.value == "status"
+                            for key in arg.keys if key is not None
+                        )
+                        for arg in node.args
+                    )
+                    if (has_status_kw or has_status_dict) and (
+                        "ManagedTestCase" in _audit_referenced_names(node)
+                    ):
+                        key = (rel, node.lineno)
+                        if key not in seen:
+                            seen.add(key)
+                            violations.append(Violation(
+                                path,
+                                node.lineno,
+                                "bulk-updates ManagedTestCase.status outside the "
+                                "lifecycle service",
+                            ))
+    return violations
+
+
 # ── Status-literal vocabulary (FIX-002) ──────────────────────────────────────
 #
 # ``FlakyQuarantineRequest.status`` stores UPPERCASE ``FlakyQuarantineStatus``
@@ -3099,6 +3334,20 @@ GUARDS: list[Guard] = [
             "Correct the class name (check app/models/postgres.py — e.g. the "
             "perf_baselines table's class is PerfBaseline, not "
             "PerformanceBaseline)."
+        ),
+    ),
+    Guard(
+        name="backend.managed-test-case-status-single-writer",
+        description=(
+            "ManagedTestCase.status transitions are owned exclusively by "
+            "services.test_case_lifecycle_service; constructors may set only "
+            "the initial state."
+        ),
+        check=_backend_managed_test_case_status_single_writer,
+        fix_hint=(
+            "Call test_case_lifecycle_service.transition(...) instead of "
+            "assigning status directly. Generic setattr helpers must "
+            "explicitly reject the 'status' field."
         ),
     ),
     Guard(

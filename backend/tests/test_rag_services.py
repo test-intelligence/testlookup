@@ -775,16 +775,215 @@ class TestCoverageMapping:
 
 class TestReviewServiceEdgeCases:
     def test_accept_case_field_protection(self):
-        """Protected fields (id, project_id, generation_batch_id, created_at) should not be editable."""
-        # Test the field filtering logic from rag_review_service
-        protected = {"id", "project_id", "generation_batch_id", "created_at"}
-        edits = {"id": "evil", "title": "New Title", "project_id": "evil", "description": "Updated"}
-        allowed = {k: v for k, v in edits.items()
-                   if k not in protected}
-        assert "id" not in allowed
-        assert "project_id" not in allowed
-        assert "title" in allowed
-        assert "description" in allowed
+        """The actual accept schema fails closed for lifecycle/identity edits."""
+        from pydantic import ValidationError
+
+        from app.models.schemas import RagCaseAcceptEdits
+
+        for protected, value in {
+            "id": str(uuid.uuid4()),
+            "project_id": str(uuid.uuid4()),
+            "generation_batch_id": str(uuid.uuid4()),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "status": "active",
+            "version": 999,
+            "author_id": str(uuid.uuid4()),
+            "reviewer_id": str(uuid.uuid4()),
+        }.items():
+            with pytest.raises(ValidationError):
+                RagCaseAcceptEdits.model_validate(
+                    {"title": "Safe replacement", protected: value}
+                )
+
+        allowed = RagCaseAcceptEdits.model_validate(
+            {"title": "Safe replacement", "description": "Reviewed content"}
+        )
+        assert allowed.title == "Safe replacement"
+        assert allowed.description == "Reviewed content"
+
+    async def test_accept_records_disposition_once_and_edits_content(self):
+        from app.services import rag_review_service as review
+
+        batch_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        case = SimpleNamespace(
+            id=uuid.uuid4(),
+            project_id=project_id,
+            generation_batch_id=batch_id,
+            status="draft",
+            title="Generated title",
+            description="Generated description",
+            version=1,
+        )
+        batch = SimpleNamespace(project_id=project_id, cases_accepted=0)
+        user = SimpleNamespace(id=uuid.uuid4())
+        db = AsyncMock()
+        db.execute.side_effect = [
+            SimpleNamespace(scalar_one_or_none=lambda: case),
+            SimpleNamespace(scalar_one_or_none=lambda: None),
+        ]
+
+        with (
+            patch.object(review, "_get_batch_or_404", AsyncMock(return_value=batch)),
+            patch(
+                "app.services.rag_faithfulness_service.check_accept",
+                AsyncMock(return_value={"allow": True}),
+            ),
+            patch.object(review, "stage_test_case_snapshot") as snapshot,
+            patch.object(review, "audit_event", AsyncMock()) as audit,
+        ):
+            result = await review.accept_case(
+                db,
+                batch_id,
+                case.id,
+                {"title": "Reviewed title"},
+                user,
+            )
+
+        assert result is case
+        assert case.title == "Reviewed title"
+        assert case.version == 2
+        assert batch.cases_accepted == 1
+        snapshot.assert_called_once()
+        assert audit.await_args.args[4] == review.GENERATION_ACCEPTED_ACTION
+        db.flush.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("prior_action", "requested_action", "disposition"),
+        [
+            ("generation_accepted", "accept", "accepted"),
+            ("generation_rejected", "accept", "rejected"),
+            ("generation_accepted", "reject", "accepted"),
+            ("generation_rejected", "reject", "rejected"),
+        ],
+    )
+    async def test_repeat_or_conflicting_disposition_is_409(
+        self,
+        prior_action,
+        requested_action,
+        disposition,
+    ):
+        from fastapi import HTTPException
+
+        from app.services import rag_review_service as review
+
+        case = SimpleNamespace(
+            id=uuid.uuid4(),
+            project_id=uuid.uuid4(),
+            status="draft",
+        )
+        db = AsyncMock()
+        db.execute.return_value = SimpleNamespace(
+            scalar_one_or_none=lambda: prior_action
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await review._ensure_initial_undisposed_draft(
+                db,
+                case,
+                requested_action=requested_action,
+            )
+
+        assert exc.value.status_code == 409
+        assert exc.value.detail["disposition"] == disposition
+        assert exc.value.detail["requested_action"] == requested_action
+
+    async def test_reject_uses_governed_review_sequence_and_disposition_audit(self):
+        from app.services import rag_review_service as review
+
+        batch_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        case = SimpleNamespace(
+            id=uuid.uuid4(),
+            project_id=project_id,
+            generation_batch_id=batch_id,
+            status="draft",
+            description="Generated description",
+        )
+        batch = SimpleNamespace(project_id=project_id, cases_rejected=0)
+        user = SimpleNamespace(id=uuid.uuid4())
+        db = AsyncMock()
+        db.execute.side_effect = [
+            SimpleNamespace(scalar_one_or_none=lambda: case),
+            SimpleNamespace(scalar_one_or_none=lambda: None),
+        ]
+
+        with (
+            patch.object(review, "_get_batch_or_404", AsyncMock(return_value=batch)),
+            patch.object(review, "transition", AsyncMock()) as transition_mock,
+            patch.object(review, "audit_event", AsyncMock()) as audit,
+        ):
+            await review.reject_case(db, batch_id, case.id, "  duplicate  ", user)
+
+        assert case.description.startswith("[Rejected: duplicate]")
+        assert [call.args[2] for call in transition_mock.await_args_list] == [
+            review.LifecycleAction.REQUEST_REVIEW,
+            review.LifecycleAction.CLAIM_REVIEW,
+            review.LifecycleAction.REJECT,
+        ]
+        assert transition_mock.await_args_list[-1].kwargs["reason"] == "duplicate"
+        assert batch.cases_rejected == 1
+        assert audit.await_args.args[4] == review.GENERATION_REJECTED_ACTION
+        assert audit.await_args.kwargs["reason"] == "duplicate"
+
+    async def test_reject_reason_over_500_is_422_before_description_mutation(self):
+        from fastapi import HTTPException
+
+        from app.services import rag_review_service as review
+
+        case = SimpleNamespace(
+            id=uuid.uuid4(),
+            project_id=uuid.uuid4(),
+            generation_batch_id=uuid.uuid4(),
+            status="draft",
+            description="original",
+        )
+        batch = SimpleNamespace(project_id=case.project_id, cases_rejected=0)
+        db = AsyncMock()
+        db.execute.side_effect = [
+            SimpleNamespace(scalar_one_or_none=lambda: case),
+            SimpleNamespace(scalar_one_or_none=lambda: None),
+        ]
+        transition_mock = AsyncMock()
+
+        with (
+            patch.object(review, "_get_batch_or_404", AsyncMock(return_value=batch)),
+            patch.object(review, "transition", transition_mock),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await review.reject_case(
+                    db,
+                    case.generation_batch_id,
+                    case.id,
+                    "x" * 501,
+                    SimpleNamespace(id=uuid.uuid4()),
+                )
+
+        assert exc.value.status_code == 422
+        assert case.description == "original"
+        assert batch.cases_rejected == 0
+        transition_mock.assert_not_awaited()
+
+    async def test_bulk_accept_deduplicates_case_ids_before_mutating(self):
+        from app.services import rag_review_service as review
+
+        first_id = uuid.uuid4()
+        second_id = uuid.uuid4()
+        accepted = {
+            first_id: SimpleNamespace(id=first_id),
+            second_id: SimpleNamespace(id=second_id),
+        }
+        accept = AsyncMock(side_effect=lambda _db, _batch, cid, **_kwargs: accepted[cid])
+        with patch.object(review, "accept_case", accept):
+            result = await review.bulk_accept(
+                AsyncMock(),
+                uuid.uuid4(),
+                [first_id, first_id, second_id, first_id],
+                SimpleNamespace(id=uuid.uuid4()),
+            )
+
+        assert [case.id for case in result] == [first_id, second_id]
+        assert [call.args[2] for call in accept.await_args_list] == [first_id, second_id]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

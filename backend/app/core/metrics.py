@@ -293,6 +293,38 @@ report_exports_total = Counter(
     ["format", "type"],  # format: excel|word|pdf; type: test_cases|test_plan|strategy|intelligence
 )
 
+# ── Authored test-case lifecycle governance ──────────────────────────────────
+
+test_case_transitions_total = Counter(
+    "testlookup_test_case_transitions_total",
+    "Validated authored test-case lifecycle transitions",
+    ["project", "from", "to", "actor_role"],
+)
+
+test_cases_by_state = Gauge(
+    "testlookup_test_cases_by_state",
+    "Current authored test cases in each governed lifecycle state",
+    ["project", "state"],
+)
+
+test_case_promotions_total = Counter(
+    "testlookup_test_case_promotions_total",
+    "Automation canonical cases promoted into authored test management",
+    ["project"],
+)
+
+test_case_deprecations_without_reason_total = Counter(
+    "testlookup_test_case_deprecations_without_reason_total",
+    "Legacy DELETE deprecations that used the first-release compatibility reason",
+    ["project"],
+)
+
+automation_cases_orphaned = Gauge(
+    "testlookup_automation_cases_orphaned",
+    "Deleted automation canonical cases awaiting retirement confirmation",
+    ["project"],
+)
+
 # ── Tier 0-2 operations (Phase E-3, 2026-04-15) ─────────────────────────────
 
 quarantine_proposals_total = Counter(

@@ -1,11 +1,17 @@
+import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, ExternalLink } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Link2Off } from 'lucide-react'
 import { clsx } from 'clsx'
+import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import PromotionAction from '@/components/testManagement/PromotionAction'
+import TransitionReasonDialog from '@/components/testManagement/TransitionReasonDialog'
 import TestHistoryTimeline from '@/components/suites/TestHistoryTimeline'
-import { useCanonicalCase, useCanonicalRuns, useSuite } from '@/hooks/useSuites'
+import { refreshSuites, useCanonicalCase, useCanonicalRuns, useSuite } from '@/hooks/useSuites'
+import { usePermissions } from '@/hooks/usePermissions'
+import { suitesService } from '@/services/suitesService'
 import { formatDateTime, formatDuration, fromNow } from '@/utils/formatters'
 
 // Status pill color map — mirrors the one in SuiteCasesPage so the two views
@@ -61,11 +67,17 @@ function RunStatusPill({ status }: { status: string }) {
 export default function CanonicalDetailPage() {
   const { canonicalId } = useParams<{ canonicalId: string }>()
   const navigate = useNavigate()
+  const { isQaEngineer } = usePermissions()
+  const [showUnlink, setShowUnlink] = useState(false)
+  const [unlinking, setUnlinking] = useState(false)
+  const [unlinkedLocally, setUnlinkedLocally] = useState(false)
+  const [unlinkRefreshWarning, setUnlinkRefreshWarning] = useState<string | null>(null)
 
   const {
     data: canonical,
     isLoading: canonicalLoading,
     error: canonicalError,
+    mutate: mutateCanonical,
   } = useCanonicalCase(canonicalId)
   // Suite lookup is best-effort — used only to show the suite name in the
   // breadcrumb / header. We render even without it so a fresh canonical
@@ -86,6 +98,7 @@ export default function CanonicalDetailPage() {
   }
 
   const runs = runHistory?.items ?? []
+  const hasManagedLink = !!canonical.managed_test_case_id && !unlinkedLocally
   // The "Open latest run" CTA jumps to the per-run test page when we have
   // both ids, falling back to the run detail page when we only know the run.
   // Mirrors the deep-link shape SuiteCasesPage uses on its rows.
@@ -95,6 +108,30 @@ export default function CanonicalDetailPage() {
       : canonical.last_seen_run_id
         ? `/runs/${canonical.last_seen_run_id}`
         : null
+
+  async function unlinkManagedCase(reason: string) {
+    if (!canonicalId) return
+    setUnlinking(true)
+    setUnlinkRefreshWarning(null)
+    let updated: typeof canonical
+    try {
+      updated = await suitesService.unlinkManagedCase(canonicalId, reason)
+    } catch {
+      toast.error('Could not remove the managed case link')
+      setUnlinking(false)
+      return
+    }
+
+    setUnlinkedLocally(true)
+    setShowUnlink(false)
+    setUnlinking(false)
+    toast.success('Managed case link removed')
+    try {
+      await Promise.all([mutateCanonical(updated, { revalidate: false }), refreshSuites()])
+    } catch {
+      setUnlinkRefreshWarning('The managed link was removed, but related catalogs could not be refreshed. The unlink control remains disabled locally.')
+    }
+  }
 
   return (
     <>
@@ -116,16 +153,40 @@ export default function CanonicalDetailPage() {
         title={canonical.test_name}
         subtitle={canonical.class_name ?? 'No class name'}
         actions={
-          latestRunHref ? (
-            <Link
-              to={latestRunHref}
-              className="inline-flex items-center gap-1 rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white"
-            >
-              <ExternalLink className="h-4 w-4" /> Open latest run
-            </Link>
-          ) : null
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {isQaEngineer && !unlinkedLocally && (hasManagedLink ? (
+              <button
+                type="button"
+                className="btn-secondary inline-flex items-center gap-2 text-sm"
+                onClick={() => setShowUnlink(true)}
+              >
+                <Link2Off className="h-4 w-4" /> Unlink managed case
+              </button>
+            ) : (
+              <PromotionAction
+                canonicalId={canonical.id}
+                onPromoted={async (result) => {
+                  await mutateCanonical(result.canonical, { revalidate: false })
+                }}
+              />
+            ))}
+            {latestRunHref && (
+              <Link
+                to={latestRunHref}
+                className="inline-flex items-center gap-1 rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white"
+              >
+                <ExternalLink className="h-4 w-4" /> Open latest run
+              </Link>
+            )}
+          </div>
         }
       />
+
+      {unlinkRefreshWarning && (
+        <p role="status" className="mb-4 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-2 text-sm text-[var(--status-broken)]">
+          {unlinkRefreshWarning}
+        </p>
+      )}
 
       {/* Identity card — the structured facts about the canonical that
           don't change run-to-run. Renders before the runs table so an
@@ -233,6 +294,17 @@ export default function CanonicalDetailPage() {
           </div>
         )}
       </section>
+
+      {showUnlink && (
+        <TransitionReasonDialog
+          title="Unlink managed case"
+          description="Explain why this canonical automation identity was linked to the wrong managed case. Both records will be preserved."
+          confirmLabel="Unlink"
+          busy={unlinking}
+          onCancel={() => setShowUnlink(false)}
+          onConfirm={unlinkManagedCase}
+        />
+      )}
     </>
   )
 }

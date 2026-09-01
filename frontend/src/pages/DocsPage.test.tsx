@@ -19,7 +19,7 @@
  * Content lives in `src/content/docs/*.md`; these tests read the same sources
  * the page renders, so a claim cannot be "tested" in a file the UI never shows.
  */
-import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -448,11 +448,11 @@ describe('code block copy control', () => {
     await act(async () => { await Promise.resolve() })
     expect(screen.getByLabelText('Copied')).toBeInTheDocument()
 
-    // Flush the timer and the React update it schedules. The synchronous
-    // helper can leave the state transition queued under a loaded/covered
-    // collection, making this test time out while the assertion waits for a
-    // render that has not been committed yet.
-    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    // Only this component's timeout matters. The async timer-drain helper also
+    // waits on unrelated Mermaid timers and can exhaust the suite timeout when
+    // all test files run together, leaving fake timers active for the next
+    // test. React's synchronous act commits this timeout's state update.
+    act(() => { vi.advanceTimersByTime(2000) })
     expect(screen.queryByLabelText('Copied')).toBeNull()
     expect(screen.getAllByLabelText('Copy code').length).toBeGreaterThan(0)
   })
@@ -465,7 +465,8 @@ describe('code block copy control', () => {
 
     fireEvent.click(screen.getAllByLabelText('Copy code')[0])
 
-    await waitFor(() => expect(mockCopy).toHaveBeenCalledTimes(1))
+    await act(async () => { await Promise.resolve() })
+    expect(mockCopy).toHaveBeenCalledTimes(1)
     expect(screen.queryByLabelText('Copied')).toBeNull()
-  })
+  }, 15_000)
 })

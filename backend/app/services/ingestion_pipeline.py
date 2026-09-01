@@ -406,6 +406,11 @@ async def finalize_run(
             try:
                 await coro_factory(step_db)
                 await step_db.commit()
+                from app.services.test_management_metrics_service import (
+                    emit_staged_test_management_metrics,
+                )
+
+                await emit_staged_test_management_metrics(step_db)
             except Exception as e:
                 await step_db.rollback()
                 logger.warning(

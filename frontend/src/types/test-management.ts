@@ -2,6 +2,55 @@ import type { PaginatedResponse } from './common'
 
 export type { PaginatedResponse }
 
+/**
+ * Wire vocabulary for the authored test-case lifecycle. Keep runtime UI
+ * controls, filters and TypeScript types on this one list so a state cannot be
+ * rendered without also being queryable.
+ */
+export const TEST_CASE_LIFECYCLE_STATES = [
+  'draft',
+  'review_requested',
+  'under_review',
+  'approved',
+  'active',
+  'rejected',
+  'needs_update',
+  'deprecated',
+  'archived',
+] as const
+
+export type TestCaseLifecycleState = typeof TEST_CASE_LIFECYCLE_STATES[number]
+
+export const TEST_CASE_TRANSITION_ACTIONS = [
+  'request_review',
+  'claim_review',
+  'withdraw_review',
+  'unclaim',
+  'approve',
+  'reject',
+  'request_changes',
+  'activate',
+  'flag_stale',
+  'revise',
+  'deprecate',
+  'reinstate',
+  'archive',
+] as const
+
+export type TestCaseTransitionAction = typeof TEST_CASE_TRANSITION_ACTIONS[number]
+
+export interface AllowedTestCaseTransition {
+  action: TestCaseTransitionAction
+  allowed: boolean
+  blocked_reason?: string | null
+}
+
+export interface TestCaseTransitionRequest {
+  action: TestCaseTransitionAction
+  reason?: string
+  notes?: string
+}
+
 export interface TestStep {
   step_number: number
   action: string
@@ -70,12 +119,23 @@ export interface ManagedTestCase {
   severity: string
   feature_area?: string
   suite_name?: string
+  test_suite_id: string | null
   tags?: string[]
-  status: string
+  status: TestCaseLifecycleState
   version: number
   author_id?: string
   assignee_id?: string
   reviewer_id?: string
+  allowed_actions?: TestCaseTransitionAction[]
+  lifecycle_state_changed_at?: string | null
+  approved_at?: string | null
+  approved_by_id?: string | null
+  needs_update_reason?: string | null
+  deprecation_reason?: string | null
+  deprecated_at?: string | null
+  deprecated_by_id?: string | null
+  archived_at?: string | null
+  archived_by_id?: string | null
   is_automated: boolean
   automation_status: string
   test_fingerprint?: string
@@ -95,10 +155,25 @@ export interface TestCaseVersion {
   version: number
   title: string
   description?: string
+  objective?: string
+  preconditions?: string
   steps?: TestStep[]
   parameters?: TestCaseParameter[]
   expected_result?: string
-  status: string
+  test_data?: string
+  test_type?: string
+  priority?: string
+  severity?: string
+  feature_area?: string
+  suite_name?: string
+  test_suite_id?: string | null
+  tags?: string[]
+  estimated_duration_minutes?: number
+  is_automated?: boolean
+  automation_status?: string
+  test_fingerprint?: string | null
+  status: TestCaseLifecycleState
+  changed_fields?: string[]
   changed_by_id?: string
   change_summary?: string
   change_type: string
@@ -245,6 +320,24 @@ export interface AICoverageResponse {
   uncovered_areas?: string[]
   recommended_new_tests?: Array<{ title: string; priority: string; rationale: string }>
   summary?: string
+}
+
+export type TestCaseEvidenceGapKind = 'never_executed' | 'automation_vanished'
+
+export interface TestCaseEvidenceGapItem {
+  id: string
+  project_id: string
+  title: string
+  status: TestCaseLifecycleState
+  canonical_test_case_id?: string | null
+  canonical_status?: string | null
+  deleted_observed_at?: string | null
+  last_executed_at?: string | null
+}
+
+export interface TestCaseEvidenceGapResponse {
+  items: TestCaseEvidenceGapItem[]
+  total: number
 }
 
 // ── Duplicate Detection (Phase 4) ──────────────────────────────────────────

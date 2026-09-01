@@ -25,9 +25,10 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 pytest.importorskip("sqlalchemy")
 
@@ -124,9 +125,17 @@ class FakeDB:
             # Replicate the project + non-deprecated filter from the bound params.
             params = stmt.compile().params
             pid = next((v for k, v in params.items() if "project_id" in k), None)
+            bound_values = {
+                item
+                for value in params.values()
+                for item in (value if isinstance(value, (list, tuple, set)) else [value])
+            }
+            selects_one_id = "managed_test_cases.id =" in desc
             rows = [
                 c for c in self._cases
-                if (pid is None or c.project_id == pid) and c.status != "deprecated"
+                if (pid is None or c.project_id == pid)
+                and c.status in svc.DUPLICATE_ELIGIBLE_STATES
+                and (not selects_one_id or c.id in bound_values)
             ]
             return _ExecResult(rows, scalar_rows=rows)
         if "dismissed_duplicate_pairs" in desc:
@@ -546,14 +555,64 @@ async def test_merge_non_destructive_soft_deprecate():
     )
     cand.id = uuid.uuid4()
     db = FakeDB(cases=[keep, loser], existing=[cand])
+    actor = SimpleNamespace(id=uuid.uuid4(), role="QA_LEAD")
 
-    returned, deprecated_id = await svc.merge_candidate(
-        db, pid, cand.id, keep_case_id=keep.id, deprecate_loser=True,
-    )
+    async def _governed_transition(_db, case_id, action, passed_actor, *, reason):
+        assert case_id == loser.id
+        assert action == svc.LifecycleAction.DEPRECATE
+        assert passed_actor is actor
+        assert str(cand.id) in reason
+        loser.status = "deprecated"
+        return SimpleNamespace(case=loser)
+
+    with patch.object(
+        svc, "transition", AsyncMock(side_effect=_governed_transition)
+    ) as governed_transition:
+        returned, deprecated_id = await svc.merge_candidate(
+            db,
+            pid,
+            cand.id,
+            keep_case_id=keep.id,
+            actor=actor,
+            deprecate_loser=True,
+        )
     assert returned.status == "merged"
     assert deprecated_id == loser.id
     assert loser.status == "deprecated"  # soft-deprecated, NOT deleted
     assert loser.is_stale is True
+    governed_transition.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_merge_requires_a_governed_reviewer_role_before_any_mutation():
+    pid = uuid.uuid4()
+    keep = _case(project_id=pid, title="Keep", cid=uuid.uuid4())
+    loser = _case(project_id=pid, title="Lose", cid=uuid.uuid4())
+    lo, hi = sorted([keep.id, loser.id])
+    cand = DuplicateTestCaseCandidate(
+        project_id=pid,
+        case_a_id=lo,
+        case_b_id=hi,
+        band="exact",
+        score=1.0,
+        method="fingerprint",
+        status="open",
+    )
+    cand.id = uuid.uuid4()
+    db = FakeDB(cases=[keep, loser], existing=[cand])
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.merge_candidate(
+            db,
+            pid,
+            cand.id,
+            keep_case_id=keep.id,
+            actor=SimpleNamespace(id=uuid.uuid4(), role="VIEWER"),
+        )
+
+    assert exc.value.status_code == 403
+    assert cand.status == "open"
+    assert loser.status == "active"
 
 
 @pytest.mark.asyncio
@@ -574,3 +633,177 @@ async def test_dismiss_records_suppression():
     suppressions = [r for r in db.added if isinstance(r, DismissedDuplicatePair)]
     assert len(suppressions) == 1
     assert (suppressions[0].case_a_id, suppressions[0].case_b_id) == (lo, hi)
+
+
+@pytest.mark.asyncio
+async def test_merge_replay_with_opposite_keeper_is_rejected_without_mutation():
+    pid = uuid.uuid4()
+    first = _case(project_id=pid, title="First", cid=uuid.uuid4())
+    second = _case(project_id=pid, title="Second", cid=uuid.uuid4())
+    lo, hi = sorted([first.id, second.id])
+    cand = DuplicateTestCaseCandidate(
+        project_id=pid,
+        case_a_id=lo,
+        case_b_id=hi,
+        band="exact",
+        score=1.0,
+        method="fingerprint",
+        status="open",
+    )
+    cand.id = uuid.uuid4()
+    db = FakeDB(cases=[first, second], existing=[cand])
+    actor = SimpleNamespace(id=uuid.uuid4(), role="QA_ENGINEER")
+
+    returned, deprecated_id = await svc.merge_candidate(
+        db,
+        pid,
+        cand.id,
+        keep_case_id=first.id,
+        actor=actor,
+        deprecate_loser=False,
+    )
+    assert returned.status == "merged"
+    assert deprecated_id is None
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.merge_candidate(
+            db,
+            pid,
+            cand.id,
+            keep_case_id=second.id,
+            actor=actor,
+            deprecate_loser=False,
+        )
+
+    assert exc.value.status_code == 409
+    assert first.status == second.status == "active"
+
+
+@pytest.mark.asyncio
+async def test_merge_omission_defaults_to_disposition_only():
+    pid = uuid.uuid4()
+    keeper = _case(project_id=pid, title="Keeper", cid=uuid.uuid4())
+    loser = _case(project_id=pid, title="Loser", cid=uuid.uuid4())
+    lo, hi = sorted([keeper.id, loser.id])
+    cand = DuplicateTestCaseCandidate(
+        project_id=pid,
+        case_a_id=lo,
+        case_b_id=hi,
+        band="exact",
+        score=1.0,
+        method="fingerprint",
+        status="open",
+    )
+    cand.id = uuid.uuid4()
+    db = FakeDB(cases=[keeper, loser], existing=[cand])
+
+    with patch.object(svc, "transition", AsyncMock()) as governed_transition:
+        returned, deprecated_id = await svc.merge_candidate(
+            db,
+            pid,
+            cand.id,
+            keep_case_id=keeper.id,
+            actor=SimpleNamespace(id=uuid.uuid4(), role="QA_ENGINEER"),
+        )
+
+    assert returned.status == "merged"
+    assert deprecated_id is None
+    assert keeper.status == loser.status == "active"
+    governed_transition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_action", ["merge", "dismiss"])
+async def test_terminal_candidate_cannot_be_disposed_again(terminal_action):
+    pid = uuid.uuid4()
+    first = _case(project_id=pid, title="First", cid=uuid.uuid4())
+    second = _case(project_id=pid, title="Second", cid=uuid.uuid4())
+    lo, hi = sorted([first.id, second.id])
+    cand = DuplicateTestCaseCandidate(
+        project_id=pid,
+        case_a_id=lo,
+        case_b_id=hi,
+        band="possible",
+        score=0.8,
+        method="structural",
+        status="merged",
+    )
+    cand.id = uuid.uuid4()
+    db = FakeDB(cases=[first, second], existing=[cand])
+
+    with pytest.raises(HTTPException) as exc:
+        if terminal_action == "dismiss":
+            await svc.dismiss_candidate(db, pid, cand.id, uuid.uuid4())
+        else:
+            await svc.merge_candidate(
+                db,
+                pid,
+                cand.id,
+                keep_case_id=first.id,
+                actor=SimpleNamespace(id=uuid.uuid4(), role="QA_ENGINEER"),
+                deprecate_loser=False,
+            )
+
+    assert exc.value.status_code == 409
+    assert cand.status == "merged"
+
+
+def test_duplicate_eligibility_excludes_review_and_terminal_states():
+    assert set(svc.DUPLICATE_ELIGIBLE_STATES) == {
+        "draft",
+        "rejected",
+        "approved",
+        "active",
+        "needs_update",
+    }
+    assert not {
+        "review_requested",
+        "under_review",
+        "deprecated",
+        "archived",
+    } & set(svc.DUPLICATE_ELIGIBLE_STATES)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["deprecated", "archived"])
+async def test_merge_refuses_terminal_keeper_before_disposition(terminal_status):
+    pid = uuid.uuid4()
+    keeper = _case(
+        project_id=pid,
+        title="Terminal keeper",
+        status=terminal_status,
+        cid=uuid.uuid4(),
+    )
+    loser = _case(project_id=pid, title="Active loser", cid=uuid.uuid4())
+    lo, hi = sorted([keeper.id, loser.id])
+    cand = DuplicateTestCaseCandidate(
+        project_id=pid,
+        case_a_id=lo,
+        case_b_id=hi,
+        band="exact",
+        score=1.0,
+        method="fingerprint",
+        status="open",
+    )
+    cand.id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute.side_effect = [
+        _ExecResult([cand]),
+        _ExecResult([keeper, loser]),
+    ]
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.merge_candidate(
+            db,
+            pid,
+            cand.id,
+            keep_case_id=keeper.id,
+            actor=SimpleNamespace(id=uuid.uuid4(), role="QA_LEAD"),
+            deprecate_loser=True,
+        )
+
+    assert exc.value.status_code == 409
+    assert "keeper" in exc.value.detail
+    assert terminal_status in exc.value.detail
+    assert cand.status == "open"
+    db.flush.assert_not_awaited()

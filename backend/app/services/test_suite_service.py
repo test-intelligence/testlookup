@@ -24,6 +24,7 @@ and the deletion UX is settled, will implement explicit lifecycle.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import structlog
@@ -34,12 +35,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
     CanonicalTestCase,
+    ManagedTestCase,
     Project,
     TestCase,
+    TestCaseLifecycleState,
     TestRun,
     TestSuite,
     TestSuiteOwner,
+    User,
 )
+from app.core.metrics import automation_cases_orphaned
+from app.services.test_management_audit_service import audit_event
+from app.services.test_management_metrics_service import (
+    stage_orphan_gauge_refresh,
+    stage_test_management_counter,
+)
+from app.services.test_case_lifecycle_service import stage_test_case_snapshot
 
 logger = structlog.get_logger("services.test_suite")
 
@@ -434,6 +445,10 @@ async def sync_canonical_test_cases(
             if canonical.status in ("deleted", "needs_review"):
                 canonical.status = "active"
                 canonical.deleted_at_run_id = None
+                canonical.deleted_observed_at = None
+                canonical.retirement_confirmed_at = None
+                canonical.retirement_confirmed_by_id = None
+                canonical.retirement_reason = None
             if tc.test_name and canonical.test_name != tc.test_name:
                 canonical.test_name = tc.test_name
             if canonical.class_name != tc.class_name:
@@ -444,6 +459,7 @@ async def sync_canonical_test_cases(
             tc.canonical_test_case_id = canonical.id
             counts["linked"] += 1
 
+    stage_orphan_gauge_refresh(db, project_id)
     logger.info(
         "canonical_sync_complete",
         project_id=str(project_id),
@@ -925,6 +941,344 @@ async def link_canonical_to_suite(
     return canonical
 
 
+async def promote_canonical_test_case(
+    db: AsyncSession,
+    canonical_id: uuid.UUID,
+    actor: User,
+) -> tuple[CanonicalTestCase, ManagedTestCase]:
+    """Create and link one draft authored case under a canonical row lock."""
+    canonical = (
+        await db.execute(
+            select(CanonicalTestCase)
+            .where(CanonicalTestCase.id == canonical_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if canonical is None:
+        raise HTTPException(status_code=404, detail="Canonical test case not found")
+    if canonical.managed_test_case_id is not None:
+        raise HTTPException(status_code=409, detail="Canonical test case is already promoted")
+    if not canonical.test_fingerprint:
+        raise HTTPException(
+            status_code=409,
+            detail="Canonical test case has no governable fingerprint identity",
+        )
+
+    same_fingerprint = list(
+        (
+            await db.execute(
+                select(ManagedTestCase)
+                .where(
+                    ManagedTestCase.project_id == canonical.project_id,
+                    ManagedTestCase.test_fingerprint == canonical.test_fingerprint,
+                )
+                .order_by(ManagedTestCase.created_at.asc(), ManagedTestCase.id.asc())
+                .limit(2)
+                .with_for_update()
+            )
+        ).scalars().all()
+    )
+    if len(same_fingerprint) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Multiple managed test cases already use this fingerprint; resolve the conflict before promotion",
+        )
+    if same_fingerprint:
+        managed = same_fingerprint[0]
+        if managed.status in {
+            TestCaseLifecycleState.DEPRECATED.value,
+            TestCaseLifecycleState.ARCHIVED.value,
+        }:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The matching managed test case is terminal; reinstate or "
+                    "resolve it before promotion"
+                ),
+            )
+        existing_link = (
+            await db.execute(
+                select(CanonicalTestCase.id)
+                .where(
+                    CanonicalTestCase.managed_test_case_id == managed.id,
+                    CanonicalTestCase.id != canonical.id,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing_link is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="The matching managed test case is already linked to another canonical case",
+            )
+        canonical.managed_test_case_id = managed.id
+        canonical.source = "linked"
+        await audit_event(
+            db,
+            "automation_case",
+            canonical.id,
+            canonical.project_id,
+            "promote",
+            actor,
+            old_values={"managed_test_case_id": None, "source": "execution"},
+            new_values={"managed_test_case_id": str(managed.id), "source": "linked"},
+            policy_snapshot={"target_state": managed.status, "fingerprint_match": "existing"},
+        )
+        stage_test_management_counter(db, "promotion", (str(canonical.project_id),))
+        await db.flush()
+        return canonical, managed
+
+    suite = await db.get(TestSuite, canonical.test_suite_id)
+    managed = ManagedTestCase(
+        project_id=canonical.project_id,
+        title=canonical.test_name,
+        feature_area=canonical.class_name,
+        suite_name=suite.name if suite is not None else None,
+        test_suite_id=canonical.test_suite_id,
+        test_type="automation",
+        status="draft",
+        version=1,
+        author_id=actor.id,
+        is_automated=True,
+        automation_status="automated",
+        # Identity copy is deliberately verbatim. Recomputing from display
+        # fields would break merged-list dedup for class-qualified tests.
+        test_fingerprint=canonical.test_fingerprint,
+    )
+    db.add(managed)
+    await db.flush()
+    stage_test_case_snapshot(
+        db,
+        managed,
+        actor_id=actor.id,
+        change_type="promoted",
+        change_summary="Promoted from automation evidence",
+        changed_fields=[
+            "title", "feature_area", "suite_name", "test_suite_id",
+            "test_type", "status", "is_automated", "automation_status",
+            "test_fingerprint",
+        ],
+    )
+    canonical.managed_test_case_id = managed.id
+    canonical.source = "linked"
+    await audit_event(
+        db,
+        "automation_case",
+        canonical.id,
+        canonical.project_id,
+        "promote",
+        actor,
+        old_values={"managed_test_case_id": None, "source": "execution"},
+        new_values={"managed_test_case_id": str(managed.id), "source": "linked"},
+        policy_snapshot={"target_state": "draft", "fingerprint_copy": "verbatim"},
+    )
+    await audit_event(
+        db,
+        "test_case",
+        managed.id,
+        managed.project_id,
+        "created",
+        actor,
+        details=f"Promoted from canonical test case {canonical.id}",
+    )
+    stage_test_management_counter(db, "promotion", (str(canonical.project_id),))
+    await db.flush()
+    return canonical, managed
+
+
+async def unlink_canonical_managed_case(
+    db: AsyncSession,
+    canonical_id: uuid.UUID,
+    actor: User,
+    *,
+    reason: str,
+) -> CanonicalTestCase:
+    reason = reason.strip()
+    if not reason:
+        raise HTTPException(status_code=422, detail="reason must not be blank")
+    if len(reason) > 500:
+        raise HTTPException(status_code=422, detail="reason must be at most 500 characters")
+    canonical = (
+        await db.execute(
+            select(CanonicalTestCase)
+            .where(CanonicalTestCase.id == canonical_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if canonical is None:
+        raise HTTPException(status_code=404, detail="Canonical test case not found")
+    if canonical.managed_test_case_id is None:
+        raise HTTPException(status_code=409, detail="Canonical test case has no managed link")
+    old_managed_id = canonical.managed_test_case_id
+    canonical.managed_test_case_id = None
+    canonical.source = "execution"
+    await audit_event(
+        db,
+        "automation_case",
+        canonical.id,
+        canonical.project_id,
+        "unlink_managed_case",
+        actor,
+        old_values={"managed_test_case_id": str(old_managed_id), "source": "linked"},
+        new_values={"managed_test_case_id": None, "source": "execution"},
+        reason=reason,
+    )
+    await db.flush()
+    return canonical
+
+
+async def confirm_canonical_retirement(
+    db: AsyncSession,
+    canonical_id: uuid.UUID,
+    actor: User,
+    *,
+    reason: str,
+) -> CanonicalTestCase:
+    reason = reason.strip()
+    if not reason:
+        raise HTTPException(status_code=422, detail="reason must not be blank")
+    if len(reason) > 500:
+        raise HTTPException(status_code=422, detail="reason must be at most 500 characters")
+    canonical = (
+        await db.execute(
+            select(CanonicalTestCase)
+            .where(CanonicalTestCase.id == canonical_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if canonical is None:
+        raise HTTPException(status_code=404, detail="Canonical test case not found")
+    if canonical.status != "deleted":
+        raise HTTPException(status_code=409, detail="Only a deleted canonical case can be retired")
+    if canonical.retirement_confirmed_at is not None:
+        raise HTTPException(status_code=409, detail="Retirement is already confirmed")
+    canonical.retirement_confirmed_at = datetime.now(timezone.utc)
+    canonical.retirement_confirmed_by_id = actor.id
+    canonical.retirement_reason = reason
+    await audit_event(
+        db,
+        "automation_case",
+        canonical.id,
+        canonical.project_id,
+        "confirm_retirement",
+        actor,
+        reason=reason,
+        old_values={"retirement_confirmed_at": None},
+        new_values={"retirement_confirmed_at": canonical.retirement_confirmed_at.isoformat()},
+    )
+    stage_orphan_gauge_refresh(db, canonical.project_id)
+    await db.flush()
+    return canonical
+
+
+async def list_orphaned_canonical_cases(
+    db: AsyncSession,
+    project_ids: Optional[list[uuid.UUID]],
+    *,
+    page: int = 1,
+    size: int = 25,
+) -> tuple[list[CanonicalTestCase], int]:
+    stmt = select(CanonicalTestCase).where(
+        CanonicalTestCase.status == "deleted",
+        CanonicalTestCase.retirement_confirmed_at.is_(None),
+    )
+    if project_ids is not None:
+        if not project_ids:
+            return [], 0
+        stmt = stmt.where(CanonicalTestCase.project_id.in_(project_ids))
+    total = int(
+        (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
+    )
+    rows = list(
+        (
+            await db.execute(
+                stmt.order_by(
+                    CanonicalTestCase.deleted_observed_at.asc().nullsfirst(),
+                    CanonicalTestCase.id.asc(),
+                ).offset((page - 1) * size).limit(size)
+            )
+        ).scalars().all()
+    )
+    count_stmt = select(
+        CanonicalTestCase.project_id,
+        func.count(CanonicalTestCase.id),
+    ).where(
+        CanonicalTestCase.status == "deleted",
+        CanonicalTestCase.retirement_confirmed_at.is_(None),
+    )
+    if project_ids is not None:
+        count_stmt = count_stmt.where(CanonicalTestCase.project_id.in_(project_ids))
+    count_rows = await db.execute(count_stmt.group_by(CanonicalTestCase.project_id))
+    counts = {project_id: int(count) for project_id, count in count_rows.all()}
+    # Explicitly reset scoped projects with no rows; otherwise a previous
+    # non-zero gauge remains stale forever after the queue is cleared.
+    if project_ids is None:
+        all_project_rows = await db.execute(select(Project.id))
+        metric_project_ids = list(all_project_rows.scalars().all())
+    else:
+        metric_project_ids = project_ids
+    for project_id in metric_project_ids:
+        try:
+            automation_cases_orphaned.labels(str(project_id)).set(counts.get(project_id, 0))
+        except Exception:
+            logger.warning("automation_orphan_metric_failed", project_id=str(project_id))
+    return rows, total
+
+
+async def list_test_case_evidence_gaps(
+    db: AsyncSession,
+    project_ids: Optional[list[uuid.UUID]],
+    *,
+    kind: str,
+    page: int = 1,
+    size: int = 25,
+) -> tuple[list[dict], int]:
+    if kind not in {"never_executed", "automation_vanished"}:
+        raise HTTPException(status_code=422, detail="Unknown evidence gap kind")
+    stmt = (
+        select(ManagedTestCase, CanonicalTestCase)
+        .outerjoin(
+            CanonicalTestCase,
+            CanonicalTestCase.managed_test_case_id == ManagedTestCase.id,
+        )
+    )
+    if project_ids is not None:
+        if not project_ids:
+            return [], 0
+        stmt = stmt.where(ManagedTestCase.project_id.in_(project_ids))
+    if kind == "never_executed":
+        stmt = stmt.where(
+            CanonicalTestCase.id.is_(None),
+            ManagedTestCase.last_executed_at.is_(None),
+        )
+    else:
+        stmt = stmt.where(CanonicalTestCase.status == "deleted")
+    total = int(
+        (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
+    )
+    rows = (
+        await db.execute(
+            stmt.order_by(ManagedTestCase.created_at.desc(), ManagedTestCase.id.asc())
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+    ).all()
+    items = [
+        {
+            "id": managed.id,
+            "project_id": managed.project_id,
+            "title": managed.title,
+            "status": managed.status,
+            "canonical_test_case_id": canonical.id if canonical is not None else None,
+            "canonical_status": canonical.status if canonical is not None else None,
+            "deleted_observed_at": canonical.deleted_observed_at if canonical is not None else None,
+            "last_executed_at": managed.last_executed_at,
+        }
+        for managed, canonical in rows
+    ]
+    return items, total
+
+
 # Maximum canonical_ids per bulk-link request. 200 covers the realistic
 # multi-select case (a SuiteCasesPage typically renders a few-dozen rows
 # per scroll viewport) and keeps the worst-case round-trip bounded.
@@ -1064,6 +1418,7 @@ async def reconcile_canonical_deletions(
     """
     from app.core.config import settings
 
+    stage_orphan_gauge_refresh(db, project_id)
     effective_window = (
         window_runs if window_runs is not None
         else settings.CANONICAL_DELETION_WINDOW_RUNS
@@ -1123,6 +1478,12 @@ async def reconcile_canonical_deletions(
             continue
         canonical.status = "deleted"
         canonical.deleted_at_run_id = deleted_at_run_id
+        canonical.deleted_observed_at = datetime.now(timezone.utc)
+        # A new disappearance is fresh evidence. A confirmation from any
+        # prior disappearance cannot retire this new observation.
+        canonical.retirement_confirmed_at = None
+        canonical.retirement_confirmed_by_id = None
+        canonical.retirement_reason = None
         counts["deleted"] += 1
 
     if counts["deleted"]:

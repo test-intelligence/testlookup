@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Optional, cast
+from typing import cast
 
 import structlog
 from fastapi import Depends, HTTPException
@@ -10,34 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, resolve_project_scope
 from app.db.postgres import get_db
-from app.models.postgres import ManagedTestCase, TestCaseAuditLog, TestPlan, User
+from app.models.postgres import ManagedTestCase, TestCase, TestPlan, TestRun, User
 
 logger = structlog.get_logger(__name__)
-
-
-async def audit_event(
-    db: AsyncSession,
-    entity_type: str,
-    entity_id: uuid.UUID,
-    project_id: Optional[uuid.UUID],
-    action: str,
-    actor: User,
-    old_values: Optional[dict] = None,
-    new_values: Optional[dict] = None,
-    details: Optional[str] = None,
-) -> None:
-    log = TestCaseAuditLog(
-        entity_type=entity_type,
-        entity_id=entity_id,
-        project_id=project_id,
-        action=action,
-        actor_id=actor.id,
-        actor_name=actor.full_name or actor.username,
-        old_values=old_values,
-        new_values=new_values,
-        details=details,
-    )
-    db.add(log)
 
 
 def row(model_instance, schema_class):
@@ -69,6 +44,35 @@ async def require_case_access(
     return cast(ManagedTestCase, case)
 
 
+async def require_case_access_for_review_target(
+    case_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> ManagedTestCase | TestCase:
+    """Authorize both managed IDs and automation IDs for the review shim.
+
+    The service turns an accessible automation-row ID into the documented 400
+    guidance. Unknown or inaccessible IDs remain indistinguishable to callers.
+    """
+    managed = await db.get(ManagedTestCase, case_id)
+    if managed is not None:
+        await resolve_project_scope(db, current_user, str(managed.project_id))
+        return managed
+
+    result = await db.execute(
+        select(TestCase, TestRun.project_id)
+        .join(TestRun, TestRun.id == TestCase.test_run_id)
+        .where(TestCase.id == case_id)
+        .limit(1)
+    )
+    automation_row = result.first()
+    if automation_row is None:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    test_case, project_id = automation_row
+    await resolve_project_scope(db, current_user, str(project_id))
+    return cast(TestCase, test_case)
+
+
 async def require_plan_access(
     plan_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -89,4 +93,6 @@ async def paginate_scalars(db: AsyncSession, query, page: int, size: int):
 
 def apply_model_updates(model_instance, values: dict) -> None:
     for field, value in values.items():
+        if field == "status":
+            raise ValueError("status updates must use the test-case lifecycle service")
         setattr(model_instance, field, value)

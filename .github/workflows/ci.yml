@@ -433,10 +433,11 @@ jobs:
                       """
                       INSERT INTO test_cases
                         (id, test_run_id, test_fingerprint, test_name,
-                         suite_name, class_name, status, error_message)
+                         suite_name, class_name, status, error_message,
+                         steps_present)
                       VALUES ($1, $2, $3, 'ci_seed_failed_test',
                               'ci-integration', 'CIIntegration', 'FAILED',
-                              'seeded integration failure')
+                              'seeded integration failure', false)
                       """,
                       test_case_id,
                       run_id,
@@ -500,6 +501,7 @@ jobs:
           tests/integration/test_search_step_scope_postgres.py
           tests/integration/test_search_statement_cache_postgres.py
           tests/integration/test_search_count_shortcut_postgres.py
+          tests/integration/test_test_case_lifecycle_postgres.py
           tests/integration/test_decision_report_supersession_postgres_mongo.py
           tests/regression/test_notification_history_schema.py
 

@@ -48,3 +48,22 @@ def test_every_postgres_integration_file_is_listed_in_the_ci_job():
         "add them to the 'Run protected PostgreSQL integration suite' step in "
         f".github/workflows/ci.yml: {missing}"
     )
+
+
+def test_ci_authority_seed_supplies_non_null_execution_defaults():
+    """Pin the raw seed to the migrated ``test_cases`` write contract."""
+    if not CI_WORKFLOW.exists():
+        pytest.skip("ci.yml not present in this checkout")
+
+    source = CI_WORKFLOW.read_text(encoding="utf-8")
+    seed = source.split(
+        "- name: Seed disposable authority rows for integration fixtures",
+        1,
+    )[1].split("- name: Run protected PostgreSQL integration suite", 1)[0]
+    test_case_insert = seed.split("INSERT INTO test_cases", 1)[1].split(
+        '"""',
+        1,
+    )[0]
+
+    assert "steps_present" in test_case_insert
+    assert "'seeded integration failure', false" in test_case_insert

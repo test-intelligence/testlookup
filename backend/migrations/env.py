@@ -5,10 +5,10 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy.ext.asyncio import async_engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 
 from app.db.postgres import Base
-from app.models.postgres import *  # noqa: import all models for autogenerate
+from app.models.postgres import *  # noqa: F403 - import all models for autogenerate
 
 config = context.config
 
@@ -16,6 +16,13 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+
+# All API replicas use the same container entrypoint, so a rolling deployment
+# may start several ``alembic upgrade head`` processes concurrently. A
+# transaction-scoped PostgreSQL advisory lock serializes the migration body and
+# is released automatically on commit, rollback, connection loss, or process
+# death. The stable signed bigint is deliberately application-specific.
+_ALEMBIC_ADVISORY_LOCK_ID = 6075990748104101441
 
 # Override sqlalchemy.url from environment
 db_url = (
@@ -45,6 +52,11 @@ def run_migrations_offline() -> None:
 def do_run_migrations(connection):
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
+        if connection.dialect.name == "postgresql":
+            connection.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                {"lock_id": _ALEMBIC_ADVISORY_LOCK_ID},
+            )
         context.run_migrations()
 
 

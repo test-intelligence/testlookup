@@ -31,6 +31,13 @@ export function patchData<TResponse, TBody = unknown>(
   return api.patch<TResponse>(url, body, config).then(({ data }) => data)
 }
 
-export function deleteData<TResponse = void>(url: string, config?: RequestConfig): Promise<TResponse> {
-  return api.delete<TResponse>(url, config).then(({ data }) => data)
+export function deleteData<TResponse = void, TBody = never>(
+  url: string,
+  config?: RequestConfig,
+  body?: TBody,
+): Promise<TResponse> {
+  return api.delete<TResponse>(url, {
+    ...config,
+    ...(body === undefined ? {} : { data: body }),
+  }).then(({ data }) => data)
 }

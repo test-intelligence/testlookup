@@ -6,12 +6,48 @@ Beyond runs and failures, TestLookup maintains a **catalog** of your logical tes
 
 **Test Management** (`/test-management`) is the catalog view:
 
-- **Test cases** — every logical test (by fingerprint) with its **type** (functional, API, integration, …), **priority** (critical/high/…/low), and **lifecycle status**: `draft → active → approved`, with `deprecated` for retirement. Filters combine, and the counts shown are execution-aware (a suite's card shows real execution totals, not just distinct-test snapshots).
+- **Test cases** — every logical test (by fingerprint) with its **type** (functional, API, integration, …), **priority** (critical/high/…/low), and governed lifecycle status. Filters combine, and the counts shown are execution-aware (a suite's card shows real execution totals, not just distinct-test snapshots).
 - **Test-case detail** — click a case for its drawer: **Details**, **History** (cross-run results), **Reviews**, **Comments**, and **Unautomated** (manual-test tracking). Deep links expand and scroll to the right case automatically.
 - **Test plans** — group cases into plans for a release or initiative and track their execution state.
 - **Test suites** — the suite catalog, including each suite's **owner** — assign one here (the picker also lets a QA lead set themselves).
 - **Review workflow** — cases can be sent for review (including **AI Review**); review states flow through the same catalog so approvals are visible where the tests live.
 - **Duplicate detection** — near-identical test cases are flagged so the catalog stays deduplicated as teams add tests independently.
+
+## Authored test-case lifecycle
+
+Authored cases follow one server-enforced state machine:
+
+```text
+draft → review_requested → under_review → approved → active
+  ↑             ↕              │            │         │
+  └── revise/rework ← rejected ─┘            └─────────┴→ needs_update → draft
+
+draft | rejected | approved | active | needs_update → deprecated → archived
+deprecated | archived → draft (reinstate)
+```
+
+The API reports the actions currently available to the signed-in user. Review
+decisions belong to the reviewer who claimed the review; another reviewer
+cannot race or replace that decision. An author cannot approve their own case.
+Deprecating, reinstating, and archiving require a QA lead or administrator and
+a recorded reason. The legacy Delete action is still accepted without a reason
+during the first compatibility release, but the server records that omission
+for operators to find and migrate.
+
+Editing an approved or active definition invalidates the old approval and moves
+the case to `needs_update`. Every save and lifecycle transition creates a full
+immutable version snapshot and an audit entry containing the transition,
+reason, actor, and effective policy. `approved` remains selectable by existing
+test-plan workflows during this compatibility release; new workflows should
+activate approved cases before execution.
+
+AI review is advisory evidence. It creates its own completed AI-review record
+and never claims a human review.
+
+Rollout is controlled by the `test_case_lifecycle_v2` feature flag. When it is
+off for a project, the direct transition and allowed-transition APIs are not
+exposed; the compatibility request-review, review-action, and Delete paths
+remain available and still enforce the same row-locked policy.
 
 ## Ownership: who gets the failure?
 
@@ -58,6 +94,25 @@ the other is what someone wrote down.
 The detail page shows a single canonical test's history across runs — its
 status over time, class name and suite membership, and how long it has been
 taking — reached from a suite's test list.
+
+An observed canonical case can be **promoted** into Test Management. Promotion
+links an existing same-project authored case with the same fingerprint when
+there is exactly one; otherwise it creates one draft authored case and copies
+the automation fingerprint verbatim. Multiple matching authored cases are a
+conflict that must be resolved rather than guessed. This keeps the combined
+catalog deduplicated. Promoting an already-linked case is refused. A wrong link
+can be removed with a required reason without deleting either record.
+
+When automation disappears across the configured observation window, the
+canonical case enters the orphan queue. The queue is derived from observed
+deletion state; a reappearing test leaves it automatically. A QA lead can
+confirm intentional retirement with a reason. Each new disappearance is fresh
+evidence and clears any confirmation made for an earlier disappearance.
+
+Two evidence-gap lists help validate the governed-library workflow:
+
+- authored cases that have never been linked to execution evidence;
+- authored cases whose linked automation has vanished.
 
 **Nothing here is hard-deleted.** Canonical rows and suite memberships carry a
 status plus the run in which they disappeared, so a test that vanishes from a

@@ -156,48 +156,84 @@ def _fake_live_session(session_id: uuid.UUID, project_id: uuid.UUID, run_id: str
 
 
 @pytest.mark.asyncio
-async def test_deprecate_managed_test_case_sets_status_and_audits():
+async def test_deprecate_managed_test_case_keeps_legacy_delete_reason_compatible():
     case_id = uuid.uuid4()
     project_id = uuid.uuid4()
     test_case = SimpleNamespace(id=case_id, project_id=project_id, status="draft")
-    user = SimpleNamespace(id=uuid.uuid4(), full_name="QA User", username="qa", role="QA_ENGINEER")
+    user = SimpleNamespace(id=uuid.uuid4(), full_name="QA Lead", username="lead", role="QA_LEAD")
     db = FakeAsyncDB([])
 
     with (
         patch.object(test_management_service, "get_test_case_or_404", AsyncMock(return_value=test_case)),
-        patch.object(test_management_service, "audit_event", AsyncMock()) as audit_mock,
+        patch.object(test_management_service, "transition", AsyncMock()) as transition_mock,
+        patch.object(
+            test_management_service,
+            "stage_test_management_counter",
+        ) as stage_counter,
     ):
         await test_management_service.deprecate_managed_test_case(db, case_id, user)
 
-    assert test_case.status == "deprecated"
-    audit_mock.assert_awaited_once()
+    assert transition_mock.await_args.kwargs["reason"] == "(no reason supplied)"
+    stage_counter.assert_called_once_with(
+        db, "deprecation_without_reason", (str(project_id),)
+    )
     # Item #2: the service only mutates + audits. The router handler owns
     # the commit, so this unit test should not see commit called.
     db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_apply_review_action_updates_review_and_test_case():
+async def test_deprecate_managed_test_case_preserves_explicit_reason_without_metric():
     case_id = uuid.uuid4()
-    test_case = SimpleNamespace(id=case_id, project_id=uuid.uuid4(), status="review_requested")
-    review = SimpleNamespace(status="pending", reviewer_id=None, human_notes=None, reviewed_at=None)
-    user = SimpleNamespace(id=uuid.uuid4(), full_name="Lead", username="lead", role=test_management_service.UserRole.QA_LEAD)
-    payload = SimpleNamespace(action="approve", notes="Looks good")
-    db = FakeAsyncDB([FakeExecuteResult(scalars=[review])])
+    test_case = SimpleNamespace(id=case_id, project_id=uuid.uuid4())
+    user = SimpleNamespace(id=uuid.uuid4(), role="ADMIN")
+    db = FakeAsyncDB([])
 
     with (
-        patch.object(test_management_service, "get_test_case_or_404", AsyncMock(return_value=test_case)),
-        patch.object(test_management_service, "audit_event", AsyncMock()) as audit_mock,
+        patch.object(
+            test_management_service,
+            "get_test_case_or_404",
+            AsyncMock(return_value=test_case),
+        ),
+        patch.object(
+            test_management_service, "transition", AsyncMock()
+        ) as transition_mock,
+        patch.object(
+            test_management_service,
+            "stage_test_management_counter",
+        ) as stage_counter,
     ):
+        await test_management_service.deprecate_managed_test_case(
+            db, case_id, user, reason="Superseded by checkout v2"
+        )
+
+    assert transition_mock.await_args.kwargs["reason"] == "Superseded by checkout v2"
+    stage_counter.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_apply_review_action_delegates_to_legacy_auto_claim_shim():
+    case_id = uuid.uuid4()
+    test_case = SimpleNamespace(id=case_id, project_id=uuid.uuid4(), status="review_requested")
+    user = SimpleNamespace(id=uuid.uuid4(), full_name="Lead", username="lead", role="QA_LEAD")
+    payload = SimpleNamespace(action="approve", notes="Looks good")
+    db = FakeAsyncDB([])
+
+    with patch.object(
+        test_management_service,
+        "auto_claim_and_decide",
+        AsyncMock(return_value=SimpleNamespace(case=test_case)),
+    ) as auto_claim:
         result = await test_management_service.apply_review_action(db, case_id, payload, user)
 
     assert result is test_case
-    assert test_case.status == "approved"
-    assert review.status == "approved"
-    assert review.reviewer_id == user.id
-    assert review.human_notes == "Looks good"
-    assert review.reviewed_at is not None
-    audit_mock.assert_awaited_once()
+    auto_claim.assert_awaited_once_with(
+        db,
+        case_id,
+        "approve",
+        user,
+        notes="Looks good",
+    )
     # Item #2: the service only mutates; router handler owns commit+refresh.
     db.commit.assert_not_awaited()
     db.refresh.assert_not_awaited()
@@ -352,7 +388,7 @@ async def test_generate_ai_cases_persists_created_cases_when_requested():
 
 
 @pytest.mark.asyncio
-async def test_review_test_case_with_ai_creates_review_when_missing():
+async def test_review_test_case_with_ai_creates_distinct_ai_completed_evidence():
     case_id = uuid.uuid4()
     test_case = SimpleNamespace(
         id=case_id,
@@ -395,7 +431,12 @@ async def test_review_test_case_with_ai_creates_review_when_missing():
 
     assert result["quality_score"] == 91
     assert test_case.ai_quality_score == 91
-    assert any(type(obj).__name__ == "TestCaseReview" for obj in db.added)
+    reviews = [obj for obj in db.added if type(obj).__name__ == "TestCaseReview"]
+    assert len(reviews) == 1
+    assert reviews[0].status == "ai_completed"
+    assert reviews[0].reviewer_id is None
+    assert reviews[0].ai_review_completed is True
+    assert reviews[0].ai_quality_score == 91
     audit_mock.assert_awaited_once()
     # Item #2: service stages only, router handler commits.
     db.commit.assert_not_awaited()

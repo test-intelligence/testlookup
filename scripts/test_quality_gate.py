@@ -941,6 +941,95 @@ def test_metrics_are_emitted_does_not_credit_a_longer_neighbour(
     assert "uploads_total is declared" in violations[0].message
 
 
+# -- Guard: backend.managed-test-case-status-single-writer --------------------
+
+
+def _managed_status_repo(tmp_path: Path, relative: str, source: str) -> None:
+    _write(tmp_path / "backend" / "app" / relative, source)
+
+
+def test_managed_status_single_writer_flags_direct_assignment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _managed_status_repo(tmp_path, "services/legacy.py", """
+        from app.models.postgres import ManagedTestCase
+        async def deprecate(db, case_id):
+            case = await db.get(ManagedTestCase, case_id)
+            case.status = "deprecated"
+    """)
+    violations = qg._backend_managed_test_case_status_single_writer()
+    assert len(violations) == 1
+    assert violations[0].line == 4
+    assert "outside the lifecycle service" in violations[0].message
+
+
+def test_managed_status_single_writer_flags_dynamic_setattr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _managed_status_repo(tmp_path, "routers/test_management_shared.py", """
+        from app.models.postgres import ManagedTestCase
+        def apply_model_updates(model_instance, values):
+            for field, value in values.items():
+                setattr(model_instance, field, value)
+    """)
+    violations = qg._backend_managed_test_case_status_single_writer()
+    assert len(violations) == 1
+    assert "status-capable setattr" in violations[0].message
+
+
+def test_managed_status_single_writer_accepts_explicit_setattr_denylist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _managed_status_repo(tmp_path, "routers/test_management_shared.py", """
+        from app.models.postgres import ManagedTestCase
+        def apply_model_updates(model_instance, values):
+            for field, value in values.items():
+                if field == "status":
+                    continue
+                setattr(model_instance, field, value)
+    """)
+    assert qg._backend_managed_test_case_status_single_writer() == []
+
+
+def test_managed_status_single_writer_allows_initial_constructor_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _managed_status_repo(tmp_path, "services/factory.py", """
+        from app.models.postgres import ManagedTestCase
+        def create(project_id):
+            return ManagedTestCase(project_id=project_id, status="draft")
+    """)
+    assert qg._backend_managed_test_case_status_single_writer() == []
+
+
+def test_managed_status_single_writer_allows_lifecycle_owner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _managed_status_repo(tmp_path, "services/test_case_lifecycle_service.py", """
+        from app.models.postgres import ManagedTestCase
+        async def transition(case: ManagedTestCase, target):
+            case.status = target
+    """)
+    assert qg._backend_managed_test_case_status_single_writer() == []
+
+
+def test_managed_status_single_writer_ignores_other_status_models(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _managed_status_repo(tmp_path, "services/reviews.py", """
+        from app.models.postgres import ManagedTestCase, TestCaseReview
+        def finish(review: TestCaseReview):
+            review.status = "approved"
+    """)
+    assert qg._backend_managed_test_case_status_single_writer() == []
+
+
 # ── DEVELOPER_GUIDE.md sync ───────────────────────────────────────────────
 #
 # The guide's section 1 is hand-maintained prose over an auto-listable

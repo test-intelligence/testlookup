@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-09-01 — govern authored test-case lifecycle and automation evidence
+
+Authored test cases now move through one row-locked lifecycle with explicit
+review claiming, claimant-only decisions, self-approval prevention, reversible
+reason-bearing retirement, `needs_update`, and archival. Every transition and
+definition save records a complete immutable version plus an expanded audit
+snapshot. Existing review and delete endpoints delegate to the same lifecycle;
+the first compatibility release records and counts legacy deletes that omit a
+reason, and approved cases remain available to existing test-plan selection.
+The new direct transition surfaces are runtime-gated by
+`test_case_lifecycle_v2`; when disabled, only the governed compatibility shims
+remain exposed. Lifecycle metrics are emitted best-effort after commit.
+
+Automation canonicals can now reuse a unique same-project fingerprint match or
+be promoted into a new linked draft without losing fingerprint identity,
+unlinked without deleting either record,
+listed in a derived unconfirmed-deletion queue, and retired by a QA lead with a
+reason. Test Management also exposes measured lists for authored cases with no
+execution evidence and linked cases whose automation vanished. AI review no
+longer claims human work, and RAG/AI creation paths now write complete version
+snapshots under the governed vocabulary.
+Catalog status filters are enum-validated, archived rows are opt-in, and an
+authored status filter never mixes in automation-derived rows. RAG acceptance
+edits now use a strict content-field schema so lifecycle and ownership fields
+cannot be overwritten through the review endpoint.
+
+The PostgreSQL integration seed now supplies the rich-detail
+`steps_present` field explicitly, and migration 0144 restores its missing
+server default to match the ORM and protect raw or rolling-upgrade writers.
+Regression coverage also pins the legacy-row snapshot and deep-redaction
+behaviors that failed in the preceding main-branch backend run.
+
+### BREAKING (compatibility window)
+
+Default catalog lists now exclude `archived` as well as `deprecated`, and
+deprecation, reinstatement, and archival require QA-lead or administrator
+authority. DELETE clients should begin sending `{ "reason": "..." }` now.
+For this first compatibility release only, a missing DELETE body is accepted as
+`(no reason supplied)`, logged, and counted; it becomes a validation error when
+the announced two-release window closes. Existing QA engineers may still
+approve another author's case, preserving the previous default approver set.
+
 ## 2026-08-31 — preserve and neutralize audit CSV fields
 
 Audit CSV exports now use the standard CSV writer so commas, quotes, and
