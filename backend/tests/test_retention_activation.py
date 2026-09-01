@@ -202,6 +202,10 @@ def test_s1_migration_upgrade_body_executes(mocker):
 
     assert module.op.create_table.call_count == 1
     assert module.op.drop_table.call_count == 1
+    # ``sa.text(...).bindparams`` infers the database bind type from this
+    # Python value. A string becomes VARCHAR and PostgreSQL rejects the insert
+    # into feature_flags.id (UUID) before the integration suite can start.
+    assert isinstance(module._FLAG_ID, uuid.UUID)
 
 
 def test_s1_migration_does_not_touch_the_policy_table_at_all():
