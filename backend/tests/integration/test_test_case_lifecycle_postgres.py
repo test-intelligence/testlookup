@@ -195,7 +195,12 @@ async def _run_alembic(dsn: str, direction: str, revision: str) -> None:
 async def test_migration_postconditions_are_true_in_postgres(pg_engine):
     async with pg_engine.connect() as connection:
         revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-        assert revision == "0144"
+        # Head advanced to 0145 when the retention-activation nudge migration
+        # (user_ui_dismissals) landed; a full upgrade now ends there. 0145 adds
+        # only that store and a feature flag, so the postconditions below —
+        # test-case versions, reviews, and the four lifecycle indexes — are
+        # unchanged.
+        assert revision == "0145"
 
         duplicate_versions = await connection.scalar(text(
             "SELECT count(*) FROM ("
