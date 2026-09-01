@@ -14,6 +14,51 @@ test mocks `op`, so it never saw the datatype mismatch). The Postgres
 migration-postconditions integration test also had its expected head bumped
 from `0144` to `0145` — it was masked while the broken `0145` upgrade aborted
 before that assertion could run.
+## 2026-09-01 — a failed reindex reported as "indexed nothing"
+
+Same defect class as the retention purge fix above, on the indexing surface.
+`index_test_cases` and `index_incremental` returned `0` from every failure
+path, and the reindex Celery task put that straight into
+`{"indexed_count": 0}` — so a run where ChromaDB was unreachable, or where the
+embedder was unavailable, was indistinguishable from a successful run that
+found nothing new to index. That result is what whoever triggered the reindex
+reads.
+
+Four sites, all now returning `None`:
+
+* full index — vector store unreachable
+* full index — embedder unavailable at upsert
+* incremental — vector store unreachable
+* incremental — embedder unavailable at upsert
+
+The upsert paths are the sharper two, and the commoner: embeddings are computed
+at upsert, not at collection creation, so that is where an offline model
+surfaces. It is also the only failure where work may **already have landed** —
+the cursor deliberately stays at the last completed batch so the failing rows
+are retried rather than skipped forever. Reporting `0` there did not merely
+fail to measure; it contradicted progress that had persisted. `None` says
+"cannot report a count"; the cursor holds how far it actually got.
+
+**Genuine zeros are preserved.** Both `if not rows: return 0` paths — nothing
+to index, cursor up to date — still return `0`. If every case returned `None`
+the distinction would be lost again in the opposite direction. Two zeros, six
+nulls, and each one deliberate.
+
+The task result now carries `indexing_measured` alongside the nullable count,
+so a consumer reading either field gets the truth.
+
+**A regression test asserted the defect**, as with the purge fix.
+`test_indexing_degrades_when_the_embedder_is_unavailable` pinned `result == 0`.
+The degradation it protects is real and still holds — the task does not fail —
+but the reported count had to stop colliding with a successful no-op. Its
+sibling, `test_a_failed_index_does_not_advance_the_cursor`, is the assertion
+that actually protects the corpus and is untouched.
+
+Tests: `backend/tests/test_semantic_index_unmeasured.py` (5). All four sites
+were mutation-tested individually — including confirming the mid-run test
+reaches the upsert path rather than passing via the unreachable-store branch.
+
+
 ## 2026-09-01 — an unreachable store reported as an empty one
 
 Two of the retention preview's twelve counts come from stores that can be down

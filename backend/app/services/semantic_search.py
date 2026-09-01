@@ -195,7 +195,7 @@ def _after_incremental_cursor(last_id):
     )
 
 
-async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -> int:
+async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -> int | None:
     """
     Full re-index of test cases into ChromaDB.
 
@@ -208,8 +208,11 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
     try:
         collection = await _get_or_create_collection()
     except Exception as exc:
+        # None, not 0. Zero means "there was nothing to index"; this is
+        # "nobody could look". The reindex task reports this number back to
+        # whoever triggered it, and a 0 there reads as a successful no-op run.
         logger.warning("ChromaDB unavailable — semantic indexing skipped: %s", exc)
-        return 0
+        return None
 
     q = select(
         TestCase.id,
@@ -245,8 +248,13 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
         # The cursor is deliberately NOT advanced: skipping it means these rows
         # are re-indexed once embeddings are available again, rather than being
         # silently passed over forever.
+        #
+        # Returns None, not 0 — matching ``index_incremental``'s equivalent
+        # path. Zero is reserved for the genuine "no rows to index" case a few
+        # lines above; this is "could not index them", and the reindex task
+        # reports the number back to whoever triggered it.
         logger.warning("Semantic indexing skipped — embeddings unavailable: %s", exc)
-        return 0
+        return None
 
     # Update cursor to the latest ID so incremental picks up from here
     _update_cursor(rows, project_id)
@@ -256,7 +264,7 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
     return count
 
 
-async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) -> int:
+async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) -> int | None:
     """
     Incremental index: only processes test cases created AFTER the last indexed ID.
 
@@ -269,8 +277,9 @@ async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) 
     try:
         collection = await _get_or_create_collection()
     except Exception as exc:
+        # Same rule as the full index: unreachable is not empty.
         logger.warning("ChromaDB unavailable — incremental indexing skipped: %s", exc)
-        return 0
+        return None
 
     # Read cursor from Redis
     last_id = None
@@ -319,11 +328,18 @@ async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) 
             cursor_project_id=project_id,
         )
     except Exception as exc:
-        # Same as the full index: the embedder is exercised at upsert. Degrade
-        # to zero and leave the cursor at the last completed batch, so the
-        # failing batch is retried without discarding earlier progress.
+        # The embedder is exercised at upsert, so this is the commonest failure
+        # of the three — and the only one where work may already have landed.
+        # The cursor stays at the last completed batch so the failing batch is
+        # retried without discarding earlier progress.
+        #
+        # Returns None rather than 0 for a sharper reason than the other two:
+        # earlier batches may have succeeded, so 0 would not merely be
+        # unmeasured, it would actively contradict work that persisted. None
+        # says "cannot report a count" — which is the truth. Read the cursor,
+        # not this number, to find out how far it got.
         logger.warning("Incremental indexing skipped — embeddings unavailable: %s", exc)
-        return 0
+        return None
     logger.info("Incrementally indexed %d new test cases", count)
     await _publish_index_size(collection)
     return count
