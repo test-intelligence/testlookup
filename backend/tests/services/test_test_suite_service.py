@@ -9,6 +9,7 @@ non-integration service suite.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -261,6 +262,10 @@ async def test_sync_canonical_updates_existing_and_restores_deleted():
         class_name="OldClass",
         status="deleted",
         deleted_at_run_id=uuid.uuid4(),
+        deleted_observed_at=datetime.now(timezone.utc),
+        retirement_confirmed_at=datetime.now(timezone.utc),
+        retirement_confirmed_by_id=uuid.uuid4(),
+        retirement_reason="Old disappearance was confirmed",
         last_seen_run_id=uuid.uuid4(),
     )
     case = _make_test_case("fp1", "Regression", test_name="new_name")
@@ -284,6 +289,10 @@ async def test_sync_canonical_updates_existing_and_restores_deleted():
     # Restored.
     assert existing_canonical.status == "active"
     assert existing_canonical.deleted_at_run_id is None
+    assert existing_canonical.deleted_observed_at is None
+    assert existing_canonical.retirement_confirmed_at is None
+    assert existing_canonical.retirement_confirmed_by_id is None
+    assert existing_canonical.retirement_reason is None
     assert existing_canonical.last_seen_run_id == run_id
     # Name + class refreshed from the payload.
     assert existing_canonical.test_name == "new_name"

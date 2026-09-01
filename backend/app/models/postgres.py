@@ -94,6 +94,20 @@ class UserRole(str, PyEnum):
     ADMIN = "ADMIN"
 
 
+class TestCaseLifecycleState(str, PyEnum):
+    """Stored lifecycle vocabulary for authored ``ManagedTestCase`` rows."""
+
+    DRAFT = "draft"
+    REVIEW_REQUESTED = "review_requested"
+    UNDER_REVIEW = "under_review"
+    APPROVED = "approved"
+    ACTIVE = "active"
+    REJECTED = "rejected"
+    NEEDS_UPDATE = "needs_update"
+    DEPRECATED = "deprecated"
+    ARCHIVED = "archived"
+
+
 class TriageStatus(str, PyEnum):
     """Per-failure triage workflow state (migration 0088).
 
@@ -700,6 +714,12 @@ class CanonicalTestCase(Base):
         Index("ix_ctc_test_suite_id", "test_suite_id"),
         Index("ix_ctc_project_status", "project_id", "status"),
         Index("ix_ctc_fingerprint", "test_fingerprint"),
+        Index(
+            "uq_ctc_managed_test_case_id",
+            "managed_test_case_id",
+            unique=True,
+            postgresql_where=text("managed_test_case_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -732,6 +752,16 @@ class CanonicalTestCase(Base):
     # Optional cross-link to the authored / AI-generated catalog.
     managed_test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("managed_test_cases.id", ondelete="SET NULL"), nullable=True
+    )
+    retirement_confirmed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    retirement_confirmed_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    retirement_reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    deleted_observed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     review_tag: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -2072,6 +2102,8 @@ class ManagedTestCase(Base):
     __tablename__ = "managed_test_cases"
     __table_args__ = (
         Index("ix_mtc_project_status", "project_id", "status"),
+        Index("ix_mtc_project_fingerprint", "project_id", "test_fingerprint"),
+        Index("ix_mtc_project_last_executed", "project_id", "last_executed_at"),
         Index("ix_mtc_author", "author_id"),
         Index("ix_mtc_fingerprint", "test_fingerprint"),
         Index("ix_mtc_dup_fingerprint", "dup_fingerprint"),
@@ -2109,8 +2141,33 @@ class ManagedTestCase(Base):
     # Lifecycle state machine
     # draft → review_requested → under_review → approved → active → deprecated
     # under_review → rejected → draft
-    status: Mapped[str] = mapped_column(String(30), default="draft", index=True)
+    status: Mapped[str] = mapped_column(
+        String(30), default=TestCaseLifecycleState.DRAFT.value, index=True
+    )
     version: Mapped[int] = mapped_column(Integer, default=1)
+    lifecycle_state_changed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    approved_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    approved_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    needs_update_reason: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    deprecation_reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    deprecated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deprecated_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    archived_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    archived_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Attribution
     author_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -2166,6 +2223,9 @@ class TestCaseVersion(Base):
     __tablename__ = "test_case_versions"
     __table_args__ = (
         Index("ix_tcv_test_case", "test_case_id"),
+        UniqueConstraint(
+            "test_case_id", "version", name="uq_test_case_versions_case_version"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -2175,15 +2235,30 @@ class TestCaseVersion(Base):
     # Snapshot fields
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
+    objective: Mapped[Optional[str]] = mapped_column(Text)
+    preconditions: Mapped[Optional[str]] = mapped_column(Text)
     steps: Mapped[Optional[list]] = mapped_column(JSON)
     parameters: Mapped[Optional[list]] = mapped_column(JSON)
     expected_result: Mapped[Optional[str]] = mapped_column(Text)
+    test_data: Mapped[Optional[str]] = mapped_column(Text)
+    test_type: Mapped[Optional[str]] = mapped_column(String(50))
+    priority: Mapped[Optional[str]] = mapped_column(String(20))
+    severity: Mapped[Optional[str]] = mapped_column(String(20))
+    feature_area: Mapped[Optional[str]] = mapped_column(String(500))
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500))
+    test_suite_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    tags: Mapped[Optional[list]] = mapped_column(JSON)
+    estimated_duration_minutes: Mapped[Optional[int]] = mapped_column(Integer)
+    is_automated: Mapped[Optional[bool]] = mapped_column(Boolean)
+    automation_status: Mapped[Optional[str]] = mapped_column(String(30))
+    test_fingerprint: Mapped[Optional[str]] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(30), nullable=False)
 
     # Change metadata
     changed_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     change_summary: Mapped[Optional[str]] = mapped_column(String(500))   # human label: "Updated steps 3-5"
     change_type: Mapped[str] = mapped_column(String(30), default="updated")  # created|updated|status_changed|approved|deprecated
+    changed_fields: Mapped[Optional[list]] = mapped_column(JSON)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -2194,6 +2269,12 @@ class TestCaseReview(Base):
     __table_args__ = (
         Index("ix_tcr_test_case", "test_case_id"),
         Index("ix_tcr_reviewer", "reviewer_id"),
+        Index(
+            "uq_test_case_reviews_one_open_per_case",
+            "test_case_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'in_progress')"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -2201,7 +2282,7 @@ class TestCaseReview(Base):
     reviewer_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     requested_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
-    # Status: pending|in_progress|approved|rejected|changes_requested
+    # Status: pending|in_progress|approved|rejected|changes_requested|ai_completed
     status: Mapped[str] = mapped_column(String(30), default="pending")
 
     # AI review output
@@ -2734,6 +2815,10 @@ class TestCaseAuditLog(Base):
     old_values: Mapped[Optional[dict]] = mapped_column(JSON)
     new_values: Mapped[Optional[dict]] = mapped_column(JSON)
     details: Mapped[Optional[str]] = mapped_column(Text)
+    reason: Mapped[Optional[str]] = mapped_column(String(500))
+    policy_snapshot: Mapped[Optional[dict]] = mapped_column(JSON)
+    transition_from: Mapped[Optional[str]] = mapped_column(String(30))
+    transition_to: Mapped[Optional[str]] = mapped_column(String(30))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 

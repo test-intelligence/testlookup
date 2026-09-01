@@ -34,16 +34,22 @@ from app.core.deps import (
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
+    CanonicalManagedUnlinkRequest,
+    CanonicalPromotionResponse,
+    CanonicalRetirementConfirmRequest,
     CanonicalTestCaseBulkLinkRequest,
     CanonicalTestCaseBulkLinkResponse,
     CanonicalTestCaseLinkRequest,
     CanonicalTestCaseListResponse,
     CanonicalTestCaseResponse,
+    ManagedTestCaseResponse,
     TestSuiteCreate,
     TestSuiteListResponse,
     TestSuiteResponse,
     TestSuiteUpdate,
 )
+from app.services.test_case_lifecycle_service import lifecycle_actions_for
+from app.services.test_management_metrics_service import emit_staged_test_management_metrics
 from app.services import test_suite_service as svc
 from app.services.run_environment import resolve_environment
 
@@ -91,6 +97,10 @@ def _canonical_to_response(
         "last_seen_test_case_id": last_seen_test_case_id,
         "deleted_at_run_id": c.deleted_at_run_id,
         "managed_test_case_id": c.managed_test_case_id,
+        "retirement_confirmed_at": c.retirement_confirmed_at,
+        "retirement_confirmed_by_id": c.retirement_confirmed_by_id,
+        "retirement_reason": c.retirement_reason,
+        "deleted_observed_at": c.deleted_observed_at,
         "review_tag": c.review_tag,
         "tags": c.tags,
         "run_count": None,
@@ -350,6 +360,30 @@ async def list_canonical_cases(
 
 
 @router.get(
+    "/api/v1/canonical-test-cases/orphaned",
+    response_model=CanonicalTestCaseListResponse,
+)
+async def list_orphaned_canonical_cases(
+    project_id: Optional[uuid.UUID] = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(25, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    accessible = await get_accessible_project_ids(db, current_user)
+    if project_id is not None:
+        if accessible is not None and project_id not in accessible:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        project_ids: Optional[list[uuid.UUID]] = [project_id]
+    else:
+        project_ids = None if accessible is None else list(accessible)
+    rows, total = await svc.list_orphaned_canonical_cases(
+        db, project_ids, page=page, size=size
+    )
+    return {"items": [_canonical_to_response(c) for c in rows], "total": total}
+
+
+@router.get(
     "/api/v1/canonical-test-cases/{canonical_id}",
     response_model=CanonicalTestCaseResponse,
 )
@@ -360,6 +394,79 @@ async def get_canonical_case(
 ):
     canonical = await svc.get_canonical_or_404(db, canonical_id)
     await _enforce_project_access(db, current_user, canonical.project_id)
+    return _canonical_to_response(canonical)
+
+
+@router.post(
+    "/api/v1/canonical-test-cases/{canonical_id}/promote",
+    response_model=CanonicalPromotionResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+)
+async def promote_canonical_case(
+    canonical_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    canonical = await svc.get_canonical_or_404(db, canonical_id)
+    await _enforce_project_access(db, current_user, canonical.project_id)
+    canonical, managed = await svc.promote_canonical_test_case(
+        db, canonical_id, current_user
+    )
+    await db.commit()
+    await emit_staged_test_management_metrics(db)
+    await db.refresh(canonical)
+    await db.refresh(managed)
+    managed_response = ManagedTestCaseResponse.model_validate(managed)
+    managed_response.allowed_actions = await lifecycle_actions_for(
+        db, managed, current_user
+    )
+    return {
+        "canonical": _canonical_to_response(canonical),
+        "managed_case": managed_response,
+    }
+
+
+@router.delete(
+    "/api/v1/canonical-test-cases/{canonical_id}/managed-link",
+    response_model=CanonicalTestCaseResponse,
+    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+)
+async def unlink_canonical_managed_case(
+    canonical_id: uuid.UUID,
+    payload: CanonicalManagedUnlinkRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    canonical = await svc.get_canonical_or_404(db, canonical_id)
+    await _enforce_project_access(db, current_user, canonical.project_id)
+    canonical = await svc.unlink_canonical_managed_case(
+        db, canonical_id, current_user, reason=payload.reason
+    )
+    await db.commit()
+    await db.refresh(canonical)
+    return _canonical_to_response(canonical)
+
+
+@router.post(
+    "/api/v1/canonical-test-cases/{canonical_id}/confirm-retirement",
+    response_model=CanonicalTestCaseResponse,
+    dependencies=[Depends(require_role(UserRole.QA_LEAD))],
+)
+async def confirm_canonical_retirement(
+    canonical_id: uuid.UUID,
+    payload: CanonicalRetirementConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    canonical = await svc.get_canonical_or_404(db, canonical_id)
+    await _enforce_project_access(db, current_user, canonical.project_id)
+    canonical = await svc.confirm_canonical_retirement(
+        db, canonical_id, current_user, reason=payload.reason
+    )
+    await db.commit()
+    await emit_staged_test_management_metrics(db)
+    await db.refresh(canonical)
     return _canonical_to_response(canonical)
 
 

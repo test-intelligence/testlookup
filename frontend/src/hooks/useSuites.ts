@@ -40,6 +40,14 @@ export function useCanonicalCase(canonicalId?: string) {
   )
 }
 
+export function useOrphanedCanonicalCases() {
+  return useProjectScopedSWR(
+    'canonical-orphaned',
+    (projectId) => suitesService.listOrphanedCanonicals(projectId),
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
+  )
+}
+
 /** Invalidate every suite-keyed SWR entry — call after any mutation. */
 export function refreshSuites() {
   return mutate(

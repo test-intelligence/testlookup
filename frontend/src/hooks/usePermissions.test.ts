@@ -32,4 +32,22 @@ describe('usePermissions', () => {
     expect(permissions.canGenerateApiKeys).toBe(false)
     expect(permissions.canManageUsers).toBe(false)
   })
+
+  it('normalizes QA engineer and keeps QA lead retirement authority separate', () => {
+    mockUseAuthStore.mockImplementation((selector: (state: { user: { role: string } }) => unknown) =>
+      selector({ user: { role: 'UserRole.QA_ENGINEER' } }),
+    )
+
+    const engineer = usePermissions()
+    expect(engineer.role).toBe('QA_ENGINEER')
+    expect(engineer.isQaEngineer).toBe(true)
+    expect(engineer.isQaLead).toBe(false)
+
+    mockUseAuthStore.mockImplementation((selector: (state: { user: { role: string } }) => unknown) =>
+      selector({ user: { role: 'QA_LEAD' } }),
+    )
+    const lead = usePermissions()
+    expect(lead.isQaEngineer).toBe(true)
+    expect(lead.isQaLead).toBe(true)
+  })
 })

@@ -2,7 +2,8 @@
 Architectural authorization test — ratchets out scope-check drift.
 
 Every API route that takes a scoped path parameter (``project_id``,
-``run_id``, ``session_id``, ``link_id``, …) must either:
+``run_id``, ``case_id``, ``canonical_id``, ``session_id``, ``link_id``, …)
+must either:
 
   * include an approved guard in its dependency chain, **or**
   * be listed as a known exemption in ``KNOWN_EXEMPT``.
@@ -43,6 +44,12 @@ GUARDED_PARAMS: dict[str, str] = {
 # Path params that still have **no guard** — routes using these as a
 # primary scope must be listed as exempt until a guard is added.
 UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
+    # Test-management resources have router-local guards rather than guards
+    # in ``core.deps``. They still belong in the path scan: leaving either
+    # name out makes every new lifecycle/promotion route pass vacuously as
+    # "no scoped param at all".
+    "case_id",
+    "canonical_id",
     "session_id",
     "link_id",
     "release_id",
@@ -151,6 +158,29 @@ def _route_is_protected(route: APIRoute) -> bool:
     # API key — owner/admin check.
     if "{key_id}" in path and any("require_api_key_owner" in n for n in dep_names):
         return True
+    # Authored test case -> project. This guard is router-local because the
+    # shared test-management module also returns the loaded case to handlers.
+    if "{case_id}" in path:
+        evidence = _authorization_evidence(route)
+        if (
+            any("require_case_access" in n for n in dep_names)
+            or "require_case_access" in evidence
+            or "_require_case_project_access" in evidence
+            or "resolve_project_scope" in evidence
+        ):
+            return True
+    # Canonical automation case -> project. Existing suite routes perform the
+    # check inline through ``_enforce_project_access``; newer lifecycle routes
+    # may use a dependency named ``require_canonical_case_access``. Inspect the
+    # handler/callee evidence as well as dependencies so both safe forms count.
+    if "{canonical_id}" in path:
+        evidence = _authorization_evidence(route)
+        if (
+            any("require_canonical_case_access" in n for n in dep_names)
+            or "_enforce_project_access" in evidence
+            or "require_canonical_case_access" in evidence
+        ):
+            return True
 
     return False
 
@@ -218,6 +248,29 @@ def test_known_exempt_is_only_a_backlog() -> None:
     )
 
 
+def test_test_case_resource_ids_are_scanned_and_not_exempted() -> None:
+    """Lifecycle routes must never regress to the old vacuous-pass shape."""
+    assert {"case_id", "canonical_id"} <= UNGUARDED_SCOPED_PARAMS
+    assert not any(
+        "{case_id}" in path or "{canonical_id}" in path
+        for _method, path in KNOWN_EXEMPT
+    )
+
+
+def test_existing_test_case_routes_have_real_access_evidence() -> None:
+    scoped = [
+        route
+        for route in _collect_api_routes()
+        if "{case_id}" in route.path or "{canonical_id}" in route.path
+    ]
+    assert scoped, "expected authored/canonical test-case routes to be mounted"
+    unprotected = [route.path for route in scoped if not _route_is_protected(route)]
+    assert unprotected == [], (
+        "test-case routes without project-derived access evidence: "
+        f"{sorted(set(unprotected))}"
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # Scoped ids that arrive OUTSIDE the path
 # ══════════════════════════════════════════════════════════════════════════
@@ -248,6 +301,7 @@ import inspect  # noqa: E402
 SCOPED_IDS: frozenset[str] = frozenset({
     "project_id", "run_id", "test_run_id", "release_id", "defect_id",
     "analysis_id", "cluster_id", "plan_id", "strategy_id", "case_id",
+    "canonical_id",
     "session_id", "link_id", "key_id", "source_id", "batch_id", "rule_id",
     "report_id", "suite_name", "project_key",
     # Plurals and prefixed forms. Their absence is not hypothetical: it hid
@@ -255,7 +309,7 @@ SCOPED_IDS: frozenset[str] = frozenset({
     # and ``/integrations/jira`` (``test_case_id``) from this scan while both
     # were live cross-tenant holes, found only by triaging the backlog by hand.
     "run_ids", "test_run_ids", "project_ids", "test_case_id", "test_case_ids",
-    "defect_ids", "case_ids", "cluster_ids",
+    "defect_ids", "case_ids", "canonical_ids", "cluster_ids",
 })
 
 #: Any of these appearing in a handler — or in a function it calls — is accepted
@@ -270,6 +324,7 @@ _SCOPE_EVIDENCE: tuple[str, ...] = (
     "require_session_access", "require_live_session_access", "require_link_access",
     "require_api_key_owner", "require_knowledge_source_access",
     "require_generation_batch_access", "require_plan_access", "require_case_access",
+    "require_canonical_case_access",
     "require_attempt_access", "require_investigation_access",
     # local helpers defined in routers/services
     "_assert_project_access", "_check_project_access", "_enforce_project_access",

@@ -21,7 +21,8 @@ from app.models.schemas import (
     TestPlanResponse,
     TestPlanUpdate,
 )
-from app.routers.test_management_shared import audit_event, logger, require_plan_access, row
+from app.routers.test_management_shared import logger, require_plan_access, row
+from app.services.test_management_audit_service import audit_event
 from app.services.test_management_service import (
     add_test_plan_item,
     create_test_plan,

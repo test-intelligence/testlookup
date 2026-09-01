@@ -30,9 +30,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_project_access
+from app.core.deps import get_current_active_user, require_project_access, require_role
 from app.db.postgres import get_db
-from app.models.postgres import DuplicateTestCaseCandidate, ManagedTestCase, User
+from app.models.postgres import DuplicateTestCaseCandidate, ManagedTestCase, User, UserRole
 from app.models.schemas import (
     DuplicateActionResponse,
     DuplicateCandidateListResponse,
@@ -42,6 +42,7 @@ from app.models.schemas import (
     DuplicateMergeRequest,
 )
 from app.services import duplicate_detection_service as dup_svc
+from app.services.test_management_metrics_service import emit_staged_test_management_metrics
 
 router = APIRouter(prefix="/api/v1/projects", tags=["Duplicate Detection"])
 
@@ -199,6 +200,7 @@ async def dismiss_duplicate_candidate(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
     _: User = Depends(require_project_access()),
+    _reviewer: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     """Dismiss a candidate pair (status → ``dismissed`` + suppression record).
 
@@ -215,6 +217,7 @@ async def dismiss_duplicate_candidate(
             detail="duplicate candidate not found in project",
         )
     await db.commit()
+    await emit_staged_test_management_metrics(db)
     return DuplicateActionResponse(
         candidate_id=cand.id,
         status=cand.status,
@@ -233,6 +236,7 @@ async def merge_duplicate_candidate(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
     _: User = Depends(require_project_access()),
+    _reviewer: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     """NON-DESTRUCTIVE merge: status → ``merged`` + optional soft-deprecate of the
     losing case. Never deletes a case or redirects a fingerprint.
@@ -246,12 +250,26 @@ async def merge_duplicate_candidate(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="candidate_id in body does not match the path",
         )
+    actor_role = (
+        current_user.role.value
+        if hasattr(current_user.role, "value")
+        else str(current_user.role)
+    )
+    if payload.deprecate_loser and actor_role not in {
+        UserRole.QA_LEAD.value,
+        UserRole.ADMIN.value,
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Deprecating a duplicate merge loser requires QA_LEAD or ADMIN",
+        )
     try:
         cand, deprecated_id = await dup_svc.merge_candidate(
             db,
             project_id,
             candidate_id,
             payload.keep_case_id,
+            actor=current_user,
             deprecate_loser=payload.deprecate_loser,
         )
     except ValueError as exc:
@@ -261,6 +279,7 @@ async def merge_duplicate_candidate(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=msg)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
     await db.commit()
+    await emit_staged_test_management_metrics(db)
     return DuplicateActionResponse(
         candidate_id=cand.id,
         status=cand.status,

@@ -10,11 +10,12 @@ and any downstream recomputed counts atomically.
 from __future__ import annotations
 
 import uuid
+import structlog
 from datetime import datetime, timezone
 from typing import Optional, cast
 
 from fastapi import HTTPException
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, literal, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.run_compare_service import normalize_suite_name
@@ -23,11 +24,10 @@ from app.models.postgres import (
     Project,
     TestCaseComment,
     TestCaseReview,
-    TestCaseVersion,
     TestPlan,
     TestPlanItem,
+    TestCaseLifecycleState,
     User,
-    UserRole,
 )
 from app.models.schemas import (
     ManagedTestCaseCreate,
@@ -38,10 +38,36 @@ from app.models.schemas import (
     TestPlanItemCreate,
     TestPlanUpdate,
 )
-from app.routers.test_management_shared import apply_model_updates, audit_event, get_or_404, paginate_scalars
+from app.routers.test_management_shared import apply_model_updates, get_or_404, paginate_scalars
+from app.services.test_management_audit_service import audit_event
+from app.services.test_management_metrics_service import stage_test_management_counter
+from app.services.test_case_lifecycle_service import (
+    LifecycleAction,
+    auto_claim_and_decide,
+    stage_test_case_snapshot,
+    transition,
+)
+
+logger = structlog.get_logger(__name__)
 
 
-async def get_test_case_or_404(db: AsyncSession, case_id: uuid.UUID) -> ManagedTestCase:
+async def get_test_case_or_404(
+    db: AsyncSession,
+    case_id: uuid.UUID,
+    *,
+    for_update: bool = False,
+) -> ManagedTestCase:
+    if for_update:
+        test_case = (
+            await db.execute(
+                select(ManagedTestCase)
+                .where(ManagedTestCase.id == case_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if test_case is None:
+            raise HTTPException(status_code=404, detail="Test case not found")
+        return test_case
     return cast(
         ManagedTestCase,
         await get_or_404(db, ManagedTestCase, case_id, "Test case not found"),
@@ -53,7 +79,8 @@ async def list_managed_test_cases(
     project_id: Optional[uuid.UUID],
     page: int,
     size: int,
-    status: Optional[str] = None,
+    status: Optional[TestCaseLifecycleState | str] = None,
+    include_archived: bool = False,
     test_type: Optional[str] = None,
     priority: Optional[str] = None,
     feature_area: Optional[str] = None,
@@ -65,9 +92,19 @@ async def list_managed_test_cases(
     if project_id:
         query = query.where(ManagedTestCase.project_id == project_id)
     if status:
-        query = query.where(ManagedTestCase.status == status)
+        status_value = status.value if isinstance(status, TestCaseLifecycleState) else status
+        query = query.where(ManagedTestCase.status == status_value)
+    elif include_archived:
+        query = query.where(ManagedTestCase.status != TestCaseLifecycleState.DEPRECATED.value)
     else:
-        query = query.where(ManagedTestCase.status != "deprecated")
+        query = query.where(
+            ManagedTestCase.status.notin_(
+                [
+                    TestCaseLifecycleState.DEPRECATED.value,
+                    TestCaseLifecycleState.ARCHIVED.value,
+                ]
+            )
+        )
     if test_type:
         query = query.where(ManagedTestCase.test_type == test_type)
     if priority:
@@ -92,13 +129,136 @@ async def list_managed_test_cases(
     return await paginate_scalars(db, query.order_by(ManagedTestCase.created_at.desc()), page, size)
 
 
+async def list_managed_test_case_fingerprints(
+    db: AsyncSession,
+    project_id: Optional[uuid.UUID],
+) -> set[tuple[uuid.UUID, str]]:
+    """Return project-scoped identities independent of authored-list filters."""
+    stmt = select(ManagedTestCase.project_id, ManagedTestCase.test_fingerprint).where(
+        ManagedTestCase.test_fingerprint.is_not(None)
+    )
+    if project_id is not None:
+        stmt = stmt.where(ManagedTestCase.project_id == project_id)
+    result = await db.execute(stmt)
+    return {
+        (row_project_id, fingerprint)
+        for row_project_id, fingerprint in result.all()
+        if fingerprint
+    }
+
+
+async def list_combined_test_case_identities(
+    db: AsyncSession,
+    project_id: Optional[uuid.UUID],
+    *,
+    include_archived: bool,
+    test_type: Optional[str],
+    search: Optional[str],
+    suite_name: Optional[str],
+    page: int,
+    size: int,
+) -> tuple[list[tuple[str, uuid.UUID]], int, int]:
+    """Page managed and latest automation identities in one bounded SQL query."""
+    managed = select(
+        literal("managed").label("source"),
+        ManagedTestCase.id.label("entity_id"),
+        func.coalesce(
+            ManagedTestCase.last_executed_at,
+            ManagedTestCase.created_at,
+        ).label("recency"),
+    )
+    if project_id is not None:
+        managed = managed.where(ManagedTestCase.project_id == project_id)
+    excluded_states = [TestCaseLifecycleState.DEPRECATED.value]
+    if not include_archived:
+        excluded_states.append(TestCaseLifecycleState.ARCHIVED.value)
+    managed = managed.where(ManagedTestCase.status.notin_(excluded_states))
+    if test_type:
+        managed = managed.where(ManagedTestCase.test_type == test_type)
+    if suite_name:
+        managed = managed.where(
+            func.lower(func.trim(ManagedTestCase.suite_name))
+            == normalize_suite_name(suite_name)
+        )
+    if search:
+        from app.services.sql_utils import like_contains
+
+        managed = managed.where(
+            ManagedTestCase.title.ilike(like_contains(search), escape="\\")
+        )
+
+    sources = [managed]
+    if not test_type or test_type.lower() == "automation":
+        from app.models.postgres import TestCase, TestRun
+        from app.services.sql_utils import like_contains
+
+        automation_base = select(
+            TestCase.id.label("entity_id"),
+            TestCase.test_fingerprint.label("fingerprint"),
+            TestRun.project_id.label("project_id"),
+            TestRun.created_at.label("recency"),
+            func.row_number().over(
+                partition_by=(TestRun.project_id, TestCase.test_fingerprint),
+                order_by=(TestRun.created_at.desc(), TestCase.id.asc()),
+            ).label("row_number"),
+        ).join(TestRun, TestCase.test_run_id == TestRun.id).where(
+            TestCase.test_fingerprint.is_not(None)
+        )
+        if project_id is not None:
+            automation_base = automation_base.where(TestRun.project_id == project_id)
+        if suite_name:
+            suite_key = normalize_suite_name(suite_name)
+            automation_base = automation_base.where(
+                or_(
+                    func.lower(func.trim(TestCase.suite_name)) == suite_key,
+                    and_(
+                        TestRun.trigger_source == "live_stream",
+                        func.lower(func.trim(TestRun.primary_suite_name)) == suite_key,
+                    ),
+                )
+            )
+        if search:
+            pattern = like_contains(search)
+            automation_base = automation_base.where(
+                TestCase.test_name.ilike(pattern, escape="\\")
+                | TestCase.class_name.ilike(pattern, escape="\\")
+            )
+        latest = automation_base.subquery()
+        linked = select(ManagedTestCase.id).where(
+            ManagedTestCase.project_id == latest.c.project_id,
+            ManagedTestCase.test_fingerprint == latest.c.fingerprint,
+        ).exists()
+        sources.append(
+            select(
+                literal("automation").label("source"),
+                latest.c.entity_id,
+                latest.c.recency,
+            ).where(latest.c.row_number == 1, ~linked)
+        )
+
+    combined = union_all(*sources).subquery() if len(sources) > 1 else managed.subquery()
+    total = int(
+        (await db.execute(select(func.count()).select_from(combined))).scalar() or 0
+    )
+    rows = (
+        await db.execute(
+            select(combined.c.source, combined.c.entity_id)
+            .order_by(combined.c.recency.desc(), combined.c.entity_id.asc())
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+    ).all()
+    return [(source, entity_id) for source, entity_id in rows], total, -(-total // size)
+
+
 async def list_automation_test_cases(
     db: AsyncSession,
     project_id: Optional[uuid.UUID],
     *,
     search: Optional[str] = None,
     suite_name: Optional[str] = None,
-    exclude_fingerprints: Optional[set[str]] = None,
+    exclude_fingerprints: Optional[set[str] | set[tuple[uuid.UUID, str]]] = None,
+    case_ids: Optional[set[uuid.UUID]] = None,
 ) -> list[dict]:
     """Return synthesized ``ManagedTestCase``-shaped rows derived from per-run
     ``TestCase`` rows.
@@ -144,6 +304,10 @@ async def list_automation_test_cases(
     )
     if project_id is not None:
         base = base.where(TestRun.project_id == project_id)
+    if case_ids is not None:
+        if not case_ids:
+            return []
+        base = base.where(TestCase.id.in_(case_ids))
     if suite_name:
         # Case-insensitive (see ``list_managed_test_cases``) *and* honouring the
         # effective-suite rule: for a ``live_stream`` run the SDK sends the
@@ -180,8 +344,12 @@ async def list_automation_test_cases(
 
     latest = (
         select(base_sq)
-        .distinct(base_sq.c.test_fingerprint)
-        .order_by(base_sq.c.test_fingerprint, base_sq.c.run_created_at.desc())
+        .distinct(base_sq.c.run_project_id, base_sq.c.test_fingerprint)
+        .order_by(
+            base_sq.c.run_project_id,
+            base_sq.c.test_fingerprint,
+            base_sq.c.run_created_at.desc(),
+        )
         .subquery()
     )
     stmt = select(latest).order_by(latest.c.run_created_at.desc())
@@ -190,9 +358,12 @@ async def list_automation_test_cases(
     exclude = exclude_fingerprints or set()
     result: list[dict] = []
     for r in rows:
-        if r.test_fingerprint in exclude:
-            continue
         row_project_id = r.run_project_id if project_id is None else project_id
+        if (
+            r.test_fingerprint in exclude
+            or (row_project_id, r.test_fingerprint) in exclude
+        ):
+            continue
         result.append({
             "id": r.id,  # per-run TestCase id; safe as a list-row key
             "owner": r.owner,
@@ -285,20 +456,19 @@ async def create_managed_test_case(
     db.add(test_case)
     await db.flush()
 
-    db.add(
-        TestCaseVersion(
-            test_case_id=test_case.id,
-            version=1,
-            title=test_case.title,
-            description=test_case.description,
-            steps=test_case.steps,
-            parameters=test_case.parameters,
-            expected_result=test_case.expected_result,
-            status="draft",
-            changed_by_id=current_user.id,
-            change_summary="Initial creation",
-            change_type="created",
-        )
+    stage_test_case_snapshot(
+        db,
+        test_case,
+        actor_id=current_user.id,
+        change_summary="Initial creation",
+        change_type="created",
+        changed_fields=[
+            "title", "description", "objective", "preconditions", "steps",
+            "parameters", "expected_result", "test_data", "test_type",
+            "priority", "severity", "feature_area", "suite_name", "tags",
+            "estimated_duration_minutes", "is_automated", "automation_status",
+            "test_fingerprint", "status",
+        ],
     )
     await audit_event(
         db, "test_case", test_case.id, test_case.project_id, "created", current_user,
@@ -313,12 +483,14 @@ async def update_managed_test_case(
     payload: ManagedTestCaseUpdate,
     current_user: User,
 ) -> ManagedTestCase:
-    test_case = await get_test_case_or_404(db, case_id)
-    if test_case.status in ("deprecated",):
-        raise HTTPException(status_code=400, detail="Cannot edit a deprecated test case")
+    test_case = await get_test_case_or_404(db, case_id, for_update=True)
+    if test_case.status in ("deprecated", "archived"):
+        raise HTTPException(status_code=409, detail=f"Cannot edit a {test_case.status} test case")
 
     old = {"title": test_case.title, "status": test_case.status, "version": test_case.version}
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True, exclude={"change_summary"})
+    if not update_data:
+        return test_case
 
     # Migration 0087 — keep ``test_suite_id`` in lockstep with ``suite_name``
     # changes. When the caller renames the suite (or clears it), we
@@ -338,23 +510,30 @@ async def update_managed_test_case(
             update_data["test_suite_id"] = suite.id
 
     apply_model_updates(test_case, update_data)
-    test_case.version += 1
-
-    db.add(
-        TestCaseVersion(
-            test_case_id=test_case.id,
-            version=test_case.version,
-            title=test_case.title,
-            description=test_case.description,
-            steps=test_case.steps,
-            parameters=test_case.parameters,
-            expected_result=test_case.expected_result,
-            status=test_case.status,
-            changed_by_id=current_user.id,
+    changed_fields = sorted(update_data)
+    if old["status"] in ("approved", "active"):
+        # The policy's default is require-rereview.  Running this through the
+        # state machine preserves the one-writer invariant and snapshots the
+        # edited content together with its approval invalidation.
+        await transition(
+            db,
+            test_case.id,
+            LifecycleAction.FLAG_STALE,
+            current_user,
+            reason="edited_after_approval",
+            notes=payload.change_summary,
+            changed_fields=changed_fields,
+        )
+    else:
+        test_case.version += 1
+        stage_test_case_snapshot(
+            db,
+            test_case,
+            actor_id=current_user.id,
             change_summary=payload.change_summary or f"Updated to v{test_case.version}",
             change_type="updated",
+            changed_fields=changed_fields,
         )
-    )
     await audit_event(
         db, "test_case", test_case.id, test_case.project_id, "updated", current_user,
         old_values=old, new_values=update_data,
@@ -366,13 +545,28 @@ async def deprecate_managed_test_case(
     db: AsyncSession,
     case_id: uuid.UUID,
     current_user: User,
+    reason: Optional[str] = None,
 ) -> None:
     test_case = await get_test_case_or_404(db, case_id)
-    old_status = test_case.status
-    test_case.status = "deprecated"
-    await audit_event(
-        db, "test_case", test_case.id, test_case.project_id, "deleted", current_user,
-        old_values={"status": old_status}, new_values={"status": "deprecated"},
+    compatibility_reason = reason
+    if not compatibility_reason or not compatibility_reason.strip():
+        compatibility_reason = "(no reason supplied)"
+        logger.warning(
+            "test_case_deprecated_without_reason",
+            test_case_id=str(test_case.id),
+            project_id=str(test_case.project_id),
+        )
+        stage_test_management_counter(
+            db,
+            "deprecation_without_reason",
+            (str(test_case.project_id),),
+        )
+    await transition(
+        db,
+        case_id,
+        LifecycleAction.DEPRECATE,
+        current_user,
+        reason=compatibility_reason,
     )
 
 
@@ -399,19 +593,11 @@ async def request_test_case_review(db: AsyncSession, case_id: uuid.UUID, current
                 ),
             )
         raise HTTPException(status_code=404, detail="Test case not found")
-    test_case = managed
-    if test_case.status not in ("draft", "rejected"):
-        raise HTTPException(status_code=400, detail=f"Cannot request review from status '{test_case.status}'")
-    previous_status = test_case.status
-    test_case.status = "review_requested"
-    review = TestCaseReview(test_case_id=case_id, requested_by_id=current_user.id, status="pending")
-    db.add(review)
-    await db.flush()  # materialize review.id for the handler response
-    await audit_event(
-        db, "test_case", test_case.id, test_case.project_id, "status_changed", current_user,
-        old_values={"status": previous_status}, new_values={"status": "review_requested"},
+    result = await transition(
+        db, case_id, LifecycleAction.REQUEST_REVIEW, current_user
     )
-    return review
+    assert result.review is not None
+    return result.review
 
 
 async def apply_review_action(
@@ -420,35 +606,14 @@ async def apply_review_action(
     payload: ReviewActionRequest,
     current_user: User,
 ) -> ManagedTestCase:
-    if current_user.role not in (UserRole.QA_LEAD, UserRole.ADMIN, UserRole.QA_ENGINEER):
-        raise HTTPException(status_code=403, detail="Insufficient permissions to review")
-
-    test_case = await get_test_case_or_404(db, case_id)
-    if test_case.status not in ("review_requested", "under_review"):
-        raise HTTPException(status_code=400, detail=f"Test case is not under review (status: {test_case.status})")
-
-    if payload.action == "approve":
-        test_case.status = "approved"
-        new_review_status = "approved"
-    elif payload.action == "reject":
-        test_case.status = "rejected"
-        new_review_status = "rejected"
-    elif payload.action == "request_changes":
-        test_case.status = "draft"
-        new_review_status = "changes_requested"
-    else:
-        raise HTTPException(status_code=400, detail="action must be approve|reject|request_changes")
-
-    review_query = select(TestCaseReview).where(TestCaseReview.test_case_id == case_id).order_by(TestCaseReview.created_at.desc()).limit(1)
-    review = (await db.execute(review_query)).scalars().first()
-    if review:
-        review.status = new_review_status
-        review.reviewer_id = current_user.id
-        review.human_notes = payload.notes
-        review.reviewed_at = datetime.now(timezone.utc)
-
-    await audit_event(db, "test_case", test_case.id, test_case.project_id, payload.action, current_user, details=payload.notes)
-    return test_case
+    result = await auto_claim_and_decide(
+        db,
+        case_id,
+        payload.action,
+        current_user,
+        notes=payload.notes,
+    )
+    return result.case
 
 
 async def add_test_case_comment(

@@ -9,10 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.postgres import ManagedTestCase, TestCaseReview, TestCaseVersion, TestStrategy, User
+from app.models.postgres import ManagedTestCase, TestCaseReview, TestStrategy, User
 from app.models.schemas import AICoverageAnalysisRequest, AIGenerateStrategyRequest, AIGenerateTestCasesRequest
-from app.routers.test_management_shared import audit_event, logger
+from app.routers.test_management_shared import logger
+from app.services.test_management_audit_service import audit_event
 from app.services.test_management_service import get_test_case_or_404
+from app.services.test_case_lifecycle_service import stage_test_case_snapshot
 
 
 async def generate_ai_cases(
@@ -50,19 +52,18 @@ async def generate_ai_cases(
             )
             db.add(test_case)
             await db.flush()
-            db.add(
-                TestCaseVersion(
-                    test_case_id=test_case.id,
-                    version=1,
-                    title=test_case.title,
-                    description=test_case.description,
-                    steps=test_case.steps,
-                    expected_result=test_case.expected_result,
-                    status="draft",
-                    changed_by_id=current_user.id,
-                    change_summary="AI generated",
-                    change_type="created",
-                )
+            stage_test_case_snapshot(
+                db,
+                test_case,
+                actor_id=current_user.id,
+                change_summary="AI generated",
+                change_type="created",
+                changed_fields=[
+                    "title", "description", "objective", "preconditions",
+                    "steps", "expected_result", "test_data", "test_type",
+                    "priority", "severity", "feature_area", "tags",
+                    "estimated_duration_minutes", "status",
+                ],
             )
             await audit_event(
                 db,
@@ -144,17 +145,17 @@ async def review_test_case_with_ai(
     test_case.ai_quality_score = result.get("quality_score")
     test_case.ai_review_notes = result
 
-    review_query = select(TestCaseReview).where(
-        TestCaseReview.test_case_id == case_id,
-        TestCaseReview.ai_review_completed == False,  # noqa: E712
-    ).limit(1)
-    review = (await db.execute(review_query)).scalars().first()
-    if not review:
-        review = TestCaseReview(test_case_id=case_id, requested_by_id=current_user.id, status="in_progress")
-        db.add(review)
-        await db.flush()
-
-    review.ai_review_completed = True
+    # AI feedback is evidence, never human review ownership.  A distinct
+    # terminal record prevents the AI path from claiming/reusing a pending
+    # review or leaving a phantom ``in_progress`` claimant.
+    review = TestCaseReview(
+        test_case_id=case_id,
+        requested_by_id=current_user.id,
+        reviewer_id=None,
+        status="ai_completed",
+        ai_review_completed=True,
+    )
+    db.add(review)
     review.ai_quality_score = result.get("quality_score")
     review.ai_review_notes = result
     review.ai_reviewed_at = datetime.now(timezone.utc)

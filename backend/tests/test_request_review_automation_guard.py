@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -26,6 +26,9 @@ class _ExecResult:
     def __init__(self, value):
         self._v = value
     def scalar_one_or_none(self):
+        return self._v
+
+    def first(self):
         return self._v
 
 
@@ -72,23 +75,59 @@ async def test_request_review_automation_id_returns_400_with_promote_hint():
 
 
 @pytest.mark.asyncio
-async def test_request_review_managed_wrong_status_returns_400():
+async def test_request_review_managed_wrong_status_returns_lifecycle_conflict():
     """A real managed test case whose status doesn't allow a review
-    transition still returns the existing 400 — this path is
-    unchanged by the automation-id guard."""
+    transition returns the governed 409 contract. This path is distinct from
+    the automation-id guidance."""
     from app.services.test_management_service import request_test_case_review
 
     managed_id = uuid.uuid4()
     managed = SimpleNamespace(
-        id=managed_id, project_id=uuid.uuid4(), status="approved",
+        id=managed_id,
+        project_id=uuid.uuid4(),
+        status="approved",
+        author_id=uuid.uuid4(),
+        reviewer_id=None,
     )
     db = SimpleNamespace(
         get=AsyncMock(return_value=managed),
-        execute=AsyncMock(),
+        execute=AsyncMock(return_value=_ExecResult(managed)),
     )
 
     with pytest.raises(HTTPException) as exc:
-        await request_test_case_review(db, managed_id, current_user=SimpleNamespace(id=uuid.uuid4()))
+        await request_test_case_review(
+            db,
+            managed_id,
+            current_user=SimpleNamespace(id=uuid.uuid4(), role="QA_ENGINEER"),
+        )
 
-    assert exc.value.status_code == 400
-    assert "approved" in exc.value.detail
+    assert exc.value.status_code == 409
+    assert exc.value.detail["current_state"] == "approved"
+    assert exc.value.detail["attempted_action"] == "request_review"
+
+
+@pytest.mark.asyncio
+async def test_automation_review_target_dependency_checks_run_project_access():
+    from app.routers import test_management_shared
+
+    automation_id = uuid.uuid4()
+    automation = SimpleNamespace(id=automation_id)
+    project_id = uuid.uuid4()
+    actor = SimpleNamespace(id=uuid.uuid4(), role="QA_ENGINEER")
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=None),
+        execute=AsyncMock(return_value=_ExecResult((automation, project_id))),
+    )
+
+    with patch.object(
+        test_management_shared,
+        "resolve_project_scope",
+        AsyncMock(side_effect=HTTPException(status_code=403, detail="Forbidden")),
+    ) as resolve_scope:
+        with pytest.raises(HTTPException) as exc:
+            await test_management_shared.require_case_access_for_review_target(
+                automation_id, db, actor
+            )
+
+    assert exc.value.status_code == 403
+    resolve_scope.assert_awaited_once_with(db, actor, str(project_id))

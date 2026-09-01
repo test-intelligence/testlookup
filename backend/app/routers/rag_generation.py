@@ -213,7 +213,13 @@ async def batch_accept(
     current_user: User = Depends(get_current_active_user),
 ):
     from app.services.rag_review_service import bulk_accept
-    cases = await bulk_accept(db, batch_id, payload.case_ids, current_user)
+    cases = await bulk_accept(
+        db,
+        batch_id,
+        payload.case_ids,
+        current_user,
+        edits_by_case=payload.edits,
+    )
     return [{"id": str(c.id), "title": c.title, "status": c.status} for c in cases]
 
 

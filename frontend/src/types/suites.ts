@@ -51,7 +51,11 @@ export interface CanonicalTestCase {
   /** Per-run TestCase.id in last_seen_run — drives "open test" deep-link. */
   last_seen_test_case_id?: string | null
   deleted_at_run_id: string | null
+  deleted_observed_at?: string | null
   managed_test_case_id: string | null
+  retirement_confirmed_at?: string | null
+  retirement_confirmed_by_id?: string | null
+  retirement_reason?: string | null
   review_tag: string | null
   tags: string[] | null
   run_count: number | null
@@ -62,6 +66,11 @@ export interface CanonicalTestCase {
 export interface CanonicalTestCaseListResponse {
   items: CanonicalTestCase[]
   total: number
+}
+
+export interface CanonicalPromotionResponse {
+  canonical: CanonicalTestCase
+  managed_case: import('./test-management').ManagedTestCase
 }
 
 export interface CanonicalRunHistoryItem {

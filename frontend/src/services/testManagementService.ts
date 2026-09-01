@@ -12,7 +12,11 @@ import type {
   ManagedTestCase,
   PaginatedResponse,
   TestCaseComment,
+  AllowedTestCaseTransition,
+  TestCaseEvidenceGapKind,
+  TestCaseEvidenceGapResponse,
   TestCaseReview,
+  TestCaseTransitionRequest,
   TestCaseVersion,
   TestPlan,
   TestPlanItem,
@@ -58,8 +62,26 @@ export const testManagementService = {
   updateCase: (id: string, data: Partial<ManagedTestCase> & { change_summary?: string }): Promise<ManagedTestCase> =>
     patchData(`/api/v1/test-management/cases/${id}`, data),
 
-  deleteCase: (id: string): Promise<void> =>
-    deleteData(`/api/v1/test-management/cases/${id}`),
+  deleteCase: (id: string, reason?: string): Promise<void> =>
+    deleteData<void, { reason: string } | undefined>(
+      `/api/v1/test-management/cases/${id}`,
+      undefined,
+      reason ? { reason } : undefined,
+    ),
+
+  transitionCase: (id: string, data: TestCaseTransitionRequest): Promise<ManagedTestCase> =>
+    postData(`/api/v1/test-management/cases/${id}/transition`, data),
+
+  getAllowedTransitions: (id: string): Promise<AllowedTestCaseTransition[]> =>
+    getData(`/api/v1/test-management/cases/${id}/allowed-transitions`),
+
+  getEvidenceGaps: (
+    projectId: string | null,
+    kind: TestCaseEvidenceGapKind,
+  ): Promise<TestCaseEvidenceGapResponse> =>
+    getData('/api/v1/test-management/cases/evidence-gaps', {
+      params: { ...(projectId ? { project_id: projectId } : {}), kind },
+    }),
 
   getCaseHistory: (id: string): Promise<TestCaseVersion[]> =>
     getData(`/api/v1/test-management/cases/${id}/history`),

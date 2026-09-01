@@ -39,6 +39,7 @@ from app.models.postgres import (  # noqa: E402
     DismissedDuplicatePair,
     DuplicateTestCaseCandidate,
     ManagedTestCase,
+    UserRole,
 )
 
 
@@ -52,6 +53,8 @@ def _case(project_id, *, title="Login works", suite_name="auth", status="active"
         title=title,
         suite_name=suite_name,
         status=status,
+        version=1,
+        is_stale=False,
     )
 
 
@@ -109,6 +112,17 @@ class _FakeSession:
 
     async def execute(self, stmt):
         text = str(stmt).lower()
+        params = stmt.compile().params
+        project_ids = {
+            value for key, value in params.items() if "project_id" in key
+        }
+        entity_ids = {
+            item
+            for key, value in params.items()
+            if "project_id" not in key
+            for item in (value if isinstance(value, (list, tuple, set)) else [value])
+            if isinstance(item, uuid.UUID)
+        }
         if "count(" in text:
             self._count_calls += 1
             # First count() in list endpoint = filtered total; second = open_count.
@@ -117,9 +131,31 @@ class _FakeSession:
             open_n = len([c for c in self._candidates if c.status == "open"])
             return _Result(scalar=open_n)
         if "managed_test_cases" in text:
-            return _Result(scalars=self._cases)
+            rows = self._cases or [
+                row
+                for row in self._gettable.values()
+                if isinstance(row, ManagedTestCase)
+            ]
+            rows = [
+                row
+                for row in rows
+                if not project_ids or row.project_id in project_ids
+            ]
+            rows = [row for row in rows if not entity_ids or row.id in entity_ids]
+            return _Result(scalars=rows, scalar=rows[0] if rows else None)
         if "duplicate_test_case_candidates" in text:
-            return _Result(scalars=self._candidates)
+            rows = self._candidates or [
+                row
+                for row in self._gettable.values()
+                if isinstance(row, DuplicateTestCaseCandidate)
+            ]
+            rows = [
+                row
+                for row in rows
+                if not project_ids or row.project_id in project_ids
+            ]
+            rows = [row for row in rows if not entity_ids or row.id in entity_ids]
+            return _Result(scalars=rows, scalar=rows[0] if rows else None)
         if "dismissed_duplicate_pairs" in text:
             return _Result(scalar=None)  # nothing suppressed yet
         return _Result(scalars=[])
@@ -299,7 +335,14 @@ async def test_merge_is_non_destructive_and_deprecates_loser():
     resp = await router_mod.merge_duplicate_candidate(
         project_id=project_id, candidate_id=cand.id,
         payload=DuplicateMergeRequest(candidate_id=cand.id, keep_case_id=keep.id, deprecate_loser=True),
-        db=db, current_user=SimpleNamespace(id=uuid.uuid4()), _=None,
+        db=db,
+        current_user=SimpleNamespace(
+            id=uuid.uuid4(),
+            role=UserRole.QA_LEAD,
+            full_name="QA Lead",
+            username="qa.lead",
+        ),
+        _=None,
     )
     assert resp.status == "merged"
     assert resp.deprecated_case_id == loser.id
@@ -313,7 +356,7 @@ async def test_merge_is_non_destructive_and_deprecates_loser():
 
 
 @pytest.mark.asyncio
-async def test_merge_without_deprecate_keeps_loser_active():
+async def test_qa_engineer_merge_default_is_non_deprecating_and_keeps_loser_active():
     project_id = uuid.uuid4()
     keep = _case(project_id, cid=uuid.uuid4())
     loser = _case(project_id, cid=uuid.uuid4())
@@ -324,12 +367,18 @@ async def test_merge_without_deprecate_keeps_loser_active():
 
     resp = await router_mod.merge_duplicate_candidate(
         project_id=project_id, candidate_id=cand.id,
-        payload=DuplicateMergeRequest(candidate_id=cand.id, keep_case_id=keep.id, deprecate_loser=False),
-        db=db, current_user=SimpleNamespace(id=uuid.uuid4()), _=None,
+        payload=DuplicateMergeRequest(candidate_id=cand.id, keep_case_id=keep.id),
+        db=db,
+        current_user=SimpleNamespace(id=uuid.uuid4(), role=UserRole.QA_ENGINEER),
+        _=None,
     )
     assert resp.status == "merged"
     assert resp.deprecated_case_id is None
     assert loser.status == "active"  # untouched
+    assert DuplicateMergeRequest(
+        candidate_id=cand.id,
+        keep_case_id=keep.id,
+    ).deprecate_loser is False
 
 
 @pytest.mark.asyncio
@@ -345,7 +394,9 @@ async def test_merge_body_path_mismatch_400s():
             payload=DuplicateMergeRequest(
                 candidate_id=uuid.uuid4(), keep_case_id=uuid.uuid4()
             ),  # body id != path id
-            db=db, current_user=SimpleNamespace(id=uuid.uuid4()), _=None,
+            db=db,
+            current_user=SimpleNamespace(id=uuid.uuid4(), role=UserRole.QA_ENGINEER),
+            _=None,
         )
     assert exc.value.status_code == 400
     assert db.committed is False
@@ -366,7 +417,9 @@ async def test_merge_bad_keep_case_id_400s():
             payload=DuplicateMergeRequest(
                 candidate_id=cand.id, keep_case_id=uuid.uuid4()  # not in the pair
             ),
-            db=db, current_user=SimpleNamespace(id=uuid.uuid4()), _=None,
+            db=db,
+            current_user=SimpleNamespace(id=uuid.uuid4(), role=UserRole.QA_ENGINEER),
+            _=None,
         )
     assert exc.value.status_code == 400
     assert db.committed is False
@@ -385,7 +438,9 @@ async def test_merge_cross_project_candidate_404s():
             payload=DuplicateMergeRequest(
                 candidate_id=foreign.id, keep_case_id=foreign.case_a_id
             ),
-            db=db, current_user=SimpleNamespace(id=uuid.uuid4()), _=None,
+            db=db,
+            current_user=SimpleNamespace(id=uuid.uuid4(), role=UserRole.QA_ENGINEER),
+            _=None,
         )
     assert exc.value.status_code == 404
 

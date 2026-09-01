@@ -632,7 +632,10 @@ class DuplicateMergeRequest(BaseModel):
     # The case to keep; the other case in the pair becomes the merge loser and
     # may be soft-deprecated. Must be one of the pair's two case ids.
     keep_case_id: uuid.UUID
-    deprecate_loser: bool = True
+    # QA Engineers may resolve the candidate without changing either case's
+    # lifecycle.  Soft-deprecation is an explicit QA Lead/Admin decision, so
+    # omission must select the least-privileged operation.
+    deprecate_loser: bool = False
 
 
 class DuplicateActionResponse(BaseModel):
@@ -1885,6 +1888,16 @@ class ManagedTestCaseResponse(BaseModel):
     tags: Optional[List[Any]] = None
     status: str
     version: int
+    allowed_actions: List[str] = Field(default_factory=list)
+    lifecycle_state_changed_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    approved_by_id: Optional[uuid.UUID] = None
+    needs_update_reason: Optional[str] = None
+    deprecation_reason: Optional[str] = None
+    deprecated_at: Optional[datetime] = None
+    deprecated_by_id: Optional[uuid.UUID] = None
+    archived_at: Optional[datetime] = None
+    archived_by_id: Optional[uuid.UUID] = None
     author_id: Optional[uuid.UUID] = None
     assignee_id: Optional[uuid.UUID] = None
     reviewer_id: Optional[uuid.UUID] = None
@@ -1917,13 +1930,28 @@ class TestCaseVersionResponse(BaseModel):
     version: int
     title: str
     description: Optional[str] = None
+    objective: Optional[str] = None
+    preconditions: Optional[str] = None
     steps: Optional[List[TestCaseStepSchema]] = None
     parameters: Optional[List[TestCaseParameterSchema]] = None
     expected_result: Optional[str] = None
+    test_data: Optional[str] = None
+    test_type: Optional[str] = None
+    priority: Optional[str] = None
+    severity: Optional[str] = None
+    feature_area: Optional[str] = None
+    suite_name: Optional[str] = None
+    test_suite_id: Optional[uuid.UUID] = None
+    tags: Optional[List[Any]] = None
+    estimated_duration_minutes: Optional[int] = None
+    is_automated: Optional[bool] = None
+    automation_status: Optional[str] = None
+    test_fingerprint: Optional[str] = None
     status: str
     changed_by_id: Optional[uuid.UUID] = None
     change_summary: Optional[str] = None
     change_type: str
+    changed_fields: Optional[List[str]] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -1948,8 +1976,38 @@ class TestCaseReviewResponse(BaseModel):
 
 
 class ReviewActionRequest(BaseModel):
-    action: str  # approve|reject|request_changes
-    notes: Optional[str] = None
+    action: Literal["approve", "reject", "request_changes"]
+    notes: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+
+
+class TestCaseTransitionRequest(BaseModel):
+    action: Literal[
+        "request_review",
+        "claim_review",
+        "withdraw_review",
+        "unclaim",
+        "approve",
+        "reject",
+        "request_changes",
+        "activate",
+        "flag_stale",
+        "revise",
+        "deprecate",
+        "reinstate",
+        "archive",
+    ]
+    reason: Optional[str] = Field(None, max_length=500)
+    notes: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+
+
+class TestCaseDeprecateRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
+class AllowedTransitionResponse(BaseModel):
+    action: str
+    allowed: bool
+    blocked_reason: Optional[str] = None
 
 
 class TestCaseCommentCreate(BaseModel):
@@ -2125,6 +2183,10 @@ class AuditLogResponse(BaseModel):
     old_values: Optional[dict] = None
     new_values: Optional[dict] = None
     details: Optional[str] = None
+    reason: Optional[str] = None
+    policy_snapshot: Optional[dict] = None
+    transition_from: Optional[str] = None
+    transition_to: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -2243,6 +2305,10 @@ class CanonicalTestCaseResponse(TimestampMixin):
     last_seen_test_case_id: Optional[uuid.UUID] = None
     deleted_at_run_id: Optional[uuid.UUID] = None
     managed_test_case_id: Optional[uuid.UUID] = None
+    retirement_confirmed_at: Optional[datetime] = None
+    retirement_confirmed_by_id: Optional[uuid.UUID] = None
+    retirement_reason: Optional[str] = None
+    deleted_observed_at: Optional[datetime] = None
     review_tag: Optional[str] = None
     tags: Optional[List[str]] = None
     run_count: Optional[int] = None
@@ -2251,6 +2317,51 @@ class CanonicalTestCaseResponse(TimestampMixin):
 
 class CanonicalTestCaseListResponse(BaseModel):
     items: List[CanonicalTestCaseResponse]
+    total: int
+
+
+class CanonicalPromotionResponse(BaseModel):
+    canonical: CanonicalTestCaseResponse
+    managed_case: ManagedTestCaseResponse
+
+
+class CanonicalManagedUnlinkRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reason must not be blank")
+        return normalized
+
+
+class CanonicalRetirementConfirmRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reason must not be blank")
+        return normalized
+
+
+class EvidenceGapItem(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    status: str
+    canonical_test_case_id: Optional[uuid.UUID] = None
+    canonical_status: Optional[str] = None
+    deleted_observed_at: Optional[datetime] = None
+    last_executed_at: Optional[datetime] = None
+
+
+class EvidenceGapListResponse(BaseModel):
+    items: List[EvidenceGapItem]
     total: int
 
 
@@ -4288,17 +4399,40 @@ class GenerationBatchResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class RagCaseAcceptEdits(BaseModel):
+    """Content fields a reviewer may change while accepting generated work."""
+
+    title: Optional[str] = Field(None, min_length=3, max_length=500)
+    description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    preconditions: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    steps: Optional[List[TestCaseStepSchema]] = None
+    parameters: Optional[List[TestCaseParameterSchema]] = None
+    expected_result: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    test_data: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    test_type: Optional[str] = Field(None, max_length=50)
+    priority: Optional[str] = Field(None, max_length=30)
+    severity: Optional[str] = Field(None, max_length=30)
+    feature_area: Optional[str] = Field(None, max_length=500)
+    tags: Optional[List[str]] = None
+    estimated_duration_minutes: Optional[int] = Field(None, ge=0)
+    is_automated: Optional[bool] = None
+    automation_status: Optional[str] = Field(None, max_length=30)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class BatchAcceptRequest(BaseModel):
     case_ids: List[uuid.UUID]
-    edits: Optional[dict] = None  # {str(case_id): {field: value}}
+    edits: Optional[Dict[uuid.UUID, RagCaseAcceptEdits]] = None
 
 
 class RejectCaseRequest(BaseModel):
-    reason: Optional[str] = None
+    reason: Optional[str] = Field(None, max_length=500)
 
 
 class AcceptCaseRequest(BaseModel):
-    edits: Optional[dict] = None
+    edits: Optional[RagCaseAcceptEdits] = None
 
 
 # ── RAG Staleness (RAG-12) ────────────────────────────────────────────────────

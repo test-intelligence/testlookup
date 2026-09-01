@@ -33,10 +33,10 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **31 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **32 guards**.
 15 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 16 ship at zero with **no baseline file at all** — those are
+fail CI. The other 17 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -58,6 +58,7 @@ and `scripts/test_quality_gate.py` fails if the two drift apart.
 | `backend.audit-write-discipline` † | any UPDATE of an audit table, and any DELETE outside the retention purge | Append a **new** audit row instead of mutating one; if a purge is needed, extend `services/retention_service.py` |
 | `backend.project-scope-guard-placement` † | an access check nested inside an `if not project_id` branch — the caller who *does* name a project skips it | Call `resolve_project_scope(db, user, project_id)` unconditionally; it 403s a non-admin naming a project they cannot reach |
 | `backend.model-imports-resolve` † | `from app.models.postgres import X` where `X` is not a real class | Fix the class name (`perf_baselines` is `PerfBaseline`, not `PerformanceBaseline`). A function-local import of a typo'd model is invisible until it runs, and a broad `except` turns it into a warning |
+| `backend.managed-test-case-status-single-writer` † | writing `ManagedTestCase.status` outside `services/test_case_lifecycle_service.py`, including status-capable generic `setattr` helpers | Call the lifecycle `transition(...)` owner so role/reason checks, immutable versions, audit rows and metrics remain one atomic unit. Constructors may set only the initial state |
 | `backend.status-enum-vocab` † | filtering an enum-backed status column with hand-written string literals | Build the filter from the enum (`FlakyQuarantineStatus.QUARANTINED.value`). A mismatched vocabulary matches nothing, silently and forever — FIX-002 had the Fixer selecting zero candidates on every run while reporting success |
 | `backend.streaming-body-not-rebound` † | `async with response["Body"] as X` — the `as` rebinds `X` to the bare `aiohttp.ClientResponse`, dropping aiobotocore's `StreamingBody` proxy | Bind first: `body = response["Body"]`, then `async with body:` and use `body`. Entering the context is still required (it releases the connection); only the `as` is wrong. This made S3 `stream_object` raise `TypeError` on **every call it ever made** (#824), and no behavioural test can catch it — a no-argument `read()` works on `ClientResponse` too, so the sibling `get_object_content` used the same shape and returned correct bytes |
 | `backend.cloud-providers-are-priced` † | a non-self-hosted LLM provider with no price-table entry | Add a `(provider, model-regex, ModelPrice)` row to `PRICE_TABLE` in `services/llm_pricing.py` |
@@ -159,6 +160,8 @@ Available guards: `require_project_access`, `require_run_access`,
 `require_release_access`, `require_knowledge_source_access`,
 `require_generation_batch_access`, `require_live_session_access`,
 `require_session_access`, `require_link_access`, `require_api_key_owner`, plus
+the test-management guard `require_case_access` (canonical routes perform
+their project lookup and membership check in the router), plus
 the role gates `require_role` / `require_project_role`. New resource guards are
 built from the `_make_project_scoped_guard()` factory.
 

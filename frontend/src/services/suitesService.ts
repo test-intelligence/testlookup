@@ -4,6 +4,7 @@ import type {
   CanonicalTestCase,
   CanonicalTestCaseBulkLinkResponse,
   CanonicalTestCaseListResponse,
+  CanonicalPromotionResponse,
   TestSuite,
   TestSuiteCreatePayload,
   TestSuiteListResponse,
@@ -68,4 +69,28 @@ export const suitesService = {
     getData<CanonicalRunHistoryResponse>(
       `/api/v1/canonical-test-cases/${canonicalId}/runs`,
     ),
+
+  promoteCanonical: (canonicalId: string) =>
+    postData<CanonicalPromotionResponse>(
+      `/api/v1/canonical-test-cases/${canonicalId}/promote`,
+      {},
+    ),
+
+  unlinkManagedCase: (canonicalId: string, reason: string) =>
+    deleteData<CanonicalTestCase, { reason: string }>(
+      `/api/v1/canonical-test-cases/${canonicalId}/managed-link`,
+      undefined,
+      { reason },
+    ),
+
+  confirmRetirement: (canonicalId: string, reason: string) =>
+    postData<CanonicalTestCase, { reason: string }>(
+      `/api/v1/canonical-test-cases/${canonicalId}/confirm-retirement`,
+      { reason },
+    ),
+
+  listOrphanedCanonicals: (projectId: string | null) =>
+    getData<CanonicalTestCaseListResponse>('/api/v1/canonical-test-cases/orphaned', {
+      params: { ...(projectId ? { project_id: projectId } : {}) },
+    }),
 }

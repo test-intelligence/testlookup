@@ -7,7 +7,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ClipboardList, Plus, Sparkles, ChevronDown, ChevronRight,
   Star, Clock, User, CheckCircle2, XCircle, AlertCircle,
-  RotateCcw, Eye, MessageSquare, History, Shield, FileText,
+  RotateCcw, MessageSquare, History, Shield, FileText,
   ChevronUp, Trash2, BookOpen, BarChart2,
   Download, FileSpreadsheet, Layers,
   Copy, GitMerge, Search as SearchIcon,
@@ -18,7 +18,12 @@ import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
+import EvidenceGapLists from '@/components/testManagement/EvidenceGapLists'
+import LifecyclePanel from '@/components/testManagement/LifecyclePanel'
+import PromotionAction from '@/components/testManagement/PromotionAction'
+import TransitionReasonDialog from '@/components/testManagement/TransitionReasonDialog'
 import { useTableSort } from '@/hooks/useTableSort'
+import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import { api } from '@/services/api'
 import { useProjectStore } from '@/store/projectStore'
 import {
@@ -46,9 +51,14 @@ import type {
   TestCaseVersion,
   TestPlan,
   TestPlanItem,
+  TestCaseTransitionAction,
   TestStep,
   TestStrategy,
 } from '@/types/test-management'
+import {
+  buildTestCaseListParams,
+  LIFECYCLE_STATUS_OPTIONS,
+} from '@/utils/testCaseLifecycleUi'
 
 // ─── Constants / helpers ─────────────────────────────────────────────────────
 
@@ -62,8 +72,26 @@ const STATUS_COLORS: Record<string, string> = {
   approved:         'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border border-[var(--status-passed-bd)]',
   active:           'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border border-[var(--status-passed-bd)]',
   rejected:         'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border border-[var(--status-failed-bd)]',
+  needs_update:     'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
   deprecated:       'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]',
+  archived:         'bg-[var(--color-bg-secondary)] text-[var(--color-text-faint)] border border-[var(--color-border)]',
 }
+
+const REVIEW_ACTION_LABELS: Partial<Record<TestCaseTransitionAction, string>> = {
+  claim_review: 'Claim review',
+  unclaim: 'Unclaim',
+  approve: 'Approve',
+  request_changes: 'Request changes',
+  reject: 'Reject',
+}
+
+const REVIEW_DECISION_ACTIONS = new Set<TestCaseTransitionAction>([
+  'approve',
+  'request_changes',
+  'reject',
+])
+
+const LEGACY_REVIEW_ACTIONS: TestCaseTransitionAction[] = ['approve', 'request_changes', 'reject']
 
 const PRIORITY_COLORS: Record<string, string> = {
   critical: 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border border-[var(--status-failed-bd)]',
@@ -359,11 +387,17 @@ function AIGenerateModal({ projectId, onClose }: AIGenerateModalProps) {
 
 // ── Case Detail Panel ─────────────────────────────────────────────────────────
 
-type DetailTab = 'details' | 'history' | 'reviews' | 'comments' | 'ai_review'
+type DetailTab = 'details' | 'lifecycle' | 'history' | 'reviews' | 'comments' | 'ai_review'
 
-interface CaseDetailPanelProps { caseItem: ManagedTestCase; onClose: () => void; onRefresh: () => void }
+interface CaseDetailPanelProps {
+  caseItem: ManagedTestCase
+  onClose: () => void
+  onRefresh: () => void
+  onCaseChanged: (updated: ManagedTestCase) => void
+  lifecycleV2: boolean
+}
 
-function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps) {
+function CaseDetailPanel({ caseItem, onClose, onRefresh, onCaseChanged, lifecycleV2 }: CaseDetailPanelProps) {
   const [activeTab, setActiveTab] = useState<DetailTab>('details')
   const [comment, setComment] = useState('')
   const [addingComment, setAddingComment] = useState(false)
@@ -379,6 +413,7 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
 
   const DETAIL_TABS: { id: DetailTab; label: string; icon: React.ReactNode }[] = [
     { id: 'details',   label: 'Details',    icon: <FileText className="h-3.5 w-3.5" /> },
+    ...(lifecycleV2 ? [{ id: 'lifecycle' as const, label: 'Lifecycle', icon: <RotateCcw className="h-3.5 w-3.5" /> }] : []),
     { id: 'history',   label: 'History',    icon: <History className="h-3.5 w-3.5" /> },
     { id: 'reviews',   label: 'Reviews',    icon: <Shield className="h-3.5 w-3.5" /> },
     { id: 'comments',  label: 'Comments',   icon: <MessageSquare className="h-3.5 w-3.5" /> },
@@ -414,20 +449,12 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
     }
   }
 
-  const handleRequestReview = async () => {
-    // Defensive guard mirroring the render-time gate: automation rows
-    // carry a per-run test_cases.id, which is not a managed_test_cases
-    // row and would 404. Surface a clear toast instead of the generic
-    // "Failed to request review" if this path is ever reached.
-    if (caseItem.source === 'automation') {
-      toast.error('Automation rows must be promoted to a managed test case before a review can be requested.')
-      return
-    }
+  const handleLegacyRequestReview = async () => {
     setRequestingReview(true)
     try {
       await testManagementService.requestReview(caseItem.id)
       onRefresh()
-      mutateReviews()
+      void mutateReviews()
       toast.success('Review requested')
     } catch {
       toast.error('Failed to request review')
@@ -555,33 +582,37 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                   </div>
                 </div>
               )}
-              {/*
-                Automation-source rows are synthesised from per-run
-                test_cases — they don't yet exist in managed_test_cases,
-                so the review endpoint would 404 on caseItem.id. Hide
-                the button rather than show a broken control; an
-                explanatory note makes the gap visible to QA leads
-                evaluating whether to author a managed test case from
-                this automation result.
-              */}
-              {caseItem.source === 'automation' ? (
-                <div className="pt-2 text-xs text-[var(--color-text-muted)]">
-                  Review requests are only available on managed test cases.
-                  Automation rows must be promoted to managed before they can be reviewed.
-                </div>
-              ) : caseItem.status !== 'review_requested' && caseItem.status !== 'under_review' ? (
+              {!lifecycleV2 && caseItem.status !== 'review_requested' && caseItem.status !== 'under_review' && (
                 <div className="pt-2">
                   <button
-                    onClick={handleRequestReview}
+                    type="button"
+                    onClick={() => void handleLegacyRequestReview()}
                     disabled={requestingReview}
                     className="btn-secondary flex items-center gap-2 text-sm"
                   >
-                    {requestingReview ? <LoadingSpinner size="sm" /> : <Eye className="h-4 w-4" />}
+                    {requestingReview ? <LoadingSpinner size="sm" /> : <Shield className="h-4 w-4" />}
                     Request Review
                   </button>
                 </div>
-              ) : null}
+              )}
             </div>
+          )}
+
+          {activeTab === 'lifecycle' && (
+            caseItem.source === 'automation' ? (
+              <p className="text-sm text-[var(--color-text-muted)]">
+                Promote this automation test to a managed draft before applying lifecycle governance.
+              </p>
+            ) : (
+              <LifecyclePanel
+                caseItem={caseItem}
+                onChanged={(updated) => {
+                  onCaseChanged(updated)
+                  onRefresh()
+                  void mutateReviews()
+                }}
+              />
+            )
           )}
 
           {/* History tab */}
@@ -598,6 +629,11 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                       <span className="text-xs text-[var(--color-text-muted)]">{fmtDateTime(v.created_at)}</span>
                     </div>
                     {v.change_summary && <p className="text-xs text-[var(--color-text-muted)]">{v.change_summary}</p>}
+                    {v.changed_fields && v.changed_fields.length > 0 && (
+                      <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                        Changed: {v.changed_fields.join(', ')}
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -893,9 +929,9 @@ function GenerateStrategyModal({ projectId, onClose }: GenerateStrategyModalProp
 
 // ─── Tab: Test Cases ──────────────────────────────────────────────────────────
 
-interface TestCasesTabProps { projectId: string | null }
+interface TestCasesTabProps { projectId: string | null; lifecycleV2: boolean }
 
-function TestCasesTab({ projectId }: TestCasesTabProps) {
+function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   const navigate = useNavigate()
   const now = useNow()  // captured at mount — avoids impure Date.now() in render
   // ── Filter state ────────────────────────────────────────────────────
@@ -912,11 +948,17 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [showAiGen, setShowAiGen] = useState(false)
   const [selectedCase, setSelectedCase] = useState<ManagedTestCase | null>(null)
+  const [pendingDeprecation, setPendingDeprecation] = useState<ManagedTestCase | null>(null)
+  const [deprecating, setDeprecating] = useState(false)
 
   const openCase = useCallback((caseItem: ManagedTestCase) => {
     const executionPath = getTestManagementCaseDetailPath(caseItem)
     if (executionPath) {
       navigate(executionPath)
+      return
+    }
+    if (caseItem.source === 'automation') {
+      toast.error('This automation result has no execution detail yet. Promote it from the row to manage its lifecycle.')
       return
     }
     setSelectedCase(caseItem)
@@ -951,15 +993,17 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
   }, [])
 
   const params = useMemo(() => {
-    const p: Record<string, unknown> = { page, size: 25 }
-    if (status) p.status = status
-    if (testType) p.test_type = testType
-    if (priority) p.priority = priority
-    if (search) p.search = search
-    if (ownerFilter) p.assignee_id = ownerFilter
-    if (suiteFilter) p.suite_name = suiteFilter
-    if (includeAutomation) p.include_automation = true
-    return p
+    return buildTestCaseListParams({
+      page,
+      size: 25,
+      status,
+      testType,
+      priority,
+      search,
+      ownerFilter,
+      suiteFilter,
+      includeAutomation,
+    })
   }, [page, status, testType, priority, search, ownerFilter, suiteFilter, includeAutomation])
 
   const { data, isLoading, mutate: mutateCases } = useTestCases(params)
@@ -1001,15 +1045,31 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
     }
   }
 
-  async function handleDelete(id: string, e: React.MouseEvent) {
+  function handleDeprecate(caseItem: ManagedTestCase, e: React.MouseEvent) {
     e.stopPropagation()
-    if (!confirm('Delete this test case?')) return
+    setPendingDeprecation(caseItem)
+  }
+
+  async function confirmDeprecation(reason: string) {
+    if (!pendingDeprecation) return
+    setDeprecating(true)
     try {
-      await testManagementService.deleteCase(id)
-      toast.success('Test case deleted')
-      void mutateCases()
+      if (lifecycleV2) {
+        const updated = await testManagementService.transitionCase(pendingDeprecation.id, {
+          action: 'deprecate',
+          reason,
+        })
+        setSelectedCase((current) => current?.id === updated.id ? updated : current)
+      } else {
+        await testManagementService.deleteCase(pendingDeprecation.id, reason)
+      }
+      setPendingDeprecation(null)
+      handleRefresh()
+      toast.success(lifecycleV2 ? 'Test case deprecated' : 'Test case deleted')
     } catch {
-      toast.error('Failed to delete test case')
+      toast.error(lifecycleV2 ? 'Failed to deprecate test case' : 'Failed to delete test case')
+    } finally {
+      setDeprecating(false)
     }
   }
 
@@ -1201,6 +1261,7 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
                       <Sparkles className="h-3.5 w-3.5" /> AI Generate
                     </button>
                     <button
+                      aria-label="New test case from catalog toolbar"
                       onClick={() => setShowCreate(true)}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
                       style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
@@ -1225,7 +1286,9 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
               <CasesTableBody
                 cases={cases}
                 onRowClick={openCase}
-                onDelete={handleDelete}
+                onDeprecate={handleDeprecate}
+                onPromoted={handleRefresh}
+                lifecycleV2={lifecycleV2}
               />
             )}
 
@@ -1262,6 +1325,8 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
           <RecentActivityCard events={auditEvents} />
         </div>
       </div>
+
+      <EvidenceGapLists projectId={projectId} />
 
       {/* Provenance */}
       <div
@@ -1305,6 +1370,18 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
           caseItem={selectedCase}
           onClose={() => setSelectedCase(null)}
           onRefresh={handleRefresh}
+          onCaseChanged={setSelectedCase}
+          lifecycleV2={lifecycleV2}
+        />
+      )}
+      {pendingDeprecation && (
+        <TransitionReasonDialog
+          title={lifecycleV2 ? 'Deprecate test case' : 'Delete test case'}
+          description={`${lifecycleV2 ? 'Deprecate' : 'Delete'} ${pendingDeprecation.title}. The case and its version history will be preserved.`}
+          confirmLabel={lifecycleV2 ? 'Deprecate' : 'Delete'}
+          busy={deprecating}
+          onCancel={() => setPendingDeprecation(null)}
+          onConfirm={confirmDeprecation}
         />
       )}
     </>
@@ -1609,16 +1686,12 @@ function CasesFilterBar({
         Automation tests
       </label>
 
-      <SelectChip label="Status" value={status} options={[
-        { value: '', label: 'All' },
-        { value: 'draft', label: 'Draft' },
-        { value: 'review_requested', label: 'Review requested' },
-        { value: 'under_review', label: 'Under review' },
-        { value: 'approved', label: 'Approved' },
-        { value: 'active', label: 'Active' },
-        { value: 'rejected', label: 'Rejected' },
-        { value: 'deprecated', label: 'Deprecated' },
-      ]} onChange={onStatusChange} />
+      <SelectChip
+        label="Status"
+        value={status}
+        options={[{ value: '', label: 'All' }, ...LIFECYCLE_STATUS_OPTIONS]}
+        onChange={onStatusChange}
+      />
 
       <SelectChip label="Type" value={testType} options={[
         { value: '', label: 'All' },
@@ -1740,11 +1813,13 @@ function SelectChip({
 
 // ── Cases table body + footer ─────────────────────────────────────────
 function CasesTableBody({
-  cases, onRowClick, onDelete,
+  cases, onRowClick, onDeprecate, onPromoted, lifecycleV2,
 }: {
   cases: ManagedTestCase[]
   onRowClick: (c: ManagedTestCase) => void
-  onDelete: (id: string, e: React.MouseEvent) => void
+  onDeprecate: (caseItem: ManagedTestCase, e: React.MouseEvent) => void
+  onPromoted: () => void
+  lifecycleV2: boolean
 }) {
   return (
     <div className="overflow-x-auto">
@@ -1762,7 +1837,16 @@ function CasesTableBody({
           </tr>
         </thead>
         <tbody>
-          {cases.map(tc => <CaseRow key={tc.id} tc={tc} onRowClick={onRowClick} onDelete={onDelete} />)}
+          {cases.map(tc => (
+            <CaseRow
+              key={tc.id}
+              tc={tc}
+              onRowClick={onRowClick}
+              onDeprecate={onDeprecate}
+              onPromoted={onPromoted}
+              lifecycleV2={lifecycleV2}
+            />
+          ))}
         </tbody>
       </table>
     </div>
@@ -1788,7 +1872,20 @@ function Th({ label, width, align }: { label: string; width?: number; align?: 'r
   )
 }
 
-function CaseRow({ tc, onRowClick, onDelete }: { tc: ManagedTestCase; onRowClick: (c: ManagedTestCase) => void; onDelete: (id: string, e: React.MouseEvent) => void }) {
+function CaseRow({
+  tc,
+  onRowClick,
+  onDeprecate,
+  onPromoted,
+  lifecycleV2,
+}: {
+  tc: ManagedTestCase
+  onRowClick: (c: ManagedTestCase) => void
+  onDeprecate: (caseItem: ManagedTestCase, e: React.MouseEvent) => void
+  onPromoted: () => void
+  lifecycleV2: boolean
+}) {
+  const deprecateAllowed = lifecycleV2 ? tc.allowed_actions?.includes('deprecate') === true : true
   return (
     <tr
       style={{ borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}
@@ -1842,13 +1939,24 @@ function CaseRow({ tc, onRowClick, onDelete }: { tc: ManagedTestCase; onRowClick
         <LastRunCell status={tc.last_execution_status} at={tc.last_executed_at} />
       </td>
       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-        <button
-          onClick={(e) => onDelete(tc.id, e)}
-          title="Delete"
-          className="text-[var(--color-text-faint)] hover:text-[var(--status-failed)] transition-colors p-1"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
+        {tc.source === 'automation' ? (
+          <PromotionAction
+            canonicalId={tc.canonical_test_case_id}
+            compact
+            onPromoted={onPromoted}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={(event) => onDeprecate(tc, event)}
+            disabled={!deprecateAllowed}
+            title={deprecateAllowed ? (lifecycleV2 ? 'Deprecate' : 'Delete') : 'Deprecation is not allowed from the current state'}
+            aria-label={`${lifecycleV2 ? 'Deprecate' : 'Delete'} ${tc.title}`}
+            className="text-[var(--color-text-faint)] transition-colors p-1 enabled:hover:text-[var(--status-failed)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </td>
     </tr>
   )
@@ -1860,8 +1968,10 @@ function CaseStatusPill({ status }: { status: string }) {
     approved:         { bg: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 30%, transparent)', fg: 'var(--color-accent)', label: 'Approved' },
     review_requested: { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken)', label: 'Review' },
     under_review:     { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken)', label: 'Under review' },
+    needs_update:     { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken)', label: 'Needs update' },
     draft:            { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: 'Draft' },
     deprecated:       { bg: 'rgba(120,113,108,0.12)', bd: 'rgba(120,113,108,0.30)', fg: '#a8a29e', label: 'Deprecated', lt: true },
+    archived:         { bg: 'rgba(120,113,108,0.08)', bd: 'rgba(120,113,108,0.22)', fg: 'var(--color-text-faint)', label: 'Archived' },
     rejected:         { bg: 'color-mix(in srgb, var(--status-failed) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)', fg: 'var(--status-failed)', label: 'Rejected' },
   }
   const p = map[status] ?? { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: status.replace(/_/g, ' ') }
@@ -3914,46 +4024,139 @@ function AddTestSuiteModal({
 
 // ─── Tab: Reviews ─────────────────────────────────────────────────────────────
 
-interface ReviewsTabProps { projectId: string | null }
+interface ReviewsTabProps { projectId: string | null; lifecycleV2: boolean }
+type ReviewQueueSource = 'requested' | 'claimed'
 
-function ReviewsTab({ projectId: _projectId }: ReviewsTabProps) {
+export function ReviewsTab({ projectId: _projectId, lifecycleV2 }: ReviewsTabProps) {
   const [reviewingId, setReviewingId] = useState<string | null>(null)
-  const { data, isLoading, mutate } = useTestCases({ status: 'review_requested', size: 50 })
+  const [transitioning, setTransitioning] = useState<{ caseId: string; action: TestCaseTransitionAction } | null>(null)
+  const [pendingDecision, setPendingDecision] = useState<{ caseItem: ManagedTestCase; action: TestCaseTransitionAction } | null>(null)
+  const [reviewOverrides, setReviewOverrides] = useState<Map<string, ManagedTestCase>>(() => new Map())
+  const [locallyAiReviewedIds, setLocallyAiReviewedIds] = useState<Set<string>>(() => new Set())
+  const [queueRefreshWarning, setQueueRefreshWarning] = useState<string | null>(null)
+  const requestedQuery = useTestCases({ status: 'review_requested', size: 50 })
+  const claimedQuery = useTestCases({ status: 'under_review', size: 50 })
 
-  const cases = data?.items ?? []
+  const entriesById = new Map<string, { caseItem: ManagedTestCase; source: ReviewQueueSource }>()
+  for (const caseItem of requestedQuery.data?.items ?? []) {
+    entriesById.set(caseItem.id, { caseItem, source: 'requested' })
+  }
+  for (const caseItem of claimedQuery.data?.items ?? []) {
+    entriesById.set(caseItem.id, { caseItem, source: 'claimed' })
+  }
+  for (const updated of reviewOverrides.values()) {
+    if (updated.status === 'review_requested') {
+      entriesById.set(updated.id, { caseItem: updated, source: 'requested' })
+    } else if (updated.status === 'under_review') {
+      entriesById.set(updated.id, { caseItem: updated, source: 'claimed' })
+    } else {
+      entriesById.delete(updated.id)
+    }
+  }
+  const reviewEntries = Array.from(entriesById.values())
+  const isLoading = requestedQuery.isLoading || claimedQuery.isLoading
+  const reviewError = requestedQuery.error ?? claimedQuery.error
 
-  const handleAiReview = async (tc: ManagedTestCase) => {
-    setReviewingId(tc.id)
+  const mutateReviews = () => Promise.all([requestedQuery.mutate(), claimedQuery.mutate()])
+
+  async function retryReviews() {
+    setQueueRefreshWarning(null)
     try {
-      await testManagementService.aiReview(tc.id)
-      toast.success('AI review complete')
-      mutate()
+      await mutateReviews()
     } catch {
-      toast.error('AI review failed')
-    } finally {
-      setReviewingId(null)
+      setQueueRefreshWarning('The review queue is still stale. Actions remain unavailable for rows from the failed source.')
     }
   }
 
-  const handleReviewAction = async (tc: ManagedTestCase, action: string) => {
+  const handleAiReview = async (tc: ManagedTestCase) => {
+    setReviewingId(tc.id)
+    setQueueRefreshWarning(null)
     try {
-      await testManagementService.reviewAction(tc.id, action)
-      toast.success(`Test case ${action}`)
-      mutate()
+      await testManagementService.aiReview(tc.id)
+    } catch {
+      toast.error('AI review failed')
+      setReviewingId(null)
+      return
+    }
+
+    setLocallyAiReviewedIds((current) => new Set(current).add(tc.id))
+    setReviewingId(null)
+    toast.success('AI review complete')
+    try {
+      await mutateReviews()
+    } catch {
+      setQueueRefreshWarning('The AI review completed, but the review queue could not be refreshed. The completed control remains disabled locally.')
+    }
+  }
+
+  const handleReviewAction = async (
+    tc: ManagedTestCase,
+    action: TestCaseTransitionAction,
+    notes?: string,
+  ) => {
+    setTransitioning({ caseId: tc.id, action })
+    setQueueRefreshWarning(null)
+    let updated: ManagedTestCase
+    try {
+      if (lifecycleV2) {
+        updated = await testManagementService.transitionCase(tc.id, {
+          action,
+          ...(notes ? { notes } : {}),
+        })
+      } else {
+        updated = await testManagementService.reviewAction(tc.id, action, notes)
+      }
     } catch {
       toast.error('Action failed')
+      setTransitioning(null)
+      return
     }
+
+    setReviewOverrides((current) => new Map(current).set(updated.id, updated))
+    setPendingDecision(null)
+    setTransitioning(null)
+    toast.success(`Test case ${action.replace(/_/g, ' ')}`)
+    try {
+      await mutateReviews()
+    } catch {
+      setQueueRefreshWarning('The review action was saved, but the queue could not be refreshed. The returned case state is shown locally.')
+    }
+  }
+
+  function chooseReviewAction(tc: ManagedTestCase, action: TestCaseTransitionAction) {
+    if (REVIEW_DECISION_ACTIONS.has(action)) {
+      setPendingDecision({ caseItem: tc, action })
+      return
+    }
+    void handleReviewAction(tc, action)
   }
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-[var(--color-text-muted)]">{cases.length} test cases awaiting review</p>
+        <p className="text-sm text-[var(--color-text-muted)]">{reviewEntries.length} test cases awaiting review</p>
       </div>
 
-      {isLoading ? (
+      {reviewError && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--status-failed)]">
+          <span>
+            The review queue could not be loaded completely. Any available cases are shown below.
+          </span>
+          <button type="button" className="btn-secondary flex-shrink-0 text-xs" onClick={() => void retryReviews()}>
+            Retry both lists
+          </button>
+        </div>
+      )}
+
+      {queueRefreshWarning && (
+        <p role="status" className="rounded-lg border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-3 text-sm text-[var(--status-broken)]">
+          {queueRefreshWarning}
+        </p>
+      )}
+
+      {isLoading && reviewEntries.length === 0 ? (
         <div className="flex items-center justify-center h-48"><LoadingSpinner size="lg" /></div>
-      ) : cases.length === 0 ? (
+      ) : reviewEntries.length === 0 && !reviewError ? (
         <EmptyState
           icon={<Shield className="h-10 w-10" />}
           title="No pending reviews"
@@ -3961,7 +4164,10 @@ function ReviewsTab({ projectId: _projectId }: ReviewsTabProps) {
         />
       ) : (
         <div className="space-y-3">
-          {cases.map(tc => (
+          {reviewEntries.map(({ caseItem: tc, source }) => {
+            const sourceFailed = source === 'requested' ? !!requestedQuery.error : !!claimedQuery.error
+            const aiReviewSavedLocally = locallyAiReviewedIds.has(tc.id)
+            return (
             <div key={tc.id} className="card">
               <div className="flex items-start gap-4">
                 <div className="flex-1 min-w-0">
@@ -3988,38 +4194,56 @@ function ReviewsTab({ projectId: _projectId }: ReviewsTabProps) {
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => handleAiReview(tc)}
-                    disabled={reviewingId === tc.id}
-                    className="btn-secondary flex items-center gap-1.5 text-xs"
-                  >
-                    {reviewingId === tc.id ? <LoadingSpinner size="sm" /> : <Sparkles className="h-3.5 w-3.5" />}
-                    AI Review
-                  </button>
-                  <button
-                    onClick={() => handleReviewAction(tc, 'approve')}
-                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-[var(--status-passed-bg)] text-[var(--status-passed)] hover:bg-[var(--status-passed-bd)] transition-colors"
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Approve
-                  </button>
-                  <button
-                    onClick={() => handleReviewAction(tc, 'request_changes')}
-                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-[var(--status-broken-bg)] text-[var(--status-broken)] hover:bg-[var(--status-broken-bd)] transition-colors"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" /> Changes
-                  </button>
-                  <button
-                    onClick={() => handleReviewAction(tc, 'reject')}
-                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-[var(--status-failed-bg)] text-[var(--status-failed)] hover:bg-[var(--status-failed-bd)] transition-colors"
-                  >
-                    <XCircle className="h-3.5 w-3.5" /> Reject
-                  </button>
+                <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+                  {sourceFailed ? (
+                    <span className="text-xs text-[var(--status-broken)]">Actions unavailable until this review list refreshes.</span>
+                  ) : (
+                    <>
+                    <button
+                      onClick={() => handleAiReview(tc)}
+                      disabled={reviewingId === tc.id || aiReviewSavedLocally}
+                      className="btn-secondary flex items-center gap-1.5 text-xs"
+                    >
+                      {reviewingId === tc.id ? <LoadingSpinner size="sm" /> : <Sparkles className="h-3.5 w-3.5" />}
+                      {aiReviewSavedLocally ? 'AI reviewed' : 'AI Review'}
+                    </button>
+                    {(lifecycleV2 ? (tc.allowed_actions ?? []) : LEGACY_REVIEW_ACTIONS).map((action) => {
+                    const label = REVIEW_ACTION_LABELS[action]
+                    if (!label) return null
+                    const saving = transitioning?.caseId === tc.id && transitioning.action === action
+                    return (
+                      <button
+                        key={action}
+                        type="button"
+                        disabled={transitioning !== null}
+                        onClick={() => chooseReviewAction(tc, action)}
+                        className="btn-secondary text-xs"
+                      >
+                        {saving ? 'Saving…' : label}
+                      </button>
+                    )
+                    })}
+                    </>
+                  )}
                 </div>
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
+      )}
+
+      {pendingDecision && (
+        <TransitionReasonDialog
+          title={REVIEW_ACTION_LABELS[pendingDecision.action] ?? 'Record review decision'}
+          description="Record a nonblank review note for the audit trail."
+          confirmLabel={REVIEW_ACTION_LABELS[pendingDecision.action] ?? 'Submit'}
+          fieldLabel="Review notes"
+          placeholder="Explain the review decision"
+          busy={transitioning?.caseId === pendingDecision.caseItem.id}
+          onCancel={() => setPendingDecision(null)}
+          onConfirm={(notes) => handleReviewAction(pendingDecision.caseItem, pendingDecision.action, notes)}
+        />
       )}
     </div>
   )
@@ -4168,8 +4392,11 @@ interface DuplicateCandidateCardProps {
   onResolved: (candidateId: string) => Promise<unknown>
 }
 
-function DuplicateCandidateCard({ projectId, candidate, onResolved }: DuplicateCandidateCardProps) {
+export function DuplicateCandidateCard({ projectId, candidate, onResolved }: DuplicateCandidateCardProps) {
+  const { isQaLead } = usePermissions()
   const [busy, setBusy] = useState<'dismiss' | 'merge' | null>(null)
+  const [resolvedLocally, setResolvedLocally] = useState<'dismissed' | 'merged' | null>(null)
+  const [refreshWarning, setRefreshWarning] = useState<string | null>(null)
   // Default to keeping case_a; user can flip before merging.
   const [keepCaseId, setKeepCaseId] = useState<string>(candidate.case_a.id)
 
@@ -4178,29 +4405,47 @@ function DuplicateCandidateCard({ projectId, candidate, onResolved }: DuplicateC
 
   const handleDismiss = async () => {
     setBusy('dismiss')
+    setRefreshWarning(null)
     try {
       await testManagementService.dismissDuplicate(projectId, candidate.id)
-      toast.success('Pair dismissed — it won’t resurface')
-      await onResolved(candidate.id)
     } catch {
       toast.error('Failed to dismiss pair')
       setBusy(null)
+      return
+    }
+
+    setResolvedLocally('dismissed')
+    setBusy(null)
+    toast.success('Pair dismissed — it won’t resurface')
+    try {
+      await onResolved(candidate.id)
+    } catch {
+      setRefreshWarning('The pair was dismissed, but the duplicate queue could not be refreshed. Actions remain disabled locally.')
     }
   }
 
   const handleMerge = async () => {
     setBusy('merge')
+    setRefreshWarning(null)
     try {
       await testManagementService.mergeDuplicate(projectId, candidate.id, {
         candidate_id: candidate.id,
         keep_case_id: keepCaseId,
         deprecate_loser: true,
       })
-      toast.success('Pair merged — losing case soft-deprecated')
-      await onResolved(candidate.id)
     } catch {
       toast.error('Failed to merge pair')
       setBusy(null)
+      return
+    }
+
+    setResolvedLocally('merged')
+    setBusy(null)
+    toast.success('Pair merged — losing case soft-deprecated')
+    try {
+      await onResolved(candidate.id)
+    } catch {
+      setRefreshWarning('The pair was merged, but the duplicate queue could not be refreshed. Merge remains disabled locally.')
     }
   }
 
@@ -4257,20 +4502,22 @@ function DuplicateCandidateCard({ projectId, candidate, onResolved }: DuplicateC
       )}
 
       {/* Actions (only on open candidates) */}
-      {candidate.status === 'open' ? (
+      {candidate.status === 'open' && !resolvedLocally ? (
         <div className="mt-4 flex items-center justify-between gap-3 flex-wrap border-t border-[var(--color-border)] pt-3">
-          <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-            Keep
-            <select
-              className="input text-xs py-1"
-              value={keepCaseId}
-              onChange={e => setKeepCaseId(e.target.value)}
-              disabled={busy !== null}
-            >
-              <option value={candidate.case_a.id}>Case A — {candidate.case_a.title}</option>
-              <option value={candidate.case_b.id}>Case B — {candidate.case_b.title}</option>
-            </select>
-          </label>
+          {isQaLead ? (
+            <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+              Keep
+              <select
+                className="input text-xs py-1"
+                value={keepCaseId}
+                onChange={e => setKeepCaseId(e.target.value)}
+                disabled={busy !== null}
+              >
+                <option value={candidate.case_a.id}>Case A — {candidate.case_a.title}</option>
+                <option value={candidate.case_b.id}>Case B — {candidate.case_b.title}</option>
+              </select>
+            </label>
+          ) : <span />}
           <div className="flex items-center gap-2">
             <button
               onClick={handleDismiss}
@@ -4280,20 +4527,27 @@ function DuplicateCandidateCard({ projectId, candidate, onResolved }: DuplicateC
               {busy === 'dismiss' ? <LoadingSpinner size="sm" /> : <XCircle className="h-3.5 w-3.5" />}
               Dismiss
             </button>
-            <button
-              onClick={handleMerge}
-              disabled={busy !== null}
-              className="btn-primary text-sm flex items-center gap-1.5"
-            >
-              {busy === 'merge' ? <LoadingSpinner size="sm" /> : <GitMerge className="h-3.5 w-3.5" />}
-              Merge
-            </button>
+            {isQaLead && (
+              <button
+                onClick={handleMerge}
+                disabled={busy !== null}
+                className="btn-primary text-sm flex items-center gap-1.5"
+              >
+                {busy === 'merge' ? <LoadingSpinner size="sm" /> : <GitMerge className="h-3.5 w-3.5" />}
+                Merge
+              </button>
+            )}
           </div>
         </div>
       ) : (
         <div className="mt-3 border-t border-[var(--color-border)] pt-3">
-          <StatusPill status={candidate.status} map={STATUS_COLORS} />
+          <StatusPill status={resolvedLocally ?? candidate.status} map={STATUS_COLORS} />
         </div>
+      )}
+      {refreshWarning && (
+        <p role="status" className="mt-3 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-2 text-xs text-[var(--status-broken)]">
+          {refreshWarning}
+        </p>
       )}
     </div>
   )
@@ -4445,6 +4699,7 @@ export default function TestManagementPage() {
   const project = useProjectStore(s => s.activeProject)
   const projectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = projectId === 'all'
+  const lifecycleV2 = useFeatureEnabled('test_case_lifecycle_v2')
 
   if (!project && !isAllProjects) {
     return (
@@ -4486,11 +4741,11 @@ export default function TestManagementPage() {
 
       {/* Tab content */}
       <div>
-        {activeTab === 'Test Cases'   && <TestCasesTab projectId={tabProjectId} />}
+        {activeTab === 'Test Cases'   && <TestCasesTab projectId={tabProjectId} lifecycleV2={lifecycleV2} />}
         {activeTab === 'Test Suites'  && <TestSuitesTab projectId={tabProjectId} />}
         {activeTab === 'Test Plans'   && <TestPlansTab projectId={tabProjectId} />}
         {activeTab === 'Strategy'     && <StrategyTab projectId={tabProjectId} />}
-        {activeTab === 'Reviews'      && <ReviewsTab projectId={tabProjectId} />}
+        {activeTab === 'Reviews'      && <ReviewsTab projectId={tabProjectId} lifecycleV2={lifecycleV2} />}
         {activeTab === 'Knowledge Generation' && <KnowledgeGenerationTab />}
         {activeTab === 'Duplicates'   && <DuplicatesTab projectId={tabProjectId} />}
         {activeTab === 'Audit Log'    && <AuditTab projectId={tabProjectId} />}
