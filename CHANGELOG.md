@@ -14,6 +14,48 @@ test mocks `op`, so it never saw the datatype mismatch). The Postgres
 migration-postconditions integration test also had its expected head bumped
 from `0144` to `0145` — it was masked while the broken `0145` upgrade aborted
 before that assertion could run.
+## 2026-09-01 — the storage figures an operator decides from
+
+The Retention page now opens with what the project is actually holding, per
+store, above the windows that control it — "how much am I keeping" is the
+question that decides whether those windows are worth setting.
+
+The markup exists to preserve two distinctions the backend encodes and a UI
+can easily throw away.
+
+**A store that could not be reached renders "not measured", never 0.** Zero and
+unreachable are opposite findings; rendering both as "0 B" tells an operator
+their project is free when the truth is nothing looked. The inverse holds too —
+a store genuinely holding nothing shows "0 B", not "not measured", or the
+distinction is simply lost in the other direction.
+
+**An estimate is visibly an estimate.** Object storage attributes bytes exactly
+because every listed object carries its own size. Document-store bytes are
+derived from average document size and carry an `est.` marker, and any total
+containing one is labelled an estimate. Database rows are counted but not
+sized, and the panel says why in as many words: rows share tables across
+projects, and deleting them does not return disk to the operating system
+without a `VACUUM FULL`. An operator reading "4,200 rows" would otherwise
+reasonably assume purging them frees space.
+
+A partial total says so — it is a floor, not a measurement.
+
+The panel also carries the deployment-wide line: how much deleted projects are
+still holding, and how many of them no retention policy will ever reclaim.
+Deleting a project does not delete its data, and until now nothing said so
+anywhere.
+
+Tests: `frontend/src/components/retention/StoragePanel.test.tsx` (10).
+
+**Two of the five mutations initially survived**, and they were the two that
+mattered — deleting the unreachable branch entirely, and swapping the null
+check for a falsy one so a real zero read as unmeasured. Both passed because
+the assertions were panel-wide and the *total* row also renders "not measured"
+and "0 B": the tests were being satisfied by the wrong element. Scoping them to
+the specific store row makes both mutations fail, which is what the tests were
+supposed to be doing all along.
+
+
 ## 2026-09-01 — the data deleted projects leave behind, and what will never reclaim it
 
 Deleting a project sets `is_active = False` and revokes its credentials.

@@ -33,6 +33,7 @@ import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import RetentionActivationNudge from '@/components/retention/RetentionActivationNudge'
+import StoragePanel from '@/components/retention/StoragePanel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -435,6 +436,11 @@ export default function RetentionPage() {
         policy={policy}
         onEnabled={(saved) => mutate(saved, { revalidate: false })}
       />
+
+      {/* ── Storage footprint (S3) ──────────────────────────────────────
+          Above the policy form on purpose: "how much am I holding" is the
+          question that decides whether the windows below are worth setting. */}
+      <StoragePanel projectId={activeProjectId} />
 
       {/* ── Policy form ─────────────────────────────────────────────── */}
       <section className="card space-y-4">
