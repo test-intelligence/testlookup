@@ -30,24 +30,27 @@ async function mockRole(page: Page, role: string): Promise<void> {
   });
 }
 
-/** Navigate somewhere the app is expected to bounce us out of.
+/** Exercise a guarded route through a React Router-compatible history entry.
  *
- * Firefox reports NS_BINDING_ABORTED when a client-side redirect fires while
- * the document load is still in flight -- which is exactly what these tests
- * provoke, so the redirect under test was failing the navigation that
- * triggered it. Chromium tolerates it, so this only ever failed on Firefox.
- *
- * The aborted load is not the assertion; the resulting URL is. Swallow the
- * abort and let the toHaveURL check that follows decide the verdict -- it
- * still fails if the redirect does not happen.
+ * A full document navigation races the ManagementGuard's immediate redirect
+ * in Firefox and can surface as NS_BINDING_ABORTED or NS_ERROR_FAILURE. These
+ * tests target that client-side guard. Add the history metadata React Router
+ * expects, then dispatch a synthetic POP so the router evaluates the route;
+ * the resulting URL remains the independent authorization assertion.
  */
-const NAVIGATION_ABORTED =
-  /NS_BINDING_ABORTED|net::ERR_ABORTED|Frame load interrupted|NS_ERROR_ABORT/i;
+async function navigateInApp(page: Page, route: string): Promise<void> {
+  await page.evaluate((nextRoute) => {
+    const currentState = window.history.state as { idx?: unknown } | null;
+    const currentIndex = typeof currentState?.idx === 'number' ? currentState.idx : -1;
+    const nextState = {
+      usr: null,
+      key: Math.random().toString(36).substring(2, 10),
+      idx: currentIndex + 1,
+    };
 
-async function gotoTolerantOfRedirect(page: import('@playwright/test').Page, route: string) {
-  await page.goto(route, { waitUntil: 'commit' }).catch((err: Error) => {
-    if (!NAVIGATION_ABORTED.test(err.message)) throw err;
-  });
+    window.history.pushState(nextState, '', nextRoute);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: nextState }));
+  }, route);
 }
 
 test.describe('Role-based access control', () => {
@@ -56,26 +59,27 @@ test.describe('Role-based access control', () => {
     await performRealLogin(page);
 
     for (const route of MANAGEMENT_ROUTES) {
-      await gotoTolerantOfRedirect(page, route);
+      await navigateInApp(page, route);
       await expect(page, `${route} should redirect a VIEWER`).toHaveURL(/\/overview/, { timeout: 8000 });
     }
 
-    // A non-management route stays put for any authenticated role. This one
-    // aborts too -- not because IT redirects, but because the previous
-    // redirect is still settling when it starts. The toHaveURL below is the
-    // real check either way: if /runs bounced, it fails.
-    await gotoTolerantOfRedirect(page, '/runs');
+    // A real Router link to a non-management route stays available to every
+    // authenticated role and proves the router rendered the destination.
+    await page.getByRole('link', { name: 'Testing', exact: true }).click();
     await expect(page).toHaveURL(/\/runs/, { timeout: 8000 });
+    await expect(page.getByRole('heading', { name: 'Test Runs', exact: true })).toBeVisible({
+      timeout: 10000,
+    });
   });
 
   test('QA_ENGINEER (below QA_LEAD) is still redirected from management routes', async ({ page }) => {
     await mockRole(page, 'QA_ENGINEER');
     await performRealLogin(page);
 
-    await gotoTolerantOfRedirect(page, '/projects');
+    await navigateInApp(page, '/projects');
     await expect(page).toHaveURL(/\/overview/, { timeout: 8000 });
 
-    await gotoTolerantOfRedirect(page, '/users');
+    await navigateInApp(page, '/users');
     await expect(page).toHaveURL(/\/overview/, { timeout: 8000 });
   });
 
