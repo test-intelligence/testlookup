@@ -1,5 +1,6 @@
 """Alembic async migration environment."""
 import asyncio
+import logging
 import os
 from logging.config import fileConfig
 
@@ -7,6 +8,7 @@ from alembic import context
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy import pool, text
 
+from app.db.migration_retry import connect_with_retry
 from app.db.postgres import Base
 from app.models.postgres import *  # noqa: F403 - import all models for autogenerate
 
@@ -16,6 +18,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+logger = logging.getLogger("alembic.env")
 
 # All API replicas use the same container entrypoint, so a rolling deployment
 # may start several ``alembic upgrade head`` processes concurrently. A
@@ -66,9 +69,30 @@ async def run_async_migrations() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-    await connectable.dispose()
+
+    def _log_retry(attempt: int, delay: float, exc: BaseException) -> None:
+        logger.warning(
+            "Database unavailable before migration (attempt %d/6); "
+            "retrying in %.1fs: %s",
+            attempt,
+            delay,
+            exc,
+        )
+
+    try:
+        connection = await connect_with_retry(
+            connectable.connect,
+            attempts=6,
+            initial_delay_seconds=1.0,
+            max_delay_seconds=5.0,
+            on_retry=_log_retry,
+        )
+        try:
+            await connection.run_sync(do_run_migrations)
+        finally:
+            await connection.close()
+    finally:
+        await connectable.dispose()
 
 
 def run_migrations_online() -> None:

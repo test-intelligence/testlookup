@@ -172,11 +172,9 @@ test.describe('Test-case lifecycle governance', () => {
   test('preserves reasoned legacy request-review and delete shims when v2 is disabled', async ({ page }) => {
     const transitionBodies: Record<string, unknown>[] = [];
     await mockLifecycle(page, transitionBodies, false);
-    let legacyDeleteBody: unknown;
     let legacyReviewRequests = 0;
     await page.route('**/api/v1/test-management/cases/managed-case-1', async (route) => {
       if (route.request().method() === 'DELETE') {
-        legacyDeleteBody = route.request().postDataJSON();
         await route.fulfill({ status: 204, body: '' });
         return;
       }
@@ -190,8 +188,12 @@ test.describe('Test-case lifecycle governance', () => {
 
     await expect(page.getByRole('button', { name: 'Lifecycle' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Delete Governed sign in' }).click();
+    const deleteRequest = page.waitForRequest((request) => (
+      request.method() === 'DELETE'
+      && new URL(request.url()).pathname === '/api/v1/test-management/cases/managed-case-1'
+    ));
     await submitReason(page, 'Delete test case', 'Legacy compatibility cleanup', 'Delete');
-    expect(legacyDeleteBody).toEqual({ reason: 'Legacy compatibility cleanup' });
+    expect((await deleteRequest).postDataJSON()).toEqual({ reason: 'Legacy compatibility cleanup' });
 
     await page.getByText('Governed sign in', { exact: true }).first().click();
     await page.getByRole('button', { name: 'Request Review' }).click();
