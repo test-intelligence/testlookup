@@ -202,6 +202,8 @@ def test_s1_migration_upgrade_body_executes(mocker):
 
     assert module.op.create_table.call_count == 1
     assert module.op.drop_table.call_count == 1
+
+
 def test_s1_migration_casts_seeded_flag_id_to_uuid(mocker):
     """The seeded ``feature_flags`` row binds a stable string id into a uuid
     column. asyncpg sends a bare str as character varying, so Postgres rejects
