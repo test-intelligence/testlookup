@@ -278,12 +278,17 @@ async def test_per_run_prefix_listing_is_capped(mocker):
     storage = _FakeStorage({})
     db = _db_with_runs(mocker, rows=rows)
 
-    await svc.project_storage_footprint(
+    out = await svc.project_storage_footprint(
         db, pid, mongo=_FakeMongo(0, 0), storage=storage
     )
 
     # uploads tree + at most MAX_RUN_PREFIXES run prefixes
     assert len(storage.calls) <= svc.MAX_RUN_PREFIXES + 1
+    obj = next(s for s in out.stores if s.store == "object_storage")
+    assert obj.measured is True
+    assert obj.complete is False
+    assert "lower bound" in (obj.estimate_basis or "")
+    assert out.fully_measured is False
 
 
 def test_payload_renames_bytes_field_for_the_wire():
@@ -292,7 +297,30 @@ def test_payload_renames_bytes_field_for_the_wire():
     payload = fp.as_payload()
 
     assert payload["bytes"] == 5
+    assert payload["complete"] is True
     assert "bytes_" not in payload
+
+
+@pytest.mark.asyncio
+async def test_storage_route_returns_404_for_a_missing_project(mocker):
+    """ADMIN membership bypass must not turn a missing project into 0 bytes."""
+    from fastapi import HTTPException
+
+    from app.routers.retention import get_project_storage
+
+    db = mocker.AsyncMock()
+    db.scalar.return_value = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_project_storage(
+            uuid.uuid4(),
+            db=db,
+            current_user=mocker.MagicMock(),
+            _=mocker.MagicMock(),
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Project not found"
 
 
 # ── deleted projects: the data nothing will ever reclaim ─────────────────────

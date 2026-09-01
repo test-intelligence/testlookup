@@ -103,6 +103,9 @@ class StoreFootprintResponse(BaseModel):
     store: str
     measured: bool
     exact: bool
+    #: False when a safety cap left part of the project's namespace unscanned.
+    #: The reported figures are then a floor even though the store was reached.
+    complete: bool = True
     bytes: Optional[int] = None
     items: Optional[int] = None
     estimate_basis: Optional[str] = None
@@ -116,8 +119,7 @@ class ProjectStorageResponse(BaseModel):
     #: None when nothing was measurable — an unreachable everything must not
     #: total to zero.
     total_bytes: Optional[int] = None
-    #: True when any contributing store was an estimate. A total mixing exact
-    #: object-storage bytes with an estimate is an estimate.
+    #: True when any contributing store was estimated or incompletely scanned.
     total_is_estimate: bool = False
     fully_measured: bool = True
 

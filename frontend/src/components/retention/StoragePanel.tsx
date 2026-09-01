@@ -20,8 +20,8 @@ import type { StoreFootprint } from '@/types/storage'
 
 const STORE_LABELS: Record<string, string> = {
   object_storage: 'Object storage',
-  postgres: 'Database rows',
-  mongo: 'Document store',
+  postgres: 'Runs & test cases',
+  mongo: 'Run document collections',
 }
 
 /** One store's figure — the single place the null rule is applied. */
@@ -45,16 +45,25 @@ function StoreValue({ store }: { store: StoreFootprint }) {
     // per-project byte figure would be an invention and a delete would not
     // return the disk anyway.
     return (
-      <span className="text-[var(--color-text)]">
+      <span
+        className="text-[var(--color-text)]"
+        title={store.estimate_basis ?? undefined}
+      >
         {store.items === null ? '—' : `${store.items.toLocaleString()} rows`}
       </span>
     )
   }
   return (
-    <span className="text-[var(--color-text)]">
+    <span
+      className="text-[var(--color-text)]"
+      title={store.estimate_basis ?? undefined}
+    >
       {formatBytes(store.bytes)}
       {!store.exact && (
         <span className="ml-1 text-[10px] text-[var(--color-text-muted)]">est.</span>
+      )}
+      {!store.complete && (
+        <span className="ml-1 text-[10px] text-[var(--status-broken)]">partial</span>
       )}
     </span>
   )
@@ -68,7 +77,8 @@ interface Props {
 
 export default function StoragePanel({ projectId, canReadDeployment = true }: Props) {
   const { data, error, isLoading, mutate } = useProjectStorage(projectId)
-  const { data: deleted } = useDeletedProjectStorage(canReadDeployment)
+  const { data: deleted, mutate: mutateDeleted } =
+    useDeletedProjectStorage(canReadDeployment)
 
   return (
     <section className="card space-y-3" data-testid="storage-panel">
@@ -79,7 +89,10 @@ export default function StoragePanel({ projectId, canReadDeployment = true }: Pr
         </h2>
         <button
           type="button"
-          onClick={() => mutate()}
+          onClick={() => {
+            void mutate()
+            if (canReadDeployment) void mutateDeleted()
+          }}
           aria-label="Refresh storage figures"
           className="ml-auto text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
         >
@@ -154,10 +167,11 @@ export default function StoragePanel({ projectId, canReadDeployment = true }: Pr
               operator reading "Database rows" will otherwise assume deleting
               them frees disk. It does not, on its own. */}
           <p className="text-[11px] text-[var(--color-text-muted)]">
-            Database rows are counted exactly, but not sized: rows share tables
-            across projects, and deleting them does not return disk to the
-            operating system without a VACUUM FULL. Document-store bytes are
-            estimated from average document size.
+            Test-run and test-case rows are counted exactly, but not sized: rows
+            share tables across projects, and deleting them does not return disk
+            to the operating system without a VACUUM FULL. Bytes for five
+            run-scoped document collections are estimated from average document
+            size.
           </p>
         </>
       )}
@@ -179,10 +193,15 @@ export default function StoragePanel({ projectId, canReadDeployment = true }: Pr
             {deleted.unreachable_by_retention > 0 ? (
               <>
                 <strong className="text-[var(--color-text)]">
-                  {deleted.unreachable_by_retention} of {deleted.projects_total}
+                  {deleted.unreachable_by_retention} of {deleted.projects_measured} measured
                 </strong>{' '}
                 have no retention policy that will ever reclaim them — deleting a
                 project does not delete its data.
+              </>
+            ) : deleted.truncated ? (
+              <>
+                All {deleted.projects_measured} measured projects are covered by an
+                enabled retention policy and will be swept.
               </>
             ) : (
               <>
@@ -192,8 +211,8 @@ export default function StoragePanel({ projectId, canReadDeployment = true }: Pr
             )}
             {deleted.truncated && (
               <>
-                {' '}Only {deleted.projects_measured} were measured, so this is a
-                floor.
+                {' '}{deleted.projects_total - deleted.projects_measured} projects
+                were not measured, so these totals are floors.
               </>
             )}
           </p>

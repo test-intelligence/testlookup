@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-01 — make storage-footprint limits and scope explicit
+
+Storage accounting now marks a reached object store as incomplete when the
+2,000-run-prefix safety cap truncates its scan, so the API and UI present the
+result as a floor instead of an exact project total. The project endpoint also
+returns 404 for missing or deleted projects rather than a plausible-looking
+zero footprint. Deleted-project messaging uses the measured-project denominator
+and never claims an unscanned deployment is fully covered; refresh updates both
+project and deployment figures. Store labels and explanations now state that
+Postgres covers test runs/test cases and Mongo covers five run-scoped
+collections, instead of implying whole-database accounting.
+
 ## 2026-09-01 — cast the seeded flag id so migration 0145 upgrades
 
 Migration `0145` seeded its `feature_flags` row by binding a stable string id

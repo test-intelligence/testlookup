@@ -30,6 +30,7 @@ const REACHED: ProjectStorage = {
       store: 'object_storage',
       measured: true,
       exact: true,
+      complete: true,
       bytes: 5_368_709_120, // 5 GiB
       items: 120,
       estimate_basis: null,
@@ -39,6 +40,7 @@ const REACHED: ProjectStorage = {
       store: 'postgres',
       measured: true,
       exact: true,
+      complete: true,
       bytes: null,
       items: 4200,
       estimate_basis: 'Row counts are exact. Bytes are not reported.',
@@ -48,6 +50,7 @@ const REACHED: ProjectStorage = {
       store: 'mongo',
       measured: true,
       exact: false,
+      complete: true,
       bytes: 1_073_741_824, // 1 GiB
       items: 30,
       estimate_basis: 'avgObjSize x document count',
@@ -73,12 +76,16 @@ function mockProject(data: ProjectStorage | undefined, extra: Record<string, unk
   } as unknown as ReturnType<typeof useProjectStorage>)
 }
 
-function mockDeleted(data: DeletedProjectsStorage | undefined) {
+function mockDeleted(
+  data: DeletedProjectsStorage | undefined,
+  extra: Record<string, unknown> = {},
+) {
   vi.mocked(useDeletedProjectStorage).mockReturnValue({
     data,
     error: undefined,
     isLoading: false,
     mutate: vi.fn(),
+    ...extra,
   } as unknown as ReturnType<typeof useDeletedProjectStorage>)
 }
 
@@ -117,6 +124,7 @@ describe('StoragePanel', () => {
             store: 'object_storage',
             measured: false,
             exact: true,
+            complete: true,
             bytes: null,
             items: null,
             estimate_basis: null,
@@ -147,6 +155,7 @@ describe('StoragePanel', () => {
             store: 'object_storage',
             measured: true,
             exact: true,
+            complete: true,
             bytes: 0,
             items: 0,
             estimate_basis: null,
@@ -173,9 +182,15 @@ describe('StoragePanel', () => {
   })
 
   it('warns that a partial total is a floor, not a measurement', () => {
-    mockProject(withStores(REACHED.stores, { fully_measured: false }))
+    mockProject(
+      withStores(
+        [{ ...REACHED.stores[0], complete: false }],
+        { fully_measured: false },
+      ),
+    )
     renderPanel()
     expect(screen.getByTestId('storage-partial-warning')).toBeInTheDocument()
+    expect(screen.getByText('partial')).toBeInTheDocument()
   })
 
   it('states the VACUUM caveat rather than implying rows free disk', () => {
@@ -216,7 +231,27 @@ describe('StoragePanel', () => {
       unreachable_by_retention: 25,
     })
     renderPanel()
-    expect(screen.getByText(/Only 25 were measured/)).toBeInTheDocument()
+    expect(screen.getByText(/25 of 25 measured/)).toBeInTheDocument()
+    expect(screen.getByText(/65 projects were not measured/)).toBeInTheDocument()
+  })
+
+  it('does not claim all deleted projects are covered when a zero-risk scan was capped', () => {
+    mockProject(REACHED)
+    mockDeleted({
+      computed_at: '2026-09-01T00:00:00Z',
+      projects_total: 90,
+      projects_measured: 25,
+      truncated: true,
+      projects: [],
+      total_bytes: 1024,
+      total_is_estimate: false,
+      unreachable_by_retention: 0,
+    })
+    renderPanel()
+
+    expect(screen.getByText(/All 25 measured projects are covered/)).toBeInTheDocument()
+    expect(screen.queryByText(/All 90 are covered/)).not.toBeInTheDocument()
+    expect(screen.getByText(/65 projects were not measured/)).toBeInTheDocument()
   })
 
   it('hides the deleted-projects line when there are none', () => {
@@ -237,11 +272,14 @@ describe('StoragePanel', () => {
 
   it('refreshes on demand rather than on window focus', async () => {
     const mutate = vi.fn()
+    const mutateDeleted = vi.fn()
     mockProject(REACHED, { mutate })
+    mockDeleted(undefined, { mutate: mutateDeleted })
     renderPanel()
 
     fireEvent.click(screen.getByRole('button', { name: /refresh storage figures/i }))
 
     await waitFor(() => expect(mutate).toHaveBeenCalled())
+    expect(mutateDeleted).toHaveBeenCalled()
   })
 })

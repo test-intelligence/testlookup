@@ -14,6 +14,8 @@ export interface StoreFootprint {
   store: string
   measured: boolean
   exact: boolean
+  /** False when a safety cap left part of the project's namespace unscanned. */
+  complete: boolean
   /** null when `measured` is false — render "not measured", never 0. */
   bytes: number | null
   items: number | null
@@ -27,7 +29,7 @@ export interface ProjectStorage {
   stores: StoreFootprint[]
   /** null when nothing was measurable — an unreachable everything is not 0 B. */
   total_bytes: number | null
-  /** True when any contributing store was an estimate. */
+  /** True when any contributing store was estimated or incompletely scanned. */
   total_is_estimate: boolean
   fully_measured: boolean
 }

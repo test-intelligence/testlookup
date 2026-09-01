@@ -29,6 +29,7 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -37,7 +38,7 @@ from app.core.deps import (
     require_project_access,
     require_role,
 )
-from app.models.postgres import User, UserRole
+from app.models.postgres import Project, User, UserRole
 from app.models.schemas import (
     ProjectStorageResponse,
     RetentionPolicyRead,
@@ -126,6 +127,18 @@ async def get_project_storage(
     500-ing, because a page whose whole job is reporting is more useful
     partially right than absent.
     """
+    project_exists = await db.scalar(
+        select(Project.id).where(
+            Project.id == project_id,
+            Project.is_active.is_(True),
+        )
+    )
+    if project_exists is None:
+        # ADMIN bypasses the membership lookup in require_project_access(), so
+        # the route itself must still distinguish a missing/deleted project
+        # from a real project that happens to contain no data.
+        raise HTTPException(status_code=404, detail="Project not found")
+
     footprint = await storage_accounting_service.project_storage_footprint(
         db, project_id
     )

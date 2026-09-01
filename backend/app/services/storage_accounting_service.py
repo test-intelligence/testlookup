@@ -72,6 +72,9 @@ class StoreFootprint:
     store: str
     measured: bool
     exact: bool
+    #: False when the store was reached but a safety cap left part of the
+    #: project's namespace unscanned. The reported values are then a floor.
+    complete: bool = True
     bytes_: Optional[int] = None
     items: Optional[int] = None
     estimate_basis: Optional[str] = None
@@ -108,12 +111,13 @@ class ProjectStorageFootprint:
         confident-but-invented figure this page has shipped before.
         """
         return any(
-            s.measured and s.bytes_ is not None and not s.exact for s in self.stores
+            s.measured and s.bytes_ is not None and (not s.exact or not s.complete)
+            for s in self.stores
         )
 
     @property
     def fully_measured(self) -> bool:
-        return all(s.measured for s in self.stores)
+        return all(s.measured and s.complete for s in self.stores)
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -127,7 +131,11 @@ class ProjectStorageFootprint:
 
 
 async def _object_storage_footprint(
-    project_id: uuid.UUID, minio_prefixes: list[str], storage: Any
+    project_id: uuid.UUID,
+    minio_prefixes: list[str],
+    storage: Any,
+    *,
+    prefixes_complete: bool = True,
 ) -> StoreFootprint:
     """Exact bytes. Every listed object carries its own ``Size``.
 
@@ -170,8 +178,17 @@ async def _object_storage_footprint(
         store="object_storage",
         measured=True,
         exact=True,
+        complete=prefixes_complete,
         bytes_=total_bytes,
         items=total_objects,
+        estimate_basis=(
+            None
+            if prefixes_complete
+            else (
+                f"Only the first {MAX_RUN_PREFIXES} non-empty run prefixes were "
+                "scanned; bytes and objects are a lower bound."
+            )
+        ),
     )
 
 
@@ -216,7 +233,8 @@ async def _postgres_footprint(
         exact=True,
         items=int(runs or 0) + int(cases or 0),
         estimate_basis=(
-            "Row counts are exact. Bytes are not reported: rows share tables "
+            "Test-run and test-case row counts are exact. Bytes are not reported: "
+            "rows share tables "
             "across projects, and deleting them does not return disk to the OS "
             "without VACUUM FULL / pg_repack."
         ),
@@ -235,7 +253,10 @@ async def _mongo_footprint(
     if not run_ids:
         return StoreFootprint(
             store="mongo", measured=True, exact=False, bytes_=0, items=0,
-            estimate_basis="No runs in this project.",
+            estimate_basis=(
+                "No runs in this project; the five run-scoped collections "
+                "contain no project documents."
+            ),
         )
 
     run_strs = [str(r) for r in run_ids]
@@ -272,9 +293,9 @@ async def _mongo_footprint(
         bytes_=est_bytes,
         items=total_docs,
         estimate_basis=(
-            "Document counts are exact. Bytes are the collection's avgObjSize "
-            "multiplied by this project's document count — collections are "
-            "shared across projects."
+            "Document counts across five run-scoped collections are exact. Bytes "
+            "are each collection's avgObjSize multiplied by this project's "
+            "document count — collections are shared across projects."
         ),
     )
 
@@ -445,13 +466,20 @@ async def project_storage_footprint(
         )
     ).all()
     run_ids = [r[0] for r in rows]
-    prefixes = [r[1] for r in rows[:MAX_RUN_PREFIXES] if r[1]]
+    all_prefixes = [r[1] for r in rows if r[1]]
+    prefixes = all_prefixes[:MAX_RUN_PREFIXES]
+    prefixes_complete = len(all_prefixes) <= MAX_RUN_PREFIXES
 
     footprint = ProjectStorageFootprint(
         project_id=str(project_id), computed_at=computed_at
     )
     footprint.stores.append(
-        await _object_storage_footprint(project_id, prefixes, storage)
+        await _object_storage_footprint(
+            project_id,
+            prefixes,
+            storage,
+            prefixes_complete=prefixes_complete,
+        )
     )
     footprint.stores.append(await _postgres_footprint(db, project_id))
     footprint.stores.append(await _mongo_footprint(project_id, run_ids, mongo))
