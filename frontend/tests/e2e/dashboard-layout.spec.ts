@@ -27,8 +27,10 @@ async function readTopRowLayout(page: import('@playwright/test').Page) {
 
 test.describe('Dashboard responsive layout', () => {
   test.beforeEach(async ({ page }) => {
+    // performRealLogin already finishes on a loaded /overview page. A second
+    // same-URL goto can race Firefox's final auth redirect and be aborted with
+    // NS_BINDING_ABORTED before the layout assertion ever runs.
     await performRealLogin(page)
-    await page.goto('/overview')
     await expect(page.getByRole('heading', { name: 'Dashboard', level: 1 })).toBeVisible()
   })
 

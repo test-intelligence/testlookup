@@ -7,8 +7,9 @@ const BACKEND_URL = process.env.VITE_API_BASE_URL || 'http://localhost:8000';
  *
  * Strategy:
  * 1. Navigate to /overview with the globalSetup storageState already injected.
- * 2. Wait briefly for the authenticated sidebar (<aside>) to appear.
- *    - If it appears: auth is confirmed, return immediately (fast path).
+ * 2. Wait briefly for both the authenticated sidebar (<aside>) and a successful
+ *    /auth/me response.
+ *    - If both appear: auth is confirmed, return immediately (fast path).
  *    - If it doesn't appear (Firefox HTTP storageState bug, or backend down/slow
  *      causing fetchUser → logout): fall through to a token-based re-auth.
  * 3. Token re-auth: call the dev-login endpoint and inject the JWT into
@@ -17,14 +18,26 @@ const BACKEND_URL = process.env.VITE_API_BASE_URL || 'http://localhost:8000';
  */
 export async function performRealLogin(page: Page) {
   // ── Fast path: storageState ──────────────────────────────────────────────
+  // The persisted store can render <aside> before ProtectedRoute's background
+  // token verification settles. Returning on the sidebar alone lets an expired
+  // token redirect race the caller's next page.goto, which Firefox reports as
+  // NS_BINDING_ABORTED. Arm the response waiter before navigation and require
+  // the verified response as the fast-path boundary.
+  const verifiedAuth = page.waitForResponse(
+    response => response.url().includes('/api/v1/auth/me') && response.ok(),
+    { timeout: 6000 },
+  ).then(() => true).catch(() => false);
   await page.goto('/overview');
 
-  const authenticated = await page.locator('aside')
-    .waitFor({ state: 'visible', timeout: 6000 })
-    .then(() => true)
-    .catch(() => false);
+  const [authenticated, tokenVerified] = await Promise.all([
+    page.locator('aside')
+      .waitFor({ state: 'visible', timeout: 6000 })
+      .then(() => true)
+      .catch(() => false),
+    verifiedAuth,
+  ]);
 
-  if (authenticated) return;
+  if (authenticated && tokenVerified) return;
 
   // ── Fallback 1: dev-login endpoint (no credentials) ──────────────────────
   try {
