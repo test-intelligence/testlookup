@@ -1855,6 +1855,14 @@ class ManagedTestCaseResponse(BaseModel):
     # The frontend uses this to render an "Automation-ingested" badge and
     # disable edit affordances on automation rows.
     source: str = "managed"
+    # Automation-backed rows carry execution metadata from their latest run.
+    # These fields let Test Management show the same source owner as the run
+    # detail and open the complete rich-detail page instead of a lossy catalog
+    # side panel. They remain null for authored managed_test_cases rows.
+    owner: Optional[str] = None
+    latest_run_id: Optional[uuid.UUID] = None
+    latest_test_case_id: Optional[uuid.UUID] = None
+    canonical_test_case_id: Optional[uuid.UUID] = None
     id: uuid.UUID
     project_id: uuid.UUID
     title: str

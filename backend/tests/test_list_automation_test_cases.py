@@ -37,6 +37,7 @@ def _synth_row(
     suite_name: str | None = "smoke",
     class_name: str | None = "SmokeSuite",
     status: str = "PASSED",
+    owner: str | None = "QA Platform",
     tags=None,
     run_created_at: datetime | None = None,
 ):
@@ -51,6 +52,8 @@ def _synth_row(
         class_name=class_name,
         suite_name=suite_name,
         status=status,
+        owner=owner,
+        canonical_test_case_id=uuid.uuid4(),
         failure_category=None,
         tags=tags,
         run_created_at=run_created_at or datetime(2026, 5, 15, tzinfo=timezone.utc),
@@ -88,6 +91,13 @@ async def test_project_scoped_returns_rows_stamped_with_that_project():
     # Synth rows are marked as automation source for the UI badge.
     assert {r["source"] for r in result} == {"automation"}
     assert all(r["is_automated"] for r in result)
+    assert {r["owner"] for r in result} == {"QA Platform"}
+    assert all(r["latest_run_id"] == row.run_id for r, row in zip(result, rows, strict=True))
+    assert all(r["latest_test_case_id"] == row.id for r, row in zip(result, rows, strict=True))
+    assert all(
+        r["canonical_test_case_id"] == row.canonical_test_case_id
+        for r, row in zip(result, rows, strict=True)
+    )
 
 
 @pytest.mark.asyncio
@@ -151,3 +161,27 @@ async def test_empty_query_returns_empty_list():
     result = await list_automation_test_cases(db, project_id=uuid.uuid4())
 
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_owner_and_execution_identity_survive_response_serialization():
+    """The list response must not silently discard the fields the UI needs."""
+    from app.models.schemas import ManagedTestCaseResponse
+    from app.services.test_management_service import list_automation_test_cases
+
+    project = uuid.uuid4()
+    source = _synth_row(
+        project_id=project,
+        fingerprint="rich-detail-owner",
+        test_name="rich_detail_production_validation",
+        owner="QA Platform",
+    )
+    db = SimpleNamespace(execute=AsyncMock(return_value=_ExecResult([source])))
+
+    result = await list_automation_test_cases(db, project_id=project)
+    response = ManagedTestCaseResponse.model_validate(result[0])
+
+    assert response.owner == "QA Platform"
+    assert response.latest_run_id == source.run_id
+    assert response.latest_test_case_id == source.id
+    assert response.canonical_test_case_id == source.canonical_test_case_id

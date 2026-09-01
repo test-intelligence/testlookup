@@ -3,7 +3,7 @@ import useSWR from 'swr'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useNow } from '@/hooks/useNow'
 import { shortAgo } from '@/utils/formatters'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ClipboardList, Plus, Sparkles, ChevronDown, ChevronRight,
   Star, Clock, User, CheckCircle2, XCircle, AlertCircle,
@@ -33,6 +33,7 @@ import {
 } from '@/services/testManagementService'
 import type { UserSummary, SuiteReviewItem, SuiteReviewState } from '@/services/testManagementService'
 import { deriveTestManagementTotals, describeStatBasis } from '@/utils/testManagementTotals'
+import { getTestManagementCaseDetailPath } from '@/utils/testManagementCase'
 import KnowledgeGenerationTab from '@/pages/test-management/KnowledgeGenerationTab'
 import type {
   AIReviewResult,
@@ -895,6 +896,7 @@ function GenerateStrategyModal({ projectId, onClose }: GenerateStrategyModalProp
 interface TestCasesTabProps { projectId: string | null }
 
 function TestCasesTab({ projectId }: TestCasesTabProps) {
+  const navigate = useNavigate()
   const now = useNow()  // captured at mount — avoids impure Date.now() in render
   // ── Filter state ────────────────────────────────────────────────────
   // Single-select today; multi-select chips with a popover are Phase 2 per
@@ -910,6 +912,15 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [showAiGen, setShowAiGen] = useState(false)
   const [selectedCase, setSelectedCase] = useState<ManagedTestCase | null>(null)
+
+  const openCase = useCallback((caseItem: ManagedTestCase) => {
+    const executionPath = getTestManagementCaseDetailPath(caseItem)
+    if (executionPath) {
+      navigate(executionPath)
+      return
+    }
+    setSelectedCase(caseItem)
+  }, [navigate])
   // Default ON so users land on a populated list — the managed_test_cases
   // table is often empty in fresh deployments, and the "Test Cases tab
   // shows nothing while runs are full of tests" surprise was the top
@@ -1213,7 +1224,7 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
             ) : (
               <CasesTableBody
                 cases={cases}
-                onRowClick={setSelectedCase}
+                onRowClick={openCase}
                 onDelete={handleDelete}
               />
             )}
@@ -1240,7 +1251,7 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
         <div className="flex flex-col gap-3.5 min-w-0">
           <ReviewQueueCard
             rows={reviewQueue.slice(0, 5)}
-            onPick={(tc) => setSelectedCase(tc)}
+            onPick={openCase}
           />
           {/* The three counts that used to be passed here were 15%, 8% and 50%
               of numbers already on the page. Besides being invented, they were
@@ -1814,7 +1825,7 @@ function CaseRow({ tc, onRowClick, onDelete }: { tc: ManagedTestCase; onRowClick
         <CasePriorityTag priority={tc.priority} />
       </td>
       <td style={{ padding: '10px 12px' }}>
-        <OwnerCell userId={tc.assignee_id ?? tc.author_id ?? null} />
+        <OwnerCell owner={tc.owner ?? null} userId={tc.assignee_id ?? tc.author_id ?? null} />
       </td>
       <td style={{ padding: '10px 12px' }}>
         {tc.is_automated ? (
@@ -1902,7 +1913,30 @@ function hashIntoBucket(s: string, buckets: number): number {
   return Math.abs(h) % buckets
 }
 
-function OwnerCell({ userId }: { userId: string | null }) {
+export function OwnerCell({ owner, userId }: { owner: string | null; userId: string | null }) {
+  const displayOwner = owner?.trim()
+  if (displayOwner) {
+    const initials = displayOwner
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(part => part[0])
+      .join('')
+      .toUpperCase()
+    const grad = AVATAR_GRADIENTS[hashIntoBucket(displayOwner, AVATAR_GRADIENTS.length)]
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-secondary)]">
+        <span
+          aria-hidden
+          className="inline-flex items-center justify-center rounded-full font-bold text-white"
+          style={{ width: 18, height: 18, background: grad, fontSize: 9 }}
+        >
+          {initials || '?'}
+        </span>
+        <span className="truncate" title={displayOwner}>{displayOwner}</span>
+      </span>
+    )
+  }
   if (!userId) {
     return (
       <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-muted)]" aria-label="Unassigned">

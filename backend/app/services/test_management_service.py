@@ -131,6 +131,8 @@ async def list_automation_test_cases(
             TestCase.class_name,
             TestCase.suite_name,
             TestCase.status,
+            TestCase.owner,
+            TestCase.canonical_test_case_id,
             TestCase.failure_category,
             TestCase.tags,
             TestRun.created_at.label("run_created_at"),
@@ -193,6 +195,10 @@ async def list_automation_test_cases(
         row_project_id = r.run_project_id if project_id is None else project_id
         result.append({
             "id": r.id,  # per-run TestCase id; safe as a list-row key
+            "owner": r.owner,
+            "latest_run_id": r.run_id,
+            "latest_test_case_id": r.id,
+            "canonical_test_case_id": r.canonical_test_case_id,
             "project_id": row_project_id,
             "title": r.test_name,
             "description": None,

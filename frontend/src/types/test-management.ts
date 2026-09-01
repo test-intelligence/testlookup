@@ -49,6 +49,12 @@ export interface ManagedTestCase {
    * affordances on automation rows.
    */
   source?: 'managed' | 'automation' | string
+  /** Source-framework owner from the latest automation execution. */
+  owner?: string | null
+  /** Latest execution identity used to open the complete run test detail. */
+  latest_run_id?: string | null
+  latest_test_case_id?: string | null
+  canonical_test_case_id?: string | null
   id: string
   project_id: string
   title: string

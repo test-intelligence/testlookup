@@ -3,6 +3,7 @@ import { performRealLogin } from './realLoginHelper'
 
 const richRunId = process.env.E2E_RICH_RUN_ID
 const richTestId = process.env.E2E_RICH_TEST_ID
+const richTestName = process.env.E2E_RICH_TEST_NAME
 const sparseRunId = process.env.E2E_RICH_SPARSE_RUN_ID
 const sparseTestId = process.env.E2E_RICH_SPARSE_TEST_ID
 
@@ -49,6 +50,27 @@ test.describe('Rich test-case detail — deployed Allure contract', () => {
     await expect(page.getByText('Render source metadata', { exact: true })).toBeVisible()
     await expect(page.getByText('Render optional step tree', { exact: true })).toBeVisible()
     await expect(page.getByText('detail-screenshot.png', { exact: true })).toBeVisible()
+  })
+
+  test('Test Management shows the source owner and opens the complete execution detail', async ({ page }) => {
+    test.skip(
+      !richRunId || !richTestId || !richTestName,
+      'Set E2E_RICH_RUN_ID, E2E_RICH_TEST_ID, and E2E_RICH_TEST_NAME to one seeded Allure case',
+    )
+
+    await page.goto('/test-management')
+    const search = page.getByRole('searchbox', { name: 'Search cases' })
+    await expect(search).toBeVisible()
+    await search.fill(richTestName as string)
+
+    const row = page.getByRole('row').filter({ hasText: richTestName as string })
+    await expect(row).toBeVisible()
+    await expect(row.getByText('QA Platform', { exact: true })).toBeVisible()
+
+    await row.getByText(richTestName as string, { exact: true }).click()
+    await expect(page).toHaveURL(new RegExp(`/runs/${richRunId}/tests/${richTestId}$`))
+    await expect(page.getByRole('heading', { name: richTestName as string, exact: true })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Enriched test case details' })).toBeVisible()
   })
 
   test('renders a safe empty state when the source has no steps', async ({ page }) => {
