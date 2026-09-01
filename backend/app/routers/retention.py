@@ -39,6 +39,7 @@ from app.core.deps import (
 )
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
+    ProjectStorageResponse,
     RetentionPolicyRead,
     RetentionPolicyWrite,
     RetentionPreviewResponse,
@@ -46,6 +47,7 @@ from app.models.schemas import (
     RetentionPurgeRequest,
 )
 from app.services import retention_service as svc
+from app.services import storage_accounting_service
 
 router = APIRouter(prefix="/api/v1/projects", tags=["Retention"])
 logger = structlog.get_logger("routers.retention")
@@ -102,6 +104,32 @@ async def put_retention_policy(
     return RetentionPolicyRead(
         **effective.as_dict(), source=effective.source, last_purge=last_purge,
     )
+
+
+@router.get(
+    "/{project_id}/storage",
+    response_model=ProjectStorageResponse,
+)
+async def get_project_storage(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_project_access()),
+):
+    """Storage footprint for this project, per store (S3).
+
+    Read-only. ADMIN-gated like the rest of this router's writes: the figure
+    is the blast radius of a purge, so it is not a general-membership read.
+
+    A store that cannot be reached comes back ``measured=False`` with null
+    figures rather than a zero — the endpoint degrades per store instead of
+    500-ing, because a page whose whole job is reporting is more useful
+    partially right than absent.
+    """
+    footprint = await storage_accounting_service.project_storage_footprint(
+        db, project_id
+    )
+    return ProjectStorageResponse(**footprint.as_payload())
 
 
 @router.post(

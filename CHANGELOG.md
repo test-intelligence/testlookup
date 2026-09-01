@@ -14,6 +14,60 @@ test mocks `op`, so it never saw the datatype mismatch). The Postgres
 migration-postconditions integration test also had its expected head bumped
 from `0144` to `0145` — it was masked while the broken `0145` upgrade aborted
 before that assertion could run.
+## 2026-09-01 — how much storage is this project actually using?
+
+Retention could report how many *rows* a purge would remove and never how many
+*bytes* it would reclaim. All twelve preview categories are cardinalities, and
+there is not one `bytes` or `size_bytes` token anywhere in the retention path —
+so the question that decides whether an operator turns retention on had no
+answer in the product.
+
+`GET /api/v1/projects/{project_id}/storage` reports the footprint per store.
+Read-only, ADMIN-gated: the figure is the blast radius of a purge, not a
+general-membership read.
+
+Two rules shape every number it returns.
+
+**Reached, or not reached.** Each store carries `measured`. A store that could
+not be contacted reports `measured=false` with null figures — never `0`. Zero
+and unreachable are opposite findings, and rendering both as "0 B" tells an
+operator their project is free when the truth is that nothing looked. The test
+for this asserts against a client that *raises*; a mock returning `[]` would
+pass against the exact bug being prevented. One store failing degrades that
+store and leaves the rest of the answer intact, because a page whose whole job
+is reporting is more useful partly right than absent.
+
+**Exact, or estimated.** Only object storage attributes bytes precisely —
+every listed object carries its own `Size`. Mongo bytes are `avgObjSize` times
+this project's document count, flagged `exact=false` with the basis stated in
+the payload. `total_is_estimate` is true whenever any contributing store was an
+estimate, because summing an exact figure with an estimate yields an estimate
+and calling it measured is how a page ends up showing a confident invented
+number.
+
+Postgres reports exact row counts and **no** byte figure at all. Rows share
+tables across projects, and a bulk DELETE does not return disk to the OS
+without `VACUUM FULL` / `pg_repack` — so a per-project byte figure would be an
+invention twice over. The payload says so rather than leaving the omission
+unexplained.
+
+The uploads tree is listed **once** per project. A per-run loop is O(runs)
+paginated LIST calls — roughly 100k round-trips on a 100k-run project for a
+number shown on a settings page. Per-run `minio_prefix` values are
+uploader-derived and unbounded in shape, so they cannot be collapsed the same
+way and are capped instead. Objects reachable from two prefixes are counted
+once; double-counting would inflate the headline reclaimable figure.
+
+Tests: `backend/tests/test_storage_accounting.py` (11). The outage semantics,
+the shared-object dedup, the estimate flag, and the prefix cap were each
+mutation-tested and observed failing.
+
+**Not yet done in this slice:** the Retention page still has no storage panel,
+deleted-project footprints are not surfaced, and
+`semantic_search.purge_project_documents` still returns `0` on a vector-store
+outage — that last one changes the preview contract two regression tests pin by
+source text, so it gets its own change.
+
 
 ## 2026-09-01 — retention shipped inert; ask the operator to turn it on
 

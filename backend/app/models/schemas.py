@@ -90,6 +90,38 @@ class SelfUpdateProfileRequest(BaseModel):
     avatar_color: Optional[str] = Field(None, max_length=20)
 
 
+class StoreFootprintResponse(BaseModel):
+    """One store's contribution to a project's storage footprint.
+
+    ``measured=False`` means the store could not be reached — ``bytes`` and
+    ``items`` are then ``None``, never ``0``. Zero and unreachable are opposite
+    findings and must not render alike.
+
+    ``exact=False`` means the byte figure is a proportional estimate over a
+    store shared with other projects; ``estimate_basis`` says how.
+    """
+    store: str
+    measured: bool
+    exact: bool
+    bytes: Optional[int] = None
+    items: Optional[int] = None
+    estimate_basis: Optional[str] = None
+    unreachable_reason: Optional[str] = None
+
+
+class ProjectStorageResponse(BaseModel):
+    project_id: str
+    computed_at: datetime
+    stores: List[StoreFootprintResponse]
+    #: None when nothing was measurable — an unreachable everything must not
+    #: total to zero.
+    total_bytes: Optional[int] = None
+    #: True when any contributing store was an estimate. A total mixing exact
+    #: object-storage bytes with an estimate is an estimate.
+    total_is_estimate: bool = False
+    fully_measured: bool = True
+
+
 class UIDismissalCreate(BaseModel):
     """Dismiss a UI prompt for the authenticated user.
 
