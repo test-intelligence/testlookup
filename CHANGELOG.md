@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-01 — strip XML-invalid control characters from Office exports
+
+Test-plan, test-strategy, and test-case Word (.docx) and Excel (.xlsx) exports
+now drop the C0 control characters that XML 1.0 forbids before handing stored
+text to python-docx and openpyxl. A single stray control byte in a stored
+title, objective, criterion, or table cell (a bad import, mangled AI output)
+no longer turns an authorized export into a 500 — python-docx (via lxml) and
+openpyxl both reject those bytes outright, the same "malformed stored metadata
+must not break the download" class already hardened for the PDF exporters. Tab,
+newline, and carriage return are preserved, and the Excel formula-inerting
+guard still fires after stripping. Regression tests drive the real Word and
+Excel exporters with control bytes across every rendered field.
+
 ## 2026-08-31 — preserve and neutralize audit CSV fields
 
 Audit CSV exports now use the standard CSV writer so commas, quotes, and
