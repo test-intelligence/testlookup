@@ -676,8 +676,11 @@ async def hybrid_search(
 # ── Retention: purge a project's documents from the search index ────────────
 
 
-async def purge_project_documents(project_id: str, *, execute: bool) -> int:
+async def purge_project_documents(project_id: str, *, execute: bool) -> int | None:
     """Count (or delete) this project's documents in the test-case index.
+
+    Returns the document count, or **None when the store could not be
+    reached** — callers must not render that as 0.
 
     **Why this exists.** Both indexers filter ``Project.is_active`` at WRITE
     time, so deleting a project stops new documents being added — but nothing
@@ -708,12 +711,16 @@ async def purge_project_documents(project_id: str, *, execute: bool) -> int:
         collection = await _get_or_create_collection()
     except Exception as exc:
         # A vector-store outage must not block the durable-store purge, which
-        # is the same stance analysis_cache_retention takes. The count is
-        # reported as 0 and the failure is logged rather than swallowed —
-        # a purge that could not visit a store must not read as "nothing to
-        # delete there".
+        # is the same stance analysis_cache_retention takes.
+        #
+        # Returns None, NOT 0. This comment used to argue that reporting 0 was
+        # acceptable because the failure was logged, and then said in its own
+        # next breath that "a purge that could not visit a store must not read
+        # as 'nothing to delete there'". Both cannot hold: every caller of this
+        # function renders the number, and none of them read the log. 0 and
+        # "could not look" are opposite findings and now have opposite values.
         logger.warning("Search-index purge failed for project %s: %s", project_id, exc)
-        return 0
+        return None
 
     where = {"project_id": str(project_id)}
     try:
@@ -723,5 +730,6 @@ async def purge_project_documents(project_id: str, *, execute: bool) -> int:
             await asyncio.to_thread(collection.delete, where=where)
         return len(ids)
     except Exception as exc:
+        # Same rule as above: unreachable is not empty.
         logger.warning("Search-index purge failed for project %s: %s", project_id, exc)
-        return 0
+        return None

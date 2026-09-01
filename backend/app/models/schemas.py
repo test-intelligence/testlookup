@@ -5363,15 +5363,25 @@ class RetentionPreviewCandidates(BaseModel):
     provenance_rows: int
     compliance_packs_expired: int
     evidence_artifact_rows: int = 0
-    analysis_cache_entries: int = 0
     memory_entries_expired: int = 0
-    search_index_documents: int = 0
+    # Optional, and the default is None rather than 0. Both of these come from
+    # stores that can be down independently of Postgres (Redis + the two Chroma
+    # collections), and both used to report 0 on an outage — indistinguishable
+    # from "nothing to delete there" on the screen an ADMIN authorises an
+    # irreversible purge from. None means the store was not reached; the
+    # response's ``unmeasured`` list names which.
+    analysis_cache_entries: Optional[int] = None
+    search_index_documents: Optional[int] = None
 
 
 class RetentionPreviewResponse(BaseModel):
     """POST ``.../retention-policy/preview`` — dry-run, writes nothing."""
     cutoffs: dict[str, datetime]
     candidates: RetentionPreviewCandidates
+    #: Candidate classes whose store could not be reached. A client that
+    #: ignores this still sees ``null`` rather than a wrong zero; a client that
+    #: reads it can say "not measured" and explain why the total is short.
+    unmeasured: List[str] = Field(default_factory=list)
 
 
 class RetentionPurgeRequest(BaseModel):

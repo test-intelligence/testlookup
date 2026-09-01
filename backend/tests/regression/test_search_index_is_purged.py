@@ -110,6 +110,9 @@ async def test_nothing_to_purge_is_not_a_delete(monkeypatch):
     collection = _Collection([])
     _install(monkeypatch, collection)
 
+    # A genuinely empty index reports 0 — and must keep reporting 0. This is
+    # the other half of the outage fix below: if BOTH cases returned None the
+    # distinction would be lost again, just in the opposite direction.
     assert await semantic_search.purge_project_documents("proj-1", execute=True) == 0
     assert collection.delete_calls == []
 
@@ -124,7 +127,11 @@ async def test_a_vector_store_outage_does_not_block_the_purge(monkeypatch):
 
     monkeypatch.setattr(semantic_search, "_get_or_create_collection", _boom)
 
-    assert await semantic_search.purge_project_documents("proj-1", execute=True) == 0
+    # Was `== 0`, which asserted the defect: an unreachable store and an empty
+    # index reported the same number, so the preview an ADMIN authorises an
+    # irreversible cross-store purge from could not tell them apart. None means
+    # "not measured". The purge still is not blocked — this test's actual point.
+    assert await semantic_search.purge_project_documents("proj-1", execute=True) is None
 
 
 def test_retention_reports_the_search_index_separately_from_the_cache():

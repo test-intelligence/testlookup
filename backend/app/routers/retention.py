@@ -146,7 +146,9 @@ async def preview_retention_purge(
     candidate counts. Deliberately available while the policy is disabled."""
     out = await svc.run_purge(db, project_id=project_id, mode="preview")
     return RetentionPreviewResponse(
-        cutoffs=out["cutoffs"], candidates=out["candidates"],
+        cutoffs=out["cutoffs"],
+        candidates=out["candidates"],
+        unmeasured=out.get("unmeasured", []),
     )
 
 

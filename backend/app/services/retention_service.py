@@ -113,6 +113,20 @@ FIELD_BOUNDS: dict[str, tuple[int, int]] = {
     "audit_days": (365, 3650),
 }
 
+def _sum_measured(values: Iterable[Optional[int]]) -> Optional[int]:
+    """Total a group of per-store counts, or None if any store was unreachable.
+
+    A partial total is worse than no total: "3 cache entries" when the semantic
+    half never answered reads as a complete figure and is not one. If any
+    contributor is unmeasured the aggregate is unmeasured, and the caller shows
+    "not measured" rather than a number that quietly under-reports.
+    """
+    materialized = list(values)
+    if any(v is None for v in materialized):
+        return None
+    return sum(v for v in materialized if v is not None)
+
+
 PURGE_AUDIT_KEY_PREFIX = "retention_purge:"
 POLICY_AUDIT_KEY_PREFIX = "retention_policy:"
 
@@ -707,14 +721,17 @@ async def run_purge(
     ).scalars().all()
 
     cutoffs_iso = {k: v.isoformat() for k, v in cutoffs.items()}
-    cache_counts = {"redis": 0, "semantic": 0}
+    # None, not 0 — these stores are SKIPPED entirely when external stores are
+    # injected (the test path), so a zero here would report "nothing in the
+    # cache" for a store the run never visited. Same rule as an outage.
+    cache_counts: dict[str, int | None] = {"redis": None, "semantic": None}
     # SEARCH-009. Distinct from ``cache_counts["semantic"]``, which is the AI
     # ANALYSIS cache (``semantic_cache``, the ``ai_analysis_cache_*``
     # collections). This is the test-case SEARCH index (``test_case_search``) —
     # a different store that the "cross-store purge" never visited, so an
     # executed purge reported complete while 98.8% of that index was
     # embeddings of deleted projects.
-    search_index_documents = 0
+    search_index_documents: int | None = None
     if not external_stores_injected:
         from app.services.analysis_cache_retention import (
             purge_project_analysis_caches,
@@ -777,11 +794,20 @@ async def run_purge(
             ),
             "provenance_rows": await _count(AIProvenanceRecord.id, provenance_where),
             "compliance_packs_expired": len(expired_packs),
-            "analysis_cache_entries": sum(cache_counts.values()),
+            "analysis_cache_entries": _sum_measured(cache_counts.values()),
             "search_index_documents": search_index_documents,
             "memory_entries_expired": len(memory_expired_ids),
         }
-        return {"mode": "preview", "cutoffs": cutoffs_iso, "candidates": candidates}
+        return {
+            "mode": "preview",
+            "cutoffs": cutoffs_iso,
+            "candidates": candidates,
+            # Names the classes whose store could not be reached, so the UI can
+            # say "not measured" explicitly instead of leaving the operator to
+            # infer it from a null. A caller that ignores this still sees null
+            # rather than a wrong zero.
+            "unmeasured": sorted(k for k, v in candidates.items() if v is None),
+        }
 
     # ── EXECUTE ──────────────────────────────────────────────────────────
 

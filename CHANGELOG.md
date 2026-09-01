@@ -14,6 +14,57 @@ test mocks `op`, so it never saw the datatype mismatch). The Postgres
 migration-postconditions integration test also had its expected head bumped
 from `0144` to `0145` — it was masked while the broken `0145` upgrade aborted
 before that assertion could run.
+## 2026-09-01 — an unreachable store reported as an empty one
+
+Two of the retention preview's twelve counts come from stores that can be down
+independently of Postgres — Redis and the two ChromaDB collections — and both
+reported `0` when they could not be reached. On the screen an ADMIN authorises
+an irreversible cross-store purge from, an outage and an empty store rendered
+identically.
+
+`semantic_search.purge_project_documents` argued the case against itself in its
+own comment: returning 0 was acceptable *because the failure was logged*, and
+in the same breath, "a purge that could not visit a store must not read as
+'nothing to delete there'". Both cannot hold. Every caller renders the number
+and none of them read the log. Both of its failure paths now return `None`, and
+so does each sub-store of `purge_project_analysis_caches`.
+
+The aggregate follows the same rule: if any contributor is unmeasured the total
+is unmeasured. A partial total is worse than none — "3 cache entries" when the
+semantic half never answered reads as complete and is not.
+
+The two counts are `Optional[int]` in the response, and the preview now carries
+`unmeasured`, naming the classes whose store could not be reached. A client
+that ignores the new field still sees `null` rather than a wrong zero.
+
+**A regression test had encoded the defect.** `test_the_counts_are_integers_not_optional`
+asserted every count must be a plain `int`, reasoning that "a nullable count
+would let 'not measured' and 'zero' look identical". The intent was right and
+the conclusion was backwards: a non-nullable count is precisely what forces the
+service to invent a number on an outage. It is now
+`test_counts_are_nullable_exactly_where_the_store_can_be_unreachable`, and it
+holds the sharper line — nullable where the store can be down, plain `int`
+where the count comes from the request's own Postgres session and cannot be
+half-measured.
+
+**Also fixed: `run_purge` defaulted both counts to 0 when external stores are
+injected**, which is the path every fake-injecting test takes. Those tests have
+been asserting against three of the five stores while the payload reported
+zeros for the other two.
+
+**And the render layer.** The preview table declared 8 of the 12 categories in
+its TypeScript type and rendered 7 — the same four classes the response model
+had already been widened once to carry. All twelve now render, and a null
+renders "not measured". The check is `== null` on purpose: it catches
+`undefined` too, so a class the server did not send reads as uncounted rather
+than throwing.
+
+Tests: `backend/tests/test_retention_unmeasured_stores.py` (8), plus two new
+rendering tests in `RetentionPage.test.tsx` covering both directions — a null
+must not render 0, and a real 0 must not render "not measured". Each was
+mutation-tested and observed failing.
+
+
 ## 2026-09-01 — how much storage is this project actually using?
 
 Retention could report how many *rows* a purge would remove and never how many
