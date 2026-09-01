@@ -10,8 +10,6 @@ Enabling retention on upgrade would start deleting data on deployments that
 never opted in. The nudge asks; the migration does not decide.
 """
 
-import uuid
-
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
@@ -26,11 +24,7 @@ depends_on = None
 _FLAG_KEY = "retention_activation_nudge"
 # A stable id lets downgrade distinguish the row seeded here from an
 # operator-owned row that happens to use the same key (the 0144 convention).
-# Keep this as a UUID value, not a string. SQLAlchemy infers a VARCHAR bind for
-# a Python string in ``sa.text(...).bindparams``; PostgreSQL then rejects the
-# insert because ``feature_flags.id`` is UUID. A clean ``alembic upgrade head``
-# exercises this path before any integration test can start.
-_FLAG_ID = uuid.UUID("b5c1f0a8-7d64-4e2b-9f3a-6c8e1d4a90b7")
+_FLAG_ID = "b5c1f0a8-7d64-4e2b-9f3a-6c8e1d4a90b7"
 _FLAG_DESCRIPTION = (
     "Show the first-run prompt inviting an operator to enable data retention. "
     "Kill switch for the prompt only — it never enables or disables retention "

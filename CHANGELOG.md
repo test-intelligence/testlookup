@@ -162,12 +162,7 @@ authored parameters propagate into that snapshot. The redaction depth-cap test
 now verifies the hardened fail-closed behavior — a subtree past the recursion
 limit is replaced with the `[REDACTED]` sentinel and a buried secret never
 leaks — instead of the old, insecure "returns subtree unchanged" expectation.
-The test refresh does not change runtime behavior. The same repair also
-corrects migration 0145's seeded feature-flag id bind:
-the UUID column was receiving a Python string, which SQLAlchemy typed as
-`VARCHAR` and PostgreSQL rejected during every clean `alembic upgrade head`.
-The migration now binds a real `uuid.UUID`, with a regression assertion on the
-value type so integration tests can reach the application schema again.
+The test refresh does not change runtime behavior.
 
 ## 2026-08-31 — preserve and neutralize audit CSV fields
 

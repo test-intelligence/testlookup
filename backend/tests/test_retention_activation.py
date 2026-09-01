@@ -202,12 +202,6 @@ def test_s1_migration_upgrade_body_executes(mocker):
 
     assert module.op.create_table.call_count == 1
     assert module.op.drop_table.call_count == 1
-    # ``sa.text(...).bindparams`` infers the database bind type from this
-    # Python value. A string becomes VARCHAR and PostgreSQL rejects the insert
-    # into feature_flags.id (UUID) before the integration suite can start.
-    assert isinstance(module._FLAG_ID, uuid.UUID)
-
-
 def test_s1_migration_casts_seeded_flag_id_to_uuid(mocker):
     """The seeded ``feature_flags`` row binds a stable string id into a uuid
     column. asyncpg sends a bare str as character varying, so Postgres rejects
