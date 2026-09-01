@@ -27,6 +27,10 @@
 # documented test command broke the documented build.
 .pytest_tmp*/
 **/.pytest_tmp*/
+# Custom pytest --basetemp roots used by local/CI validation (for example,
+# `.tmp/pytest-homelab-full-*`) have the same Windows permission behavior.
+.tmp/
+**/.tmp/
 .mypy_cache/
 .ruff_cache/
 .tox/
