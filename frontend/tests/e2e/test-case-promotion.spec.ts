@@ -182,9 +182,7 @@ test.describe('Automation promotion', () => {
       items: [{ ...CANONICAL_CASE, status: 'deleted', deleted_observed_at: '2026-08-31T00:00:00Z' }],
       total: 1,
     });
-    let retirementBody: unknown;
     await page.route('**/api/v1/canonical-test-cases/canonical-1/confirm-retirement', async (route) => {
-      retirementBody = route.request().postDataJSON();
       await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ detail: 'A newer execution restored this test' }) });
     });
     await page.goto('/test-management');
@@ -195,9 +193,13 @@ test.describe('Automation promotion', () => {
     const confirm = dialog.getByRole('button', { name: 'Confirm retirement' });
     await expect(confirm).toBeDisabled();
     await dialog.getByRole('textbox').fill('Removed intentionally from the source suite');
+    const retirementRequest = page.waitForRequest((request) => (
+      request.method() === 'POST'
+      && new URL(request.url()).pathname === '/api/v1/canonical-test-cases/canonical-1/confirm-retirement'
+    ));
     await confirm.click();
 
-    expect(retirementBody).toEqual({ reason: 'Removed intentionally from the source suite' });
+    expect((await retirementRequest).postDataJSON()).toEqual({ reason: 'Removed intentionally from the source suite' });
     await expect(page.getByRole('alert').filter({ hasText: 'A newer execution restored this test' })).toBeVisible();
     await expect(dialog).toBeVisible();
   });
