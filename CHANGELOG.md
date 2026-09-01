@@ -341,6 +341,40 @@ Vitest's async timer advance inside `act()`, so the timer callback and the
 resulting render are both flushed before the assertion. This removes the
 known timeout without weakening the production behavior or increasing the
 suite timeout.
+## 2026-08-31 — the deterministic summary a human reads when the LLM is down
+
+Coverage slice 9. `summary_renderer` produces the developer- and manager-mode
+narratives `SummaryAgent` serves. When an LLM is unavailable — offline mode, an
+outage, a malformed response — the render functions fall back to a *deterministic*
+summary assembled from the already-computed context. That fallback is what a human
+actually reads during the incidents that matter most, so its wording is
+load-bearing: a wrong pass-rate, a dropped release recommendation, or an empty
+action list is a defect a reader would act on, and nothing alerts on it.
+
+The module sat at ~24% — the module-level prompt loads ran, but neither render
+entry point nor any of the three fallback builders (`_fallback_developer`,
+`_fallback_manager`, `_format_similar`) had executed. 17 tests take it to **zero
+missed statements**:
+
+- **Developer fallback** — the headline's build / failed-count / one-decimal
+  pass-rate; recommended actions taken two-per-analysis across the top three,
+  then capped at three; evidence excerpts truncated to 100 chars; the
+  "no high-confidence root causes" and default-action fallbacks when the pool
+  is empty.
+- **Manager fallback** — the executive summary's `_`→space substitutions
+  (category lowercased, recommendation preserved), the `CONDITIONAL_GO` default
+  when no recommendation is present, scope-of-impact counts, and the default
+  key-risks / decisions when release inputs are empty.
+- **`_format_similar`** — empty, named, and the present-but-nameless case that
+  must read "in recent runs" rather than an empty "Similar failures found: ".
+- **Async entry points** — a truthy `fallback_reason` short-circuits the LLM
+  branch; a raising `get_llm` is caught and its message becomes the reason; and
+  the success path parses fenced JSON and attaches deterministic citations.
+
+Both fallback builders are asserted to tolerate an empty `assembled` dict without
+raising. The LLM is either short-circuited or mocked — no network, no model, no
+API key. Every expected value was read off the real implementation before being
+asserted.
 
 ## 2026-08-30 — the HTML→text conversion that feeds RAG had never executed
 
