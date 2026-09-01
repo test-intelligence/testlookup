@@ -90,6 +90,21 @@ class SelfUpdateProfileRequest(BaseModel):
     avatar_color: Optional[str] = Field(None, max_length=20)
 
 
+class UIDismissalCreate(BaseModel):
+    """Dismiss a UI prompt for the authenticated user.
+
+    ``dismissal_key`` is validated against a closed allowlist in
+    ``services/ui_dismissal_service.KNOWN_DISMISSAL_KEYS`` rather than by a
+    Pydantic enum here: a strict enum over a ``String(100)`` column silently
+    422s when the vocabularies drift, and the UI shows nothing at all.
+    """
+    dismissal_key: str = Field(..., min_length=1, max_length=100)
+
+
+class UIDismissalListResponse(BaseModel):
+    dismissed: List[str] = Field(default_factory=list)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -303,6 +318,13 @@ class ProjectResponse(TimestampMixin):
     is_active: bool
     manager_user_id: Optional[uuid.UUID] = None  # migration 0076
     default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079
+    # S1 — retention posture, resolved in the SAME query as the project list
+    # (LEFT JOIN, never a per-project lookup). Three states, deliberately
+    # distinct: "unconfigured" (no policy row has ever existed) is the case
+    # the activation nudge exists for, and collapsing it into "disabled"
+    # would hide exactly the projects that need prompting.
+    # None on responses built before the join existed.
+    retention_status: Optional[Literal["enabled", "disabled", "unconfigured"]] = None
 
     model_config = ConfigDict(from_attributes=True)
 

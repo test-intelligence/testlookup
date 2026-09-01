@@ -7,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_accessible_project_ids, get_current_active_user, require_project_access, require_role
 from app.db.postgres import get_db
-from app.models.postgres import Project, ProjectMember, User, UserRole
+from app.models.postgres import (
+    Project,
+    ProjectMember,
+    ProjectRetentionPolicy,
+    User,
+    UserRole,
+)
 from app.models.schemas import (
     ProjectCreate,
     ProjectResetRequest,
@@ -24,18 +30,48 @@ from app.services.project_reset_service import (
 router = APIRouter(prefix="/api/v1/projects", tags=["Projects"])
 
 
+def _retention_status(enabled: bool | None) -> str:
+    """Map the LEFT-JOINed policy flag onto the three-state posture.
+
+    ``None`` is not "disabled": the column is NOT NULL, so a NULL can only
+    come from the outer join finding no row — i.e. retention was never
+    configured for this project at all. That is the population S1's nudge
+    targets, and folding it into "disabled" would make it invisible.
+    """
+    if enabled is None:
+        return "unconfigured"
+    return "enabled" if enabled else "disabled"
+
+
 @router.get("", response_model=list[ProjectResponse])
 async def list_projects(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    stmt = select(Project).where(Project.is_active.is_(True)).order_by(Project.name)
+    # S1: the retention posture rides along on a LEFT JOIN rather than a
+    # per-project lookup. `enabled` is NOT NULL on the policy table, so a NULL
+    # here means exactly one thing — no policy row has ever existed — which is
+    # the state the activation nudge exists to catch.
+    stmt = (
+        select(Project, ProjectRetentionPolicy.enabled)
+        .outerjoin(
+            ProjectRetentionPolicy,
+            ProjectRetentionPolicy.project_id == Project.id,
+        )
+        .where(Project.is_active.is_(True))
+        .order_by(Project.name)
+    )
     # Tenant isolation: non-admin users only see projects they belong to
     accessible = await get_accessible_project_ids(db, current_user)
     if accessible is not None:
         stmt = stmt.where(Project.id.in_(accessible))
     result = await db.execute(stmt)
-    return result.scalars().all()
+    return [
+        ProjectResponse.model_validate(project).model_copy(
+            update={"retention_status": _retention_status(enabled)}
+        )
+        for project, enabled in result.all()
+    ]
 
 
 @router.post(

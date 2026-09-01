@@ -25,7 +25,7 @@ from app.core.security import (
 from app.core.token_revocation import revoke_all_user_tokens, revoke_jti
 from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, User, UserRole
-from app.services import mfa_service
+from app.services import mfa_service, ui_dismissal_service
 from app.services.refresh_token_service import (
     RefreshTokenError,
     _revoke_family as _revoke_refresh_family,
@@ -41,6 +41,8 @@ from app.models.schemas import (
     SelfUpdateProfileRequest,
     TokenResponse,
     UserCreate,
+    UIDismissalCreate,
+    UIDismissalListResponse,
     UserResponse,
 )
 
@@ -523,6 +525,37 @@ async def refresh_tokens(
 async def get_me(current_user: User = Depends(get_current_active_user)):
     """Return the authenticated user's profile."""
     return current_user
+
+
+@router.get("/me/dismissals", response_model=UIDismissalListResponse)
+async def list_my_dismissals(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """UI prompts this user has dismissed. Read-only; no project scope — a
+    dismissal is a property of the person, not of a project."""
+    keys = await ui_dismissal_service.list_dismissal_keys(db, current_user.id)
+    return UIDismissalListResponse(dismissed=keys)
+
+
+@router.post(
+    "/me/dismissals",
+    response_model=UIDismissalListResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def dismiss_prompt(
+    payload: UIDismissalCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dismiss a UI prompt for this user. Idempotent — dismissing twice is a
+    no-op and still returns 201 with the full list."""
+    await ui_dismissal_service.record_dismissal(
+        db, current_user.id, payload.dismissal_key
+    )
+    await db.commit()
+    keys = await ui_dismissal_service.list_dismissal_keys(db, current_user.id)
+    return UIDismissalListResponse(dismissed=keys)
 
 
 @router.patch("/me", response_model=UserResponse)

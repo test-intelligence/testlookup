@@ -3767,6 +3767,38 @@ class SavedView(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
 
+class UserUIDismissal(Base):
+    """A UI prompt this user has dismissed (migration 0145).
+
+    Deliberately generic: one row per ``(user_id, dismissal_key)``. The first
+    consumer is the retention-activation nudge, which exists because
+    ``ProjectRetentionPolicy.enabled`` defaults to ``False`` and nothing in the
+    product ever asked an operator to turn retention on — the feature shipped
+    present, discoverable, and inert.
+
+    Per-USER, not per-browser. ``localStorage`` was the cheaper option and is
+    wrong here: the same operator on a second machine would be re-prompted to
+    enable a destructive background job they had already declined.
+
+    Writes are idempotent — dismissing twice is a no-op, so the endpoint can be
+    retried safely and a double-clicked button cannot raise.
+    """
+    __tablename__ = "user_ui_dismissals"
+    __table_args__ = (
+        UniqueConstraint("user_id", "dismissal_key", name="uq_user_ui_dismissal"),
+        Index("ix_uuid_user", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    dismissal_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    dismissed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class DigestSchedule(str, PyEnum):
     DAILY = "DAILY"
     WEEKLY = "WEEKLY"

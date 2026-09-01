@@ -32,6 +32,7 @@ import { Link } from 'react-router-dom'
 import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import RetentionActivationNudge from '@/components/retention/RetentionActivationNudge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -414,6 +415,17 @@ export default function RetentionPage() {
       <PageHeader
         title="Retention & Purge"
         subtitle={`Data-retention windows for ${projectName || 'this project'}. ADMIN only.`}
+      />
+
+      {/* ── Activation nudge (S1) ───────────────────────────────────────
+          Renders only while the policy is disabled and undismissed. The
+          feature shipped inert — present, discoverable, and never switched
+          on — so this is the ask. Enabling goes through a preview first. */}
+      <RetentionActivationNudge
+        projectId={activeProjectId}
+        projectName={projectName || 'this project'}
+        policy={policy}
+        onEnabled={(saved) => mutate(saved, { revalidate: false })}
       />
 
       {/* ── Policy form ─────────────────────────────────────────────── */}

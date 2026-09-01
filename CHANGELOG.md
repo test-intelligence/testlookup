@@ -1,5 +1,56 @@
 # Changelog
 
+## 2026-09-01 — retention shipped inert; ask the operator to turn it on
+
+Data retention has worked for some time: a per-project policy with four
+independent clocks, a nightly beat, a dry-run preview, a manual purge behind a
+typed confirmation, and an ADMIN UI at Settings -> Retention & Purge. It
+coordinates deletes across five stores in a deliberately pinned order.
+
+None of it runs by default. `project_retention_policies.enabled` defaults to
+`false`, and nothing in the product ever asked an operator to change that — no
+onboarding step, no prompt, no default. `ONBOARDING_STEPS` has five entries and
+retention is not among them. The feature was present, discoverable, and doing
+nothing, which is why it reads as missing.
+
+The Retention page now carries a first-run prompt for projects where retention
+has never been switched on. It cannot enable anything on its own: the only path
+to the enable button runs a real preview for that project and renders the
+candidate counts — runs, test cases, stored objects, audit rows — so nobody
+turns on an irreversible nightly delete without seeing what the first pass
+would remove.
+
+Dismissal is stored per **user**, in a new `user_ui_dismissals` table, not in
+`localStorage`. The cheaper option was wrong here: the same operator on a
+second machine would be re-prompted to enable a destructive background job they
+had already declined. Writes go through `ON CONFLICT DO NOTHING`, so a
+double-clicked button cannot 500 a dismissal that in fact succeeded — a
+read-then-write check would let two concurrent requests both pass and the
+second INSERT violate the unique constraint. Keys are validated against a
+closed allowlist, because a typo'd key that never matches on read is
+indistinguishable from a dismissal that was never recorded.
+
+`GET /api/v1/projects` now reports `retention_status` per project, resolved by a
+LEFT JOIN in the existing list query rather than a per-project lookup. Three
+states, and the third is the point: `enabled` is NOT NULL, so a NULL from the
+outer join means no policy row has ever existed. Folding that "unconfigured"
+case into "disabled" would hide exactly the projects the prompt exists to find.
+
+Migration 0145 adds the dismissal store and seeds the prompt's kill-switch flag.
+It deliberately does not touch `project_retention_policies`: enabling retention
+on upgrade would start irreversibly deleting data on deployments that never
+opted in. A regression test scans **every** revision in the history for an
+`UPDATE ... enabled = true` or a `server_default` flipped to true, because that
+guarantee is about the whole migration history, not this one file.
+
+Tests: `backend/tests/test_retention_activation.py` (10) and
+`frontend/src/components/retention/RetentionActivationNudge.test.tsx` (7). Each
+load-bearing assertion was mutation-tested — the status mapping, the N+1 guard,
+the key allowlist, the ON CONFLICT clause, the preview-before-enable gate, the
+dismissed check, and the loading-state guard were each broken in turn and each
+test observed failing.
+
+
 ## 2026-09-01 — restore data visibility in dense tables and header menus
 
 A full-app rendering audit of all 27 routes found three repeating patterns
