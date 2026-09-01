@@ -5,15 +5,18 @@ import StatusBadge from '@/components/ui/StatusBadge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useTestSteps } from '@/hooks/useRuns'
 import { formatDuration } from '@/utils/formatters'
-import type { TestAttachment, TestStep } from '@/types/runs'
+import { isSafeExternalUrl } from '@/utils/safeUrl'
+import { normalizeAttachments, normalizeParameters, normalizeSteps } from '@/utils/testCaseDetail'
+import type { NormalizedTestCaseDetail, TestCaseDetailAttachment, TestCaseDetailStep, TestCaseLink } from '@/types/test-case-detail'
 
 const FAILED_STATUSES = ['FAILED', 'BROKEN']
 
-function AttachmentList({ attachments }: { attachments: TestAttachment[] }) {
-  if (attachments.length === 0) return null
+function AttachmentList({ attachments }: { attachments?: TestCaseDetailAttachment[] | null }) {
+  const safeAttachments = attachments ?? []
+  if (safeAttachments.length === 0) return null
   return (
     <ul className="mt-1.5 space-y-1">
-      {attachments.map(att => (
+      {safeAttachments.map(att => (
         <li
           key={att.id}
           className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]"
@@ -31,15 +34,57 @@ function AttachmentList({ attachments }: { attachments: TestAttachment[] }) {
   )
 }
 
-function StepNode({ step, depth }: { step: TestStep; depth: number }) {
+function LinkList({ links }: { links?: TestCaseLink[] | null }) {
+  const safeLinks = (links ?? []).filter(link => isSafeExternalUrl(link.url))
+  if (safeLinks.length === 0) return null
+  return (
+    <ul className="mt-1.5 space-y-1">
+      {safeLinks.map((link, index) => (
+        <li key={`${link.url}-${index}`} className="text-xs">
+          <a
+            href={link.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[var(--color-accent)] underline-offset-2 hover:underline"
+          >
+            {link.name || link.url}
+          </a>
+          {link.type && <span className="ml-1.5 text-[10px] text-[var(--color-text-muted)]">{link.type}</span>}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function ParameterList({ parameters }: { parameters?: TestCaseDetailStep['parameters'] }) {
+  const safeParameters = normalizeParameters(parameters)
+  if (safeParameters.length === 0) return null
+  return (
+    <dl className="mt-1.5 grid grid-cols-1 gap-1 sm:grid-cols-2">
+      {safeParameters.map((parameter, index) => (
+        <div key={`${parameter.name}-${index}`} className="rounded bg-[var(--color-bg-hover)]/50 px-2 py-1">
+          <dt className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{parameter.name}</dt>
+          <dd className="break-words font-mono text-xs text-[var(--color-text-secondary)]">
+            {parameter.masked ? 'Masked' : (parameter.display_value ?? parameter.value ?? 'Not supplied')}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function StepNode({ step, depth }: { step: TestCaseDetailStep; depth: number }) {
   const isFailed = FAILED_STATUSES.includes(step.status?.toUpperCase())
+  const hasParameters = normalizeParameters(step.parameters).length > 0
   const hasDetail = Boolean(
-    step.assertion_message || step.assertion_trace || step.expected_value || step.actual_value,
+    step.assertion_message || step.assertion_trace || step.expected || step.actual ||
+      step.action || step.error_message || step.error_trace || hasParameters || step.links?.length,
   )
   const hasChildren = step.steps.length > 0
+  const hasAttachments = (step.attachments?.length ?? 0) > 0
   // Auto-expand failing steps so the user lands on the relevant detail.
   const [open, setOpen] = useState<boolean>(isFailed)
-  const expandable = hasDetail || hasChildren
+  const expandable = hasDetail || hasChildren || hasAttachments
 
   return (
     <div>
@@ -79,38 +124,46 @@ function StepNode({ step, depth }: { step: TestStep; depth: number }) {
 
           {open && hasDetail && (
             <div className="mt-1.5 space-y-1.5">
-              {step.assertion_message && (
-                <p className="text-xs text-[var(--color-danger)]">{step.assertion_message}</p>
+              {(step.assertion_message || step.error_message) && (
+                <p className="text-xs text-[var(--color-danger)]">{step.assertion_message || step.error_message}</p>
               )}
-              {(step.expected_value != null || step.actual_value != null) && (
+              {(step.action || step.expected != null || step.actual != null) && (
                 <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-                  {step.expected_value != null && (
+                  {step.action && (
+                    <div className="rounded bg-[var(--color-bg-hover)]/50 px-2 py-1 sm:col-span-2">
+                      <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Action</span>
+                      <p className="break-words text-xs text-[var(--color-text-secondary)]">{step.action}</p>
+                    </div>
+                  )}
+                  {step.expected != null && (
                     <div className="rounded bg-[var(--color-bg-hover)]/50 px-2 py-1">
                       <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
                         Expected
                       </span>
                       <p className="break-words font-mono text-xs text-[var(--color-text-secondary)]">
-                        {step.expected_value}
+                        {step.expected}
                       </p>
                     </div>
                   )}
-                  {step.actual_value != null && (
+                  {step.actual != null && (
                     <div className="rounded bg-[var(--color-bg-hover)]/50 px-2 py-1">
                       <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
                         Actual
                       </span>
                       <p className="break-words font-mono text-xs text-[var(--color-text-secondary)]">
-                        {step.actual_value}
+                        {step.actual}
                       </p>
                     </div>
                   )}
                 </div>
               )}
-              {step.assertion_trace && (
+              {step.assertion_trace || step.error_trace ? (
                 <pre className="max-h-64 overflow-auto rounded bg-[var(--color-bg-secondary)] px-2 py-1.5 font-mono text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-                  {step.assertion_trace}
+                  {step.assertion_trace || step.error_trace}
                 </pre>
-              )}
+              ) : null}
+              <ParameterList parameters={step.parameters} />
+              <LinkList links={step.links} />
             </div>
           )}
 
@@ -129,7 +182,15 @@ function StepNode({ step, depth }: { step: TestStep; depth: number }) {
   )
 }
 
-export default function TestStepsPanel({ runId, testId }: { runId?: string; testId?: string }) {
+export default function TestStepsPanel({
+  runId,
+  testId,
+  detail,
+}: {
+  runId?: string
+  testId?: string
+  detail?: NormalizedTestCaseDetail | null
+}) {
   const { data, isLoading } = useTestSteps(runId, testId)
 
   if (isLoading) {
@@ -140,8 +201,15 @@ export default function TestStepsPanel({ runId, testId }: { runId?: string; test
     )
   }
 
-  const steps = data?.steps ?? []
-  const testAttachments = data?.attachments ?? []
+  // An explicitly supplied [] is meaningful: the enriched endpoint has
+  // confirmed that this source had no steps. Null means fall back to the
+  // legacy lazy endpoint while the backend contract is being migrated.
+  const steps = detail?.steps !== null && detail?.steps !== undefined
+    ? detail.steps
+    : normalizeSteps(data?.steps)
+  const testAttachments = detail?.attachments !== null && detail?.attachments !== undefined
+    ? detail.attachments
+    : normalizeAttachments(data?.attachments)
 
   if (steps.length === 0 && testAttachments.length === 0) {
     return (
@@ -153,14 +221,14 @@ export default function TestStepsPanel({ runId, testId }: { runId?: string; test
 
   return (
     <div className="card space-y-3 p-3">
-      {data && (data.retry_count != null || data.is_flaky_run) && (
+      {(data || detail?.execution) && ((data?.retry_count ?? detail?.execution?.retry_count) != null || data?.is_flaky_run || detail?.execution?.is_flaky) && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-text-muted)]">
-          {data.retry_count != null && data.retry_count > 0 && (
+          {(data?.retry_count ?? detail?.execution?.retry_count ?? 0) > 0 && (
             <span className="badge bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
-              {data.retry_count} {data.retry_count === 1 ? 'retry' : 'retries'}
+              {data?.retry_count ?? detail?.execution?.retry_count} {(data?.retry_count ?? detail?.execution?.retry_count) === 1 ? 'retry' : 'retries'}
             </span>
           )}
-          {data.is_flaky_run && <span className="badge-flaky">flaky run</span>}
+          {(data?.is_flaky_run || detail?.execution?.is_flaky) && <span className="badge-flaky">flaky run</span>}
         </div>
       )}
 

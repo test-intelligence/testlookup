@@ -265,6 +265,8 @@ def parse_playwright_json(content: str, test_run_id: str) -> List[dict]:
         logger.warning("Playwright JSON 'suites' is not a list — skipping")
         return []
 
+    config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+    parser_version = config.get("version") or payload.get("version")
     normalized: List[dict] = []
     for suite in _walk_suites(top_suites, parents=()):
         suite_title_path = suite["parents"] + (suite["title"],)
@@ -284,6 +286,7 @@ def parse_playwright_json(content: str, test_run_id: str) -> List[dict]:
                     spec_line=spec_line,
                     suite_name=suite_name,
                     test_run_id=test_run_id,
+                    parser_version=(str(parser_version)[:100] if parser_version is not None else None),
                 )
                 if case is not None:
                     normalized.append(case)
@@ -324,6 +327,7 @@ def _normalize_test(
     spec_line: Any,
     suite_name: str,
     test_run_id: str,
+    parser_version: Optional[str],
 ) -> Optional[dict]:
     if not isinstance(test, dict):
         return None
@@ -386,6 +390,7 @@ def _normalize_test(
 
     full_name = f"{spec_file}:{spec_line}" if spec_file and spec_line else spec_title
 
+    steps = _result_step_tree(final_result if isinstance(final_result, dict) else None)
     return {
         "test_run_id": test_run_id,
         "test_name": test_name,
@@ -403,6 +408,9 @@ def _normalize_test(
         "attachments": [],
         # Native nested step tree of the final attempt in the common step dict
         # shape (+ a synthetic top-level step per remaining errors[] entry).
-        "steps": _result_step_tree(final_result if isinstance(final_result, dict) else None),
+        "steps": steps,
+        "steps_present": bool(steps),
         "framework": "playwright",
+        "parser_format": "playwright",
+        "parser_version": parser_version,
     }

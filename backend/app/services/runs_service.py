@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
     CanonicalTestCase,
+    ManagedTestCase,
     Project,
     Release,
     ReleaseTestRunLink,
@@ -637,6 +638,7 @@ async def get_test_steps_tree(
         att_by_step.setdefault(a.test_step_id, []).append({
             "id": a.id,
             "test_step_id": a.test_step_id,
+            "source_test_run_id": a.source_test_run_id,
             "name": a.name,
             "source_ref": a.source_ref,
             "media_type": a.media_type,
@@ -660,7 +662,7 @@ async def get_test_steps_tree(
             "assertion_trace": s.assertion_trace,
             "expected_value": s.expected_value,
             "actual_value": s.actual_value,
-            "parameters": s.parameters,
+            "parameters": _safe_step_parameters(s.parameters),
             "created_at": s.created_at,
             "steps": [],
             "attachments": att_by_step.get(s.id, []),
@@ -684,9 +686,315 @@ async def get_test_steps_tree(
         "retry_count": tc.retry_count,
         "is_flaky_run": tc.is_flaky_run,
         "stack_trace": tc.stack_trace,
+        "snapshot_source_test_run_id": (
+            str(steps_rows[0].source_test_run_id)
+            if steps_rows and steps_rows[0].source_test_run_id is not None
+            else (
+                str(att_rows[0].source_test_run_id)
+                if att_rows and att_rows[0].source_test_run_id is not None
+                else None
+            )
+        ),
         "steps": roots,
         "attachments": att_by_step.get(None, []),
     }
+
+
+def _safe_step_parameters(value: object) -> list[dict] | dict | None:
+    """Redact parameter payloads from every producer at response time."""
+    if isinstance(value, list):
+        return _safe_source_parameters(value)
+    if isinstance(value, dict):
+        from app.services.redaction_service import redact_dict
+        safe = redact_dict(value)
+        if not isinstance(safe, dict):
+            return {"value": "[REDACTED]"}
+        mode = str(safe.get("mode") or "").lower()
+        if safe.get("masked") is True or mode in {"masked", "hidden"}:
+            if "value" in safe:
+                safe["value"] = None
+            safe["masked"] = True
+        return safe
+    return None
+
+
+def _safe_source_parameters(value: object) -> list[dict]:
+    """Return only object parameters; malformed persisted JSON is omitted."""
+    if not isinstance(value, list):
+        return []
+    from app.services.redaction_service import redact_dict
+    result: list[dict] = []
+    for item in value[:100]:
+        if not isinstance(item, dict):
+            continue
+        mode = str(item.get("mode") or "").lower()
+        masked = bool(item.get("masked")) or mode in {"masked", "hidden"}
+        safe = redact_dict(item)
+        safe = safe if isinstance(safe, dict) else {"value": "[REDACTED]"}
+        if masked:
+            safe["value"] = None
+            safe["masked"] = True
+        result.append(safe)
+    return result
+
+
+def _safe_authored_parameters(value: object) -> list[dict]:
+    """Normalize authored parameters and fail closed for marked secrets."""
+    if not isinstance(value, list):
+        return []
+    from app.services.redaction_service import redact_dict
+    result: list[dict] = []
+    for item in value[:100]:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+            continue
+        safe = redact_dict(item)
+        safe = safe if isinstance(safe, dict) else {"name": item["name"]}
+        mode = str(item.get("mode") or "").lower()
+        if bool(item.get("masked")) or mode in {"masked", "hidden"}:
+            safe["value"] = None
+            safe["masked"] = True
+        result.append(safe)
+    return result
+
+
+def _safe_source_links(value: object) -> list[dict[str, str | None]]:
+    """Return only bounded link records accepted by the public contract."""
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str | None]] = []
+    for item in value[:100]:
+        if not isinstance(item, dict):
+            continue
+        url = item.get("url")
+        if not isinstance(url, str) or not url.strip():
+            continue
+        result.append({
+            "url": url[:2000],
+            "name": item.get("name")[:500] if isinstance(item.get("name"), str) else None,
+            "type": item.get("type")[:100] if isinstance(item.get("type"), str) else None,
+        })
+    return result
+
+
+def _safe_source_labels(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in value[:100]:
+        if not isinstance(item, dict):
+            continue
+        name, label_value = item.get("name"), item.get("value")
+        if isinstance(name, str) and name.strip() and isinstance(label_value, str):
+            result.append({"name": name[:255], "value": label_value[:500]})
+    return result
+
+
+def _safe_source_extensions(value: object) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    from app.services.redaction_service import redact_dict
+    return redact_dict(dict(list(value.items())[:100])) or {}
+
+
+def build_enriched_test_case_detail(test_case: TestCase, step_tree: dict) -> dict:
+    """Build the versioned additive read contract from existing rows.
+
+    This function is pure so the contract can be tested without a database. It
+    preserves the legacy flat fields while grouping the same data into
+    identity/classification/execution/provenance sections.
+    """
+    steps = step_tree.get("steps") if isinstance(step_tree.get("steps"), list) else []
+    attachments = step_tree.get("attachments") if isinstance(step_tree.get("attachments"), list) else []
+    tags = getattr(test_case, "tags", None) or []
+    steps_present = bool(getattr(test_case, "steps_present", bool(steps)))
+    # Sparse current executions must not surface a previous non-empty
+    # canonical snapshot as if it belonged to this run.
+    if hasattr(test_case, "steps_present") and not test_case.steps_present:
+        steps = []
+        if not getattr(test_case, "has_attachments", False):
+            attachments = []
+    source_run_id = step_tree.get("snapshot_source_test_run_id") or str(test_case.test_run_id)
+    flat = {
+        "id": test_case.id,
+        "test_run_id": test_case.test_run_id,
+        "test_name": test_case.test_name,
+        "suite_name": test_case.suite_name,
+        "class_name": test_case.class_name,
+        "status": test_case.status,
+        "duration_ms": test_case.duration_ms,
+        "severity": test_case.severity,
+        "feature": test_case.feature,
+        "failure_category": test_case.failure_category,
+        "has_attachments": bool(test_case.has_attachments),
+        "step_count": getattr(test_case, "step_count", None),
+        "assigned_to_user_id": getattr(test_case, "assigned_to_user_id", None),
+        "created_at": test_case.created_at,
+        "full_name": test_case.full_name,
+        "package_name": test_case.package_name,
+        "story": test_case.story,
+        "epic": test_case.epic,
+        "owner": test_case.owner,
+        "tags": [str(tag) for tag in tags if tag is not None],
+        "error_message": test_case.error_message,
+        "minio_s3_prefix": test_case.minio_s3_prefix,
+    }
+    return {
+        **flat,
+        "contract": "test-case-detail",
+        "schema_version": 1,
+        "contract_version": "1",
+        "identity": {
+            "test_case_id": test_case.id,
+            "test_run_id": test_case.test_run_id,
+            "canonical_test_case_id": getattr(test_case, "canonical_test_case_id", None),
+            "test_fingerprint": test_case.test_fingerprint,
+            "test_name": test_case.test_name,
+            "full_name": test_case.full_name,
+            "source_uuid": getattr(test_case, "source_uuid", None),
+            "source_history_id": getattr(test_case, "source_history_id", None),
+            "source_test_case_id": getattr(test_case, "source_test_case_id", None),
+            "uuid": getattr(test_case, "source_uuid", None),
+            "history_id": getattr(test_case, "source_history_id", None),
+            "fingerprint": test_case.test_fingerprint,
+            "display_name": test_case.test_name,
+        },
+        "classification": {
+            "suite_name": test_case.suite_name,
+            "class_name": test_case.class_name,
+            "package_name": test_case.package_name,
+            "severity": test_case.severity,
+            "feature": test_case.feature,
+            "story": test_case.story,
+            "epic": test_case.epic,
+            "owner": test_case.owner,
+            "tags": [str(tag) for tag in tags if tag is not None],
+            "service_name": getattr(test_case, "service_name", None),
+            "component_name": None,
+            "suite": ({"name": test_case.suite_name, "legacy_name": test_case.suite_name}
+                      if test_case.suite_name else None),
+            "service": ({"name": test_case.service_name, "source": "explicit", "confidence": "high"}
+                        if getattr(test_case, "service_name", None) else None),
+            "components": [
+                {"name": str(component), "source": "explicit", "confidence": "high"}
+                for component in (getattr(test_case, "component_names", None) or [])
+                if component
+            ],
+            "file_path": None,
+            "framework": getattr(test_case, "parser_format", None),
+            "language": None,
+            "labels": _safe_source_labels(getattr(test_case, "source_labels", None)),
+        },
+        "execution": {
+            "status": test_case.status,
+            "duration_ms": test_case.duration_ms,
+            "retry_count": getattr(test_case, "retry_count", None),
+            "is_flaky_run": getattr(test_case, "is_flaky_run", None),
+            "step_count": getattr(test_case, "step_count", None),
+            "steps_present": steps_present,
+            "has_attachments": bool(test_case.has_attachments),
+            "failure_category": test_case.failure_category,
+            "error_message": test_case.error_message,
+            "stack_trace": getattr(test_case, "stack_trace", None),
+            "parameters": _safe_source_parameters(getattr(test_case, "source_parameters", None)),
+        },
+        "provenance": {
+            "source_test_run_id": source_run_id,
+            "parser_format": getattr(test_case, "parser_format", None),
+            "parser_version": getattr(test_case, "parser_version", None),
+            "minio_s3_prefix": test_case.minio_s3_prefix,
+            "format": getattr(test_case, "parser_format", None),
+            "source_file": None,
+            "field_sources": {
+                "identity": "source_report" if getattr(test_case, "source_uuid", None) else "platform_fallback",
+                "suite": "source_report" if test_case.suite_name else "unknown",
+            },
+            "warnings": [],
+        },
+        "steps_present": steps_present,
+        "steps": steps,
+        "attachments": attachments,
+        "definition": step_tree.get("definition"),
+        "links": _safe_source_links(getattr(test_case, "source_links", None)),
+        "extensions": _safe_source_extensions(getattr(test_case, "source_extensions", None)),
+    }
+
+
+async def get_enriched_test_case_detail(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    test_id: uuid.UUID,
+) -> dict | None:
+    """Return the enriched contract for a test authorized within ``run_id``."""
+    result = await db.execute(
+        select(TestCase, TestRun.project_id)
+        .join(TestRun, TestRun.id == TestCase.test_run_id)
+        .where(TestCase.id == test_id, TestCase.test_run_id == run_id)
+    )
+    row = result.first()
+    if row is None:
+        return None
+    test_case, project_id = row
+
+    from app.services.feature_flags import is_enabled
+    if not await is_enabled("test_case_rich_detail", db=db, project_id=project_id):
+        return None
+
+    definition = None
+    managed = None
+    if test_case.canonical_test_case_id:
+        managed_id = (
+            await db.execute(
+                select(CanonicalTestCase.managed_test_case_id).where(
+                    CanonicalTestCase.id == test_case.canonical_test_case_id,
+                    CanonicalTestCase.project_id == project_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if managed_id is not None:
+            managed = (
+                await db.execute(
+                    select(ManagedTestCase).where(
+                        ManagedTestCase.id == managed_id,
+                        ManagedTestCase.project_id == project_id,
+                    )
+                )
+            ).scalar_one_or_none()
+    if managed is None and test_case.test_fingerprint:
+        managed_result = await db.execute(
+            select(ManagedTestCase)
+            .where(
+                ManagedTestCase.project_id == project_id,
+                (ManagedTestCase.test_fingerprint == test_case.test_fingerprint)
+                | (ManagedTestCase.title == test_case.test_name),
+            )
+            .order_by(ManagedTestCase.updated_at.desc())
+            .limit(1)
+        )
+        managed = managed_result.scalar_one_or_none()
+    if managed is not None:
+        definition = {
+            "id": managed.id,
+            "version": managed.version,
+            "title": managed.title,
+            "description": managed.description,
+            "objective": managed.objective,
+            "preconditions": managed.preconditions,
+            "expected_result": managed.expected_result,
+            "test_data": managed.test_data,
+            "steps": managed.steps,
+            "parameters": _safe_authored_parameters(getattr(managed, "parameters", None)),
+            "test_type": managed.test_type,
+            "priority": managed.priority,
+            "severity": managed.severity,
+            "suite_name": managed.suite_name,
+            "tags": managed.tags or [],
+        }
+
+    step_tree = await get_test_steps_tree(db, run_id, test_id)
+    return build_enriched_test_case_detail(
+        test_case,
+        {**(step_tree or {"steps": [], "attachments": []}), "definition": definition},
+    )
 
 
 # ── Granular-step batched read helpers (Phase 5 enrichment) ─────────────────

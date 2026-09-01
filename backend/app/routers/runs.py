@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_accessible_project_ids, get_current_active_user, require_run_access
 from app.db.postgres import get_db
 from app.models.postgres import LaunchStatus, Project, TestCase, TestRun, User
-from app.models.schemas import TestCaseHistoryResponse, TestCaseListResponse
+from app.models.schemas import EnrichedTestCaseDetailResponse, TestCaseHistoryResponse, TestCaseListResponse
 from app.services.runs_service import (
     get_run_with_release,
     list_project_runs,
@@ -314,6 +314,30 @@ async def get_test_case_steps(
     if tree is None:
         raise HTTPException(status_code=404, detail="Test case not found")
     return tree
+
+
+@router.get(
+    "/{run_id}/tests/{test_id}/rich-detail",
+    response_model=EnrichedTestCaseDetailResponse,
+)
+async def get_enriched_test_case_detail_endpoint(
+    run_id: uuid.UUID,
+    test_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
+):
+    """Versioned additive detail contract with optional recursive steps.
+
+    Access is checked against the supplied run before the service query. The
+    endpoint is separate from the legacy flat detail route so existing clients
+    retain their response shape during gradual rollout.
+    """
+    from app.services.runs_service import get_enriched_test_case_detail
+
+    payload = await get_enriched_test_case_detail(db, run_id, test_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    return payload
 
 
 @router.get("/{run_id}/tests/{test_id}/history", response_model=TestCaseHistoryResponse)

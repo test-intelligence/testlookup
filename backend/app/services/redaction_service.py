@@ -120,7 +120,7 @@ def redact_value(key: str, value: Any) -> Any:
     return value
 
 
-def redact_dict(data: dict | None, *, _depth: int = 0) -> dict | None:
+def redact_dict(data: dict | None, *, _depth: int = 0) -> dict | str | None:
     """Recursively redact sensitive values in a dict.
 
     - Keys matching SENSITIVE_KEYS → value replaced with REDACTED.
@@ -129,16 +129,13 @@ def redact_dict(data: dict | None, *, _depth: int = 0) -> dict | None:
     """
     if not data:
         return data
-    if _depth > _MAX_RECURSION_DEPTH:
-        # Depth limit protects against cycles and pathological inputs, but any
-        # PII nested below this point will pass through unredacted. Emit a
-        # single warning so the caller can spot inputs that need pre-flattening
-        # instead of silently leaking data.
+    if _depth >= _MAX_RECURSION_DEPTH:
+        # Fail closed. A depth cap must never return an unredacted subtree.
         logger.warning(
-            "redact_dict: max recursion depth %d exceeded — returning subtree unredacted",
+            "redact_dict: max recursion depth %d reached — redacting subtree",
             _MAX_RECURSION_DEPTH,
         )
-        return data
+        return REDACTED
 
     result: dict[str, Any] = {}
     for key, value in data.items():
@@ -150,15 +147,23 @@ def redact_dict(data: dict | None, *, _depth: int = 0) -> dict | None:
         elif isinstance(value, dict):
             result[key] = redact_dict(value, _depth=_depth + 1)
         elif isinstance(value, list):
-            result[key] = [
-                redact_dict(item, _depth=_depth + 1) if isinstance(item, dict)
-                else redact_text(item) if isinstance(item, str)
-                else item
-                for item in value
-            ]
+            result[key] = [_redact_nested(item, _depth + 1) for item in value[:100]]
         else:
             result[key] = value
     return result
+
+
+def _redact_nested(value: Any, depth: int) -> Any:
+    """Redact nested dict/list values and replace capped subtrees."""
+    if depth >= _MAX_RECURSION_DEPTH:
+        return REDACTED
+    if isinstance(value, dict):
+        return redact_dict(value, _depth=depth)
+    if isinstance(value, list):
+        return [_redact_nested(item, depth + 1) for item in value[:100]]
+    if isinstance(value, str):
+        return redact_text(value)
+    return value
 
 
 def redact_for_llm(text: str) -> str:

@@ -264,12 +264,17 @@ async def create_managed_test_case(
         )
         test_suite_id = suite.id
 
+    # Keep authored cases discoverable from executed results when the
+    # automation uses the same title and has no class discriminator. This is
+    # only a fallback identity; an explicit canonical link remains authoritative.
+    from app.services.ingestion import make_test_fingerprint
     test_case = ManagedTestCase(
         **payload.model_dump(exclude_unset=True, exclude={"change_summary"}),
         author_id=current_user.id,
         status="draft",
         version=1,
         test_suite_id=test_suite_id,
+        test_fingerprint=make_test_fingerprint(payload.title, None),
     )
     db.add(test_case)
     await db.flush()
@@ -281,6 +286,7 @@ async def create_managed_test_case(
             title=test_case.title,
             description=test_case.description,
             steps=test_case.steps,
+            parameters=test_case.parameters,
             expected_result=test_case.expected_result,
             status="draft",
             changed_by_id=current_user.id,
@@ -335,6 +341,7 @@ async def update_managed_test_case(
             title=test_case.title,
             description=test_case.description,
             steps=test_case.steps,
+            parameters=test_case.parameters,
             expected_result=test_case.expected_result,
             status=test_case.status,
             changed_by_id=current_user.id,
