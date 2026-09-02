@@ -331,10 +331,15 @@ The same cascade made the artifacts clock behave as
 window died anyway when its run aged out, which contradicts having two clocks
 at all.
 
-Migration 0145 flips the foreign key to `SET NULL` and the column to nullable.
-The constraint is added `NOT VALID` and validated separately, so the
-`ACCESS EXCLUSIVE` lock covers a catalog update rather than a full scan of a
-table that can be large.
+Migration 0146 makes all three run-owned artifact links — run, test case, and
+agent pipeline run — use `SET NULL`, and makes `run_id` nullable. Changing only
+the direct run link would still delete the artifact through the other two
+CASCADE paths. Constraints are added `NOT VALID` and validated separately, so
+each `ACCESS EXCLUSIVE` lock covers a catalog update rather than a full scan.
+The verified-artifact triggers retain strict content immutability while
+admitting only those foreign-key detachments; SET NULL itself fires UPDATE
+triggers, so leaving the original trigger functions unchanged would block the
+run purge instead of preserving evidence.
 
 Retention now stamps `project_id` on those artifacts **before** the run link
 detaches — the guarantee step 3.6 already gives `ai_provenance_records`.
@@ -351,13 +356,12 @@ Tests: `tests/integration/test_protected_artifact_survives_run_cascade.py`
 drives a real Postgres, because no mocked session can observe a foreign-key
 cascade — which is exactly why the existing unit test missed this: it calls the
 protection helper directly with a hand-rolled Mongo double and never reaches
-the delete. `tests/test_h1_evidence_artifact_cascade.py` (6) carries the schema
+the delete. `tests/test_h1_evidence_artifact_cascade.py` (8) carries the schema
 and ordering guards that run without a database, including that the stamp
 happens *before* the run delete rather than after it, where it would be useless.
 
-**Migration-number note.** Numbered 0145 against head 0144. The
-`feat/retention-s1-activate` branch also carries a 0145; whichever merges
-second must renumber. This is a hotfix for live data loss and should land first.
+Migration 0146 follows the user-dismissal and feature-flag seed in 0145, so the
+repository retains one linear Alembic head.
 
 
 ## 2026-09-01 — restore data visibility in dense tables and header menus

@@ -871,7 +871,7 @@ async def run_purge(
             .values(project_id=project_id)
         )
 
-    # (3.7) H1 — same guarantee as (3.6), for evidence artifacts. Since 0145
+    # (3.7) H1 — same guarantee as (3.6), for evidence artifacts. Since 0146
     # ``evidence_artifacts.run_id`` is SET NULL rather than CASCADE, so an
     # artifact spared by the published-report filter above now SURVIVES the run
     # delete instead of being cascaded away behind the filter's back. Stamp the

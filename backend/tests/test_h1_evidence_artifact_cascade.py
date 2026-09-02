@@ -11,6 +11,7 @@ They assert the two things that made the defect possible: the foreign key's
 delete rule, and the fact that the project-scope stamp has to happen BEFORE the
 run delete rather than after it.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -19,8 +20,8 @@ from app.models.postgres import EvidenceArtifact
 from app.services import retention_service
 
 
-def _run_id_fk():
-    return next(iter(EvidenceArtifact.__table__.c.run_id.foreign_keys))
+def _ondelete(column: str) -> str | None:
+    return next(iter(EvidenceArtifact.__table__.c[column].foreign_keys)).ondelete
 
 
 def test_evidence_artifact_run_link_detaches_rather_than_cascades():
@@ -31,10 +32,17 @@ def test_evidence_artifact_run_link_detaches_rather_than_cascades():
     purge's own count could not see it, because the count is taken after the
     protective filter.
     """
-    assert _run_id_fk().ondelete == "SET NULL", (
+    assert _ondelete("run_id") == "SET NULL", (
         "evidence_artifacts.run_id must SET NULL: with CASCADE the run delete "
         "silently undoes the purge's published-report protection"
     )
+
+
+def test_every_run_owned_parent_link_detaches_rather_than_cascades():
+    """A run deletion also cascades its test-case and pipeline parents."""
+    assert _ondelete("run_id") == "SET NULL"
+    assert _ondelete("test_case_id") == "SET NULL"
+    assert _ondelete("producer_pipeline_run_id") == "SET NULL"
 
 
 def test_the_run_link_is_nullable_so_the_row_can_outlive_its_run():
@@ -83,17 +91,46 @@ def test_the_migration_repoints_the_constraint_rather_than_only_dropping_it():
         Path(__file__).resolve().parents[1]
         / "migrations"
         / "versions"
-        / "0145_evidence_artifact_run_set_null.py"
+        / "0146_evidence_artifact_run_set_null.py"
     )
     body = migration.read_text(encoding="utf-8")
     upgrade = body.split("def upgrade()", 1)[1].split("def downgrade()", 1)[0]
 
     assert "ON DELETE SET NULL" in upgrade
+    assert '(_TEST_CASE_FK, "test_case_id", "test_cases")' in upgrade
+    assert (
+        '(_PIPELINE_FK, "producer_pipeline_run_id", "agent_pipeline_runs")' in upgrade
+    )
     assert "VALIDATE CONSTRAINT" in upgrade, (
         "add the constraint NOT VALID then VALIDATE separately — a plain ADD "
         "CONSTRAINT holds ACCESS EXCLUSIVE for a full scan of a table that can "
         "be large"
     )
+
+
+def test_verified_artifact_triggers_allow_only_parent_detachment():
+    """SET NULL fires UPDATE triggers; the exception must stay narrow."""
+    from pathlib import Path
+
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "versions"
+        / "0146_evidence_artifact_run_set_null.py"
+    )
+    body = migration.read_text(encoding="utf-8")
+    upgrade = body.split("def upgrade()", 1)[0]
+
+    assert "prevent_verified_evidence_mutation" in upgrade
+    assert "validate_evidence_artifact_scope" in upgrade
+    assert "to_jsonb(NEW)" in upgrade
+    assert "NEW.run_id IS NULL" in upgrade
+    assert "NEW.test_case_id IS NULL" in upgrade
+    assert "NEW.producer_pipeline_run_id IS NULL" in upgrade
+    assert "WHERE id = OLD.run_id" in upgrade
+    assert "WHERE id = OLD.test_case_id" in upgrade
+    assert "WHERE id = OLD.producer_pipeline_run_id" in upgrade
+    assert "verified evidence artifacts are immutable" in upgrade
 
 
 def test_the_downgrade_refuses_rather_than_deleting_survivors():
@@ -105,7 +142,7 @@ def test_the_downgrade_refuses_rather_than_deleting_survivors():
         Path(__file__).resolve().parents[1]
         / "migrations"
         / "versions"
-        / "0145_evidence_artifact_run_set_null.py"
+        / "0146_evidence_artifact_run_set_null.py"
     )
     downgrade = migration.read_text(encoding="utf-8").split("def downgrade()", 1)[1]
 

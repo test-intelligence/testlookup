@@ -15,6 +15,7 @@ never drives the delete path, which is precisely why the bug survived it. No
 mocked session can observe a foreign-key CASCADE — the behaviour lives in
 Postgres, not in the ORM.
 """
+
 from __future__ import annotations
 
 import os
@@ -36,7 +37,17 @@ def _dsn() -> str:
     return value
 
 
-async def _seed(conn, *, project_id, run_id, artifact_id, run_age_days):
+async def _seed(
+    conn,
+    *,
+    project_id,
+    run_id,
+    test_case_id,
+    pipeline_id,
+    artifact_id,
+    run_age_days,
+    verified=True,
+):
     created = datetime.now(timezone.utc) - timedelta(days=run_age_days)
     await conn.execute(
         text(
@@ -54,15 +65,42 @@ async def _seed(conn, *, project_id, run_id, artifact_id, run_age_days):
     )
     await conn.execute(
         text(
+            "INSERT INTO test_cases "
+            "(id, test_run_id, test_fingerprint, test_name, status) "
+            "VALUES (:id, :run, :fingerprint, 'H1 cascade fixture', 'PASSED')"
+        ),
+        {"id": test_case_id, "run": run_id, "fingerprint": artifact_id.hex},
+    )
+    await conn.execute(
+        text(
+            "INSERT INTO agent_pipeline_runs "
+            "(id, test_run_id, workflow_type, status, execution_metadata) "
+            "VALUES (:id, :run, 'deep', 'completed', '{}'::json)"
+        ),
+        {"id": pipeline_id, "run": run_id},
+    )
+    await conn.execute(
+        text(
             "INSERT INTO evidence_artifacts "
-            "(id, run_id, project_id, idempotency_key, created_at) "
-            "VALUES (:id, :r, :p, :k, now())"
+            "(id, run_id, project_id, producer_pipeline_run_id, test_case_id, "
+            "artifact_type, source_system, summary_excerpt, schema_version, "
+            "content_sha256, content_size_bytes, media_type, sensitivity, "
+            "freshness, integrity_status, retention_class, idempotency_key, "
+            "created_at) VALUES "
+            "(:id, :run, :project, :pipeline, :test_case, 'stack_trace', "
+            "'pytest', 'protected verified evidence', 2, :sha, 12, "
+            "'text/plain', 'internal', 'current', :integrity, 'artifacts', "
+            ":key, now())"
         ),
         {
             "id": artifact_id,
-            "r": run_id,
-            "p": project_id,
-            "k": f"h1-{artifact_id}",
+            "run": run_id,
+            "project": project_id,
+            "pipeline": pipeline_id,
+            "test_case": test_case_id,
+            "sha": "a" * 64,
+            "integrity": "verified" if verified else "legacy_unverified",
+            "key": artifact_id.hex,
         },
     )
 
@@ -75,16 +113,34 @@ async def test_deleting_a_run_no_longer_destroys_its_evidence_artifacts():
     the foreign key overruled it.
     """
     engine = create_async_engine(_dsn())
-    project_id, run_id, artifact_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    project_id, run_id, test_case_id, pipeline_id, artifact_id = (
+        uuid.uuid4() for _ in range(5)
+    )
     try:
         async with engine.begin() as conn:
             await _seed(
                 conn,
                 project_id=project_id,
                 run_id=run_id,
+                test_case_id=test_case_id,
+                pipeline_id=pipeline_id,
                 artifact_id=artifact_id,
                 run_age_days=400,
             )
+
+        # Application code cannot use the trigger exception to sever authority
+        # links while their parents still exist. Only the FK delete action may
+        # detach them.
+        async with engine.connect() as conn:
+            tx = await conn.begin()
+            with pytest.raises(
+                Exception, match="verified evidence artifacts are immutable"
+            ):
+                await conn.execute(
+                    text("UPDATE evidence_artifacts SET run_id=NULL WHERE id=:id"),
+                    {"id": artifact_id},
+                )
+            await tx.rollback()
 
         async with engine.begin() as conn:
             await conn.execute(
@@ -95,7 +151,9 @@ async def test_deleting_a_run_no_longer_destroys_its_evidence_artifacts():
             row = (
                 await conn.execute(
                     text(
-                        "SELECT run_id, project_id FROM evidence_artifacts "
+                        "SELECT run_id, project_id, test_case_id, "
+                        "producer_pipeline_run_id, integrity_status "
+                        "FROM evidence_artifacts "
                         "WHERE id = :id"
                     ),
                     {"id": artifact_id},
@@ -108,15 +166,49 @@ async def test_deleting_a_run_no_longer_destroys_its_evidence_artifacts():
             "deleted them anyway"
         )
         assert row.run_id is None, "the run link should detach, not persist"
+        assert row.test_case_id is None, (
+            "the test-case link must detach; CASCADE here is an alternate "
+            "artifact-deletion path"
+        )
+        assert row.producer_pipeline_run_id is None, (
+            "the pipeline link must detach; CASCADE here is an alternate "
+            "artifact-deletion path"
+        )
         assert row.project_id == project_id, (
             "project scope must survive, or the row is unreachable by the "
             "artifacts clock and leaks forever"
         )
+        assert row.integrity_status == "verified"
+
+        async with engine.connect() as conn:
+            tx = await conn.begin()
+            with pytest.raises(
+                Exception, match="verified evidence artifacts are immutable"
+            ):
+                await conn.execute(
+                    text(
+                        "UPDATE evidence_artifacts SET summary_excerpt='tampered' "
+                        "WHERE id=:id"
+                    ),
+                    {"id": artifact_id},
+                )
+            await tx.rollback()
     finally:
         async with engine.begin() as conn:
             await conn.execute(
                 text("DELETE FROM evidence_artifacts WHERE id = :id"),
                 {"id": artifact_id},
+            )
+            await conn.execute(
+                text("DELETE FROM agent_pipeline_runs WHERE id = :id"),
+                {"id": pipeline_id},
+            )
+            await conn.execute(
+                text("DELETE FROM test_cases WHERE id = :id"),
+                {"id": test_case_id},
+            )
+            await conn.execute(
+                text("DELETE FROM test_runs WHERE id = :id"), {"id": run_id}
             )
             await conn.execute(
                 text("DELETE FROM projects WHERE id = :id"), {"id": project_id}
@@ -138,21 +230,24 @@ async def test_an_artifact_with_no_project_scope_is_stamped_before_the_link_drop
     from app.services.retention_service import _chunks  # noqa: F401  (shape check)
 
     engine = create_async_engine(_dsn())
-    project_id, run_id, artifact_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    project_id, run_id, test_case_id, pipeline_id, artifact_id = (
+        uuid.uuid4() for _ in range(5)
+    )
     try:
         async with engine.begin() as conn:
             await _seed(
                 conn,
                 project_id=project_id,
                 run_id=run_id,
+                test_case_id=test_case_id,
+                pipeline_id=pipeline_id,
                 artifact_id=artifact_id,
                 run_age_days=400,
+                verified=False,
             )
             # Clear the scope so only the stamping step can restore it.
             await conn.execute(
-                text(
-                    "UPDATE evidence_artifacts SET project_id = NULL WHERE id = :id"
-                ),
+                text("UPDATE evidence_artifacts SET project_id = NULL WHERE id = :id"),
                 {"id": artifact_id},
             )
 
@@ -179,7 +274,8 @@ async def test_an_artifact_with_no_project_scope_is_stamped_before_the_link_drop
             row = (
                 await conn.execute(
                     text(
-                        "SELECT run_id, project_id FROM evidence_artifacts "
+                        "SELECT run_id, project_id, test_case_id, "
+                        "producer_pipeline_run_id FROM evidence_artifacts "
                         "WHERE id = :id"
                     ),
                     {"id": artifact_id},
@@ -188,6 +284,8 @@ async def test_an_artifact_with_no_project_scope_is_stamped_before_the_link_drop
 
         assert row is not None
         assert row.run_id is None
+        assert row.test_case_id is None
+        assert row.producer_pipeline_run_id is None
         assert row.project_id == project_id, (
             "an artifact that survives its run with no project scope is "
             "unreachable by every project-scoped purge — it would leak forever"
@@ -197,6 +295,17 @@ async def test_an_artifact_with_no_project_scope_is_stamped_before_the_link_drop
             await conn.execute(
                 text("DELETE FROM evidence_artifacts WHERE id = :id"),
                 {"id": artifact_id},
+            )
+            await conn.execute(
+                text("DELETE FROM agent_pipeline_runs WHERE id = :id"),
+                {"id": pipeline_id},
+            )
+            await conn.execute(
+                text("DELETE FROM test_cases WHERE id = :id"),
+                {"id": test_case_id},
+            )
+            await conn.execute(
+                text("DELETE FROM test_runs WHERE id = :id"), {"id": run_id}
             )
             await conn.execute(
                 text("DELETE FROM projects WHERE id = :id"), {"id": project_id}
