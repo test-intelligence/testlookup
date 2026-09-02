@@ -871,6 +871,22 @@ async def run_purge(
             .values(project_id=project_id)
         )
 
+    # (3.7) H1 — same guarantee as (3.6), for evidence artifacts. Since 0146
+    # ``evidence_artifacts.run_id`` is SET NULL rather than CASCADE, so an
+    # artifact spared by the published-report filter above now SURVIVES the run
+    # delete instead of being cascaded away behind the filter's back. Stamp the
+    # project scope first or the survivor is unreachable: with run_id nulled and
+    # project_id already NULL it would escape the artifacts-clock delete forever.
+    for chunk in _chunks(cand.purge_run_ids, _PG_DELETE_CHUNK):
+        await db.execute(
+            update(EvidenceArtifact)
+            .where(
+                EvidenceArtifact.run_id.in_(chunk),
+                EvidenceArtifact.project_id.is_(None),
+            )
+            .values(project_id=project_id)
+        )
+
     # (4) Postgres run delete — CASCADE covers all 22 direct children plus
     # the second hop via test_cases (zero RESTRICT children).
     runs_deleted = 0
