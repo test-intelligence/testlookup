@@ -19,7 +19,7 @@
  */
 import { createElement } from 'react'
 import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 
 import type { GitLabConfig } from '@/types/gitlab'
@@ -90,8 +90,17 @@ function baseConfig(overrides: Partial<GitLabConfig> = {}): GitLabConfig {
   }
 }
 
-async function renderPage() {
-  const { default: GitLabIntegrationPage } = await import('./GitLabIntegrationPage')
+let GitLabIntegrationPage: (typeof import('./GitLabIntegrationPage'))['default']
+
+beforeAll(async () => {
+  // Import once outside the individual tests' 5-second budgets. Router 7's
+  // larger transform graph can make a per-test dynamic import time out only
+  // under the full parallel suite even though the page is already rendered.
+  const pageModule = await import('./GitLabIntegrationPage')
+  GitLabIntegrationPage = pageModule.default
+}, 30_000)
+
+function renderPage() {
   return render(
     createElement(
       SWRConfig,
