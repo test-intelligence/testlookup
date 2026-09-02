@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-01 — coordinate the React 19 runtime and type upgrade
+
+React, React DOM, and both corresponding type packages now move to 19.2
+together, avoiding the invalid mixed-major dependency graph in the generated
+upgrade. Two forwarded input-ref contracts now explicitly admit the null state
+returned by React 19's `useRef` typing. The aligned tree has no invalid peers
+and passes lint and a production TypeScript build.
+
 ## 2026-09-01 — make storage-footprint limits and scope explicit
 
 Storage accounting now marks a reached object store as incomplete when the
