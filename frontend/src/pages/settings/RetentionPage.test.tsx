@@ -21,7 +21,7 @@
  */
 import { createElement } from 'react'
 import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 
 import type { RetentionPolicy } from '@/types/retention'
@@ -104,8 +104,16 @@ function saveButton(): HTMLButtonElement {
   return screen.getByText('Save policy').closest('button') as HTMLButtonElement
 }
 
-async function renderPage() {
-  const { default: RetentionPage } = await import('./RetentionPage')
+let RetentionPage: (typeof import('./RetentionPage'))['default']
+
+beforeAll(async () => {
+  // Import once outside individual tests' 5-second budgets. Router 7's larger
+  // transform graph can otherwise consume that budget only in the full suite.
+  const pageModule = await import('./RetentionPage')
+  RetentionPage = pageModule.default
+}, 30_000)
+
+function renderPage() {
   return render(
     createElement(
       SWRConfig,

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-01 — validate the React Router 7 upgrade under full-suite load
+
+React Router DOM is upgraded to 7.18.2. The full parallel frontend suite
+exposed two settings-page tests whose per-test dynamic imports could consume
+Vitest's five-second budget while Vite transformed the larger router graph.
+Those suites now import their page once in a bounded suite setup hook, keeping
+the product assertions and normal per-test timeout intact. All 1,325 frontend
+tests, lint, and the production build pass with the upgraded router.
+
 ## 2026-09-01 — cast the seeded flag id so migration 0145 upgrades
 
 Migration `0145` seeded its `feature_flags` row by binding a stable string id
