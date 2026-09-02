@@ -283,3 +283,16 @@ describe('StoragePanel', () => {
     expect(mutateDeleted).toHaveBeenCalled()
   })
 })
+
+describe('store labels', () => {
+  it('names every store the backend can return', async () => {
+    // The table falls back to the raw key for an unknown store, so a backend
+    // that adds a line renders `reports` verbatim rather than failing — which
+    // is exactly the kind of thing nobody notices. `reports` arrived with S4.
+    const { STORE_LABELS } = await import('./storeLabels')
+    for (const store of ['object_storage', 'postgres', 'mongo', 'reports']) {
+      expect(STORE_LABELS[store]).toBeTruthy()
+      expect(STORE_LABELS[store]).not.toBe(store)
+    }
+  })
+})

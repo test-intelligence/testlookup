@@ -16,12 +16,18 @@ class                   what it covers
                         Mongo docs (``execution_logs``, ``ocp_pod_events``,
                         ``run_summaries`` by test_run_id;
                         ``ai_analysis_payloads`` by test_case_id).
-``artifacts_days``      MinIO objects: ``TestRun.minio_prefix`` +
+``artifacts_days``      revoked ``report_share_links`` (dead on revoke, but the row
+                        only ever died via the run CASCADE), and
+                        MinIO objects: ``TestRun.minio_prefix`` +
                         ``uploads/{project_id}/{run_id}/`` prefixes, and
                         pipeline artifacts plus verified ``EvidenceArtifact``
                         metadata/content excerpts
                         (``pipeline/{Y}/{m}/{d}/{pipeline_run_id}/…``).
 ``audit_days``          ``access_audit_logs`` + ``test_case_audit_logs``
+                        + Mongo ``decision_reports`` and ``decision_report_attempts``
+                        (keyed on ``test_run_id`` — a report is evidence ABOUT a
+                        run and must OUTLIVE it, so it rides the audit clock,
+                        never the runs clock)
                         + terminal ``deletion_jobs``
                         (project-scoped), ``ai_provenance_records`` (via the
                         0113 project_id column — survives run deletion),
@@ -91,6 +97,7 @@ from app.models.postgres import (
     LiveSession,
     Project,
     ProjectRetentionPolicy,
+    ReportShareLink,
     SettingsAuditLog,
     TestCase,
     TestCaseAuditLog,
@@ -514,6 +521,7 @@ class _ExecutionPlan:
     access_audit_where: tuple
     tc_audit_where: tuple
     deletion_job_where: tuple
+    revoked_share_link_where: tuple
     provenance_where: tuple
     memory_expired_ids: list
     expired_packs: list
@@ -537,6 +545,12 @@ class _Candidates:
     evidence_artifact_ids: list[uuid.UUID]
     # audit clock
     audit_pipeline_strs: list[str]
+    #: Runs past the AUDIT cutoff — a strictly wider window than the runs
+    #: clock, because ``audit_days >= runs_days`` is an enforced invariant.
+    #: Decision reports key on this: a report is evidence ABOUT a run and
+    #: outlives it, so purging it on the runs clock would destroy the evidence
+    #: at the moment its subject went.
+    audit_run_strs: list[str]
 
 
 async def _collect_candidates(
@@ -652,6 +666,7 @@ async def _collect_candidates(
         artifact_pipeline_strs=artifact_pipeline_strs,
         evidence_artifact_ids=evidence_artifact_ids,
         audit_pipeline_strs=audit_pipeline_strs,
+        audit_run_strs=[str(r) for r in audit_run_ids],
     )
 
 
@@ -670,6 +685,11 @@ _MONGO_PLANS: tuple[tuple[str, str, str], ...] = (
     (Collections.DECISION_EVIDENCE_SNAPSHOTS, "test_run_id", "purge_run_strs"),
     (Collections.AI_ANALYSIS_PAYLOADS, "test_case_id", "purge_tc_strs"),
     (_PIPELINE_EVENT_LOG, "pipeline_run_id", "audit_pipeline_strs"),
+    # S4 — the only two Collections members that were absent from this table,
+    # so nothing had ever purged a decision report. On the AUDIT clock, not
+    # the runs clock: a report is evidence about a run and must outlive it.
+    (Collections.DECISION_REPORTS, "test_run_id", "audit_run_strs"),
+    (Collections.DECISION_REPORT_ATTEMPTS, "test_run_id", "audit_run_strs"),
 )
 
 
@@ -740,6 +760,15 @@ async def run_purge(
         AIProvenanceRecord.created_at < cutoffs["audit"],
     )
     deletion_job_where = deletion_job_purge_filter(project_id, cutoffs["audit"])
+    # S4 — a revoked share link is dead the moment it is revoked, but the row
+    # only ever died via the run CASCADE, so a revoked link on a run that is
+    # still inside its window lingered forever. Artifacts clock: the link is a
+    # pointer to a report, not evidence about it.
+    revoked_share_link_where = (
+        ReportShareLink.project_id == project_id,
+        ReportShareLink.is_revoked.is_(True),
+        ReportShareLink.created_at < cutoffs["artifacts"],
+    )
     memory_expired_where = (
         AgentMemoryEntry.project_id == project_id,
         AgentMemoryEntry.lifecycle_status == "active",
@@ -768,6 +797,7 @@ async def run_purge(
         access_audit_where=access_audit_where,
         tc_audit_where=tc_audit_where,
         deletion_job_where=deletion_job_where,
+        revoked_share_link_where=revoked_share_link_where,
         provenance_where=provenance_where,
         memory_expired_ids=memory_expired_ids,
         expired_packs=expired_packs,
@@ -845,6 +875,9 @@ async def run_purge(
                 await _count(AccessAuditLog.id, access_audit_where)
                 + await _count(TestCaseAuditLog.id, tc_audit_where)
                 + await _count(DeletionJob.id, deletion_job_where)
+            ),
+            "revoked_share_links": await _count(
+                ReportShareLink.id, revoked_share_link_where
             ),
             "provenance_rows": await _count(AIProvenanceRecord.id, provenance_where),
             "compliance_packs_expired": len(expired_packs),
@@ -972,6 +1005,11 @@ async def resolve_run_candidates(
         artifact_pipeline_strs=pipeline_strs,
         evidence_artifact_ids=evidence_ids,
         audit_pipeline_strs=list(pipeline_strs),
+        # An explicit single-run delete takes the report with it. The audit
+        # clock exists so a report outlives its run under the POLICY purge;
+        # it is not a reason to strand a report whose subject an operator
+        # deliberately removed.
+        audit_run_strs=[str(run_id)],
     )
 
     plan = _ExecutionPlan(
@@ -979,6 +1017,10 @@ async def resolve_run_candidates(
         access_audit_where=never,
         tc_audit_where=never,
         deletion_job_where=never,
+        # Share links are ondelete=CASCADE on run_id, so the run delete
+        # already takes them. A filter here would be a second deletion of
+        # rows that are already gone.
+        revoked_share_link_where=never,
         provenance_where=never,
         memory_expired_ids=[],
         expired_packs=[],
@@ -1115,6 +1157,9 @@ async def execute_candidates(
     deletion_job_result = await db.execute(
         delete(DeletionJob).where(*plan.deletion_job_where)
     )
+    revoked_link_result = await db.execute(
+        delete(ReportShareLink).where(*plan.revoked_share_link_where)
+    )
     provenance_result = await db.execute(
         delete(AIProvenanceRecord).where(*plan.provenance_where)
     )
@@ -1148,6 +1193,7 @@ async def execute_candidates(
             "access_audit_rows": int(getattr(access_result, "rowcount", 0) or 0),
             "test_case_audit_rows": int(getattr(tc_audit_result, "rowcount", 0) or 0),
             "deletion_job_rows": int(getattr(deletion_job_result, "rowcount", 0) or 0),
+            "revoked_share_links": int(getattr(revoked_link_result, "rowcount", 0) or 0),
             "provenance_rows": int(getattr(provenance_result, "rowcount", 0) or 0),
             "compliance_packs": packs_deleted,
             "memory_entries_expired": memory_rows_expired,

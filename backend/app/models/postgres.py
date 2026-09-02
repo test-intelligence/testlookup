@@ -3694,8 +3694,6 @@ class ReportShareLink(Base):
     is_revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     access_count: Mapped[int] = mapped_column(Integer, default=0)
     last_accessed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    storage_key_pdf: Mapped[Optional[str]] = mapped_column(String(500))
-    storage_key_html: Mapped[Optional[str]] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -3998,7 +3996,26 @@ class AIEvalGateRun(Base):
 
 
 class DecisionReportEvalCycle(Base):
-    """Durable evidence for a report-level evaluation corpus cycle."""
+    """Durable evidence for a report-level evaluation corpus cycle.
+
+    **RET-D16 — deliberately outside the project-scoped purge, and it must
+    stay that way.** This table has neither ``project_id`` nor ``test_run_id``,
+    which the retention epic flagged as "structurally unreachable by any
+    project-scoped purge, forever".
+
+    The decision recorded here is that adding a scope column would be WRONG,
+    not merely unnecessary. A cycle evaluates the report-generation corpus as
+    a whole and spans reports drawn from many projects; stamping any single
+    ``project_id`` on it would be a lie, and purging it when that project was
+    deleted would destroy an attestation that still describes live behaviour
+    elsewhere. It belongs with the eval-gate evidence (``prompt_manifest_eval``),
+    not with tenant data.
+
+    Unbounded growth is bounded by cadence instead of by a clock: ``cycle_key``
+    is unique and one row is written per evaluation cycle — an attestation
+    event, orders of magnitude rarer than a test run. If that cadence ever
+    changes, this needs a DEPLOYMENT-wide clock, not a project-scoped one.
+    """
     __tablename__ = "decision_report_eval_cycles"
     __table_args__ = (
         Index("ix_drec_corpus_evaluated", "corpus_version", "evaluated_at"),

@@ -414,7 +414,8 @@ async def test_preview_writes_nothing_and_returns_all_count_keys():
     # Contract keys, all present.
     assert set(out["candidates"]) == {
         "runs", "test_cases", "mongo_docs", "minio_objects",
-        "event_archive_rows", "audit_rows", "provenance_rows",
+        "event_archive_rows", "audit_rows", "revoked_share_links",
+        "provenance_rows",
         "compliance_packs_expired", "evidence_artifact_rows",
         "analysis_cache_entries", "memory_entries_expired",
         # SEARCH-009. Reported separately from analysis_cache_entries on

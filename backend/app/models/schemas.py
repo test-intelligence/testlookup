@@ -90,6 +90,31 @@ class SelfUpdateProfileRequest(BaseModel):
     avatar_color: Optional[str] = Field(None, max_length=20)
 
 
+class RetireCompliancePackRequest(BaseModel):
+    """Bring a pack's retention window forward to now.
+
+    Typed confirmation rather than a checkbox: a pack is audit evidence, and
+    retiring it early hands it to the next nightly purge.
+    """
+
+    confirmation_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        description="Must equal the pack id exactly.",
+    )
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
+class CompliancePackLifecycleResponse(BaseModel):
+    pack_id: uuid.UUID
+    retention_expires_at: datetime
+    #: True when the pack is now past its window and the next sweep will
+    #: collect it. False means it was retired to a future instant, which
+    #: should not happen and is worth seeing rather than assuming.
+    purgeable_now: bool
+
+
 class DeletionPreviewResponse(BaseModel):
     """A frozen candidate set an ADMIN authorises from.
 
@@ -5521,6 +5546,9 @@ class RetentionPreviewCandidates(BaseModel):
     minio_objects: int
     event_archive_rows: int
     audit_rows: int
+    #: Revoked share links past the artifacts clock. Dead on revoke, but
+    #: the row only ever died via the run CASCADE.
+    revoked_share_links: int = 0
     provenance_rows: int
     compliance_packs_expired: int
     evidence_artifact_rows: int = 0

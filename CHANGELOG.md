@@ -1,5 +1,81 @@
 # Changelog
 
+## 2026-09-02 — S4: reports outlive their runs, but not forever
+
+"Storage of the reports" was the first thing the brief asked for, and reports
+were managed by nothing. `decision_reports` and `decision_report_attempts` were
+the only two `Collections` members absent from the purge's plan table — nothing
+had ever deleted one.
+
+**The clock matters as much as the coverage.** They join the purge on the
+**audit** clock, not the runs clock. A report is evidence *about* a run;
+purging it alongside its run would destroy the evidence at the exact moment its
+subject went, which is when it is most likely to be wanted. `audit_days >=
+runs_days` is already an enforced invariant, so the audit window is strictly
+wider — and a test asserts the two cutoffs genuinely differ, or the distinction
+would be decorative. An explicit single-run delete still takes its report,
+because stranding a report about a run nobody can look up helps no one.
+
+The coverage test is derived rather than listed: it compares `Collections`
+against the plan table and fails when a **new** collection is added without a
+retention decision. Listing today's gaps would need editing for tomorrow's.
+
+**Compliance packs get retire-early and delete**, guarded on the retention
+window. `retire_early` sets `retention_expires_at = now` and hands the work to
+the nightly purge that already does it correctly — object first, then row, so a
+failed object delete leaves the row for the next sweep rather than orphaning
+the ZIP. `DELETE` refuses with 409 while the window is open, naming the expiry.
+The window was previously enforced only on the way out: nothing could shorten
+it, and with no delete route nothing tested it on the way in.
+
+**No hold check is stubbed.** The epic's criterion is "refused while a hold
+covers it", but legal holds are S9 and no hold table exists. An `if hold:`
+against a table that does not exist reads as a working guard while never firing
+once — the defect this epic catalogues, shipped in the code that catalogues it.
+A test asserts the check is absent until S9 gives it something to check.
+
+**Revoked share links join the artifacts clock.** A link is dead the moment it
+is revoked, but the row only ever died via the run CASCADE, so a revoked link
+on a run still inside its window lingered forever.
+
+**Two dead columns dropped** (migration 0149). `report_share_links.storage_key_pdf`
+and `storage_key_html` were added in 0033 and never written or read since; the
+only reference outside the model was a test asserting the attribute exists,
+which is how they survived three years. This belongs in *this* slice
+specifically: anyone adding share links to the artifacts clock would see two
+storage-key columns, conclude a link owns objects, and write an object delete
+against a key that is always NULL — reporting storage reclaimed that never
+existed.
+
+**Report bytes are their own line** in `GET /{project_id}/storage`, not folded
+into the Mongo total. "How much are my reports costing me" cannot be answered
+from a figure that also contains raw Allure payloads and pod events, and the two
+sit on different retention clocks, so comparing them is the comparison worth
+being able to make. A test asserts the two buckets do not overlap, or the
+project total would double-count every report. Unreachable still reports
+`measured: false`, never 0 — this line argues for a deletion, and a fabricated
+0 argues for deleting nothing.
+
+**RET-D16 decided, as the epic demanded.** `decision_report_eval_cycles` has
+neither `project_id` nor `test_run_id`. The recorded decision is that adding one
+would be **wrong**: a cycle evaluates the report-generation corpus across many
+projects, so any single `project_id` would be false, and purging it when that
+project was deleted would destroy an attestation still describing live behaviour
+elsewhere. It belongs with the eval-gate evidence, not tenant data. Growth is
+bounded by cadence — one row per cycle, enforced by `uq_drec_cycle_key` — and a
+test fails if that constraint is dropped, because the argument depends on it.
+
+**The preview regression test earned its keep.** Adding a category broke
+`test_every_counted_class_survives_serialisation`: `RetentionPreviewCandidates`
+did not declare `revoked_share_links`, so FastAPI would have silently dropped it
+from the dry run an ADMIN authorises an irreversible purge from. That is RET-D10
+recurring, caught automatically.
+
+**Validated:** 39 unit tests across the report-lifecycle and storage suites, 36
+frontend component tests, migration 0149 applied **and** downgraded against a
+real PostgreSQL 16, both architectural ratchets, `make quality-gate` 33/33,
+`ruff` and `eslint` clean.
+
 ## 2026-09-02 — S5 UI: the criteria builder, and the freeze made visible
 
 `CriteriaDeletionPanel` on the retention page: narrow to the runs you want
