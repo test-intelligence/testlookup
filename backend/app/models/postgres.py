@@ -3137,15 +3137,30 @@ class EvidenceArtifact(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
+    # Migration 0146 (H1) — was CASCADE + NOT NULL, which silently undid the
+    # retention purge's own artifact protection: the purge deliberately spares
+    # artifacts cited by a published decision report, and then the run DELETE
+    # cascaded them away anyway. It also made the artifacts clock behave as
+    # min(artifacts_days, runs_days), so an artifact younger than its own
+    # retention window died with its run.
+    #
+    # Every run-owned parent edge uses SET NULL. Changing only run_id would not
+    # help: deleting the run also cascades through its TestCase and
+    # AgentPipelineRun rows. ``project_id`` is stamped before those links
+    # detach so the artifact stays scoped and remains purgeable later.
+    run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=True,
     )
     producer_pipeline_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        ForeignKey("agent_pipeline_runs.id", ondelete="CASCADE"), nullable=True,
+        ForeignKey("agent_pipeline_runs.id", ondelete="SET NULL"), nullable=True,
     )
     cluster_id: Mapped[Optional[str]] = mapped_column(String(20))
-    test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_cases.id", ondelete="CASCADE"), nullable=True)
+    test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_cases.id", ondelete="SET NULL"), nullable=True
+    )
     artifact_type: Mapped[str] = mapped_column(String(50), nullable=False)      # stack_trace | log_anomaly | api_contract | metric | build_change | config_diff
     source_system: Mapped[str] = mapped_column(String(100), nullable=False)     # splunk | mongodb | prometheus | github | ocp | chromadb
     uri_or_ref: Mapped[Optional[str]] = mapped_column(String(1000))

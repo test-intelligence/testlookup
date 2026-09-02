@@ -327,6 +327,57 @@ load-bearing assertion was mutation-tested — the status mapping, the N+1 guard
 the key allowlist, the ON CONFLICT clause, the preview-before-enable gate, the
 dismissed check, and the loading-state guard were each broken in turn and each
 test observed failing.
+## 2026-09-01 — H1: the purge protected evidence artifacts, then deleted them anyway
+
+`retention_service` deliberately spares evidence artifacts that a **published
+decision report** still references: `_published_report_artifact_ids` filters
+them out of the explicit `delete(EvidenceArtifact)`, and fails closed so an
+error protects everything rather than nothing.
+
+Two steps later the purge ran `delete(TestRun)` — and
+`evidence_artifacts.run_id` was `ondelete="CASCADE", nullable=False`, so the
+cascade destroyed exactly what the filter had spared. With the shipped defaults
+(`artifacts_days=180` < `runs_days=365`) that fires on any project holding runs
+older than a year. Silently: the purge's `evidence_artifact_rows` count is
+taken *after* the protective filter, so it never counted what the cascade
+removed.
+
+The same cascade made the artifacts clock behave as
+`min(artifacts_days, runs_days)` — an artifact younger than its own retention
+window died anyway when its run aged out, which contradicts having two clocks
+at all.
+
+Migration 0146 makes all three run-owned artifact links — run, test case, and
+agent pipeline run — use `SET NULL`, and makes `run_id` nullable. Changing only
+the direct run link would still delete the artifact through the other two
+CASCADE paths. Constraints are added `NOT VALID` and validated separately, so
+each `ACCESS EXCLUSIVE` lock covers a catalog update rather than a full scan.
+The verified-artifact triggers retain strict content immutability while
+admitting only those foreign-key detachments; SET NULL itself fires UPDATE
+triggers, so leaving the original trigger functions unchanged would block the
+run purge instead of preserving evidence.
+
+Retention now stamps `project_id` on those artifacts **before** the run link
+detaches — the guarantee step 3.6 already gives `ai_provenance_records`.
+Without it the fix for one leak creates another: an artifact surviving with
+both `run_id` and `project_id` null is unreachable by every project-scoped
+sweep, forever.
+
+The downgrade **refuses** if any artifact has a null `run_id`, rather than
+deleting rows to satisfy the restored `NOT NULL`. Those rows are the evidence
+this migration exists to preserve; a downgrade that silently drops them would
+be worse than one that stops and says so.
+
+Tests: `tests/integration/test_protected_artifact_survives_run_cascade.py`
+drives a real Postgres, because no mocked session can observe a foreign-key
+cascade — which is exactly why the existing unit test missed this: it calls the
+protection helper directly with a hand-rolled Mongo double and never reaches
+the delete. `tests/test_h1_evidence_artifact_cascade.py` (8) carries the schema
+and ordering guards that run without a database, including that the stamp
+happens *before* the run delete rather than after it, where it would be useless.
+
+Migration 0146 follows the user-dismissal and feature-flag seed in 0145, so the
+repository retains one linear Alembic head.
 
 
 ## 2026-09-01 — restore data visibility in dense tables and header menus
