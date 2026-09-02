@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-02 — stop the frontend suite failing tests it did not break
+
+The frontend suite failed 6-10 tests on every full run, always in
+`useSuites`, `ValueMetricsPage`, `AIConfigPage`, `useSeedStatus` or
+`useWebVitals` — a different set each time, every one of them passing in
+isolation, and none of them related to whatever change was under test.
+
+The cause was worker width, not the tests. Vitest defaults to roughly
+(CPU count - 1) workers — 23 on a 24-core machine — and every worker boots its
+own jsdom and React module graph. With ~10GB free that thrashes memory, and
+page-level tests that dynamically `await import()` a large page module tip past
+the 5s default timeout. Worker width is now capped at `50%`, which scales down
+correctly on smaller CI runners, and the timeout is raised to 15s so a slow
+import is not reported as a broken test. A genuinely hung test still fails.
+
+The second failure in each run was a phantom. A test that times out can leave
+its tree mounted, so the NEXT test in the file failed with
+`Found multiple elements` and accused innocent code — `Eng-Hours Saved` appears
+exactly once in ValueMetricsPage. The setup file now unmounts unconditionally
+after every test, keeping each failure attributable to the test that caused it.
+
+Six consecutive full runs are now clean at 1362/1362, against a baseline that
+failed every run.
+
+
 ## 2026-09-02 — give the flexible column a budget to be flexible in
 
 Third and final pass on the /intelligence runs table, measured on the running
