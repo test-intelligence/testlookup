@@ -63,6 +63,21 @@ describe('IntelligenceHubPage timing column', () => {
     })
   })
 
+  it('makes Build the flexible column so Timing cannot be pushed off-screen', async () => {
+    await renderPage()
+    const build = await screen.findByRole('columnheader', { name: /Build/i })
+    // `min-w-0` on a cell does NOT shrink an auto-layout table column — it
+    // still sizes to content. On the live deployment that left Build at 376px
+    // and the table at 1007px inside a 641px panel, so Pass rate and Timing
+    // were scrolled out of view at a normal laptop width. `w-full max-w-0` is
+    // the pair that actually lets the column shrink and truncate.
+    expect(build.className.split(' ')).toContain('w-full')
+    expect(build.className.split(' ')).toContain('max-w-0')
+    // Only Build flexes; the rest must stay content-sized.
+    const timing = screen.getByRole('columnheader', { name: /Timing/i })
+    expect(timing.className.split(' ')).not.toContain('max-w-0')
+  })
+
   it('no longer renders a full toLocaleString datetime in the row', async () => {
     await renderPage()
     await screen.findByRole('columnheader', { name: /Timing/i })

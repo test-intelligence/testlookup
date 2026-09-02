@@ -53,9 +53,17 @@ describe('Test Management cases table columns', () => {
     expect(headers.map(h => h.textContent?.trim())).toEqual(
       ['Test case', 'Status', 'Owner', 'Last run', ''],
     )
-    // The title column must carry no fixed width — it absorbs the slack.
-    expect(headers[0].getAttribute('width')).toBeNull()
-    expect((headers[0] as HTMLElement).style.width).toBe('')
+    // The title column must be the flexible one. Asserting merely that it has
+    // NO width was the original mistake — that is what a content-sized column
+    // looks like, and it let the table overflow its wrapper by ~106px on the
+    // live deployment. `width: 100%` claims the slack; `max-width: 0` is what
+    // actually permits the column to shrink below its content in an
+    // auto-layout table, so the inner truncate can engage.
+    const titleTh = headers[0] as HTMLElement
+    expect(titleTh.style.width).toBe('100%')
+    expect(titleTh.style.maxWidth).toBe('0px')
+    // Every other column stays fixed-width so only the title absorbs slack.
+    expect((headers[1] as HTMLElement).style.maxWidth).toBe('')
   })
 
   it('folds the demoted fields into the meta line rather than dropping them', () => {

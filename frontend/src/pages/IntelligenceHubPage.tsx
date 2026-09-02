@@ -707,7 +707,10 @@ function RunsTable({
             <table className="w-full text-[13px] border-collapse">
               <thead>
                 <tr className="bg-[var(--color-bg-secondary)] text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                  <Th>Build</Th>
+                  {/* w-full + max-w-0 is what actually makes an auto-layout
+                      table column flexible — `min-w-0` on a <td> does nothing,
+                      the column still sizes to its content min-content width. */}
+                  <Th className="w-full max-w-0">Build</Th>
                   <Th>Suite</Th>
                   <Th>Status</Th>
                   {/* US-15.1 honesty fix: this column has always rendered the
@@ -780,35 +783,36 @@ function RunRow({
       onClick={() => onOpen(run.id)}
       className="cursor-pointer hover:bg-[var(--color-bg-hover)] transition-colors border-b border-[var(--color-border)] last:border-b-0"
     >
-      <td className="px-3.5 py-2.5 min-w-0">
-        <div className="flex items-baseline gap-2">
+      <td className="px-3.5 py-2.5 w-full max-w-0">
+        <div className="flex items-baseline gap-2 min-w-0">
           {/* Prefer the per-(project, suite) human-readable Run #N — server-
               computed via ROW_NUMBER() so the same value appears on
               /runs, /live, /my-failures, and here. Falls back to the
               raw SDK build_number for rows that pre-date the run_seq
               field (legacy ingests). */}
-          <span className="font-mono text-[13px] font-semibold text-[var(--color-text)] whitespace-nowrap">
+          <span className="font-mono text-[13px] font-semibold text-[var(--color-text)] whitespace-nowrap flex-none">
             {run.run_seq != null ? `Run #${run.run_seq}` : `#${String(run.build_number)}`}
           </span>
           <span className="text-[13px] font-medium text-[var(--color-text)] truncate" title={run.jenkins_job || undefined}>
             {run.jenkins_job || ''}
           </span>
         </div>
-        <div className="mt-0.5 inline-flex items-center gap-2 text-[11.5px] text-[var(--color-text-muted)]">
+        <div className="mt-0.5 flex items-center gap-2 text-[11.5px] text-[var(--color-text-muted)] min-w-0">
           {run.branch && (
-            <span className="inline-flex items-center gap-1 px-1.5 py-0 rounded-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] font-mono">
-              <GitBranch className="h-2.5 w-2.5" />{run.branch}
+            <span className="inline-flex items-center gap-1 px-1.5 py-0 rounded-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] font-mono min-w-0 max-w-[160px]" title={run.branch}>
+              <GitBranch className="h-2.5 w-2.5 flex-none" />
+              <span className="truncate">{run.branch}</span>
             </span>
           )}
-          <span aria-hidden>·</span>
-          <span className={clsx('inline-flex items-center justify-center rounded-full w-4 h-4 text-[9px] font-semibold', av.cls)}>
+          <span aria-hidden className="flex-none">·</span>
+          <span className={clsx('inline-flex items-center justify-center rounded-full w-4 h-4 text-[9px] font-semibold flex-none', av.cls)}>
             {av.initials}
           </span>
-          <span className="truncate max-w-[120px]">{author}</span>
+          <span className="truncate">{author}</span>
           {isAll && run.project_name && (
             <>
-              <span aria-hidden>·</span>
-              <span className="text-[var(--color-text-faint)] truncate max-w-[120px]">{run.project_name}</span>
+              <span aria-hidden className="flex-none">·</span>
+              <span className="text-[var(--color-text-faint)] truncate">{run.project_name}</span>
             </>
           )}
         </div>

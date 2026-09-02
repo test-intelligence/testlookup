@@ -1831,7 +1831,7 @@ export function CasesTableBody({
                 ride the meta line under the title. Seven fixed widths (660px)
                 plus Title's minWidth:280 demanded ~940px, so Title collapsed to
                 a few characters and Last run + actions scrolled out of view. */}
-            <Th label="Test case" />
+            <Th label="Test case" flex />
             <Th label="Status"     width={100} />
             <Th label="Owner"      width={122} />
             <Th label="Last run"   width={110} align="right" />
@@ -1855,7 +1855,19 @@ export function CasesTableBody({
   )
 }
 
-function Th({ label, width, align }: { label: string; width?: number; align?: 'right' }) {
+function Th({ label, width, align, flex }: {
+  label: string
+  width?: number
+  align?: 'right'
+  /**
+   * Marks THE flexible column. `width: 100%` claims the leftover space and
+   * `maxWidth: 0` lets the browser shrink the column below its content's
+   * min-content width, which is what allows the inner `truncate` to engage.
+   * Without maxWidth the column sizes to its longest title and pushes the
+   * trailing columns out of the scroll wrapper.
+   */
+  flex?: boolean
+}) {
   return (
     <th
       style={{
@@ -1866,7 +1878,8 @@ function Th({ label, width, align }: { label: string; width?: number; align?: 'r
         fontSize: 10.5,
         textTransform: 'uppercase',
         letterSpacing: 'var(--tracking-wider)',
-        width,
+        width: flex ? '100%' : width,
+        maxWidth: flex ? 0 : undefined,
       }}
     >
       {label}
@@ -1899,7 +1912,7 @@ function CaseRow({
       className="transition-colors hover:bg-[var(--color-bg-hover)]"
       onClick={() => onRowClick(tc)}
     >
-      <td style={{ padding: '9px 12px' }} className="min-w-0">
+      <td style={{ padding: '9px 12px', width: '100%', maxWidth: 0 }}>
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-[12.5px] font-medium text-[var(--color-text)] truncate" title={tc.title}>{tc.title}</span>
           {tc.ai_generated && <Sparkles className="h-3 w-3 text-[var(--status-flaky)] flex-shrink-0" aria-label="AI generated" />}

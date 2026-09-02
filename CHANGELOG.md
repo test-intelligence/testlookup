@@ -340,6 +340,30 @@ Mongo; there is no MinIO service. Object storage is therefore a recording double
 which is sufficient for what is asserted — which prefixes reached `delete_prefix`
 and when — and insufficient for anything about MinIO's own behaviour, which the
 file does not claim. `make quality-gate` 33/33 and `ruff` clean.
+## 2026-09-02 — make the flexible table columns actually flexible
+
+Follow-up to the 2026-09-01 data-visibility work, found by checking the running
+deployment rather than the test suite. Merging the timing columns reclaimed the
+width it promised, but the columns meant to absorb that slack never shrank:
+`min-w-0` on a `<td>` does nothing in an auto-layout table, where a column is
+still sized to its content min-content width. On the live cluster
+`/intelligence` measured 1007px of columns inside a 641px panel (Build alone
+376px), so Pass rate and Timing were still scrolled out of view at a 1345px
+laptop width — the original complaint, merely reduced. `/test-management`
+overflowed its wrapper by 106px against a promise of no horizontal scrolling at
+900px.
+
+Both flexible columns now carry `width: 100%` with `max-width: 0`, the pair that
+actually lets a table column shrink below its content so the inner `truncate`
+engages. The Build cell's identifier stays `flex-none`, and its branch chip,
+author and project name truncate individually instead of forcing the column
+open.
+
+The regression test for this had asserted the title column carried *no* width —
+which is precisely what a content-sized column looks like, so it locked in the
+bug. It now asserts the mechanism instead, and both column guards are
+mutation-verified.
+
 
 ## 2026-09-01 — S2b: a deletion you can see while it is still running
 
