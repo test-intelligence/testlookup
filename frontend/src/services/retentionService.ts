@@ -1,4 +1,8 @@
 import type {
+  DeletionExecuteAccepted,
+  DeletionJob,
+  DeletionPreview,
+  RetentionCriteria,
   RetentionPolicy,
   RetentionPolicyWrite,
   RetentionPreview,
@@ -38,4 +42,31 @@ export const retentionService = {
       `/api/v1/projects/${projectId}/retention-policy/purge`,
       { confirmation_name: confirmationName },
     ),
+}
+
+/**
+ * Criteria deletion (S5). Two steps, and the split is the safety property:
+ * `preview` FREEZES a candidate set and returns its `job_id`; `execute` takes
+ * that id and replays the frozen set. Passing criteria to execute would
+ * re-resolve them, and the set deleted would not be the set reviewed.
+ *
+ * Errors ride the shared Axios interceptor: 403 (run ids from another
+ * project), 409 (job already executed, or the frozen set drifted), 422
+ * (confirmation name mismatch, or criteria that narrow nothing).
+ */
+export const criteriaDeletionService = {
+  preview: (projectId: string, criteria: RetentionCriteria) =>
+    postData<DeletionPreview, RetentionCriteria>(
+      `/api/v1/projects/${projectId}/deletion/preview`,
+      criteria,
+    ),
+
+  execute: (projectId: string, jobId: string, confirmationName: string) =>
+    postData<DeletionExecuteAccepted, { job_id: string; confirmation_name: string }>(
+      `/api/v1/projects/${projectId}/deletion/execute`,
+      { job_id: jobId, confirmation_name: confirmationName },
+    ),
+
+  jobs: (projectId: string) =>
+    getData<{ jobs: DeletionJob[] }>(`/api/v1/projects/${projectId}/deletion/jobs`),
 }

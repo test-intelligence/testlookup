@@ -34,6 +34,7 @@ import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import RetentionActivationNudge from '@/components/retention/RetentionActivationNudge'
 import StoragePanel from '@/components/retention/StoragePanel'
+import CriteriaDeletionPanel from '@/components/retention/CriteriaDeletionPanel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -649,6 +650,10 @@ export default function RetentionPage() {
       </section>
 
       {/* ── Danger zone ─────────────────────────────────────────────── */}
+      {activeProjectId && activeProjectId !== ALL_PROJECTS_ID && (
+        <CriteriaDeletionPanel projectId={activeProjectId} projectName={projectName} />
+      )}
+
       <section className="card space-y-4 border-[var(--status-failed-bd)]/40" aria-labelledby="retention-danger-heading">
         <header className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--status-failed)]">
           <AlertTriangle className="h-4 w-4" />

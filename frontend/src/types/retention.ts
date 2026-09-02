@@ -126,3 +126,108 @@ export const DEFAULT_RETENTION_POLICY: RetentionPolicy = Object.freeze({
   source: 'default',
   last_purge: null,
 })
+
+// ── Criteria deletion (S5) ───────────────────────────────────────────────────
+
+/**
+ * Statuses a run can hold. Mirrors the backend `LaunchStatus` enum exactly — a
+ * value outside this list matches nothing forever, and the delete would report
+ * success having found zero runs.
+ */
+export const RUN_STATUSES = ['IN_PROGRESS', 'PASSED', 'FAILED', 'STOPPED'] as const
+export type RunStatus = (typeof RUN_STATUSES)[number]
+
+/** Max run ids the backend accepts in one criteria set (it 422s above this). */
+export const MAX_RUN_IDS = 500
+
+/**
+ * What to delete. Every field is optional and AT LEAST ONE must be set — a
+ * project id alone is a full project purge, not a filtered deletion, and the
+ * backend refuses it.
+ *
+ * **AND across fields, OR within a list.** `statuses: ['FAILED']` with
+ * `branches: ['main']` means *failed AND on main*.
+ */
+export interface RetentionCriteria {
+  date_from?: string | null
+  date_to?: string | null
+  older_than_days?: number | null
+  run_ids?: string[] | null
+  statuses?: RunStatus[] | null
+  suite_names?: string[] | null
+  /**
+   * `only` matches the run's own suite label — the conservative reading, which
+   * will not delete a multi-suite run because one of its suites was named.
+   * `any` matches a run with any test case in the suite; destructive, opt-in.
+   */
+  suite_match?: 'only' | 'any'
+  branches?: string[] | null
+  environments?: string[] | null
+}
+
+/** Fields that actually narrow the set. `project_id` is deliberately absent. */
+export const NARROWING_FIELDS: Array<keyof RetentionCriteria> = [
+  'date_from',
+  'date_to',
+  'older_than_days',
+  'run_ids',
+  'statuses',
+  'suite_names',
+  'branches',
+  'environments',
+]
+
+/** One run the preview refuses to delete, and every reason it gave. */
+export interface DeletionBlocker {
+  run_id: string
+  reasons: string[]
+}
+
+/**
+ * A FROZEN candidate set. `job_id` is what execute takes — never the criteria
+ * again, because re-resolving would run a different set from the one shown
+ * here: `TestRun.status` and `primary_suite_name` are rewritten by ingestion
+ * and live-session close while the job waits.
+ */
+export interface DeletionPreview {
+  job_id: string
+  project_id: string
+  run_count: number
+  run_ids: string[]
+  candidate_hash: string
+  /** The set exceeded the reviewable bound and was cut. */
+  truncated: boolean
+  /** Object prefixes outside the project scope — NOT deleted, reported here. */
+  refused_prefixes: string[]
+  blocked: DeletionBlocker[]
+}
+
+export interface DeletionExecuteAccepted {
+  job_id: string
+  run_count: number
+  status: 'accepted'
+}
+
+/** Job states the backend can actually produce. There is no `cancelled`. */
+export type DeletionJobStatus =
+  | 'queued'
+  | 'previewed'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'partial'
+
+export interface DeletionJob {
+  id: string
+  project_id: string
+  job_kind: string
+  status: DeletionJobStatus
+  criteria?: Record<string, unknown> | null
+  counts?: Record<string, unknown> | null
+  /** NULL means NOT MEASURED. Never render it as 0. */
+  bytes_reclaimed?: number | null
+  error?: string | null
+  requested_at: string
+  started_at?: string | null
+  finished_at?: string | null
+}
