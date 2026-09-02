@@ -28,7 +28,7 @@ from __future__ import annotations
 import uuid
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +40,8 @@ from app.core.deps import (
 )
 from app.models.postgres import Project, User, UserRole
 from app.models.schemas import (
+    DeletionJobListResponse,
+    DeletionJobResponse,
     ProjectStorageResponse,
     RetentionPolicyRead,
     RetentionPolicyWrite,
@@ -48,6 +50,7 @@ from app.models.schemas import (
     RetentionPurgeRequest,
 )
 from app.services import retention_service as svc
+from app.services import deletion_job_service
 from app.services import storage_accounting_service
 
 router = APIRouter(prefix="/api/v1/projects", tags=["Retention"])
@@ -143,6 +146,52 @@ async def get_project_storage(
         db, project_id
     )
     return ProjectStorageResponse(**footprint.as_payload())
+
+
+
+@router.get(
+    "/{project_id}/deletion/jobs",
+    response_model=DeletionJobListResponse,
+)
+async def list_deletion_jobs(
+    project_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_project_access()),
+):
+    """Deletions that have run for this project, newest first.
+
+    The purge already writes a never-purged record to ``settings_audit_log``,
+    but that row is written after the fact — it cannot say a job is running
+    now, and it cannot exist for one that failed. This is that view.
+    """
+    jobs = await deletion_job_service.list_jobs(db, project_id, limit=limit)
+    return DeletionJobListResponse(
+        jobs=[DeletionJobResponse.model_validate(j) for j in jobs]
+    )
+
+
+@router.get(
+    "/{project_id}/deletion/jobs/{job_id}",
+    response_model=DeletionJobResponse,
+)
+async def get_deletion_job(
+    project_id: uuid.UUID,
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_project_access()),
+):
+    """One deletion job — the endpoint a 202 caller polls.
+
+    404s when the job belongs to another project, rather than leaking that the
+    id exists somewhere else.
+    """
+    job = await deletion_job_service.get_job(db, job_id)
+    if job is None or job.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Deletion job not found")
+    return DeletionJobResponse.model_validate(job)
 
 
 @router.post(

@@ -17,6 +17,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from alembic.config import Config as AlembicConfig
+from alembic.script import ScriptDirectory
 from fastapi import HTTPException
 from sqlalchemy.engine import make_url
 from sqlalchemy import delete, func, select, text
@@ -195,10 +197,23 @@ async def _run_alembic(dsn: str, direction: str, revision: str) -> None:
 async def test_migration_postconditions_are_true_in_postgres(pg_engine):
     async with pg_engine.connect() as connection:
         revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-        # Head advanced to 0146 when evidence artifacts were allowed to outlive
-        # their deleted runs. The lifecycle tables and indexes asserted below
-        # are unchanged by that retention fix.
-        assert revision == "0146"
+        # Assert the database is AT HEAD, not at a literal revision.
+        #
+        # This was pinned to a hardcoded number and had already been bumped
+        # once ("head advanced to 0146..."). Every unrelated migration then
+        # failed this test, and the failure said nothing about the lifecycle
+        # postconditions the test actually exists to check — it only said
+        # somebody added a migration. Reading the head from the script
+        # directory keeps the real check (every migration applied) and drops
+        # the false one.
+        head = ScriptDirectory.from_config(
+            AlembicConfig(str(BACKEND_ROOT / "alembic.ini"))
+        ).get_current_head()
+        assert revision == head, (
+            f"database is at {revision}, head is {head} — the fixture did not "
+            "run every migration, so the postconditions below are being "
+            "asserted against a partially migrated schema"
+        )
 
         duplicate_versions = await connection.scalar(text(
             "SELECT count(*) FROM ("

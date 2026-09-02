@@ -79,6 +79,10 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
 #   "module.py": (max_commits, "reason")
 COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
     # ── Worker-owned transactions (Celery tasks) ─────────────────────
+    "deletion_job_service.py": (
+        2,
+        "Independent-session BY DESIGN, and the design is the point. This module records that a destructive job started, and how it ended. A ``failed`` or ``partial`` status written on the caller's session is erased by the very rollback that produced the failure, so a stage-only writer could only ever record successes — precisely the half an operator does not need. open_job and close_job therefore each open their own AsyncSessionLocal and commit it (2 commits). Both swallow their own exceptions so a bookkeeping failure cannot break the purge it is describing. Same reason the retention purge-audit row is written after its commit rather than inside it.",
+    ),
     "agent_memory_service.py": (
         1,
         "Celery-task-owned: pipeline memory persist runs in an isolated "
@@ -541,7 +545,13 @@ def test_allowlist_total_is_bounded() -> None:
     # 60 -> 61 for the Phase 3 cluster-child transactional outbox, and
     # 61 -> 71 for the durable action-ledger and report-supersession
     # workers added in the Phase 3 decision/action slices.
-    assert total <= 71, (
+    # Raised 71 -> 73 on 2026-09-01 (retention S2b): deletion_job_service's
+    # two commits are the slice's load-bearing design, not a shortcut — a
+    # deletion's `failed` status written on the caller's session is erased by
+    # the rollback that produced the failure, so open_job and close_job each
+    # own an independent AsyncSessionLocal. Making them stage-only would make
+    # the table structurally incapable of recording the outcomes it exists for.
+    assert total <= 73, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )

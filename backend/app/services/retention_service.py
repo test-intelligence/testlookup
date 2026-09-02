@@ -22,6 +22,7 @@ class                   what it covers
                         metadata/content excerpts
                         (``pipeline/{Y}/{m}/{d}/{pipeline_run_id}/…``).
 ``audit_days``          ``access_audit_logs`` + ``test_case_audit_logs``
+                        + terminal ``deletion_jobs``
                         (project-scoped), ``ai_provenance_records`` (via the
                         0113 project_id column — survives run deletion),
                         Mongo ``pipeline_event_log`` (by pipeline_run_ids
@@ -85,6 +86,7 @@ from app.models.postgres import (
     AgentMemoryEntry,
     AIProvenanceRecord,
     CompliancePack,
+    DeletionJob,
     EvidenceArtifact,
     LiveSession,
     Project,
@@ -94,6 +96,7 @@ from app.models.postgres import (
     TestCaseAuditLog,
     TestRun,
 )
+from app.services import deletion_job_service
 
 logger = structlog.get_logger(__name__)
 
@@ -112,6 +115,24 @@ FIELD_BOUNDS: dict[str, tuple[int, int]] = {
     "artifacts_days": (7, 3650),
     "audit_days": (365, 3650),
 }
+
+def deletion_job_purge_filter(project_id: uuid.UUID, cutoff: datetime) -> tuple:
+    """WHERE clause for retiring `deletion_jobs` on the audit clock.
+
+    Module-level so tests compile the predicate the purge actually uses. A test
+    that rebuilt an equivalent clause would keep passing after the real one
+    lost its project scope.
+
+    Only TERMINAL jobs are in scope: a row still marked ``running`` past the
+    window is a sweep that hung, and deleting it on a clock would erase the
+    only evidence that it did.
+    """
+    return (
+        DeletionJob.project_id == project_id,
+        DeletionJob.requested_at < cutoff,
+        DeletionJob.status.in_(sorted(deletion_job_service.TERMINAL_STATUSES)),
+    )
+
 
 def _sum_measured(values: Iterable[Optional[int]]) -> Optional[int]:
     """Total a group of per-store counts, or None if any store was unreachable.
@@ -492,6 +513,7 @@ class _ExecutionPlan:
     event_archive_where: tuple
     access_audit_where: tuple
     tc_audit_where: tuple
+    deletion_job_where: tuple
     provenance_where: tuple
     memory_expired_ids: list
     expired_packs: list
@@ -717,6 +739,7 @@ async def run_purge(
         AIProvenanceRecord.project_id == project_id,
         AIProvenanceRecord.created_at < cutoffs["audit"],
     )
+    deletion_job_where = deletion_job_purge_filter(project_id, cutoffs["audit"])
     memory_expired_where = (
         AgentMemoryEntry.project_id == project_id,
         AgentMemoryEntry.lifecycle_status == "active",
@@ -744,6 +767,7 @@ async def run_purge(
         event_archive_where=event_archive_where,
         access_audit_where=access_audit_where,
         tc_audit_where=tc_audit_where,
+        deletion_job_where=deletion_job_where,
         provenance_where=provenance_where,
         memory_expired_ids=memory_expired_ids,
         expired_packs=expired_packs,
@@ -820,6 +844,7 @@ async def run_purge(
             "audit_rows": (
                 await _count(AccessAuditLog.id, access_audit_where)
                 + await _count(TestCaseAuditLog.id, tc_audit_where)
+                + await _count(DeletionJob.id, deletion_job_where)
             ),
             "provenance_rows": await _count(AIProvenanceRecord.id, provenance_where),
             "compliance_packs_expired": len(expired_packs),
@@ -988,6 +1013,9 @@ async def execute_candidates(
     # (6) Audit-class deletes (audit clock — separate from the run clock).
     access_result = await db.execute(delete(AccessAuditLog).where(*plan.access_audit_where))
     tc_audit_result = await db.execute(delete(TestCaseAuditLog).where(*plan.tc_audit_where))
+    deletion_job_result = await db.execute(
+        delete(DeletionJob).where(*plan.deletion_job_where)
+    )
     provenance_result = await db.execute(
         delete(AIProvenanceRecord).where(*plan.provenance_where)
     )
@@ -1020,6 +1048,7 @@ async def execute_candidates(
             "event_archive_stripped": event_archive_stripped,
             "access_audit_rows": int(getattr(access_result, "rowcount", 0) or 0),
             "test_case_audit_rows": int(getattr(tc_audit_result, "rowcount", 0) or 0),
+            "deletion_job_rows": int(getattr(deletion_job_result, "rowcount", 0) or 0),
             "provenance_rows": int(getattr(provenance_result, "rowcount", 0) or 0),
             "compliance_packs": packs_deleted,
             "memory_entries_expired": memory_rows_expired,

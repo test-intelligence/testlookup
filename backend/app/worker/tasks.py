@@ -4422,10 +4422,20 @@ async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any
             )
 
     summary: dict[str, Any] = {"projects": len(targets), "errors": 0, "results": {}}
+    from app.services import deletion_job_service
+
     for pid in targets:
         started = _time.monotonic()
         errors: list[str] = []
         out: dict[str, Any] | None = None
+
+        # Opened BEFORE the purge and on its own session, so a job that dies
+        # mid-flight still leaves a `running` row rather than no trace at all.
+        # The audit row below is written after the fact and cannot express
+        # "started but never finished".
+        job_id = await deletion_job_service.open_job(
+            project_id=pid, job_kind=deletion_job_service.KIND_SCHEDULED
+        )
         try:
             async with AsyncSessionLocal() as db:
                 out = await retention_service.run_purge(
@@ -4439,6 +4449,20 @@ async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any
                 "[retention] purge failed for project %s: %s", pid, exc,
             )
         duration_ms = int((_time.monotonic() - started) * 1000)
+
+        # Closed on its own session too — a `failed` written on the session
+        # that just rolled back would be rolled back with it, so the only
+        # outcome such a writer could ever record is success.
+        await deletion_job_service.close_job(
+            job_id,
+            status=(
+                deletion_job_service.FAILED
+                if errors
+                else deletion_job_service.COMPLETED
+            ),
+            counts=(out or {}).get("counts"),
+            error=errors[0] if errors else None,
+        )
 
         # Purge-audit record — settings_audit_log is itself NEVER purged,
         # which is what keeps these records durable past every window.

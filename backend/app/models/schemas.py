@@ -90,6 +90,32 @@ class SelfUpdateProfileRequest(BaseModel):
     avatar_color: Optional[str] = Field(None, max_length=20)
 
 
+class DeletionJobResponse(BaseModel):
+    """One deletion that ran (or is running).
+
+    `bytes_reclaimed` is nullable and is NOT defaulted to 0 — "reclaimed
+    nothing" and "nobody measured" are opposite findings, and this is the
+    surface that tells an operator whether a purge was worth running.
+    """
+    id: uuid.UUID
+    project_id: uuid.UUID
+    job_kind: str
+    status: str
+    criteria: Optional[dict] = None
+    counts: Optional[dict] = None
+    bytes_reclaimed: Optional[int] = None
+    error: Optional[str] = None
+    requested_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DeletionJobListResponse(BaseModel):
+    jobs: List[DeletionJobResponse] = Field(default_factory=list)
+
+
 class StoreFootprintResponse(BaseModel):
     """One store's contribution to a project's storage footprint.
 
