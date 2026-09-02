@@ -281,7 +281,7 @@ function SearchCommandBar({
   scope: EntityScope
   onScopeChange: (s: EntityScope) => void
   scopeCounts: Record<EntityScope, number>
-  inputRef: React.RefObject<HTMLInputElement>
+  inputRef: React.RefObject<HTMLInputElement | null>
 }) {
   const [focused, setFocused] = useState(false)
   return (
