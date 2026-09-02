@@ -360,6 +360,54 @@ load-bearing assertion was mutation-tested — the status mapping, the N+1 guard
 the key allowlist, the ON CONFLICT clause, the preview-before-enable gate, the
 dismissed check, and the loading-state guard were each broken in turn and each
 test observed failing.
+## 2026-09-01 — S2a: one executor, so every deletion path shares the ordering
+
+`run_purge` did resolution and execution in one function, so single-run
+deletion and criteria deletion would each have had to re-implement the delete
+sequence. That sequence is not incidental: the Postgres CASCADE destroys the
+only mapping from a run to its Mongo documents and MinIO keys, so those stores
+must be visited while the mapping still exists. Three copies of that rule is
+how the stores drift apart.
+
+The execute half is now `execute_candidates`. **The move is provably faithful**
+— the 110-line body is byte-identical once the six `plan.` qualifiers are
+removed. That was worth verifying mechanically rather than asserting: an
+earlier plan proposed a "candidate-set parity fixture" to prove it, which would
+have been theatre, because the retention test harness routes SELECTs by
+compiled-SQL substring and a refactor changes the SQL text.
+
+The extraction did need one new structure. The execute branch closed over nine
+locals built during resolution, and none were on `_Candidates`: seven never
+reference a run at all, and `event_archive_where` keys on a different column
+from the runs clock. `_ExecutionPlan` carries them. That is the concrete reason
+a single `older_than_days` criterion could never express the policy purge —
+it is four independent clocks, not one.
+
+**What could not be proved without a database, and now is.**
+`tests/integration/test_purge_executor_against_real_postgres.py` asserts that
+the Mongo delete is handed the purged run's id, which is only possible if the
+id was materialized before the cascade. A mocked session cannot execute a
+foreign key, so no unit test can observe this: if the executor ever resolved
+ids after the run delete, every unit test would still pass, every count would
+still report success, and the data would be orphaned forever.
+
+Three source-reading guards broke, loudly and correctly, because the code they
+inspect moved. They were re-pointed through a single `_purge_source()` helper
+that reads both halves, and one gained an explicit assertion that the split
+found something — a `str.split` that finds nothing does not fail, it just stops
+protecting anything.
+
+The audit-class deletes stay in `retention_service.py`: `_AUDIT_DELETE_ALLOWLIST`
+in the quality gate is a one-element set checked by exact path membership, so
+moving them would fail CI, and widening the allowlist would weaken a real
+invariant.
+
+Verified: 261 retention-adjacent unit tests, the quality gate (including
+`audit-write-discipline`), ruff. **The two integration tests were not run** —
+no `TESTLOOKUP_POSTGRES_TEST_DSN` was reachable here. They collect cleanly, and
+they need a real database before this merges.
+
+
 ## 2026-09-01 — H1: the purge protected evidence artifacts, then deleted them anyway
 
 `retention_service` deliberately spares evidence artifacts that a **published

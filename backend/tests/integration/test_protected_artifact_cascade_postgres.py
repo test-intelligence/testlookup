@@ -58,10 +58,10 @@ async def _seed(
     )
     await conn.execute(
         text(
-            "INSERT INTO test_runs (id, project_id, status, created_at) "
-            "VALUES (:id, :p, 'PASSED', :c)"
+            "INSERT INTO test_runs (id, project_id, build_number, status, created_at) "
+            "VALUES (:id, :p, :b, 'PASSED', :c)"
         ),
-        {"id": run_id, "p": project_id, "c": created},
+        {"id": run_id, "p": project_id, "b": f"ci-{run_id.hex[:8]}", "c": created},
     )
     await conn.execute(
         text(

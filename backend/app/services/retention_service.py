@@ -478,6 +478,26 @@ async def _published_report_artifact_ids(
 
 
 @dataclass
+class _ExecutionPlan:
+    """The non-run-scoped filters the execute phase needs.
+
+    ``_Candidates`` holds what is derived FROM runs. These eight are not: seven
+    never reference a run at all, and ``event_archive_where`` keys on a
+    different column (``event_archive_at``) from the one the runs clock uses.
+    They come from four independent clocks, which is exactly why a single
+    ``older_than_days`` criterion could never express the policy purge — and why
+    the executor takes them as data rather than closing over them.
+    """
+
+    event_archive_where: tuple
+    access_audit_where: tuple
+    tc_audit_where: tuple
+    provenance_where: tuple
+    memory_expired_ids: list
+    expired_packs: list
+
+
+@dataclass
 class _Candidates:
     """Everything materialized from Postgres BEFORE any delete (the
     ordering trap: the CASCADE destroys the only run→doc/key mapping)."""
@@ -720,6 +740,15 @@ async def run_purge(
         )
     ).scalars().all()
 
+    plan = _ExecutionPlan(
+        event_archive_where=event_archive_where,
+        access_audit_where=access_audit_where,
+        tc_audit_where=tc_audit_where,
+        provenance_where=provenance_where,
+        memory_expired_ids=memory_expired_ids,
+        expired_packs=expired_packs,
+    )
+
     cutoffs_iso = {k: v.isoformat() for k, v in cutoffs.items()}
     # None, not 0 — these stores are SKIPPED entirely when external stores are
     # injected (the test path), so a zero here would report "nothing in the
@@ -811,6 +840,58 @@ async def run_purge(
 
     # ── EXECUTE ──────────────────────────────────────────────────────────
 
+    counts = await execute_candidates(
+        db,
+        project_id=project_id,
+        cand=cand,
+        plan=plan,
+        mongo=mongo,
+        storage=storage,
+        cache_counts=cache_counts,
+        search_index_documents=search_index_documents,
+        now=now,
+    )
+
+    logger.info(
+        "retention_purge_executed",
+        project_id=str(project_id),
+        cutoffs=cutoffs_iso,
+        counts=counts,
+    )
+    return {"mode": "execute", "cutoffs": cutoffs_iso, "counts": counts}
+
+
+
+async def execute_candidates(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    cand: _Candidates,
+    plan: _ExecutionPlan,
+    mongo: Any,
+    storage: Any,
+    cache_counts: dict[str, int],
+    search_index_documents: int,
+    now: datetime,
+) -> dict[str, Any]:
+    """Perform the deletes, in the one order that is safe (see §1.2).
+
+    Extracted verbatim from ``run_purge``'s execute branch so that the
+    scheduled purge and every future deletion path share ONE executor. The
+    ordering is the whole reason this is a separate function rather than a
+    convenience: the Postgres CASCADE destroys the only mapping from runs to
+    Mongo documents and MinIO keys, so those stores must be visited while the
+    mapping still exists.
+
+    Stages only. The caller owns ``db.commit()`` — the router for preview, the
+    Celery task for execute.
+
+    ``cand`` carries the run-scoped candidates; ``plan`` carries the eight
+    non-run-scoped filters the execute branch previously closed over. Passing
+    them explicitly is what makes the resolution phase separable at all: they
+    are derived from four independent clocks, and seven of them never
+    reference a run.
+    """
     # (2) Mongo deletes — while the Postgres mapping still exists.
     mongo_deleted: dict[str, int] = {}
     for collection, field, attr in _MONGO_PLANS:
@@ -839,10 +920,10 @@ async def run_purge(
     # lifecycle state, and Chroma is purged before the caller commits.
     memory_vectors_deleted = 0
     memory_rows_expired = 0
-    if memory_expired_ids:
+    if plan.memory_expired_ids:
         from app.services.agent_memory_service import expire_memory_entries, purge_memory_vectors
 
-        memory_vectors_deleted = await purge_memory_vectors(project_id, memory_expired_ids)
+        memory_vectors_deleted = await purge_memory_vectors(project_id, plan.memory_expired_ids)
         memory_rows_expired = await expire_memory_entries(
             db, project_id=project_id, now=now
         )
@@ -899,23 +980,23 @@ async def run_purge(
     # recovery service's archive-window check stays coherent.
     strip_result = await db.execute(
         update(TestRun)
-        .where(*event_archive_where)
+        .where(*plan.event_archive_where)
         .values(event_archive=None, event_archive_at=None)
     )
     event_archive_stripped = int(getattr(strip_result, "rowcount", 0) or 0)
 
     # (6) Audit-class deletes (audit clock — separate from the run clock).
-    access_result = await db.execute(delete(AccessAuditLog).where(*access_audit_where))
-    tc_audit_result = await db.execute(delete(TestCaseAuditLog).where(*tc_audit_where))
+    access_result = await db.execute(delete(AccessAuditLog).where(*plan.access_audit_where))
+    tc_audit_result = await db.execute(delete(TestCaseAuditLog).where(*plan.tc_audit_where))
     provenance_result = await db.execute(
-        delete(AIProvenanceRecord).where(*provenance_where)
+        delete(AIProvenanceRecord).where(*plan.provenance_where)
     )
 
     # Expired compliance packs: object first, row second — if the object
     # delete fails the row survives, so the next sweep retries (re-entrant).
     packs_deleted = 0
     deletable_pack_ids: list[uuid.UUID] = []
-    for pack in expired_packs:
+    for pack in plan.expired_packs:
         try:
             await storage.delete_object(pack.minio_key, bucket=_COMPLIANCE_BUCKET)
             deletable_pack_ids.append(pack.id)
@@ -950,10 +1031,4 @@ async def run_purge(
         "memory": {"vectors_deleted": memory_vectors_deleted},
     }
 
-    logger.info(
-        "retention_purge_executed",
-        project_id=str(project_id),
-        cutoffs=cutoffs_iso,
-        counts=counts,
-    )
-    return {"mode": "execute", "cutoffs": cutoffs_iso, "counts": counts}
+    return counts

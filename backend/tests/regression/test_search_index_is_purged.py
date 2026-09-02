@@ -145,7 +145,12 @@ def test_retention_reports_the_search_index_separately_from_the_cache():
 
     from app.services import retention_service
 
-    source = inspect.getsource(retention_service.run_purge)
+    # S2a moved the counts assembly into ``execute_candidates``; the counter
+    # itself is still computed during resolution. Read both halves, or this
+    # guard passes by finding nothing.
+    source = inspect.getsource(retention_service.run_purge) + inspect.getsource(
+        retention_service.execute_candidates
+    )
     assert "search_index_documents" in source
     assert '"search_index"' in source, "execute result must report the store it purged"
     # Preview must report it too — a preview that under-counts is its own
