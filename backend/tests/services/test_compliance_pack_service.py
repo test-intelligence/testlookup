@@ -38,10 +38,20 @@ def test_sha256_matches_hashlib():
 
 
 def test_build_minio_key_is_date_prefixed_and_unique_per_pack():
+    """Repointed at the key builder production actually calls (S6a).
+
+    ``_build_minio_key`` was generalised into ``build_export_key`` and this
+    test was its only remaining caller — it would have gone on asserting the
+    shape of a function nothing used, while the real key builder went
+    unchecked by it.
+    """
     release_id = uuid.uuid4()
     pack_id = uuid.uuid4()
     ts = datetime(2026, 4, 14, 10, 0, tzinfo=timezone.utc)
-    key = svc._build_minio_key(release_id, ts, pack_id)
+    scope = svc.ExportScope.for_release(
+        release_id=release_id, project_id=uuid.uuid4(), run_ids=[uuid.uuid4()]
+    )
+    key = svc.build_export_key(scope, ts, pack_id)
     assert key.startswith("compliance/2026/04/14/")
     assert str(release_id) in key
     assert key.endswith(f"{pack_id}.zip")
@@ -65,12 +75,19 @@ def test_build_manifest_includes_every_file_with_correct_hash():
         "run.json": b'{"id": "t1"}',
     }
     release = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    # _build_manifest takes an ExportScope now (S6a) — one description for
+    # both the release pack and a retention export, so there is one
+    # manifest chain rather than two that can drift.
+    scope = svc.ExportScope.for_release(
+        release_id=release.id, project_id=release.project_id,
+        run_ids=[uuid.uuid4()],
+    )
     run = SimpleNamespace(id=uuid.uuid4())
     decision = SimpleNamespace(recommendation="GO", risk_score=10, policy_id=None)
     manifest_bytes = svc._build_manifest(
         files,
         datetime.now(timezone.utc),
-        release,
+        scope,
         run,
         decision,
     )
@@ -90,8 +107,15 @@ def test_build_manifest_includes_every_file_with_correct_hash():
 def test_build_manifest_is_sorted_by_filename():
     files = {"z.json": b"z", "a.json": b"a", "m.json": b"m"}
     release = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    # _build_manifest takes an ExportScope now (S6a) — one description for
+    # both the release pack and a retention export, so there is one
+    # manifest chain rather than two that can drift.
+    scope = svc.ExportScope.for_release(
+        release_id=release.id, project_id=release.project_id,
+        run_ids=[uuid.uuid4()],
+    )
     manifest = json.loads(
-        svc._build_manifest(files, datetime.now(timezone.utc), release, None, None)
+        svc._build_manifest(files, datetime.now(timezone.utc), scope, None, None)
     )
     names = [e["name"] for e in manifest["files"]]
     assert names == sorted(names)
@@ -113,11 +137,18 @@ def test_zip_includes_manifest_and_every_declared_file():
         "run.json": b'{"id": "t1"}',
     }
     release = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    # _build_manifest takes an ExportScope now (S6a) — one description for
+    # both the release pack and a retention export, so there is one
+    # manifest chain rather than two that can drift.
+    scope = svc.ExportScope.for_release(
+        release_id=release.id, project_id=release.project_id,
+        run_ids=[uuid.uuid4()],
+    )
     run = SimpleNamespace(id=uuid.uuid4(), build_number="b-1")
     decision = SimpleNamespace(recommendation="GO", risk_score=10, policy_id=None)
 
     manifest_bytes = svc._build_manifest(
-        files, datetime.now(timezone.utc), release, run, decision,
+        files, datetime.now(timezone.utc), scope, run, decision,
     )
 
     buf = io.BytesIO()
