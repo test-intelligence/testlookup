@@ -33,6 +33,15 @@ toolchain. Regression: `frontend/src/hooks/eslintTen.upgrade.test.ts` pins the v
 majors and asserts the minimatch→brace-expansion v5 override (guarding against a
 "simplify the overrides" change that would silently re-break `npm run lint`).
 
+## 2026-09-01 — validate the React Router 7 upgrade under full-suite load
+
+React Router DOM is upgraded to 7.18.2. The full parallel frontend suite
+exposed two settings-page tests whose per-test dynamic imports could consume
+Vitest's five-second budget while Vite transformed the larger router graph.
+Those suites now import their page once in a bounded suite setup hook, keeping
+the product assertions and normal per-test timeout intact. All 1,325 frontend
+tests, lint, and the production build pass with the upgraded router.
+
 ## 2026-09-01 — make storage-footprint limits and scope explicit
 
 Storage accounting now marks a reached object store as incomplete when the
