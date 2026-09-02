@@ -739,7 +739,7 @@ function renderHighlightedQuery(q: string): React.ReactNode {
     )
     last = m.index + m[0].length
   }
-  if (last < q.length) parts.push(<span key={key++}>{q.slice(last)}</span>)
+  if (last < q.length) parts.push(<span key={key}>{q.slice(last)}</span>)
   return parts
 }
 
