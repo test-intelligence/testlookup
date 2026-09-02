@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026-09-02 — S5 UI: the criteria builder, and the freeze made visible
+
+`CriteriaDeletionPanel` on the retention page: narrow to the runs you want
+gone, review exactly what was selected, then execute. Completes S5, whose
+backend shipped in #953 with no UI.
+
+**Any edit to a criterion discards the preview.** The counts on screen were
+resolved from the OLD criteria, so leaving them visible would let an operator
+authorise a number that is not what would run. This mirrors the backend's freeze
+rather than duplicating its logic: the component never sends criteria to
+execute, only the `job_id` it was handed.
+
+**Three things the preview surfaces that would otherwise be silent:**
+
+* **Blocked runs and why** — in flight, or cited by a compliance pack, release
+  or decision report. Excluded from the frozen set and listed, so the count
+  authorised is the count that goes rather than a number discovered to be wrong
+  mid-execution.
+* **Refused object prefixes** — storage outside the project's scope that will
+  *not* be deleted. Without this the operator watches storage fail to fall and
+  has nothing to go on.
+* **Truncation** — the set exceeded the reviewable bound and was cut, rather
+  than quietly deleting a slice of it.
+
+**The empty-criteria guard is stated, not just enforced.** With nothing
+selected the Preview button is disabled *and* says why: deleting with no
+criteria would purge the entire project. The backend 422s it either way; the UI
+should not make an operator click to find out.
+
+`suite_match` defaults to `only` — the conservative reading that will not
+delete a multi-suite run because one of its suites was named. Choosing `any`
+shows an inline warning that it does exactly that.
+
+`buildCriteria` omits empty fields rather than sending empty lists: a
+present-but-empty list is a criterion matching nothing, which the backend would
+treat as a real narrowing that selected zero runs.
+
+The form translation lives in `criteriaForm.ts`, not the component. That removes
+the Fast Refresh lint warning honestly (by moving the non-component exports
+rather than suppressing them) and makes the translation testable without a DOM.
+
+**Validated:** 16 new component tests, 50 across the retention components,
+`tsc --noEmit` clean, `eslint` clean.
+
 ## 2026-09-02 — S5: delete by criteria, executing the set that was reviewed
 
 `POST /api/v1/projects/{project_id}/deletion/preview` resolves a criteria set,
