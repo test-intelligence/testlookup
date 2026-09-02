@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-09-02 — deps: ESLint 9→10 (+ @eslint/js), untangling the brace-expansion pin
+
+Supersedes Dependabot #921 (@eslint/js 10 alone), which could not land:
+`@eslint/js@10` peers `eslint: ^10`, so bumping it without eslint itself leaves an
+unsatisfiable peer. `eslint` and `@eslint/js` are bumped 9→10 together. Every
+lint plugin already declares `eslint ^10` support (typescript-eslint 8,
+eslint-plugin-react-hooks 7, eslint-plugin-react-refresh 0.5), and CI's frontend
+job already runs Node 22, satisfying ESLint 10's `^20.19 || ^22.13 || >=24` engine.
+
+**One override migration.** ESLint 10 resolves config globs through
+`@eslint/config-array` → `minimatch@10`, which imports the **named** `expand`
+export from `brace-expansion` (the v2+/v5 API). The repo's global
+`brace-expansion: 1.1.13` override (a ReDoS-CVE safety pin) forces v1, whose
+default-only export has no `.expand` — so ESLint 10 crashed at startup with
+`(0 , brace_expansion_1.expand) is not a function` and every lint run died.
+`minimatch` is the only `brace-expansion` consumer in the tree, so the existing
+narrow `@typescript-eslint/typescript-estree → brace-expansion: 5.0.5` override is
+replaced by a `minimatch → brace-expansion: 5.0.9` override that routes **both**
+minimatch@10 instances to a v5 (named-export, CVE-patched) build. The global v1
+pin stays as a safety net for any future non-minimatch consumer.
+
+**Two genuine defects fixed**, surfaced by ESLint 10 promoting `no-useless-assignment`
+to its recommended set: a dead `let cmp = 0` initializer in `useTableSort.ts`
+(every branch of the exhaustive if/else reassigns it) and a dead final `key++`
+post-increment in `SearchPage.tsx`'s query highlighter (the incremented value is
+never read again). Both are behavior-preserving.
+
+**Validated:** `npm run lint` (0 errors, 18 warnings — identical set to `main`),
+`tsc --noEmit`, `vitest run` (1341 passed), and `vite build` all green on the new
+toolchain. Regression: `frontend/src/hooks/eslintTen.upgrade.test.ts` pins the v10
+majors and asserts the minimatch→brace-expansion v5 override (guarding against a
+"simplify the overrides" change that would silently re-break `npm run lint`).
 ## 2026-09-01 — coordinate the React 19 runtime and type upgrade
 
 React, React DOM, and both corresponding type packages now move to 19.2
@@ -16,6 +48,7 @@ Vitest's five-second budget while Vite transformed the larger router graph.
 Those suites now import their page once in a bounded suite setup hook, keeping
 the product assertions and normal per-test timeout intact. All 1,325 frontend
 tests, lint, and the production build pass with the upgraded router.
+
 ## 2026-09-01 — make storage-footprint limits and scope explicit
 
 Storage accounting now marks a reached object store as incomplete when the
