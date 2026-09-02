@@ -32,6 +32,13 @@ never read again). Both are behavior-preserving.
 toolchain. Regression: `frontend/src/hooks/eslintTen.upgrade.test.ts` pins the v10
 majors and asserts the minimatch→brace-expansion v5 override (guarding against a
 "simplify the overrides" change that would silently re-break `npm run lint`).
+## 2026-09-01 — coordinate the React 19 runtime and type upgrade
+
+React, React DOM, and both corresponding type packages now move to 19.2
+together, avoiding the invalid mixed-major dependency graph in the generated
+upgrade. Two forwarded input-ref contracts now explicitly admit the null state
+returned by React 19's `useRef` typing. The aligned tree has no invalid peers
+and passes lint and a production TypeScript build.
 
 ## 2026-09-01 — validate the React Router 7 upgrade under full-suite load
 
