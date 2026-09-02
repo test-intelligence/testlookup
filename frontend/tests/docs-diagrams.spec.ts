@@ -94,7 +94,33 @@ test.describe('user guide diagrams', () => {
     // require the measurement to notice. This asserts the detector works,
     // independently of whether the app currently has anything to detect.
     await page.goto(HARNESS)
-    await page.locator('article figure svg').first().waitFor({ timeout: 60_000 })
+
+    // Wait for EVERY diagram, not just the first one to appear.
+    //
+    // Mermaid renders each diagram independently and asynchronously, so the
+    // first `article figure svg` to exist says nothing about the rest — and
+    // this test needs a `g.node foreignObject`, which a freshly-inserted <svg>
+    // does not necessarily carry yet. Gating on one <svg> made the narrowing
+    // step find nothing and fail with "no node label was available to narrow",
+    // intermittently and only under CI timing. Measuring mid-render can also
+    // report a half-laid-out label as clipped, tripping the precondition below.
+    // Same gate the measurement test uses.
+    const handle = await page.waitForFunction(() => window.__HARNESS__, undefined, {
+      timeout: 60_000,
+    })
+    const info = await handle.jsonValue()
+    await expect
+      .poll(() => page.locator('article figure svg').count(), {
+        timeout: 60_000,
+        message: 'not every diagram produced an SVG',
+      })
+      .toBe(info.expected)
+
+    // Then wait for the exact element this test narrows.
+    await page
+      .locator('article figure g.node foreignObject')
+      .first()
+      .waitFor({ timeout: 60_000 })
 
     const before = await page.evaluate(measureDiagramLabels, 'article figure')
     expect(before.clipped, 'precondition: nothing should be clipped yet').toEqual([])

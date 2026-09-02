@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-09-02 — the diagram self-test no longer measures a half-drawn page
+
+`docs-diagrams.spec.ts` intermittently failed in CI with "no node label was
+available to narrow". The self-test waited for the FIRST `article figure svg`
+to exist and then immediately reached for a `g.node foreignObject` to shrink —
+but Mermaid renders each diagram independently and asynchronously, so one `<svg>`
+says nothing about the rest.
+
+Measured at that gate across five local runs, the page held 1, 8, 6, 2 and 6 of
+its 13 diagrams, and 10 to 55 of its 97 node labels — a different partially
+drawn page every time. On slower CI the count reaches the gate at zero labels,
+`querySelector` returns null, and the narrowing step has nothing to work with.
+The same window made the "nothing should be clipped yet" precondition liable to
+measure a label that had not finished being laid out.
+
+It now waits for every diagram to draw — the gate the sibling measurement test
+already used — and then for the specific element it narrows. At that gate the
+page is deterministic: 13 diagrams and 97 labels on every run.
+
+
 ## 2026-09-02 — stop the frontend suite failing tests it did not break
 
 The frontend suite failed 6-10 tests on every full run, always in
