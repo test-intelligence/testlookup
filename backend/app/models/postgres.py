@@ -5215,6 +5215,77 @@ class ValueMetricAssumptions(Base):
     )
 
 
+class DeletionJob(Base):
+    """One record of a deletion actually happening (migration 0147, S2b).
+
+    Retention already writes a purge record into ``settings_audit_log``, which
+    is never purged and stays the compliance evidence. This table is the
+    OPERATIONAL surface: what ran, what it removed, and — the part the audit row
+    cannot express — whether it is still running, and whether it finished.
+
+    **Written on its own session.** A ``failed`` or ``partial`` status written
+    inside the transaction that failed is erased by that transaction's rollback,
+    so the only states a same-session writer can ever record are the successful
+    ones. Same reason the purge-audit row is written after the commit.
+
+    ``resolved_run_ids`` records exactly which runs went, and ``candidate_hash``
+    fingerprints that set. Today that is an audit detail; criteria deletion
+    (S3b) reuses both to freeze a previewed candidate set and refuse to execute
+    if the world moved underneath it.
+
+    Status vocabulary is deliberately limited to states this slice can actually
+    reach: ``queued|running|completed|failed|partial``. ``previewed`` arrives
+    with criteria deletion; ``cancelled`` is NOT declared, because nothing can
+    produce it — shipping a state nothing writes is the defect this epic
+    catalogues elsewhere, not a placeholder.
+    """
+
+    __tablename__ = "deletion_jobs"
+    __table_args__ = (
+        Index("ix_deletion_jobs_project_started", "project_id", "started_at"),
+        Index("ix_deletion_jobs_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    #: scheduled | criteria | single_entity — see deletion_job_service.KIND_*.
+    #: No other kind is declared: a value nothing writes is a filter that
+    #: matches nothing forever.
+    job_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: queued | running | completed | failed | partial
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
+
+    #: The validated criteria this job ran on. NULL for the scheduled purge,
+    #: which runs on the project's policy rather than an ad-hoc selection.
+    criteria: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    resolved_run_ids: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    candidate_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    counts: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    #: NULL = not measured. Never 0 — an unmeasured reclamation and a
+    #: reclamation of nothing are opposite findings.
+    #:
+    #: NOTHING POPULATES THIS YET. The purge counts objects deleted, not
+    #: bytes; storage accounting (S3) is what will measure it. Every row
+    #: therefore reads "not measured", which is true — unlike a 0 default,
+    #: which would report every purge as having reclaimed nothing.
+    bytes_reclaimed: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    holds_honoured: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    references_broken: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    requested_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
 class ProjectRetentionPolicy(Base):
     """Per-project data retention policy (PMF US-11.4, migration 0113).
 

@@ -832,7 +832,14 @@ async def test_get_last_purge_none_when_no_execute_rows():
 
 class _SweepSession:
     """Fake AsyncSessionLocal() context: serves the enabled-policy id query
-    and records audit adds/commits."""
+    and records adds/commits, bucketed BY TYPE.
+
+    The sweep opens this factory for several unrelated purposes — the audit
+    row, and (S2b) the deletion-job status writes, which deliberately use
+    their own sessions. A collector that lumped them together made
+    ``audit_rows`` mean "everything anything wrote", so adding any new
+    own-session writer broke an assertion about audit rows.
+    """
 
     def __init__(self, store):
         self.store = store
@@ -847,7 +854,12 @@ class _SweepSession:
         return _Rows(self.store["targets"])
 
     def add(self, obj):
-        self.store["audit_rows"].append(obj)
+        from app.models.postgres import SettingsAuditLog
+
+        if isinstance(obj, SettingsAuditLog):
+            self.store["audit_rows"].append(obj)
+        else:
+            self.store.setdefault("other_rows", []).append(obj)
 
     async def commit(self):
         self.store["commits"] += 1
@@ -897,6 +909,19 @@ async def test_sweep_isolates_failing_project_and_writes_zero_count_audit(monkey
     assert ok_row.changed_fields["errors"] == []
     assert ok_row.changed_fields["counts"] == zero_counts
     assert ok_row.changed_fields["mode"] == "execute"
+
+    # S2b: both projects also opened a deletion_jobs row, BEFORE the purge ran.
+    # This is the half settings_audit_log structurally cannot record — the
+    # failed project's audit row exists only because the sweep caught the
+    # error, whereas the job row exists from the moment work started.
+    from app.models.postgres import DeletionJob
+
+    jobs = [o for o in store.get("other_rows", []) if isinstance(o, DeletionJob)]
+    assert {j.project_id for j in jobs} == {pid_fail, pid_ok}
+    assert all(j.status == "running" for j in jobs), (
+        "a job must be opened as running; opening it in a terminal state "
+        "would make a crash mid-purge indistinguishable from a clean finish"
+    )
 
 
 async def test_sweep_explicit_project_skips_enabled_query(monkeypatch):

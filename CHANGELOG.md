@@ -1,5 +1,79 @@
 # Changelog
 
+## 2026-09-01 — S2b: a deletion you can see while it is still running
+
+Retention already wrote a purge record into `settings_audit_log`, which is never
+purged and stays the compliance evidence. But that row is written **after** the
+purge commits, so it can only ever describe work that finished. Nothing could
+show that a destructive job was running right now, and nothing recorded one that
+failed — precisely the half an operator needs during an incident.
+
+`deletion_jobs` (migration 0147) is that operational surface, exposed as
+`GET /api/v1/retention/{project_id}/deletion/jobs` and `/{job_id}` (ADMIN). The
+existing nightly purge writes to it from day one rather than waiting for the
+slices that will share it, so the table is never an empty surface.
+
+**Every status write opens its own session, and that is the whole design.** A
+`failed` or `partial` written on the caller's session is erased by the rollback
+that produced the failure, so a same-session writer can only ever record the
+successes — the wrong half, and the same reason the purge-audit row is written
+after its commit. `open_job` is called *before* the purge and `close_job` after,
+both on independent sessions; both swallow their own errors, because a
+bookkeeping failure must not turn a completed purge into a reported failure.
+
+**`bytes_reclaimed` is nullable with no default.** "Reclaimed nothing" and
+"nobody measured" are opposite findings, and this is the column an operator reads
+to decide whether a purge was worth running. `close_job` sets only the fields it
+was handed, so a partial close cannot blank a number an earlier write measured —
+while an explicit `0` still survives the guard. Nothing populates it yet — the
+purge counts objects, not bytes — so every row currently reads "not measured",
+which is true. The obvious alternative, diffing `project_storage_footprint`
+before and after, was rejected: it doubles an expensive cross-store scan on every
+nightly sweep and attributes concurrent ingestion to the purge, so it would
+produce a confidently wrong number rather than an honest NULL.
+
+**No status or kind is declared that nothing can produce.** `cancelled` is absent
+until something can cancel; `previewed` arrives with criteria deletion's freeze.
+The model's `job_kind` comment previously advertised `report` and `reclamation`,
+which no code writes — a filter option that matches nothing forever, the defect
+this epic catalogues elsewhere. Both are gone, and a test now pins the model's
+documented vocabulary to the service's `KIND_*` constants.
+
+**IDOR guard.** `job_id` is not a guarded path param, so `require_project_access()`
+validates only `project_id` — the handler's own ownership check is the entire
+defence. A foreign job and a missing job return byte-identical 404s, so the
+endpoint cannot be used as an existence oracle.
+
+**A row is written every sweep, including sweeps that deleted nothing.** The
+alternative — writing only when something went — makes an empty list mean either
+"nothing was due" or "the sweep never ran", and those are opposite findings. The
+audit clock is what keeps that choice affordable.
+
+**The table is itself on the audit clock.** An epic about unbounded storage
+growth must not ship a table that grows forever. The purge now retires TERMINAL
+`deletion_jobs` under `audit_days`, alongside the access/test-case audit logs and
+provenance records. Jobs still marked `running` past the window are deliberately
+left: that row is the evidence a sweep hung, and a clock-based delete would erase
+exactly what the table exists to keep. The migration docstring had asserted this
+coverage before any code implemented it, and the service's own header table listed
+two purged tables while the code deleted four — both now match the code, with
+tests pinning them.
+
+**Transaction-boundary allowlist.** Services in this codebase stage and let the
+router commit; `deletion_job_service` is an explicit exception, entered in
+`COMMIT_ALLOWLIST` with its reason and the total cap raised 71 → 73. Converting it
+to stage-only would make the table structurally incapable of recording the
+outcomes it exists for — the ratchet caught this, which is what it is for.
+
+**Validated:** 23 unit tests, and a 25-mutation pass in which all 25 were killed.
+Two mutations initially survived and both were test defects, not code defects:
+the own-session test grepped `inspect.getsource` for `AsyncSessionLocal` and
+passed against a mutant using the caller's session, because the name still
+appeared on the function's own import line — it now asserts the session factory
+is actually *called*; and the ordering test matched `retention_service.run_purge`
+in the task's own docstring rather than at the call site. `make quality-gate` and
+`ruff` clean.
+
 ## 2026-09-02 — deps: ESLint 9→10 (+ @eslint/js), untangling the brace-expansion pin
 
 Supersedes Dependabot #921 (@eslint/js 10 alone), which could not land:
