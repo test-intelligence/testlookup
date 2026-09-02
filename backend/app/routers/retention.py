@@ -29,6 +29,7 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -37,8 +38,9 @@ from app.core.deps import (
     require_project_access,
     require_role,
 )
-from app.models.postgres import User, UserRole
+from app.models.postgres import Project, User, UserRole
 from app.models.schemas import (
+    ProjectStorageResponse,
     RetentionPolicyRead,
     RetentionPolicyWrite,
     RetentionPreviewResponse,
@@ -46,6 +48,7 @@ from app.models.schemas import (
     RetentionPurgeRequest,
 )
 from app.services import retention_service as svc
+from app.services import storage_accounting_service
 
 router = APIRouter(prefix="/api/v1/projects", tags=["Retention"])
 logger = structlog.get_logger("routers.retention")
@@ -104,6 +107,44 @@ async def put_retention_policy(
     )
 
 
+@router.get(
+    "/{project_id}/storage",
+    response_model=ProjectStorageResponse,
+)
+async def get_project_storage(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_project_access()),
+):
+    """Storage footprint for this project, per store (S3).
+
+    Read-only. ADMIN-gated like the rest of this router's writes: the figure
+    is the blast radius of a purge, so it is not a general-membership read.
+
+    A store that cannot be reached comes back ``measured=False`` with null
+    figures rather than a zero — the endpoint degrades per store instead of
+    500-ing, because a page whose whole job is reporting is more useful
+    partially right than absent.
+    """
+    project_exists = await db.scalar(
+        select(Project.id).where(
+            Project.id == project_id,
+            Project.is_active.is_(True),
+        )
+    )
+    if project_exists is None:
+        # ADMIN bypasses the membership lookup in require_project_access(), so
+        # the route itself must still distinguish a missing/deleted project
+        # from a real project that happens to contain no data.
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    footprint = await storage_accounting_service.project_storage_footprint(
+        db, project_id
+    )
+    return ProjectStorageResponse(**footprint.as_payload())
+
+
 @router.post(
     "/{project_id}/retention-policy/preview",
     response_model=RetentionPreviewResponse,
@@ -118,7 +159,9 @@ async def preview_retention_purge(
     candidate counts. Deliberately available while the policy is disabled."""
     out = await svc.run_purge(db, project_id=project_id, mode="preview")
     return RetentionPreviewResponse(
-        cutoffs=out["cutoffs"], candidates=out["candidates"],
+        cutoffs=out["cutoffs"],
+        candidates=out["candidates"],
+        unmeasured=out.get("unmeasured", []),
     )
 
 

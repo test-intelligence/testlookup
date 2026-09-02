@@ -33,6 +33,7 @@ import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import RetentionActivationNudge from '@/components/retention/RetentionActivationNudge'
+import StoragePanel from '@/components/retention/StoragePanel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -88,6 +89,14 @@ const CANDIDATE_ROWS: Array<{
   { key: 'audit_rows', label: 'Audit rows' },
   { key: 'provenance_rows', label: 'Provenance rows' },
   { key: 'compliance_packs_expired', label: 'Expired compliance packs' },
+  // The four the API returned and this table silently dropped. The response
+  // model had already been widened once for exactly these; the regression
+  // recurred here, at the render layer, where a missing row looks identical
+  // to a zero.
+  { key: 'evidence_artifact_rows', label: 'Evidence artifacts' },
+  { key: 'memory_entries_expired', label: 'Agent-memory entries' },
+  { key: 'analysis_cache_entries', label: 'Analysis-cache entries' },
+  { key: 'search_index_documents', label: 'Search-index documents' },
 ]
 
 /** Editable form shape — day counts as strings so typing is never fought. */
@@ -428,6 +437,11 @@ export default function RetentionPage() {
         onEnabled={(saved) => mutate(saved, { revalidate: false })}
       />
 
+      {/* ── Storage footprint (S3) ──────────────────────────────────────
+          Above the policy form on purpose: "how much am I holding" is the
+          question that decides whether the windows below are worth setting. */}
+      <StoragePanel projectId={activeProjectId} />
+
       {/* ── Policy form ─────────────────────────────────────────────── */}
       <section className="card space-y-4">
         <div className="flex items-center gap-2">
@@ -592,7 +606,24 @@ export default function RetentionPage() {
                   <tr key={key}>
                     <td className="py-1 text-[var(--color-text)]">{label}</td>
                     <td className="py-1 text-right font-mono text-[var(--color-text)]">
-                      {preview.candidates[key].toLocaleString()}
+                      {/* `== null` on purpose: catches null AND undefined.
+                          null = the store could not be reached; undefined =
+                          the server did not send this class at all (an older
+                          backend, or a field dropped from the response model —
+                          which has happened here before). Both mean "nobody
+                          counted this", and printing 0 for either would tell
+                          an operator there is nothing to delete in a store
+                          nothing actually looked at. */}
+                      {preview.candidates[key] == null ? (
+                        <span
+                          className="text-[var(--color-text-muted)] not-italic"
+                          title="This store could not be reached, so its contents were not counted."
+                        >
+                          not measured
+                        </span>
+                      ) : (
+                        preview.candidates[key].toLocaleString()
+                      )}
                     </td>
                   </tr>
                 ))}

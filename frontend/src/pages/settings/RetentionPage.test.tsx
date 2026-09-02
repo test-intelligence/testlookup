@@ -293,6 +293,81 @@ describe('RetentionPage', () => {
     expect(screen.getByText(/numbers may differ slightly/)).toBeTruthy()
   })
 
+  it('renders "not measured" for a store the purge could not reach', async () => {
+    // RET-D15. `analysis_cache_entries` and `search_index_documents` come from
+    // stores that can be down independently of Postgres, and both used to
+    // report 0 on an outage — indistinguishable from "nothing to delete" on
+    // the screen an ADMIN authorises an irreversible cross-store purge from.
+    mockPreview.mockResolvedValue({
+      cutoffs: {
+        raw_events: '2026-05-04T00:00:00Z',
+        runs: '2025-08-02T00:00:00Z',
+        artifacts: '2026-02-03T00:00:00Z',
+        audit: '2019-08-05T00:00:00Z',
+      },
+      candidates: {
+        runs: 42,
+        test_cases: 900,
+        mongo_docs: {},
+        minio_objects: 12,
+        event_archive_rows: 250,
+        audit_rows: 3,
+        provenance_rows: 5,
+        compliance_packs_expired: 1,
+        evidence_artifact_rows: 2,
+        memory_entries_expired: 4,
+        analysis_cache_entries: null,
+        search_index_documents: null,
+      },
+      unmeasured: ['analysis_cache_entries', 'search_index_documents'],
+    })
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Preview purge')).toBeTruthy())
+    await act(async () => {
+      fireEvent.click(screen.getByText('Preview purge'))
+    })
+
+    await waitFor(() => expect(screen.getByText('Analysis-cache entries')).toBeTruthy())
+    expect(screen.getAllByText('not measured').length).toBe(2)
+  })
+
+  it('shows a real zero as 0, not as "not measured"', async () => {
+    // The other half of the rule. If an outage and an empty store both
+    // rendered "not measured" the distinction would be lost again, just in the
+    // opposite direction.
+    mockPreview.mockResolvedValue({
+      cutoffs: {
+        raw_events: '2026-05-04T00:00:00Z',
+        runs: '2025-08-02T00:00:00Z',
+        artifacts: '2026-02-03T00:00:00Z',
+        audit: '2019-08-05T00:00:00Z',
+      },
+      candidates: {
+        runs: 42,
+        test_cases: 900,
+        mongo_docs: {},
+        minio_objects: 12,
+        event_archive_rows: 250,
+        audit_rows: 3,
+        provenance_rows: 5,
+        compliance_packs_expired: 1,
+        evidence_artifact_rows: 2,
+        memory_entries_expired: 4,
+        analysis_cache_entries: 0,
+        search_index_documents: 0,
+      },
+      unmeasured: [],
+    })
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Preview purge')).toBeTruthy())
+    await act(async () => {
+      fireEvent.click(screen.getByText('Preview purge'))
+    })
+
+    await waitFor(() => expect(screen.getByText('Analysis-cache entries')).toBeTruthy())
+    expect(screen.queryByText('not measured')).toBeNull()
+  })
+
   it('surfaces a preview failure as an inline error', async () => {
     mockPreview.mockRejectedValue(new Error('boom'))
     await renderPage()

@@ -12,9 +12,15 @@ logger = structlog.get_logger(__name__)
 
 async def purge_project_analysis_caches(
     project_id: str, *, cutoff: datetime, execute: bool
-) -> dict[str, int]:
-    """Count or delete cache entries older than the raw/artifact cutoff."""
-    counts = {"redis": 0, "semantic": 0}
+) -> dict[str, int | None]:
+    """Count or delete cache entries older than the raw/artifact cutoff.
+
+    A sub-store that could not be reached reports **None**, not 0 — an
+    outage and an empty cache are opposite findings, and the caller renders
+    this number. Starting at None means a failure before the assignment
+    leaves None rather than a zero nobody wrote on purpose.
+    """
+    counts: dict[str, int | None] = {"redis": None, "semantic": None}
     try:
         from app.db.redis_client import get_redis
 

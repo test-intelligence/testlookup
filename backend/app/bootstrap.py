@@ -15,6 +15,7 @@ from app.routers import (
     agents,
     ai_evaluation,
     admin_maintenance,
+    admin_storage,
     analysis_report,
     analyze,
     analytics,
@@ -109,6 +110,7 @@ PUBLIC_ROUTERS: Sequence[APIRouter] = (
 
 PROTECTED_ROUTERS: Sequence[APIRouter] = (
     admin_maintenance.router,
+    admin_storage.router,
     projects.router,
     # run_compare must be registered BEFORE runs.router because both share the
     # ``/api/v1/runs`` prefix and runs.router has ``GET /{run_id}`` which

@@ -359,9 +359,17 @@ async def _run_index(monkeypatch, func_name, *, blow_up_at_upsert=True):
 async def test_indexing_degrades_when_the_embedder_is_unavailable(
     monkeypatch, func_name
 ):
-    """An unavailable embedder must cost the index, not the task."""
+    """An unavailable embedder must cost the index, not the task.
+
+    Was ``== 0``. The degradation is the point and it still holds — the task
+    does not fail — but the *reported count* must not be 0, because 0 is what a
+    successful run that found nothing to index also returns. The reindex task
+    surfaces this number to whoever triggered it, so the two cases have to be
+    distinguishable. None means "could not index"; the sibling test below pins
+    the invariant that actually protects the corpus (the cursor must not move).
+    """
     result, _ = await _run_index(monkeypatch, func_name)
-    assert result == 0
+    assert result is None
 
 
 @pytest.mark.parametrize("func_name", ["index_test_cases", "index_incremental"])

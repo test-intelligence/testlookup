@@ -287,9 +287,11 @@ class TestRedactionEdgeCases:
         for _ in range(11):
             deep = {"nested": deep}
         result = redact_dict(deep)
-        # Walk down 10 levels — outer levels are processed normally.
-        cursor = result
-        for _ in range(10):
+        # Walk down the outer levels — they are processed normally — until the
+        # value stops being a dict, which is where the depth cap kicked in.
+        cursor: object = result
+        while isinstance(cursor, dict):
+            assert "password" not in cursor  # the leaf never survived intact
             cursor = cursor["nested"]
         assert cursor == REDACTED
         assert "leaked" not in str(result)

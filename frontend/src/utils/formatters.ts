@@ -182,3 +182,24 @@ export const isoTooltip = (
   return `Started ${label(start)}
 ${tail}`
 }
+
+/**
+ * Human-readable byte size. Binary units (KiB/MiB) because that is what object
+ * stores report.
+ *
+ * Takes a NUMBER, not `number | null`, on purpose: "not measured" is a
+ * rendering decision the caller has to make visibly, not something a formatter
+ * should quietly turn into a dash. A store that could not be reached and a
+ * store holding 0 B must not format alike.
+ */
+export const formatBytes = (bytes: number): string => {
+  if (bytes === 0) return '0 B'
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
+  const exponent = Math.min(
+    Math.floor(Math.log(Math.abs(bytes)) / Math.log(1024)),
+    units.length - 1,
+  )
+  const value = bytes / Math.pow(1024, exponent)
+  // One decimal above bytes; whole numbers for raw bytes.
+  return exponent === 0 ? `${bytes} B` : `${value.toFixed(1)} ${units[exponent]}`
+}
