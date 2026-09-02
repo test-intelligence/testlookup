@@ -33,10 +33,10 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **32 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **33 guards**.
 15 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 17 ship at zero with **no baseline file at all** — those are
+fail CI. The other 18 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -94,6 +94,7 @@ fails if a *second* deleter appears.
 | `frontend.modal-dialog-role` † | a `fixed inset-0` modal overlay with no `role="dialog"` | Add `role="dialog" aria-modal="true"` and name it with `aria-labelledby` pointing at the modal heading's `id` — a static `aria-label` goes stale when the title is dynamic. A full-screen overlay that genuinely is not a dialog opts out with a `not-a-dialog` comment |
 | `frontend.refresh-intervals-from-config` † | a hand-picked SWR `refreshInterval` | `import { REFRESH_INTERVALS } from '@/config/refreshIntervals'` and take a tier — `REALTIME` / `ACTIVE` / `POLLING` / `BACKGROUND` (`0` = disabled is fine) |
 | `frontend.ai-output-hedging` † | AI output rendered as a verdict — a bare `Root cause:`, `Root Cause Summary`, "the cause is …", "is caused by" | Hedge the copy ("Suggested root cause", "likely caused by") and render the conclusion through `components/ai/AISuggestion` so it carries the badge, basis and provenance (US-15.1). Pipeline **stage** names like "Root Cause Analysis" are already allowed |
+| `frontend.ingest-formats-match-backend` † | the upload dropdown (`reportUploadService.ts::SUPPORTED_FORMATS`) advertising a format `/ingest/file` rejects, the backend accepting a parser the UI never offers, or either registry becoming unparseable by the guard | Add or remove the format on **both** sides of the language boundary — the `SUPPORTED_FORMATS` array (value + label) and the `ReportFormat` union in `reportUploadService.ts`, and `_SUPPORTED_FORMATS` in `routers/ingest.py` (a new backend parser also needs `_detect_format` wired). If a refactor changes a registry's source shape, update the guard parser in the same change; otherwise CI fails instead of silently disabling parity enforcement |
 
 ### Database
 
