@@ -90,6 +90,64 @@ class SelfUpdateProfileRequest(BaseModel):
     avatar_color: Optional[str] = Field(None, max_length=20)
 
 
+class DeletionPreviewResponse(BaseModel):
+    """A frozen candidate set an ADMIN authorises from.
+
+    The ids are materialized and hashed here, and ``execute`` replays them.
+    Re-resolving at execute time would delete a different set from the one
+    that was reviewed: criteria read columns other code rewrites while the job
+    is queued (``TestRun.status`` by aggregate updates and live-session close,
+    ``primary_suite_name`` at session close).
+    """
+
+    job_id: uuid.UUID
+    project_id: uuid.UUID
+    run_count: int
+    run_ids: List[uuid.UUID]
+    candidate_hash: str
+    truncated: bool = Field(
+        False,
+        description=(
+            "The candidate set exceeded the reviewable bound and was cut. "
+            "Reported rather than silently deleting the first N."
+        ),
+    )
+    refused_prefixes: List[str] = Field(default_factory=list)
+    blocked: List[dict] = Field(
+        default_factory=list,
+        description=(
+            "Runs that cannot be deleted and why — in flight, or cited by a "
+            "compliance pack, release or decision report. Surfaced at preview "
+            "so an ADMIN sees them before authorising, not after."
+        ),
+    )
+
+
+class DeletionExecuteRequest(BaseModel):
+    """Execute takes a JOB ID, never a criteria body.
+
+    Accepting criteria here would re-resolve them, which is the bug the freeze
+    exists to prevent — the set executed would not be the set reviewed.
+    """
+
+    job_id: uuid.UUID
+    confirmation_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description=(
+            "Must equal the project's name exactly. A typed confirmation, not "
+            "a checkbox, because this is irreversible across five stores."
+        ),
+    )
+
+
+class DeletionExecuteAcceptedResponse(BaseModel):
+    job_id: uuid.UUID
+    run_count: int
+    status: Literal["accepted"] = "accepted"
+
+
 class DeletionJobResponse(BaseModel):
     """One deletion that ran (or is running).
 

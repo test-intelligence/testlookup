@@ -139,16 +139,59 @@ async def test_an_unreachable_status_is_refused(mocker):
 
 
 def test_no_status_is_declared_that_nothing_can_produce():
-    """``cancelled`` is deliberately absent.
+    """The rule, derived rather than spelled out.
 
-    Nothing in this slice can cancel a job, and a state nothing writes is a
-    filter option that returns nothing forever — the defect this epic
-    catalogues elsewhere, not a placeholder for future work.
+    A state nothing writes is a filter option that returns nothing forever.
+    The first version of this named the two statuses that were absent at the
+    time; ``previewed`` then gained a producer in S5 and the test had to be
+    edited to say the opposite — which is a test tracking a list, not a rule.
+
+    Now every declared status must have a writer somewhere in ``app/``, so a
+    status added ahead of its producer fails, and one that gains a producer
+    needs no edit here.
     """
-    assert "cancelled" not in svc.REACHABLE_STATUSES
-    assert "previewed" not in svc.REACHABLE_STATUSES, (
-        "previewed belongs to criteria deletion's freeze; declaring it before "
-        "anything writes it is the same defect"
+    from pathlib import Path
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    corpus = "".join(
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in app_dir.rglob("*.py")
+    )
+
+    # Explicit, reasoned exemptions — not a broadened match. Anything here is
+    # a claim that a producer exists outside app/ Python source.
+    PRODUCED_ELSEWHERE = {
+        # deletion_jobs.status carries server_default='queued' (migration
+        # 0147), so any INSERT that omits the column writes it. open_job sets
+        # RUNNING immediately, so no observable row sits in it today — but the
+        # column default is a real writer, not an aspiration.
+        "queued": "column server_default in migration 0147",
+    }
+
+    for status in sorted(svc.REACHABLE_STATUSES):
+        if status in PRODUCED_ELSEWHERE:
+            continue
+        constant = status.upper()
+        # A producer is a line that either assigns the value to `status=` or
+        # RETURNS it — `outcome_status()` picks between completed/partial/failed
+        # and its result is handed straight to close_job, which is as real a
+        # write path as a literal keyword argument.
+        #
+        # Line-scanned with plain substrings rather than a regex: an escape
+        # mangled in generation would match nothing and pass vacuously, which
+        # has happened twice in this codebase.
+        producers = [
+            line for line in corpus.splitlines()
+            if constant in line and ("status=" in line or "return " in line)
+        ]
+        assert producers, (
+            status + " is declared reachable but nothing in app/ ever writes "
+            "it — a filter option that returns nothing, forever"
+        )
+
+    assert "cancelled" not in svc.REACHABLE_STATUSES, (
+        "nothing can cancel a job; declaring the state before the mechanism "
+        "is the defect this rule exists to catch"
     )
 
 
@@ -392,7 +435,11 @@ def test_a_hung_job_is_not_purged_on_the_clock():
     assert svc.RUNNING not in svc.TERMINAL_STATUSES
     assert svc.QUEUED not in svc.TERMINAL_STATUSES
     assert svc.TERMINAL_STATUSES < svc.REACHABLE_STATUSES
-    assert svc.TERMINAL_STATUSES == {svc.COMPLETED, svc.FAILED, svc.PARTIAL}
+    # ``previewed`` IS terminal: a preview nobody executed is abandoned, not
+    # in flight, and keeping those forever grows the table with every dry run.
+    assert svc.TERMINAL_STATUSES == {
+        svc.COMPLETED, svc.FAILED, svc.PARTIAL, svc.PREVIEWED
+    }
 
 
 def test_the_purge_filter_scopes_by_project_and_terminal_status():

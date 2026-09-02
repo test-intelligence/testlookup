@@ -1,5 +1,76 @@
 # Changelog
 
+## 2026-09-02 — S5: delete by criteria, executing the set that was reviewed
+
+`POST /api/v1/projects/{project_id}/deletion/preview` resolves a criteria set,
+reports what cannot be deleted, and **freezes** the result. `POST .../execute`
+takes that **job id — never a criteria body** — and replays the frozen set.
+
+**Why the freeze is the whole slice.** The nightly purge's candidate set is a
+pure function of `(policy, now)`, so re-resolving gives the same answer.
+Criteria are not: they read columns other code rewrites while the job sits
+queued — `TestRun.status` by `_update_run_aggregates` and by live-session close,
+`primary_suite_name` at session close. Execute is asynchronous, so re-resolving
+there would delete a different set from the one an ADMIN reviewed. Preview
+materializes the ids and hashes them; execute refuses on drift. Freezing is also
+what makes `statuses` a legitimate criterion at all — once the id set is fixed,
+the source column's mutability stops mattering.
+
+**AND across fields, OR within a list**, asserted on a case where the two
+readings differ: `statuses=[FAILED], branches=[main]` under OR would delete every
+run on `main` regardless of status. A single-field test cannot tell them apart.
+
+**What the criteria model refuses**, each because the alternative fails quietly:
+a project id alone (that is a full project purge behind a form that looks like a
+filter); an unknown status (a literal outside the column's vocabulary matches
+nothing, forever, and the delete reports success having found zero); an inverted
+date range; more than 500 run ids; and any unknown field, since a typo'd
+criterion silently ignored widens the deletion to everything the caller thought
+they had narrowed. Run ids from another project fail the **whole** request with
+403 — filtering to the caller's own acts on a request they got wrong, and naming
+the foreign id would confirm it exists elsewhere.
+
+`suite_match` defaults to `only`, matching the run's own indexed
+`primary_suite_name`: the conservative reading that will not delete a multi-suite
+run because one of its suites was named. `any` is the destructive reading and is
+opt-in, and it considers **both** suite columns — old live-stream runs carry
+membership only at run level, file uploads only per test case, so reading either
+alone under-deletes silently. `tags` stays out: `TestRun.tags` is `JSON`, not
+`JSONB`, so there is no containment operator and no GIN support.
+
+**Blockers surface at preview, not mid-execution.** An ADMIN authorises a count;
+discovering cited or in-flight runs later would mean the number that went was not
+the number approved.
+
+**A defect this slice found in already-merged code.** S2b shipped `deletion_jobs`
+with two statuses nothing writes — `partial` and `queued` — which is exactly the
+defect that slice claimed to prevent. Its test checked `cancelled` and `previewed`
+*by name*, so it guarded the two statuses that had been thought about and missed
+the two that had not. The test now derives the rule: every status in
+`REACHABLE_STATUSES` must have a writer in `app/`, so it needs no edit when one
+gains a producer and fails when one is declared ahead of its mechanism. `queued`
+is recorded as an explicit exemption (the column's `server_default` in migration
+0147 writes it). `partial` now has a real producer in `outcome_status()`: a
+criteria job deletes many runs, nothing retries it (`max_retries=0` — a retry
+would replay deletions already done and count them as failures), so "some of them
+went" is a final answer that must not be reported as success or failure.
+
+**The transaction ratchet pushed a better design.** `freeze_candidate_set`
+originally took its own session, which would have been a third commit in
+`deletion_job_service` and needed the cap raised. The ratchet's advice was right:
+`open_job`/`close_job` own sessions because they record whether a deletion
+*failed*, and a status written on the failing transaction dies with it. The freeze
+records no outcome — it is an ordinary write on a success path the router already
+owns a transaction for, and a private session would leave an executable job behind
+after a preview that errored. It is now `stage_frozen_candidate_set`, staged on
+the caller's session, and the cap stayed at 2.
+
+Also fixed: this slice is **S5** in the epic. S2b and S2c called it "S3b" in three
+code comments and the epic's own margin note — a label I invented.
+
+**Validated:** 57 unit tests, `make quality-gate` 33/33, both architectural
+ratchets, `ruff` clean.
+
 ## 2026-09-02 — S2c: delete one run, across every store, without collateral
 
 `DELETE /api/v1/runs/{run_id}` (ADMIN, `require_run_access`, `{confirm, reason}`)
