@@ -163,6 +163,18 @@ now verifies the hardened fail-closed behavior — a subtree past the recursion
 limit is replaced with the `[REDACTED]` sentinel and a buried secret never
 leaks — instead of the old, insecure "returns subtree unchanged" expectation.
 The test refresh does not change runtime behavior.
+## 2026-09-01 — strip XML-invalid control characters from Office exports
+
+Test-plan, test-strategy, and test-case Word (.docx) and Excel (.xlsx) exports
+now drop the C0 control characters that XML 1.0 forbids before handing stored
+text to python-docx and openpyxl. A single stray control byte in a stored
+title, objective, criterion, or table cell (a bad import, mangled AI output)
+no longer turns an authorized export into a 500 — python-docx (via lxml) and
+openpyxl both reject those bytes outright, the same "malformed stored metadata
+must not break the download" class already hardened for the PDF exporters. Tab,
+newline, and carriage return are preserved, and the Excel formula-inerting
+guard still fires after stripping. Regression tests drive the real Word and
+Excel exporters with control bytes across every rendered field.
 
 ## 2026-08-31 — preserve and neutralize audit CSV fields
 
@@ -340,6 +352,40 @@ Vitest's async timer advance inside `act()`, so the timer callback and the
 resulting render are both flushed before the assertion. This removes the
 known timeout without weakening the production behavior or increasing the
 suite timeout.
+## 2026-08-31 — the deterministic summary a human reads when the LLM is down
+
+Coverage slice 9. `summary_renderer` produces the developer- and manager-mode
+narratives `SummaryAgent` serves. When an LLM is unavailable — offline mode, an
+outage, a malformed response — the render functions fall back to a *deterministic*
+summary assembled from the already-computed context. That fallback is what a human
+actually reads during the incidents that matter most, so its wording is
+load-bearing: a wrong pass-rate, a dropped release recommendation, or an empty
+action list is a defect a reader would act on, and nothing alerts on it.
+
+The module sat at ~24% — the module-level prompt loads ran, but neither render
+entry point nor any of the three fallback builders (`_fallback_developer`,
+`_fallback_manager`, `_format_similar`) had executed. 17 tests take it to **zero
+missed statements**:
+
+- **Developer fallback** — the headline's build / failed-count / one-decimal
+  pass-rate; recommended actions taken two-per-analysis across the top three,
+  then capped at three; evidence excerpts truncated to 100 chars; the
+  "no high-confidence root causes" and default-action fallbacks when the pool
+  is empty.
+- **Manager fallback** — the executive summary's `_`→space substitutions
+  (category lowercased, recommendation preserved), the `CONDITIONAL_GO` default
+  when no recommendation is present, scope-of-impact counts, and the default
+  key-risks / decisions when release inputs are empty.
+- **`_format_similar`** — empty, named, and the present-but-nameless case that
+  must read "in recent runs" rather than an empty "Similar failures found: ".
+- **Async entry points** — a truthy `fallback_reason` short-circuits the LLM
+  branch; a raising `get_llm` is caught and its message becomes the reason; and
+  the success path parses fenced JSON and attaches deterministic citations.
+
+Both fallback builders are asserted to tolerate an empty `assembled` dict without
+raising. The LLM is either short-circuited or mocked — no network, no model, no
+API key. Every expected value was read off the real implementation before being
+asserted.
 
 ## 2026-08-30 — the HTML→text conversion that feeds RAG had never executed
 
@@ -993,6 +1039,32 @@ Verified by reverting: all six guards fail against the old code.
 
 Frontend 173 files / 1233 passed / 0 failed, quality gate 30/30, tsc clean,
 eslint 0 errors (18 warnings, unchanged from main).
+## 2026-08-30 — the upload dropdown and `/ingest/file` could drift apart silently
+
+The formats a self-hoster can pick in the upload UI
+(`reportUploadService.ts::SUPPORTED_FORMATS`) and the formats the endpoint will
+actually accept (`routers/ingest.py::_SUPPORTED_FORMATS`) are two hand-kept
+lists on opposite sides of the frontend/backend language boundary. Nothing
+coupled them. They happen to match today (twelve formats each, including the
+`auto` detection mode), but a one-sided edit was a silent adoption defect
+waiting to happen, in either direction:
+
+- **UI ahead of backend** — the dropdown offers a format `/ingest/file` rejects.
+  The user selects it, uploads, and gets a `400` for a format the product told
+  them it supported. The first-run guide derives its advertised-format list from
+  the same array, so the promise is made twice.
+- **Backend ahead of UI** — a new parser lands server-side but never appears in
+  the dropdown or onboarding copy. A real capability stays invisible and
+  under-advertised.
+
+A new quality-gate guard, `frontend.ingest-formats-match-backend`, parses both
+registries and fails CI if the two sets differ, naming the offending format and
+the side that is out of step. It ships at zero with no baseline — an absolute
+rule, not a ratchet — and fails closed if either registry is refactored out of
+the shape it parses, so a source rewrite cannot silently disable parity
+enforcement. Paired unit tests in `scripts/test_quality_gate.py` pin the current
+shape, both drift directions, and both unparseable-registry cases.
+`architecture/DEVELOPER_GUIDE.md`'s guard tables and counts are updated to match.
 
 ## 2026-08-30 — an outage rendered as "you have no data"
 
