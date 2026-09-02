@@ -1589,7 +1589,7 @@ function VerdictStat({ label, value, sub, isFirst, isLast }: { label: string; va
 
 // ── Filter bar ──────────────────────────────────────────────────────────
 interface CasesFilterBarProps {
-  searchInputRef: React.RefObject<HTMLInputElement>
+  searchInputRef: React.RefObject<HTMLInputElement | null>
   search: string
   onSearchChange: (v: string) => void
   status: string

@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-01 — coordinate the React 19 runtime and type upgrade
+
+React, React DOM, and both corresponding type packages now move to 19.2
+together, avoiding the invalid mixed-major dependency graph in the generated
+upgrade. Two forwarded input-ref contracts now explicitly admit the null state
+returned by React 19's `useRef` typing. The aligned tree has no invalid peers
+and passes lint and a production TypeScript build.
+
+## 2026-09-01 — validate the React Router 7 upgrade under full-suite load
+
+React Router DOM is upgraded to 7.18.2. The full parallel frontend suite
+exposed two settings-page tests whose per-test dynamic imports could consume
+Vitest's five-second budget while Vite transformed the larger router graph.
+Those suites now import their page once in a bounded suite setup hook, keeping
+the product assertions and normal per-test timeout intact. All 1,325 frontend
+tests, lint, and the production build pass with the upgraded router.
 ## 2026-09-01 — make storage-footprint limits and scope explicit
 
 Storage accounting now marks a reached object store as incomplete when the
