@@ -55,6 +55,7 @@ from app.db.postgres import AsyncSessionLocal
 from app.db.redis_client import get_redis
 from app.models.postgres import LaunchStatus, TestCase, TestRun, TestStatus
 from app.streams import LIVE_TESTCASES_KEY
+from app.services.run_tombstone_service import run_is_tombstoned
 from app.streams.live_run_state import RedisLiveRunState
 
 logger = structlog.get_logger(__name__)
@@ -240,6 +241,13 @@ async def drain_run_buffer(
             run = (
                 await db.execute(_sel(TestRun).where(TestRun.id == run_uuid))
             ).scalar_one_or_none()
+            if run is None and await run_is_tombstoned(db, run_uuid):
+                # Deliberately deleted: draining would recreate the row with
+                # its events and objects already gone.
+                logger.info(
+                    "drain_skipped_tombstoned_run", run_id=str(run_uuid)
+                )
+                return
             if run is None:
                 # First drain for this run — create with status=IN_PROGRESS.
                 run = TestRun(

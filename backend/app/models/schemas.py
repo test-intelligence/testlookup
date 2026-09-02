@@ -414,6 +414,56 @@ class ProjectResponse(TimestampMixin):
     model_config = ConfigDict(from_attributes=True)
 
 
+class DeleteRunRequest(BaseModel):
+    """Payload for ``DELETE /api/v1/runs/{run_id}``.
+
+    ``confirm`` is a deliberate second step, not ceremony: this deletes across
+    five stores and is irreversible. ``reason`` is recorded on the deletion job
+    and the tombstone, so "why is this run gone" has an answer later.
+    """
+
+    confirm: bool = Field(
+        ...,
+        description="Must be true. A DELETE without it is refused, not assumed.",
+    )
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
+class DeleteRunAcceptedResponse(BaseModel):
+    """202, not 204.
+
+    A synchronous delete of a multi-GB prefix times out at the gateway, and
+    because the cross-store order is Mongo -> MinIO -> Postgres the caller
+    would get a 504 with the artifacts already gone and the run still listed.
+    Poll ``job_id`` on the deletion-jobs endpoint instead.
+    """
+
+    job_id: Optional[uuid.UUID] = Field(
+        None,
+        description=(
+            "Deletion job to poll. NULL when the job record could not be "
+            "written — the deletion still runs; only its bookkeeping failed."
+        ),
+    )
+    run_id: uuid.UUID
+    status: Literal["accepted"] = "accepted"
+    refused_prefixes: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Object prefixes NOT deleted because they fall outside the "
+            "project's scope. Reported rather than silently skipped: storage "
+            "that does not fall needs an explanation."
+        ),
+    )
+
+
+class DeleteRunRefusedResponse(BaseModel):
+    """409 body. Every blocker is listed, not just the first one found."""
+
+    run_id: uuid.UUID
+    blockers: List[str]
+
+
 class ProjectResetRequest(BaseModel):
     """Destructive reset payload. ``mode`` selects the wipe scope; the
     backend rejects any request whose ``confirmation_name`` doesn't

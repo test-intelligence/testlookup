@@ -436,6 +436,12 @@ def persist_live_session(
             run = existing.scalar_one_or_none()
 
             session_suite = (suite_name or "").strip() or None
+            from app.services import run_tombstone_service as run_tombstones
+
+            if run is None and await run_tombstones.run_is_tombstoned(db, run_uuid):
+                # Deliberately deleted — do not bring it back headless.
+                logger.info("[live] skipping tombstoned run %s", run_uuid)
+                return
             if run is None:
                 run = TestRun(
                     id=run_uuid,
@@ -4965,3 +4971,114 @@ def sweep_flaky_detection(self, project_id: str | None = None) -> dict:
             return out
 
     return cast(dict, _run_async(_run()))
+
+
+@celery_app.task(
+    name="app.worker.tasks.delete_run_everywhere",
+    bind=True,
+    max_retries=2,
+    queue="critical",
+)
+def delete_run_everywhere(
+    self,
+    run_id: str,
+    job_id: str | None = None,
+    reason: str = "",
+    requested_by_id: str | None = None,
+):
+    """Delete ONE run across all five stores. Irreversible.
+
+    Queued by ``DELETE /api/v1/runs/{run_id}``, which has already refused
+    in-flight runs, cited runs, and prefixes outside the project scope. This
+    performs the deletion the route promised with its 202.
+
+    **Reuses ``execute_candidates``.** The Mongo -> MinIO -> Postgres ordering
+    is the hardest part of a cross-store delete — the Postgres CASCADE destroys
+    the only mapping from a run to its documents and keys, so those stores must
+    be visited while the mapping still exists. A second copy of that sequence
+    is exactly what S2a existed to prevent.
+
+    **The tombstone lands in the same commit as the deletion.** Five code paths
+    re-create a ``TestRun`` from a caller-supplied id on a SELECT miss.
+    Committing the tombstone first blocks live ingestion into a run that still
+    exists; committing it after leaves a window in which the run is gone and
+    those paths are free to bring it back. One transaction has neither problem.
+
+    ``queue="critical"`` because an operator is waiting on the 202 and polling
+    the job; behind a long ingestion backlog it would look hung.
+    """
+    from sqlalchemy import select
+
+    from app.db.mongo import get_mongo_db
+    from app.db.postgres import AsyncSessionLocal
+    from app.db.storage import get_storage_provider
+    from app.models.postgres import TestRun
+    from app.services import (
+        deletion_job_service,
+        run_deletion_service,
+        semantic_search,
+    )
+
+    async def _run() -> dict[str, Any]:
+        run_uuid = uuid.UUID(run_id)
+        job_uuid = uuid.UUID(job_id) if job_id else None
+        counts: dict[str, Any] = {}
+
+        async with AsyncSessionLocal() as db:
+            run = (
+                await db.execute(select(TestRun).where(TestRun.id == run_uuid))
+            ).scalar_one_or_none()
+            if run is None:
+                # Already gone — a duplicate delivery, not a failure. Celery
+                # is at-least-once, so this task must be idempotent.
+                logger.info("[delete-run] %s already absent; nothing to do", run_id)
+                return {"deleted": False, "reason": "already_absent"}
+
+            project_uuid = run.project_id
+
+            # Scoped to the RUN, never the project (RET-D8). None means the
+            # store could not be reached — it must not be reported as 0.
+            index_documents = await semantic_search.purge_run_documents(
+                str(project_uuid), run_id, execute=True
+            )
+
+            counts = await run_deletion_service.perform_run_deletion(
+                db,
+                run=run,
+                mongo=await get_mongo_db(),
+                storage=get_storage_provider(),
+                search_index_documents=index_documents,
+                reason=reason,
+                deleted_by_id=(
+                    uuid.UUID(requested_by_id) if requested_by_id else None
+                ),
+                deletion_job_id=job_uuid,
+            )
+
+            # ONE commit covers the cross-store deletion and the tombstone.
+            await db.commit()
+
+        return {"deleted": True, "counts": counts, "run_id": run_id}
+
+    try:
+        result = _run_async(_run())
+    except Exception as exc:
+        _run_async(
+            deletion_job_service.close_job(
+                uuid.UUID(job_id) if job_id else None,
+                status=deletion_job_service.FAILED,
+                error=str(exc)[:500],
+            )
+        )
+        logger.warning("[delete-run] %s failed: %s", run_id, exc)
+        raise
+
+    _run_async(
+        deletion_job_service.close_job(
+            uuid.UUID(job_id) if job_id else None,
+            status=deletion_job_service.COMPLETED,
+            counts=result.get("counts"),
+            resolved_run_ids=[run_id],
+        )
+    )
+    return result

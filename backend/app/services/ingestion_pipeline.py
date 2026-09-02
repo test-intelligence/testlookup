@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import LaunchStatus, Project, TestCase, TestRun
 from app.services.run_environment import normalize_environment
+from app.services.run_tombstone_service import run_is_tombstoned
 from app.services.ingestion import (
     _update_run_aggregates,
     _upsert_test_case,
@@ -176,8 +177,17 @@ async def create_run_from_payload(
                 resolved=effective_build,
             )
 
+    # A caller-supplied run_id can name a run an operator deleted. Creating it
+    # here would resurrect the row without any of its data.
+    resolved_run_id = uuid.UUID(run_id) if run_id else uuid.uuid4()
+    if run_id and await run_is_tombstoned(db, resolved_run_id):
+        raise ValueError(
+            f"run {resolved_run_id} was deleted and cannot be re-created; "
+            "ingest under a new run id"
+        )
+
     run = TestRun(
-        id=uuid.UUID(run_id) if run_id else uuid.uuid4(),
+        id=resolved_run_id,
         project_id=pid,
         build_number=effective_build,
         branch=branch,

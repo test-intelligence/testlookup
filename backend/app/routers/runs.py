@@ -1,4 +1,5 @@
 """Test run and test case list endpoints."""
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -7,16 +8,29 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, get_current_active_user, require_run_access
+from app.core.deps import (
+    get_accessible_project_ids,
+    get_current_active_user,
+    require_role,
+    require_run_access,
+)
 from app.db.postgres import get_db
-from app.models.postgres import LaunchStatus, Project, TestCase, TestRun, User
-from app.models.schemas import EnrichedTestCaseDetailResponse, TestCaseHistoryResponse, TestCaseListResponse
+from app.models.postgres import LaunchStatus, Project, TestCase, TestRun, User, UserRole
+from app.models.schemas import (
+    DeleteRunAcceptedResponse,
+    DeleteRunRequest,
+    EnrichedTestCaseDetailResponse,
+    TestCaseHistoryResponse,
+    TestCaseListResponse,
+)
 from app.services.runs_service import (
     get_run_with_release,
     list_project_runs,
     list_run_test_cases,
     natural_build_number_key,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/runs", tags=["Test Runs"])
 
@@ -649,3 +663,110 @@ async def recover_live_run_from_buffer(
         "source": source,
         "message": message,
     }
+
+
+@router.delete("/{run_id}", status_code=202, response_model=DeleteRunAcceptedResponse)
+async def delete_run(
+    run_id: uuid.UUID,
+    body: DeleteRunRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_run_access()),
+):
+    """Delete one run across all five stores. Irreversible.
+
+    **202, not 204.** A synchronous delete of a multi-GB prefix times out at
+    the gateway, and the Mongo -> MinIO -> Postgres ordering means the caller
+    would get a 504 with the artifacts already gone and the run still listed.
+    The work runs as a Celery job; poll it at
+    ``GET /api/v1/retention/{project_id}/deletion/jobs/{job_id}``.
+
+    Four guards, each a real hazard rather than defensive habit:
+
+    * **In flight.** ``IN_PROGRESS`` is refused — the drainer and the persist
+      task are writing to this run right now.
+    * **Resurrection.** A tombstone is written in the same transaction as the
+      row deletion, because five code paths re-create a ``TestRun`` from a
+      caller-supplied id on a SELECT miss. Refusing ``IN_PROGRESS`` narrows
+      that window; it does not close it.
+    * **Citations.** A run cited by a compliance pack, linked to a release, or
+      named by a decision report is refused — deleting it strands evidence
+      whose subject no longer exists.
+    * **Prefix scope.** ``minio_prefix`` is uploader-derived and unvalidated
+      beyond non-empty. Prefixes outside the project's scope are refused and
+      REPORTED, never deleted.
+    """
+    from app.db.mongo import get_mongo_db
+    from app.services import deletion_job_service, run_deletion_service
+    from app.services.run_tombstone_service import run_is_tombstoned
+    from app.worker.tasks import delete_run_everywhere
+
+    if not body.confirm:
+        raise HTTPException(
+            status_code=422,
+            detail="confirm must be true — this deletes across five stores "
+                   "and cannot be undone",
+        )
+
+    run = (
+        await db.execute(select(TestRun).where(TestRun.id == run_id))
+    ).scalar_one_or_none()
+    if run is None:
+        # A tombstoned run is also 404: it is gone, and saying so differently
+        # would leak that the id once existed.
+        raise HTTPException(status_code=404, detail="Test run not found")
+
+    if await run_is_tombstoned(db, run_id):
+        # The row EXISTS and is tombstoned, which means something re-created it
+        # despite the guards — the drainer's tombstone lookup fails open on a
+        # database error, so this is reachable. Proceed with the delete: this
+        # is exactly when an operator needs it to work. Returning 404 here
+        # would leave a resurrected, dataless run that nothing could remove.
+        logger.warning(
+            "run_resurrection_detected run_id=%s project_id=%s",
+            run_id, run.project_id,
+        )
+
+    if run_deletion_service.status_blocks_deletion(run.status):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Run is still executing. Deleting it now races the drainer "
+                "and the persist task, which would re-create the row with "
+                "none of its data. Stop the run first."
+            ),
+        )
+
+    mongo = await get_mongo_db()
+    blockers = await run_deletion_service.citation_blockers(
+        db, run_id=run_id, mongo=mongo
+    )
+    if blockers:
+        raise HTTPException(
+            status_code=409,
+            detail={"run_id": str(run_id), "blockers": blockers},
+        )
+
+    _safe, refused = run_deletion_service.safe_artifact_prefixes(
+        run.project_id, run_id, run.minio_prefix
+    )
+
+    job_id = await deletion_job_service.open_job(
+        project_id=run.project_id,
+        job_kind=deletion_job_service.KIND_SINGLE_ENTITY,
+        criteria={"run_id": str(run_id), "reason": body.reason},
+        requested_by_id=current_user.id,
+    )
+
+    delete_run_everywhere.delay(
+        str(run_id),
+        str(job_id) if job_id else None,
+        body.reason,
+        str(current_user.id),
+    )
+
+    return DeleteRunAcceptedResponse(
+        job_id=job_id,
+        run_id=run_id,
+        refused_prefixes=refused,
+    )

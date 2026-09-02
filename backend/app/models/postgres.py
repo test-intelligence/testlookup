@@ -5215,6 +5215,47 @@ class ValueMetricAssumptions(Base):
     )
 
 
+class RunTombstone(Base):
+    """A run that was deliberately deleted, and must not come back (0148, S2c).
+
+    Five code paths create a ``TestRun`` from a caller-supplied id on a SELECT
+    miss — the stream stub, ``persist_live_session``, the live-session drainer,
+    the live-persist Celery task, and ``ingestion_pipeline`` when a ``run_id``
+    is passed. Each is correct on its own terms; together they are why a
+    per-run delete could not previously be offered. Delete a run while any is
+    in flight and the row reappears seconds later with its events, objects and
+    archive already gone.
+
+    Refusing to delete an ``IN_PROGRESS`` run narrows that window but does not
+    close it: a Celery task already holding the id does not re-read the status.
+
+    ``run_id`` is the primary key and is deliberately NOT a foreign key to
+    ``test_runs`` — the row it names has been deleted, which is the whole
+    point. Retention retires tombstones on the audit clock so this does not
+    become a table that only grows.
+    """
+
+    __tablename__ = "run_tombstones"
+    __table_args__ = (
+        Index("ix_run_tombstones_project_deleted", "project_id", "deleted_at"),
+    )
+
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    deleted_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    deletion_job_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("deletion_jobs.id", ondelete="SET NULL"), nullable=True
+    )
+
+
 class DeletionJob(Base):
     """One record of a deletion actually happening (migration 0147, S2b).
 
