@@ -99,13 +99,41 @@ def test_the_four_classes_that_were_being_dropped_are_declared():
         assert field in declared, f"{field} is counted by the purge but not reported"
 
 
-def test_the_counts_are_integers_not_optional():
-    """A nullable count would let 'not measured' and 'zero' look identical in
-    the response — the distinction retention needs most."""
+#: Counts sourced from stores that can be down independently of Postgres —
+#: Redis and the two Chroma collections. These are nullable ON PURPOSE.
+_STORE_DEPENDENT_COUNTS = frozenset({"analysis_cache_entries", "search_index_documents"})
+
+
+def test_counts_are_nullable_exactly_where_the_store_can_be_unreachable():
+    """Keep 'not measured' and 'zero' distinguishable — the distinction
+    retention needs most.
+
+    This test previously asserted the opposite: that every count must be a
+    plain ``int``, reasoning that "a nullable count would let 'not measured'
+    and 'zero' look identical". **The intent was right and the conclusion was
+    backwards.** A non-nullable count forces the service to invent a number
+    when a store is unreachable, and it did: both failure paths in
+    ``semantic_search.purge_project_documents`` returned ``0``, so an outage
+    and an empty index rendered identically on the screen an ADMIN authorises
+    an irreversible cross-store purge from. Nullability is what separates them.
+
+    The rule is not "everything nullable" either. A count derived from the same
+    Postgres session the request already holds cannot be half-measured — if
+    that session is gone the request has failed — so those stay plain ``int``,
+    where ``0`` truthfully means zero.
+    """
     for name, field in RetentionPreviewCandidates.model_fields.items():
         if name == "mongo_docs":
             continue
-        assert field.annotation is int, (
-            f"{name} should be a plain int; a nullable count makes "
-            "'not measured' indistinguishable from 'nothing to delete'"
-        )
+        annotation = str(field.annotation)
+        if name in _STORE_DEPENDENT_COUNTS:
+            assert "Optional" in annotation or "None" in annotation, (
+                f"{name} comes from a store that can be unreachable; it must be "
+                "nullable so an outage cannot be reported as 'nothing to delete'"
+            )
+        else:
+            assert field.annotation is int, (
+                f"{name} is derived from the request's own Postgres session and "
+                "cannot be partially measured; a nullable type here would invite "
+                "a null that means nothing in particular"
+            )

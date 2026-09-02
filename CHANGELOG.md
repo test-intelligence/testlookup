@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-01 — make storage-footprint limits and scope explicit
+
+Storage accounting now marks a reached object store as incomplete when the
+2,000-run-prefix safety cap truncates its scan, so the API and UI present the
+result as a floor instead of an exact project total. The project endpoint also
+returns 404 for missing or deleted projects rather than a plausible-looking
+zero footprint. Deleted-project messaging uses the measured-project denominator
+and never claims an unscanned deployment is fully covered; refresh updates both
+project and deployment figures. Store labels and explanations now state that
+Postgres covers test runs/test cases and Mongo covers five run-scoped
+collections, instead of implying whole-database accounting.
+
 ## 2026-09-01 — cast the seeded flag id so migration 0145 upgrades
 
 Migration `0145` seeded its `feature_flags` row by binding a stable string id
@@ -14,6 +26,241 @@ test mocks `op`, so it never saw the datatype mismatch). The Postgres
 migration-postconditions integration test also had its expected head bumped
 from `0144` to `0145` — it was masked while the broken `0145` upgrade aborted
 before that assertion could run.
+## 2026-09-01 — the storage figures an operator decides from
+
+The Retention page now opens with what the project is actually holding, per
+store, above the windows that control it — "how much am I keeping" is the
+question that decides whether those windows are worth setting.
+
+The markup exists to preserve two distinctions the backend encodes and a UI
+can easily throw away.
+
+**A store that could not be reached renders "not measured", never 0.** Zero and
+unreachable are opposite findings; rendering both as "0 B" tells an operator
+their project is free when the truth is nothing looked. The inverse holds too —
+a store genuinely holding nothing shows "0 B", not "not measured", or the
+distinction is simply lost in the other direction.
+
+**An estimate is visibly an estimate.** Object storage attributes bytes exactly
+because every listed object carries its own size. Document-store bytes are
+derived from average document size and carry an `est.` marker, and any total
+containing one is labelled an estimate. Database rows are counted but not
+sized, and the panel says why in as many words: rows share tables across
+projects, and deleting them does not return disk to the operating system
+without a `VACUUM FULL`. An operator reading "4,200 rows" would otherwise
+reasonably assume purging them frees space.
+
+A partial total says so — it is a floor, not a measurement.
+
+The panel also carries the deployment-wide line: how much deleted projects are
+still holding, and how many of them no retention policy will ever reclaim.
+Deleting a project does not delete its data, and until now nothing said so
+anywhere.
+
+Tests: `frontend/src/components/retention/StoragePanel.test.tsx` (10).
+
+**Two of the five mutations initially survived**, and they were the two that
+mattered — deleting the unreachable branch entirely, and swapping the null
+check for a falsy one so a real zero read as unmeasured. Both passed because
+the assertions were panel-wide and the *total* row also renders "not measured"
+and "0 B": the tests were being satisfied by the wrong element. Scoping them to
+the specific store row makes both mutations fail, which is what the tests were
+supposed to be doing all along.
+
+
+## 2026-09-01 — the data deleted projects leave behind, and what will never reclaim it
+
+Deleting a project sets `is_active = False` and revokes its credentials.
+Nothing then reconciles the data, and the three retention paths disagree about
+what happens next: the nightly beat selects on
+`ProjectRetentionPolicy.enabled` **alone** and does not filter `is_active`, so
+it sweeps a deleted project *if it opted in*; the manual purge does check and
+404s; preview does not check and works. Since `enabled` defaults to `false`,
+the default case — delete a project that never turned retention on — is purged
+by **nothing, ever**, across all five stores, and is invisible on every screen.
+
+This is already measured in the codebase. `purge_project_documents`'s own
+docstring records 49,380 search-index documents against 600 belonging to active
+projects: **98.8% of the index was deleted projects' embeddings.**
+
+`GET /api/v1/admin/storage/deleted-projects` reports every inactive project
+with its footprint per store and, for each, whether any retention policy will
+ever reach it. `unreachable_by_retention` is the headline — the count of
+deleted projects holding data nothing will reclaim.
+
+It lives on its own router rather than on `retention.py`, which is mounted at
+`/api/v1/projects`: any literal segment added there is matched against the
+`{project_id}` UUID converter first and 422s.
+
+Bounded by `limit`, because each footprint costs at least one paginated
+object-store listing. `truncated` and `projects_measured` say when the answer
+is partial — a silently capped total would understate the very number this
+endpoint exists to surface.
+
+Read-only. It reports what is stranded; it does not delete it. Reclamation
+needs a `projects.deleted_at` column that does not exist yet (so this cannot
+report *when* a project was deleted), a grace window, and a decision about
+which of the three inconsistent `is_active` behaviours is correct — that is its
+own change.
+
+Tests: `backend/tests/test_storage_accounting.py` (16, up from 11). One of them
+exists because mutation testing found a hole: flipping the scan from
+`is_active = false` to `true` — reporting ACTIVE projects as deleted — passed
+every other test in the file, because a mocked session returns its canned rows
+whatever the WHERE clause says. The predicate is now asserted against the
+compiled statement.
+
+
+## 2026-09-01 — a failed reindex reported as "indexed nothing"
+
+Same defect class as the retention purge fix above, on the indexing surface.
+`index_test_cases` and `index_incremental` returned `0` from every failure
+path, and the reindex Celery task put that straight into
+`{"indexed_count": 0}` — so a run where ChromaDB was unreachable, or where the
+embedder was unavailable, was indistinguishable from a successful run that
+found nothing new to index. That result is what whoever triggered the reindex
+reads.
+
+Four sites, all now returning `None`:
+
+* full index — vector store unreachable
+* full index — embedder unavailable at upsert
+* incremental — vector store unreachable
+* incremental — embedder unavailable at upsert
+
+The upsert paths are the sharper two, and the commoner: embeddings are computed
+at upsert, not at collection creation, so that is where an offline model
+surfaces. It is also the only failure where work may **already have landed** —
+the cursor deliberately stays at the last completed batch so the failing rows
+are retried rather than skipped forever. Reporting `0` there did not merely
+fail to measure; it contradicted progress that had persisted. `None` says
+"cannot report a count"; the cursor holds how far it actually got.
+
+**Genuine zeros are preserved.** Both `if not rows: return 0` paths — nothing
+to index, cursor up to date — still return `0`. If every case returned `None`
+the distinction would be lost again in the opposite direction. Two zeros, six
+nulls, and each one deliberate.
+
+The task result now carries `indexing_measured` alongside the nullable count,
+so a consumer reading either field gets the truth.
+
+**A regression test asserted the defect**, as with the purge fix.
+`test_indexing_degrades_when_the_embedder_is_unavailable` pinned `result == 0`.
+The degradation it protects is real and still holds — the task does not fail —
+but the reported count had to stop colliding with a successful no-op. Its
+sibling, `test_a_failed_index_does_not_advance_the_cursor`, is the assertion
+that actually protects the corpus and is untouched.
+
+Tests: `backend/tests/test_semantic_index_unmeasured.py` (5). All four sites
+were mutation-tested individually — including confirming the mid-run test
+reaches the upsert path rather than passing via the unreachable-store branch.
+
+
+## 2026-09-01 — an unreachable store reported as an empty one
+
+Two of the retention preview's twelve counts come from stores that can be down
+independently of Postgres — Redis and the two ChromaDB collections — and both
+reported `0` when they could not be reached. On the screen an ADMIN authorises
+an irreversible cross-store purge from, an outage and an empty store rendered
+identically.
+
+`semantic_search.purge_project_documents` argued the case against itself in its
+own comment: returning 0 was acceptable *because the failure was logged*, and
+in the same breath, "a purge that could not visit a store must not read as
+'nothing to delete there'". Both cannot hold. Every caller renders the number
+and none of them read the log. Both of its failure paths now return `None`, and
+so does each sub-store of `purge_project_analysis_caches`.
+
+The aggregate follows the same rule: if any contributor is unmeasured the total
+is unmeasured. A partial total is worse than none — "3 cache entries" when the
+semantic half never answered reads as complete and is not.
+
+The two counts are `Optional[int]` in the response, and the preview now carries
+`unmeasured`, naming the classes whose store could not be reached. A client
+that ignores the new field still sees `null` rather than a wrong zero.
+
+**A regression test had encoded the defect.** `test_the_counts_are_integers_not_optional`
+asserted every count must be a plain `int`, reasoning that "a nullable count
+would let 'not measured' and 'zero' look identical". The intent was right and
+the conclusion was backwards: a non-nullable count is precisely what forces the
+service to invent a number on an outage. It is now
+`test_counts_are_nullable_exactly_where_the_store_can_be_unreachable`, and it
+holds the sharper line — nullable where the store can be down, plain `int`
+where the count comes from the request's own Postgres session and cannot be
+half-measured.
+
+**Also fixed: `run_purge` defaulted both counts to 0 when external stores are
+injected**, which is the path every fake-injecting test takes. Those tests have
+been asserting against three of the five stores while the payload reported
+zeros for the other two.
+
+**And the render layer.** The preview table declared 8 of the 12 categories in
+its TypeScript type and rendered 7 — the same four classes the response model
+had already been widened once to carry. All twelve now render, and a null
+renders "not measured". The check is `== null` on purpose: it catches
+`undefined` too, so a class the server did not send reads as uncounted rather
+than throwing.
+
+Tests: `backend/tests/test_retention_unmeasured_stores.py` (8), plus two new
+rendering tests in `RetentionPage.test.tsx` covering both directions — a null
+must not render 0, and a real 0 must not render "not measured". Each was
+mutation-tested and observed failing.
+
+
+## 2026-09-01 — how much storage is this project actually using?
+
+Retention could report how many *rows* a purge would remove and never how many
+*bytes* it would reclaim. All twelve preview categories are cardinalities, and
+there is not one `bytes` or `size_bytes` token anywhere in the retention path —
+so the question that decides whether an operator turns retention on had no
+answer in the product.
+
+`GET /api/v1/projects/{project_id}/storage` reports the footprint per store.
+Read-only, ADMIN-gated: the figure is the blast radius of a purge, not a
+general-membership read.
+
+Two rules shape every number it returns.
+
+**Reached, or not reached.** Each store carries `measured`. A store that could
+not be contacted reports `measured=false` with null figures — never `0`. Zero
+and unreachable are opposite findings, and rendering both as "0 B" tells an
+operator their project is free when the truth is that nothing looked. The test
+for this asserts against a client that *raises*; a mock returning `[]` would
+pass against the exact bug being prevented. One store failing degrades that
+store and leaves the rest of the answer intact, because a page whose whole job
+is reporting is more useful partly right than absent.
+
+**Exact, or estimated.** Only object storage attributes bytes precisely —
+every listed object carries its own `Size`. Mongo bytes are `avgObjSize` times
+this project's document count, flagged `exact=false` with the basis stated in
+the payload. `total_is_estimate` is true whenever any contributing store was an
+estimate, because summing an exact figure with an estimate yields an estimate
+and calling it measured is how a page ends up showing a confident invented
+number.
+
+Postgres reports exact row counts and **no** byte figure at all. Rows share
+tables across projects, and a bulk DELETE does not return disk to the OS
+without `VACUUM FULL` / `pg_repack` — so a per-project byte figure would be an
+invention twice over. The payload says so rather than leaving the omission
+unexplained.
+
+The uploads tree is listed **once** per project. A per-run loop is O(runs)
+paginated LIST calls — roughly 100k round-trips on a 100k-run project for a
+number shown on a settings page. Per-run `minio_prefix` values are
+uploader-derived and unbounded in shape, so they cannot be collapsed the same
+way and are capped instead. Objects reachable from two prefixes are counted
+once; double-counting would inflate the headline reclaimable figure.
+
+Tests: `backend/tests/test_storage_accounting.py` (11). The outage semantics,
+the shared-object dedup, the estimate flag, and the prefix cap were each
+mutation-tested and observed failing.
+
+**Not yet done in this slice:** the Retention page still has no storage panel,
+deleted-project footprints are not surfaced, and
+`semantic_search.purge_project_documents` still returns `0` on a vector-store
+outage — that last one changes the preview contract two regression tests pin by
+source text, so it gets its own change.
+
 
 ## 2026-09-01 — retention shipped inert; ask the operator to turn it on
 

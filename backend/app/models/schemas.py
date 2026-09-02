@@ -90,6 +90,65 @@ class SelfUpdateProfileRequest(BaseModel):
     avatar_color: Optional[str] = Field(None, max_length=20)
 
 
+class StoreFootprintResponse(BaseModel):
+    """One store's contribution to a project's storage footprint.
+
+    ``measured=False`` means the store could not be reached — ``bytes`` and
+    ``items`` are then ``None``, never ``0``. Zero and unreachable are opposite
+    findings and must not render alike.
+
+    ``exact=False`` means the byte figure is a proportional estimate over a
+    store shared with other projects; ``estimate_basis`` says how.
+    """
+    store: str
+    measured: bool
+    exact: bool
+    #: False when a safety cap left part of the project's namespace unscanned.
+    #: The reported figures are then a floor even though the store was reached.
+    complete: bool = True
+    bytes: Optional[int] = None
+    items: Optional[int] = None
+    estimate_basis: Optional[str] = None
+    unreachable_reason: Optional[str] = None
+
+
+class ProjectStorageResponse(BaseModel):
+    project_id: str
+    computed_at: datetime
+    stores: List[StoreFootprintResponse]
+    #: None when nothing was measurable — an unreachable everything must not
+    #: total to zero.
+    total_bytes: Optional[int] = None
+    #: True when any contributing store was estimated or incompletely scanned.
+    total_is_estimate: bool = False
+    fully_measured: bool = True
+
+
+class DeletedProjectStorageEntry(BaseModel):
+    project_id: str
+    name: str
+    #: True when the nightly beat would eventually sweep this project anyway.
+    #: The beat selects on `ProjectRetentionPolicy.enabled` alone and does NOT
+    #: filter `is_active`, so a project that opted in before deletion is still
+    #: reachable. One that never opted in — the default — is not.
+    reachable_by_retention: bool
+    footprint: ProjectStorageResponse
+
+
+class DeletedProjectsStorageResponse(BaseModel):
+    computed_at: datetime
+    projects_total: int
+    projects_measured: int
+    #: True when `limit` cut the scan short. A capped total that did not say so
+    #: would understate the very figure this endpoint exists to surface.
+    truncated: bool = False
+    projects: List[DeletedProjectStorageEntry] = Field(default_factory=list)
+    total_bytes: Optional[int] = None
+    total_is_estimate: bool = False
+    #: Deleted projects that no retention policy will ever reach — the headline.
+    unreachable_by_retention: int = 0
+
+
 class UIDismissalCreate(BaseModel):
     """Dismiss a UI prompt for the authenticated user.
 
@@ -5331,15 +5390,25 @@ class RetentionPreviewCandidates(BaseModel):
     provenance_rows: int
     compliance_packs_expired: int
     evidence_artifact_rows: int = 0
-    analysis_cache_entries: int = 0
     memory_entries_expired: int = 0
-    search_index_documents: int = 0
+    # Optional, and the default is None rather than 0. Both of these come from
+    # stores that can be down independently of Postgres (Redis + the two Chroma
+    # collections), and both used to report 0 on an outage — indistinguishable
+    # from "nothing to delete there" on the screen an ADMIN authorises an
+    # irreversible purge from. None means the store was not reached; the
+    # response's ``unmeasured`` list names which.
+    analysis_cache_entries: Optional[int] = None
+    search_index_documents: Optional[int] = None
 
 
 class RetentionPreviewResponse(BaseModel):
     """POST ``.../retention-policy/preview`` — dry-run, writes nothing."""
     cutoffs: dict[str, datetime]
     candidates: RetentionPreviewCandidates
+    #: Candidate classes whose store could not be reached. A client that
+    #: ignores this still sees ``null`` rather than a wrong zero; a client that
+    #: reads it can say "not measured" and explain why the total is short.
+    unmeasured: List[str] = Field(default_factory=list)
 
 
 class RetentionPurgeRequest(BaseModel):

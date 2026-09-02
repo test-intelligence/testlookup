@@ -71,11 +71,24 @@ export interface RetentionPreviewCandidates {
   audit_rows: number
   provenance_rows: number
   compliance_packs_expired: number
+  evidence_artifact_rows: number
+  memory_entries_expired: number
+  /**
+   * Nullable ON PURPOSE. These two come from stores that can be down
+   * independently of Postgres (Redis and the two Chroma collections). They
+   * used to report 0 on an outage, which is indistinguishable from "nothing
+   * to delete" on the screen an ADMIN authorises an irreversible purge from.
+   * `null` means the store was not reached — render "not measured", never 0.
+   */
+  analysis_cache_entries: number | null
+  search_index_documents: number | null
 }
 
 export interface RetentionPreview {
   cutoffs: RetentionPreviewCutoffs
   candidates: RetentionPreviewCandidates
+  /** Candidate classes whose store could not be reached. */
+  unmeasured?: string[]
 }
 
 /** POST …/purge 202 response. */

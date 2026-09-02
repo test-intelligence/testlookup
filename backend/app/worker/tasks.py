@@ -2666,7 +2666,21 @@ def reindex_search(self, project_id: str | None = None, full: bool = False) -> d
                 count = await index_test_cases(db, project_id=project_id)
             else:
                 count = await index_incremental(db, project_id=project_id)
-        return {"indexed_count": count, "project_id": project_id, "mode": "full" if full else "incremental"}
+        # `count is None` means the indexer could not report a number — the
+        # vector store was unreachable, or the embedder failed partway. It is
+        # NOT "indexed nothing", and this result is what whoever triggered the
+        # reindex reads. Reporting 0 here made a failed run indistinguishable
+        # from a successful no-op.
+        #
+        # For the mid-run embedder failure, earlier batches may have landed and
+        # the Redis cursor holds the real progress — the count is unreportable,
+        # not zero.
+        return {
+            "indexed_count": count,
+            "indexing_measured": count is not None,
+            "project_id": project_id,
+            "mode": "full" if full else "incremental",
+        }
 
     try:
         result = cast(dict[str, Any], _run_async(_run()))
