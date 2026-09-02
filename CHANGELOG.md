@@ -28,7 +28,7 @@ post-increment in `SearchPage.tsx`'s query highlighter (the incremented value is
 never read again). Both are behavior-preserving.
 
 **Validated:** `npm run lint` (0 errors, 18 warnings — identical set to `main`),
-`tsc --noEmit`, `vitest run` (1338 passed), and `vite build` all green on the new
+`tsc --noEmit`, `vitest run` (1341 passed), and `vite build` all green on the new
 toolchain. Regression: `frontend/src/hooks/eslintTen.upgrade.test.ts` pins the v10
 majors and asserts the minimatch→brace-expansion v5 override (guarding against a
 "simplify the overrides" change that would silently re-break `npm run lint`).

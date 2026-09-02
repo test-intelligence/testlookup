@@ -45,10 +45,10 @@ describe('ESLint 10 upgrade (regression)', () => {
       | undefined
     const braceForMinimatch = minimatchOverride?.['brace-expansion']
 
-    // Must exist and be v5+ (the named-export `expand` API minimatch@10 calls) —
+    // Must be v5 (the named-export `expand` API and semver range minimatch@10 uses) —
     // NOT the global v1 pin, whose default-only export crashes eslint 10.
     expect(braceForMinimatch).toBeDefined()
-    expect(braceForMinimatch).toMatch(/^[5-9]\./)
+    expect(braceForMinimatch).toMatch(/^5\./)
     expect(braceForMinimatch).not.toMatch(/^1\./)
   })
 
