@@ -692,6 +692,63 @@ async def hybrid_search(
 # ── Retention: purge a project's documents from the search index ────────────
 
 
+async def purge_run_documents(
+    project_id: str, run_id: str, *, execute: bool
+) -> int | None:
+    """Count (or delete) ONE run's documents in the test-case index.
+
+    Returns the document count, or **None when the store could not be
+    reached** — callers must not render that as 0.
+
+    **Why this is separate from :func:`purge_project_documents` (RET-D8).**
+    That function deletes on ``{"project_id": ...}``, which is right for the
+    nightly sweep — it retires a whole project. Calling it from a single-run
+    delete would destroy every embedding the project owns while reporting a
+    plausible-looking number, and search would stay empty until someone ran a
+    full reindex. The two scopes are different deletions and are now different
+    functions.
+
+    Filtering on ``test_run_id`` metadata rather than on an id list: the ids
+    are test-case UUIDs, which the caller would otherwise have to re-derive
+    from the Postgres rows this same deletion is removing. The indexer writes
+    that key on every document (see :func:`_index_rows`).
+
+    ``project_id`` is in the filter as defence in depth. Run ids are UUIDs so
+    a cross-project collision is not the live worry; a where-clause naming
+    only the run would be correct today and silently wrong the moment the
+    collection is shared.
+    """
+    try:
+        collection = await _get_or_create_collection()
+    except Exception as exc:
+        # Unreachable is not empty — same stance as the project-wide purge.
+        logger.warning(
+            "Search-index run purge failed for run %s: %s", run_id, exc
+        )
+        return None
+
+    where = {
+        "$and": [
+            {"project_id": str(project_id)},
+            {"test_run_id": str(run_id)},
+        ]
+    }
+    try:
+        payload = await asyncio.to_thread(collection.get, where=where, include=[])
+        ids = list(payload.get("ids") or [])
+        if execute and ids:
+            await asyncio.to_thread(collection.delete, where=where)
+        return len(ids)
+    except Exception as exc:
+        # A failure BETWEEN the get and the delete must not return the
+        # pre-delete count: that reports documents as removed which are still
+        # in the store.
+        logger.warning(
+            "Search-index run purge failed for run %s: %s", run_id, exc
+        )
+        return None
+
+
 async def purge_project_documents(project_id: str, *, execute: bool) -> int | None:
     """Count (or delete) this project's documents in the test-case index.
 

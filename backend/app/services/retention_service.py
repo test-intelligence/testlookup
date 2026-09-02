@@ -887,6 +887,105 @@ async def run_purge(
 
 
 
+async def resolve_run_candidates(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    minio_prefix: Optional[str],
+) -> tuple[_Candidates, _ExecutionPlan]:
+    """Build the executor's inputs for deleting exactly ONE run.
+
+    Reuses ``execute_candidates`` rather than growing a second copy of the
+    deletion logic, because the ordering it encodes — materialize the
+    cross-store ids BEFORE the Postgres CASCADE destroys the mapping — is the
+    single hardest thing to get right and must not exist twice.
+
+    **The six project-wide filters are deliberately empty.** ``_ExecutionPlan``
+    carries clocks that never reference a run: the access and test-case audit
+    logs, provenance records, deletion jobs, expired agent memory and expired
+    compliance packs. Those belong to the nightly policy purge. A per-run
+    delete that inherited them would silently take a project's whole audit
+    trail with one run — so each is pinned to ``false()``, which compiles to a
+    literal that matches nothing BY CONSTRUCTION rather than by a filter that
+    happens not to match today.
+
+    ``event_archive_where`` is the exception: it is scoped to this run, since
+    the archived event blob belongs to it.
+    """
+    from sqlalchemy import false
+
+    never = (false(),)
+
+    tc_strs = [
+        str(tc_id)
+        for tc_id in (
+            await db.execute(
+                select(TestCase.id).where(TestCase.test_run_id == run_id)
+            )
+        ).scalars().all()
+    ]
+
+    pipeline_strs = {
+        str(pid)
+        for pid in (
+            await db.execute(
+                select(AgentPipelineRun.id).where(
+                    AgentPipelineRun.test_run_id == run_id
+                )
+            )
+        ).scalars().all()
+    }
+
+    evidence_ids = list(
+        (
+            await db.execute(
+                select(EvidenceArtifact.id).where(
+                    EvidenceArtifact.run_id == run_id
+                )
+            )
+        ).scalars().all()
+    )
+
+    # live_execution_events is keyed by the CLIENT's run id — a LiveSession
+    # slug on the webhook path. A UUID-only resolver reaches none of them.
+    from app.services.run_deletion_service import (
+        live_session_slugs_for_run,
+        safe_artifact_prefixes,
+    )
+
+    live_keys = await live_session_slugs_for_run(
+        db, project_id=project_id, run_id=run_id
+    )
+    safe_prefixes, _refused = safe_artifact_prefixes(
+        project_id, run_id, minio_prefix
+    )
+
+    candidates = _Candidates(
+        purge_run_ids=[run_id],
+        purge_run_strs=[str(run_id)],
+        purge_tc_strs=tc_strs,
+        raw_run_strs=[str(run_id)],
+        raw_tc_strs=tc_strs,
+        raw_live_run_keys=live_keys,
+        artifact_prefixes=safe_prefixes,
+        artifact_pipeline_strs=pipeline_strs,
+        evidence_artifact_ids=evidence_ids,
+        audit_pipeline_strs=list(pipeline_strs),
+    )
+
+    plan = _ExecutionPlan(
+        event_archive_where=(TestRun.id == run_id,),
+        access_audit_where=never,
+        tc_audit_where=never,
+        deletion_job_where=never,
+        provenance_where=never,
+        memory_expired_ids=[],
+        expired_packs=[],
+    )
+    return candidates, plan
+
+
 async def execute_candidates(
     db: AsyncSession,
     *,

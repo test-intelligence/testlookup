@@ -76,7 +76,8 @@ async def test_create_session_writes_a_test_run_stub():
                AsyncMock(return_value=project)), \
          patch("app.services.stream_service.get_redis",
                return_value=fake_redis), \
-         patch("app.streams.live_run_state.RedisLiveRunState.start",
+         patch("app.services.stream_service.run_is_tombstoned",
+               AsyncMock(return_value=False)),          patch("app.streams.live_run_state.RedisLiveRunState.start",
                AsyncMock(return_value=None)):
         response = await create_session(db, payload)
 
@@ -135,7 +136,8 @@ async def test_test_run_stub_save_failure_does_not_break_session_create():
                AsyncMock(return_value=project)), \
          patch("app.services.stream_service.get_redis",
                return_value=fake_redis), \
-         patch("app.streams.live_run_state.RedisLiveRunState.start",
+         patch("app.services.stream_service.run_is_tombstoned",
+               AsyncMock(return_value=False)),          patch("app.streams.live_run_state.RedisLiveRunState.start",
                AsyncMock(return_value=None)):
         # Must NOT raise — the duplicate-key SAVEPOINT is swallowed.
         response = await create_session(db, payload)

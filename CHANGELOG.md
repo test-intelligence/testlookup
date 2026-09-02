@@ -1,5 +1,97 @@
 # Changelog
 
+## 2026-09-02 — S2c: delete one run, across every store, without collateral
+
+`DELETE /api/v1/runs/{run_id}` (ADMIN, `require_run_access`, `{confirm, reason}`)
+returns **202 with a job id**, not 204. A synchronous delete of a multi-GB prefix
+times out at the gateway, and because the store order is Mongo → MinIO →
+Postgres the caller would get a 504 with the artifacts already gone and the run
+still listed. `delete_run_everywhere` (queue `critical`) does the work and reuses
+S2a's `execute_candidates`, so the materialize-before-cascade ordering — the
+hardest part of a cross-store delete — exists in exactly one place.
+
+**The EPIC undercounted the resurrection hazard by three.** It named
+`persist_live_session` and the stream stub. There are **five** paths that create
+a `TestRun` from a caller-supplied id on a SELECT miss: those two, the
+live-session drainer, the live-persist Celery task, and `ingestion_pipeline`
+whenever a `run_id` is passed. Each is correct on its own terms — they exist so
+a live session racing the drainer still lands in `test_runs` — and collectively
+they are why a per-run delete could not previously be offered. Delete a run while
+any is in flight and the row returns seconds later with its events, objects and
+archive already gone. Refusing `IN_PROGRESS` narrows that window but cannot close
+it: a Celery task already holding the id does not re-read the status.
+
+So `run_tombstones` (migration 0148) records the deletion and all five paths
+consult it. `run_id` is the primary key and deliberately **not** a foreign key to
+`test_runs` — the row it names is gone, which is the point; a FK would make the
+tombstone impossible to write. The tombstone lands in the **same commit** as the
+deletion: committed first it blocks live ingestion into a run that still exists,
+committed after it leaves the window open. The lookup **fails open** — a
+bookkeeping query that errors must not discard live CI results, because a
+resurrected row is visible and re-deletable whereas dropped results are not. An
+inventory test fails if a sixth creation site appears.
+
+**RET-D8: `purge_run_documents`.** `purge_project_documents` deletes on
+`{"project_id": …}`, which is right for the nightly sweep and catastrophic for a
+per-run delete — it would empty the project's entire vector index while reporting
+a plausible number, and search would stay empty until someone ran a full reindex.
+The new function filters on `test_run_id` metadata. Unreachable still returns
+`None`, never `0`.
+
+**RET-D9: the prefix guard.** `TestRun.minio_prefix` is uploader-derived —
+`webhooks.py` builds it as `key.split("/")[:-1]` from whatever object key the
+uploader chose, and the only existing validation rejects empty. A sentinel at
+`uploads/shared/upload_complete.json` yields the prefix `uploads/shared/`, and a
+delete honouring it wipes a shared area for every project. The nightly purge is
+bounded by only running against opted-in projects; this endpoint is not. Prefixes
+outside the project scope — including `uploads/{project}x/` and traversals that
+start inside the scope and climb out — are refused and **reported on the 202**,
+never silently skipped.
+
+**The scope cannot widen.** `_ExecutionPlan` carries five clocks that never
+reference a run. `resolve_run_candidates` pins every one to `false()`, so a
+single-run delete cannot take a project's audit trail with it — a literal that
+matches nothing *by construction*, not a filter that happens not to match today.
+
+**Citations block, and unreachable stores block too.** A run cited by a
+compliance pack, linked to a release, or named by a decision report is refused
+with **every** blocker listed, so clearing one does not reveal a second. When the
+citation store cannot be reached the delete is refused rather than allowed: the
+asymmetry runs opposite to the tombstone lookup, because deleting evidence a
+published report cites is unrecoverable.
+
+**A design flaw the route tests found.** The tombstone branch originally returned
+404 for a row that still existed. But a tombstoned row that exists means a
+resurrection got past the guards — reachable, since the drainer's lookup fails
+open — and 404 would strand a dataless run nothing could remove, exactly when the
+operator most needs the endpoint. It now logs `run_resurrection_detected` and
+proceeds.
+
+**Two bugs caught by tooling rather than by tests.** `ruff` found four names
+(`AsyncSessionLocal`, `select`, `datetime`, `timezone`) that are not module-scope
+in `tasks.py` — the task would have raised `NameError` at runtime, and the import
+check passed because they are referenced only inside the coroutine. The quality
+gate found `logger.info("…", run_id=…)` on a **stdlib** logger in
+`stream_service`, which raises `TypeError` in `Logger._log` — it would have
+crashed precisely when the tombstone guard fired.
+
+**Validated:** 88 unit tests across five files, 5 integration tests against real
+PostgreSQL 16, and 32 mutations of which all 32 were killed. Three mutations
+survived the first pass and every one was a test defect: a status check asserted
+only `isinstance(…, bool)`; a mutation was aimed at a test that stubs the very
+lookup it mutates; and a module-level source grep still matched the import line —
+the same blind spot that let a mutant through in S2b. Fixing the second exposed a
+further problem in the replacement test, where nested `AsyncMock`s made
+`scalar_one_or_none()` return a coroutine, so two of its three assertions were
+passing without exercising the comparison at all.
+
+**Store coverage, stated honestly.** The EPIC asks for an integration test
+against real Postgres + Mongo + MinIO. CI's integration job runs Postgres and
+Mongo; there is no MinIO service. Object storage is therefore a recording double,
+which is sufficient for what is asserted — which prefixes reached `delete_prefix`
+and when — and insufficient for anything about MinIO's own behaviour, which the
+file does not claim. `make quality-gate` 33/33 and `ruff` clean.
+
 ## 2026-09-01 — S2b: a deletion you can see while it is still running
 
 Retention already wrote a purge record into `settings_audit_log`, which is never

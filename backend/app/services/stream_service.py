@@ -25,8 +25,17 @@ from app.models.schemas import (
 )
 from app.services.async_utils import await_if_needed
 from app.services.run_status import terminal_run_status
+from app.services.run_tombstone_service import run_is_tombstoned
 
 logger = logging.getLogger(__name__)
+
+
+class _StubSkipped(Exception):
+    """Internal: the companion TestRun stub was deliberately not written.
+
+    Raised inside the stub's SAVEPOINT so the deliberate skip unwinds by
+    the same path as a failed write, and caught separately so it is never
+    reported as an error."""
 
 # Throttle: warn at most once per process when the live buffer cap is disabled.
 _buffer_cap_disabled_warned = False
@@ -223,8 +232,19 @@ async def create_session(
     # back to it on exception. The outer LiveSession write stays
     # committed regardless. Services don't own ``db.rollback()`` on
     # injected sessions; the SAVEPOINT is the right primitive here.
+    #
+    # A tombstoned id means an operator deleted this run: writing the stub
+    # would put the row back with none of its data behind it. Only the STUB is
+    # skipped — create_session still returns normally and the LiveSession is
+    # still written, because refusing the session outright would drop live
+    # results on the floor.
+    stub_would_resurrect = await run_is_tombstoned(db, session_id)
+    if stub_would_resurrect:
+        logger.info("live_stub_skipped_tombstoned_run run_id=%s", session_id)
     try:
         async with db.begin_nested():
+            if stub_would_resurrect:
+                raise _StubSkipped()
             stub = TestRun(
                 id=uuid.UUID(session_id),
                 project_id=project_uuid,
@@ -251,6 +271,12 @@ async def create_session(
             )
             db.add(stub)
             await db.flush()
+    except _StubSkipped:
+        # Deliberate: the id is tombstoned. Not a failure, and it must not be
+        # logged as one — the SAVEPOINT rollback is exactly the behaviour we
+        # want, so this reuses the existing unwind rather than adding a second
+        # code path around the write.
+        pass
     except Exception as exc:
         # stdlib ``logging`` doesn't take arbitrary kwargs the way
         # structlog does (the rest of this module is on stdlib logging
@@ -1159,6 +1185,12 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
     ci_context = (getattr(session, "extra_metadata", None) or {}).get("ci_context") or {}
 
     run = (await db.execute(select(TestRun).where(TestRun.id == run_uuid))).scalar_one_or_none()
+    if run is None and await run_is_tombstoned(db, run_uuid):
+        # Deliberately deleted. Re-creating it here would return a run whose
+        # events, objects and archive are already gone — an operator was told
+        # this run no longer exists.
+        logger.info("live_persist_skipped_tombstoned_run run_id=%s", run_uuid)
+        return None
     if run is None:
         run = TestRun(
             id=run_uuid,
