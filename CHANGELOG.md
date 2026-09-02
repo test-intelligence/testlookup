@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-02 — give the flexible column a budget to be flexible in
+
+Third and final pass on the /intelligence runs table, measured on the running
+deployment at a 1345px viewport (where the runs panel is 641px).
+
+Making Build flexible was necessary but not sufficient. The four fixed columns
+were taking 631px of the 641px panel, so Build collapsed to 28px — unreadable —
+and the table still overflowed by 19px, leaving Timing cut off. Suite, Status,
+Pass rate and Timing are now capped to the design's budget (110 / 88 / 86 /
+158px), which leaves Build a readable ~199px and brings the table to exactly the
+panel width.
+
+The cap has to land on the CELLS as well as the headers: an auto-layout table
+column cannot shrink below its cells' min-content width, so capping only the
+`<th>` left the table 35px over. Build also carries a `min-w-[150px]` floor so
+it can never collapse to a sliver again.
+
+Verified live afterwards: /intelligence, /runs, /live and /test-management all
+report zero horizontal overflow, and at 375px no cell carries a
+`md:table-cell` breakpoint class, so the sort key stays present and the table
+scrolls instead of dropping it.
+
+
 ## 2026-09-02 — S6a: the archive learns to describe something other than a release
 
 S6 (export before delete) is the largest slice in the epic — a service

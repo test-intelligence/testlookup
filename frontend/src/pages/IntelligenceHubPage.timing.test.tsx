@@ -85,3 +85,74 @@ describe('IntelligenceHubPage timing column', () => {
     expect(screen.queryByText(full)).not.toBeInTheDocument()
   })
 })
+
+/**
+ * Regression cover for the column BUDGET, measured on the live deployment.
+ *
+ * Making Build flexible was necessary but not sufficient: the four fixed
+ * columns were consuming 631px of a 641px panel, so Build collapsed to 28px
+ * and the table still overflowed by 19px. A `max-width` on the <th> alone does
+ * not help either — an auto-layout column cannot shrink below its CELLS'
+ * min-content width, so the cap has to land on both.
+ */
+describe('IntelligenceHubPage column budget', () => {
+  const CAPPED = [
+    { name: /Suite/i, cap: 'max-w-[110px]' },
+    { name: /Status/i, cap: 'max-w-[88px]' },
+    { name: /Pass rate/i, cap: 'max-w-[86px]' },
+    { name: /Timing/i, cap: 'max-w-[158px]' },
+  ]
+
+  it('caps every fixed column so Build keeps a readable share', async () => {
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{
+        id: 'r1', build_number: '42', status: 'PASSED', failed_tests: 0, passed_tests: 1,
+        broken_tests: 0, skipped_tests: 0, total_tests: 1, pass_rate: 100, branch: 'main',
+        created_at: '2026-04-03T15:00:00Z', start_time: '2026-04-03T15:00:00Z',
+        end_time: '2026-04-03T15:08:12Z', duration_ms: 492000,
+      }] },
+      isLoading: false,
+    })
+    render(
+      <MemoryRouter initialEntries={['/intelligence']}>
+        <Routes><Route path="/intelligence" element={<IntelligenceHubPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('columnheader', { name: /Timing/i })
+
+    for (const { name, cap } of CAPPED) {
+      const th = screen.getByRole('columnheader', { name })
+      expect(th.className.split(' ')).toContain(cap)
+    }
+    // Build floors so it can never collapse to an unreadable sliver.
+    const build = screen.getByRole('columnheader', { name: /Build/i })
+    expect(build.className.split(' ')).toContain('min-w-[150px]')
+  })
+
+  it('caps the CELLS too, not just the headers', async () => {
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{
+        id: 'r1', build_number: '42', status: 'PASSED', failed_tests: 0, passed_tests: 1,
+        broken_tests: 0, skipped_tests: 0, total_tests: 1, pass_rate: 100, branch: 'main',
+        created_at: '2026-04-03T15:00:00Z', start_time: '2026-04-03T15:00:00Z',
+        end_time: '2026-04-03T15:08:12Z', duration_ms: 492000,
+      }] },
+      isLoading: false,
+    })
+    const { container } = render(
+      <MemoryRouter initialEntries={['/intelligence']}>
+        <Routes><Route path="/intelligence" element={<IntelligenceHubPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('columnheader', { name: /Timing/i })
+    const cells = [...container.querySelectorAll('tbody tr td')]
+    expect(cells).toHaveLength(5)
+    // Header-only caps left the table 35px over its wrapper on the deployment.
+    expect(cells[1].className).toContain('max-w-[110px]')
+    expect(cells[2].className).toContain('max-w-[88px]')
+    expect(cells[3].className).toContain('max-w-[86px]')
+    expect(cells[4].className).toContain('max-w-[158px]')
+  })
+})

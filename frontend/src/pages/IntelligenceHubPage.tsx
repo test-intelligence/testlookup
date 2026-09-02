@@ -710,19 +710,24 @@ function RunsTable({
                   {/* w-full + max-w-0 is what actually makes an auto-layout
                       table column flexible — `min-w-0` on a <td> does nothing,
                       the column still sizes to its content min-content width. */}
-                  <Th className="w-full max-w-0">Build</Th>
-                  <Th>Suite</Th>
-                  <Th>Status</Th>
+                  {/* Column budget (measured live at a 1345px viewport, where the
+                      runs panel is 641px): the four fixed columns must fit in
+                      ~442px so Build keeps a readable ~200px. Without caps they
+                      took 631px, collapsing Build to 28px AND still overflowing. */}
+                  <Th className="w-full max-w-0 min-w-[150px]">Build</Th>
+                  <Th className="w-[110px] max-w-[110px]">Suite</Th>
+                  <Th className="w-[88px] max-w-[88px]">Status</Th>
                   {/* US-15.1 honesty fix: this column has always rendered the
                       run's pass rate. It was labelled "AI confidence", which
                       it never was — no AI confidence is wired here. */}
-                  <Th>Pass rate</Th>
+                  <Th className="w-[86px] max-w-[86px]">Pass rate</Th>
                   {/* Timing is the SORT KEY here. It was previously two
                       `hidden md:table-cell` columns, so below 768px the table
                       dropped the field it was ordered by. Merged and always
                       visible — see TimingCell. */}
                   <Th
                     align="right"
+                    className="w-[158px] max-w-[158px]"
                     onClick={onToggleDatetimeSort}
                     sortDir={datetimeSortDir === 'desc' ? '↓' : '↑'}
                   >
@@ -783,7 +788,7 @@ function RunRow({
       onClick={() => onOpen(run.id)}
       className="cursor-pointer hover:bg-[var(--color-bg-hover)] transition-colors border-b border-[var(--color-border)] last:border-b-0"
     >
-      <td className="px-3.5 py-2.5 w-full max-w-0">
+      <td className="px-3.5 py-2.5 w-full max-w-0 min-w-[150px]">
         <div className="flex items-baseline gap-2 min-w-0">
           {/* Prefer the per-(project, suite) human-readable Run #N — server-
               computed via ROW_NUMBER() so the same value appears on
@@ -817,15 +822,15 @@ function RunRow({
           )}
         </div>
       </td>
-      <td className="px-3.5 py-2.5">
+      <td className="px-3.5 py-2.5 w-[110px] max-w-[110px] overflow-hidden">
         <SuiteBadge
           primary={run.primary_suite_name}
           all={run.suite_names}
           linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
         />
       </td>
-      <td className="px-3.5 py-2.5"><RunStatusPill run={run} /></td>
-      <td className="px-3.5 py-2.5">
+      <td className="px-3.5 py-2.5 w-[88px] max-w-[88px] overflow-hidden"><RunStatusPill run={run} /></td>
+      <td className="px-3.5 py-2.5 w-[86px] max-w-[86px] overflow-hidden">
         {passRatePct != null
           ? <PassRateMeter pct={passRatePct} />
           : <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>}
@@ -834,6 +839,7 @@ function RunRow({
         started={run.start_time ?? run.created_at}
         end={run.end_time}
         durationMs={run.duration_ms}
+        className="w-[158px] max-w-[158px]"
       />
     </tr>
   )
