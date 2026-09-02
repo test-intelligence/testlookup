@@ -5271,14 +5271,14 @@ class DeletionJob(Base):
 
     ``resolved_run_ids`` records exactly which runs went, and ``candidate_hash``
     fingerprints that set. Today that is an audit detail; criteria deletion
-    (S3b) reuses both to freeze a previewed candidate set and refuse to execute
+    (S5) reuses both to freeze a previewed candidate set and refuse to execute
     if the world moved underneath it.
 
-    Status vocabulary is deliberately limited to states this slice can actually
-    reach: ``queued|running|completed|failed|partial``. ``previewed`` arrives
-    with criteria deletion; ``cancelled`` is NOT declared, because nothing can
-    produce it — shipping a state nothing writes is the defect this epic
-    catalogues elsewhere, not a placeholder.
+    Status vocabulary is limited to states something can actually reach:
+    ``queued|previewed|running|completed|failed|partial``. ``previewed`` was
+    withheld until S5's preview endpoint gave it a producer. ``cancelled`` is
+    still NOT declared, because nothing can produce it — shipping a state
+    nothing writes is the defect this epic catalogues elsewhere.
     """
 
     __tablename__ = "deletion_jobs"

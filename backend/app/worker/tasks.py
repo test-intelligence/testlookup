@@ -5082,3 +5082,130 @@ def delete_run_everywhere(
         )
     )
     return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.execute_criteria_deletion_task",
+    bind=True,
+    max_retries=0,
+    queue="critical",
+)
+def execute_criteria_deletion_task(
+    self,
+    job_id: str,
+    project_id: str,
+    requested_by_id: str | None = None,
+):
+    """Replay a frozen candidate set, one run at a time.
+
+    Per-run rather than one big transaction, deliberately. A criteria job can
+    cover thousands of runs across five stores; a single transaction holding
+    all of it would sit on locks for minutes and lose everything to one bad
+    row. Per-run means a failure costs one run, and the others still go.
+
+    That is also why ``partial`` exists as an outcome. The nightly purge
+    self-heals within 24h because it re-runs; nothing retries this
+    (``max_retries=0`` — a retry would replay deletions already done and
+    report them as failures). "Some of them went" is therefore a real, final
+    state, and reporting it as either success or failure would be a lie.
+    """
+    from sqlalchemy import select
+
+    from app.db.mongo import get_mongo_db
+    from app.db.postgres import AsyncSessionLocal
+    from app.db.storage import get_storage_provider
+    from app.models.postgres import TestRun
+    from app.services import (
+        deletion_job_service,
+        run_deletion_service,
+        semantic_search,
+    )
+
+    async def _run() -> dict[str, Any]:
+        job_uuid = uuid.UUID(job_id)
+        project_uuid = uuid.UUID(project_id)
+
+        async with AsyncSessionLocal() as db:
+            try:
+                run_ids = await deletion_job_service.claim_frozen_set(
+                    db, job_id=job_uuid, project_id=project_uuid
+                )
+            except deletion_job_service.FrozenSetRejected as rejected:
+                # The route already validated this; reaching here means a
+                # duplicate delivery or a race, and re-deleting would be worse
+                # than declining.
+                logger.warning(
+                    "[criteria-delete] job %s not executable: %s",
+                    job_id, rejected.detail,
+                )
+                return {"executed": False, "reason": rejected.detail}
+
+        await deletion_job_service.close_job(
+            job_uuid, status=deletion_job_service.RUNNING
+        )
+
+        mongo = await get_mongo_db()
+        storage = get_storage_provider()
+        deleted: list[str] = []
+        failures: list[str] = []
+        totals: dict[str, Any] = {}
+
+        for run_id in run_ids:
+            try:
+                async with AsyncSessionLocal() as db:
+                    run = (
+                        await db.execute(
+                            select(TestRun).where(TestRun.id == run_id)
+                        )
+                    ).scalar_one_or_none()
+                    if run is None:
+                        # Already gone. Idempotent, not an error.
+                        deleted.append(str(run_id))
+                        continue
+
+                    index_documents = await semantic_search.purge_run_documents(
+                        str(project_uuid), str(run_id), execute=True
+                    )
+                    counts = await run_deletion_service.perform_run_deletion(
+                        db,
+                        run=run,
+                        mongo=mongo,
+                        storage=storage,
+                        search_index_documents=index_documents,
+                        reason="criteria deletion",
+                        deleted_by_id=(
+                            uuid.UUID(requested_by_id) if requested_by_id else None
+                        ),
+                        deletion_job_id=job_uuid,
+                    )
+                    await db.commit()
+                deleted.append(str(run_id))
+                for store, value in (counts or {}).items():
+                    if isinstance(value, dict):
+                        bucket = totals.setdefault(store, {})
+                        for key, num in value.items():
+                            if isinstance(num, int):
+                                bucket[key] = bucket.get(key, 0) + num
+            except Exception as exc:  # noqa: BLE001 — one run must not stop the rest
+                failures.append(f"{run_id}: {str(exc)[:200]}")
+                logger.warning("[criteria-delete] run %s failed: %s", run_id, exc)
+
+        status = deletion_job_service.outcome_status(
+            requested=len(run_ids), deleted=len(deleted)
+        )
+        await deletion_job_service.close_job(
+            job_uuid,
+            status=status,
+            counts=totals or None,
+            resolved_run_ids=deleted or None,
+            error="; ".join(failures[:5]) if failures else None,
+        )
+        return {
+            "executed": True,
+            "status": status,
+            "requested": len(run_ids),
+            "deleted": len(deleted),
+            "failed": len(failures),
+        }
+
+    return _run_async(_run())

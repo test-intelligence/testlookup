@@ -38,8 +38,11 @@ from app.core.deps import (
     require_project_access,
     require_role,
 )
-from app.models.postgres import Project, User, UserRole
+from app.models.postgres import Project, TestRun, User, UserRole
 from app.models.schemas import (
+    DeletionExecuteAcceptedResponse,
+    DeletionExecuteRequest,
+    DeletionPreviewResponse,
     DeletionJobListResponse,
     DeletionJobResponse,
     ProjectStorageResponse,
@@ -51,6 +54,7 @@ from app.models.schemas import (
 )
 from app.services import retention_service as svc
 from app.services import deletion_job_service
+from app.services.deletion_criteria import RetentionCriteria
 from app.services import storage_accounting_service
 
 router = APIRouter(prefix="/api/v1/projects", tags=["Retention"])
@@ -254,3 +258,163 @@ async def enqueue_retention_purge(
         actor_id=str(current_user.id),
     )
     return RetentionPurgeQueued(queued=True)
+
+
+@router.post(
+    "/{project_id}/deletion/preview",
+    response_model=DeletionPreviewResponse,
+)
+async def preview_criteria_deletion(
+    project_id: uuid.UUID,
+    criteria: RetentionCriteria,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_project_access()),
+):
+    """Resolve a criteria set and FREEZE it for execution.
+
+    The freeze is the whole point (N3/N4). The nightly purge's candidate set is
+    a pure function of ``(policy, now)``, so re-resolving gives the same answer.
+    Criteria are not: they read columns other code rewrites while the job sits
+    queued — ``TestRun.status`` by ``_update_run_aggregates`` and by
+    live-session close, ``primary_suite_name`` at session close. Execute is
+    asynchronous, so re-resolving there would delete a different set from the
+    one an ADMIN reviewed. This materializes the ids and hashes them; execute
+    replays that set.
+
+    Runs that cannot be deleted are reported HERE rather than discovered
+    mid-execution, so the count an ADMIN authorises is the count that will go.
+    """
+    from app.db.mongo import get_mongo_db
+    from app.services import deletion_criteria, run_deletion_service
+
+    foreign = await deletion_criteria.foreign_run_ids(
+        db, project_id=project_id, run_ids=criteria.run_ids or []
+    )
+    if foreign:
+        # The whole request fails. Filtering to the caller's own runs would act
+        # on a request they got wrong, and naming which id was foreign would
+        # confirm it exists in another project.
+        raise HTTPException(
+            status_code=403,
+            detail="one or more run_ids do not belong to this project",
+        )
+
+    run_ids = await deletion_criteria.resolve_criteria_candidates(
+        db, project_id=project_id, criteria=criteria
+    )
+    truncated = len(run_ids) > deletion_criteria.MAX_CANDIDATES
+    run_ids = run_ids[: deletion_criteria.MAX_CANDIDATES]
+
+    mongo = await get_mongo_db()
+    blocked: list[dict] = []
+    deletable: list[uuid.UUID] = []
+    refused_prefixes: list[str] = []
+
+    rows = (
+        await db.execute(
+            select(TestRun.id, TestRun.status, TestRun.minio_prefix).where(
+                TestRun.id.in_(run_ids)
+            )
+        )
+    ).all() if run_ids else []
+    by_id = {r[0]: r for r in rows}
+
+    for run_id in run_ids:
+        row = by_id.get(run_id)
+        if row is None:
+            continue
+        reasons: list[str] = []
+        if run_deletion_service.status_blocks_deletion(row[1]):
+            reasons.append("run is still executing")
+        reasons.extend(
+            await run_deletion_service.citation_blockers(
+                db, run_id=run_id, mongo=mongo
+            )
+        )
+        if reasons:
+            blocked.append({"run_id": str(run_id), "reasons": reasons})
+            continue
+        _safe, refused = run_deletion_service.safe_artifact_prefixes(
+            project_id, run_id, row[2]
+        )
+        refused_prefixes.extend(refused)
+        deletable.append(run_id)
+
+    job_id = deletion_job_service.stage_frozen_candidate_set(
+        db,
+        project_id=project_id,
+        run_ids=deletable,
+        criteria=criteria.model_dump(mode="json", exclude_none=True),
+        requested_by_id=current_user.id,
+    )
+    # The router owns the commit, per the transaction-boundary rule. A preview
+    # that failed after this point must NOT leave an executable job behind.
+    await db.commit()
+
+    return DeletionPreviewResponse(
+        job_id=job_id,
+        project_id=project_id,
+        run_count=len(deletable),
+        run_ids=deletable,
+        candidate_hash=deletion_job_service.candidate_hash(
+            [str(r) for r in deletable]
+        ),
+        truncated=truncated,
+        refused_prefixes=sorted(set(refused_prefixes)),
+        blocked=blocked,
+    )
+
+
+@router.post(
+    "/{project_id}/deletion/execute",
+    status_code=202,
+    response_model=DeletionExecuteAcceptedResponse,
+)
+async def execute_criteria_deletion(
+    project_id: uuid.UUID,
+    body: DeletionExecuteRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_project_access()),
+):
+    """Execute a previewed set. Takes a JOB ID, never a criteria body.
+
+    Accepting criteria here would re-resolve them, which is exactly the bug the
+    freeze exists to prevent: the set executed would not be the set reviewed.
+
+    Refusals come from :func:`claim_frozen_set` — 404 for a missing or foreign
+    job, 409 for one that is not ``previewed`` (which is what stops a
+    double-submitted form deleting twice) and 409 on hash drift.
+    """
+    from app.worker.tasks import execute_criteria_deletion_task
+
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if body.confirmation_name != project.name:
+        # Typed confirmation, matching the project-reset endpoint's guard.
+        raise HTTPException(
+            status_code=422,
+            detail="confirmation_name must match the project name exactly",
+        )
+
+    try:
+        run_ids = await deletion_job_service.claim_frozen_set(
+            db, job_id=body.job_id, project_id=project_id
+        )
+    except deletion_job_service.FrozenSetRejected as rejected:
+        raise HTTPException(
+            status_code=rejected.status_code, detail=rejected.detail
+        ) from rejected
+
+    execute_criteria_deletion_task.delay(
+        str(body.job_id), str(project_id), str(current_user.id)
+    )
+
+    return DeletionExecuteAcceptedResponse(
+        job_id=body.job_id, run_count=len(run_ids)
+    )
