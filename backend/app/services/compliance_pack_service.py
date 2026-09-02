@@ -44,6 +44,7 @@ import io
 import json
 import uuid
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -408,7 +409,7 @@ def _build_readme(
 def _build_manifest(
     files: dict[str, bytes],
     generated_at: datetime,
-    release: Release,
+    scope: "ExportScope",
     run: Optional[TestRun],
     decision: Optional[ReleaseDecision],
 ) -> bytes:
@@ -431,17 +432,40 @@ def _build_manifest(
                 "sha256": _sha256(data),
             }
         )
-    manifest = {
+    manifest: dict[str, Any] = {
         "format_version": 1,
         "generated_at": generated_at.isoformat(),
-        "release_id": str(release.id),
-        "project_id": str(release.project_id),
-        "test_run_id": str(run.id) if run else None,
-        "recommendation": decision.recommendation if decision else None,
-        "risk_score": decision.risk_score if decision else None,
-        "policy_id": str(decision.policy_id) if decision and decision.policy_id else None,
+        "project_id": str(scope.project_id),
         "files": entries,
     }
+
+    # ``_serialize`` uses ``sort_keys=True``, so ANY added key changes every
+    # byte of the manifest and therefore its digest. A release pack must emit
+    # exactly the key set it has always emitted, or an auditor regenerating
+    # one gets a digest that disagrees with the value they recorded. Scope
+    # description is therefore conditional, not additive.
+    if scope.kind == "release":
+        manifest.update(
+            {
+                "release_id": str(scope.release_id),
+                "test_run_id": str(run.id) if run else None,
+                "recommendation": decision.recommendation if decision else None,
+                "risk_score": decision.risk_score if decision else None,
+                "policy_id": (
+                    str(decision.policy_id)
+                    if decision and decision.policy_id
+                    else None
+                ),
+            }
+        )
+    else:
+        manifest.update(
+            {
+                "scope": "runs",
+                "tier": scope.tier,
+                "run_ids": [str(r) for r in scope.run_ids],
+            }
+        )
     return _serialize(manifest)
 
 
@@ -496,7 +520,10 @@ async def _build_pack_payload(
         "agent_activity.json": _serialize(agent_activity),
     }
 
-    manifest_bytes = _build_manifest(files, generated_at, release, run, decision)
+    scope = ExportScope.for_release(
+        release_id=release.id, project_id=release.project_id, run_ids=[run.id]
+    )
+    manifest_bytes = _build_manifest(files, generated_at, scope, run, decision)
     manifest_hash = _sha256(manifest_bytes)
 
     # Now write the ZIP with manifest.json first so consumers who scan
@@ -526,11 +553,104 @@ async def _build_pack_payload(
     return zip_bytes, metadata
 
 
-def _build_minio_key(release_id: uuid.UUID, generated_at: datetime, pack_id: uuid.UUID) -> str:
+#: Upper bound on runs in one export (S6a).
+#:
+#: No cap existed on compliance packs — a release covers one run, so the
+#: question never arose. A retention export covers a candidate set, and an
+#: unbounded one OOMs or times out AFTER the operator was told the export
+#: would protect their data. Refusing up front with a stated bound is the
+#: honest failure; truncating would export a subset and then delete the whole
+#: set, which is the worst outcome this slice can produce.
+MAX_EXPORT_RUNS = 2000
+
+_EXPORT_TIERS = ("summary", "evidence", "full")
+
+
+@dataclass(frozen=True)
+class ExportScope:
+    """What an archive covers.
+
+    The compliance pack was release-shaped throughout: the entry point took a
+    ``Release``, the storage key was built from ``release_id``, and the
+    manifest named release fields directly. A retention export covers a set of
+    runs instead. This is the one description both understand, so there is one
+    builder rather than two — the epic's explicit warning, because a second
+    copy of the manifest chain is a second thing that can drift from the
+    verification steps the README tells an auditor to follow.
+    """
+
+    kind: str                  # "release" | "runs"
+    project_id: uuid.UUID
+    run_ids: tuple[uuid.UUID, ...]
+    tier: str
+    release_id: Optional[uuid.UUID] = None
+
+    @staticmethod
+    def _validate(run_ids, tier: str) -> tuple[uuid.UUID, ...]:
+        if tier not in _EXPORT_TIERS:
+            raise ValueError(
+                f"unknown tier {tier!r}; expected one of {list(_EXPORT_TIERS)} — "
+                "a tier outside the vocabulary selects no content and produces "
+                "an archive that looks successful and holds nothing"
+            )
+        ids = tuple(run_ids)
+        if not ids:
+            raise ValueError(
+                "an export needs at least one run; exporting nothing and then "
+                "deleting on the strength of it is the worst outcome available"
+            )
+        if len(ids) > MAX_EXPORT_RUNS:
+            raise ValueError(
+                f"{len(ids)} runs exceeds the export bound of {MAX_EXPORT_RUNS}; "
+                "narrow the criteria. The set is NOT truncated, because "
+                "exporting a subset and deleting the whole set is silent data loss"
+            )
+        return ids
+
+    @classmethod
+    def for_release(
+        cls, *, release_id: uuid.UUID, project_id: uuid.UUID, run_ids
+    ) -> "ExportScope":
+        """A compliance pack. Always ``full``: it is evidence, and has always
+        contained everything — defaulting it to ``summary`` would silently thin
+        an artifact auditors already rely on."""
+        return cls(
+            kind="release",
+            project_id=project_id,
+            run_ids=cls._validate(run_ids, "full"),
+            tier="full",
+            release_id=release_id,
+        )
+
+    @classmethod
+    def for_runs(
+        cls, *, project_id: uuid.UUID, run_ids, tier: str
+    ) -> "ExportScope":
+        """A retention export over a candidate set."""
+        return cls(
+            kind="runs",
+            project_id=project_id,
+            run_ids=cls._validate(run_ids, tier),
+            tier=tier,
+        )
+
+
+def build_export_key(
+    scope: ExportScope, generated_at: datetime, pack_id: uuid.UUID
+) -> str:
     """Deterministic storage key. Date-prefixed so MinIO lifecycle rules
-    can expire old packs by year/month without listing the whole bucket."""
+    can expire old archives by year/month without listing the whole bucket.
+
+    Release packs keep their existing ``compliance/`` prefix and shape
+    verbatim — every stored pack is addressed by it. Run exports live under
+    ``exports/`` so a lifecycle rule written for compliance packs does not
+    silently start expiring retention archives.
+    """
     date_prefix = generated_at.strftime("%Y/%m/%d")
-    return f"compliance/{date_prefix}/{release_id}/{pack_id}.zip"
+    if scope.kind == "release":
+        return f"compliance/{date_prefix}/{scope.release_id}/{pack_id}.zip"
+    return f"exports/{date_prefix}/{scope.project_id}/{pack_id}.zip"
+
 
 
 # ── Public entry points ───────────────────────────────────────────────────
@@ -568,7 +688,18 @@ async def generate_pack(
 
     pack_id = uuid.uuid4()
     generated_at = datetime.now(timezone.utc)
-    minio_key = _build_minio_key(release.id, generated_at, pack_id)
+
+    # One description, one key builder. The release path goes through the same
+    # ExportScope a retention export uses — the epic's warning is that a
+    # half-generalised service with two entry points is worse than either,
+    # because the second copy of the manifest chain drifts from the
+    # verification steps the README tells an auditor to follow.
+    scope = ExportScope.for_release(
+        release_id=release.id,
+        project_id=release.project_id,
+        run_ids=[uuid.UUID(metadata["run_id"])],
+    )
+    minio_key = build_export_key(scope, generated_at, pack_id)
 
     # Upload to MinIO. A failure here aborts the pack — we don't want a
     # DB row pointing at nothing.

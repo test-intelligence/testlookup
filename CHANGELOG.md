@@ -1,5 +1,63 @@
 # Changelog
 
+## 2026-09-02 — S6a: the archive learns to describe something other than a release
+
+S6 (export before delete) is the largest slice in the epic — a service
+generalisation, three fidelity tiers, two targets with a new job state and TTL,
+a migration, verification-by-re-read, sanitizer routing and a real-store
+integration test. It is split the way the epic itself split S2, and for the
+reason the epic gave there: shipping it as one slice is how the irreversible
+refactor ends up rushed.
+
+* **S6a (this)** — generalise `compliance_pack_service` from `Release` to a
+  scope, plus the size cap. **No new endpoint**, so nothing half-built is
+  exposed.
+* **S6b** — export-before-delete ordering, verification, the `deletion_jobs`
+  export columns, tier content, the reclamation ratio.
+* **S6c** — the `collect` target: presigned URL, `awaiting_collection`, TTL,
+  client acknowledgement.
+
+**`ExportScope` is one description both kinds share.** The pack service was
+release-shaped throughout: the entry point took a `Release`, the storage key was
+built from `release_id`, and the manifest named release fields directly. The
+epic's warning was explicit — a half-generalised service with two entry points
+is worse than either, because a second copy of the manifest chain is a second
+thing that can drift from the verification steps the README tells an auditor to
+follow. So `generate_pack` now goes through the same scope a retention export
+will.
+
+**The release manifest does not move a byte.** `_serialize` uses
+`sort_keys=True`, so *any* added key changes every byte and therefore the
+digest. An auditor who recorded a pack's `manifest_sha256` and later regenerates
+it would get a different value and conclude the evidence had been tampered with.
+The scope description is therefore conditional, not additive, and a test pins
+the release key set as a literal.
+
+Run exports live under an `exports/` prefix rather than `compliance/`, so a
+MinIO lifecycle rule written to expire compliance packs does not silently start
+expiring retention archives.
+
+**A size cap that did not exist.** No bound was enforced on compliance packs — a
+release covers one run, so the question never arose. A retention export covers a
+candidate set, and an unbounded one OOMs or times out *after* the operator was
+told the export would protect their data. `MAX_EXPORT_RUNS = 2000`, refused up
+front with the bound stated, and explicitly **not** truncated: exporting a subset
+and then deleting the whole set is silent data loss.
+
+**The same dead-code pattern as S4, caught again.** `_build_minio_key` was left
+as a back-compat shim after the generalisation — and its only remaining caller
+was a *test*. It would have gone on asserting the key shape of a function
+nothing called, while the real builder went unchecked by it. Shim deleted, test
+repointed at `build_export_key`.
+
+**And the same weak-assertion pattern, caught by mutation.** The delegation test
+grepped `generate_pack` for `"ExportScope"`, which still appeared on the line
+above a mutant that built the storage key inline. It now asserts the *call* —
+`build_export_key(` present, and no hardcoded `f"compliance/` literal.
+
+**Validated:** 14 scope tests, 203 across every compliance/export/pack suite,
+12/12 mutations killed, `make quality-gate` 33/33, `ruff` clean.
+
 ## 2026-09-02 — S4: reports outlive their runs, but not forever
 
 "Storage of the reports" was the first thing the brief asked for, and reports
