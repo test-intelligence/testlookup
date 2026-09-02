@@ -65,6 +65,17 @@ router commit; `deletion_job_service` is an explicit exception, entered in
 to stage-only would make the table structurally incapable of recording the
 outcomes it exists for — the ratchet caught this, which is what it is for.
 
+**A hardcoded migration head, fixed rather than bumped.**
+`test_migration_postconditions_are_true_in_postgres` asserted `revision ==
+"0146"` — a literal that had already been bumped once for the previous
+migration. Every unrelated migration fails it, and the failure says nothing
+about the lifecycle postconditions the test exists to check. It now computes the
+head from the Alembic script directory, which keeps the real check (the fixture
+ran every migration, so the postconditions below are not being asserted against
+a partially migrated schema) and drops the false one. Verified both ways against
+a real PostgreSQL 16: green at head, and still red — with a message naming both
+revisions — against a database deliberately stopped at 0146.
+
 **Validated:** 23 unit tests, and a 25-mutation pass in which all 25 were killed.
 Two mutations initially survived and both were test defects, not code defects:
 the own-session test grepped `inspect.getsource` for `AsyncSessionLocal` and
