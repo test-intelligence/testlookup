@@ -57,6 +57,20 @@ _RUN_SCOPED_COLLECTIONS = (
     Collections.DECISION_EVIDENCE_SNAPSHOTS,
 )
 
+#: Reports are measured SEPARATELY from the run-scoped collections, not
+#: folded into the Mongo total. "How much are my reports costing me" was the
+#: brief's first question, and it is unanswerable from a single Mongo figure
+#: that also contains raw Allure payloads and pod events.
+#:
+#: They also sit on a different clock — the audit clock, because a report is
+#: evidence about a run and outlives it — so a reader comparing this line to
+#: the runs figure is comparing two different retention windows, which is
+#: exactly the comparison worth being able to make.
+_REPORT_COLLECTIONS = (
+    Collections.DECISION_REPORTS,
+    Collections.DECISION_REPORT_ATTEMPTS,
+)
+
 _MONGO_ID_CHUNK = 500
 
 
@@ -375,6 +389,65 @@ class DeletedProjectsReport:
         }
 
 
+async def _reports_footprint(
+    project_id: uuid.UUID, run_ids: list[uuid.UUID], mongo: Any
+) -> StoreFootprint:
+    """Decision reports and their attempts, as their own line.
+
+    Same estimation basis as the Mongo footprint — exact document counts,
+    bytes from ``avgObjSize`` — and labelled an estimate for the same reason.
+
+    Unreachable returns ``measured=False``, never 0: a store nobody could
+    look at must not read as a store holding nothing.
+    """
+    if not run_ids:
+        return StoreFootprint(
+            store="reports", measured=True, exact=False, bytes_=0, items=0,
+            estimate_basis="No runs in this project, so no reports about them.",
+        )
+
+    run_strs = [str(r) for r in run_ids]
+    total_docs = 0
+    est_bytes = 0
+    try:
+        for collection in _REPORT_COLLECTIONS:
+            coll = mongo[collection]
+            docs = 0
+            for i in range(0, len(run_strs), _MONGO_ID_CHUNK):
+                chunk = run_strs[i : i + _MONGO_ID_CHUNK]
+                docs += await coll.count_documents({"test_run_id": {"$in": chunk}})
+            total_docs += docs
+            if docs:
+                stats = await mongo.command("collStats", collection)
+                est_bytes += docs * int(stats.get("avgObjSize") or 0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "storage_accounting_reports_unreachable",
+            project_id=str(project_id),
+            error=str(exc),
+        )
+        return StoreFootprint(
+            store="reports",
+            measured=False,
+            exact=False,
+            unreachable_reason=type(exc).__name__,
+        )
+
+    return StoreFootprint(
+        store="reports",
+        measured=True,
+        exact=False,
+        bytes_=est_bytes,
+        items=total_docs,
+        estimate_basis=(
+            "Exact document counts across decision_reports and "
+            "decision_report_attempts; bytes estimated from each collection's "
+            "avgObjSize. Reports ride the AUDIT clock, so they outlive the "
+            "runs they describe."
+        ),
+    )
+
+
 async def deleted_project_footprints(
     db: AsyncSession,
     *,
@@ -483,4 +556,5 @@ async def project_storage_footprint(
     )
     footprint.stores.append(await _postgres_footprint(db, project_id))
     footprint.stores.append(await _mongo_footprint(project_id, run_ids, mongo))
+    footprint.stores.append(await _reports_footprint(project_id, run_ids, mongo))
     return footprint

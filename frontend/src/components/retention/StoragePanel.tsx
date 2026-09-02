@@ -17,12 +17,8 @@ import { AlertTriangle, Database, HardDrive, RefreshCw } from 'lucide-react'
 import { useDeletedProjectStorage, useProjectStorage } from '@/hooks/useStorage'
 import { formatBytes } from '@/utils/formatters'
 import type { StoreFootprint } from '@/types/storage'
+import { STORE_LABELS } from './storeLabels'
 
-const STORE_LABELS: Record<string, string> = {
-  object_storage: 'Object storage',
-  postgres: 'Runs & test cases',
-  mongo: 'Run document collections',
-}
 
 /** One store's figure — the single place the null rule is applied. */
 function StoreValue({ store }: { store: StoreFootprint }) {

@@ -35,6 +35,8 @@ from app.core.deps import (
 )
 from app.models.postgres import Release, User, UserRole
 from app.models.schemas import (
+    CompliancePackLifecycleResponse,
+    RetireCompliancePackRequest,
     CompliancePackGenerateRequest,
     CompliancePackRead,
 )
@@ -145,3 +147,99 @@ async def download_compliance_pack(
             "X-Pack-Id": str(pack.id),
         },
     )
+
+
+@router.post(
+    "/api/v1/compliance-packs/{pack_id}/retire",
+    response_model=CompliancePackLifecycleResponse,
+)
+async def retire_compliance_pack(
+    pack_id: uuid.UUID,
+    body: RetireCompliancePackRequest,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bring a pack's retention window forward to now (S4).
+
+    Does not delete. The nightly purge already deletes packs past their
+    window, using an object-then-row ordering that makes a failed object
+    delete retryable; duplicating that here would mean two implementations of
+    the one sequence that must not be got wrong.
+
+    ADMIN, typed confirmation, and a reason — a pack is audit evidence
+    generated with a seven-year default, so shortening that is a deliberate
+    act and is recorded as one.
+    """
+    from app.services import compliance_pack_lifecycle as lifecycle
+
+    pack = await lifecycle.get_pack_for_write(db, pack_id)
+    if pack is None:
+        raise HTTPException(status_code=404, detail="Compliance pack not found")
+
+    await resolve_project_scope(db, current_user, str(pack.project_id))
+
+    if body.confirmation_id != str(pack.id):
+        raise HTTPException(
+            status_code=422,
+            detail="confirmation_id must match the pack id exactly",
+        )
+
+    stamped = lifecycle.retire_early(pack, reason=body.reason)
+    await db.commit()
+
+    logger.info(
+        "compliance_pack_retired",
+        pack_id=str(pack_id),
+        actor=str(current_user.id),
+        reason=body.reason[:500],
+    )
+    return CompliancePackLifecycleResponse(
+        pack_id=pack.id,
+        retention_expires_at=stamped,
+        purgeable_now=True,
+    )
+
+
+@router.delete("/api/v1/compliance-packs/{pack_id}", status_code=204)
+async def delete_compliance_pack(
+    pack_id: uuid.UUID,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a pack whose retention window has already passed.
+
+    **Refused while the window is still open** — 409, naming the expiry. Retire
+    it first if it really should go now. That two-step exists because the
+    window was previously enforced only on the way out: nothing could shorten
+    it, and with no delete route nothing tested it on the way in either.
+
+    S9 adds the legal-hold check alongside this. It is deliberately absent
+    rather than stubbed: a hold check against a table that does not exist
+    reads as a working guard while never firing.
+    """
+    from app.db.storage import get_storage_provider
+    from app.services import compliance_pack_lifecycle as lifecycle
+
+    pack = await lifecycle.get_pack_for_write(db, pack_id)
+    if pack is None:
+        raise HTTPException(status_code=404, detail="Compliance pack not found")
+
+    await resolve_project_scope(db, current_user, str(pack.project_id))
+
+    blockers = lifecycle.deletion_blockers(pack)
+    if blockers:
+        raise HTTPException(status_code=409, detail={"blockers": blockers})
+
+    # Object first, then the row — the same ordering the nightly purge uses, so
+    # a failed object delete leaves the row for the next sweep rather than
+    # orphaning the ZIP with nothing pointing at it.
+    storage = get_storage_provider()
+    await storage.delete_object(pack.minio_key, bucket="compliance-packs")
+
+    await db.delete(pack)
+    await db.commit()
+
+    logger.info(
+        "compliance_pack_deleted", pack_id=str(pack_id), actor=str(current_user.id)
+    )
+    return None

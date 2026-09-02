@@ -440,7 +440,11 @@ class TestShareLinkService:
         assert hasattr(ReportShareLink, "expires_at")
         assert hasattr(ReportShareLink, "is_revoked")
         assert hasattr(ReportShareLink, "access_count")
-        assert hasattr(ReportShareLink, "storage_key_pdf")
+        # storage_key_pdf/_html were dropped in 0149: declared in 0033,
+        # never written or read. This assertion had pinned the existence
+        # of a column nothing used, which is how it survived three years.
+        assert not hasattr(ReportShareLink, "storage_key_pdf")
+        assert not hasattr(ReportShareLink, "storage_key_html")
 
 
 # ── Request Schema Tests ─────────────────────────────────────────────────────

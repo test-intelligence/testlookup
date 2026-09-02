@@ -182,7 +182,12 @@ async def test_one_store_failing_does_not_lose_the_others(mocker):
         db, pid, mongo=_FakeMongo(0, 0), storage=_FailingStorage()
     )
 
-    assert {s.store for s in out.stores} == {"object_storage", "postgres", "mongo"}
+    # `reports` is its own line (S4): folding report bytes into the Mongo
+    # total makes "how much are my reports costing me" unanswerable, and
+    # they ride a different retention clock from everything beside them.
+    assert {s.store for s in out.stores} == {
+        "object_storage", "postgres", "mongo", "reports"
+    }
     assert next(s for s in out.stores if s.store == "postgres").measured is True
     assert next(s for s in out.stores if s.store == "object_storage").measured is False
 
