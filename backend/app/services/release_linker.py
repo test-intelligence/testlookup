@@ -372,6 +372,46 @@ async def get_or_create_default_release(
     return release
 
 
+async def _link_with_phase(
+    db: AsyncSession,
+    *,
+    release: Release,
+    test_run_id: uuid.UUID,
+    phase_id: Optional[uuid.UUID],
+    executed_at: Optional[datetime],
+    link_source: str,
+    project_id: uuid.UUID,
+) -> Tuple[Release, bool]:
+    """Link a run to *release*, attributing a phase when one can be inferred.
+
+    **A caller-supplied ``phase_id`` always wins.** The only writer of
+    ``phase_id`` before S3a was the manual link endpoint and its Link Run modal,
+    so a non-NULL value here means a person chose it. Inference must never
+    overwrite that — it would silently move a hand-placed run to a different
+    phase, and phase membership is what a phase gate evaluates.
+
+    Inference only fills the gap, and returns None freely: a run in a release
+    but in no phase is a normal state, not a hole to plug with a guess.
+    """
+    resolved_phase = phase_id
+    if resolved_phase is None:
+        from app.services import release_attribution
+
+        resolved_phase = await release_attribution.match_phase(
+            db, release.id, executed_at
+        )
+
+    created = await link_run_to_release(
+        db,
+        release.id,
+        test_run_id,
+        resolved_phase,
+        link_source=link_source,
+        project_id=project_id,
+    )
+    return release, created
+
+
 async def link_run_or_default(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -406,13 +446,17 @@ async def link_run_or_default(
     """
     cleaned = (release_name or "").strip()
     if cleaned:
-        return await auto_link_release(
+        # Rung 1. Phase inference applies here too — naming a release does not
+        # name a phase, and a client that supplies one is rare.
+        resolved, _created = await resolve_or_create_release(db, project_id, cleaned)
+        return await _link_with_phase(
             db,
-            project_id=project_id,
-            release_name=cleaned,
+            release=resolved,
             test_run_id=test_run_id,
             phase_id=phase_id,
+            executed_at=executed_at,
             link_source=LinkSource.EXPLICIT_CLIENT.value,
+            project_id=project_id,
         )
 
     project = (
@@ -421,8 +465,49 @@ async def link_run_or_default(
     if project is None:
         return None
 
-    from app.services import release_lifecycle_service
+    from app.services import release_attribution, release_lifecycle_service
 
+    run = (
+        await db.execute(select(TestRun).where(TestRun.id == test_run_id))
+    ).scalar_one_or_none()
+
+    # ── Rung 3: a project attribution rule ───────────────────────────────────
+    # Ahead of the cutoff window because a rule is an explicit statement by
+    # someone who owns the project ("release/* means the 2.5 line"), whereas a
+    # window is an inference from dates. An explicit rule should not lose to a
+    # date range that happens to overlap.
+    if run is not None:
+        rule = await release_attribution.match_attribution_rule(db, project_id, run)
+        if rule is not None:
+            resolved, _created = await resolve_or_create_release(
+                db, project_id, rule.target_release_name
+            )
+            return await _link_with_phase(
+                db,
+                release=resolved,
+                test_run_id=test_run_id,
+                phase_id=phase_id,
+                executed_at=executed_at,
+                link_source=LinkSource.RULE_MATCH.value,
+                project_id=project_id,
+            )
+
+    # ── Rung 4: a release whose cutoff window contains the execution time ────
+    windowed = await release_attribution.match_cutoff_window(
+        db, project_id, executed_at
+    )
+    if windowed is not None:
+        return await _link_with_phase(
+            db,
+            release=windowed,
+            test_run_id=test_run_id,
+            phase_id=phase_id,
+            executed_at=executed_at,
+            link_source=LinkSource.CUTOFF_WINDOW.value,
+            project_id=project_id,
+        )
+
+    # ── Rung 5: the release active when the run executed ─────────────────────
     active = await release_lifecycle_service.resolve_active_release_at(
         db, project_id, executed_at
     )
@@ -431,15 +516,15 @@ async def link_run_or_default(
             db, project_id, reason="ingest_defensive"
         )
 
-    created = await link_run_to_release(
+    return await _link_with_phase(
         db,
-        active.id,
-        test_run_id,
-        phase_id,
+        release=active,
+        test_run_id=test_run_id,
+        phase_id=phase_id,
+        executed_at=executed_at,
         link_source=LinkSource.ACTIVE_RELEASE.value,
         project_id=project_id,
     )
-    return active, created
 
 
 async def find_primary_release_drift(

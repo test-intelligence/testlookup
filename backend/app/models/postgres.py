@@ -3077,6 +3077,66 @@ class Release(Base):
     )
 
 
+class AttributionMatchField(str, PyEnum):
+    """What a rule looks at on the run (migration 0154).
+
+    Every value must be a column that exists on ``TestRun`` at ingest time —
+    a rule matching on something derived later would evaluate against NULL
+    and silently never fire.
+    """
+
+    BRANCH = "branch"
+    BUILD_NUMBER = "build_number"
+    ENVIRONMENT = "environment"
+    TAG = "tag"
+
+
+class ReleaseAttributionRule(Base):
+    """Per-project rule mapping run metadata to a release (migration 0154).
+
+    The bridge for teams that cannot send an explicit ``release_name``: match
+    on what a run already carries and name the release it belongs to. Without
+    these, such projects fall straight to the active release, which cannot tell
+    a hotfix branch from a release candidate from trunk CI.
+    """
+
+    __tablename__ = "release_attribution_rules"
+    __table_args__ = (
+        Index("ix_attribution_rules_project_priority", "project_id", "priority"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    #: Lower evaluates first. Deliberately not unique — ties break on
+    #: (created_at, id) in the evaluator, so ordering stays deterministic
+    #: without making a reorder a multi-statement dance.
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100, server_default="100")
+    is_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+
+    match_field: Mapped[str] = mapped_column(String(30), nullable=False)
+    #: Glob, not regex. User-authored input: a regex is easy to get subtly
+    #: wrong and is a denial-of-service surface.
+    match_pattern: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    #: By NAME, not id — a rule usually predates the release it names, and the
+    #: name resolves through the same auto-create path every other rung uses.
+    target_release_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now()
+    )
+
+
 class ReleasePhase(Base):
     """A phase / milestone within a Release lifecycle."""
     __tablename__ = "release_phases"

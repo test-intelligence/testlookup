@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-09-03 — attribution rules, so a release axis works without changing CI
+
+The attribution ladder's strongest rung is an explicit `release_name` from the
+client. Plenty of teams cannot supply one — the CI job predates the field, or
+another team owns it, or the release lives in Jira with nothing connecting it to
+a build. Those projects fell straight to the active release, which cannot
+separate a hotfix branch from a release candidate from trunk CI: every run
+landed in one release, and the release axis bought ordering but not de-blending.
+
+`release_attribution_rules` (migration 0154) is the bridge. A rule matches on
+what a run already carries — branch, build label, environment, tag — and names
+the release it belongs to, so a project that cuts release branches gets accurate
+attribution without touching a pipeline.
+
+Two deliberate choices. Patterns are **globs, not regexes**: this is
+user-authored input, and a regex is both easy to get subtly wrong and a
+denial-of-service surface. Rules target a release **by name, not id**, because a
+rule usually predates the release it names — `release/2.5.*` gets written while
+2.5.0 is still hypothetical — and a name resolves through the same auto-create
+path every other rung uses.
+
+Rung 4 (cutoff window) landed alongside it, and both rungs needed total
+orderings. Overlapping windows are normal — a hotfix validated while the next
+minor is in QA — so "the containing window" is usually several. The tie-break is
+narrowest-first, because a narrow window is the more specific claim: a two-day
+hotfix window inside a six-week release window means the hotfix. Then version,
+then `created_at`, then `id`. Four keys because each earlier one can genuinely
+tie and the last cannot.
+
+That determinism is not pedantry. The output is an *attribution*, and a wrong
+one is invisible: the run still shows a release, nothing errors, and the same run
+re-ingested could land somewhere else.
+
+Phase attribution ships with it, and **a human's choice always wins**. The only
+writer of `phase_id` before this was the Link Run modal, so a non-NULL value
+means a person chose it; inference only fills the gap. It also returns nothing
+freely — a run in a release but no phase is a normal state, not a hole to plug
+with a guess, and phase membership is exactly what a phase gate evaluates.
+
+Rules ahead of windows in the ladder, because a rule is a statement by someone
+who owns the project and a window is an inference from dates.
+
 ## 2026-09-03 — a test run now records when it ran, not when it was uploaded
 
 `TestRun.start_time` is read by ~43 call sites for ordering, time-window
