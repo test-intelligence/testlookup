@@ -1,5 +1,170 @@
 # Changelog
 
+## 2026-09-03 — a test run now records when it ran, not when it was uploaded
+
+`TestRun.start_time` is read by ~43 call sites for ordering, time-window
+filtering and duration, and every one of them assumes it means *when the run
+executed*. On the upload paths it did not: both ingest paths stamped
+`datetime.now()`, so a JUnit archive uploaded the morning after a nightly had a
+`start_time` a day off.
+
+That was tolerable until release attribution depended on it. The attribution
+ladder resolves which release was active **as of** a run's execution time, so
+ingest time in that column silently degrades it to "whatever release is current"
+— exactly the mis-attribution the as-of design exists to prevent, and invisible
+because the run still shows *a* release.
+
+`/ingest/file` now accepts an optional `executed_at`, threaded through to
+`start_time`. Overwriting rather than adding a column is deliberate: a second
+"when did this run" field would force all 43 readers to choose between them, and
+every one that chose wrong would be wrong silently. Omitting the field keeps the
+previous behaviour exactly, so no existing client changes.
+
+The value is bounded rather than trusted, because a bad timestamp is not a
+validation error — it is a run that **disappears**. `start_time` drives the
+30-day window every dashboard defaults to, so a stale value removes the run from
+every default view and a future one pins it to the top of every ordering,
+neither raising anything.
+
+The bounds are asymmetric on purpose. A future timestamp is always wrong and
+always clock skew, so it is clamped to now. A past one is usually legitimate —
+re-ingesting an old archive is the case this exists for — so it is accepted a
+year back, and only rejected beyond that, where the likeliest explanation is a
+unit error (seconds read as milliseconds, or a zero epoch) rather than a
+genuinely old run. Resolution never raises: losing a run's results over a bad
+clock would be far worse than recording a slightly wrong time and logging it.
+
+## 2026-09-02 — the release a run counts toward is now one indexed predicate
+
+Every windowed analytics read filters `test_runs` by project and a date range.
+Adding a release axis by joining `release_test_run_links` on each of them would
+add a join to dozens of endpoints and — worse — double-count a run linked to
+two releases in any aggregate. Silent fan-out, invisible in tests.
+
+`test_runs.primary_release_id` (migration 0152) makes the release one more
+indexed predicate on a query shape that already exists. It follows the
+`primary_suite_name` precedent, including that precedent's caveat: the
+denormalized column answers for PRIMARY membership only, so `/runs` — which
+reads the link table — still returns the wider set. That divergence is
+deliberate and pinned by a test.
+
+**There is no single writer.** An earlier draft of this design claimed the
+linker owned the column. It does not: four live paths change which link is
+primary — ingest, the Link Run modal, unlink, and the Run Detail control — and
+each now calls `sync_primary_release`. Miss one and nothing raises;
+release-scoped analytics answer from the old attribution while `/runs` answers
+correctly, and two surfaces disagree with no error anywhere. A regression test
+asserts all four sync, and sweeps the service layer for a fifth writer.
+
+An hourly drift sweep repairs what slips through and counts it, so a missed
+call site is measurable rather than invisible. It uses `IS DISTINCT FROM`
+rather than `!=`: NULL is legitimate on both sides, and `NULL != x` is NULL,
+so a plain inequality would silently skip exactly the rows a missed sync
+produces.
+
+The backfill runs in bounded, self-terminating batches rather than one
+statement — each pass selects only rows whose value still differs, so a row
+fixed by one pass cannot be selected by the next — and the index is built
+`CONCURRENTLY`. `test_runs` is one of the largest tables here; a single UPDATE
+would hold row locks across all of it.
+
+NULL is a real state meaning "not attributed", not a backfill gap: an in-flight
+live run has no link yet by design, and a swallowed linker error leaves one
+permanently unattributed. Release-scoped reads must not assume every run has a
+release.
+
+## 2026-09-02 — releases can be ordered, and a run has exactly one primary release
+
+Two things the release dimension could not be built on.
+
+**Ordering.** A release was a case-insensitive name and nothing else, so
+"compare 2.4.0 against its predecessor" had no way to order two releases.
+Every obvious encoding gets some real version wrong: sorting by name puts
+2.10.0 before 2.9.0, and a plain zero-pad still sorts `2.4.0-rc1` *after*
+`2.4.0`, because the longer string wins — the exact inversion of what a release
+train means. `releases.sort_key` (migration 0151) is a total order in three
+parts: a band prefix so unparseable names never interleave with real versions,
+zero-padded numeric segments so 2.10.0 follows 2.9.0, and a `~` sentinel for
+"no pre-release" so a GA outranks its own candidates. `baseline_release_id`
+lets a hotfix point at its parent rather than at whatever shipped last.
+
+**One primary link.** `release_test_run_links` is many-to-many by design — a
+hotfix build genuinely can be validated for both 2.3.1 and 2.4.0 — but
+`fetch_release_map` returns one release per run, keyed on `test_run_id`. A
+multi-linked run therefore kept whichever row Postgres returned last, and the
+run list showed a non-deterministic release badge.
+
+That was live, not hypothetical. `link_run_to_release` dedupes on
+`(release_id, test_run_id)` and never removes a prior link, so any run that was
+auto-attributed and then re-labelled by hand already carried two rows.
+`is_primary` (partial-unique per run) gives readers one deterministic answer
+while leaving secondary memberships intact.
+
+The backfill ranks by evidence, not arrival: a link a client named or a human
+chose beats anything inferred. Arrival order alone would have picked the
+*automatic* link on every run somebody had corrected, since ingest always runs
+before the correction — silently discarding it. This is why S0's `link_source`
+had to land first; without it there is nothing to rank by.
+
+Also in this migration: `release_test_run_links` gains an index on
+`test_run_id` (the hot read runs that direction and was sequentially scanning —
+only `release_id` was indexed), and a denormalized `project_id` so the
+same-project rule S0 added at the service layer can be enforced by the database
+and swept for existing violations. Cross-project links found by the sweep are
+reported, not rewritten: which project such a link *should* have been in is
+unknowable, and guessing would fabricate attribution.
+
+Unlinking now promotes a survivor to primary. Without that, removing the
+primary link left a run attributed to several releases but flagged for none, so
+every `is_primary`-scoped read would drop it — it would simply stop appearing,
+with no error anywhere.
+
+## 2026-09-02 — every project now has an active release, and every link says how it got there
+
+A test run that arrived with no release name from the client fell into a
+per-project `is_default` row. That row never rotated, so it accumulated runs
+across every release cycle at once — a 2.1 run and a 2.6 run sat in the same
+bucket with nothing to separate them. Membership of it carried no information,
+which meant no release number computed from it meant what it said.
+
+`releases.is_active` replaces it (migration 0150). Same partial-unique shape —
+at most one per project — but it is a *rotating* pointer: it moves as releases
+ship, so an unlabelled run lands in whatever release was genuinely in flight.
+`activated_at` / `deactivated_at` record the interval each release held it, and
+the ingest fallback resolves **as of the run's execution time** rather than
+reading the flag at ingest. Without that, a JUnit archive uploaded after a
+rotation would be filed under the release that came next, and nothing would
+ever re-attribute it.
+
+The other half of the invariant — *at least* one — cannot be a constraint, so
+it is upheld at every path that could break it (project creation in the same
+transaction, rotation, release deletion, a defensive resolve at ingest) and
+then measured by an hourly sweep. The sweep reports as well as repairs: a
+reconciliation task that silently fixes what it finds makes the invariant look
+perfect precisely *because* something keeps fixing it. Two counters, because a
+violations counter reading zero is indistinguishable from a sweep that never
+ran.
+
+`release_test_run_links.link_source` ships in the same migration deliberately.
+Without it the rotating release is a *worse* disguise than the bucket it
+replaced: the old junk drawer at least self-labelled as `Default Release (…)`,
+whereas a QA lead who creates `2.4.0` now gets every untagged nightly landing
+under a real version number with nothing able to tell it from a run somebody
+tagged. Existing default-bucket links are backfilled `default_fallback` and the
+migrated release is flagged `is_auto_named`, so neither is mistaken for a
+deliberate assignment.
+
+Auto-created releases are named `Unreleased`, never a guessed version: bumping
+2.4.0 to 2.5.0 when the next release is really 2.4.1 produces an
+authoritative-looking wrong name that quietly accretes runs under a version
+that will never exist.
+
+Also fixed in passing: `release_service.link_test_run` accepted a run from any
+project, so a caller with QA_LEAD on one project could pull another project's
+results into their release — and from there into its scorecard and compliance
+pack. It now requires run and release to share a project.
+
+`is_default` is retained as a dormant column so 0150 has a real downgrade.
 ## 2026-09-02 — health banner: a critical-store outage is not an optional degradation
 
 The degraded banner told every dependency outage the same story: "Degraded: X

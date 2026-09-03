@@ -89,15 +89,34 @@ def test_metrics_compute_readiness_thresholds():
 
 @pytest.mark.asyncio
 async def test_release_linker_link_run_idempotent():
+    class _Col:
+        """Column stand-in supporting the comparisons the linker builds."""
+
+        def is_(self, _other):
+            return None
+
+        def __eq__(self, _other):
+            return None
+
+        __hash__ = object.__hash__
+
     class FakeLink:
-        release_id = object()
-        test_run_id = object()
+        id = _Col()
+        release_id = _Col()
+        test_run_id = _Col()
+        # Migration 0151: the linker checks whether the run already has a
+        # primary link before deciding whether this one becomes primary.
+        is_primary = _Col()
 
         def __init__(self, **kwargs):
             self.data = kwargs
 
     def fake_select(*args, **kwargs):
-        return SimpleNamespace(where=lambda *a, **k: None)
+        # Chainable: the primary-link probe is select(...).where(...).limit(1).
+        chain = SimpleNamespace()
+        chain.where = lambda *a, **k: chain
+        chain.limit = lambda *a, **k: chain
+        return chain
 
     class FakeDB:
         def __init__(self):
@@ -125,7 +144,26 @@ async def test_release_linker_link_run_idempotent():
 
     with patch.dict(
         "sys.modules",
-        {"app.models.postgres": SimpleNamespace(Release=object, ReleaseTestRunLink=FakeLink)},
+        {
+            "app.models.postgres": SimpleNamespace(
+                # ``Project`` has always been in release_linker's import list;
+                # its absence here is why this test was red before 0150 too.
+                Project=object,
+                Release=object,
+                # sync_primary_release updates test_runs, so the module-level
+                # import needs this name or the stub cannot even load.
+                TestRun=_Col(),
+                ReleaseTestRunLink=FakeLink,
+                # Migration 0150: the linker records HOW each attribution was
+                # decided, so the stub has to carry the vocabulary.
+                LinkSource=SimpleNamespace(
+                    UNKNOWN=SimpleNamespace(value="unknown"),
+                    EXPLICIT_CLIENT=SimpleNamespace(value="explicit_client"),
+                    MANUAL_UI=SimpleNamespace(value="manual_ui"),
+                    ACTIVE_RELEASE=SimpleNamespace(value="active_release"),
+                ),
+            )
+        },
         clear=False,
     ):
         from app.services import release_linker

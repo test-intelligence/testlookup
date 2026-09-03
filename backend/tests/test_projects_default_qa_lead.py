@@ -30,6 +30,21 @@ import pytest
 from fastapi import HTTPException
 
 
+def _savepoint_capable(db):
+    """Give an AsyncMock session a working ``begin_nested()``.
+
+    ``AsyncMock.begin_nested()`` returns a coroutine, not an async context
+    manager, so ``async with db.begin_nested():`` raises TypeError. Project
+    creation now provisions the project's active release (migration 0150), and
+    that insert is SAVEPOINT-wrapped for race-safety — so any fake session
+    reaching create_project needs this.
+    """
+    savepoint = AsyncMock()
+    savepoint.__aenter__ = AsyncMock(return_value=savepoint)
+    savepoint.__aexit__ = AsyncMock(return_value=False)
+    db.begin_nested = MagicMock(return_value=savepoint)
+    return db
+
 def _scalar(value):
     res = MagicMock()
     res.scalar_one_or_none = MagicMock(return_value=value)
@@ -50,7 +65,7 @@ async def test_update_project_runs_role_check_when_field_present():
         id=project_id, name="P", description=None, default_qa_lead_user_id=None,
         manager_user_id=None,
     )
-    db = AsyncMock()
+    db = _savepoint_capable(AsyncMock())
     db.execute = AsyncMock(return_value=_scalar(project))
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
@@ -85,7 +100,7 @@ async def test_update_project_skips_role_check_when_field_absent():
         id=project_id, name="P", description="old", default_qa_lead_user_id=None,
         manager_user_id=None,
     )
-    db = AsyncMock()
+    db = _savepoint_capable(AsyncMock())
     db.execute = AsyncMock(return_value=_scalar(project))
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
@@ -115,7 +130,7 @@ async def test_update_project_400_from_validator_aborts_persist():
         id=project_id, name=original_name, description=None,
         default_qa_lead_user_id=None, manager_user_id=None,
     )
-    db = AsyncMock()
+    db = _savepoint_capable(AsyncMock())
     db.execute = AsyncMock(return_value=_scalar(project))
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
@@ -145,7 +160,7 @@ async def test_update_project_returns_404_for_missing_project():
     from app.routers.projects import update_project
     from app.models.schemas import ProjectUpdate
 
-    db = AsyncMock()
+    db = _savepoint_capable(AsyncMock())
     db.execute = AsyncMock(return_value=_scalar(None))
 
     with patch(
@@ -180,7 +195,7 @@ async def test_create_project_runs_role_check_when_default_qa_lead_set():
         default_qa_lead_user_id=qa_lead_id,
     )
     # No project exists with that slug → conflict check returns None.
-    db = AsyncMock()
+    db = _savepoint_capable(AsyncMock())
     db.execute = AsyncMock(return_value=_scalar(None))
     db.add = MagicMock()
 
@@ -216,7 +231,7 @@ async def test_create_project_skips_role_check_when_default_qa_lead_omitted():
     from app.models.schemas import ProjectCreate
 
     payload = ProjectCreate(name="Bare Project", slug="bare-project")
-    db = AsyncMock()
+    db = _savepoint_capable(AsyncMock())
     db.execute = AsyncMock(return_value=_scalar(None))
     db.add = MagicMock()
     db.flush = AsyncMock()

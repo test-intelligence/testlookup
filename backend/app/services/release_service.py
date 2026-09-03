@@ -17,12 +17,22 @@ from typing import Optional
 
 import structlog
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import case, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.postgres import Project, Release, ReleasePhase, ReleaseTestRunLink, TestRun
+from app.models.postgres import (
+    LinkSource,
+    Project,
+    Release,
+    ReleasePhase,
+    ReleaseTestRunLink,
+    TestRun,
+)
 from app.models.serializers import serialize_model  # noqa: F401
+from app.services import release_lifecycle_service
+from app.services.release_linker import sync_primary_release
+from app.services.release_sort_key import compute_sort_key
 
 logger = structlog.get_logger(__name__)
 
@@ -143,6 +153,9 @@ async def create_release(db: AsyncSession, body) -> Release:
         description=body.description,
         status=body.status,
         planned_date=body.planned_date,
+        # Computed on write so ordering is an index scan rather than a Python
+        # sort over every release in the project (migration 0151).
+        sort_key=compute_sort_key(body.version, body.name),
     )
     db.add(release)
     await db.flush()  # need release.id for child phases
@@ -161,6 +174,25 @@ async def create_release(db: AsyncSession, body) -> Release:
                 exit_criteria=phase_in.exit_criteria,
                 notes=phase_in.notes,
             )
+        )
+
+    # Take over as the active release only when the incumbent is an
+    # auto-created placeholder (migration 0150). That covers onboarding — the
+    # project has an ``Unreleased`` row, a user creates "2.4.0" and reasonably
+    # expects runs to land there — without ever displacing a release somebody
+    # deliberately activated. Pre-planning 2.6.0 while shipping 2.5.0 must not
+    # hijack attribution.
+    # A release created directly in a terminal status must never take the
+    # active flag: nothing would ever rotate it out, because rotation only
+    # fires on a transition INTO a terminal status and it is already there.
+    # The project would be permanently attributing new runs to something
+    # already shipped.
+    if (
+        body.status not in release_lifecycle_service.TERMINAL_STATUSES
+        and await release_lifecycle_service.should_activate_on_create(db, project_uuid)
+    ):
+        await release_lifecycle_service.activate_release(
+            db, release, reason="explicit_create_over_auto_named"
         )
     return release
 
@@ -189,6 +221,13 @@ async def get_release_details(db: AsyncSession, release_id: str) -> dict:
     data["phases"] = [serialize_model(phase) for phase in release.phases]
 
     if release.test_run_links:
+        # ``tr.project_id = :proj_id`` is not redundant with the release
+        # filter. Nothing at the database level stops a link joining a run and
+        # a release in different projects — the service layer rejects new ones
+        # and 0151 reports existing ones, but historical rows can violate it.
+        # Without this predicate a single bad link would surface another
+        # tenant's run in this release's detail view, and from there in the
+        # signed compliance pack.
         runs_query = text(
             """
             SELECT
@@ -201,10 +240,15 @@ async def get_release_details(db: AsyncSession, release_id: str) -> dict:
             FROM test_runs tr
             JOIN release_test_run_links rtr ON rtr.test_run_id = tr.id
             WHERE rtr.release_id = :rel_id
+              AND tr.project_id = :proj_id
             ORDER BY tr.created_at DESC
             """
         )
-        runs_rows = (await db.execute(runs_query, {"rel_id": release_id})).fetchall()
+        runs_rows = (
+            await db.execute(
+                runs_query, {"rel_id": release_id, "proj_id": release.project_id}
+            )
+        ).fetchall()
         data["linked_runs"] = [dict(row._mapping) for row in runs_rows]
     else:
         data["linked_runs"] = []
@@ -228,9 +272,14 @@ async def get_release_details(db: AsyncSession, release_id: str) -> dict:
         FROM test_runs tr
         JOIN release_test_run_links rtr ON rtr.test_run_id = tr.id
         WHERE rtr.release_id = :rel_id
+          AND tr.project_id = :proj_id
         """
     )
-    agg = (await db.execute(agg_query, {"rel_id": release_id})).one()
+    agg = (
+        await db.execute(
+            agg_query, {"rel_id": release_id, "proj_id": release.project_id}
+        )
+    ).one()
     metrics = dict(agg._mapping)
     for key, value in metrics.items():
         if hasattr(value, "__float__") and not isinstance(value, (int, float, bool)):
@@ -270,13 +319,83 @@ async def update_release(db: AsyncSession, release_id: str, body) -> Release:
 
     for field, value in updates.items():
         setattr(release, field, value)
+
+    # Renaming a release, or giving it a version for the first time, changes
+    # where it sorts. Recompute unconditionally rather than guarding on which
+    # fields changed — the guard is the part that rots.
+    release.sort_key = compute_sort_key(release.version, release.name)
+
+    # A release that just finished must not keep the active flag, or the next
+    # unlabelled run lands in something already shipped. Hand it on rather than
+    # blocking the transition: an invariant that makes shipping harder gets
+    # routed around, and teams would simply leave releases ``in_progress``.
+    if (
+        new_status in release_lifecycle_service.TERMINAL_STATUSES
+        and release.is_active
+    ):
+        await release_lifecycle_service.rotate_on_close(
+            db, release, reason=new_status
+        )
     return release
 
 
 async def delete_release(db: AsyncSession, release_id: str) -> None:
-    """Stage deletion of a release. Handler commits."""
+    """Stage deletion of a release. Handler commits.
+
+    Deleting the active release would leave the project with none, so the flag
+    is handed to a successor first. This is the enforcement point the active
+    invariant would otherwise lose to a plain DELETE.
+    """
     release = await get_release_or_404(db, release_id)
+    if release.is_active:
+        await release_lifecycle_service.rotate_on_close(
+            db, release, reason="deleted"
+        )
+        # Land the demotion before the row is marked deleted. SQLAlchemy drops
+        # pending UPDATEs for deleted objects, so without this the successor's
+        # promotion reaches Postgres while this row still holds the flag.
+        await db.flush()
+
+    # The release's links CASCADE away with it. Any run whose PRIMARY link was
+    # one of them is left attributed to several releases and flagged for none,
+    # so every is_primary-scoped read drops it silently — it just stops
+    # appearing. Collect those runs first, then repair them after the delete.
+    orphaned_runs = (
+        await db.execute(
+            select(ReleaseTestRunLink.test_run_id).where(
+                ReleaseTestRunLink.release_id == release.id,
+                ReleaseTestRunLink.is_primary.is_(True),
+            )
+        )
+    ).scalars().all()
+
     await db.delete(release)
+    await db.flush()
+
+    for run_id in orphaned_runs:
+        survivor = (
+            await db.execute(
+                select(ReleaseTestRunLink)
+                .where(ReleaseTestRunLink.test_run_id == run_id)
+                .order_by(
+                    case(
+                        (ReleaseTestRunLink.link_source == LinkSource.EXPLICIT_CLIENT.value, 0),
+                        (ReleaseTestRunLink.link_source == LinkSource.MANUAL_UI.value, 0),
+                        (ReleaseTestRunLink.link_source == LinkSource.RULE_MATCH.value, 1),
+                        (ReleaseTestRunLink.link_source == LinkSource.CUTOFF_WINDOW.value, 1),
+                        (ReleaseTestRunLink.link_source == LinkSource.ACTIVE_RELEASE.value, 2),
+                        else_=3,
+                    ),
+                    ReleaseTestRunLink.linked_at.asc(),
+                    ReleaseTestRunLink.id.asc(),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if survivor is not None:
+            survivor.is_primary = True
+        await db.flush()
+        await sync_primary_release(db, run_id)
 
 
 async def add_phase(db: AsyncSession, release_id: str, body) -> ReleasePhase:
@@ -387,16 +506,30 @@ async def delete_phase(db: AsyncSession, release_id: str, phase_id: str) -> None
     await db.delete(phase)
 
 
-async def link_test_run(db: AsyncSession, release_id: str, body) -> tuple[ReleaseTestRunLink, bool]:
+async def link_test_run(
+    db: AsyncSession,
+    release_id: str,
+    body,
+    linked_by_id: uuid.UUID | None = None,
+) -> tuple[ReleaseTestRunLink, bool]:
     """Stage a release↔run link. Returns (link, is_new).
 
     If a matching link already exists we return it with ``is_new=False`` and
     the handler just re-serializes without committing.
     """
-    await get_release_or_404(db, release_id)
+    release = await get_release_or_404(db, release_id)
     run_uuid = uuid.UUID(body.test_run_id)
     run = (await db.execute(select(TestRun).where(TestRun.id == run_uuid))).scalar_one_or_none()
     if not run:
+        raise HTTPException(status_code=404, detail="Test run not found")
+
+    # A link may only join a run and a release in the SAME project. Nothing
+    # enforced this before, so a caller who is QA_LEAD on project A and knows a
+    # run UUID from project B could pull B's results into A's release — and
+    # from there into A's release scorecard and its signed compliance pack.
+    # 404 rather than 403: a caller with no access to that run should not learn
+    # whether the id exists.
+    if run.project_id != release.project_id:
         raise HTTPException(status_code=404, detail="Test run not found")
 
     existing = (
@@ -410,13 +543,35 @@ async def link_test_run(db: AsyncSession, release_id: str, body) -> tuple[Releas
     if existing:
         return existing, False
 
+    # A human deliberately choosing a release outranks anything the system
+    # inferred, so this link takes over as primary — demoting the automatic one
+    # rather than sitting beside it non-deterministically, which is what made
+    # the run list's release badge unstable before migration 0151.
+    await db.execute(
+        update(ReleaseTestRunLink)
+        .where(
+            ReleaseTestRunLink.test_run_id == run_uuid,
+            ReleaseTestRunLink.is_primary.is_(True),
+        )
+        .values(is_primary=False)
+    )
+
     link = ReleaseTestRunLink(
         release_id=uuid.UUID(release_id),
         test_run_id=run_uuid,
         phase_id=uuid.UUID(body.phase_id) if body.phase_id else None,
+        # A human chose this. It is the strongest provenance there is, and the
+        # scorecard counts it as asserted rather than inferred.
+        link_source=LinkSource.MANUAL_UI.value,
+        is_primary=True,
+        project_id=release.project_id,
+        linked_by_id=linked_by_id,
     )
     db.add(link)
     await db.flush()
+    # Third of the four paths that change which link is primary — see
+    # release_linker.sync_primary_release for why there is no single writer.
+    await sync_primary_release(db, run_uuid)
     return link, True
 
 
@@ -432,4 +587,54 @@ async def unlink_test_run(db: AsyncSession, release_id: str, run_id: str) -> Non
     ).scalar_one_or_none()
     if not link:
         raise HTTPException(status_code=404, detail="Link not found")
+
+    # Removing the primary link would leave the run attributed to several
+    # releases but flagged for none, so every analytics read scoped by
+    # ``is_primary`` would drop it silently — it would simply stop appearing,
+    # with no error anywhere. Promote a survivor first, by the same evidence
+    # ranking migration 0151's backfill uses.
+    survivor = None
+    if link.is_primary:
+        survivor = (
+            await db.execute(
+                select(ReleaseTestRunLink)
+                .where(
+                    ReleaseTestRunLink.test_run_id == link.test_run_id,
+                    ReleaseTestRunLink.id != link.id,
+                )
+                .order_by(
+                    case(
+                        (ReleaseTestRunLink.link_source == LinkSource.EXPLICIT_CLIENT.value, 0),
+                        (ReleaseTestRunLink.link_source == LinkSource.MANUAL_UI.value, 0),
+                        (ReleaseTestRunLink.link_source == LinkSource.RULE_MATCH.value, 1),
+                        (ReleaseTestRunLink.link_source == LinkSource.CUTOFF_WINDOW.value, 1),
+                        (ReleaseTestRunLink.link_source == LinkSource.ACTIVE_RELEASE.value, 2),
+                        else_=3,
+                    ),
+                    ReleaseTestRunLink.linked_at.asc(),
+                    ReleaseTestRunLink.id.asc(),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    run_id_for_sync = link.test_run_id
+    was_primary = link.is_primary
+
+    # Delete FIRST, then flush, then promote. Assigning ``is_primary = False``
+    # to a row that is about to be deleted does nothing: SQLAlchemy never
+    # emits an UPDATE for an object in the deleted set, and within one mapper
+    # it runs every save/update before every delete. So the promote statement
+    # would reach Postgres while the outgoing row still held the flag, and
+    # ``ix_rtr_links_primary`` would reject it — deterministically, every time
+    # the primary link of a multi-linked run is removed. The endpoint 500s,
+    # the DELETE never runs, and the run keeps both the link and the flag.
     await db.delete(link)
+    await db.flush()
+
+    if was_primary and survivor is not None:
+        survivor.is_primary = True
+        await db.flush()
+    # The promoted survivor (or None, if that was the run's last link) has to
+    # reach the denormalized column, or analytics keeps answering from a
+    # release the run is no longer linked to.
+    await sync_primary_release(db, run_id_for_sync)

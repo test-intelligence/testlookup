@@ -118,7 +118,9 @@ async def test_release_name_whitespace_stripped():
 @pytest.mark.asyncio
 async def test_link_race_loser_returns_false():
     """Two concurrent link_run_to_release calls: loser returns False cleanly."""
-    db = _make_db(None)  # lookup: link does not exist yet
+    # Two execute() calls now: the existing-link lookup, then the
+    # is-this-run-already-primary lookup added by migration 0151.
+    db = _make_db(None, None)
     db.flush = AsyncMock(
         side_effect=IntegrityError("INSERT", params={}, orig=Exception("uq_release_test_run"))
     )

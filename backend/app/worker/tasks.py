@@ -1,6 +1,7 @@
 """Celery background tasks for ingestion and AI analysis."""
 import asyncio
 import logging
+from datetime import datetime
 import random
 import time
 import uuid
@@ -878,6 +879,9 @@ def ingest_uploaded_file(
     ci_actor: str = None,
     ci_run_url: str = None,
     environment: str = None,
+    # ISO-8601 string; defaulted so tasks queued before this shipped still
+    # deserialize. None means "not supplied" and ingest time is used.
+    executed_at: str = None,
     commit_range=None,  # bare list OR {base, head, commits}; both JSON-safe
 ):
     """
@@ -985,6 +989,9 @@ def ingest_uploaded_file(
                     ci_actor=ci_actor,
                     ci_run_url=ci_run_url,
                     environment=environment,
+                    executed_at=(
+                        datetime.fromisoformat(executed_at) if executed_at else None
+                    ),
                     commit_range=commit_range,
                 )
                 if archive_prefix:
@@ -5206,6 +5213,239 @@ def execute_criteria_deletion_task(
             "requested": len(run_ids),
             "deleted": len(deleted),
             "failed": len(failures),
+        }
+
+    return _run_async(_run())
+
+
+@celery_app.task(
+    name="app.worker.tasks.reconcile_active_releases",
+    bind=True,
+    queue="default",
+    time_limit=300,
+)
+def reconcile_active_releases(self) -> dict:
+    """Sweep for projects with no active release, repair them, and REPORT.
+
+    Migration 0150. Every other enforcement point — project creation, rotation,
+    deletion, reset, the defensive resolve at ingest — is supposed to keep the
+    invariant true. This task exists because "supposed to" is not a guarantee,
+    and because SQL cannot express "every project has a row over there".
+
+    The reporting half is not incidental. A reconciliation task that silently
+    repairs what it finds makes the invariant look perfect precisely *because*
+    something keeps fixing it, and the defect that caused the violation is
+    never seen. So every detection increments a counter and is written to the
+    audit log with ``record_attempt`` — which commits on its own session and
+    therefore survives a repair that fails.
+
+    Two counters, deliberately: ``sweeps_total`` proves the sweep ran at all,
+    because a violations counter sitting at 0 reads identically whether nothing
+    is broken or nothing is checking. Alert on violations only against a
+    non-zero, increasing sweep count.
+    """
+
+    async def _run() -> dict:
+        from app.core.metrics import (
+            release_invariant_sweeps_total,
+            release_invariant_violations_total,
+        )
+        from app.db.postgres import AsyncSessionLocal
+        from app.services import release_lifecycle_service
+        from app.services.audit_log_service import record_attempt
+
+        repaired: list[str] = []
+        failed: list[str] = []
+
+        async with AsyncSessionLocal() as db:
+            project_ids = (
+                await release_lifecycle_service.find_projects_without_active_release(db)
+            )
+
+        for project_id in project_ids:
+            # Record the DETECTION before attempting the repair, on its own
+            # session. If the repair then fails, the fact that the invariant
+            # was violated is still on the record.
+            await record_attempt(
+                action="release.invariant_violation_detected",
+                setting_key=f"release.active_missing:{project_id}",
+                actor_name="system",
+            )
+            try:
+                async with AsyncSessionLocal() as db:
+                    await release_lifecycle_service.get_or_create_active_release(
+                        db, project_id, reason="reconciliation"
+                    )
+                    await db.commit()
+                repaired.append(str(project_id))
+                release_invariant_violations_total.labels(outcome="repaired").inc()
+            except Exception as exc:
+                failed.append(str(project_id))
+                release_invariant_violations_total.labels(
+                    outcome="repair_failed"
+                ).inc()
+                _slog.warning(
+                    "active_release_repair_failed",
+                    project_id=str(project_id),
+                    error=str(exc),
+                )
+
+        release_invariant_sweeps_total.inc()
+
+        if project_ids:
+            _slog.warning(
+                "active_release_invariant_violations",
+                found=len(project_ids),
+                repaired=len(repaired),
+                failed=len(failed),
+            )
+
+        return {
+            "checked": True,
+            "violations": len(project_ids),
+            "repaired": len(repaired),
+            "failed": len(failed),
+        }
+
+    return _run_async(_run())
+
+
+@celery_app.task(
+    name="app.worker.tasks.reconcile_primary_releases",
+    bind=True,
+    queue="default",
+    time_limit=300,
+)
+def reconcile_primary_releases(self) -> dict:
+    """Repair drift between ``test_runs.primary_release_id`` and the link table.
+
+    Migration 0152 denormalized the primary release onto ``test_runs`` so a
+    release filter is one indexed predicate rather than a join. Four live paths
+    change which link is primary and each must call ``sync_primary_release``;
+    this sweep exists because "must" is not "does".
+
+    Drift is not cosmetic. Release-scoped analytics read the denormalized
+    column while ``/runs`` reads the link table, so a stale value makes two
+    surfaces disagree about which release a run belongs to — with no error
+    anywhere. The counters make a missed call site measurable instead of
+    invisible.
+    """
+
+    async def _run() -> dict:
+        from app.core.metrics import (
+            release_primary_drift_total,
+            release_primary_sweeps_total,
+        )
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.release_linker import (
+            find_primary_release_drift,
+            sync_primary_release,
+        )
+
+        repaired: list[str] = []
+        failed: list[str] = []
+
+        async with AsyncSessionLocal() as db:
+            drifted = await find_primary_release_drift(db)
+
+        for run_id in drifted:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await sync_primary_release(db, run_id)
+                    await db.commit()
+                repaired.append(str(run_id))
+                release_primary_drift_total.labels(outcome="repaired").inc()
+            except Exception as exc:
+                failed.append(str(run_id))
+                release_primary_drift_total.labels(outcome="repair_failed").inc()
+                _slog.warning(
+                    "primary_release_repair_failed",
+                    run_id=str(run_id),
+                    error=str(exc),
+                )
+
+        release_primary_sweeps_total.inc()
+
+        if drifted:
+            _slog.warning(
+                "primary_release_drift_detected",
+                found=len(drifted),
+                repaired=len(repaired),
+                failed=len(failed),
+            )
+
+        return {
+            "checked": True,
+            "drifted": len(drifted),
+            "repaired": len(repaired),
+            "failed": len(failed),
+        }
+
+    return _run_async(_run())
+
+
+@celery_app.task(
+    name="app.worker.tasks.reconcile_release_sort_keys",
+    bind=True,
+    queue="default",
+    time_limit=300,
+)
+def reconcile_release_sort_keys(self) -> dict:
+    """Fill in ``releases.sort_key`` for rows that have none.
+
+    Migration 0151 adds the column and 0153 indexes it, but neither computes
+    it. An earlier draft reimplemented the encoder in SQL and got pre-releases
+    wrong — every ``2.4.0-rc1`` landed in the text band, sorting after its own
+    GA instead of before it, which is the precise inversion the encoder exists
+    to prevent. Two implementations of one encoding is a drift this codebase
+    has paid for before, and SQL is the copy that cannot be unit-tested, so it
+    was deleted rather than patched.
+
+    This sweep is the single writer's reach into rows the writers missed:
+    releases created before 0151, and any future path that forgets. Safe to
+    run repeatedly — it only touches NULLs.
+    """
+
+    async def _run() -> dict:
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.release_linker import (
+            find_releases_missing_sort_key,
+            sync_release_sort_key,
+        )
+
+        filled: list[str] = []
+        failed: list[str] = []
+
+        async with AsyncSessionLocal() as db:
+            missing = await find_releases_missing_sort_key(db)
+
+        for release_id in missing:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await sync_release_sort_key(db, release_id)
+                    await db.commit()
+                filled.append(str(release_id))
+            except Exception as exc:
+                failed.append(str(release_id))
+                _slog.warning(
+                    "release_sort_key_backfill_failed",
+                    release_id=str(release_id),
+                    error=str(exc),
+                )
+
+        if missing:
+            _slog.info(
+                "release_sort_keys_backfilled",
+                found=len(missing),
+                filled=len(filled),
+                failed=len(failed),
+            )
+
+        return {
+            "checked": True,
+            "missing": len(missing),
+            "filled": len(filled),
+            "failed": len(failed),
         }
 
     return _run_async(_run())

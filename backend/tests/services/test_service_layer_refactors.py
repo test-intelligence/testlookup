@@ -606,8 +606,12 @@ async def test_release_service_list_releases_enriches_run_counts():
 
 @pytest.mark.asyncio
 async def test_release_service_link_test_run_returns_existing_link_message():
-    release = SimpleNamespace(id=uuid.uuid4())
-    run = SimpleNamespace(id=uuid.uuid4())
+    # Same project on both: migration 0151 made a link legal only when the run
+    # and the release belong to the same project, so a fake run without a
+    # matching project_id is now rejected before the existing-link check.
+    project_id = uuid.uuid4()
+    release = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+    run = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
     existing = SimpleNamespace(id=uuid.uuid4())
     body = SimpleNamespace(test_run_id=str(run.id), phase_id=None)
     db = FakeAsyncDB(

@@ -25,8 +25,9 @@ pytest.importorskip("sqlalchemy")
 
 
 class _Result:
-    def __init__(self, *, scalar=None):
+    def __init__(self, *, scalar=None, scalars=None):
         self._scalar = scalar
+        self._scalars = scalars or []
 
     def scalar(self):
         return self._scalar
@@ -36,6 +37,11 @@ class _Result:
 
     def scalar_one_or_none(self):
         return self._scalar
+
+    def scalars(self):
+        # ``_next_free_auto_name`` reads every existing release name to pick a
+        # free one; after a full reset there are none.
+        return SimpleNamespace(all=lambda: list(self._scalars))
 
 
 def _project(name: str = "GoogleSearch", *, active: bool = True):
@@ -56,6 +62,10 @@ def _fake_db(*, project, run_count=0, full_table_counts=None):
       [if mode == "full"]
       4..N: alternating SELECT COUNT + DELETE for each table in
             _FULL_RESET_TABLES — 2 calls per table.
+      last: full mode wipes ``releases``, so reset_project re-provisions the
+            project's active release in the same transaction (migration 0150).
+            That is one more SELECT, returning None so a fresh placeholder is
+            created rather than an existing one reused.
     """
     results: list[object] = [
         _Result(scalar=project),
@@ -66,11 +76,21 @@ def _fake_db(*, project, run_count=0, full_table_counts=None):
         for n in full_table_counts:
             results.append(_Result(scalar=n))
             results.append(MagicMock())
+        # _create_auto_release: the reusable-placeholder probe, then the
+        # name-collision lookup. Both empty — everything was just deleted.
+        results.append(_Result(scalar=None))
+        results.append(_Result(scalars=[]))
+
+    savepoint = AsyncMock()
+    savepoint.__aenter__ = AsyncMock(return_value=savepoint)
+    savepoint.__aexit__ = AsyncMock(return_value=False)
 
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=results),
         add=MagicMock(),
         commit=AsyncMock(),
+        flush=AsyncMock(),
+        begin_nested=MagicMock(return_value=savepoint),
     )
     return db
 

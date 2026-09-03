@@ -159,6 +159,31 @@ celery_app.conf.update(
             "task": "app.worker.tasks.resync_stale_knowledge_sources",
             "schedule": crontab(minute=0, hour="*/4"),
         },
+        # Migration 0150: prove the active-release invariant rather than
+        # assume it. Hourly at :20 — frequent enough that a violation is
+        # repaired long before it can misattribute a day's runs, and
+        # deliberately clear of 02:00, when nightly-retention-purge is
+        # deleting test_runs: a sweep reading run→release membership while
+        # rows are disappearing underneath it observes a moving target.
+        "reconcile-active-releases": {
+            "task": "app.worker.tasks.reconcile_active_releases",
+            "schedule": crontab(minute=20),
+        },
+        # Migration 0152: the denormalized primary_release_id has four writers
+        # and no single owner, so drift is swept rather than assumed away.
+        # :50 keeps it clear of the active-release sweep at :20 — the two read
+        # overlapping rows and a repair racing a detection would log noise.
+        "reconcile-primary-releases": {
+            "task": "app.worker.tasks.reconcile_primary_releases",
+            "schedule": crontab(minute=50),
+        },
+        # Migration 0151/0153 leave sort_key NULL rather than reimplementing
+        # the encoder in SQL — see the task docstring. :35 keeps it clear of
+        # the two sibling sweeps at :20 and :50.
+        "reconcile-release-sort-keys": {
+            "task": "app.worker.tasks.reconcile_release_sort_keys",
+            "schedule": crontab(minute=35),
+        },
         # FLK-P3: nightly retrain of the flaky-confidence model from human
         # quarantine decisions. No-op-safe until enough labeled decisions exist.
         "nightly-flaky-confidence-training": {

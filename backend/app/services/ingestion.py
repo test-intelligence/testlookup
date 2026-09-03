@@ -275,8 +275,8 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             except Exception as tag_err:
                 logger.warning("auto_tagging_failed", error=str(tag_err))
 
-            # ── Link to release (explicit name wins; falls back to the
-            # project's default release — migration 0077) ────────────────
+            # ── Link to release (explicit name wins; falls back to whichever
+            # release was ACTIVE WHEN THE RUN EXECUTED — migration 0150) ──
             try:
                 from app.services.release_linker import link_run_or_default
                 result = await link_run_or_default(
@@ -284,6 +284,7 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                     project_id=run.project_id,
                     release_name=sentinel.release_name,
                     test_run_id=run.id,
+                    executed_at=run.start_time,
                 )
                 if result and result[1]:
                     logger.info(

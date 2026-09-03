@@ -234,12 +234,31 @@ async def paginate_query(db: AsyncSession, query, page: int, size: int):
 
 
 async def fetch_release_map(db: AsyncSession, run_ids: list[uuid.UUID]) -> dict[str, dict[str, str | None]]:
+    """Map each run id to the ONE release its badge should show.
+
+    ``release_test_run_links`` is many-to-many by design — a hotfix build can
+    genuinely be validated for both 2.3.1 and 2.4.0 — but this returns a dict
+    keyed on ``test_run_id``, so before migration 0151 a multi-linked run
+    silently kept whichever row Postgres happened to return last and the run
+    list showed a non-deterministic release name.
+
+    That was not hypothetical: ``link_run_to_release`` never removes a prior
+    link, so any run that was auto-attributed and then re-labelled by hand
+    already carried two rows.
+
+    Filtering on ``is_primary`` makes the answer deterministic. The partial
+    unique index ``ix_rtr_links_primary`` guarantees at most one such row per
+    run, so the dict comprehension can no longer lose data.
+    """
     if not run_ids:
         return {}
     result = await db.execute(
         select(ReleaseTestRunLink.test_run_id, Release.id, Release.name)
         .join(Release, Release.id == ReleaseTestRunLink.release_id)
-        .where(ReleaseTestRunLink.test_run_id.in_(run_ids))
+        .where(
+            ReleaseTestRunLink.test_run_id.in_(run_ids),
+            ReleaseTestRunLink.is_primary.is_(True),
+        )
     )
     return {
         str(test_run_id): {"id": str(release_id), "name": release_name}

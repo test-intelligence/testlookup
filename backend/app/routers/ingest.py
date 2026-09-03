@@ -13,6 +13,7 @@ keys / JWTs must still be members of the target project (enforced by
 ``resolve_project_scope``).
 """
 import uuid
+from datetime import datetime
 
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -214,6 +215,17 @@ async def ingest_file(
     # Environment this run executed against (roadmap Phase 0). Optional —
     # omitting it records "not known" rather than a synthetic default.
     environment: str = Form(None, max_length=100),
+    # When the run actually EXECUTED, ISO-8601. Optional; omitting it keeps the
+    # pre-existing behaviour of stamping ingest time.
+    #
+    # This matters beyond accuracy: release attribution resolves which release
+    # was active AS OF this moment, so for a batch upload the difference
+    # between execution and ingest is the difference between the right release
+    # and whichever one happens to be current. Bounded by
+    # ``services/execution_time`` — a client value is not trusted, because a
+    # bad one silently removes the run from every default time window rather
+    # than raising.
+    executed_at: datetime = Form(None),
     # Commit attribution (US-8.1, air-gapped path) — an optional JSON-encoded
     # list of ``{sha, author, message, files}`` the CLI can supply so suspect
     # ranking needs no outbound VCS call. Parsed + bounded below.
@@ -364,6 +376,8 @@ async def ingest_file(
         ci_actor=ci_actor,
         ci_run_url=ci_run_url,
         environment=environment,
+        # ISO string, not a datetime: Celery serializes task kwargs as JSON.
+        executed_at=executed_at.isoformat() if executed_at else None,
         commit_range=commit_range_arg,
     )
 

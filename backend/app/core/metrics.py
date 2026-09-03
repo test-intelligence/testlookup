@@ -430,3 +430,36 @@ celery_task_runtime_seconds = Histogram(
     ["task_name", "queue_name"],
     buckets=(0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, float("inf")),
 )
+
+
+# ── Release lifecycle (migration 0150) ────────────────────────────────────────
+
+# TWO counters, not one, and the pairing is the point. A sweep counter that is
+# never incremented and a violation counter that reads 0 look identical to a
+# healthy system — "no violations" and "never ran" are the same number. Alert on
+# violations only when sweeps is non-zero and increasing.
+release_invariant_sweeps_total = Counter(
+    "testlookup_release_invariant_sweeps_total",
+    "Completed active-release reconciliation sweeps",
+)
+
+release_invariant_violations_total = Counter(
+    "testlookup_release_invariant_violations_total",
+    "Projects found with no active release, by what the sweep did about it",
+    ["outcome"],  # repaired | repair_failed
+)
+
+
+# Same two-counter shape as the active-release invariant above, for the same
+# reason: a drift counter reading zero is indistinguishable from a sweep that
+# never ran.
+release_primary_sweeps_total = Counter(
+    "testlookup_release_primary_sweeps_total",
+    "Completed primary_release_id drift sweeps",
+)
+
+release_primary_drift_total = Counter(
+    "testlookup_release_primary_drift_total",
+    "Runs whose denormalized primary_release_id disagreed with their primary link",
+    ["outcome"],  # repaired | repair_failed
+)

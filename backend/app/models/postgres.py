@@ -290,6 +290,15 @@ class TestRun(Base):
             "project_id", "pr_number",
             postgresql_where=text("pr_number IS NOT NULL"),
         ),
+        # Migration 0152: the release axis. Column order matches how these
+        # queries are actually shaped — tenant-scoped first (project_id is
+        # never absent), then narrowed to a release, then bounded by the
+        # window. Release-first would not serve the far commoner
+        # project+window read that carries no release filter.
+        Index(
+            "ix_test_runs_project_release_created",
+            "project_id", "primary_release_id", "created_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -323,6 +332,27 @@ class TestRun(Base):
     # run shared one environment. Consumed by the per-test history timeline and
     # as the "environment consistency" signal in the flakiness score.
     environment: Mapped[Optional[str]] = mapped_column(String(100))
+
+    # The release this run counts toward, denormalized from the run's PRIMARY
+    # link (migration 0152). Lets every windowed analytics read add a release
+    # filter as one more indexed predicate on a query shape that already
+    # exists, instead of joining ``release_test_run_links`` — which would also
+    # double-count a run linked to two releases in any aggregate.
+    #
+    # Answers for PRIMARY membership only, the same caveat ``primary_suite_name``
+    # carries: ``/runs`` reads the link table and so returns the wider set.
+    #
+    # NULL is a real state meaning "not attributed", not a backfill gap: an
+    # in-flight live run has no link yet by design, and a swallowed linker
+    # error leaves one permanently unattributed. Release-scoped reads must not
+    # assume every run has a release.
+    #
+    # Maintained by ``release_linker.sync_primary_release`` from every path
+    # that changes ``is_primary``, and repaired by the reconciliation sweep —
+    # there is no single writer to point at.
+    primary_release_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("releases.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Aggregated counts
     total_tests: Mapped[int] = mapped_column(Integer, default=0)
@@ -2879,6 +2909,44 @@ class SuiteMembershipEvent(Base):
 
 # ── Release Management ────────────────────────────────────────────────────────
 
+
+class LinkSource(str, PyEnum):
+    """How a run came to be attributed to a release (migration 0150).
+
+    The ordering here is the resolution ladder's own precedence, strongest
+    evidence first. Everything from ``RULE_MATCH`` down is an *inference*, and
+    the release scorecard reports the split so a verdict never hides how much
+    of its evidence was asserted versus derived.
+    """
+
+    #: The client / upload form / live session named the release outright.
+    EXPLICIT_CLIENT = "explicit_client"
+    #: A human assigned it through the UI or the manual link endpoint.
+    MANUAL_UI = "manual_ui"
+    #: A project attribution rule matched (branch, tag, build pattern, env).
+    RULE_MATCH = "rule_match"
+    #: The run fell inside a release's declared cutoff window.
+    CUTOFF_WINDOW = "cutoff_window"
+    #: Fell through to whichever release was active — the terminal rung.
+    ACTIVE_RELEASE = "active_release"
+    #: Pre-0150 link against the old ``is_default`` bucket. Inference, and the
+    #: weakest kind: the bucket never rotated, so it says nothing about which
+    #: release was underway.
+    DEFAULT_FALLBACK = "default_fallback"
+    #: Pre-0150 link whose provenance is not recoverable. Deliberately distinct
+    #: from DEFAULT_FALLBACK so a backfilled row is never read as a measured one.
+    UNKNOWN = "unknown"
+
+
+#: Sources that represent a positive assertion about which release a run
+#: belongs to, rather than something the system worked out. Used by the
+#: attribution-mix reporting and by rotation, which must not treat an
+#: auto-attributed release as evidence a human is managing it.
+ASSERTED_LINK_SOURCES = frozenset(
+    {LinkSource.EXPLICIT_CLIENT.value, LinkSource.MANUAL_UI.value}
+)
+
+
 class Release(Base):
     """A software release tracked through the QA lifecycle."""
     __tablename__ = "releases"
@@ -2891,6 +2959,17 @@ class Release(Base):
             unique=True,
             postgresql_where=text("is_default IS TRUE"),
         ),
+        # Migration 0150: at most one ACTIVE release per project. Same shape as
+        # the default index above, which it supersedes — see ``is_active``.
+        Index(
+            "ix_releases_project_active",
+            "project_id",
+            unique=True,
+            postgresql_where=text("is_active IS TRUE"),
+        ),
+        # Migration 0153. Release-over-release comparison orders within a
+        # project, never globally, so the project column leads.
+        Index("ix_releases_project_sort", "project_id", "sort_key"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -2906,9 +2985,77 @@ class Release(Base):
     # Migration 0077: project-level default — used when ingestion / live
     # session create receives no explicit release_name. At most one row per
     # project (partial unique index above).
+    #
+    # SUPERSEDED by ``is_active`` in migration 0150. Kept as a dormant column
+    # for one release so S0 has a real downgrade path; nothing reads it. Do not
+    # add new readers — use ``is_active``.
     is_default: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+
+    # Migration 0150. The project's CURRENT release: where a run with no
+    # release from the client lands. Unlike ``is_default`` this rotates as
+    # releases ship, so membership carries real information about which release
+    # was underway. At most one per project (partial unique index above), and
+    # ``release_lifecycle_service`` guarantees at least one — so every project
+    # has exactly one at every moment.
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
+    # True while no human has named this release — set on every auto-created
+    # row, cleared on rename. Drives the "name your release" prompt and the
+    # cross-project count of teams who have not set releases up, and keeps an
+    # auto-created placeholder out of the rotation successor pool (ingest fills
+    # the ``planning`` pool with arbitrary client-supplied strings, so "the next
+    # planning release" is not a curated queue).
+    is_auto_named: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
+    # The interval this release held ``is_active``. Attribution resolves the
+    # active release AS OF a run's execution time from these columns rather
+    # than reading the mutable flag at ingest — otherwise an archive uploaded
+    # after a rotation is attributed to the release that came next.
+    # ``deactivated_at IS NULL`` on the currently-active row.
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    deactivated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # ── Identity and ordering (migration 0151) ───────────────────────────────
+
+    # major | minor | patch | hotfix | rc. Drives gate-policy resolution: a
+    # one-line hotfix and a major release should not face identical thresholds.
+    release_type: Mapped[Optional[str]] = mapped_column(String(20))
+
+    # Total-order encoding of the version, computed on write by
+    # ``services/release_sort_key.compute_sort_key``. Sorting by ``name`` puts
+    # 2.10.0 before 2.9.0, and a naive zero-pad still sorts an RC after its own
+    # GA — see that module for the encoding and why each part of it exists.
+    # No ``index=True``: that would declare a single-column ``ix_releases_sort_key``
+    # that no migration creates, and the only intended read is project-scoped
+    # ordering, which ``ix_releases_project_sort`` (declared below, created in
+    # 0153) already serves. Model and database must name the same indexes or
+    # the inventory in either one is a lie.
+    sort_key: Mapped[Optional[str]] = mapped_column(String(64))
+
+    # Explicit predecessor for release-over-release comparison. Defaults to the
+    # previous sort_key but is overridable, because a hotfix's baseline is its
+    # parent release, not whatever shipped most recently.
+    baseline_release_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("releases.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # The span in which runs belong to this release. An ATTRIBUTION INPUT (the
+    # ladder's cutoff-window rung) and a UI default window — deliberately not a
+    # filter on the release truth table: a run attributed by the active-release
+    # fallback is by definition outside every cutoff window, so filtering the
+    # verdict by this span would exclude exactly the runs it was built from.
+    cutoff_start_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    cutoff_end_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # Pairs with TestRun.environment (migration 0129) for environment-aware
+    # attribution rules and phase criteria.
+    target_environment: Mapped[Optional[str]] = mapped_column(String(100))
 
     # Target/actual dates
     planned_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -2971,12 +3118,56 @@ class ReleaseTestRunLink(Base):
     __table_args__ = (
         UniqueConstraint("release_id", "test_run_id", name="uq_release_test_run"),
         Index("ix_rtr_links_release", "release_id"),
+        # Migration 0151. The hot read runs the OTHER way: fetch_release_map
+        # does an IN over run ids on every run-list render and had no index to
+        # use, so it sequentially scanned.
+        Index("ix_rtr_links_test_run", "test_run_id"),
+        # Exactly one primary release per run. Partial-unique so the secondary
+        # memberships a cherry-pick needs stay legal — this constrains which
+        # link analytics read, not how many a run may have.
+        Index(
+            "ix_rtr_links_primary",
+            "test_run_id",
+            unique=True,
+            postgresql_where=text("is_primary IS TRUE"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     release_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("releases.id", ondelete="CASCADE"), nullable=False)
     test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
     phase_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("release_phases.id", ondelete="SET NULL"), nullable=True)
+
+    # HOW this link came to be (migration 0150). See ``LinkSource``. Without
+    # it a deliberate assignment and an automatic fallback are the same row,
+    # so a release scorecard cannot say how much of its evidence was inferred
+    # — which is exactly what a GO/NO_GO built on that evidence needs to state.
+    #
+    # Nullable only because rows predating 0150 exist; the backfill stamps
+    # every one of them, and all writers supply a value. A NULL that appears
+    # after 0150 means a writer skipped the linker.
+    link_source: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+
+    # Which of a run's links analytics should read (migration 0151). The table
+    # is many-to-many by design — a hotfix build can genuinely be validated for
+    # both 2.3.1 and 2.4.0 — but a run-list badge and a per-release pass rate
+    # each need ONE answer, and picking arbitrarily is what made the release
+    # column non-deterministic for multi-linked runs.
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
+    # Who made this link, when a human did. NULL for automatic attribution —
+    # the actor is then recorded by ``link_source`` instead.
+    linked_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Denormalized from the release. A link may only join a run and a release
+    # in the SAME project; before 0151 nothing enforced that at any layer, so a
+    # caller could pull another project's results into their release and from
+    # there into its scorecard and signed compliance pack.
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

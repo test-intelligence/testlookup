@@ -29,12 +29,19 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
-def _release(status="planning"):
+def _release(status="planning", is_active=False):
     return SimpleNamespace(
         id=uuid.uuid4(),
         status=status,
         name="r1",
         released_at=None,
+        version=None,
+        # Migration 0150: marking a release terminal hands the active flag to a
+        # successor. These tests pin PHASE validation, so they use a
+        # non-active release to keep rotation out of the way — rotation has
+        # its own coverage in test_active_release_invariant.py.
+        is_active=is_active,
+        project_id=uuid.uuid4(),
     )
 
 

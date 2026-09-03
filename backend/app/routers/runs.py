@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -480,6 +480,12 @@ async def set_run_release(
     run_id: uuid.UUID,
     body: dict,
     db: AsyncSession = Depends(get_db),
+    # QA_LEAD, matching the sibling POST /releases/{id}/test-runs. Before S1
+    # this route only added a link; it now also DEMOTES whichever link was
+    # primary, which decides what every release-scoped analytic reads. Leaving
+    # it on a membership-only guard would let any project member override a
+    # QA lead's deliberate attribution.
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     _: User = Depends(require_run_access()),
 ):
     release_name = (body.get("release_name") or "").strip()
@@ -492,12 +498,48 @@ async def set_run_release(
 
     from app.services.release_linker import auto_link_release
 
+    from app.models.postgres import LinkSource, ReleaseTestRunLink
+
     release, created = await auto_link_release(
         db=db,
         project_id=run.project_id,
         release_name=release_name,
         test_run_id=run.id,
+        # A person typed this release name into the Run Detail control, so it
+        # is an assertion rather than something the system worked out — and it
+        # must outrank whatever ingest attributed automatically.
+        link_source=LinkSource.MANUAL_UI.value,
+        # Record WHO. Without this the row claims manual_ui provenance with no
+        # actor, which is weaker evidence than it looks — the scorecard counts
+        # it as asserted while nothing can say by whom.
+        linked_by_id=current_user.id,
     )
+
+    # Make the human's choice the one analytics reads. Without this the run
+    # keeps its automatic link as primary and the release badge goes on showing
+    # the old value, so the control appears to do nothing.
+    await db.execute(
+        update(ReleaseTestRunLink)
+        .where(
+            ReleaseTestRunLink.test_run_id == run.id,
+            ReleaseTestRunLink.release_id != release.id,
+            ReleaseTestRunLink.is_primary.is_(True),
+        )
+        .values(is_primary=False)
+    )
+    await db.execute(
+        update(ReleaseTestRunLink)
+        .where(
+            ReleaseTestRunLink.test_run_id == run.id,
+            ReleaseTestRunLink.release_id == release.id,
+        )
+        .values(is_primary=True)
+    )
+    # Fourth path that changes the primary link; the denormalized column has
+    # to follow or the release badge and release-scoped analytics disagree.
+    from app.services.release_linker import sync_primary_release
+
+    await sync_primary_release(db, run.id)
     await db.commit()
 
     return {

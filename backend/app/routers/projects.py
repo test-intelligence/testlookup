@@ -126,6 +126,17 @@ async def create_project(
     from app.services.service_account_service import enroll_service_accounts_in_project
     enrolled_service_accounts = await enroll_service_accounts_in_project(db, project.id)
 
+    # Every project must have exactly one active release at every moment
+    # (migration 0150) — it is where a run with no release from the client
+    # lands. Created in THIS transaction on purpose: doing it lazily at first
+    # ingest would make the invariant true-after-the-first-repair rather than
+    # true from t=0, and the reconciliation sweep could not then distinguish
+    # "never provisioned" from "something broke it".
+    from app.services.release_lifecycle_service import (
+        ensure_active_release_for_new_project,
+    )
+    await ensure_active_release_for_new_project(db, project)
+
     await db.commit()
     await db.refresh(project)
 

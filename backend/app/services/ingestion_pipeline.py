@@ -7,7 +7,7 @@ Used by:
   3. ingest_uploaded_file task — POST /api/v1/ingest/file (file upload)
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Optional
 
 import structlog
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import LaunchStatus, Project, TestCase, TestRun
+from app.services.execution_time import resolve_execution_time
 from app.services.run_environment import normalize_environment
 from app.services.run_tombstone_service import run_is_tombstoned
 from app.services.ingestion import (
@@ -72,6 +73,11 @@ async def create_run_from_payload(
     # Optional (migration 0129). Absent means "not recorded", NOT "default" —
     # see services/run_environment.py for why that distinction is load-bearing.
     environment: Optional[str] = None,
+    # When the run actually executed. Bounded by services/execution_time before
+    # it reaches start_time — see that module for why an unbounded client value
+    # is a run that silently vanishes from every default window rather than a
+    # validation error.
+    executed_at: Optional[datetime] = None,
     # Either supplied wire shape: a bare commit list, or the boundary-carrying
     # ``{base, head, commits}`` object (``SuppliedCommitRangeInput``).
     commit_range: Optional[Any] = None,
@@ -206,7 +212,7 @@ async def create_run_from_payload(
         failed_tests=0,
         skipped_tests=0,
         broken_tests=0,
-        start_time=datetime.now(timezone.utc),
+        start_time=resolve_execution_time(executed_at, context="upload"),
     )
     db.add(run)
     await db.flush()
@@ -521,17 +527,32 @@ async def finalize_run(
 
     await _run_isolated("quarantine_tagging", _apply_quarantine_tags)
 
-    # Release linking — explicit name wins; otherwise fall back to the
-    # project's default release (auto-created on first use; migration 0077).
+    # Release linking — explicit name wins; otherwise fall back to whichever
+    # release was ACTIVE WHEN THE RUN EXECUTED (migration 0150).
+    #
+    # ``executed_at`` is the run's start_time. On this path that is currently
+    # stamped at ingest rather than carried from the client, so for a batch
+    # upload it is close to ingest time and the as-of lookup degrades to "the
+    # release active now" — the same answer the old default bucket gave. It is
+    # passed anyway so this path is already correct once S3a plumbs a
+    # client-supplied execution timestamp, rather than needing a second edit.
     from app.services.release_linker import link_run_or_default
-    await _run_isolated(
-        "release_linking",
-        lambda d: link_run_or_default(
+
+    async def _link_release(d):
+        # Read start_time on the step's own session — ``_run_isolated``
+        # discards its callable's return value, so the lookup has to live
+        # inside the step that uses it.
+        started_at = await d.scalar(
+            select(TestRun.start_time).where(TestRun.id == rid)
+        )
+        return await link_run_or_default(
             db=d, project_id=pid,
             release_name=release_name,
             test_run_id=rid,
-        ),
-    )
+            executed_at=started_at,
+        )
+
+    await _run_isolated("release_linking", _link_release)
 
     # Tier 1 item 5 — post a GitHub check run for this commit SHA. The
     # service is the hard kill switch: it returns a ``skipped`` dict

@@ -148,7 +148,15 @@ async def _gather_decision_and_run(
         .select_from(TestRun)
         .join(ReleaseTestRunLink, ReleaseTestRunLink.test_run_id == TestRun.id)
         .join(ReleaseDecision, ReleaseDecision.test_run_id == TestRun.id)
-        .where(ReleaseTestRunLink.release_id == release.id)
+        .where(
+            ReleaseTestRunLink.release_id == release.id,
+            # Same-project guard. A link joining a run and a release across
+            # projects is rejected at the service layer now, but historical
+            # rows can violate it — and this query feeds a SIGNED compliance
+            # pack, which is the worst possible place for another tenant's run
+            # to appear.
+            TestRun.project_id == release.project_id,
+        )
         .order_by(TestRun.start_time.desc().nulls_last())
         .limit(1)
     )

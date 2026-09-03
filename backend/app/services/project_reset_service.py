@@ -199,6 +199,25 @@ async def reset_project(
         },
     )
     db.add(audit_row)
+
+    # ``full`` mode deletes every release (see _FULL_RESET_TABLES), which
+    # breaks the active-release invariant (migration 0150): the project would
+    # have none until the hourly sweep noticed, and every run ingested in
+    # between would fall through the attribution ladder with nowhere to land.
+    # Re-provision in the SAME transaction that emptied it, so the invariant is
+    # never observably false and the sweep's violation counter stays a real
+    # signal rather than counting our own doing.
+    #
+    # ``runs`` mode is deliberately excluded — it deletes test_runs only and
+    # leaves releases intact, so provisioning here would mint a spurious
+    # placeholder on every runs-only reset.
+    if mode == "full":
+        from app.services.release_lifecycle_service import (
+            ensure_active_release_for_new_project,
+        )
+
+        await ensure_active_release_for_new_project(db, project)
+
     await db.commit()
 
     logger.info(

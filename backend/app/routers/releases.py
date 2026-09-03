@@ -218,10 +218,12 @@ async def link_test_run(
     release_id: str,
     body: LinkRunRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     __: User = Depends(require_release_access()),
 ):
-    link, is_new = await release_service.link_test_run(db, release_id, body)
+    link, is_new = await release_service.link_test_run(
+        db, release_id, body, linked_by_id=current_user.id
+    )
     if is_new:
         await db.commit()
         await db.refresh(link)
@@ -237,6 +239,11 @@ async def unlink_test_run(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role(UserRole.ADMIN)),
     __: User = Depends(require_run_access()),
+    # The route carries TWO scoped path params and only the run was checked.
+    # The authz ratchet stops at the first scoped param it can satisfy, so it
+    # cannot see the gap — a caller with access to the run but not the release
+    # could unlink it from a release in a project they cannot reach.
+    ___: User = Depends(require_release_access()),
 ):
     await release_service.unlink_test_run(db, release_id, run_id)
     await db.commit()

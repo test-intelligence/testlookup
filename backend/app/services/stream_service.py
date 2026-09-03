@@ -478,6 +478,20 @@ async def close_session(
             # uuid.UUID(session.run_id) raised ValueError on every slug run,
             # silently skipping release linking via the broad except below.
             test_run_id=canonical_test_run_uuid(session.run_id),
+            # Live sessions are the one path that carries a real execution
+            # time: started_at is stamped when the session opened, not at
+            # ingest. So the as-of lookup is genuinely accurate here — a long
+            # session that spans a rotation is attributed to the release that
+            # was underway when it started, not the one that came after.
+            #
+            # getattr, not attribute access: this whole block sits inside a
+            # broad ``except`` that logs and continues, so an AttributeError
+            # here would not fail loudly — it would silently skip release
+            # linking for every live run, which is exactly the regression
+            # ``test_release_link_canonical_uuid`` exists to catch. Degrading
+            # to None (= "the currently active release") is the honest
+            # fallback; dropping the link is not.
+            executed_at=getattr(session, "started_at", None),
         )
     except Exception as rel_err:
         logger.warning(
