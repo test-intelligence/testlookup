@@ -223,19 +223,21 @@ def test_every_route_guards_the_release_before_using_it(fn_name):
 # ── Scope boundary ───────────────────────────────────────────────────────────
 
 
-def test_precomputed_aggregate_endpoints_are_left_alone():
-    """/flaky-scores and /systemic-clusters read per-project derived tables
-    with no run dimension, so no predicate on test_runs can reach them.
+def test_systemic_clusters_still_takes_no_release():
+    """The derived-table boundary, checked on the ROUTER where these live.
 
-    Accepting a release_id there would be worse than not accepting one: the
-    caller would believe the filter applied while getting project-wide numbers.
-    They stay unscoped until S4b gives their tables a release column.
+    The original version of this test looked them up on ``analytics_service``,
+    where neither exists — so ``getattr`` returned None, the loop skipped, and
+    it passed while asserting nothing. Found when S4b changed the answer for
+    one of the two and the test did not notice.
+
+    ``systemic_clusters`` reads a per-project derived table with no run
+    dimension. Accepting a release_id would mean the caller believes a filter
+    applied while getting project-wide clusters.
     """
-    for fn_name in ("flaky_scores", "systemic_clusters"):
-        fn = getattr(svc, fn_name, None)
-        if fn is None:
-            continue
-        assert "release_id" not in inspect.signature(fn).parameters, (
-            f"{fn_name} reads a derived table — a release_id here would be "
-            f"accepted and silently ignored"
-        )
+    from app.routers import analytics
+
+    assert "release_id" not in inspect.signature(analytics.systemic_clusters).parameters, (
+        "systemic-clusters reads a derived table with no run dimension — a "
+        "release_id here would be accepted and silently ignored"
+    )

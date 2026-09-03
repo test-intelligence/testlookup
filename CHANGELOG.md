@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-03 — which flaky tests are affecting this release
+
+`/flaky-scores` now takes an optional `release_id`. It returns the project's
+flaky tests **that actually ran in that release**.
+
+This was originally scoped as "give `flaky_score` a release column and recompute
+per release". That does not survive contact with the scorer. `flaky_score_service`
+refuses to emit a score below **5 observations of the same test**, and only calls
+confidence "high" at **20+**. A rolling 30-day window clears that easily; one
+release — a three-day hotfix, a short RC cycle — frequently does not. Per-release
+rows would mostly carry `score=None, confidence="none"`, so the table would
+multiply by active-release count while answering "no data" more often than it
+answered — reading as broken rather than as honest.
+
+The question users actually ask is an intersection, not a release-scoped
+statistic: project-wide scores ∩ tests that ran in the release. Every key for it
+already existed (`flaky_score.test_fingerprint` → `test_cases.test_fingerprint` →
+`test_runs.primary_release_id`), so this is a subquery rather than a migration,
+and each score keeps its full evidence base instead of being recomputed on a
+fraction of it.
+
+**The result is mixed-scope, and says so.** Membership is release-scoped; the
+score is not. A filtered list looks release-scoped, so a reader could take
+`score` as "how flaky during 2.4.0" and be wrong, with nothing in a bare list to
+correct them. The response now carries a `scope` block naming what each number
+measures, and the note explains the evidence floor rather than merely asserting
+the limitation — "scores are project-wide" alone reads like an unfinished
+feature; naming the threshold makes it a decision someone can argue with.
+
+The intersection subquery is tenant-scoped independently of the outer query.
+Test fingerprints are not salted per project, so without its own project filter
+a foreign release id could select fingerprints that collide with another
+project's — and the outer project filter would not save it, because the `IN`
+list is what selects the rows.
+
+`/systemic-clusters` still takes no release, for the original reason: it reads a
+per-project derived table with no run dimension. A test pins that, and it is no
+longer the vacuous one it was — the previous version looked the route up on the
+service module where it does not exist, so it passed while asserting nothing.
+
 ## 2026-09-03 — dashboards can be asked about one release
 
 Five run-backed analytics endpoints now take an optional `release_id`:

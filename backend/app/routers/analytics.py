@@ -1,5 +1,7 @@
 """Analytics endpoints: flaky tests, failure clusters, coverage, defects."""
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +19,8 @@ from app.models.postgres import (
     FlakyScore,
     SystemicFlakeCluster,
     SystemicFlakeClusterMember,
+    TestCase,
+    TestRun,
     User,
     UserRole,
 )
@@ -105,6 +109,11 @@ async def flake_load(
 async def flaky_scores(
     project_id: str = Query(..., description="Project to score — never a fleet average"),
     limit: int = Query(50, ge=1, le=200),
+    # S4b. Selects WHICH flaky tests ran in this release. It does NOT rescope
+    # the score — see the ``scope`` block in the response and the note below.
+    release_id: str | None = Query(
+        None, description="Only flaky tests that ran in this release"
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -127,15 +136,35 @@ async def flaky_scores(
     scoped, _allowed = await resolve_project_scope(db, current_user, project_id)
     if scoped is None:
         raise HTTPException(status_code=400, detail="Invalid project ID")
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
 
-    rows = (
-        await db.execute(
-            select(FlakyScore)
-            .where(FlakyScore.project_id == scoped)
-            .order_by(FlakyScore.score.desc())
-            .limit(limit)
+    stmt = (
+        select(FlakyScore)
+        .where(FlakyScore.project_id == scoped)
+        .order_by(FlakyScore.score.desc())
+    )
+    if release_id is not None:
+        # INTERSECTION, not a rescope. flaky_score is a rolling-window
+        # statistic keyed on (project_id, test_fingerprint) — it has no release
+        # dimension and deliberately gains none: the service refuses to emit a
+        # score below 5 observations of the same test and only calls confidence
+        # "high" at 20+, thresholds a single release frequently cannot reach.
+        # Recomputing per release would multiply the table while most rows
+        # reported no score at all.
+        #
+        # So the filter selects which already-scored tests actually ran in the
+        # release, leaving each score on its full evidence base.
+        ran_in_release = (
+            select(TestCase.test_fingerprint)
+            .join(TestRun, TestRun.id == TestCase.test_run_id)
+            .where(
+                TestRun.project_id == scoped,
+                TestRun.primary_release_id == uuid.UUID(release_id),
+            )
         )
-    ).scalars().all()
+        stmt = stmt.where(FlakyScore.test_fingerprint.in_(ran_in_release))
+
+    rows = (await db.execute(stmt.limit(limit))).scalars().all()
 
     calibration = (
         await db.execute(
@@ -167,6 +196,23 @@ async def flaky_scores(
         ],
         "total": len(rows),
         "suppression": decision.to_dict(),
+        # A filtered list LOOKS release-scoped, and here only half of it is:
+        # membership is release-scoped, the score is not. Saying so in the
+        # payload rather than only in the docs, because the number is what
+        # gets read — a reader who takes `score` as "how flaky during 2.4.0"
+        # would be wrong, and nothing in a bare filtered list would tell them.
+        "scope": {
+            "membership": "release" if release_id else "project",
+            "score": "project_window",
+            "release_id": release_id,
+            "note": (
+                "Scores are computed project-wide over the scoring window and "
+                "are NOT recomputed per release: a single release rarely "
+                "reaches the evidence floor a score needs. A release filter "
+                "selects which already-scored tests ran in that release, not "
+                "how flaky they were during it."
+            ) if release_id else None,
+        },
     }
 
 
