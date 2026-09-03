@@ -5,6 +5,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
+    resolve_release_query_scope,
     get_accessible_project_ids,
     get_current_active_user,
     require_role,
@@ -44,6 +45,9 @@ async def flaky_tests(
     days: int = Query(30, ge=1, le=365),
     limit: int = Query(20, ge=1, le=100),
     suite_name: str | None = Query(None, min_length=1),
+    # S4a. Optional: omitting it returns byte-identical results to before
+    # the release axis existed (NFR1), including issuing no extra query.
+    release_id: str | None = Query(None, description="Scope to one release"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -53,6 +57,7 @@ async def flaky_tests(
     # Both slots get forwarded to the service so the raw-SQL ``_tenant_filter``
     # applies the right ``=`` or ``IN (...)`` clause as defence-in-depth.
     scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
     return await analytics_service.flaky_tests(
         db,
         str(scoped) if scoped else None,
@@ -60,6 +65,7 @@ async def flaky_tests(
         limit,
         suite_name=suite_name,
         allowed_project_ids=allowed,
+        release_id=release_id,
     )
 
 
@@ -251,17 +257,22 @@ async def failure_categories(
     project_id: str | None = None,
     days: int = Query(30, ge=1, le=365),
     suite_name: str | None = Query(None, min_length=1),
+    # S4a. Optional: omitting it returns byte-identical results to before
+    # the release axis existed (NFR1), including issuing no extra query.
+    release_id: str | None = Query(None, description="Scope to one release"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Return distribution of failure categories for AI-analysed test cases."""
     scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
     return await analytics_service.failure_categories(
         db,
         str(scoped) if scoped else None,
         days,
         suite_name=suite_name,
         allowed_project_ids=allowed,
+        release_id=release_id,
     )
 
 
@@ -273,11 +284,15 @@ async def top_failing_tests(
     days: int = Query(30, ge=1, le=365),
     limit: int = Query(15, ge=1, le=50),
     suite_name: str | None = Query(None, min_length=1),
+    # S4a. Optional: omitting it returns byte-identical results to before
+    # the release axis existed (NFR1), including issuing no extra query.
+    release_id: str | None = Query(None, description="Scope to one release"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Return tests with the highest total failure count in the period."""
     scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
     return await analytics_service.top_failing_tests(
         db,
         str(scoped) if scoped else None,
@@ -285,6 +300,7 @@ async def top_failing_tests(
         limit,
         suite_name=suite_name,
         allowed_project_ids=allowed,
+        release_id=release_id,
     )
 
 
@@ -388,17 +404,22 @@ async def coverage_stats(
     project_id: str | None = None,
     days: int = Query(30, ge=1, le=365),
     suite_name: str | None = Query(None, min_length=1),
+    # S4a. Optional: omitting it returns byte-identical results to before
+    # the release axis existed (NFR1), including issuing no extra query.
+    release_id: str | None = Query(None, description="Scope to one release"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Return test suite coverage stats aggregated over the period."""
     scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
     return await analytics_service.coverage_stats(
         db,
         str(scoped) if scoped else None,
         days,
         suite_name=suite_name,
         allowed_project_ids=allowed,
+        release_id=release_id,
     )
 
 
@@ -409,6 +430,9 @@ async def suite_detail(
     project_id: str | None = None,
     suite_name: str = "",
     days: int = Query(30, ge=1, le=365),
+    # S4a. Optional: omitting it returns byte-identical results to before
+    # the release axis existed (NFR1), including issuing no extra query.
+    release_id: str | None = Query(None, description="Scope to one release"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -419,12 +443,14 @@ async def suite_detail(
       - Last 10 test runs that included this suite
     """
     scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
     return await analytics_service.suite_detail(
         db,
         str(scoped) if scoped else None,
         suite_name,
         days,
         allowed_project_ids=allowed,
+        release_id=release_id,
     )
 
 

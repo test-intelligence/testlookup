@@ -1220,3 +1220,57 @@ async def verify_webhook_secret(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid webhook secret",
         )
+
+
+async def resolve_release_query_scope(
+    db: AsyncSession,
+    release_id: Optional[str],
+    current_user: "User",
+) -> Optional[str]:
+    """Validate an optional ``release_id`` QUERY parameter (S4a).
+
+    Returns the id unchanged when the caller may read it, ``None`` when no
+    release was requested, and raises otherwise.
+
+    **Why this is not ``require_release_access``.** That guard reads a PATH
+    parameter and is wired as a ``Depends``. The release axis arrives as an
+    optional query parameter on endpoints that already carry their own scoped
+    path or query id, and the architectural authorization ratchet checks
+    evidence per-ROUTE rather than per-ID — it stops at the first scoped
+    parameter it can satisfy. So a route taking both ``project_id`` and
+    ``release_id`` passes the ratchet with the release entirely unchecked, and
+    nothing anywhere would report it.
+
+    Called explicitly rather than as a dependency because the check must not
+    run when the parameter is absent: that path has to stay byte-identical to
+    pre-S4a behaviour (NFR1), including issuing no extra query.
+
+    404 for a release that does not exist, 403 for one the caller cannot
+    reach — matching ``require_release_access`` rather than inventing a second
+    convention. A uniform 404 would hide existence better, but having two
+    guards disagree about the same resource is the worse failure: it teaches
+    readers that the codes are arbitrary.
+    """
+    if release_id is None:
+        return None
+
+    from app.models.postgres import Release
+
+    try:
+        release_uuid = uuid.UUID(str(release_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid release_id") from exc
+
+    release = (
+        await db.execute(select(Release).where(Release.id == release_uuid))
+    ).scalar_one_or_none()
+    if release is None:
+        raise HTTPException(status_code=404, detail="Release not found")
+
+    accessible = await get_accessible_project_ids(db, current_user)
+    # ``None`` means admin — no membership restriction.
+    if accessible is not None and release.project_id not in accessible:
+        raise HTTPException(
+            status_code=403, detail="You do not have access to this release"
+        )
+    return str(release_uuid)

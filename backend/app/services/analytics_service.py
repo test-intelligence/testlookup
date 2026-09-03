@@ -76,6 +76,41 @@ def _add_suite_param(params: dict, suite_name: str | None) -> str:
     return _suite_filter_sql()
 
 
+def _add_release_param(
+    params: dict,
+    release_id: str | uuid.UUID | None,
+    *,
+    table_alias: str = "tr",
+) -> str:
+    """Release scoping for raw-SQL analytics queries (S4a).
+
+    Returns an SQL fragment, or ``""`` when no release is requested — so a
+    caller that omits ``release_id`` produces byte-identical SQL to before
+    this existed. That is NFR1, and it is what lets the read path ship
+    incrementally: every one of these endpoints keeps answering exactly as it
+    did until somebody asks it for a release.
+
+    **Deliberately a conditional fragment, not a null-tolerant predicate.**
+    The obvious alternative is to always emit
+    ``AND (:release_id IS NULL OR tr.primary_release_id = :release_id)``,
+    which reads more simply and is a well-known way to lose an index: the
+    planner cannot know at plan time which branch applies, so it stops using
+    ``ix_test_runs_project_release_created`` and falls back to a scan — for
+    every call, including the overwhelming majority that pass no release at
+    all. Appending nothing when there is nothing to filter keeps both plans
+    clean.
+
+    Reads the DENORMALIZED column rather than joining ``release_test_run_links``
+    (migration 0152): a join would add a table to every one of these queries
+    and, worse, would multiply rows for a run linked to more than one release,
+    silently inflating every COUNT and AVG in this module.
+    """
+    if release_id is None:
+        return ""
+    params["release_id"] = str(release_id)
+    return f"AND {table_alias}.primary_release_id = :release_id"
+
+
 def _tenant_filter(
     params: dict,
     *,
@@ -144,12 +179,16 @@ async def flaky_tests(
     limit: int,
     suite_name: str | None = None,
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
+    # S4a. None = no release filter, and the SQL is then byte-identical
+    # to before this parameter existed (NFR1).
+    release_id: Optional[str] = None,
 ) -> dict:
     params: dict = {"period_start": _period_start(days), "limit": limit}
     project_filter = _tenant_filter(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
     suite_filter = _add_suite_param(params, suite_name)
+    release_filter = _add_release_param(params, release_id)
     # The /failures headline states this list as fact -- "N tests show pass/fail
     # oscillation on the same SHA. Re-runs may pass without fixing the underlying
     # race" -- so membership must actually BE oscillation. A failure-ratio band
@@ -195,6 +234,7 @@ async def flaky_tests(
             WHERE tch.created_at >= :period_start
               {project_filter}
               {suite_filter}
+          {release_filter}
         ) seq
         GROUP BY test_fingerprint
         HAVING COUNT(*) >= 3
@@ -363,12 +403,16 @@ async def failure_categories(
     days: int,
     suite_name: str | None = None,
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
+    # S4a. None = no release filter, and the SQL is then byte-identical
+    # to before this parameter existed (NFR1).
+    release_id: Optional[str] = None,
 ) -> dict:
     params: dict = {"period_start": _period_start(days)}
     project_filter = _tenant_filter(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
     suite_filter = _add_suite_param(params, suite_name)
+    release_filter = _add_release_param(params, release_id)
     # Grouped by (category, status) so the derived failure-kind triad
     # (US-9.1) can apply its BROKEN nudge; ``items`` keeps its historical
     # per-category shape by re-aggregating in Python (rows are few).
@@ -384,6 +428,7 @@ async def failure_categories(
           AND tc.created_at >= :period_start
           {project_filter}
           {suite_filter}
+          {release_filter}
         GROUP BY category, tc.status
         ORDER BY count DESC
         """
@@ -438,12 +483,16 @@ async def top_failing_tests(
     limit: int,
     suite_name: str | None = None,
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
+    # S4a. None = no release filter, and the SQL is then byte-identical
+    # to before this parameter existed (NFR1).
+    release_id: Optional[str] = None,
 ) -> dict:
     params: dict = {"period_start": _period_start(days), "limit": limit}
     project_filter = _tenant_filter(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
     suite_filter = _add_suite_param(params, suite_name)
+    release_filter = _add_release_param(params, release_id)
     query = text(
         f"""
         SELECT
@@ -460,6 +509,7 @@ async def top_failing_tests(
           AND tc.created_at >= :period_start
           {project_filter}
           {suite_filter}
+          {release_filter}
         GROUP BY tc.test_fingerprint
         ORDER BY fail_count DESC
         LIMIT :limit
@@ -502,6 +552,9 @@ async def coverage_stats(
     days: int,
     suite_name: str | None = None,
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
+    # S4a. None = no release filter, and the SQL is then byte-identical
+    # to before this parameter existed (NFR1).
+    release_id: Optional[str] = None,
 ) -> dict:
     period_start = _period_start(days)
     params: dict = {"period_start": period_start}
@@ -509,6 +562,7 @@ async def coverage_stats(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
     suite_filter = _add_suite_param(params, suite_name)
+    release_filter = _add_release_param(params, release_id)
     # Effective suite — preferred over raw ``tc.suite_name`` for
     # GROUP BY so live_stream runs whose SDK stamped the test class
     # name on every event still bucket under their session-level
@@ -564,6 +618,7 @@ async def coverage_stats(
         WHERE tc.created_at >= :period_start
           {project_filter}
           {suite_filter}
+          {release_filter}
         GROUP BY {effective_suite}
         ORDER BY unique_tests DESC
         LIMIT 50
@@ -618,6 +673,9 @@ async def suite_detail(
     suite_name: str,
     days: int,
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
+    # S4a. None = no release filter, and the SQL is then byte-identical
+    # to before this parameter existed (NFR1).
+    release_id: Optional[str] = None,
 ) -> dict:
     params: dict = {
         "suite_name": suite_name,
@@ -627,6 +685,11 @@ async def suite_detail(
     project_filter = _tenant_filter(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
+    # Same fragment for every subquery below: all five sites alias
+    # test_runs as `tr`, so a release filter applied to only some of them
+    # would make one response internally inconsistent — a suite total scoped
+    # to a release beside a per-test breakdown that was not.
+    release_filter = _add_release_param(params, release_id)
     # Match by the EFFECTIVE suite (equality), NOT a loose OR. The OR form
     # (``tc.suite_name = :s OR tr.primary_suite_name = :s``) over-returns:
     # for a multi-suite run whose ``primary_suite_name`` matches, the second
@@ -665,6 +728,7 @@ async def suite_detail(
         WHERE {suite_match}
           AND tc.created_at >= :period_start
           {project_filter}
+          {release_filter}
         """
     )
     cases_query = text(
@@ -695,6 +759,7 @@ async def suite_detail(
         WHERE {suite_match}
           AND tc.created_at >= :period_start
           {project_filter}
+          {release_filter}
         GROUP BY tc.test_fingerprint
         ORDER BY failed DESC, total_executions DESC
         LIMIT 200
@@ -718,6 +783,7 @@ async def suite_detail(
         WHERE {suite_match}
           AND tr.created_at >= :period_start
           {project_filter}
+          {release_filter}
         GROUP BY tr.id, tr.build_number, tr.created_at
         ORDER BY tr.created_at DESC
         LIMIT 15
@@ -785,6 +851,7 @@ async def suite_detail(
                   WHERE tc2.test_run_id = tr.id
               )
               {run_fallback_project_filter}
+          {release_filter}
             """
         )
         recent_runs_fallback_query = text(
@@ -819,6 +886,7 @@ async def suite_detail(
                   WHERE tc2.test_run_id = tr.id
               )
               {run_fallback_project_filter}
+          {release_filter}
             ORDER BY tr.created_at DESC
             LIMIT 15
             """

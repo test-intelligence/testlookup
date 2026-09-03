@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-09-03 — dashboards can be asked about one release
+
+Five run-backed analytics endpoints now take an optional `release_id`:
+`/flaky-tests`, `/failure-categories`, `/top-failing`, `/coverage` and
+`/suite-detail`. This is the first slice of the release dimension a user can
+actually see.
+
+Omitting the parameter produces **byte-identical SQL** to before it existed, and
+issues no extra query. That is not a nicety — every one of these is on a hot
+path the web app already calls, so a regression here is not a wrong number, it
+is a slower or subtly different dashboard for everyone who never asked for a
+release. It is also what lets the rest of the read path ship incrementally.
+
+The predicate is a **conditional fragment**, not
+`AND (:release_id IS NULL OR tr.primary_release_id = :release_id)`. The
+null-tolerant form reads better and is a well-known way to lose an index: the
+planner cannot know at plan time which branch applies, so it abandons
+`ix_test_runs_project_release_created` and scans — on every call, including the
+overwhelming majority that pass no release at all. Appending nothing when there
+is nothing to filter keeps both plans clean.
+
+It reads the denormalized `test_runs.primary_release_id` and never joins
+`release_test_run_links`. A join would multiply rows for any run linked to more
+than one release, silently inflating every COUNT and AVG in the module.
+
+`suite_detail` needed all five of its subquery sites scoped, including the
+old-SDK fallback path. Scoping only some would make a single response
+internally inconsistent — a suite total filtered to a release beside a per-test
+breakdown that was not — which reads as a data bug rather than a missing filter.
+
+The authorization guard is new work rather than a reuse.
+`require_release_access` reads a PATH parameter as a dependency; here
+`release_id` is an optional QUERY parameter on routes that already carry their
+own scoped id, and the architectural ratchet checks evidence **per route, not
+per id** — it stops at the first scoped parameter it can satisfy. These routes
+would have passed the ratchet with the release entirely unchecked, and nothing
+would have reported it. `resolve_release_query_scope` validates it per-id, and
+is called explicitly rather than as a dependency so the absent-parameter path
+still issues no query.
+
+`/flaky-scores` and `/systemic-clusters` deliberately do **not** accept a
+release. They read per-project derived tables with no run dimension, so no
+predicate on `test_runs` can reach them; accepting the parameter would mean the
+caller believes a filter applied while getting project-wide numbers. They stay
+project-scoped until S4b gives those tables a release column — pinned by a test
+so it cannot be added carelessly.
+
 ## 2026-09-03 — releases can come from GitHub, and a run can find its own
 
 Releases live in Jira fix versions and GitHub milestones, varying by team.
