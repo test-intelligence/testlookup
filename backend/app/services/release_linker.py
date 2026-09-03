@@ -471,6 +471,29 @@ async def link_run_or_default(
         await db.execute(select(TestRun).where(TestRun.id == test_run_id))
     ).scalar_one_or_none()
 
+    # ── Rung 2: an external match via the run's git context ──────────────────
+    # Ahead of rules because a milestone on the PR is a statement GitHub
+    # itself maintains between code and release — stronger evidence than a
+    # pattern someone wrote once. Returns None for every ordinary reason (no
+    # PR, no integration, offline), and never raises: a sync fault must not
+    # fail an ingest, because the test results are the thing of value.
+    if run is not None:
+        from app.services import github_release_sync
+
+        external = await github_release_sync.resolve_release_for_run(
+            db, project_id, run
+        )
+        if external is not None:
+            return await _link_with_phase(
+                db,
+                release=external,
+                test_run_id=test_run_id,
+                phase_id=phase_id,
+                executed_at=executed_at,
+                link_source=LinkSource.EXTERNAL_MATCH.value,
+                project_id=project_id,
+            )
+
     # ── Rung 3: a project attribution rule ───────────────────────────────────
     # Ahead of the cutoff window because a rule is an explicit statement by
     # someone who owns the project ("release/* means the 2.5 line"), whereas a

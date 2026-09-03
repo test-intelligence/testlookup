@@ -111,6 +111,12 @@ def test_link_source_vocabulary_separates_assertion_from_inference():
     assert ASSERTED_LINK_SOURCES == {
         LinkSource.EXPLICIT_CLIENT.value,
         LinkSource.MANUAL_UI.value,
+        # Added in S3b. An external match is read from GitHub, which maintains
+        # the milestone-to-PR link itself — so it is a system of record, not a
+        # pattern or a date range this codebase guessed with. A release whose
+        # evidence is entirely external_match IS fully attributed, and a
+        # scorecard that called it inferred would understate its own evidence.
+        LinkSource.EXTERNAL_MATCH.value,
     }
     for inferred in (
         LinkSource.ACTIVE_RELEASE,

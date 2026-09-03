@@ -2923,6 +2923,12 @@ class LinkSource(str, PyEnum):
     EXPLICIT_CLIENT = "explicit_client"
     #: A human assigned it through the UI or the manual link endpoint.
     MANUAL_UI = "manual_ui"
+    #: Resolved from the run's own git context against a synced external
+    #: release — currently a GitHub milestone on the PR the run was built from
+    #: (migration 0155). An assertion rather than an inference: GitHub itself
+    #: maintains that link between code and release, so nothing here was
+    #: guessed from patterns or dates.
+    EXTERNAL_MATCH = "external_match"
     #: A project attribution rule matched (branch, tag, build pattern, env).
     RULE_MATCH = "rule_match"
     #: The run fell inside a release's declared cutoff window.
@@ -2943,7 +2949,16 @@ class LinkSource(str, PyEnum):
 #: attribution-mix reporting and by rotation, which must not treat an
 #: auto-attributed release as evidence a human is managing it.
 ASSERTED_LINK_SOURCES = frozenset(
-    {LinkSource.EXPLICIT_CLIENT.value, LinkSource.MANUAL_UI.value}
+    {
+        LinkSource.EXPLICIT_CLIENT.value,
+        LinkSource.MANUAL_UI.value,
+        # An external match belongs here, not with the inferences: the
+        # milestone-to-PR link is maintained by GitHub, so the attribution is
+        # read from a system of record rather than derived from a pattern or a
+        # date range. A release whose evidence is all external_match is fully
+        # attributed, and the scorecard should say so.
+        LinkSource.EXTERNAL_MATCH.value,
+    }
 )
 
 
@@ -2970,6 +2985,15 @@ class Release(Base):
         # Migration 0153. Release-over-release comparison orders within a
         # project, never globally, so the project column leads.
         Index("ix_releases_project_sort", "project_id", "sort_key"),
+        # Migration 0155. Partial: most releases are local and carry NULL
+        # here, and Postgres treats NULLs as distinct — so an unfiltered
+        # unique index would constrain nothing it was written for.
+        Index(
+            "ix_releases_external_identity",
+            "project_id", "source_system", "external_id",
+            unique=True,
+            postgresql_where=text("external_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -3056,6 +3080,26 @@ class Release(Base):
     # Pairs with TestRun.environment (migration 0129) for environment-aware
     # attribution rules and phase criteria.
     target_environment: Mapped[Optional[str]] = mapped_column(String(100))
+
+    # ── External ownership (migration 0155) ──────────────────────────────────
+    # TestLookup is not the system of record for release IDENTITY — releases
+    # live in Jira fix versions and GitHub/GitLab milestones, varying by team.
+    # It owns release QUALITY: attribution, criteria, policy, the verdict.
+    #
+    # NULL means "ours", which is the common case (hand-created and
+    # ingest-created releases) and not a gap to backfill.
+    #
+    # When source_system is not local, name/version/dates/status are read-only
+    # in the UI — the external system is authoritative and an edit here would
+    # be silently overwritten by the next sync.
+    source_system: Mapped[Optional[str]] = mapped_column(String(20))
+
+    #: The provider's STABLE id. Sync keys on this, never on the name:
+    #: renaming a milestone must update the existing release rather than orphan
+    #: its run history and mint a second one.
+    external_id: Mapped[Optional[str]] = mapped_column(String(255))
+    external_url: Mapped[Optional[str]] = mapped_column(String(1000))
+    last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # Target/actual dates
     planned_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

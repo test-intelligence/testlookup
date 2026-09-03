@@ -381,6 +381,12 @@ async def delete_release(db: AsyncSession, release_id: str) -> None:
                     case(
                         (ReleaseTestRunLink.link_source == LinkSource.EXPLICIT_CLIENT.value, 0),
                         (ReleaseTestRunLink.link_source == LinkSource.MANUAL_UI.value, 0),
+                        # Rank 0 with the other assertions: GitHub itself
+                        # maintains the milestone-to-PR link, so this was read
+                        # from a system of record, not derived. Omitting it
+                        # would drop it to the ELSE branch and let a pattern
+                        # match outrank it when promoting a survivor.
+                        (ReleaseTestRunLink.link_source == LinkSource.EXTERNAL_MATCH.value, 0),
                         (ReleaseTestRunLink.link_source == LinkSource.RULE_MATCH.value, 1),
                         (ReleaseTestRunLink.link_source == LinkSource.CUTOFF_WINDOW.value, 1),
                         (ReleaseTestRunLink.link_source == LinkSource.ACTIVE_RELEASE.value, 2),
@@ -606,6 +612,12 @@ async def unlink_test_run(db: AsyncSession, release_id: str, run_id: str) -> Non
                     case(
                         (ReleaseTestRunLink.link_source == LinkSource.EXPLICIT_CLIENT.value, 0),
                         (ReleaseTestRunLink.link_source == LinkSource.MANUAL_UI.value, 0),
+                        # Rank 0 with the other assertions: GitHub itself
+                        # maintains the milestone-to-PR link, so this was read
+                        # from a system of record, not derived. Omitting it
+                        # would drop it to the ELSE branch and let a pattern
+                        # match outrank it when promoting a survivor.
+                        (ReleaseTestRunLink.link_source == LinkSource.EXTERNAL_MATCH.value, 0),
                         (ReleaseTestRunLink.link_source == LinkSource.RULE_MATCH.value, 1),
                         (ReleaseTestRunLink.link_source == LinkSource.CUTOFF_WINDOW.value, 1),
                         (ReleaseTestRunLink.link_source == LinkSource.ACTIVE_RELEASE.value, 2),

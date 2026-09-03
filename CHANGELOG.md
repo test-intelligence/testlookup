@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-03 — releases can come from GitHub, and a run can find its own
+
+Releases live in Jira fix versions and GitHub milestones, varying by team.
+TestLookup is not the system of record for release *identity* — it owns release
+*quality*: attribution, criteria, policy, the verdict. Migration 0155 records
+that split with `source_system`, `external_id`, `external_url` and
+`last_synced_at`, and `github_release_sync` pulls GitHub milestones in so a team
+does not maintain their releases twice.
+
+Sync keys on `external_id`, **never on name**. A name-keyed sync orphans a
+release's entire run history and mints a duplicate the moment somebody tidies a
+milestone title — silently, because both rows look perfectly fine afterwards.
+
+The uniqueness constraint is a *partial* index on
+`(project_id, source_system, external_id)`, and partial for a specific reason:
+most releases are local and carry NULL in both columns, and Postgres treats
+NULLs as distinct — so an unfiltered unique index would permit unlimited local
+releases (correct) while constraining nothing at all about the synced ones it
+was written for.
+
+Ladder rung 2 comes with it. A run already carries `commit_hash`, `branch`,
+`ci_repo` and `pr_number`, which is enough to read the milestone off the PR it
+was built from — the link GitHub itself maintains between code and release. That
+ranks as an *assertion* rather than an inference: it is read from a system of
+record, not derived from a pattern or a date range. A release whose evidence is
+entirely external matches is fully attributed, and a scorecard calling that
+inferred would understate its own evidence.
+
+Rung 2 never fails an ingest. Every fault — no integration, offline, a network
+fault, malformed JSON — degrades to "no external match" and the ladder continues
+to rung 3. The test results are the thing of value; attribution can be repaired
+afterwards.
+
+The SSRF guard is reused on the read path, which is where it is easiest to
+forget. `api_base_url` is QA_LEAD-configurable and the project's PAT is sent to
+it, so an unguarded base is a read primitive regardless of HTTP verb — the risk
+is in where the credential goes, not in whether anything is written. Every
+outbound request funnels through one gate that checks offline mode, then the
+credential, then the host.
+
 ## 2026-09-03 — attribution rules, so a release axis works without changing CI
 
 The attribution ladder's strongest rung is an explicit `release_name` from the

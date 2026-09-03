@@ -316,11 +316,52 @@ def test_link_source_values_used_by_the_backfill_all_exist():
     # ranking that parsed to nothing at all would pass.
     assert quoted, "the ranking CASE parsed to no link_source literals"
     assert quoted <= known, f"unknown link_source literals in migration: {quoted - known}"
-    # And pin the other direction: a new asserted source the migration does not
-    # rank would silently fall to ELSE and lose to an inference.
-    assert ASSERTED_LINK_SOURCES <= quoted, (
-        f"migration does not rank every asserted source: {ASSERTED_LINK_SOURCES - quoted}"
+    # And pin the other direction — but against the vocabulary that existed
+    # when 0151 was WRITTEN, not today's. This is a one-time backfill of rows
+    # that predate it, so a source introduced later (external_match, S3b) has
+    # no rows here to rank and its absence is correct.
+    #
+    # The forward-looking version of this guard lives where it can still bite:
+    # ``test_live_survivor_ranking_covers_every_asserted_source`` checks the
+    # promotion ranking in release_service, which runs against live data.
+    historical_asserted = {
+        LinkSource.EXPLICIT_CLIENT.value,
+        LinkSource.MANUAL_UI.value,
+    }
+    assert historical_asserted <= quoted, (
+        f"migration does not rank the sources that existed when it ran: "
+        f"{historical_asserted - quoted}"
     )
+
+
+def test_live_survivor_ranking_covers_every_asserted_source():
+    """The ranking that runs on LIVE data must know every asserted source.
+
+    ``unlink_test_run`` and ``delete_release`` promote a survivor link by
+    ranking ``link_source``. A source missing from that CASE falls to the ELSE
+    branch and ranks last — so an assertion would lose to an inference, and the
+    run would be promoted to the wrong release silently.
+
+    Unlike the 0151 backfill, this code runs against data that can contain any
+    source, including ones added after it was written. That is why the check
+    belongs here and is anchored to ASSERTED_LINK_SOURCES rather than a
+    historical snapshot.
+    """
+    import inspect
+
+    from app.services import release_service
+
+    for fn in (release_service.unlink_test_run, release_service.delete_release):
+        src = inspect.getsource(fn)
+        ranking = src[src.index("case("):src.index("else_=")]
+        for asserted in ASSERTED_LINK_SOURCES:
+            enum_name = next(
+                s.name for s in LinkSource if s.value == asserted
+            )
+            assert f"LinkSource.{enum_name}.value" in ranking, (
+                f"{fn.__name__} does not rank {asserted} — it would fall to "
+                f"ELSE and lose to an inference when promoting a survivor"
+            )
 
 
 def test_primary_backfill_partitions_per_run():

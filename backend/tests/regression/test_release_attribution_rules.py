@@ -324,20 +324,31 @@ def test_inference_never_overwrites_a_supplied_phase():
 
 
 def test_every_ladder_rung_attributes_a_phase():
-    """All four rungs go through one helper.
+    """Every rung goes through the one phase-attributing helper.
 
     A rung that linked directly would attribute a release but never a phase, so
     phase gating would see an evidence gap that depends on which rung fired —
     invisible, and impossible to reason about from the data.
+
+    The expected count is DERIVED from the rungs actually present rather than
+    hardcoded. A hardcoded number breaks every time the ladder grows a rung,
+    which trains people to bump it without looking — the opposite of what this
+    test is for. Derived, it stays silent when a rung is added correctly and
+    fails only when one skips the helper.
     """
     import inspect
+    import re
 
     from app.services import release_linker
 
     src = inspect.getsource(release_linker.link_run_or_default)
-    assert src.count("_link_with_phase") == 4
-    for rung in ("EXPLICIT_CLIENT", "RULE_MATCH", "CUTOFF_WINDOW", "ACTIVE_RELEASE"):
-        assert rung in src, f"rung {rung} missing from the ladder"
+    rungs = set(re.findall(r"LinkSource\.([A-Z_]+)\.value", src))
+    assert len(rungs) >= 4, f"expected the ladder to have rungs, found {rungs}"
+    assert src.count("_link_with_phase") == len(rungs), (
+        f"{len(rungs)} rungs ({sorted(rungs)}) but "
+        f"{src.count('_link_with_phase')} calls to the phase helper — a rung "
+        f"is linking directly and will never attribute a phase"
+    )
 
 
 def test_rule_is_evaluated_before_the_cutoff_window():
