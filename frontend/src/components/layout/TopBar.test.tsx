@@ -133,7 +133,7 @@ describe('TopBar', () => {
       expect(screen.getByRole('option', { name: 'Core UI' })).toBeInTheDocument()
     })
 
-    const select = screen.getByRole('combobox')
+    const select = screen.getByRole('combobox', { name: /select project/i })
     fireEvent.change(select, { target: { value: 'p1' } })
     expect(mocked.setActiveProject).toHaveBeenCalledWith({ id: 'p1', name: 'Core UI' })
   })
@@ -161,7 +161,7 @@ describe('TopBar', () => {
       expect(screen.getByRole('option', { name: 'All Projects' })).toBeInTheDocument()
     })
 
-    const select = screen.getByRole('combobox')
+    const select = screen.getByRole('combobox', { name: /select project/i })
     fireEvent.change(select, { target: { value: 'all' } })
     expect(mocked.setAllProjects).toHaveBeenCalledTimes(1)
     expect(mocked.setActiveProject).not.toHaveBeenCalled()

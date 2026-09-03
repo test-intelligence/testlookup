@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Search, Bell, CheckCircle, XCircle } from 'lucide-react'
 import { useNavigate, Link } from 'react-router-dom'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { ReleasePicker } from './ReleasePicker'
 import { useAuthStore } from '@/store/authStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { LogOut } from 'lucide-react'
@@ -176,6 +177,11 @@ export default function TopBar() {
           <option key={p.id} value={p.id}>{p.name}</option>
         ))}
       </select>
+
+      {/* Release selector — the third global filter, after project and time
+          window. Sits next to the project picker because it is scoped BY it:
+          it is inert until a single project is pinned. */}
+      <ReleasePicker />
 
       {/* Notification bell — starts the right-aligned trailing group.
           ``ml-auto`` on the first of these siblings pushes it and everything

@@ -1,5 +1,62 @@
 # Changelog
 
+## 2026-09-03 — the release filter, in the header and in the link
+
+The picker that makes `releaseStore` reachable: a third `<select>` in the
+TopBar, beside project and time window, plus `?release=` deep links.
+
+It is built around the rule that the control must never misreport what the page
+is filtered by, which cuts both ways.
+
+A filter that is *applied but not shown* is the subtler half. A selection
+restored from localStorage or arriving on a link exists before the release list
+does, and a `<select>` whose value matches no option silently falls back to
+displaying the first one — so the header would read "All releases" while the
+pages behind it were filtered. The picker renders a placeholder option for that
+id until the list arrives, and only then decides whether the selection was real.
+
+A filter that is *shown but not applied* is the half `releaseStore` already
+described: reconciliation drops a selection belonging to another project, and
+the drop is now announced rather than silent. The same check catches a shared
+link into a project that does not own the release — that one gets an error
+toast naming the reason, because it is the case where the user did nothing
+wrong and can act on the answer.
+
+The control stays visible but disabled in All Projects mode, with a title
+saying why, rather than disappearing. `projectStore` defaults to that sentinel,
+so it is the state users are most often in; a filter that appears and vanishes
+as you switch projects is harder to learn than one that is always present and
+explains itself. "No releases yet" is distinguished from "we have not asked
+yet", so the control does not flicker dead on every page load.
+
+URL writes use `replace`, not `push`: changing a filter is not a navigation, and
+pushing would turn the back button into an undo stack for filter changes. Other
+query params are preserved, so the release filter composes with each page's own.
+
+Multi-agent review then found the first cut had the wrong lifetime model. The
+picker sits in TopBar under the `/*` route, so it mounts once and never
+unmounts — "read the URL on mount" was really "read it once per browser
+session". Every later `?release=` was ignored (in-app links, back/forward, and
+any link opened before a project had resolved), and the write-back pass then
+deleted the param it had just declined to read, so a reload could not recover
+it either. Hydration is no longer a one-shot: a single effect owns the URL and
+the store, adopting whichever moved, and it neither consumes nor strips a param
+it cannot yet act on.
+
+The same review found the picker could clear one selection twice, from two
+effects in the same commit, announcing two different reasons for one project
+switch — an info toast and a contradictory error blaming the release. The drop
+now reads live store state instead of its render closure, which also makes it
+idempotent under StrictMode. Instrumenting that revealed the deeper cause: the
+URL write published a selection before it had been validated, and then re-adopted
+its own write as if it had arrived by navigation, resurrecting what had just been
+dropped. Selections are now published only once known to be real.
+
+Seventeen mutations were run against the tests, all seventeen caught, including a
+positive control proving the harness executed the suite rather than dying at
+startup and scoring silence as success.
+
+
 ## 2026-09-03 — the release filter cannot outlive its project
 
 `releaseStore` adds the third global filter axis alongside project and time
