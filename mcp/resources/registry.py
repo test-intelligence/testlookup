@@ -59,7 +59,13 @@ def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.resource("testlookup://projects/{project_id}/flaky-tests")
     async def flaky_tests(project_id: str) -> str:
-        """Current flakiness leaderboard (last 30 days, top 20)."""
+        """Current flakiness leaderboard (last 30 days, top 20).
+
+        Project-wide. The web UI can narrow the same data to one release; this
+        resource cannot, so it and a release-filtered dashboard answer
+        different questions. Release scoping is a UI/REST capability and an
+        explicit MCP non-goal.
+        """
         data = await api.get(
             "/api/v1/analytics/flaky-tests",
             params={"project_id": project_id, "days": 30, "limit": 20},

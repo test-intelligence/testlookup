@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-03 — MCP tools now say they answer for the whole project
+
+S4a gave five analytics endpoints an optional `release_id`. The MCP tools call
+those same endpoints and deliberately did not get the parameter — release
+scoping is a decided non-goal for MCP.
+
+The consequence is that the same question now returns different numbers
+depending on which surface asked it: a release-filtered dashboard and an MCP
+tool reading the same endpoint disagree, legitimately. Nothing is broken, but
+nothing said so either — and the reader most likely to hit it is an agent
+choosing between tools, which sees only the description.
+
+The four affected tool descriptions and one resource now state that they answer
+project-wide, that the UI can narrow the same data to a release, and that the
+two therefore answer different questions. A docstring is the only place an MCP
+client surfaces this, so the docstring is the feature; a test pins it, because a
+docs-only guarantee has nothing else holding it in place and the next person to
+edit those descriptions has no reason to know the sentence is load-bearing.
+
+**The epic said "MCP and CLI"; only MCP is affected.** The CLI calls no
+analytics endpoint at all, so it has no release-scopeable surface and nothing to
+caveat. That is pinned too — if a CLI analytics command is added later it
+silently inherits this divergence, and the test will say so.
 ## 2026-09-03 — which flaky tests are affecting this release
 
 `/flaky-scores` now takes an optional `release_id`. It returns the project's

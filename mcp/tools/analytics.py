@@ -41,6 +41,12 @@ def register(mcp) -> None:  # noqa: ANN001
             project_id: Project UUID.
             days: Analysis window in days (1-365, default 30).
             limit: Maximum number of tests to return (1-100, default 20).
+        
+        Scope: this answers for the WHOLE PROJECT over the time window. The web
+        UI can narrow the same data to a single release; these tools cannot, so
+        a number here and a number on a release-filtered dashboard are answering
+        different questions and will legitimately differ. See docs: release
+        scoping is a UI/REST capability and an explicit MCP non-goal.
         """
         data = await api.get(
             "/api/v1/analytics/flaky-tests",
@@ -80,6 +86,12 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             project_id: Project UUID.
             days: Analysis window in days (1-365, default 30).
+        
+        Scope: this answers for the WHOLE PROJECT over the time window. The web
+        UI can narrow the same data to a single release; these tools cannot, so
+        a number here and a number on a release-filtered dashboard are answering
+        different questions and will legitimately differ. See docs: release
+        scoping is a UI/REST capability and an explicit MCP non-goal.
         """
         data = await api.get(
             "/api/v1/analytics/failure-categories",
@@ -129,6 +141,12 @@ def register(mcp) -> None:  # noqa: ANN001
             project_id: Project UUID.
             days: Analysis window in days (1-365, default 30).
             limit: Maximum tests to return (1-100, default 15).
+        
+        Scope: this answers for the WHOLE PROJECT over the time window. The web
+        UI can narrow the same data to a single release; these tools cannot, so
+        a number here and a number on a release-filtered dashboard are answering
+        different questions and will legitimately differ. See docs: release
+        scoping is a UI/REST capability and an explicit MCP non-goal.
         """
         data = await api.get(
             "/api/v1/analytics/top-failing",
@@ -166,6 +184,12 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             project_id: Project UUID.
             days: Analysis window in days (1-365, default 30).
+        
+        Scope: this answers for the WHOLE PROJECT over the time window. The web
+        UI can narrow the same data to a single release; these tools cannot, so
+        a number here and a number on a release-filtered dashboard are answering
+        different questions and will legitimately differ. See docs: release
+        scoping is a UI/REST capability and an explicit MCP non-goal.
         """
         data = await api.get(
             "/api/v1/analytics/coverage",
