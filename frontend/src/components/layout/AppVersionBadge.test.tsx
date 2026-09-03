@@ -20,7 +20,7 @@ vi.mock('@/utils/clipboard', () => ({
 }))
 
 function health(data: SystemHealth['data']): SystemHealth {
-  return { data, unavailable: [], isDegraded: false, isUnreachable: false }
+  return { data, unavailable: [], criticalUnavailable: [], isDegraded: false, isUnreachable: false }
 }
 
 const FULL_SHA = '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b'

@@ -67,9 +67,30 @@ async function fetchSystemHealth(): Promise<HealthDetails> {
 // rather than silently landing in either bucket.
 const BENIGN_STATUSES: ReadonlySet<string> = new Set(['ok', 'skipped'])
 
+// The stores whose outage loses the DATA, not merely a feature: the three
+// dependencies the backend wraps in `_critical(...)` in
+// `backend/app/routers/health.py` (postgres / mongo / redis — the ones
+// `/health/ready` fails closed on). An optional dependency degrading (MinIO,
+// Ollama, ChromaDB) costs a capability; one of these being unreachable costs
+// the pages themselves. The degraded banner keys off this to stop offering its
+// "we'll fall back to PostgreSQL where possible" reassurance during a critical
+// outage — a promise that is misleading in general and self-contradictory when
+// PostgreSQL is the store that is down.
+//
+// Keyed on the dependency NAME, not the `error` status, on purpose: a probe
+// can report `error` for a non-critical service too (an optional check that
+// raises), and criticality is a property of which store it is, not of how it
+// failed. Pinned name-for-name against health.py by
+// `backend/tests/regression/test_health_critical_deps_are_shared.py`, so a new
+// critical probe on the backend forces this set to be updated rather than the
+// outage silently rendering as an optional-only degradation.
+const CRITICAL_DEPS: ReadonlySet<string> = new Set(['postgres', 'mongo', 'redis'])
+
 export interface SystemHealth {
   data: HealthDetails | null
   unavailable: string[]   // names of checks reporting a genuine problem
+  /** Names of unavailable checks that are CRITICAL stores (a subset of `unavailable`). */
+  criticalUnavailable: string[]
   isDegraded: boolean
   /** The health poll itself failed — we know nothing, rather than nothing being wrong. */
   isUnreachable: boolean
@@ -94,6 +115,7 @@ export function useSystemHealth(): SystemHealth {
   return {
     data: data ?? null,
     unavailable,
+    criticalUnavailable: unavailable.filter((name) => CRITICAL_DEPS.has(name)),
     isDegraded: unavailable.length > 0,
     isUnreachable: Boolean(error),
   }

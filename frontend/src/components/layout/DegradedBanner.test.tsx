@@ -20,7 +20,14 @@ vi.mock('@/hooks/useSystemHealth', () => ({
 }))
 
 function health(overrides: Partial<SystemHealth> = {}): SystemHealth {
-  return { data: null, unavailable: [], isDegraded: false, isUnreachable: false, ...overrides }
+  return {
+    data: null,
+    unavailable: [],
+    criticalUnavailable: [],
+    isDegraded: false,
+    isUnreachable: false,
+    ...overrides,
+  }
 }
 
 describe('DegradedBanner', () => {
@@ -33,10 +40,44 @@ describe('DegradedBanner', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('names the unreachable dependencies when the poll succeeded', () => {
-    mockHealth.value = health({ unavailable: ['redis', 'chromadb'], isDegraded: true })
+  it('names the unreachable OPTIONAL dependencies with the fallback reassurance', () => {
+    // Optional-only degradation (MinIO, ChromaDB) — a feature is lost, not the
+    // data, so the "falls back to PostgreSQL" reassurance is honest here.
+    mockHealth.value = health({ unavailable: ['minio', 'chromadb'], isDegraded: true })
     render(<DegradedBanner />)
-    expect(screen.getByText(/Redis, ChromaDB unreachable/)).toBeInTheDocument()
+    expect(screen.getByText(/MinIO, ChromaDB unreachable/)).toBeInTheDocument()
+    expect(screen.getByText(/show data from PostgreSQL where possible/)).toBeInTheDocument()
+    expect(screen.queryByTestId('health-critical-banner')).not.toBeInTheDocument()
+  })
+
+  it('escalates to a critical alert when a core store is unreachable', () => {
+    // A critical store (postgres/mongo/redis) being down loses the data itself.
+    mockHealth.value = health({
+      unavailable: ['postgres', 'chromadb'],
+      criticalUnavailable: ['postgres'],
+      isDegraded: true,
+    })
+    render(<DegradedBanner />)
+
+    const banner = screen.getByTestId('health-critical-banner')
+    expect(banner).toHaveAttribute('role', 'alert')
+    expect(banner).toHaveTextContent(/Critical services unreachable:\s*PostgreSQL/)
+    expect(banner).toHaveTextContent(/Core data is unavailable/)
+    // The critical branch must NOT promise the PostgreSQL fallback — least of
+    // all when PostgreSQL is the store that is down.
+    expect(screen.queryByText(/show data from PostgreSQL where possible/)).not.toBeInTheDocument()
+  })
+
+  it('does not name PostgreSQL as a fallback when PostgreSQL itself is the outage', () => {
+    // The self-contradiction guard: the old single message told the operator
+    // their pages would "show data from PostgreSQL" while PostgreSQL was down.
+    mockHealth.value = health({
+      unavailable: ['postgres'],
+      criticalUnavailable: ['postgres'],
+      isDegraded: true,
+    })
+    render(<DegradedBanner />)
+    expect(screen.queryByText(/show data from PostgreSQL where possible/)).not.toBeInTheDocument()
   })
 
   it('says the backend is unreachable — not nothing — when the health poll failed', () => {

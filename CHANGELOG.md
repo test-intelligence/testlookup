@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-02 — health banner: a critical-store outage is not an optional degradation
+
+The degraded banner told every dependency outage the same story: "Degraded: X
+unreachable. Pages relying on these will show data from PostgreSQL where
+possible." That reassurance is honest for an OPTIONAL dependency (MinIO, Ollama,
+ChromaDB) — a lost feature, with core Postgres-backed pages intact — but during
+a CRITICAL outage it loses the data itself, and when PostgreSQL is the store
+that is down the message is self-contradictory: it promises the operator their
+pages will fall back to the very database that is unreachable.
+
+The backend already draws this line — postgres / mongo / redis are wrapped in
+`_critical(...)` (the probes `/health/ready` fails closed on); the rest run
+through `_with_budget(...)`. `useSystemHealth` now surfaces
+`criticalUnavailable` (the unavailable checks that are critical stores), keyed
+on the dependency NAME rather than the `error` status — criticality is which
+store it is, not how it failed. When any critical store is unreachable the
+banner escalates to a `role="alert"` "Critical services unreachable: … — core
+data is unavailable" and drops the PostgreSQL-fallback promise; the reassuring
+copy stays for optional-only degradation.
+
+`CRITICAL_DEPS` is pinned name-for-name to the backend's `_critical(...)` calls
+by `backend/tests/regression/test_health_critical_deps_are_shared.py`, mirroring
+the existing status-vocabulary pin, so promoting a probe to the critical tier
+forces the frontend set to be updated rather than the outage silently rendering
+as an optional degradation.
 ## 2026-09-03 — documentation headings with inline code anchor correctly
 
 A heading in the in-app docs that carried inline Markdown — the only one today

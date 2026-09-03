@@ -83,6 +83,44 @@ describe('useSystemHealth', () => {
     expect(result.current.isDegraded).toBe(true)
   })
 
+  it('separates a critical store outage from an optional degradation', async () => {
+    // postgres/mongo/redis are the critical stores; minio/ollama/chromadb are
+    // optional. `criticalUnavailable` must carry only the former.
+    vi.mocked(axios.get).mockResolvedValue(
+      healthPayload({
+        postgres: { status: 'error' },
+        mongo: { status: 'ok' },
+        redis: { status: 'ok' },
+        minio: { status: 'degraded' },
+        ollama: { status: 'skipped' },
+        chromadb: { status: 'ok' },
+      }),
+    )
+
+    const { result } = renderHook(() => useSystemHealth(), { wrapper })
+    await waitFor(() => expect(result.current.data).not.toBeNull())
+
+    expect(result.current.unavailable).toEqual(['postgres', 'minio'])
+    expect(result.current.criticalUnavailable).toEqual(['postgres'])
+    expect(result.current.isDegraded).toBe(true)
+  })
+
+  it('leaves criticalUnavailable empty when only optional services degrade', async () => {
+    vi.mocked(axios.get).mockResolvedValue(
+      healthPayload({
+        postgres: { status: 'ok' },
+        minio: { status: 'degraded' },
+        chromadb: { status: 'degraded' },
+      }),
+    )
+
+    const { result } = renderHook(() => useSystemHealth(), { wrapper })
+    await waitFor(() => expect(result.current.data).not.toBeNull())
+
+    expect(result.current.unavailable).toEqual(['minio', 'chromadb'])
+    expect(result.current.criticalUnavailable).toEqual([])
+  })
+
   it('treats an unrecognised status as a problem', async () => {
     // Fail loud, not silent: a status neither side knows should surface rather
     // than be assumed harmless.
