@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-09-03 — the release filter cannot outlive its project
+
+`releaseStore` adds the third global filter axis alongside project and time
+window. It holds only the selection; the release list stays in SWR, per the rule
+that server data does not go in Zustand.
+
+The design turns on one failure mode. Releases are project-scoped, so a release
+id from project A matches no run in project B. If the selection survived a
+project switch, every windowed page would filter by an id nothing matches and
+render empty — **with the picker still showing a release name**. The user sees
+"no data" and nothing connects it to their filter, which is indistinguishable
+from the product being broken. It is the same class as the 2026-05-15
+"no project selected" incident that `projectStore` documents.
+
+So the store persists `scopedProjectId` alongside the selection, never the id
+alone: a restored id with no record of its project cannot be validated, and
+would silently filter whichever project happened to be active on the next load.
+`syncToProject` returns whether it dropped a selection, so the UI can say so — a
+filter that vanishes silently is its own confusion.
+
+The default is `null` — genuinely absent, not a sentinel and not "all". Every
+page therefore behaves exactly as it did before the release axis existed until
+somebody picks a release, which is what makes this shippable without touching
+any page's default rendering.
+
+ALL_PROJECTS is handled as the common path rather than an edge case, because
+that is what it is: `projectStore` defaults to the sentinel and promotes any
+stale selection back to it. Releases cannot be enumerated across projects, so
+the filter is inert there.
+
 ## 2026-09-03 — MCP tools now say they answer for the whole project
 
 S4a gave five analytics endpoints an optional `release_id`. The MCP tools call
