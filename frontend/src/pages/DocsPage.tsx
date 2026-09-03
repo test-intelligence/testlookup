@@ -40,6 +40,31 @@ import {
 import { DOC_SOURCES } from '@/content/guide/sources'
 import { slugify } from '@/content/guide/slug'
 
+/**
+ * Plain-text content of a rendered React node tree — the text a heading reads
+ * as once its inline Markdown (code, bold, links) is stripped.
+ *
+ * A heading's id must equal `slugify` of its TEXT: that is what `anchorIds`
+ * (slug.ts) computes from the raw Markdown, and what both the on-page TOC and
+ * every cross-page `#fragment` link resolve against. Slugifying
+ * `String(children)` instead breaks the moment a heading carries any inline
+ * Markdown — `### \`defect_commander\`` arrives here as a `<code>` React
+ * element, and `String(element)` is `"[object Object]"`, so the heading
+ * rendered `id="object-object"` while the TOC linked `#defect_commander` and
+ * the anchor scrolled nowhere (and two such headings would collide on that one
+ * bogus id). Reading the node's text keeps the rendered id in lockstep with the
+ * slug the TOC and fragment links target.
+ */
+function nodeText(node: React.ReactNode): string {
+  if (node == null || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(nodeText).join('')
+  if (isValidElement(node)) {
+    return nodeText((node.props as { children?: React.ReactNode }).children)
+  }
+  return ''
+}
+
 /** Headings for the on-page table of contents. */
 function headingsOf(markdown: string): { depth: number; text: string; id: string }[] {
   const out: { depth: number; text: string; id: string }[] = []
@@ -180,7 +205,7 @@ const MARKDOWN_COMPONENTS = {
   ),
   h2: (p: { children?: React.ReactNode }) => (
     <h2
-      id={slugify(String(p.children ?? ''))}
+      id={slugify(nodeText(p.children))}
       className="text-base font-semibold text-[var(--color-text)] mt-6 mb-2 scroll-mt-4"
     >
       {p.children}
@@ -188,7 +213,7 @@ const MARKDOWN_COMPONENTS = {
   ),
   h3: (p: { children?: React.ReactNode }) => (
     <h3
-      id={slugify(String(p.children ?? ''))}
+      id={slugify(nodeText(p.children))}
       className="text-[14px] font-semibold text-[var(--color-text)] mt-4 mb-2 scroll-mt-4"
     >
       {p.children}

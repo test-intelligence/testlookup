@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-09-03 — documentation headings with inline code anchor correctly
+
+A heading in the in-app docs that carried inline Markdown — the only one today
+is `### `defect_commander`` in `administration.md` — reached `DocsPage`'s
+heading renderer as a React `<code>` element rather than a plain string. The
+id was computed as `slugify(String(children))`, and `String()` of a React
+element is `"[object Object]"`, so the heading rendered `id="object-object"`
+instead of `defect_commander`.
+
+The on-page "On this page" table of contents and every cross-page `#fragment`
+link resolve against the slug `anchorIds` computes from the raw Markdown
+(`defect_commander`), so the anchor pointed at an id the page never rendered
+and clicking it scrolled nowhere — and two such headings would have collided on
+the same bogus `object-object` id. The `every #fragment link lands on a heading
+that exists` test did not catch it: it checked link targets against `anchorIds`,
+trusting the comment that `DocsPage` "renders the ids the same way" — which held
+only for plain-text headings.
+
+The heading renderer now derives its id from the node's text content (a small
+`nodeText` walk that unwraps inline `<code>`/`<strong>`/etc.), matching
+`slugify` of the raw heading text. A new regression test renders every topic
+whose headings carry inline Markdown and asserts the DOM carries every id
+`anchorIds` promises.
+
 ## 2026-09-02 — the diagram self-test no longer measures a half-drawn page
 
 `docs-diagrams.spec.ts` intermittently failed in CI with "no node label was

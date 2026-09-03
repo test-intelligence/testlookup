@@ -131,6 +131,33 @@ describe('internal links', () => {
     }
     expect(broken, 'a #fragment link with no matching heading dumps the reader at the top').toEqual([])
   })
+
+  it('renders each heading with the id its TOC and #fragment links target', () => {
+    // The check above trusts that DocsPage renders the very ids `anchorIds`
+    // computes. That held only for plain-text headings. A heading carrying
+    // inline Markdown — `### `defect_commander`` in administration.md — reached
+    // the heading renderer as a React `<code>` element, and slugifying
+    // `String(children)` turned it into the id "object-object" (two such
+    // headings would even collide on that one id). So the on-page TOC entry and
+    // any cross-page link to `#defect_commander` scrolled nowhere. Prove the
+    // rendered DOM actually carries every id `anchorIds` promises, for each
+    // topic whose headings carry inline Markdown.
+    const inlineMarkdownHeading = /^#{2,3}\s+.*[`*_[]/m
+    const topics = Object.entries(DOC_SOURCES).filter(([, body]) =>
+      inlineMarkdownHeading.test(body),
+    )
+    expect(topics.length, 'a topic must exercise an inline-Markdown heading').toBeGreaterThan(0)
+    for (const [id, body] of topics) {
+      const { unmount } = renderDocs(`/docs/${id}`)
+      for (const anchor of anchorIds(body)) {
+        expect(
+          document.getElementById(anchor),
+          `${id}.md renders no element with id "${anchor}" — its TOC/#fragment target`,
+        ).not.toBeNull()
+      }
+      unmount()
+    }
+  })
 })
 
 // ── Diagrams ────────────────────────────────────────────────────────────────
