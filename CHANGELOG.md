@@ -1,5 +1,57 @@
 # Changelog
 
+## 2026-09-04 — rolling a release up to one answer per test
+
+`release_rollup_service` (S6a-2): the per-test-latest rollup and the verdict it
+supports.
+
+"Is 2.4.0 shippable?" is not "did the last run pass". A release accumulates many
+runs, the same test appears in several, and a test that failed on Monday and
+passed on Friday is a PASS for the release — the fix landed. Summing every
+result answers a different question loudly: a test re-run ten times contributes
+ten results and drowns out nine tests that ran once. So the unit is the TEST and
+its value is its latest result.
+
+Four judgements, each one a way the gate could report a better release than it
+measured:
+
+**Skipped is not evidence.** Counting skips is how a release with everything
+skipped reports full coverage and a perfect score. The pass rate divides by
+evidence rather than the denominator, so a barely-tested release does not
+masquerade as a broken one either, and it returns `None` rather than `0.0` when
+nothing ran — a zero is a measurement that happened.
+
+**BROKEN blocks like FAILED.** A test that errored before asserting anything did
+not prove the code works. Treating "the harness fell over" as non-blocking is
+how an infrastructure outage reads as a green release.
+
+**Five statuses, not four**, carrying UNKNOWN for the reason
+`TestRun.unknown_tests` exists per that column's own comment: dropping it
+shrinks the denominator and inflates the pass rate.
+
+**`NOT_EVALUATED` below the evidence floor**, because with almost nothing
+exercised, GO claims the release is sound on no evidence and NO_GO claims it is
+broken on the same absence.
+
+Review then found four defects that each produced a WRONG verdict, not merely an
+imprecise one. A tie in `start_time` handed the winner to the query planner —
+`list.sort` is stable and the query had no ORDER BY, and two CI shards triggered
+together share a timestamp routinely, so the same data could yield GO and then
+NO_GO with no write in between. A fingerprint turned out not to be a test
+identity: it is `sha256(class::name)` with no project and no suite, so two
+different tests called `test_login` collapsed into one and the later suite's
+PASS erased the earlier suite's FAIL. There was no project predicate, though
+migration 0151 deliberately left cross-project links in place. And the reads
+were unbounded where the structurally identical join in `flaky_score_service`
+caps and says why.
+
+It also caught this module claiming more than the codebase delivers. The
+docstring said S3a-1 made `start_time` mean execution time; `resolve_execution_time`
+has exactly one caller, and the sentinel ingest path still stamps `now()`. The
+docstring now says which paths carry a real execution time, and the write-side
+gap is recorded as its own finding rather than being quietly absorbed here.
+
+
 ## 2026-09-04 — a verdict for the release, not for a run
 
 `ReleaseGateDecision` (migration 0156). The first slice of S6a, which the epic
