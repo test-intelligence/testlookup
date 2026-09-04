@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-09-04 — a saved view remembers its release, and the pack can answer for one
+
+Two slices, both about a release id outliving the moment it was chosen.
+
+**Saved views (S5-3f-ii).** No migration — `SavedView.filters` is already JSON.
+The work is entirely in what happens when somebody ELSE, or a LATER somebody,
+opens the view. A view saved against project A and opened while B is active
+would filter every page by an id nothing matches: an empty page with the view's
+name showing, which is the "product looks broken" failure `releaseStore` exists
+to prevent, arriving by a different route. `is_shared` means the stored id is
+read by people who never chose it, so it is validated against the READER's
+access rather than trusted because it was stored. And a release deleted after
+saving leaves a dangling id that would show an empty page and blame the data.
+
+In all three cases the release is DROPPED and the view still opens. Losing one
+filter is recoverable; refusing to open a saved view because one field went
+stale is not.
+
+**The compliance pack (S8).** Its own docstring promises an artifact that "fully
+reconstructs a release decision". It reconstructed a RUN's decision:
+`ReleaseDecision` is keyed `test_run_id`, so the join through
+`ReleaseTestRunLink` finds one run's verdict that happens to be linked to the
+release. "Is 2.4.0 shippable?" was the one question the compliance pack could
+not answer — and this is the artifact that LEAVES the tool and gets attached to
+an audit, where every other surface is a screen somebody can re-check.
+
+`release_gate_decision.json` now travels with the pack, carrying the FULL
+append-only history rather than only the standing verdict: a pack showing one
+verdict cannot show it was ever anything else, which is the first thing an
+auditor asks. A never-evaluated release reports `evaluated: false` explicitly
+rather than omitting the section, because an absent file reads as "this product
+has no such concept". It is gathered as a CORE snapshot, so an error fails the
+build rather than shipping a silently incomplete artifact a reviewer would trust
+as authoritative. Both decisions are kept — the run one explains an execution,
+the release one explains the shipping call.
+
+
 ## 2026-09-04 — which defects actually block a release
 
 `Defect.release_id` and `Defect.affects_releases` (migration 0157), and the

@@ -11,6 +11,7 @@ GO/NO_GO, and by what policy?":
   * ``release.json``         — release row snapshot
   * ``run.json``             — test run snapshot
   * ``decision.json``        — ReleaseDecision row + override audit chain
+  * ``release_gate_decision.json`` — the RELEASE-level verdict + its history
   * ``policy_snapshot.json`` — the exact ReleaseGatePolicy that was in force
   * ``decision_trail.json``  — full AI decision trail from Tier 0B
   * ``clusters.json``        — failure clusters with member test IDs
@@ -215,6 +216,44 @@ async def _gather_policy_snapshot(
     }
 
 
+async def _gather_release_gate(
+    db: AsyncSession, release_id: uuid.UUID
+) -> dict[str, Any]:
+    """The RELEASE-level verdict and its append-only history (S8).
+
+    The pack's own docstring promises an artifact that "fully reconstructs a
+    release decision". Until now it reconstructed a RUN's decision that happened
+    to be linked to the release — `ReleaseDecision` is keyed `test_run_id`, so
+    the join through `ReleaseTestRunLink` finds one run's verdict, not the
+    release's. "Is 2.4.0 shippable?" was the one question the compliance pack
+    could not answer.
+
+    Returns an explicit ``evaluated: false`` rather than omitting the section
+    when a release has never been gated. An absent file reads as "this product
+    has no such concept"; a present one saying "never evaluated" is a fact a
+    reviewer can act on, and the difference matters most in the artifact people
+    audit rather than the screen they glance at.
+    """
+    from app.services import release_gate_decision_service as gate_decisions
+
+    current = await gate_decisions.current_decision(db, release_id)
+    history = await gate_decisions.decision_history(db, release_id)
+    if current is None:
+        return {
+            "evaluated": False,
+            "reason": "this release has no gate decision on record",
+            "history": [_to_jsonable(h) for h in history],
+        }
+    return {
+        "evaluated": True,
+        "current": _to_jsonable(current),
+        # The whole point of an append-only table. A pack that carried only the
+        # standing verdict could not show that it had ever been anything else,
+        # which is exactly what an auditor asks.
+        "history": [_to_jsonable(h) for h in history],
+    }
+
+
 async def _gather_decision_trail(
     db: AsyncSession, run_id: Optional[uuid.UUID],
 ) -> dict[str, Any]:
@@ -381,6 +420,14 @@ def _build_readme(
     lines.append("| `release.json` | Frozen snapshot of the release row. |")
     lines.append("| `run.json` | Frozen snapshot of the test run row used for the decision. |")
     lines.append("| `decision.json` | `ReleaseDecision` row including the override audit chain. |")
+    # Listed, or a reviewer has no way to know it is there. The pack's README
+    # IS its index — a file present in the ZIP but absent from this table is
+    # undiscoverable to the person the pack exists for.
+    lines.append(
+        "| `release_gate_decision.json` | The RELEASE-level verdict and its full "
+        "append-only history. Distinct from `decision.json`, which is one run's "
+        "decision: this is the shipping call for the release as a whole. |"
+    )
     lines.append("| `policy_snapshot.json` | The exact `ReleaseGatePolicy` version in force at decision time. |")
     lines.append("| `decision_trail.json` | AI decision trail (stages + per-test routing + workflow events). |")
     lines.append("| `clusters.json` | Failure clusters identified in the run. |")
@@ -508,6 +555,9 @@ async def _build_pack_payload(
     run_snapshot = _to_jsonable(run)
     decision_snapshot = _to_jsonable(decision)
     policy_snapshot = await _gather_policy_snapshot(db, decision, release.project_id)
+    # A CORE snapshot, not best-effort: a pack missing the release verdict
+    # cannot justify the release, which is what the pack is for.
+    release_gate = await _gather_release_gate(db, release.id)
     decision_trail = await _gather_decision_trail(db, run.id)
     clusters = await _gather_clusters(db, run.id)
     defects = await _gather_defects(db, release.project_id, run.id)
@@ -520,6 +570,10 @@ async def _build_pack_payload(
         "release.json": _serialize(release_snapshot),
         "run.json": _serialize(run_snapshot),
         "decision.json": _serialize(decision_snapshot),
+        # The RELEASE-level verdict, distinct from the run-level `decision.json`
+        # beside it. Both are kept: the run decision explains one execution, the
+        # release gate explains the shipping call.
+        "release_gate_decision.json": _serialize(release_gate),
         "policy_snapshot.json": _serialize(policy_snapshot),
         "decision_trail.json": _serialize(decision_trail),
         "clusters.json": _serialize(clusters),
