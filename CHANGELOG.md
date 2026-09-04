@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-09-04 — a policy you can inherit half of
+
+`policy_resolution` replaces winner-takes-all policy selection with a key-wise
+merge (S7b).
+
+The old resolver picked ONE document and discarded the rest: project if there
+was one, else system, else hardcoded. That is wrong the moment a project wants
+to change one thing. A project policy setting a single threshold silently
+dropped every other key the system default carried — and those keys did not fall
+back to the system default, they fell through to the HARDCODED constants,
+because the system document was never consulted again. A team tightening one
+number inherited a policy they never wrote for everything else, with nothing
+anywhere reporting the substitution.
+
+S6b would have made it worse: a phase policy setting one criterion would discard
+the project's whole document the same way.
+
+Resolution now merges key by key, narrowest scope winning per key, and records
+WHICH SCOPE supplied each one. That provenance is the point rather than a
+nicety: "why did this release fail the gate?" is answerable only if you can say
+which threshold applied and where it came from, and a single level name is true
+of the document while being false of most of its contents.
+
+`phase` is declared as a scope already, so S6b adds a row to a list rather than
+a fourth branch to the chain of if-statements that produced this behaviour in
+the first place.
+
+Ordered lists are replaced wholesale rather than concatenated. Appending a
+narrower scope's rules to a broader scope's would apply both, so a project that
+removed a rule would find it still firing and could never turn one off.
+
+Mutation testing found two pieces of DEAD CODE this file's own comments
+described as load-bearing. An empty-document guard that could not be killed
+because iterating an empty dict already does nothing — protection that protected
+nothing. And a constant claiming to stop ordered lists being concatenated, when
+a list never reaches the nested merge at all, so its membership was doing no
+work. Both are now either gone or honest about what they actually govern.
+
+
 ## 2026-09-04 — asking the gate, and comparing against what came before
 
 Three endpoints complete S6a: read the standing verdict, evaluate a new one,
