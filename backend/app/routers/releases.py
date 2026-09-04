@@ -29,6 +29,7 @@ from app.services import (
     github_release_sync,
     jira_release_sync,
     release_gate_service,
+    release_phase_gate_service,
     release_service,
 )
 
@@ -349,6 +350,57 @@ async def update_phase(
     await db.refresh(phase)
     result = serialize_model(phase)
     result["all_phases_completed"] = all_done
+    return result
+
+
+@router.get("/{release_id}/phases/gate")
+async def get_release_phase_gate(
+    release_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_release_access()),
+):
+    """Every phase of this release, with a verdict each, and whether it may
+    advance.
+
+    Read-only: ``evaluate_all_phases`` defaults to ``record=False`` because
+    looking at the state of a release is routine, and appending a decision row
+    per phase per look would bury the real decisions in noise.
+
+    The summary is three-valued on purpose. A release blocked by a FAILING
+    phase and one blocked by an UNEVALUATED phase need different actions — fix
+    the tests, or go run some — and collapsing both into "cannot advance" sends
+    a release manager to do the wrong one half the time. ``NO_PHASES`` is a
+    fourth state and not a pass: phases are optional, so having none is not a
+    failure, but nothing was gated either.
+    """
+    phases = await release_phase_gate_service.evaluate_all_phases(db, release_id)
+    return {
+        "release_id": release_id,
+        **release_phase_gate_service.summarise_gate(phases),
+        "phases": phases,
+    }
+
+
+@router.post("/{release_id}/phases/{phase_id}/gate/evaluate")
+async def evaluate_release_phase_gate(
+    release_id: str,
+    phase_id: str,
+    record: bool = Query(True, description="Append the verdict to the audit history"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    __: User = Depends(require_release_access()),
+):
+    """Evaluate ONE phase and, by default, record the verdict.
+
+    ``record=false`` previews without appending. The history is the point of
+    that table, so writing to it is a deliberate act rather than a side effect
+    of looking — which is also why the read endpoint above never records.
+    """
+    result = await release_phase_gate_service.evaluate_phase(
+        db, release_id, phase_id, record=record, created_by_id=current_user.id
+    )
+    # The service stages the decision row; the router owns the transaction.
+    await db.commit()
     return result
 
 

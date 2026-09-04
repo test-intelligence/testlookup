@@ -47,10 +47,10 @@ RELEASE_MODULES = (
 )
 
 #: Not yet wired, with the slice that will wire each. Shrinks to empty.
-ALLOWED_UNWIRED = {
-    "release_phase_gate_service": "W4 — phase gate endpoint + gated update_phase",
-    "policy_resolution": "W4 — reached via the phase gate once that is wired",
-}
+#: Empty. Every release-epic module is now reachable from a router or a worker
+#: task — which is the whole point of the guard above, and the state it exists
+#: to hold. An entry added here is a promise, not an exemption.
+ALLOWED_UNWIRED: dict[str, str] = {}
 
 
 #: Where a request or a scheduled job actually enters the application.

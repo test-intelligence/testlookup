@@ -296,13 +296,26 @@ class TestTheRoutesAreGuardedAndReachable:
 
         return {r.path: r for r in router.routes if "gate" in getattr(r, "path", "")}
 
-    def test_all_three_routes_are_registered(self):
+    def test_every_gate_route_is_registered(self):
+        """An exact set, not a subset.
+
+        Equality is what makes the sibling test below meaningful: it asserts
+        every route matching "gate" verifies access to THIS release, so a new
+        gate route must be added here deliberately rather than appearing
+        unnoticed and inheriting a guarantee nobody checked for it.
+
+        The phase-gate pair (W4) joined this set when
+        ``release_phase_gate_service`` gained a router — until then it had no
+        route at all, and no request could reach it.
+        """
         paths = set(self._routes())
 
         assert paths == {
             "/api/v1/releases/{release_id}/gate",
             "/api/v1/releases/{release_id}/gate/baseline",
             "/api/v1/releases/{release_id}/gate/evaluate",
+            "/api/v1/releases/{release_id}/phases/gate",
+            "/api/v1/releases/{release_id}/phases/{phase_id}/gate/evaluate",
         }
 
     def test_every_gate_route_verifies_access_to_THIS_release(self):

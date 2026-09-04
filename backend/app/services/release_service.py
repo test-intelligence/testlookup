@@ -453,8 +453,33 @@ async def update_phase(db: AsyncSession, release_id: str, phase_id: str, body) -
     The "all phases completed" flag is computed before commit so the handler
     can surface it alongside the response without a second round-trip.
     """
-    phase = await get_phase_or_404(db, release_id, phase_id)
     updates = body.model_dump(exclude_none=True)
+
+    # Checked BEFORE the phase is loaded: an incoherent payload cannot succeed
+    # whatever the phase turns out to be, so it needs no database round-trip.
+    #
+    # Changing what a phase must satisfy and declaring it done are two acts,
+    # and doing both in one request makes the second unanswerable: the gate
+    # would be evaluated against criteria that were never in force while the
+    # work happened. Refused rather than ordered, because there is no ordering
+    # of the two that is honest.
+    #
+    # This is the half of S6b that needs no feature flag. ENFORCEMENT — refusing
+    # to complete a phase whose gate does not say GO — is a breaking change to
+    # a live endpoint and is deliberately NOT here; `GET
+    # /releases/{id}/phases/gate` answers, and nothing yet obliges a caller to
+    # ask.
+    if "status" in updates and "exit_criteria" in updates:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Change a phase's exit criteria and its status in separate "
+                "requests — otherwise the status is decided against criteria "
+                "that were not in force."
+            ),
+        )
+
+    phase = await get_phase_or_404(db, release_id, phase_id)
 
     # Check for duplicate name if renaming
     if "name" in updates:

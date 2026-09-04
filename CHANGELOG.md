@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-09-04 — The phase gate becomes reachable, and the worklist empties
+
+Last of the wiring fixes. `release_phase_gate_service` had no router and no
+caller; `policy_resolution`'s only importer was that dead module — so the pair
+looked wired from the inside while no request could reach either. That is
+exactly why the reachability guard asks about routers rather than importers, and
+wiring the gate revives the policy resolver transitively, as designed.
+
+`GET /releases/{id}/phases/gate` returns a verdict per phase and whether the
+release may advance. Read-only: looking at a release is routine, and appending a
+decision row per phase per look would bury the real decisions in noise. The
+summary is four-valued — BLOCKED, INCOMPLETE, READY, NO_PHASES — because a
+release blocked by a FAILING phase and one blocked by an UNEVALUATED phase need
+different actions ("fix the tests" versus "go run some"), and NO_PHASES is not a
+pass: phases are optional, so having none is not a failure, but nothing was
+gated either.
+
+`POST /releases/{id}/phases/{phase_id}/gate/evaluate` evaluates one phase and
+records by default, with `record=false` to preview. Writing to the audit history
+is a deliberate act rather than a side effect of looking.
+
+**Scope, stated rather than implied.** This makes the gate ANSWERABLE, not
+ENFORCING. `update_phase` still lets a QA lead mark a phase completed without
+consulting it, and `status="skipped"` still counts as done in the `all_done`
+aggregate — a second, silent route past the gate. Turning either into a refusal
+is a breaking change to a live endpoint, and the epic specified it behind a
+feature flag that does not exist (no release feature flag exists at all). Both
+are outstanding by decision, not by oversight, and a test pins that fact so this
+work cannot be read as evidence the gate is enforced.
+
+The one part of S6b that needs no flag ships here: a payload changing `status`
+AND `exit_criteria` together is refused. Changing what a phase must satisfy and
+declaring it done are two acts, and doing both at once makes the second
+unanswerable — the gate would be judged against criteria that were never in
+force while the work happened. There is no ordering of the two that is honest,
+so it is refused rather than sequenced, and refused BEFORE the phase is loaded
+because an incoherent payload cannot succeed whatever the phase turns out to be.
+
+Mutation-tested 9/9; the first run's survivor was a real gap (both behavioural
+tests passed `record` explicitly, so flipping its default survived them).
+
+**`ALLOWED_UNWIRED` is now empty.** Every release-epic module is reachable from
+a router or a worker task, and the guard holds that state: an entry added to
+either worklist is a promise, not an exemption, because both are asserted to
+shrink.
+
 ## 2026-09-04 — The P0 cap answers for the release it was asked about
 
 `get_dashboard_summary` takes a `release_id` and scopes its pass rate and every
