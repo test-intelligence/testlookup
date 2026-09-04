@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-09-04 — Jira fix versions become releases
+
+`jira_release_sync` (S3c), the last slice of the release epic.
+
+Written as a deliberate SIBLING of `github_release_sync` rather than something
+that merely resembles it. Two syncs that differ in shape are two syncs somebody
+has to reason about separately, and the second one is where a gate gets
+forgotten — so several of its tests assert the two AGREE rather than testing
+this one alone: neither commits, both scope their lookup by project AND source
+system, both declare distinct source systems so one cannot claim the other's
+rows.
+
+Same three gates in the same order, funnelled through one `_authorized_get` so a
+future caller cannot add a request that skips one. `AI_OFFLINE_MODE` is checked
+FIRST and is a hard kill switch: an air-gapped deployment must not egress
+because somebody enabled an integration. Then the integration flag, then a
+credential — both halves, because with only one the Basic header is well-formed
+and useless, so the request would 401 rather than fail with a readable reason.
+Then an SSRF check on the host, re-checked at egress rather than at
+configuration time, which also defends against DNS rebinding.
+
+Keyed on the version ID, never the name. Renaming a fix version must UPDATE the
+existing release; a name-keyed sync orphans its entire run history and mints a
+second row, silently, the first time somebody tidies a version string — and the
+damage is invisible because both rows look plausible.
+
+Jira's `released` and `archived` flags are deliberately NOT mapped onto
+`Release.status`. They describe the version's lifecycle in Jira, not whether
+this product's gate has passed, and mapping them would let an external tool mark
+a release shipped that the gate never approved.
+
+The mutation survivor was the SSRF check: every gate test raises before reaching
+it, so deleting the guard survived the whole suite. That is the guard that
+matters most here — the Jira domain is operator-configurable and therefore an
+SSRF sink by design. Now covered from both sides.
+
+
 ## 2026-09-04 — a saved view remembers its release, and the pack can answer for one
 
 Two slices, both about a release id outliving the moment it was chosen.
