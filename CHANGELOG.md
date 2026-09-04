@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-09-04 — asking the gate, and comparing against what came before
+
+Three endpoints complete S6a: read the standing verdict, evaluate a new one,
+and compare a release against its predecessor.
+
+`GET /releases/{id}/gate` reads the STORED verdict and deliberately does not
+recompute. Recomputing would restate a past decision under today's runs and
+today's policy, which is what the snapshot columns exist to prevent. It 404s
+when a release has never been evaluated — distinct from a verdict of
+NOT_EVALUATED, which means the gate DID run and could not say. Collapsing those
+loses the difference between "we have not looked" and "we looked and cannot
+say".
+
+`POST /releases/{id}/gate/evaluate` computes and appends. `record=false` gives a
+preview, because writing to an append-only trail that a release decision is
+later justified by should be a deliberate act rather than a side effect of
+looking. It requires QA_LEAD to record but not to read: making people ask
+permission to LOOK at a release decision would hide it from the people it is
+made for.
+
+`GET /releases/{id}/gate/baseline` returns `comparable: false` WITH A REASON
+rather than numbers whenever a delta would mislead — no baseline, or either side
+below the evidence floor. A pass-rate delta measured against a release nothing
+ran in is arithmetically fine and completely meaningless, and once it is a
+figure on a scorecard nobody re-derives whether it meant anything. The
+denominator delta travels beside the rate delta for the same reason: an
+improvement on a much smaller suite is not an improvement.
+
+One bug caught before it shipped: the handler called
+`require_release_access()(release_id=..., ...)` directly. That guard takes a
+`Request` and reads `request.path_params` — it has no `release_id` keyword — so
+every request would have raised TypeError before doing any work. It is now a
+dependency, with a test asserting the FORM, because a service-level test cannot
+see handler wiring.
+
+
 ## 2026-09-04 — rolling a release up to one answer per test
 
 `release_rollup_service` (S6a-2): the per-test-latest rollup and the verdict it

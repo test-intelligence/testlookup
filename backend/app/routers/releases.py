@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,7 +25,7 @@ from app.core.deps import (
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 from app.models.serializers import serialize_model
-from app.services import release_service
+from app.services import release_gate_service, release_service
 
 router = APIRouter(prefix="/api/v1/releases", tags=["Releases"])
 
@@ -124,6 +124,46 @@ async def get_release(
     return await release_service.get_release_details(db, release_id)
 
 
+@router.get("/{release_id}/gate")
+async def get_release_gate(
+    release_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_release_access()),
+):
+    """The standing verdict for this release, read from the stored snapshot.
+
+    Deliberately does NOT recompute. Recomputing would restate a past verdict
+    under today's runs and today's policy, which is what the snapshot columns on
+    ``ReleaseGateDecision`` exist to prevent.
+
+    404 when the release has never been evaluated — distinct from a verdict of
+    NOT_EVALUATED, which means it WAS evaluated and there was not enough
+    evidence to say. Collapsing those two into one response would lose the
+    difference between "we have not looked" and "we looked and cannot say".
+    """
+    gate = await release_gate_service.current_gate(db, release_id)
+    if gate is None:
+        raise HTTPException(status_code=404, detail="This release has not been evaluated yet")
+    return gate
+
+
+@router.get("/{release_id}/gate/baseline")
+async def get_release_gate_baseline(
+    release_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_release_access()),
+):
+    """Release-over-release comparison, or a stated reason it is not meaningful.
+
+    Returns ``comparable: false`` with a reason rather than numbers whenever a
+    delta would mislead — no baseline, or either side below the evidence floor.
+    A delta against a release nothing ran in is arithmetically fine and
+    completely meaningless, and once it is a number on a scorecard nobody
+    re-derives whether it was meaningful.
+    """
+    return await release_gate_service.compare_to_baseline(db, release_id)
+
+
 # ── Mutation endpoints (QA_LEAD or ADMIN) ────────────────────────────────────
 
 @router.post("", status_code=201)
@@ -168,6 +208,44 @@ async def delete_release(
 ):
     await release_service.delete_release(db, release_id)
     await db.commit()
+
+
+@router.post("/{release_id}/gate/evaluate")
+async def evaluate_release_gate(
+    release_id: str,
+    record: bool = Query(
+        True,
+        description="Append the verdict to the release's audit history. "
+        "Pass false to preview without recording.",
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    # BOTH guards, as dependencies. `require_role` answers "may this user record
+    # verdicts at all"; `require_release_access` answers "may they touch THIS
+    # release" — the per-id check the authorization ratchet is blind to once a
+    # route satisfies it on any scoped parameter.
+    #
+    # It has to be a Depends: the guard reads `request.path_params`, so calling
+    # it by hand with a `release_id=` keyword raises TypeError on every request.
+    _access: User = Depends(require_release_access()),
+):
+    """Evaluate the gate and, by default, record the verdict.
+
+    QA_LEAD, not plain membership. Recording appends to an append-only audit
+    trail that a release decision is later justified by, so it is a privileged
+    write even though it computes rather than edits.
+
+    The router owns the commit, per the repo's transaction-boundary rule, so the
+    demote of the previous verdict and the insert of the new one land as one
+    unit of work — a failure cannot leave a release with two current verdicts or
+    none.
+    """
+    result = await release_gate_service.evaluate_release(
+        db, release_id, record=record, created_by_id=current_user.id
+    )
+    if record:
+        await db.commit()
+    return result
 
 
 @router.post("/{release_id}/phases", status_code=201)
