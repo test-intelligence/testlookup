@@ -9,6 +9,20 @@ import type { Release } from '@/types/releases'
 /** The query-string key that carries the filter in a shared link. */
 export const RELEASE_PARAM = 'release'
 
+/** Asks for runs no release claims — `primary_release_id IS NULL`.
+ *
+ *  Must equal `UNATTRIBUTED` in `backend/app/core/release_filter.py`. The two
+ *  halves are a producer and a consumer of one vocabulary: if they drift, the
+ *  backend either 422s it as a malformed UUID or matches no rows, and BOTH read
+ *  to the user as "this release has no runs" — the same answer a working filter
+ *  gives for an empty release. Indistinguishable, and wrong.
+ *
+ *  In a healthy system this bucket is empty: every project has an active
+ *  release and the attribution ladder always lands somewhere. A run appears
+ *  here when the linker failed and swallowed the error, which is otherwise
+ *  invisible — so this is an operational view, not a routine filter. */
+export const UNATTRIBUTED_RELEASE = 'unattributed'
+
 /** Sentinel for the "no release filter" option. Empty string, because that is
  *  what a `<select>` hands back for an option with no value — mapping it to
  *  `null` in one place beats scattering `|| null` across every read site. */
@@ -72,7 +86,8 @@ export function ReleasePicker() {
 
   // Whether the current selection appears in the list we hold. Declared here
   // because both the URL reflection and the stale-drop below gate on it.
-  const selectedIsKnown = releases.some(r => r.id === activeReleaseId)
+  const selectedIsKnown =
+    activeReleaseId === UNATTRIBUTED_RELEASE || releases.some(r => r.id === activeReleaseId)
 
   // (1) Reconcile against the active project. Runs on mount too: a selection
   // restored from localStorage may belong to a project other than the one now
@@ -161,6 +176,10 @@ export function ReleasePicker() {
   // by an id nothing matches.
   useEffect(() => {
     if (!listLoaded || isAllProjects) return
+    // The Unattributed bucket is a real selection that will never appear in the
+    // release list. Without this it would be dropped as "stale" the moment the
+    // list loaded, with an error blaming the user's choice.
+    if (useReleaseStore.getState().activeReleaseId === UNATTRIBUTED_RELEASE) return
     // Read LIVE store state, not the render closure. Effect (1) may already
     // have cleared this selection in the same commit — on a project switch it
     // does exactly that — and acting on the captured value would clear an
@@ -201,6 +220,9 @@ export function ReleasePicker() {
           {r.name}
         </option>
       ))}
+      {/* Last, and separated: it is not a release, it is the absence of one.
+          Listing it among the releases would invite reading it as one. */}
+      <option value={UNATTRIBUTED_RELEASE}>— Unattributed —</option>
       {/* A filter applied before the list arrives — from localStorage or a
           deep link. Without a matching option the `<select>` would fall back to
           showing "All releases" while the filter was in fact applied, which

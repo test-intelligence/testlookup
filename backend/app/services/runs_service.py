@@ -364,17 +364,23 @@ async def list_project_runs(
         # longer appears in that release's run list. It was already absent from
         # that release's analytics, so this makes the two agree rather than
         # introducing a new exclusion.
-        try:
-            release_uuid = uuid.UUID(str(release_id))
-        except (ValueError, TypeError, AttributeError):
-            # Fail CLOSED. An unparseable release filter must not fall through
-            # to "no filter" — that would answer a narrow question with every
-            # run in the project, which reads as data the caller did not ask
-            # for rather than as an error. The router validates first and 422s;
-            # this is defence-in-depth for any other caller.
-            filters.append(false())
+        from app.core.release_filter import is_unattributed
+
+        if is_unattributed(release_id):
+            filters.append(TestRun.primary_release_id.is_(None))
+            release_uuid = None
         else:
-            filters.append(TestRun.primary_release_id == release_uuid)
+            try:
+                release_uuid = uuid.UUID(str(release_id))
+            except (ValueError, TypeError, AttributeError):
+                # Fail CLOSED. An unparseable release filter must not fall through
+                # to "no filter" — that would answer a narrow question with every
+                # run in the project, which reads as data the caller did not ask
+                # for rather than as an error. The router validates first and 422s;
+                # this is defence-in-depth for any other caller.
+                filters.append(false())
+            else:
+                filters.append(TestRun.primary_release_id == release_uuid)
     suite_filter = _run_suite_filter(suite_name)
     if suite_filter is not None:
         filters.append(suite_filter)

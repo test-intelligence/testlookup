@@ -1254,6 +1254,15 @@ async def resolve_release_query_scope(
     if release_id is None:
         return None
 
+    from app.core.release_filter import UNATTRIBUTED, is_unattributed
+
+    if is_unattributed(release_id):
+        # Names no release, so there is nothing to look up and nothing to
+        # authorize: the answer is "runs this project has that no release
+        # claims", and the project scoping the caller already passed still
+        # applies. Normalised so every downstream comparison sees one spelling.
+        return UNATTRIBUTED
+
     from app.models.postgres import Release
 
     try:

@@ -166,7 +166,15 @@ class TestTheReleaseReachesTheQuery:
         # A bind with no placeholder is dead weight at best and raises on some
         # drivers; a placeholder with no bind always raises.
         assert 'params["release_id"]' in src
-        assert "if release_id:" in src
+        # Three branches, not two: no filter, the unattributed NULL test, and
+        # the equality. The NULL branch must NOT bind a parameter, because its
+        # predicate references none.
+        assert "if not release_id:" in src
+        assert 'release_filter = "AND tr.primary_release_id IS NULL "' in src
+        assert "not _unattributed(release_id)" in src, (
+            "the unattributed branch must be excluded from the bind, or the "
+            "query binds a value its SQL never mentions"
+        )
 
 
 class TestTheRouteVerifiesTheReleaseItWasGiven:

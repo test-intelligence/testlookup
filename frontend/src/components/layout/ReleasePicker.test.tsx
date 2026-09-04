@@ -447,6 +447,34 @@ describe('ReleasePicker', () => {
     expect(mocked.toast.error).toHaveBeenCalledTimes(1)
   })
 
+  it('offers the Unattributed bucket', async () => {
+    renderPicker()
+    await waitFor(() => expect(picker()).toBeEnabled())
+
+    expect(screen.getByRole('option', { name: /unattributed/i })).toBeInTheDocument()
+  })
+
+  it('keeps the Unattributed selection instead of dropping it as stale', async () => {
+    // It is a real selection that will NEVER appear in the release list, so the
+    // stale-drop would clear it the moment the list loaded — with an error
+    // blaming the user's choice for asking a question the product supports.
+    renderPicker()
+    await waitFor(() => expect(picker()).toBeEnabled())
+
+    fireEvent.change(picker(), { target: { value: 'unattributed' } })
+
+    await waitFor(() => expect(screen.getByTestId('url')).toHaveTextContent('release=unattributed'))
+    expect(useReleaseStore.getState().activeReleaseId).toBe('unattributed')
+    expect(mocked.toast.error).not.toHaveBeenCalled()
+  })
+
+  it('shares it by link like any other selection', async () => {
+    renderPicker('/?release=unattributed')
+
+    await waitFor(() => expect(useReleaseStore.getState().activeReleaseId).toBe('unattributed'))
+    expect(picker()).toHaveValue('unattributed')
+  })
+
   it('stays quiet when there was no filter to drop', async () => {
     // The overwhelmingly common path. Announcing here would train users to
     // ignore the message that matters.

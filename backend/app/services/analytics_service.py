@@ -107,6 +107,12 @@ def _add_release_param(
     """
     if release_id is None:
         return ""
+    from app.core.release_filter import is_unattributed
+
+    if is_unattributed(release_id):
+        # No bind parameter: the predicate is a NULL test, and binding a value
+        # nothing references would be dead weight.
+        return f"AND {table_alias}.primary_release_id IS NULL"
     params["release_id"] = str(release_id)
     return f"AND {table_alias}.primary_release_id = :release_id"
 

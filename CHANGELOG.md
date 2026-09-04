@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-09-04 — the runs no release claims
+
+Adds the Unattributed bucket: a release-filter value meaning
+`primary_release_id IS NULL`.
+
+In a healthy system it is EMPTY, and that is what makes it worth having. Every
+project has an active release and the attribution ladder always lands
+somewhere, so a run only reaches this bucket when the linker failed and
+swallowed the error. Such a run looks completely normal everywhere else — it is
+absent only from the release dimension, missing from every release's numbers
+with nothing anywhere reporting it. This is the view that surfaces it. An
+operational answer to "show me what fell through", not a routine filter.
+
+One sentinel, defined once in `core/release_filter.py` and imported by all five
+points that filter by release. An inlined literal at each site is how a producer
+and a consumer drift apart with no error between them — the shape that made
+`"quarantined"` match nothing forever. The comparison is case- and
+whitespace-tolerant because the value travels through query strings, saved-view
+JSON and shared URLs, where a near miss would be parsed as a UUID and rejected
+as malformed: a 422 for what was really a capitalisation difference.
+
+The mutation pass is the story of this change. It opened at 6 of 12, and the
+survivors shared one cause: five tests asserted that `is_unattributed` appeared
+in a function's source, and that name is also on the IMPORT line — so replacing
+`if is_unattributed(release_id):` with `if False:` left every assertion passing
+while the bucket matched nothing anywhere. Five vacuous tests, one mutation. A
+sixth matched a string that also occurs in `selectedIsKnown`, so deleting the
+stale-drop exemption changed nothing it could see.
+
+They are now behavioural: they call the code and read the SQL it compiles.
+12 of 12, including a mutation to a TypeScript constant caught by a Python test
+that reads both halves of the vocabulary — the only place a frontend/backend
+disagreement can be caught, because neither side raises when they disagree.
+
+
 ## 2026-09-04 — saying which numbers the release filter does not reach
 
 The picker sits in the TopBar, so it is present on every route, but not every

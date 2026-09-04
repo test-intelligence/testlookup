@@ -403,7 +403,14 @@ async def get_trend_data(
     # alternative ``AND (:release_id IS NULL OR ...)`` cannot be resolved at
     # plan time and would cost the index on EVERY call, including the majority
     # that pass no release.
-    release_filter = "AND tr.primary_release_id = :release_id " if release_id else ""
+    from app.core.release_filter import is_unattributed as _unattributed
+
+    if not release_id:
+        release_filter = ""
+    elif _unattributed(release_id):
+        release_filter = "AND tr.primary_release_id IS NULL "
+    else:
+        release_filter = "AND tr.primary_release_id = :release_id "
     # 2026-05-15 bug fix: matching this filter via INNER JOIN test_cases
     # silently dropped every run whose ``test_cases`` rows weren't persisted
     # (a common state for live-stream ingest, which writes aggregates onto
@@ -466,7 +473,7 @@ async def get_trend_data(
         params["suite_name"] = suite_key
     # Bound only when the fragment that references it was emitted. A bind with
     # no placeholder raises on some drivers and is dead weight on the rest.
-    if release_id:
+    if release_id and not _unattributed(release_id):
         params["release_id"] = str(release_id)
     result = await db.execute(query, params)
     rows = result.fetchall()
@@ -530,7 +537,12 @@ async def _period_stats(
     # this function. Appended only when asked, so a caller that omits it builds
     # the identical statement it built before this axis existed.
     if release_id:
-        conditions.append(TestRun.primary_release_id == release_id)
+        from app.core.release_filter import is_unattributed
+
+        if is_unattributed(release_id):
+            conditions.append(TestRun.primary_release_id.is_(None))
+        else:
+            conditions.append(TestRun.primary_release_id == release_id)
     # DELETE /projects/{id} is a SOFT delete (is_active -> False). Scoped calls
     # already name one project, but the UNSCOPED dashboard aggregated over every
     # project ever created, deleted ones included: measured live at 44,315
