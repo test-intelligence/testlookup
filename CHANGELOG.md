@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-04 — which defects actually block a release
+
+`Defect.release_id` and `Defect.affects_releases` (migration 0157), and the
+service that gates on them (S7a).
+
+A defect has TWO relationships to a release, and gating on either one alone is
+wrong in opposite directions at the same time.
+
+`release_id` is where the defect was FOUND, derived from the failing test's run.
+Gate on that alone and every INHERITED defect disappears: a defect found in
+2.3.0 and still open never shows up when you ask 2.4.0 what is blocking it, so
+the release ships over a known open bug.
+
+`affects_releases` is which releases it IMPACTS. Gate on that alone and every
+untriaged defect disappears, because the column is NULL until somebody asserts
+something — and a gate that stops blocking the moment a field is left blank is
+not a gate.
+
+So the rule is affects-if-asserted, found-in as the fallback. NULL means "not
+triaged", not "harmless", and an empty list is treated as unasserted too — `[]`
+is what a form submits when nobody picks anything, and reading it as "affects no
+releases" would silently unblock everything.
+
+The migration deliberately does NOT seed `affects_releases` from `release_id`. A
+guess written into a column is indistinguishable from a human's assertion later,
+and the read path already falls back, so nothing is lost by not guessing. The
+backfill of `release_id` is batched and self-terminating, and joins on
+`tr.project_id = dd.project_id` — nothing at the database level stops a test
+case and a defect belonging to different projects, and a cross-project row would
+stamp another tenant's release onto this defect.
+
+Severity is the second trap. "No open CRITICALs" reads as a strict criterion and
+is a lenient one: severity is free text set by whoever filed the defect, often
+absent on machine-created rows, and a NULL severity is not a low one. Unrated
+defects are reported separately rather than dropped, so the gate cannot be
+passed by leaving a field blank — and the criterion is three-valued, because
+"blocked by a known critical" and "cannot tell, nothing is triaged" need
+different actions.
+
+
 ## 2026-09-04 — gating a phase without approving work nobody did
 
 `release_phase_gate_service` (S6b): a verdict per phase, and a release-level

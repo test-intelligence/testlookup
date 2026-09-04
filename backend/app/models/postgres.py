@@ -1094,6 +1094,32 @@ class Defect(Base):
     owner_team: Mapped[Optional[str]] = mapped_column(String(255))
     labels: Mapped[Optional[list]] = mapped_column(JSON)
     criticality_scores: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    # ── Release scope (migration 0157) ───────────────────────────────────────
+    #
+    # Two columns, because a defect has two relationships to a release and
+    # conflating them makes the gate wrong in opposite directions.
+
+    #: Where the defect was FOUND — derived from the failing test's run. A fact
+    #: about history, so it does not change when the defect is later found to
+    #: affect something else. NULL for defects filed by hand or predating the
+    #: release axis, which is a legitimate state rather than a gap to backfill.
+    release_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("releases.id", ondelete="SET NULL"), nullable=True
+    )
+
+    #: Which releases the defect IMPACTS, as a list of release ids.
+    #:
+    #: Distinct from ``release_id``, and the distinction is the point. A defect
+    #: found in 2.3.0 and still open blocks 2.4.0 as well; one found in 2.4.0
+    #: and fixed before 2.5.0 branched blocks neither. Gating on "found in this
+    #: release" alone lets every inherited defect through AND blocks a release
+    #: for defects somebody already fixed — wrong in both directions at once.
+    #:
+    #: NULL means "not asserted", and the read path falls back to ``release_id``
+    #: rather than treating NULL as "affects nothing". A defect nobody has
+    #: triaged for impact is not thereby harmless.
+    affects_releases: Mapped[Optional[list]] = mapped_column(JSON)
     evidence_bundle: Mapped[Optional[dict]] = mapped_column(JSON)
     duplicate_of: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
     is_duplicate: Mapped[bool] = mapped_column(Boolean, default=False)
