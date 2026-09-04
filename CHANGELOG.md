@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-09-04 — the run list and the numbers above it now agree
+
+`/runs` becomes release-scoped, which takes `/overview` to four of five sources
+scoped. It also closes two findings an audit raised against the endpoint.
+
+**One definition of "in this release".** `list_project_runs` selected every run
+with ANY link to the release, while every other release-scoped read filters the
+denormalized `primary_release_id`. Behind a single global picker that meant the
+run list and the KPI cards above it disagreed for any run linked to two
+releases. The sharpest evidence was in the same module: `fetch_release_map`
+already read `is_primary` to build each row's release BADGE, so a run could
+appear in release B's list wearing a badge that said release A.
+
+Aligned to primary. The accepted cost, stated rather than left to be
+discovered: a run linked to a release as a SECONDARY link no longer appears in
+that release's run list — it was already absent from that release's analytics,
+so this makes the two agree rather than adding a new exclusion.
+
+**The route did not verify the release it was handed.** Every other endpoint
+taking `release_id` calls the scope guard; this one did not, so a malformed
+value reached `uuid.UUID()` and raised — a 500 where the rest of the API answers
+422 — and a well-formed id belonging to another tenant was never checked. The
+authorization ratchet cannot see it: it stops at the first scoped parameter a
+route satisfies, and this route satisfies it on `project_id`.
+
+The service now also fails CLOSED. An unparseable release filter matches nothing
+rather than falling through to "no filter", because answering a narrow question
+with every run in the project reads as data the caller did not ask for rather
+than as an error.
+
+On the frontend `useRuns` spreads a generic params object, so one injection
+makes the run lists on /overview, /trends, /coverage and /failures release-aware
+at once. The global filter is applied BEFORE the caller's params, so a page that
+is already about one release keeps its own subject instead of having it silently
+replaced by the header.
+
+
 ## 2026-09-04 — the KPI cards and every trend chart answer for one release
 
 S5-3a connected the release filter to five analytics hooks. This connects the

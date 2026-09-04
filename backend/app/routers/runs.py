@@ -13,6 +13,7 @@ from app.core.deps import (
     get_current_active_user,
     require_role,
     require_run_access,
+    resolve_release_query_scope,
 )
 from app.db.postgres import get_db
 from app.models.postgres import LaunchStatus, Project, TestCase, TestRun, User, UserRole
@@ -78,6 +79,14 @@ async def list_runs(
 ):
     # days=0 means no date filter (all time)
     effective_days = days if days and days > 0 else None
+    # Verify the PROVIDED release. This route was the only one accepting
+    # ``release_id`` that skipped the check: a malformed value reached
+    # ``uuid.UUID()`` in the service and raised ValueError -> 500 rather than
+    # 422, and a well-formed id belonging to another tenant was never checked
+    # at all. The architectural authorization ratchet cannot see it, because it
+    # stops at the first scoped parameter a route satisfies and this route
+    # satisfies it on ``project_id``.
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
     # Filter by accessible projects when no explicit project_id
     if not project_id:
         accessible = await get_accessible_project_ids(db, current_user)

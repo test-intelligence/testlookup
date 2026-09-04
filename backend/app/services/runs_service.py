@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import ARRAY, BigInteger, and_, case, cast, func, or_, select
+from sqlalchemy import ARRAY, BigInteger, and_, case, cast, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -347,10 +347,34 @@ async def list_project_runs(
     if status:
         filters.append(TestRun.status == status)
     if release_id:
-        linked_ids_q = select(ReleaseTestRunLink.test_run_id).where(
-            ReleaseTestRunLink.release_id == uuid.UUID(release_id)
-        )
-        filters.append(TestRun.id.in_(linked_ids_q))
+        # Filters the DENORMALIZED primary column, not membership of
+        # ``release_test_run_links``.
+        #
+        # This used to select every run with ANY link to the release, while
+        # every other release-scoped read in the product — the analytics
+        # endpoints, the KPI cards, the trend charts — filters
+        # ``primary_release_id``. Behind a single global release picker that
+        # meant the run list and the numbers above it disagreed for any run
+        # linked to two releases, with nothing on screen to explain it. Worse,
+        # this same function already reads ``is_primary`` when it builds each
+        # row's release BADGE, so a run could appear in release B's list
+        # wearing a badge that said release A.
+        #
+        # The accepted cost: a run linked to a release as a SECONDARY link no
+        # longer appears in that release's run list. It was already absent from
+        # that release's analytics, so this makes the two agree rather than
+        # introducing a new exclusion.
+        try:
+            release_uuid = uuid.UUID(str(release_id))
+        except (ValueError, TypeError, AttributeError):
+            # Fail CLOSED. An unparseable release filter must not fall through
+            # to "no filter" — that would answer a narrow question with every
+            # run in the project, which reads as data the caller did not ask
+            # for rather than as an error. The router validates first and 422s;
+            # this is defence-in-depth for any other caller.
+            filters.append(false())
+        else:
+            filters.append(TestRun.primary_release_id == release_uuid)
     suite_filter = _run_suite_filter(suite_name)
     if suite_filter is not None:
         filters.append(suite_filter)

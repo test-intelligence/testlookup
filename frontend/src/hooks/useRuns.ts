@@ -1,15 +1,27 @@
 import useSWR from 'swr'
 import { runsService } from '@/services/runsService'
 import { useActiveProjectId, useProjectScopedSWR } from './useProjectScopedSWR'
+import { useReleaseScope } from './useReleaseScope'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function useRuns(params?: Record<string, unknown>) {
+  const releaseId = useReleaseScope()
   return useProjectScopedSWR(
     'runs',
-    (projectId) => runsService.list(projectId, params),
+    (projectId) =>
+      runsService.list(projectId, {
+        // Global filter first, caller's params second, so an EXPLICIT
+        // `release_id` from a page that is already about one release wins over
+        // the header picker rather than being silently overridden by it.
+        ...(releaseId ? { release_id: releaseId } : {}),
+        ...params,
+      }),
     { refreshInterval: REFRESH_INTERVALS.ACTIVE },
-    [params],
+    // In the deps, not just the params: without it, switching releases would
+    // reuse the previous release's cached run list under the new release's
+    // name.
+    [params, releaseId],
   )
 }
 
