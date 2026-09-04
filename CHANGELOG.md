@@ -1,5 +1,55 @@
 # Changelog
 
+## 2026-09-04 — the KPI cards and every trend chart answer for one release
+
+S5-3a connected the release filter to five analytics hooks. This connects the
+two endpoints behind the numbers people actually look at first: the Overview KPI
+cards and every trend chart in the app.
+
+It was not the planned next slice. Release-span window mode was. An audit of
+what the filter actually reaches found that NO page in the product had
+everything on screen release-scoped — `/overview`, the default landing route,
+had one of five sources scoped. Partial scoping is worse than none: the one card
+that visibly changes when you pick a release teaches the reader that the filter
+works on that page, so they read the pass rate and the trend line beside it as
+the same release's story. A page where nothing changes at least invites
+suspicion. Adding a second release-flavoured control on top of that would have
+deepened the confusion, so the window mode moves behind this.
+
+The interesting part is the cache. `get_dashboard_summary` memoises into Redis,
+and the key carries no user identity — so a release that reaches the QUERY but
+not the KEY does not mis-scope one response. The first person to filter by a
+release poisons the shared entry, and every other viewer's unfiltered dashboard
+serves that release's numbers until the TTL expires. That is the SWR-key defect
+from S5-3a with the blast radius changed from one browser to every viewer, and
+it is invisible: each number is individually well-formed.
+
+The release is therefore a CONDITIONAL cache kwarg. Passing it unconditionally
+would render a permanent `release=` segment into the key, changing it for every
+caller who never asked about a release and orphaning every existing entry —
+breaking, at the cache layer, the same "omitting the parameter changes nothing"
+promise the SQL layer keeps by appending no fragment.
+
+Both handlers verify the release they were given. The authorization ratchet
+checks evidence per-route and stops at the first scoped parameter it can
+satisfy, so both of these passed on `project_id` alone with the release entirely
+unchecked — the blind spot that hid nine IDORs before.
+
+The full suite caught a defect the targeted runs missed, for the sixth time on
+this epic: `release_id` defaults to `Query(None, …)`, which FastAPI resolves only
+at request time, so a DIRECT call hands the `Query` object to `uuid.UUID()` and
+422s. Harmless over HTTP, fatal for the four unit tests that call these handlers
+directly — two of which had been passing only because they return before
+reaching the guard.
+
+Three of this slice's own tests were weak, and the mutation harness rather than
+review found two of them. One assertion matched the comment explaining what not
+to do (third recurrence here, so comment-stripping is now shared). One counted
+occurrences and survived a dropped argument. And the positive control SURVIVED,
+which is the harness saying every test in the file inspected source rather than
+behaviour — there are now tests that compile the real statement and read the SQL.
+
+
 ## 2026-09-03 — the release filter starts filtering
 
 S5-1 shipped the store and S5-2 shipped the picker, and between them they

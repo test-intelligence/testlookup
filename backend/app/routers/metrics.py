@@ -4,7 +4,11 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, get_current_active_user
+from app.core.deps import (
+    get_accessible_project_ids,
+    get_current_active_user,
+    resolve_release_query_scope,
+)
 from app.db.postgres import get_db
 from app.models.postgres import User
 from app.services.commit_attribution_service import get_tia_readiness
@@ -53,6 +57,7 @@ async def dashboard_summary(
     project_id: str | None = None,
     days: int = Query(7, ge=1, le=90),
     suite_name: str | None = Query(None, min_length=1),
+    release_id: str | None = Query(None, description="Scope to one release"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -65,7 +70,17 @@ async def dashboard_summary(
         # KPIs via ?project_id=<other-tenant-uuid> (the service trusts it).
         if not project_id or not _project_in_scope(project_id, accessible):
             return {}
-    return await get_dashboard_summary(db, project_id, days, suite_name=suite_name)
+    # Verifies the PROVIDED release, not merely the None path. The
+    # architectural authorization ratchet checks evidence per-ROUTE and stops at
+    # the first scoped parameter it can satisfy, so this route passes the
+    # ratchet on ``project_id`` alone with the release entirely unchecked —
+    # exactly the blind spot that hid nine IDORs before. Called explicitly
+    # rather than as a dependency so the absent-release path issues no extra
+    # query and stays byte-identical (NFR1).
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
+    return await get_dashboard_summary(
+        db, project_id, days, suite_name=suite_name, release_id=release_id
+    )
 
 
 @router.get("/trends")
@@ -73,6 +88,7 @@ async def trend_data(
     project_id: str | None = None,
     days: int = Query(7, ge=1, le=90),
     suite_name: str | None = Query(None, min_length=1),
+    release_id: str | None = Query(None, description="Scope to one release"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -83,7 +99,10 @@ async def trend_data(
         # Non-admin: only own-project trends (see dashboard_summary).
         if not project_id or not _project_in_scope(project_id, accessible):
             return {"data": [], "period_days": days}
-    data = await get_trend_data(db, project_id, days, suite_name=suite_name)
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
+    data = await get_trend_data(
+        db, project_id, days, suite_name=suite_name, release_id=release_id
+    )
     return {"data": data, "period_days": days}
 
 

@@ -118,6 +118,7 @@ async def get_dashboard_summary(
     project_id: str | None,
     days: int = 7,
     suite_name: str | None = None,
+    release_id: str | None = None,
 ) -> dict:
     """Compute all Executive Dashboard KPIs for a project.
 
@@ -127,7 +128,24 @@ async def get_dashboard_summary(
     from app.services.cache_service import CACHE_TTL_DASHBOARD, cache_get, cache_set
 
     suite_key = _normalize_suite_name(suite_name)
-    cached = await cache_get("dashboard_summary_v2", project_id, days=days, suite=suite_key or "")
+    # The release MUST reach the cache key, not only the query.
+    #
+    # This cache is Redis and the key carries no user identity, so a release
+    # that scoped the query but not the key would serve one release's KPIs for
+    # another ACROSS USERS for the whole TTL: the first reader to ask about a
+    # release would poison the unfiltered dashboard for everyone else. That is
+    # the same defect class as an SWR key missing a parameter, with a blast
+    # radius of every viewer rather than one browser.
+    #
+    # Passed as a conditional kwarg rather than always-present, because
+    # ``_build_cache_key`` renders every kwarg into the string: a permanent
+    # ``release=`` segment would change the key for the no-release path and
+    # orphan every existing entry, which is exactly the byte-identical
+    # behaviour NFR1 promises callers who omit the axis.
+    release_key = {"release": release_id} if release_id else {}
+    cached = await cache_get(
+        "dashboard_summary_v2", project_id, days=days, suite=suite_key or "", **release_key
+    )
     if cached is not None:
         return cached
 
@@ -136,8 +154,10 @@ async def get_dashboard_summary(
     prev_period_start = now - timedelta(days=days * 2)
 
     # ── Current period stats ──────────────────────────────
-    cur = await _period_stats(db, project_id, period_start, now, suite_key)
-    prev = await _period_stats(db, project_id, prev_period_start, period_start, suite_key)
+    cur = await _period_stats(db, project_id, period_start, now, suite_key, release_id)
+    prev = await _period_stats(
+        db, project_id, prev_period_start, period_start, suite_key, release_id
+    )
 
     def trend(cur_val, prev_val):
         if prev_val and prev_val != 0:
@@ -332,7 +352,15 @@ async def get_dashboard_summary(
     }
 
     # P3-6: Cache the result for subsequent requests
-    await cache_set("dashboard_summary_v2", result_dict, project_id, ttl=CACHE_TTL_DASHBOARD, days=days, suite=suite_key or "")
+    await cache_set(
+        "dashboard_summary_v2",
+        result_dict,
+        project_id,
+        ttl=CACHE_TTL_DASHBOARD,
+        days=days,
+        suite=suite_key or "",
+        **release_key,
+    )
 
     return result_dict
 
@@ -342,6 +370,7 @@ async def get_trend_data(
     project_id: str | None,
     days: int = 7,
     suite_name: str | None = None,
+    release_id: str | None = None,
 ) -> list:
     """Return daily pass/fail/skip breakdown for the trend chart."""
     period_start = datetime.now(timezone.utc) - timedelta(days=days)
@@ -367,6 +396,14 @@ async def get_trend_data(
     project_filter = (
         "AND tr.project_id = :project_id " if project_id else ""
     ) + "AND tr.project_id IN (SELECT id FROM projects WHERE is_active)"
+    # Release scoping (S5-3b), same conditional-fragment shape as the project
+    # pin above and as ``analytics_service._add_release_param``: appending
+    # nothing when unasked keeps the plan — and the SQL text — identical to
+    # what this function produced before the axis existed. The null-tolerant
+    # alternative ``AND (:release_id IS NULL OR ...)`` cannot be resolved at
+    # plan time and would cost the index on EVERY call, including the majority
+    # that pass no release.
+    release_filter = "AND tr.primary_release_id = :release_id " if release_id else ""
     # 2026-05-15 bug fix: matching this filter via INNER JOIN test_cases
     # silently dropped every run whose ``test_cases`` rows weren't persisted
     # (a common state for live-stream ingest, which writes aggregates onto
@@ -417,6 +454,7 @@ async def get_trend_data(
         FROM test_runs tr
         WHERE tr.created_at >= :period_start
           {project_filter}
+          {release_filter}
           {suite_filter}
         GROUP BY day
         ORDER BY day ASC
@@ -426,6 +464,10 @@ async def get_trend_data(
         params["project_id"] = str(project_id)
     if suite_key:
         params["suite_name"] = suite_key
+    # Bound only when the fragment that references it was emitted. A bind with
+    # no placeholder raises on some drivers and is dead weight on the rest.
+    if release_id:
+        params["release_id"] = str(release_id)
     result = await db.execute(query, params)
     rows = result.fetchall()
 
@@ -479,8 +521,16 @@ async def _period_stats(
     start: datetime,
     end: datetime,
     suite_name: str | None = None,
+    release_id: str | None = None,
 ) -> dict:
     conditions = [TestRun.created_at >= start, TestRun.created_at < end]
+    # Release scoping (S5-3b). Reads the DENORMALIZED column added in migration
+    # 0152 rather than joining ``release_test_run_links``: a join would multiply
+    # rows for a run linked to more than one release, inflating every SUM in
+    # this function. Appended only when asked, so a caller that omits it builds
+    # the identical statement it built before this axis existed.
+    if release_id:
+        conditions.append(TestRun.primary_release_id == release_id)
     # DELETE /projects/{id} is a SOFT delete (is_active -> False). Scoped calls
     # already name one project, but the UNSCOPED dashboard aggregated over every
     # project ever created, deleted ones included: measured live at 44,315

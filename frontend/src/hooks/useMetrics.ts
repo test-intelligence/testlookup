@@ -15,20 +15,22 @@ export function refreshDefects() {
 }
 
 export function useDashboardSummary(days = 30, suiteName?: string | null) {
+  const releaseId = useReleaseScope()
   return useProjectScopedSWR(
     'metrics-summary',
-    (projectId) => metricsService.getSummary(projectId, days, suiteName),
+    (projectId) => metricsService.getSummary(projectId, days, suiteName, releaseId),
     { refreshInterval: REFRESH_INTERVALS.POLLING },
-    [days, suiteName],
+    [days, suiteName, releaseId],
   )
 }
 
 export function useTrendData(days = 30, suiteName?: string | null) {
+  const releaseId = useReleaseScope()
   return useProjectScopedSWR(
     'metrics-trends',
-    (projectId) => metricsService.getTrends(projectId, days, suiteName),
+    (projectId) => metricsService.getTrends(projectId, days, suiteName, releaseId),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
-    [days, suiteName],
+    [days, suiteName, releaseId],
   )
 }
 

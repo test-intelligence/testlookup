@@ -36,7 +36,8 @@ async def test_summary_blocks_foreign_project_for_non_admin():
     with patch.object(metrics_router, "get_accessible_project_ids", AsyncMock(return_value={mine})), \
          patch.object(metrics_router, "get_dashboard_summary", svc):
         result = await metrics_router.dashboard_summary(
-            project_id=str(foreign), days=7, suite_name=None, db=AsyncMock(), current_user=_user(),
+            project_id=str(foreign), days=7, suite_name=None, release_id=None,
+            db=AsyncMock(), current_user=_user(),
         )
 
     assert result == {}                       # foreign project → empty
@@ -51,7 +52,8 @@ async def test_summary_allows_own_project_for_non_admin():
     with patch.object(metrics_router, "get_accessible_project_ids", AsyncMock(return_value={mine})), \
          patch.object(metrics_router, "get_dashboard_summary", svc):
         result = await metrics_router.dashboard_summary(
-            project_id=str(mine), days=7, suite_name=None, db=AsyncMock(), current_user=_user(),
+            project_id=str(mine), days=7, suite_name=None, release_id=None,
+            db=AsyncMock(), current_user=_user(),
         )
 
     assert result == {"avg_pass_rate_7d": {"value": 90.0}}
@@ -65,7 +67,8 @@ async def test_summary_admin_unrestricted():
     with patch.object(metrics_router, "get_accessible_project_ids", AsyncMock(return_value=None)), \
          patch.object(metrics_router, "get_dashboard_summary", svc):
         result = await metrics_router.dashboard_summary(
-            project_id=str(uuid.uuid4()), days=7, suite_name=None, db=AsyncMock(), current_user=_user(),
+            project_id=str(uuid.uuid4()), days=7, suite_name=None, release_id=None,
+            db=AsyncMock(), current_user=_user(),
         )
     assert result == {"ok": True}
     svc.assert_awaited_once()
@@ -78,7 +81,8 @@ async def test_trends_blocks_foreign_project_for_non_admin():
     with patch.object(metrics_router, "get_accessible_project_ids", AsyncMock(return_value={mine})), \
          patch.object(metrics_router, "get_trend_data", svc):
         result = await metrics_router.trend_data(
-            project_id=str(uuid.uuid4()), days=7, suite_name=None, db=AsyncMock(), current_user=_user(),
+            project_id=str(uuid.uuid4()), days=7, suite_name=None, release_id=None,
+            db=AsyncMock(), current_user=_user(),
         )
     assert result == {"data": [], "period_days": 7}
     svc.assert_not_called()
