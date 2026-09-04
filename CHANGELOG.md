@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-09-03 — the release filter starts filtering
+
+S5-1 shipped the store and S5-2 shipped the picker, and between them they
+shipped a control that did nothing. No page read the store; no service sent
+`release_id`. The backend had accepted the parameter on six analytics endpoints
+since S4a. The two halves were never joined, so picking a release changed the
+header, the URL, and nothing else — every page kept rendering unfiltered data
+under a release heading.
+
+That is a worse failure than an absent feature, and it is the same shape as a
+declared-but-never-incremented metric: the surface says a number is scoped and
+the reader believes it.
+
+Five hooks and their service methods now carry the axis. Three things had to be
+true at once, and each is pinned by a test and a mutation:
+
+The id must reach the SWR **key**, not only the request. In the params alone it
+would change what is fetched without changing what is cached, so switching
+releases would serve the previous release's response under the new release's
+name — confidently wrong rather than merely empty. `useSuiteDetail` builds its
+key by hand instead of through `useProjectScopedSWR`, so it needed the axis
+added in both places and is the one that could have silently missed it.
+
+The id must be **omitted**, not sent empty, when nothing is selected. That is
+NFR1, and it is load-bearing rather than cosmetic: the backend appends no SQL
+fragment at all in that case, specifically so the planner keeps using
+`ix_test_runs_project_release_created`. A frontend that always sent
+`release_id=` would push every caller down the release branch and quietly lose
+the index.
+
+The id must **not** be sent in All Projects mode. `ReleasePicker` disables
+itself there, but a disabled control is a UI convention, not an enforcement —
+the store can still hold a value from before the switch, and sending it would
+filter every project's data by one project's release. `useReleaseScope` is that
+enforcement, and every hook reads it rather than the store.
+
+The service-level tests exist because the hook tests mock the whole service, so
+nothing there exercises the param builder that implements NFR1.
+
+My own mutation pass reported fourteen of fourteen caught. Review then ran ten
+DIFFERENT mutations and three survived, which is the more useful number: a
+mutation score measures the mutations you thought to try, and mine had a blind
+spot in each of the three places I had generalised from one example. The key was
+pinned on two of five hooks; every no-release test omitted the argument while
+every hook passes an explicit `null`; and the argument sweep used `toContain`,
+which cannot see position and so accepted release and suite transposed. All
+three are now covered, and re-running the reviewer's three verbatim kills them.
+
+
 ## 2026-09-03 — the release filter, in the header and in the link
 
 The picker that makes `releaseStore` reachable: a third `<select>` in the

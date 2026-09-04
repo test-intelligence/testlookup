@@ -31,8 +31,11 @@
  *   - Bridge settings deep-link (link emits a toast).
  *   - Print styles.
  *
- * Data: derives every section from the existing useDefects(...) +
- * useFailureCategories. The README assumes a richer DefectItem with severity,
+ * Data: derives every section from the existing useDefects(...). A
+ * useFailureCategories() call sat here too, described as feeding the workflow
+ * ribbon; its result was never destructured, so it fed nothing. Removed once
+ * the release filter made it re-fetch on every release change to no effect.
+ * The README assumes a richer DefectItem with severity,
  * owner, release tag, and bridge metadata — none of which the current model
  * carries. Every "missing" field is synthesised:
  *   - severity     ← failure_category + ai_confidence_score
@@ -59,7 +62,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import DefectIntakeModal from '@/components/defects/DefectIntakeModal'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
-import { refreshDefects, useDefects, useFailureCategories } from '@/hooks/useMetrics'
+import { refreshDefects, useDefects } from '@/hooks/useMetrics'
 import { jiraBridgeState, useIntegrationsConfig, type JiraBridgeState } from '@/hooks/useIntegrationsConfig'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { isSafeExternalUrl } from '@/utils/safeUrl'
@@ -1530,9 +1533,6 @@ export default function DefectsPage() {
   const { data: allDefectsData, isLoading, error: defectsError, mutate: retryDefects } =
     useDefects(1, undefined)
   const allDefects = useMemo<DefectItem[]>(() => allDefectsData?.items ?? [], [allDefectsData])
-  // Categories — used by the workflow ribbon for evidence-count flavor.
-  useFailureCategories(30)
-
   const model = useMemo(() => buildQueueModel(allDefects), [allDefects])
   const verdict = pickVerdict(model)
   const ribbonStages = useMemo(() => buildRibbon(model), [model])

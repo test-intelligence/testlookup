@@ -7,6 +7,7 @@ import { metricsService } from '@/services/metricsService'
 import { analyticsService } from '@/services/analyticsService'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useActiveProjectId, useProjectScopedSWR } from './useProjectScopedSWR'
+import { useReleaseScope } from './useReleaseScope'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function refreshDefects() {
@@ -32,38 +33,46 @@ export function useTrendData(days = 30, suiteName?: string | null) {
 }
 
 export function useFlakyTests(days = 30, suiteName?: string | null) {
+  const releaseId = useReleaseScope()
   return useProjectScopedSWR(
     'analytics-flaky',
-    (projectId) => analyticsService.getFlakyTests(projectId, days, suiteName),
+    (projectId) => analyticsService.getFlakyTests(projectId, days, suiteName, releaseId),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
-    [days, suiteName],
+    // `releaseId` belongs in the deps, which become the SWR key. In the params
+    // alone it would change the request without changing the cache entry, so
+    // switching releases would render the previous one's numbers under the new
+    // one's name.
+    [days, suiteName, releaseId],
   )
 }
 
 export function useFailureCategories(days = 30, suiteName?: string | null) {
+  const releaseId = useReleaseScope()
   return useProjectScopedSWR(
     'analytics-categories',
-    (projectId) => analyticsService.getFailureCategories(projectId, days, suiteName),
+    (projectId) => analyticsService.getFailureCategories(projectId, days, suiteName, releaseId),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
-    [days, suiteName],
+    [days, suiteName, releaseId],
   )
 }
 
 export function useTopFailing(days = 30, suiteName?: string | null) {
+  const releaseId = useReleaseScope()
   return useProjectScopedSWR(
     'analytics-top-failing',
-    (projectId) => analyticsService.getTopFailing(projectId, days, suiteName),
+    (projectId) => analyticsService.getTopFailing(projectId, days, suiteName, releaseId),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
-    [days, suiteName],
+    [days, suiteName, releaseId],
   )
 }
 
 export function useCoverage(days = 30, suiteName?: string | null) {
+  const releaseId = useReleaseScope()
   return useProjectScopedSWR(
     'analytics-coverage',
-    (projectId) => analyticsService.getCoverage(projectId, days, suiteName),
+    (projectId) => analyticsService.getCoverage(projectId, days, suiteName, releaseId),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
-    [days, suiteName],
+    [days, suiteName, releaseId],
   )
 }
 
@@ -76,12 +85,36 @@ export function useDefects(page = 1, resolutionStatus?: string) {
   )
 }
 
-export function useSuiteDetail(suiteName: string | null, days = 30) {
+/**
+ * Run-level aggregates for one suite.
+ *
+ * `releaseScoped: false` opts a caller out of the global release filter, for
+ * questions that are not release-shaped. The motivating case is a data-INTEGRITY
+ * diagnostic: `SuiteCasesPage` compares these run-level totals against an
+ * unscoped list of test cases to tell "this suite never ingested anything" from
+ * "runs landed but per-test rows were dropped". Scoping one side of that
+ * comparison and not the other lets a release selection zero the totals and
+ * silently retract the warning — the filter would be hiding an ingestion bug
+ * rather than narrowing a result. A comparison must have both halves on the
+ * same scope.
+ */
+export function useSuiteDetail(
+  suiteName: string | null,
+  days = 30,
+  options?: { releaseScoped?: boolean },
+) {
   const projectId = useActiveProjectId()
+  const scopedReleaseId = useReleaseScope()
+  const releaseId = options?.releaseScoped === false ? null : scopedReleaseId
   const fetchProjectId = projectId === ALL_PROJECTS_ID ? null : projectId
   return useSWR(
-    projectId && suiteName ? ['analytics-suite-detail', projectId, suiteName, days] : null,
-    () => analyticsService.getSuiteDetail(fetchProjectId, suiteName as string, days),
+    // This hook builds its key by hand rather than through
+    // `useProjectScopedSWR`, so the release has to be added in BOTH places
+    // explicitly — the key here and the argument below.
+    projectId && suiteName
+      ? ['analytics-suite-detail', projectId, suiteName, days, releaseId]
+      : null,
+    () => analyticsService.getSuiteDetail(fetchProjectId, suiteName as string, days, releaseId),
     { revalidateOnFocus: false },
   )
 }

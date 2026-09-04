@@ -243,7 +243,16 @@ export default function SuiteCasesPage() {
   // "runs landed but per-test rows were not persisted" (the JUnit-XML
   // run-summary / live-buffer-eviction case). Mirrors the wording used
   // by ``/test-management?tab=Test+Suites`` and ``/coverage/suite``.
-  const { data: suiteSummary } = useSuiteDetail(suite?.name ?? null, 30)
+  //
+  // Deliberately NOT release-scoped. The comparison below is against an
+  // unscoped list of test cases, and "did ingestion drop the per-test rows?"
+  // is not a per-release question. Letting the global release filter zero
+  // these totals would retract the warning whenever the reader happened to
+  // have a release selected the suite has no runs in — the filter would hide
+  // an ingestion bug instead of narrowing a result.
+  const { data: suiteSummary } = useSuiteDetail(suite?.name ?? null, 30, {
+    releaseScoped: false,
+  })
   const runLevelExecutions = suiteSummary?.summary?.total_executions ?? 0
   const runLevelUnique = suiteSummary?.summary?.unique_tests ?? 0
   const [moveTarget, setMoveTarget] = useState<CanonicalTestCase | null>(null)
