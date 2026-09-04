@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-04 — A saved view's release now survives the round trip
+
+First of the wiring fixes. `saved_view_release` shipped complete and
+mutation-tested, and nothing in `app/` imported it — a behaviour contract with
+no path to reach it. Its own tests called the service directly, so they proved
+the rules were right and nothing at all about whether a request ever applies
+them. The router now does.
+
+Reading a view resolves its stored release against THIS reader and reports the
+verdict (`release: {release_id, applied, reason}`, additive and optional, so
+existing consumers are unchanged). Writing one canonicalises the release through
+`store_release`, which also removes the key for a falsy value rather than
+persisting `{"release_id": null}` — a null and an absent key read identically to
+most consumers but not to all.
+
+The wiring exposed a scoping hole the service could not see on its own.
+`resolve_project_scope` returns `allowed=None` for an ADMIN *and* for a
+non-admin pinned to one verified project; only `scoped` tells them apart.
+Passing `allowed` straight through would treat a pinned non-admin as
+unrestricted, so a view whose own project matched the active one could carry a
+release belonging to a THIRD project past the access check. `_reader_scope`
+narrows to the verified project; only a true admin gets None.
+
+Listing views with no release issues exactly the queries it did before —
+`resolve_for_reader` returns before touching the database when nothing is
+stored.
+
+**And a guard so the class cannot recur.** The check is TRANSITIVE reachability
+from a router or worker task, not "does anything import this": `policy_resolution`
+has an importer — `release_phase_gate_service`, which is itself imported by
+nothing. Asking "does something import this" calls that pair wired; asking "can
+a request get here" calls both dead, which is the truth. A second guard covers
+dead FUNCTIONS inside live modules, because `github_release_sync` is reached for
+the attribution ladder while `sync_milestones` inside it is called by nothing.
+Both carry a worklist that is itself asserted to shrink, so an exemption cannot
+outlive the work it excuses.
+
+Measured alongside: 14 of 77 release-epic functions have bodies that never
+execute in the whole 8544-test suite.
+
 ## 2026-09-04 — Four release-filter defects the existing tests could not see
 
 The release read axis shipped with thorough tests, and every one of them was a

@@ -4119,6 +4119,22 @@ class SavedViewUpdate(BaseModel):
     is_default: Optional[bool] = None
 
 
+class SavedViewRelease(BaseModel):
+    """Whether THIS reader may apply the release stored in a view (S5-3f-ii).
+
+    A saved view outlives the state it was saved in, and a shared view is read
+    by people who did not save it — so the stored id is an id somebody else
+    supplied. The verdict is reported rather than the view being refused:
+    losing one filter is recoverable, refusing to open a view because one field
+    went stale is not. ``reason`` is what lets the UI say the result set is
+    wider than the view's author intended.
+    """
+
+    release_id: Optional[str] = None
+    applied: bool = False
+    reason: Optional[str] = None
+
+
 class SavedViewResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
@@ -4131,6 +4147,9 @@ class SavedViewResponse(BaseModel):
     is_default: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
+    # Additive and optional: a view carrying no release resolves to None and
+    # every existing consumer is unchanged.
+    release: Optional[SavedViewRelease] = None
     model_config = ConfigDict(from_attributes=True)
 
 
