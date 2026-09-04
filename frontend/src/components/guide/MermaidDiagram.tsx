@@ -62,14 +62,52 @@ export default function MermaidDiagram({ source }: { source: string }) {
       // component exists to avoid. Reproduced 6 of 13 diagrams stuck.
       const id = `mermaid-${reactId.replace(/[^a-zA-Z0-9]/g, '')}-${++attemptRef.current}`
 
+      // Removes mermaid's scratch node for THIS attempt, whenever the render
+      // ends up finishing.
+      //
+      // Scoped to a DIRECT CHILD of <body>, which is what a stray is. This
+      // matters because mermaid names the SVG it returns after the id it was
+      // given (`idSelector = "#" + id` in its source, and `render` hands back
+      // that element's serialised markup) — so once the result is written into
+      // this component, `getElementById(id)` finds THE DIAGRAM.
+      //
+      // Honestly: the guard is defence-in-depth, not load-bearing today.
+      // Attaching the cleanup to the render promise means it always runs
+      // before the innerHTML write, so removing the scope alone changes
+      // nothing — mutation testing confirms that mutation survives. What is
+      // killed is the PAIR: reorder the cleanup past the write AND drop the
+      // scope, and the component deletes the picture it just drew. The guard
+      // is what makes the first of those survivable on its own.
+      const removeStray = () => {
+        for (const el of [document.getElementById(`d${id}`), document.getElementById(id)]) {
+          if (el && el.parentElement === document.body) el.remove()
+        }
+      }
+
       try {
         const mermaid = (await import('mermaid')).default
 
         mermaid.initialize(mermaidConfig(readDiagramPalette()))
 
         let timer: ReturnType<typeof setTimeout> | undefined
+        // Held in a variable so the cleanup can be attached to the RENDER,
+        // not just to the race.
+        //
+        // `Promise.race` does not cancel the loser. When the timeout wins, the
+        // catch below cleans up while `mermaid.render` is still running — so
+        // anything it appends after that moment is stranded under <body> with
+        // nothing left to remove it, and in an SPA the leftover survives every
+        // navigation. That is the original report this fallback was written
+        // for ("Syntax error in text" on a page with no diagrams of its own),
+        // reappearing through the one path the cleanup could not reach.
+        //
+        // Attaching here means the scratch node is removed however late the
+        // render settles, and on both outcomes.
+        const rendering = mermaid.render(id, source)
+        rendering.then(removeStray, removeStray)
+
         const { svg } = await Promise.race([
-          mermaid.render(id, source),
+          rendering,
           new Promise<never>((_, reject) => {
             timer = setTimeout(
               () => reject(new Error('mermaid did not settle')),
@@ -87,9 +125,11 @@ export default function MermaidDiagram({ source }: { source: string }) {
         // and reaching that code, the leftover would be stranded under <body>
         // and visible on every page. Removing it by id costs nothing and does
         // not depend on which branch inside mermaid failed.
-        for (const stray of [document.getElementById(`d${id}`), document.getElementById(id)]) {
-          stray?.remove()
-        }
+        //
+        // Still needed alongside the late cleanup above: this catch also fires
+        // for a failure BEFORE `rendering` exists (the dynamic import, or
+        // `initialize`), where there is no promise to attach to.
+        removeStray()
 
         if (cancelled) return
         // Clear any diagram from a previous render, so the fallback is not

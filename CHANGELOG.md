@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-09-04 — The mermaid "flake" was a race that stranded a real element
+
+`Docs — Diagrams draw and fit` failed on roughly every other PR with "mermaid
+left a scratch element under `<body>`". Same SHA, fail then pass — the shape of
+a flake. It was not one.
+
+`Promise.race` does not cancel the loser. When the 15s timeout won, the catch
+removed mermaid's scratch element by id **while `mermaid.render` was still
+running** — so anything it appended after that moment was stranded, with nothing
+left to remove it. In a single-page app the leftover then survives every
+navigation, and each further attempt adds another copy. That is the original
+report this component's fallback was written for: "Syntax error in text /
+mermaid version 11.17.2" three times at the bottom of a page with no diagrams of
+its own. It came back through the one path the cleanup could not reach.
+
+It reproduces only when a render exceeds the timeout, which is why it fired on a
+loaded CI runner and almost never locally. Reproduced first as a unit test —
+mock a render that settles *after* the timeout and appends its node then — and
+that test failed against the old code before any fix was written.
+
+The cleanup is now attached to the render promise itself, so it runs however
+late that settles, and on both outcomes. The catch keeps its own call, because a
+SYNCHRONOUS throw from `mermaid.render` happens before there is a promise to
+attach anything to — that path has its own test, since the fix makes the catch
+look redundant and it is not.
+
+Scoped to a direct child of `<body>`, because mermaid names the SVG it returns
+after the id it was given, so once the result is in the DOM `getElementById(id)`
+finds the diagram itself. Mutation testing was clear about what that scope is
+worth: dropping it *alone* survives, because ordering already protects the write.
+Dropping it **together with** a reordering deletes the drawn picture, and that
+pair is killed. The guard is defence-in-depth and the comment now says so.
+
+Mutation-tested 5/6, the survivor being that expected one.
+
 ## 2026-09-04 — A saved view's release now survives the round trip
 
 First of the wiring fixes. `saved_view_release` shipped complete and
