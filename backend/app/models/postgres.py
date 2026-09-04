@@ -4075,6 +4075,136 @@ class SavedView(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
 
+class ReleaseGateDecision(Base):
+    """A go/no-go verdict for a RELEASE, not for a run (migration 0156).
+
+    ``ReleaseDecision`` — the table this sits beside, not replaces — is keyed
+    ``test_run_id`` UNIQUE: exactly one verdict per run, answering "is this run
+    shippable?". That is a real question, and it is not the one a release
+    manager asks. "Is 2.4.0 shippable?" is a judgement over the whole set of
+    runs attributed to the release, and it has no run to hang off.
+
+    Append-only, deliberately
+    -------------------------
+    A verdict is evidence about a moment. Re-evaluating UPDATEs nothing: it
+    inserts a new row and demotes the previous one, so the history of what was
+    decided, on what evidence, under which policy, survives. A gate that
+    rewrites its own past cannot be audited, and "why did we ship that?" is
+    exactly the question this table exists to answer months later.
+
+    Two partial unique indexes
+    --------------------------
+    One CURRENT release-level verdict per release, and one CURRENT verdict per
+    phase — with history rows carrying ``is_current = false`` and constrained by
+    neither. Partial rather than plain, for the same reason ``is_active`` is on
+    ``Release``: an unfiltered unique index would collapse the history this
+    table is built to keep.
+
+    Phase-level rows land here from S6b; the column and its index exist now so
+    that slice does not need a second migration against a live table.
+
+    Everything is SNAPSHOTTED
+    -------------------------
+    ``denominator``, ``run_ids``, ``policy_snapshot`` and ``status_rollup`` are
+    stored, not recomputed on read. A policy edited next month must not silently
+    restate last month's verdict, and a run deleted by retention must not change
+    what the gate saw. The FK to the policy is kept for provenance and is
+    ``SET NULL`` — the snapshot is the authority, the pointer is the reference.
+    """
+
+    __tablename__ = "release_gate_decisions"
+    __table_args__ = (
+        # At most one CURRENT release-level verdict per release. ``phase_id IS
+        # NULL`` distinguishes the release-level row from the phase rows below;
+        # without that clause a phase verdict would contend for the same slot.
+        Index(
+            "ix_rgd_release_current",
+            "release_id",
+            unique=True,
+            postgresql_where=text("is_current IS TRUE AND phase_id IS NULL"),
+        ),
+        # And at most one CURRENT verdict per phase. Separate index rather than
+        # one over (release_id, phase_id): Postgres treats NULLs as distinct, so
+        # a single index would not constrain the release-level rows at all.
+        Index(
+            "ix_rgd_phase_current",
+            "release_id", "phase_id",
+            unique=True,
+            postgresql_where=text("is_current IS TRUE AND phase_id IS NOT NULL"),
+        ),
+        # History reads are always "this release, newest first".
+        Index("ix_rgd_release_created", "release_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    release_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("releases.id", ondelete="CASCADE"), nullable=False
+    )
+    #: NULL for the release-level verdict; set for a phase gate (S6b).
+    phase_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("release_phases.id", ondelete="CASCADE"), nullable=True
+    )
+
+    #: Exactly one row per (release[, phase]) carries this. See the indexes.
+    is_current: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
+    #: GO | CONDITIONAL_GO | NO_GO | NOT_EVALUATED.
+    #:
+    #: ``NOT_EVALUATED`` is a first-class verdict, not an error and not a
+    #: default. Below the evidence floor the honest answer is "we cannot say",
+    #: and collapsing that into GO ("nothing failed") or NO_GO ("no proof")
+    #: would each be a confident lie in a different direction. Absence is not
+    #: health, and it is not sickness either.
+    verdict: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    # ── The snapshot: what was true when this verdict was formed ─────────────
+
+    #: Tests in scope for the verdict. Stored because a later ingest changes it,
+    #: and a percentage whose denominator has moved is not the number that was
+    #: decided on.
+    denominator: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: How many of those actually carried evidence. Paired with the denominator
+    #: so a reader can tell "90% passed" from "90% of the 10% we saw passed".
+    evidence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: The exact runs the rollup consumed, so the verdict remains explicable
+    #: after retention deletes them.
+    run_ids: Mapped[Optional[list]] = mapped_column(JSON)
+    #: Counts per status in the five-value mapping.
+    status_rollup: Mapped[Optional[dict]] = mapped_column(JSON)
+    #: Which rung of the attribution ladder claimed each run. A verdict built
+    #: mostly from active-release fallback is weaker evidence than one built
+    #: from explicit client names, and the scorecard says so.
+    attribution_mix: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    #: Provenance pointer. SET NULL: the snapshot below is the authority.
+    policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("release_gate_policies.id", ondelete="SET NULL"), nullable=True
+    )
+    #: The policy AS EVALUATED. A policy edited later must not restate a past
+    #: verdict.
+    policy_snapshot: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    #: What this release was compared against. Defaults to the release's own
+    #: ``baseline_release_id`` but is snapshotted, because that pointer is
+    #: editable.
+    baseline_release_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("releases.id", ondelete="SET NULL"), nullable=True
+    )
+
+    blocking_reasons: Mapped[Optional[list]] = mapped_column(JSON)
+    conditions_for_go: Mapped[Optional[list]] = mapped_column(JSON)
+
+    #: NULL for an automatic evaluation; set when a human recorded it.
+    created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class UserUIDismissal(Base):
     """A UI prompt this user has dismissed (migration 0145).
 

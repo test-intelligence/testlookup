@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-09-04 — a verdict for the release, not for a run
+
+`ReleaseGateDecision` (migration 0156). The first slice of S6a, which the epic
+calls the point where it pays off.
+
+`ReleaseDecision` — the table this sits beside rather than replaces — is keyed
+`test_run_id UNIQUE`: exactly one verdict per run, answering "is this run
+shippable?". That is a real question, and it is not the one a release manager
+asks. "Is 2.4.0 shippable?" is a judgement over every run attributed to the
+release, and it has no single run to hang off.
+
+**Append-only.** Re-evaluating inserts a new row and demotes the previous one;
+it never updates a verdict in place. A verdict is evidence about a moment, and a
+gate that rewrites its own past cannot answer "why did we ship that?" months
+later — which is the question the table exists for.
+
+**Two partial unique indexes**, and both halves of that phrase carry weight.
+Partial on `is_current`, or the index would permit exactly one verdict per
+release for all time and destroy the history. And split on `phase_id IS NULL` /
+`IS NOT NULL` rather than one index over the pair, because Postgres treats NULLs
+as distinct: a combined index would leave the release-level rows — the very ones
+the first index exists to constrain — unconstrained.
+
+**The snapshot is authoritative.** Denominator, evidence count, run set, policy
+and status rollup are stored rather than recomputed on read. Retention deletes
+runs and policies get edited; a verdict that recomputed itself would silently
+restate history under today's inputs. The FK to the policy is kept for
+provenance and is SET NULL — the snapshot is the authority, the pointer is only
+a reference.
+
+`NOT_EVALUATED` is a first-class verdict rather than an error or a default.
+Below the evidence floor, collapsing "we cannot say" into GO ("nothing failed")
+or NO_GO ("no proof") is a confident lie in one direction or the other.
+
+The flush between demote and promote is load-bearing and commented as such.
+Both are UPDATEs against the same partial unique index, and SQLAlchemy orders
+persistent UPDATEs by PRIMARY KEY rather than by assignment order — with uuid4
+ids that is a coin flip. The same defect broke `activate_release` and
+`unlink_test_run` in S0, both found by running the code rather than reading it,
+so the test asserts the ORDER OF OPERATIONS rather than the presence of a call.
+
+
 ## 2026-09-04 — the runs no release claims
 
 Adds the Unattributed bucket: a release-filter value meaning
