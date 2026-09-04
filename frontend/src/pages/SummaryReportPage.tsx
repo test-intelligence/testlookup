@@ -15,6 +15,7 @@ import {
   MinusCircle, TriangleAlert, XCircle, Zap,
 } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
+import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
@@ -203,6 +204,13 @@ export default function SummaryReportPage() {
         subtitle={`Project: ${project.name} · ${MODE_LABELS[mode].hint}`}
         actions={
           <div className="flex items-center gap-2">
+            {/* This page is not release-scoped, and its output LEAVES the tool:
+                the PDF filename encodes project, window and mode but not a
+                release, so a report attached to a go/no-go thread carries no
+                trace of what was selected when it was generated. Marking it
+                here is the honest interim answer until the report itself can
+                answer per release. */}
+            <AllReleasesBadge reason="This report and its PDF export cover the selected time window across all releases." />
             {(['1d', '7d'] as const).map(w => (
               <button
                 key={w}

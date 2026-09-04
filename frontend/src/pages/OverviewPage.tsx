@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
@@ -13,6 +14,7 @@ import { useDashboardSummary, useFailureCategories, useTrendData } from '@/hooks
 import { useValueMetricsKpi } from '@/hooks/useValueMetrics'
 import { useRuns } from '@/hooks/useRuns'
 import SuiteBadge from '@/components/ui/SuiteBadge'
+import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import FirstRunGuide from '@/components/onboarding/FirstRunGuide'
 import { isFirstRunGuideDismissed, dismissFirstRunGuide } from '@/components/onboarding/firstRunSteps'
@@ -202,9 +204,13 @@ interface KpiProps {
   linkTo?: string
   /** Footer link label override (default: "View all"). */
   linkLabel?: string
+  /** Rendered beside the label. Used to mark a card the global release filter
+   *  does NOT reach, so a reader cannot take it for release-scoped just
+   *  because the cards around it are. */
+  badge?: ReactNode
 }
 
-function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId, linkTo, linkLabel }: KpiProps) {
+function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId, linkTo, linkLabel, badge }: KpiProps) {
   const isBad = tone === 'bad'
   const dotColor = SPARK_COLOR[tone]
   const valueIsDash = value === '—'
@@ -219,6 +225,7 @@ function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId, li
       <div className="flex items-center gap-1.5 text-[11px] uppercase text-[var(--color-text-muted)] font-medium" style={{ letterSpacing: 'var(--tracking-wider)' }}>
         <span className="h-1.5 w-1.5 rounded-full" style={{ background: dotColor }} aria-hidden />
         <span>{label}</span>
+        {badge}
       </div>
       <div className="flex items-baseline justify-between gap-1.5">
         <span
@@ -1373,6 +1380,13 @@ export default function OverviewPage() {
                 tone="good"
                 gradId="kpi-hours-saved"
                 emptyMsg={`30d · ≈ ${valueMetrics.headline.fte_equivalent_30d.toFixed(1)} FTE · estimated`}
+                // The last card on this page the release filter does not
+                // reach, and deliberately so: the headline is an explicit
+                // 30-day figure, so scoping it to a three-day hotfix would
+                // produce a number its own label contradicts.
+                badge={
+                  <AllReleasesBadge reason="Engineering hours saved is a rolling 30-day figure, which a single release does not divide cleanly." />
+                }
                 linkTo="/value-metrics"
                 linkLabel="View value metrics"
               />

@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-09-04 — saying which numbers the release filter does not reach
+
+The picker sits in the TopBar, so it is present on every route, but not every
+number can answer per release. That mixed state is worse than no scoping at
+all: on a page where one card visibly changes when you pick a release, the
+change teaches the reader that the filter works *here*, so they read the numbers
+beside it as the same release's story. A page where nothing changes at least
+invites suspicion.
+
+`AllReleasesBadge` marks the exception rather than the rule. Early in this epic
+almost everything was unscoped and the honest marker would have been on the few
+things that were; that has now inverted — analytics, KPI cards, trend charts and
+run lists are all release-aware — so marking what remains is both quieter and
+self-limiting. As more surfaces are scoped, these disappear.
+
+It renders NOTHING when no release is selected. With no release chosen there is
+no discrepancy to explain, every page looks exactly as it did before the axis
+existed, and the badge does not become furniture people stop reading. It reads
+`useReleaseScope` rather than the store, so it also stays hidden in All Projects
+mode and during the window after a project switch — states where the filter is
+not being applied and nothing is unscoped relative to it.
+
+Two placements, chosen for consequence rather than convenience:
+
+The Overview "Eng-hours saved" card, the last of that page's five sources the
+filter does not reach — and deliberately so. The headline is an explicit 30-day
+figure with a monthly series, so scoping it to a three-day hotfix would produce
+a number its own label contradicts. That is a real answer, not an oversight, so
+the badge carries it.
+
+The Summary Report, whose output LEAVES the tool. Its PDF filename encodes
+project, window and mode but not a release, so a report attached to a go/no-go
+thread carries no trace of what was selected when it was generated. Marking the
+page is the honest interim answer until the report itself can answer per
+release.
+
+
 ## 2026-09-04 — the run list and the numbers above it now agree
 
 `/runs` becomes release-scoped, which takes `/overview` to four of five sources
