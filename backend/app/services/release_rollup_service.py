@@ -205,8 +205,23 @@ def _order_key(run: TestRun) -> Any:
 async def build_rollup(
     db: AsyncSession,
     release_id: uuid.UUID | str,
+    *,
+    phase_id: uuid.UUID | str | None = None,
 ) -> ReleaseRollup:
-    """Roll a release's runs up to one latest status per distinct test."""
+    """Roll a release's runs up to one latest status per distinct test.
+
+    With ``phase_id`` the scope narrows to runs whose PRIMARY link carries that
+    phase — the phase attribution S3a-2 stamps via ``match_phase``.
+
+    A phase can legitimately have NO runs. ``match_phase`` returns None freely
+    because phases are optional and their planned windows need not cover the
+    whole release, so a NULL ``phase_id`` on a link is a common, correct state
+    rather than a gap. That makes the empty rollup the NORMAL case for a phase,
+    not an edge one — and it is exactly why the verdict for an empty phase must
+    be NOT_EVALUATED rather than GO. A gate that reads "nothing failed" off zero
+    runs passes every phase nobody tested, which is the vacuous pass this slice
+    exists to avoid.
+    """
     rollup = ReleaseRollup()
 
     # Pin the project explicitly rather than trusting the release link.
@@ -236,6 +251,24 @@ async def build_rollup(
                 .where(
                     TestRun.primary_release_id == release_id,
                     TestRun.project_id == project_id,
+                    *(
+                        # Narrow to one phase by its PRIMARY link. Reading the
+                        # link rather than a column on the run is not incidental:
+                        # phase membership is a property of how the run was
+                        # attributed to this release, and the same run attributed
+                        # to a different release could sit in a different phase.
+                        [
+                            TestRun.id.in_(
+                                select(ReleaseTestRunLink.test_run_id).where(
+                                    ReleaseTestRunLink.release_id == release_id,
+                                    ReleaseTestRunLink.is_primary.is_(True),
+                                    ReleaseTestRunLink.phase_id == phase_id,
+                                )
+                            )
+                        ]
+                        if phase_id is not None
+                        else []
+                    ),
                 )
                 # Deterministic order from the database as well as in Python.
                 # The sort below is the authority, but leaving the query

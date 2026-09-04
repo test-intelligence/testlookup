@@ -499,3 +499,58 @@ class TestBuildRollupReadsTheDatabaseCorrectly:
         assert not any("FROM test_runs" in s for s in seen), (
             "an unresolvable release must not query runs with a null project scope"
         )
+
+    def test_a_phase_scoped_rollup_filters_on_the_primary_link(self):
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        import asyncio
+
+        seen: list[str] = []
+
+        class _Rows:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return self._rows
+
+            def scalars(self):
+                return self
+
+            def scalar_one_or_none(self):
+                return self._rows[0] if self._rows else None
+
+        class _Session:
+            async def execute(self, stmt, *a, **kw):
+                sql = " ".join(str(stmt).split())
+                seen.append(sql)
+                if "FROM releases" in sql:
+                    return _Rows(["p1"])
+                if "FROM test_runs" in sql:
+                    return _Rows([self_run])
+                return _Rows([])
+
+        self_run = self._run("r1", start_time=now)
+        asyncio.run(svc.build_rollup(_Session(), "rel-1", phase_id="ph-1"))
+
+        runs_sql = next(s for s in seen if "FROM test_runs" in s)
+        # Phase membership is a property of HOW the run was attributed to this
+        # release, so it is read from the link, not from a column on the run —
+        # the same run attributed to a different release could sit in a
+        # different phase. Without this predicate every phase is gated against
+        # the whole release and each one inherits the others' results.
+        assert "release_test_run_links" in runs_sql
+        assert "phase_id" in runs_sql
+        assert "is_primary" in runs_sql
+
+    def test_an_unscoped_rollup_does_not_mention_phases(self):
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        _, seen = self._build([self._run("r1", start_time=now)], [], [])
+        runs_sql = next(s for s in seen if "FROM test_runs" in s)
+
+        # NFR1 in miniature: omitting the phase must produce the statement this
+        # function produced before phase gating existed.
+        assert "phase_id" not in runs_sql.split(" WHERE ")[1]

@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-09-04 — gating a phase without approving work nobody did
+
+`release_phase_gate_service` (S6b): a verdict per phase, and a release-level
+summary that keeps three outcomes apart.
+
+The epic's own ordering constraint named the risk — "S3a must populate
+`phase_id` before S6b gates on it, or the gate evaluates every phase against
+zero runs and passes vacuously". Checking that precondition showed it is more
+delicate than the warning implies. `match_phase` returns None FREELY: phases are
+optional and their planned windows need not cover the whole release, so a NULL
+`phase_id` is a common and correct state, and many phases legitimately have no
+runs at all.
+
+The empty phase is therefore the normal case here, not an edge one. A gate that
+reads "no failures" off an empty phase hands out an approval for work nobody
+did, and that approval is indistinguishable from a real one. Most of this
+slice's tests are about the empty and near-empty cases; the populated happy path
+gets one.
+
+Three outcomes stay apart rather than collapsing into a boolean. BLOCKED means a
+phase failed — go fix tests. INCOMPLETE means a phase is unevaluated — go run
+some. They need opposite actions, and a two-valued gate sends a release manager
+the wrong way half the time. A release with no phases at all is NO_PHASES:
+phases are optional so it is not a failure, but nothing was gated so it is not a
+pass either.
+
+S7b earned its keep immediately. A phase's `exit_criteria` merge over the
+project policy key by key, so a phase setting one criterion no longer discards
+every threshold the project configured — the exact loss the previous
+winner-takes-all resolver would have caused here.
+
+Phase membership is read from the primary LINK rather than a column on the run,
+because it is a property of how the run was attributed to this release: the same
+run attributed to a different release could sit in a different phase.
+
+
 ## 2026-09-04 — a policy you can inherit half of
 
 `policy_resolution` replaces winner-takes-all policy selection with a key-wise
