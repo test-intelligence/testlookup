@@ -49,7 +49,6 @@ RELEASE_MODULES = (
 #: Not yet wired, with the slice that will wire each. Shrinks to empty.
 ALLOWED_UNWIRED = {
     "release_phase_gate_service": "W4 — phase gate endpoint + gated update_phase",
-    "release_defect_service": "W3 — release-aware blocking-defect count",
     "policy_resolution": "W4 — reached via the phase gate once that is wired",
 }
 

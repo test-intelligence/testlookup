@@ -22,13 +22,48 @@ logger = logging.getLogger(__name__)
 P0_DEFECT_SEVERITY = "CRITICAL"
 
 
-async def count_open_critical_defects(db: AsyncSession, project_id) -> int:
+async def count_open_critical_defects(
+    db: AsyncSession, project_id, release_id=None
+) -> int:
     """Count OPEN CRITICAL defects (the canonical severity behind a policy
     "P0" hard cap) for a project. Centralised so every release-gate call site
     counts the same set — the prior inline ``severity == "P0"`` filters
     (metrics readiness + release-council synth/deep) each matched nothing or
     the wrong severity, silently defeating the ``max_p0_defects`` cap.
+
+    **``release_id`` narrows it to the defects that affect THAT release (F5).**
+    Without it the release-scoped dashboard counted every open CRITICAL in the
+    project, and a hard-cap breach forces NO_GO regardless of the pass-rate
+    band — so asking about 2.4.0 returned red because of a P0 found in 2.3.0
+    that nobody ever said affects 2.4.0. The release filter reached every
+    number on that summary except the one able to veto all of them.
+
+    Delegates rather than restating the rule. "Affects this release" is
+    SQL narrowing PLUS a Python containment test, because ``affects_releases``
+    is a portable JSON column whose search operators differ between Postgres
+    and SQLite — a second copy of that would drift, and the two halves would
+    stop agreeing about what blocks a release.
+
+    Omitting ``release_id`` leaves the query below byte-identical, so every
+    existing caller is unchanged.
     """
+    from app.core.release_filter import is_unattributed
+
+    if release_id is not None and not is_unattributed(release_id):
+        from app.services.release_defect_service import blocking_defects
+
+        # Not filtered by active project here: this path is already pinned to
+        # one project_id, so the soft-deleted-project exclusion below (which
+        # exists for the aggregate case) has nothing to protect against.
+        found = await blocking_defects(db, release_id, project_id)
+        return sum(
+            1
+            for d in found
+            if (d.severity or "").upper() == P0_DEFECT_SEVERITY
+        )
+
+    # The Unattributed bucket falls through on purpose: its runs belong to no
+    # release, so the project's open P0s are the relevant set.
     conds = [
         Defect.resolution_status == "OPEN",
         Defect.severity == P0_DEFECT_SEVERITY,
@@ -283,7 +318,9 @@ async def get_dashboard_summary(
             # Count open CRITICAL defects for the "P0" hard cap. The prior
             # ``severity == "P0"`` filter matched no rows (defects are stored
             # CRITICAL/HIGH/MEDIUM/LOW), so the cap silently never fired.
-            active_p0 = await count_open_critical_defects(db, project_id)
+            active_p0 = await count_open_critical_defects(
+                db, project_id, release_id
+            )
             classified = classify_with_policy(
                 pass_rate=pass_rate,
                 active_defects_p0=active_p0,

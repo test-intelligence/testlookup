@@ -1095,6 +1095,12 @@ async def create_manual_defect(db: AsyncSession, project_id: uuid.UUID, payload:
         resolution_status="OPEN",
         promotion_source="manual",
     )
+    # Deduplicated and sorted by the service that owns the rule, so the stored
+    # value does not churn on rewrite — a column that reorders itself makes
+    # every audit diff look like a change.
+    from app.services.release_defect_service import assert_affects
+
+    defect.affects_releases = assert_affects(defect, payload.get("affects_releases") or [])
     db.add(defect)
     await db.flush()
     return defect

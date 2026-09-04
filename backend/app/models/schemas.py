@@ -5486,6 +5486,13 @@ class DefectIntakeRequest(BaseModel):
     test_name: Optional[str] = Field(None, max_length=1000)
     suite_name: Optional[str] = Field(None, max_length=500)
     jira_ticket_url: Optional[str] = Field(None, max_length=1000)
+    #: Which releases this defect IMPACTS — distinct from where it was found.
+    #:
+    #: Until this existed the column had no writer anywhere in the product, so
+    #: it was permanently NULL: ``blocking_defects`` only ever took its
+    #: found-in fallback, and the asserted-impact branch it was written for
+    #: could not execute. NULL means "not triaged", never "harmless".
+    affects_releases: Optional[list[str]] = Field(None, max_length=100)
 
 
 class DefectIntakeResponse(BaseModel):

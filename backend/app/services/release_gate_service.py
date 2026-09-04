@@ -35,8 +35,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Release
+from app.services import release_defect_service as defect_svc
 from app.services import release_gate_decision_service as decisions
 from app.services import release_rollup_service as rollup_svc
+
+#: Worst-first. A known blocker is decisive, so NO_GO outranks "cannot tell";
+#: and NOT_EVALUATED outranks GO because an unassessed criterion must never
+#: read as a pass. Both sides speak this same three-valued vocabulary, which
+#: is what makes combining them meaningful rather than a cast.
+_VERDICT_RANK = {"NO_GO": 2, "NOT_EVALUATED": 1, "GO": 0}
+
+
+def _worse_of(a: str, b: str) -> str:
+    return a if _VERDICT_RANK.get(a, 0) >= _VERDICT_RANK.get(b, 0) else b
 
 
 async def evaluate_release(
@@ -62,6 +73,23 @@ async def evaluate_release(
     ).scalar_one_or_none()
     baseline_id = getattr(release, "baseline_release_id", None) if release else None
 
+    # Open defects are the other half of "is this release shippable", and the
+    # rollup cannot see them: it answers from test results alone, so a release
+    # whose whole suite passes over a known open CRITICAL rolled up to GO.
+    #
+    # ``defects_for_release`` is three-valued for the reason the rollup is:
+    # "blocked by a known critical" and "cannot tell, these defects have no
+    # severity" need different actions, and a boolean sends somebody to fix
+    # the wrong thing. Unrated defects are reported rather than dropped, so
+    # the gate cannot be passed by leaving a field blank.
+    defects = None
+    if release is not None:
+        defects = await defect_svc.defects_for_release(
+            db, release_id, release.project_id
+        )
+        verdict = _worse_of(verdict, defects["verdict"])
+        blocking = list(blocking) + list(defects["reasons"])
+
     decision = None
     if record:
         decision = await decisions.record_decision(
@@ -83,6 +111,9 @@ async def evaluate_release(
         "verdict": verdict,
         "blocking_reasons": blocking,
         "scorecard": scorecard,
+        # Attached whole, not reduced to its verdict: a reader deciding whether
+        # to override needs to see WHICH defects, and how many were unrated.
+        "defects": defects,
         "decision_id": str(decision.id) if decision is not None else None,
         "recorded": record,
     }

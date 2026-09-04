@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-09-04 — The P0 cap answers for the release it was asked about
+
+`get_dashboard_summary` takes a `release_id` and scopes its pass rate and every
+trend to it — then counted P0 defects PROJECT-WIDE for the `max_p0_defects` hard
+cap. A cap breach forces NO_GO regardless of the pass-rate band, so asking the
+dashboard about 2.4.0 returned red because of an open CRITICAL found in 2.3.0
+that nobody ever said affects 2.4.0. The release filter reached every number on
+that summary except the one able to veto all of them. `/metrics/summary` is
+release-scopeable and has live frontend callers, so this was reachable in the
+product rather than latent.
+
+`count_open_critical_defects` now takes an optional release and DELEGATES to
+`release_defect_service.blocking_defects` rather than restating the rule.
+"Affects this release" is SQL narrowing plus a Python containment test, because
+`affects_releases` is a portable JSON column whose search operators differ
+between Postgres and SQLite; a second copy would drift, and the two halves would
+stop agreeing about what blocks a release. Omitting the release leaves the
+original query byte-identical. The Unattributed bucket falls through to
+project-wide on purpose: its runs belong to no release, so the project's open
+P0s are the relevant set.
+
+Delegation has a trap, and it is pinned: `blocking_defects` blocks on CRITICAL
+*and* HIGH, while the P0 cap is CRITICAL alone. Counting its whole result would
+silently TIGHTEN the cap — a subtler bug than the one being fixed, introduced by
+the fix.
+
+**`affects_releases` gets a writer.** Nothing in the product wrote that column,
+so it was permanently NULL: `blocking_defects` only ever took its found-in
+fallback and the asserted-impact branch it exists for could not execute. Defect
+intake can now assert impact. There is no defect-update endpoint anywhere in the
+app, so intake is the honest place for it. An empty assertion stores NULL, not
+`[]` — NULL means "not triaged" and is what the fallback keys on, while an empty
+list reads as "affects nothing" and silently stops the defect blocking anything.
+
+**And the gate consults defects.** The rollup answers from test results alone, so
+a release whose whole suite passes over a known open CRITICAL rolled up to GO.
+The two verdicts combine worst-first: NO_GO outranks "cannot tell", and
+NOT_EVALUATED outranks GO because an unassessed criterion must never read as a
+pass.
+
+Mutation-tested 12/12. The first run scored 10/12, and both survivors were in
+the one thing this slice exists to prove: deleting the `defects_for_release`
+call from `evaluate_release` left every test green, because they exercised
+`_worse_of` and `verdict_contribution` in isolation and never the path between
+them — the same "well-tested module nothing reaches" shape being fixed,
+reproduced inside the fix for it.
+
 ## 2026-09-04 — Releases can be pulled in from GitHub and Jira
 
 `sync_milestones` and `sync_fix_versions` shipped complete, gated and tested,
