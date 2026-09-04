@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-09-04 — Four release-filter defects the existing tests could not see
+
+The release read axis shipped with thorough tests, and every one of them was a
+source assertion — `"{release_filter}" in src`, `"is_unattributed" in code`.
+Not one called the function. So the axis was verified as text and never as
+behaviour, and four defects walked through. All four are fixed here, and the
+new tests execute rather than read.
+
+**Two 500s.** `suite_detail`'s run-level fallback builds a fresh params dict and
+then interpolates the fragment built against the outer one, so the rendered SQL
+said `AND tr.primary_release_id = :release_id` with nothing bound —
+`StatementError`. Reached by picking a release and opening a suite that only ran
+in a different one, which is precisely the empty state that branch exists to
+render. And `/analytics/flaky-scores` called `uuid.UUID(release_id)` unguarded,
+so the Unattributed bucket — which travels as the literal string
+`unattributed`, not a UUID — raised `ValueError`. Its test asserted
+`"is_unattributed" in code`, which matched the import line.
+
+**Two silent scope mixes, which are worse.** `coverage_stats` returns a summary
+and a suite table in ONE payload and only the table half was filtered, so the
+page put release-scoped rows under project-wide tiles and the frontend derived
+its coverage health score from the unscoped half. `flaky_tests` merges
+human-triaged flakes into the auto-detected list; that merge query was unscoped
+too, so `/failures` under a release listed release-scoped intermittents beside
+manual flakes from every release, with `source` the only hint and nothing saying
+the halves were scoped differently. Neither errors. `"{release_filter}" in src`
+was true throughout both — the fragment was present once, in the other query.
+
+The fourth was found by the test written for the third, which is the point: the
+new checks are **counted and positioned**, not name-present. Every `text()`
+literal that touches `test_runs` must carry a release fragment (that count found
+`flaky_tests`); every executed statement's binds must be present in the params
+dict it was executed with (that pair-recording found the 500); and every
+`uuid.UUID(release_id)` in a router that resolves a release query param must sit
+under a branch that has already ruled out the sentinel — walked as an AST
+ancestry check, because asking whether the name appears in the file is how the
+third defect passed.
+
+Mutation-tested at 10/10 with each original defect restored, including an
+inverted guard that routes every release into the Unattributed branch and a
+fragment rebound to the wrong params dict.
+
 ## 2026-09-04 — Jira fix versions become releases
 
 `jira_release_sync` (S3c), the last slice of the release epic.

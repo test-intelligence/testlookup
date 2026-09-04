@@ -240,7 +240,7 @@ async def flaky_tests(
             WHERE tch.created_at >= :period_start
               {project_filter}
               {suite_filter}
-          {release_filter}
+              {release_filter}
         ) seq
         GROUP BY test_fingerprint
         HAVING COUNT(*) >= 3
@@ -278,6 +278,15 @@ async def flaky_tests(
             manual_params, project_id=project_id, allowed_project_ids=allowed_project_ids,
         )
         m_suite_filter = _add_suite_param(manual_params, suite_name)
+        # Scope the merge the same way as the auto-detected half above.
+        #
+        # This branch builds a FRESH params dict, so the `release_filter` from
+        # the top of the function is bound to the wrong one and the query had
+        # no filter at all. Under a release, /failures therefore listed
+        # release-scoped intermittents merged with human-triaged flakes from
+        # EVERY release, in one list, with `source` the only hint and nothing
+        # saying the two halves were scoped differently.
+        m_release_filter = _add_release_param(manual_params, release_id)
         manual_query = text(
             f"""
             SELECT
@@ -302,6 +311,7 @@ async def flaky_tests(
               AND tc.test_fingerprint IS NOT NULL
               {m_project_filter}
               {m_suite_filter}
+              {m_release_filter}
             GROUP BY tc.test_fingerprint
             ORDER BY last_seen DESC
             LIMIT :limit
@@ -662,8 +672,15 @@ async def coverage_stats(
         WHERE tc.created_at >= :period_start
           {project_filter}
           {suite_filter}
+          {release_filter}
         """
     )
+    # Both halves of ONE response must share a scope. `suite_query` above was
+    # release-filtered and this one was not, so the page rendered a
+    # release-scoped table under project-wide headline tiles — and
+    # `computeHealthModel` derived the coverage health score from the unscoped
+    # numbers sitting directly above the scoped rows. No error, just two
+    # different questions answered side by side under one heading.
     suites = (await db.execute(suite_query, params)).fetchall()
     total = (await db.execute(total_query, params)).one()
     return {
@@ -815,6 +832,18 @@ async def suite_detail(
     )
     if needs_fallback:
         run_fallback_params: dict = {"period_start": _period_start(days)}
+        # Carry the release bind into the FALLBACK params too.
+        #
+        # `release_filter` was built against `params` far above, but this branch
+        # builds a FRESH dict — and then interpolates that same fragment into
+        # both fallback queries. So `AND tr.primary_release_id = :release_id`
+        # was executed with no value bound: a StatementError, surfacing as a 500
+        # on the one path that exists to render an empty state.
+        #
+        # The trigger is ordinary: pick a release, open a suite that only ran in
+        # a different one. All three primary queries come back empty, which is
+        # exactly what puts us in this branch.
+        _add_release_param(run_fallback_params, release_id)
         run_fallback_project_filter = _tenant_filter(
             run_fallback_params,
             project_id=project_id,
@@ -857,7 +886,7 @@ async def suite_detail(
                   WHERE tc2.test_run_id = tr.id
               )
               {run_fallback_project_filter}
-          {release_filter}
+              {release_filter}
             """
         )
         recent_runs_fallback_query = text(
@@ -892,7 +921,7 @@ async def suite_detail(
                   WHERE tc2.test_run_id = tr.id
               )
               {run_fallback_project_filter}
-          {release_filter}
+              {release_filter}
             ORDER BY tr.created_at DESC
             LIMIT 15
             """

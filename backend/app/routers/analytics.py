@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.release_filter import is_unattributed
 from app.core.deps import (
     resolve_release_query_scope,
     get_accessible_project_ids,
@@ -154,13 +155,22 @@ async def flaky_scores(
         #
         # So the filter selects which already-scored tests actually ran in the
         # release, leaving each score on its full evidence base.
+        #
+        # The Unattributed bucket arrives as the literal sentinel rather than a
+        # UUID, so parsing it unconditionally raised ValueError -> 500. Every
+        # other filter site guards with `is_unattributed()` first; this one was
+        # missed because `/flaky-scores` has no frontend caller, so nothing
+        # exercised it. One predicate, chosen here, rather than two branches
+        # that could drift.
+        release_predicate = (
+            TestRun.primary_release_id.is_(None)
+            if is_unattributed(release_id)
+            else TestRun.primary_release_id == uuid.UUID(release_id)
+        )
         ran_in_release = (
             select(TestCase.test_fingerprint)
             .join(TestRun, TestRun.id == TestCase.test_run_id)
-            .where(
-                TestRun.project_id == scoped,
-                TestRun.primary_release_id == uuid.UUID(release_id),
-            )
+            .where(TestRun.project_id == scoped, release_predicate)
         )
         stmt = stmt.where(FlakyScore.test_fingerprint.in_(ran_in_release))
 
