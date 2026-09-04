@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -25,7 +25,12 @@ from app.core.deps import (
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 from app.models.serializers import serialize_model
-from app.services import release_gate_service, release_service
+from app.services import (
+    github_release_sync,
+    jira_release_sync,
+    release_gate_service,
+    release_service,
+)
 
 router = APIRouter(prefix="/api/v1/releases", tags=["Releases"])
 
@@ -80,6 +85,16 @@ class ReleaseUpdate(BaseModel):
 class LinkRunRequest(BaseModel):
     test_run_id: str
     phase_id: Optional[str] = None
+
+
+class ReleaseSyncIn(BaseModel):
+    project_id: str
+    #: A closed set, so an unknown source is a 422 naming the valid ones rather
+    #: than a silent no-op that reports "0 created" and looks like an empty
+    #: milestone list.
+    source: Literal["github", "jira"]
+    #: Jira only. Falls back to the deployment's configured default key.
+    jira_project_key: Optional[str] = None
 
 
 # ── Read endpoints (any authenticated user) ──────────────────────────────────
@@ -183,6 +198,64 @@ async def create_release(
     release = await release_service.create_release(db, body)
     await db.commit()
     return await release_service.serialize_created_release(db, release)
+
+
+@router.post("/sync")
+async def sync_releases_from_external(
+    body: ReleaseSyncIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+):
+    """Pull releases in from GitHub milestones or Jira fix versions.
+
+    **Why this endpoint exists at all.** ``sync_milestones`` and
+    ``sync_fix_versions`` shipped complete, gated and tested, and nothing
+    called either of them -- so rung 2 of the attribution ladder ("the run's
+    external match") could never fire in production, because nothing created a
+    release carrying a ``source_system`` for it to match against. Two finished
+    features were unreachable behind a missing route.
+
+    **Manual, not scheduled.** No beat entry: ``AI_OFFLINE_MODE`` defaults to
+    True and a periodic job that egresses on its own is a materially larger
+    change than making a finished feature reachable. A person asking for a sync
+    is also the point at which a 503 explaining WHY it cannot run is useful.
+
+    Only identity is written -- name, external id, external url. A synced
+    release's phases, criteria, gate policy and run attribution are never
+    touched, because those are TestLookup's and neither GitHub nor Jira knows
+    anything about them.
+    """
+    # ``require_role(QA_LEAD)`` gates by ROLE, never by project membership, and
+    # ``project_id`` arrives in the BODY -- which the architectural ratchet
+    # matches only in the PATH, so this route would otherwise be auto-declared
+    # protected while a QA lead of one project synced releases into any other
+    # project on the deployment. Same repair as ``create_release`` above.
+    scoped, _allowed = await resolve_project_scope(db, current_user, body.project_id)
+    if scoped is None:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+
+    try:
+        if body.source == "github":
+            summary = await github_release_sync.sync_milestones(db, scoped)
+        else:
+            summary = await jira_release_sync.sync_fix_versions(
+                db, scoped, body.jira_project_key
+            )
+    except (
+        github_release_sync.GitHubSyncUnavailable,
+        jira_release_sync.JiraSyncUnavailable,
+    ) as exc:
+        # 503 with the gate's own words. "AI_OFFLINE_MODE is enabled" and "No
+        # Jira domain configured" are different problems with different fixes,
+        # and collapsing them into one message is how an operator ends up
+        # re-checking credentials that were never the issue.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    # The services deliberately do not commit -- the router owns the
+    # transaction, so one commit covers the whole sync and a failure part-way
+    # through leaves no half-imported set of releases.
+    await db.commit()
+    return {"source": body.source, **summary}
 
 
 @router.put("/{release_id}")

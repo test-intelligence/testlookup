@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.postgres import Release
+from app.services.defect_jira_service import resolve_jira_config
 from app.services.github_checks_service import _ssrf_block_reason
 
 logger = structlog.get_logger(__name__)
@@ -53,35 +54,57 @@ class JiraSyncUnavailable(RuntimeError):
     """Sync cannot run: offline mode, integration disabled, or no credential."""
 
 
-def _auth_header() -> str:
-    raw = f"{settings.JIRA_EMAIL}:{settings.JIRA_API_TOKEN}"
+def _auth_header(cfg: dict) -> str:
+    raw = f"{cfg['email']}:{cfg['api_token']}"
     return f"Basic {base64.b64encode(raw.encode()).decode()}"
 
 
-async def _authorized_get(path: str, params: Optional[dict] = None) -> Any:
+async def _authorized_get(
+    db: AsyncSession, path: str, params: Optional[dict] = None
+) -> Any:
     """GET a Jira path, or raise ``JiraSyncUnavailable``.
 
     Every outbound request funnels through here so the gates cannot be bypassed
     by a future caller. Mirrors ``github_release_sync._authorized_get`` on
     purpose: a reader who has understood one has understood both.
+
+    **Where the credential comes from.** ``resolve_jira_config``, not
+    ``settings``. A deployment configured through Settings -> Integrations
+    stores the API token in the SECRET SERVICE, because the AppSetting value it
+    writes is stripped of secrets -- so reading ``settings.JIRA_API_TOKEN``
+    directly finds nothing and this sync would refuse to run, with "No Jira
+    credential configured", on a Jira that is fully configured and working for
+    every other feature. Sharing the resolver is also what keeps one deployment
+    from having two different answers to "is Jira set up".
+
+    What is deliberately NOT shared is the request itself. ``_jira_get`` in that
+    module issues its call with no SSRF check, and the Jira domain is
+    operator-configurable -- an SSRF sink by design. This egress keeps its own
+    guard, and keeps being the only one here.
     """
     if settings.AI_OFFLINE_MODE:
-        # The hard kill switch, checked FIRST. An air-gapped deployment must not
-        # egress because somebody enabled an integration.
+        # The hard kill switch, checked FIRST and read from process config
+        # rather than the resolved document: an air-gapped deployment must not
+        # egress because somebody enabled an integration in the UI.
         raise JiraSyncUnavailable("AI_OFFLINE_MODE is enabled")
 
-    if not settings.JIRA_ENABLED:
+    cfg = await resolve_jira_config(db)
+
+    # The three remaining gates stay spelled out here rather than delegating to
+    # ``availability_reason``, which collapses them into one "not_configured".
+    # A reader who has to fix this needs to know WHICH half is missing.
+    if not cfg.get("enabled"):
         raise JiraSyncUnavailable("Jira integration is not enabled")
 
-    if not settings.JIRA_DOMAIN:
+    if not cfg.get("domain"):
         raise JiraSyncUnavailable("No Jira domain configured")
 
-    if not (settings.JIRA_EMAIL and settings.JIRA_API_TOKEN):
+    if not (cfg.get("email") and cfg.get("api_token")):
         # Without both halves the Basic header is well-formed and useless, so
         # the request would 401 rather than fail here with a readable reason.
         raise JiraSyncUnavailable("No Jira credential configured")
 
-    url = f"https://{settings.JIRA_DOMAIN}/rest/api/3{path}"
+    url = f"https://{cfg['domain']}/rest/api/3{path}"
 
     # Re-checked at egress rather than at configuration time: that also defends
     # against DNS rebinding, and against rows configured before the guard
@@ -92,7 +115,7 @@ async def _authorized_get(path: str, params: Optional[dict] = None) -> Any:
         raise JiraSyncUnavailable(f"Target host is not allowed ({block})")
 
     headers = {
-        "Authorization": _auth_header(),
+        "Authorization": _auth_header(cfg),
         "Accept": "application/json",
         "User-Agent": "TestLookup/1.0",
     }
@@ -143,8 +166,11 @@ async def sync_fix_versions(
     """
     from app.services.release_sort_key import compute_sort_key
 
-    key = jira_project_key or settings.JIRA_DEFAULT_PROJECT_KEY
-    raw = await _authorized_get(f"/project/{key}/versions")
+    # Resolved, not read from ``settings``: a Settings-UI deployment overrides
+    # the default project key the same way it overrides the credential.
+    cfg = await resolve_jira_config(db)
+    key = jira_project_key or cfg.get("default_project_key")
+    raw = await _authorized_get(db, f"/project/{key}/versions")
 
     now = datetime.now(timezone.utc)
     created = updated = skipped = 0

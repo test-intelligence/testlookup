@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-09-04 — Releases can be pulled in from GitHub and Jira
+
+`sync_milestones` and `sync_fix_versions` shipped complete, gated and tested,
+and **nothing called either of them**. The knock-on is bigger than two idle
+functions: rung 2 of the attribution ladder matches a run against a release
+carrying a `source_system`, and nothing in the product ever created one — so
+that rung could never fire in production.
+
+`POST /api/v1/releases/sync` reaches both. Manual, not scheduled:
+`AI_OFFLINE_MODE` defaults to True, and a periodic job that egresses on its own
+is a materially larger change than making a finished feature reachable. A person
+asking for a sync is also the point at which a 503 explaining why it cannot run
+is useful. Only identity is written — a synced release's phases, criteria, gate
+policy and run attribution are never touched.
+
+**And a bug that had to be fixed first.** `jira_release_sync` read its
+credential from `settings.JIRA_API_TOKEN`, but a deployment configured through
+Settings → Integrations keeps that token in the SECRET SERVICE —
+`resolve_jira_config` exists precisely because "the stored AppSetting value is
+stripped of secrets". Wiring an endpoint to the old code would have shipped a
+route that reports "No Jira credential configured" on a Jira that works for
+every other feature in the product. The default project key had the same
+problem, and answering the wrong Jira project reads as "0 created" rather than
+as a misconfiguration.
+
+What is deliberately NOT reused from `defect_jira_service` is the request
+itself: its `_jira_get` issues calls with no SSRF check, and the Jira domain is
+operator-configurable. This module keeps its own egress and keeps being the only
+one in the file. It also keeps its four distinct gate messages rather than
+delegating to `availability_reason`, which collapses "no domain" and "no
+credential" into one `not_configured` — a reader who has to fix it needs to know
+which half is missing.
+
+`project_id` arrives in the BODY, and the architectural authorization ratchet
+matches only PATH parameters — so without an explicit `resolve_project_scope`
+the route would be auto-declared protected while a QA lead of one project synced
+releases into any other project on the deployment. Same repair `create_release`
+already carries.
+
+Mutation-tested 11/11. The reachability guard's uncalled-function worklist is
+now empty.
+
 ## 2026-09-04 — The mermaid "flake" was a race that stranded a real element
 
 `Docs — Diagrams draw and fit` failed on roughly every other PR with "mermaid

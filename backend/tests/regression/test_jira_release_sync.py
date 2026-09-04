@@ -41,12 +41,21 @@ PROJECT = uuid.uuid4()
 
 
 class _Session:
+    """Answers the release lookup, and separately the config lookup.
+
+    ``resolve_jira_config`` reads an ``AppSetting`` row through this same
+    session, so a fake that returns ``_existing`` for EVERY statement hands a
+    ``Release`` back as the integrations config. Returning None for that query
+    is what makes these tests fall through to the env settings they set.
+    """
+
     def __init__(self, existing=None):
         self.added = []
         self._existing = existing
 
     async def execute(self, *a, **kw):
-        existing = self._existing
+        stmt = str(a[0]) if a else ""
+        existing = None if "app_settings" in stmt else self._existing
 
         class _R:
             def scalar_one_or_none(self_inner):
@@ -74,7 +83,7 @@ def _sync(monkeypatch, payload, session=None, **setting_overrides):
     for k, v in settings_defaults.items():
         monkeypatch.setattr(jira.settings, k, v, raising=False)
 
-    async def _get(path, params=None):
+    async def _get(db, path, params=None):
         return payload
 
     monkeypatch.setattr(jira, "_authorized_get", _get)
@@ -93,7 +102,11 @@ class TestTheGatesCannotBeBypassed:
         defaults.update(overrides)
         for k, v in defaults.items():
             monkeypatch.setattr(jira.settings, k, v, raising=False)
-        return asyncio.run(jira._authorized_get("/project/QA/versions"))
+        # A db, because the credential now comes from ``resolve_jira_config``
+        # rather than ``settings`` -- a Settings-UI deployment keeps the token
+        # in the secret service, so reading settings directly found nothing and
+        # this sync refused to run on a fully-configured Jira.
+        return asyncio.run(jira._authorized_get(_Session(), "/project/QA/versions"))
 
     def test_offline_mode_blocks_before_anything_else(self, monkeypatch):
         with pytest.raises(jira.JiraSyncUnavailable, match="AI_OFFLINE_MODE"):

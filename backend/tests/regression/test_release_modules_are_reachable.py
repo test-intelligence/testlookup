@@ -51,7 +51,6 @@ ALLOWED_UNWIRED = {
     "release_phase_gate_service": "W4 — phase gate endpoint + gated update_phase",
     "release_defect_service": "W3 — release-aware blocking-defect count",
     "policy_resolution": "W4 — reached via the phase gate once that is wired",
-    "jira_release_sync": "W2 — external release sync entry point",
 }
 
 
@@ -166,10 +165,9 @@ def test_the_worklist_only_names_modules_the_guard_watches():
 
 ENTRY_FUNCTIONS = ("sync_milestones", "sync_fix_versions")
 
-ALLOWED_UNCALLED = {
-    "sync_milestones": "W2 — external release sync entry point",
-    "sync_fix_versions": "W2 — external release sync entry point",
-}
+#: Empty: both sync entry points are now reachable through
+#: ``POST /api/v1/releases/sync``.
+ALLOWED_UNCALLED: dict[str, str] = {}
 
 
 def _callers_of(func: str) -> set[str]:
