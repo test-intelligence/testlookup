@@ -18,6 +18,7 @@ import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
+import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useQuarantineList, useQuarantineStats } from '@/hooks/useFlakyQuarantine'
@@ -76,7 +77,15 @@ export default function QuarantinePage() {
       <PageHeader
         title="Flaky Quarantine"
         subtitle="Review and approve flaky test quarantine proposals"
-        actions={<ExperimentalBadge />}
+        actions={
+          <span className="inline-flex items-center gap-2">
+            {/* A quarantine request is a standing decision about a TEST, with
+                no release dimension — the endpoint takes none. Without this
+                the stats tiles below read as one release's proposals. */}
+            <AllReleasesBadge reason="A quarantine request is a standing decision about a test, not about one release's runs — a test is quarantined for the project or it is not." />
+            <ExperimentalBadge />
+          </span>
+        }
       />
 
       {/* Stats tiles */}

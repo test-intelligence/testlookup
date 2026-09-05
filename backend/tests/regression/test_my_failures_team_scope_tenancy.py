@@ -134,7 +134,7 @@ class TestBehaviour:
         ):
             with pytest.raises(HTTPException) as excinfo:
                 await mod.my_assigned_failures_count(
-                    project_id=str(theirs), days=30, scope="team",
+                    project_id=str(theirs), days=30, release_id=None, scope="team",
                     db=AsyncMock(), current_user=user,
                 )
         assert excinfo.value.status_code == 403, (
@@ -164,7 +164,7 @@ class TestBehaviour:
 
         with patch("app.core.deps.resolve_project_scope", resolver):
             await mod.my_assigned_failures_count(
-                project_id=None, days=30, scope="mine",
+                project_id=None, days=30, release_id=None, scope="mine",
                 db=db, current_user=user,
             )
         resolver.assert_not_awaited()

@@ -78,7 +78,7 @@ async def test_count_mine_filters_by_assignee_for_any_role():
     user = _user(role=UserRole.VIEWER.value)
 
     await my_assigned_failures_count(
-        project_id=None, days=30, scope="mine", db=db, current_user=user,
+        project_id=None, days=30, release_id=None, scope="mine", db=db, current_user=user,
     )
     assert captured, "count endpoint must run exactly one query"
     assert _emits_assignee_filter(captured[0]), (
@@ -103,7 +103,7 @@ async def test_count_team_as_qa_lead_drops_assignee_filter():
     user = _user(role=UserRole.QA_LEAD.value)
 
     await my_assigned_failures_count(
-        project_id=None, days=30, scope="team", db=db, current_user=user,
+        project_id=None, days=30, release_id=None, scope="team", db=db, current_user=user,
     )
     assert not _emits_assignee_filter(captured[0]), (
         "scope=team for QA_LEAD must drop the assignee predicate so the "
@@ -126,7 +126,7 @@ async def test_count_team_as_admin_drops_assignee_filter():
     user = _user(role=UserRole.ADMIN.value)
 
     await my_assigned_failures_count(
-        project_id=None, days=30, scope="team", db=db, current_user=user,
+        project_id=None, days=30, release_id=None, scope="team", db=db, current_user=user,
     )
     assert not _emits_assignee_filter(captured[0])
 
@@ -147,7 +147,7 @@ async def test_count_team_as_viewer_is_silently_downgraded_to_mine():
     user = _user(role=UserRole.VIEWER.value)
 
     await my_assigned_failures_count(
-        project_id=None, days=30, scope="team", db=db, current_user=user,
+        project_id=None, days=30, release_id=None, scope="team", db=db, current_user=user,
     )
     assert _emits_assignee_filter(captured[0]), (
         "VIEWER asking for team scope must be silently downgraded — the "
@@ -171,7 +171,7 @@ async def test_count_team_as_qa_engineer_is_silently_downgraded():
     user = _user(role=UserRole.QA_ENGINEER.value)
 
     await my_assigned_failures_count(
-        project_id=None, days=30, scope="team", db=db, current_user=user,
+        project_id=None, days=30, release_id=None, scope="team", db=db, current_user=user,
     )
     assert _emits_assignee_filter(captured[0])
 

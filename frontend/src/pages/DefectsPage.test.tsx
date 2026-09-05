@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 import DefectsPage from './DefectsPage'
+import { useReleaseStore } from '@/store/releaseStore'
 
 // Mock every useMetrics export — the page (or its widgets) may import any
 // of them and vitest errors on an undefined export. Tests override the
@@ -182,5 +183,50 @@ describe('DefectsPage', () => {
     mockIntegrationsConfig.mockReturnValue({ config: halfConfigured, error: undefined, isLoading: false })
     renderWithDefects()
     expect(await screen.findByText('Not configured')).toBeInTheDocument()
+  })
+})
+
+describe('DefectsPage — saying that the release filter does not apply', () => {
+  /**
+   * The page's own subtitle reads "N P0 blocking release". With a release
+   * picked in the header, that sentence reads as "blocking THIS release" — and
+   * the numbers are the project's: `/analytics/defects` accepts no release_id,
+   * and a defect raised against an earlier release can still be open now.
+   */
+  function renderPage() {
+    return render(
+      <MemoryRouter initialEntries={['/defects']}>
+        <Routes>
+          <Route path="/defects" element={<DefectsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('marks the page when a release is selected', async () => {
+    useReleaseStore.setState({ activeReleaseId: 'rel-1', scopedProjectId: 'proj-1' })
+    renderPage()
+
+    expect(await screen.findByText('All releases')).toBeInTheDocument()
+  })
+
+  it('explains why, rather than only flagging it', async () => {
+    useReleaseStore.setState({ activeReleaseId: 'rel-1', scopedProjectId: 'proj-1' })
+    renderPage()
+
+    const badge = await screen.findByText('All releases')
+    expect(badge.getAttribute('title')).toMatch(/tracked per project, not per release/)
+  })
+
+  it('stays silent when no release is selected', async () => {
+    // The control, and the badge's whole design: with no release chosen there
+    // is no discrepancy to explain, and the page looks exactly as it did
+    // before the release axis existed. A badge that always rendered would pass
+    // the two tests above and become furniture.
+    useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
+    renderPage()
+
+    await screen.findByText(/Defect Workflow/i)
+    expect(screen.queryByText('All releases')).toBeNull()
   })
 })

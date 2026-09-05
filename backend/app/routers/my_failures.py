@@ -341,6 +341,9 @@ async def list_my_assigned_failures(
 async def my_assigned_failures_count(
     project_id: Optional[str] = Query(None),
     days: int = Query(30, ge=1, le=365),
+    release_id: Optional[str] = Query(
+        None, description="Only failures from runs in this release."
+    ),
     scope: str = Query("mine", pattern="^(mine|team)$"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -354,6 +357,8 @@ async def my_assigned_failures_count(
     """
     scoped_project_id = _parse_project_id(project_id)
     period_start = datetime.now(timezone.utc) - timedelta(days=days)
+    # Access-checked and sentinel-aware, exactly as the list endpoint does it.
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
 
     effective_scope = scope
     if scope == "team" and current_user.role not in (
@@ -392,6 +397,16 @@ async def my_assigned_failures_count(
     ]
     if effective_scope == "mine":
         filters.append(TestCase.assigned_to_user_id == current_user.id)
+    # The release axis, for the same reason as every other filter here: this
+    # endpoint exists to answer the list's question cheaply, so it has to
+    # answer the SAME question. The list gained the release predicate and this
+    # did not — the comment above says a disagreement means "the badge
+    # advertises work the page cannot show", and a release-scoped page beside
+    # a project-wide badge is precisely that.
+    #
+    # `release_predicate` contributes nothing when no release is selected, so
+    # the badge's SQL is byte-identical for every existing caller.
+    filters.extend(release_predicate(release_id))
     if scoped_project_id is not None:
         filters.append(TestRun.project_id == scoped_project_id)
     elif allowed_project_ids is not None:

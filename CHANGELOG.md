@@ -1,5 +1,76 @@
 # Changelog
 
+## 2026-09-05 — Three pages under a release picker, and only two needed a label
+
+Closes the backlog item below. They looked like one problem and were two, which
+is the useful half of this entry: **labelling `/my-failures` would have been a
+lie.**
+
+**`/my-failures` had an INERT filter, not a missing label.** The backend has
+accepted `release_id` on `/me/assigned-failures` since the epic wired it — the
+entry above records "`/my-failures` … now honour the release" — and the frontend
+hook never sent it. So the picker sat in the header, on the page, changing
+nothing. An inert filter is worse than an absent one: the reader takes the list
+as "2.4.0's failures assigned to me" when it is the project's. Now wired, with
+the effective release in the SWR deps so switching releases cannot serve the
+previous one's page from cache.
+
+**The count endpoint moved with it, for a narrower reason than first claimed.**
+`/me/assigned-failures/count` is a SEPARATE handler from the list — the epic's
+note that the predicate went into a shared `base_filters` list is true of the
+list's own total, not of this endpoint, which builds its own filters and never
+gained the release. It now accepts the same `release_id`.
+
+**A correction worth recording, because I wrote the wrong reason first.** The
+original justification here was that the sidebar badge would otherwise disagree
+with a release-scoped page. That is false: the sidebar renders
+`useMyFailuresCountUnscoped`, which sends neither `project_id` nor `release_id`
+because it is an "all my work" indicator spanning every project. It was never
+mirroring the page, so there was no disagreement to fix. **The e2e caught it** —
+an assertion that a release-scoped `/count` request would be made failed against
+the deployment, which is how the mistake surfaced rather than shipping as a
+plausible sentence.
+
+The real argument is smaller and still holds: the two endpoints are a documented
+pair — the count exists "to answer the list's question cheaply" — and a pair that
+accepts different filters is one a client author has to discover by experiment.
+Note also that **`useMyFailuresCount` has no caller in the app today**; it is
+kept correct so that wiring it later cannot reintroduce the inert filter.
+
+The cross-project badge stays unscoped, and now says why: a release belongs to
+one project, so filtering a badge that spans every project by one project's
+release answers a question nobody asked. A test asserts it stays that way, so
+"scope everything" cannot be applied here by reflex.
+
+**`/defects` and `/quarantine` genuinely cannot be scoped**, so they declare it.
+Neither endpoint accepts a release. `/defects` earns the badge twice over: its
+own subtitle reads "N P0 **blocking release**", which with a release selected
+reads as *this* release, while `/analytics/defects` has no release dimension at
+all and a defect raised against an earlier release can still be open now.
+
+### The trap that cost nine tests
+
+Adding `release_id: Optional[str] = Query(None)` to the count handler broke nine
+existing tests, because they call the handler DIRECTLY and a direct call
+receives the `Query` object rather than `None`. This is the fifth time that has
+happened in this repo. The fix is the established one — pass `release_id=None`
+at the call site, exactly as the list endpoint's tests already do — not to make
+the handler tolerate a `Query` object, which would hide the real contract.
+
+### Verification
+
+Backend: seven tests holding the count to the list's scoping, including one that
+both endpoints describe the parameter identically (they are read together in the
+OpenAPI schema). Frontend: eight hook tests, six page tests, and e2e for all
+three pages.
+
+Mutation-checked in three directions, and the third is the one that matters: the
+list dropping the release, the badge dropping it, and the **cross-project badge
+wrongly gaining it** — that last control is what stops a later "scope
+everything" pass from breaking a hook that is correct as it stands. The e2e
+carries the same shape: it asserts `/my-failures` is **not** labelled, because
+its filter works.
+
 ## 2026-09-05 — Search now says what it has always done
 
 Closes the "`scope` blocks are returned and nothing renders them" item from the
@@ -216,7 +287,7 @@ and the route.
 is untouched.** `/coverage` supports All Projects; if the fix had started
 demanding a project there, every other test here would still pass.
 
-## Backlog — three pages still show project-wide numbers unlabelled (not yet fixed)
+## Backlog — three pages still show project-wide numbers unlabelled (FIXED 2026-09-05, see the entry above)
 
 Found 2026-09-05 while fixing the search badge, by asking which read surfaces
 ignore the global release filter without saying so. Recorded rather than fixed,

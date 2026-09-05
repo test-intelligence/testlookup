@@ -266,3 +266,135 @@ test.describe('Project scope — search says that it spans every release', () =>
     );
   });
 });
+
+/**
+ * The three pages that were showing project-wide numbers under a visible
+ * release picker, and what each one needed.
+ *
+ * They looked like one problem and were two. `/defects` and `/quarantine`
+ * genuinely cannot be scoped — neither endpoint accepts a release — so they
+ * declare it. `/my-failures` was different: the backend had accepted
+ * `release_id` since the epic wired it and the frontend never sent it, so the
+ * picker sat on the page changing nothing. An INERT filter is worse than an
+ * absent one, and labelling it "all releases" would have been a lie.
+ */
+test.describe('Project scope — the pages that show project-wide numbers', () => {
+  const BADGE = '[title^="Not filtered by the selected release"]';
+
+  /** Pin a project that has runs, so the release picker has something to offer. */
+  async function pinProjectWithRuns(
+    page: import('@playwright/test').Page,
+    request: import('@playwright/test').APIRequestContext,
+  ) {
+    const token = await page.evaluate(() => {
+      try {
+        return JSON.parse(localStorage.getItem('auth-storage') || '{}')?.state?.token ?? '';
+      } catch {
+        return '';
+      }
+    });
+    expect(token, 'no bearer token after login — the harness is broken').toBeTruthy();
+
+    const res = await request.get('/api/v1/runs?page=1&size=1', {
+      headers: { Authorization: `Bearer ${token}` },
+      failOnStatusCode: false,
+    });
+    expect(res.ok(), `runs lookup failed with ${res.status()}`).toBeTruthy();
+    const runs = (await res.json()).items ?? [];
+    expect(runs.length, 'no runs anywhere on this deployment').toBeGreaterThan(0);
+
+    await page.addInitScript((id) => {
+      localStorage.setItem(
+        'testlookup-active-project',
+        JSON.stringify({ state: { activeProjectId: id, activeProject: null }, version: 0 }),
+      );
+    }, runs[0].project_id as string);
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await performRealLogin(page);
+  });
+
+  for (const [label, path] of [
+    ['defects', '/defects'],
+    ['quarantine', '/quarantine'],
+  ] as const) {
+    test(`${label} declares that the release filter does not reach it`, async ({
+      page,
+      request,
+    }) => {
+      await pinProjectWithRuns(page, request);
+      await page.goto(path);
+
+      const picker = page.getByLabel('Filter by release');
+      await expect(picker).toBeEnabled();
+      const value = await picker.locator('option').nth(1).getAttribute('value');
+      if (!value) throw new Error('the picker offers no release for a pinned project');
+
+      // Nothing to explain until a release is chosen.
+      await expect(page.locator(BADGE)).toHaveCount(0);
+
+      await picker.selectOption(value);
+
+      await expect(
+        page.locator(BADGE),
+        `${path} shows project-wide numbers under a release filter with nothing saying so`,
+      ).toBeVisible();
+    });
+  }
+
+  test('my-failures carries the release to the API instead of ignoring it', async ({
+    page,
+    request,
+  }) => {
+    // Asserted on the WIRE, not on rendered rows: this deployment's assignment
+    // data is not fixed, so "the list changed" is not a stable assertion, but
+    // "the request carried the filter" is exactly what was missing.
+    await pinProjectWithRuns(page, request);
+
+    const scoped: string[] = [];
+    await page.route('**/api/v1/me/assigned-failures**', async (route) => {
+      if (route.request().url().includes('release_id=')) scoped.push(route.request().url());
+      await route.continue();
+    });
+
+    await page.goto('/my-failures');
+    const picker = page.getByLabel('Filter by release');
+    await expect(picker).toBeEnabled();
+    const value = await picker.locator('option').nth(1).getAttribute('value');
+    if (!value) throw new Error('the picker offers no release for a pinned project');
+
+    await picker.selectOption(value);
+    await page.waitForLoadState('networkidle');
+
+    expect(
+      scoped.length,
+      'the inbox was requested project-wide under a release filter — the picker is inert on this page',
+    ).toBeGreaterThan(0);
+
+    // Deliberately NOT asserting a release-scoped `/count` request here. The
+    // sidebar badge is `useMyFailuresCountUnscoped`, which spans every project
+    // and every release on purpose — it is an "all my work" indicator, not a
+    // mirror of this page. Asserting otherwise passed review in an earlier
+    // draft of this test and failed against the deployment, which is where the
+    // mistake surfaced.
+  });
+
+  test('my-failures is NOT labelled, because its filter works', async ({
+    page,
+    request,
+  }) => {
+    // The control that keeps the two fixes distinct. Labelling a page whose
+    // filter actually applies would state the opposite of the truth.
+    await pinProjectWithRuns(page, request);
+    await page.goto('/my-failures');
+
+    const picker = page.getByLabel('Filter by release');
+    await expect(picker).toBeEnabled();
+    const value = await picker.locator('option').nth(1).getAttribute('value');
+    if (!value) throw new Error('the picker offers no release for a pinned project');
+    await picker.selectOption(value);
+
+    await expect(page.locator(BADGE)).toHaveCount(0);
+  });
+});

@@ -56,6 +56,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
+import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -1697,6 +1698,12 @@ export default function DefectsPage() {
                 <span style={{ color: 'var(--status-failed)' }}>{model.p0Count} P0 blocking release</span>
               </>
             )}
+            {/* This line already says "blocking release", so a reader with one
+                selected in the header takes these counts as that release's.
+                They are the project's: `/analytics/defects` has no release
+                dimension, and a defect raised against an earlier release can
+                still be open now. */}
+            <AllReleasesBadge reason="Defects are tracked per project, not per release — one raised against an earlier release can still be open now. Whether a defect blocks a particular release is decided by the release gate." />
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">

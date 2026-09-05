@@ -316,7 +316,7 @@ async def test_count_endpoint_returns_scalar():
     user = SimpleNamespace(id=uuid.uuid4())
 
     result = await my_assigned_failures_count(
-        project_id=None, days=30, db=db, current_user=user,
+        project_id=None, days=30, release_id=None, db=db, current_user=user,
     )
     assert result == {"count": 7}
 
@@ -332,6 +332,6 @@ async def test_count_endpoint_handles_null_scalar():
     user = SimpleNamespace(id=uuid.uuid4())
 
     result = await my_assigned_failures_count(
-        project_id="all", days=30, db=db, current_user=user,
+        project_id="all", days=30, release_id=None, db=db, current_user=user,
     )
     assert result == {"count": 0}
