@@ -1,5 +1,215 @@
 # Changelog
 
+## Backlog — Production-readiness UX audit, P1-P3 (not yet implemented)
+
+Filed 2026-09-05 from a design handoff bundle
+(`design_handoff_production_readiness/`, with an audit + scorecard in section 6a
+of the mockup). **This is the parent of the two entries below it** — it ships the
+TimingCell and pagination handoffs as its own P1-3 items 1 and 2, so take it as
+the plan of record and those two as the detailed specs. **Not implemented.**
+
+**P1 — the guards that are not guarding**
+
+* **P1-1 · ~20 destructive actions use native `window.confirm`.** Verified: **24
+  call sites across 17 files**. The argument for replacing them is better than
+  "inconsistent styling" — a browser that offers "prevent additional dialogs"
+  can suppress a repeat confirm entirely, and the guard then silently does
+  nothing while the code still reads as guarded. Proposes a shared
+  `ConfirmDialog` with an optional `typedName` for irreversible operations, on
+  the pattern already used by the Retention and ProjectData danger zones.
+* **P1-2 · dialogs let focus escape.** Proposes a `useDialog` hook (focus trap,
+  Escape, focus restore, scroll lock) generalised from
+  `TransitionReasonDialog.tsx`, which the handoff correctly identifies as the
+  one already-correct implementation. **Scope correction: the handoff says "~15"
+  modals; there are 31 `role="dialog"` components under `src/`.** That is double
+  the stated work and should be re-estimated before anyone commits to it.
+* **P1-3 · four rendering fixes.** TimingCell and pagination are the two entries
+  below. The other two: TopBar popovers rendering under page panels — and the
+  handoff is right that `components/ui/HeaderPopover.tsx` already portals with
+  Escape and outside-click handling, so this is a migration of ThemePicker and
+  the account menu onto it rather than new code; and a title-first layout for
+  the `/test-management` Cases table.
+
+**P2**
+
+* **P2-1 · `/users` pagination is fake.** `UserManagementPage.tsx:93` fetches
+  `page_size: PAGE_SIZE` (the 200 API max) and filters client-side over a
+  possibly-truncated set, with an `isTruncated` banner at `:102` admitting it.
+  Server-side paging plus moving the role/status filters into query params makes
+  the filters operate on the whole set, and the banner disappears by design.
+* **P2-2 · a11y parity for `/intelligence` and `/live`** with the patterns
+  already on Coverage/Defects/Runs.
+* **P2-3 · remove placeholder buttons.** **Scope correction: the handoff names
+  the two on `ReleaseCard.tsx` (:99, :106), but there are four** — `Export
+  schedule` and `Calendar view` at `ReleasesPage.tsx:700,707` toast the same
+  "coming in next iteration". As written, P2-3 would leave two placeholders
+  standing and the handoff's own acceptance check 6 ("No button in the app
+  toasts 'coming in next iteration'") would fail.
+
+**P3** — normalise loading and toast copy (`PerformancePage.tsx:17` is a bare
+`Loading...` div; `DigestsPage.tsx` has four bare `toast.error('Failed')` at
+:87, :90, :94, :113 that should name the operation); optional undo-toasts for
+low-risk deletes; URL-persisted sort/filter state copied from SearchPage.
+
+**Worth keeping in the plan: the handoff carries a "do NOT change" list** —
+outage-vs-empty-state separation (guarded by `outageRendersAsNoData.test.tsx`),
+the honest empty states that prefer "no estimate" to a fake zero, the
+gate-decision Undo on RunIntelligencePage, and the typed-name confirmations on
+the existing danger zones. A UX pass that quietly regressed any of those would
+be a net loss, and naming them up front is the reason it would not.
+
+## Backlog — "Open flaky coach" leads to a dead end (not yet fixed)
+
+Reported 2026-09-05: from `/overview` with no project chosen, the "Flaky tests"
+KPI card's **Open flaky coach** link lands on `/flaky-coach` showing nothing.
+**Not implemented — this entry is the backlog item.**
+
+**First, a correction to the report, because it changes the fix.** Reproduced
+live against the deployment (`main` @ `b278a426`, logged in as admin, default
+All Projects): the page is **not blank**. It renders a titled empty state —
+"Select a project · Flaky Coach requires a specific project selection to analyze
+test history." Also checked the state that WOULD produce a blank page — a
+persisted project id that no longer exists — and `projectStore` reconciles it to
+`ALL_PROJECTS_ID` on read, so that path does not exist either. So the fix is not
+"stop rendering nothing"; the page already says what is wrong. The defect is
+that saying so is all it does.
+
+**What is actually wrong, and it is two things.**
+
+1. **The dead end offers no way out of itself.** `FlakyCoachPage.tsx:198-212`
+   renders an `EmptyState` with an icon, a title and a description — and no
+   control. The remedy (the project selector) is in the top bar, and the user
+   has to know that. **23 page components** render some form of "select a
+   project" and, as far as this one shows, none embeds the picker that resolves
+   it.
+2. **The link is offered from a state in which its destination cannot work.**
+   `OverviewPage.tsx:1333` sets `linkTo="/flaky-coach"` unconditionally, on a
+   card whose number is a **cross-project aggregate** — the dashboard says
+   "Flaky tests: 22" and sends you to a page that categorically cannot show any
+   of them. Of the seven `linkTo` targets on the dashboard, `/flaky-coach` is
+   the ONLY one that hard-gates on a single project (`if (isAllProjects)` appears
+   in `FlakyCoachPage.tsx` and in none of `/runs`, `/defects`, `/failures`,
+   `/value-metrics`, `/test-management`). That makes this an inconsistency
+   rather than a pattern — every other dashboard destination works in All
+   Projects mode.
+
+**How to resolve this class, not just this instance.** Three layers, in
+increasing order of what they buy:
+
+* **Make the dead end actionable.** Give `EmptyState` a first-class
+  "requires a project" variant that renders the project picker inline, so the
+  problem is resolved where it is encountered. One component; the 23 call sites
+  converge on it instead of each writing its own sentence.
+* **Stop offering links that cannot work.** Introduce a small route→scope
+  registry (`'/flaky-coach': 'single-project'`) and have the link layer —
+  `KpiCard` and friends — ask whether the destination is reachable in the
+  current scope, rather than every call site remembering. In All Projects mode
+  the card then either withholds the link or offers "pick a project to open the
+  coach", which is the honest affordance.
+* **Make it un-reintroducible.** That registry is testable, and this repo
+  already ratchets invariants this way. A unit test can walk the route table in
+  `App.tsx`, find every page whose source contains the single-project guard, and
+  assert it is declared in the registry — so a new project-gated page fails the
+  build until its scope is declared, and any link to it is checked automatically.
+
+**The open product question underneath.** Whether Flaky Coach *should* be
+single-project at all. The KPI can count flakes across projects, so the data
+supports an aggregate view; the coach's per-test history analysis may not. That
+decision belongs to whoever owns the page — but until it is made, the dashboard
+should not advertise a number it cannot then show.
+
+## Backlog — Standard table pagination, 10 rows by default (not yet implemented)
+
+Filed 2026-09-05 from a design handoff bundle
+(`design_handoff_table_pagination/`, with a before/after mockup in sections
+5a/5b). **Not implemented — this entry is the backlog item.** It is **P1-3 item
+2** of the production-readiness audit above; this entry is the detailed spec,
+that one is the plan of record.
+
+**The ask.** Replace the prev/next-only `Pagination` with a numbered,
+size-selectable bar, and make **10** the default page size across every table.
+
+**Current state, as audited by the handoff.** `components/ui/Pagination.tsx` is
+prev/next plus "Page X of Y" and returns `null` when `pages <= 1`. Nine tables
+use it (IntelligenceHubPage, RunsPage ×2, LiveExecutionPage, ReleasesPage,
+RunDetailPage, MyFailuresPage, SearchPage, TestManagementPage ×3). Page sizes
+are scattered constants — `TABLE_PAGE_SIZE`, `LINKED_PAGE_SIZE`,
+`SUITE_CASES_PAGE_SIZE`, `RESULTS_PAGE_SIZE` all at 25, with 50/100/200
+elsewhere — and `settings/AgentActivityPage.tsx` and
+`components/fixer/FixAttemptsSection.tsx` duplicate their own offset controls
+instead of using the shared component.
+
+**Shape of the change.** The new props (`pageSize`, `pageSizeOptions`,
+`onPageSizeChange`, `storageKey`) are all optional, so the nine existing call
+sites compile unchanged and gain numbered pages immediately. A shared
+`DEFAULT_TABLE_PAGE_SIZE = 10` replaces the scattered constants, and a
+`usePagination(totalItems, storageKey)` hook carries the page-clamp that several
+pages currently re-implement (snap to the last page when rows disappear
+underneath you). Size choice persists per `storageKey`; changing size or a
+filter resets to page 1. Server-paginated tables pass the size through the
+`page`/`size` params their APIs already accept.
+
+**Two things worth deciding before starting.** First, the handoff keeps
+`return null` at one page only when no size picker is present — so most tables
+will start rendering a bar they never rendered before, which is a visible change
+on every screen with a short table, not just the paginated ones. Second,
+`UserManagementPage` is called out as fetch-200-and-paginate-client-side; that
+keeps its existing truncation notice honest but means its "10 per page" is
+paging a truncated set, which should stay visible in the UI.
+
+**Acceptance** (from the handoff): every listed table defaults to 10 rows with
+the new bar and no page keeps its ad-hoc controls; the window algorithm shows
+`1 2 3 … 13` and `1 … 6 7 8 … 13` on page 7; size persists across reload;
+deleting rows on the last page snaps back rather than showing an empty page;
+`Pagination.test.tsx` keeps its three existing tests passing and gains
+window-algorithm and size-picker cases.
+
+## Backlog — TimingCell cross-day overlap on /intelligence (not yet fixed)
+
+Filed 2026-09-05 from a design handoff bundle
+(`design_handoff_timingcell_overlap_fix/`: a README spec plus a before/after
+mockup, `TestLookup UX Fixes (standalone).html`). Recorded here rather than in
+`docs/`, which is gitignored. **Not implemented — this entry is the backlog
+item.** It is **P1-3 item 1** of the production-readiness audit above; this
+entry is the detailed spec, that one is the plan of record.
+
+**The bug.** On `/intelligence`, in "Recent runs analyzed", the TIMING column
+text overlaps PASS RATE whenever a run spans more than one day
+(`Aug 27, 20:23 -> Aug 29, 16:04`). Same-day runs render fine.
+
+**Root cause, verified against the code rather than taken on trust:**
+
+* `TimingCell.tsx:53` is `'px-3.5 py-2 text-right align-middle'` — **no
+  overflow clamp** on the cell.
+* `:57` renders `formatTimingRange(started, end)` in a `whitespace-nowrap` span.
+* The caller pins the column at `w-[158px] max-w-[158px]`
+  (`IntelligenceHubPage.tsx:842`). A same-day range fits; a cross-day one is
+  roughly 230px.
+* `:56` wraps in `flex flex-col items-end`, so the over-wide nowrap text bleeds
+  **leftward** over the neighbouring column instead of clipping.
+
+`/runs` and `/live` use the same component and would inherit the fix.
+
+**The proposed fix** is stacking the cross-day range onto two right-aligned
+lines plus `overflow-hidden` on the cell — one file, `TimingCell.tsx`. The
+handoff is explicit that widening the column is NOT the answer: `w-[220px]`
+re-crowds the table at laptop widths, which is the original problem this
+component was built to solve.
+
+**One implementation note before anyone takes this.** The handoff detects the
+cross-day case by sniffing the formatted string — `/[A-Za-z]/.test(to)`, on the
+grounds that a same-day end is time-only. That is currently true and is pinned
+by `formatters.test.ts:161` ("collapses a same-day range", "REPEATS the date
+when the run crosses midnight"), so the heuristic works. But it couples the
+component to the formatter's output shape, and `TimingCell` already receives
+both `started` and `end` — comparing their calendar days directly is the same
+amount of code and cannot be broken by a future change to how the range reads.
+
+**Acceptance:** no overlap at 1440px and 1280px on `/intelligence`, `/runs` and
+`/live` (including a running live session); the Timing column stays visible
+below 768px because it is the sort key; the full-ISO `title` tooltip is
+unchanged.
+
 ## 2026-09-05 — The release axis, checked against a real deployment
 
 The epic's e2e spec covered the release axis as it stood after the first pass.
