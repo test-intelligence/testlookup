@@ -33,7 +33,12 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, get_db
+from app.core.deps import (
+    get_current_active_user,
+    get_db,
+    resolve_release_query_scope,
+)
+from app.core.release_filter import release_predicate
 from app.models.postgres import (
     Project,
     TestCase,
@@ -100,6 +105,9 @@ def _parse_project_id(raw: Optional[str]) -> Optional[uuid.UUID]:
 async def list_my_assigned_failures(
     project_id: Optional[str] = Query(None, description='Project UUID or "all"'),
     days: int = Query(30, ge=1, le=365, description="Time window (created_at)"),
+    release_id: Optional[str] = Query(
+        None, description="Only failures from runs in this release."
+    ),
     page: int = Query(1, ge=1),
     size: int = Query(25, ge=1, le=100),
     scope: str = Query(
@@ -125,6 +133,8 @@ async def list_my_assigned_failures(
     """
     scoped_project_id = _parse_project_id(project_id)
     period_start = datetime.now(timezone.utc) - timedelta(days=days)
+    # Access-checked and sentinel-aware, like every other release-scoped read.
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
 
     # Team scope is only honoured for QA_LEAD / ADMIN. Anyone else
     # silently falls back to ``mine`` so the URL can't be tampered with
@@ -171,6 +181,12 @@ async def list_my_assigned_failures(
     ]
     if effective_scope == "mine":
         base_filters.append(TestCase.assigned_to_user_id == current_user.id)
+    # The release axis. Appended to `base_filters`, which BOTH the count and
+    # the list query use — so the badge and the table cannot end up scoped
+    # differently, which is the "one response, two scopes" defect this epic
+    # produced twice elsewhere.
+    base_filters.extend(release_predicate(release_id))
+
     if scoped_project_id is not None:
         base_filters.append(TestRun.project_id == scoped_project_id)
     elif allowed_project_ids is not None:

@@ -34,3 +34,37 @@ def is_unattributed(release_id: str | None) -> bool:
     malformed — a 422 for what was really a capitalisation difference.
     """
     return isinstance(release_id, str) and release_id.strip().lower() == UNATTRIBUTED
+
+
+def release_predicate(release_id, model=None) -> list:
+    """The release rule for a SQLAlchemy Core ``.where()``, as a splat-able list.
+
+    ``[]`` when no release is asked for, so the compiled SQL is byte-identical
+    to before the axis existed. That is NFR1, expressed the only way a Core
+    select can express it — the raw-SQL side achieves the same thing by
+    appending an empty fragment, and both exist so the planner keeps using
+    ``ix_test_runs_project_release_created`` for the callers who never asked
+    for a release.
+
+    Lives here, with the sentinel, because the alternative is what this module's
+    own docstring warns about: several surfaces each spelling the same rule,
+    with no error when they disagree — just filters that quietly disagree about
+    what a release contains. ``summary_report_service`` had its own copy for
+    exactly one commit.
+
+    ``model`` defaults to ``TestRun`` and is imported lazily: this module lives
+    in ``core`` so that ``core.deps`` can use it without creating a
+    core -> models dependency at import time.
+    """
+    if release_id is None:
+        return []
+    if model is None:
+        from app.models.postgres import TestRun
+
+        model = TestRun
+    if is_unattributed(release_id):
+        return [model.primary_release_id.is_(None)]
+
+    import uuid as _uuid
+
+    return [model.primary_release_id == _uuid.UUID(str(release_id))]

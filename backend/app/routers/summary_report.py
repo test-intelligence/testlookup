@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
     get_accessible_project_ids,
+    resolve_release_query_scope,
     get_current_active_user,
 )
 from app.db.postgres import get_db
@@ -58,6 +59,18 @@ async def get_summary_report(
         "window",
         description="``window`` aggregates every run in the window; ``latest`` takes the most recent run per suite.",
     ),
+    # APPENDED, not inserted. Adding a parameter mid-signature reorders it for
+    # every positional caller — three existing router tests then passed their
+    # project UUID into `release_id` and got a 422. FastAPI resolves these by
+    # name at runtime, so position only matters to direct callers, which is
+    # exactly what the tests are.
+    release_id: Optional[str] = Query(
+        None,
+        description=(
+            "Scope every number in the report to one release. Omit for all "
+            "releases — the SQL is then byte-identical to before this existed."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -65,8 +78,13 @@ async def get_summary_report(
     if project_id is not None:
         await _enforce_project_access(db, current_user, project_id)
 
+    # The release axis (S4a's shape). Resolved through the shared helper so the
+    # id is access-checked and the Unattributed sentinel is handled the same way
+    # every other release-scoped read handles it.
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
+
     payload = await svc.build_summary_report(
-        db, project_id, days=days, mode=mode,
+        db, project_id, days=days, mode=mode, release_id=release_id,
     )
     return SummaryReportResponse(**payload)
 
@@ -78,12 +96,20 @@ async def export_summary_report_pdf(
     mode: SummaryMode = Query("window"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    # The export has to carry the same scope as the screen. A release-scoped
+    # report whose PDF is project-wide is the "one response, two scopes" defect
+    # in its worst form: the discrepancy leaves the product entirely, in a file
+    # somebody attaches to a sign-off.
+    release_id: Optional[str] = Query(
+        None, description="Scope the exported report to one release."
+    ),
 ):
     """Return the summary report as a downloadable PDF."""
     await _enforce_project_access(db, current_user, project_id)
+    release_id = await resolve_release_query_scope(db, release_id, current_user)
 
     payload = await svc.build_summary_report(
-        db, project_id, days=days, mode=mode,
+        db, project_id, days=days, mode=mode, release_id=release_id,
     )
 
     # ReportLab is sync + CPU-bound — keep the event loop free.

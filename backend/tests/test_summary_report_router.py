@@ -108,6 +108,11 @@ async def test_get_summary_report_returns_service_envelope():
     ):
         result = await get_summary_report(
             project_id=project_id, days=7, mode="window",
+            # Explicit, because this calls the handler DIRECTLY. FastAPI
+            # resolves `Query(None)` to None per request; a direct call gets
+            # the Query OBJECT, which the release resolver then tries to parse
+            # as a UUID and rejects with a 422.
+            release_id=None,
             db=db, current_user=user,
         )
 
@@ -176,6 +181,11 @@ async def test_get_summary_report_preserves_phase5_step_fields():
     ):
         result = await get_summary_report(
             project_id=project_id, days=7, mode="window",
+            # Explicit, because this calls the handler DIRECTLY. FastAPI
+            # resolves `Query(None)` to None per request; a direct call gets
+            # the Query OBJECT, which the release resolver then tries to parse
+            # as a UUID and rejects with a 422.
+            release_id=None,
             db=db, current_user=user,
         )
 
@@ -218,7 +228,8 @@ async def test_get_summary_report_works_with_no_project_id():
         new=AsyncMock(return_value=empty_envelope),
     ):
         result = await get_summary_report(
-            project_id=None, days=7, mode="window", db=db, current_user=user,
+            project_id=None, days=7, mode="window", release_id=None,
+            db=db, current_user=user,
         )
 
     assert result.project_id is None
@@ -249,6 +260,11 @@ async def test_pdf_endpoint_streams_pdf_bytes():
     ):
         response = await export_summary_report_pdf(
             project_id=project_id, days=7, mode="window",
+            # Explicit, because this calls the handler DIRECTLY. FastAPI
+            # resolves `Query(None)` to None per request; a direct call gets
+            # the Query OBJECT, which the release resolver then tries to parse
+            # as a UUID and rejects with a 422.
+            release_id=None,
             db=db, current_user=user,
         )
 

@@ -23,10 +23,11 @@ from app.core.deps import (
     resolve_project_scope,
 )
 from app.db.postgres import get_db
-from app.models.postgres import User, UserRole
+from app.models.postgres import AccessAuditLog, User, UserRole
 from app.models.serializers import serialize_model
 from app.services import (
     github_release_sync,
+    release_lifecycle_service,
     jira_release_sync,
     release_gate_service,
     release_phase_gate_service,
@@ -397,6 +398,89 @@ async def update_phase(
     result = serialize_model(phase)
     result["all_phases_completed"] = all_done
     return result
+
+
+@router.post("/{release_id}/activate")
+async def activate_release_endpoint(
+    release_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    __: User = Depends(require_release_access()),
+):
+    """Make this the project's active release.
+
+    The active release is where a run lands when nothing else claims it — the
+    attribution ladder's terminal rung. It has been a real, enforced concept
+    since S0 (one per project, guarded by ``ix_releases_project_active``, with
+    activation history behind it), and until now it could only ever be chosen
+    FOR the user by the ingestion ladder and the rotation beat.
+    ``activate_release`` was written complete, with its ``reason="manual"``
+    default, for a caller that never arrived.
+
+    Both guards, not one: ``require_role`` gates by ROLE and knows nothing about
+    which project this release belongs to, so a QA lead of one project could
+    otherwise redirect another project's attribution.
+
+    The swap itself stays in ``release_lifecycle_service`` — it contains a
+    load-bearing flush between the demote and the promote, because SQLAlchemy
+    orders persistent UPDATEs by primary key and ``Release.id`` is a random
+    uuid4, so without it half of all orderings present two active rows to a
+    partial unique index. Writing ``is_active`` here instead would route around
+    that.
+    """
+    release = await release_service.get_release_or_404(db, release_id)
+
+    if release.status in release_lifecycle_service.TERMINAL_STATUSES:
+        # A finished release must not collect new runs: the next unlabelled run
+        # would be attributed to something already shipped, and the misdated
+        # evidence would sit in its gate decision looking legitimate.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{release.name}' is {release.status} and cannot be made "
+                "active — a finished release must not collect new runs."
+            ),
+        )
+
+    if release.is_active:
+        # Idempotent by design. A double-click, or two people acting on the
+        # same stale page, must not be an error — the requested state is the
+        # state.
+        return {
+            "release_id": str(release.id),
+            "is_active": True,
+            "deactivated": None,
+            "changed": False,
+        }
+
+    previous = await release_lifecycle_service.activate_release(
+        db, release, reason="manual"
+    )
+
+    db.add(
+        AccessAuditLog(
+            actor_user_id=current_user.id,
+            actor_name=current_user.username,
+            project_id=release.project_id,
+            action="release.activated",
+            before_value=(
+                {"release_id": str(previous.id), "name": previous.name}
+                if previous is not None
+                else None
+            ),
+            after_value={"release_id": str(release.id), "name": release.name},
+        )
+    )
+
+    # The router owns the transaction, so the demote and the promote commit
+    # together — there is never a committed state with two actives or none.
+    await db.commit()
+    return {
+        "release_id": str(release.id),
+        "is_active": True,
+        "deactivated": str(previous.id) if previous is not None else None,
+        "changed": True,
+    }
 
 
 @router.get("/{release_id}/phases/gate")

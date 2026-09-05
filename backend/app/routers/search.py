@@ -382,6 +382,25 @@ async def search_test_cases(
         "page": page,
         "size": size,
         "pages": pages,
+        # Search is deliberately NOT release-scoped, and says so.
+        #
+        # Every other windowed read honours the header's release filter. This
+        # one must not: search is a DISCOVERY tool, and scoping it would return
+        # nothing for a test that exists but last ran in another release —
+        # which reads as "that test does not exist". A user hunting for a test
+        # they know they wrote would conclude the product had lost it.
+        #
+        # Saying so in the payload is the other half of the S4b decision: a
+        # surface that ignores a filter the header is showing has to declare
+        # it, or the user reasonably assumes it applied. The UI renders this as
+        # the all-releases badge.
+        "scope": {
+            "release": "not_applicable",
+            "note": (
+                "Search spans every release in the project by design — a test "
+                "you are looking for may have last run in a different one."
+            ),
+        },
     }
 
 

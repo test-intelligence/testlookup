@@ -69,11 +69,39 @@ class _Totals:
         return round((n / self.total) * 100.0, 1) if self.total else 0.0
 
 
+def _release_predicate(release_id) -> list:
+    """The one Core predicate, imported rather than restated.
+
+    It lived here for exactly one commit before `my_failures` needed the same
+    rule — which is the moment a local copy becomes two surfaces that can
+    disagree about what a release contains.
+    """
+    from app.core.release_filter import release_predicate
+
+    return release_predicate(release_id)
+
+
+def _release_filter(params: dict, release_id, alias: str = "tr") -> str:
+    """Release scoping for this module's raw-SQL queries.
+
+    Imported from ``analytics_service`` rather than restated. The rule has two
+    halves — a conditional fragment (never ``(:p IS NULL OR col = :p)``, which
+    loses ``ix_test_runs_project_release_created`` for every caller who passes
+    no release) and the Unattributed sentinel, which arrives as a literal
+    string rather than a UUID. A second copy would drift, and this module and
+    the analytics pages would then disagree about what a release contains.
+    """
+    from app.services.analytics_service import _add_release_param
+
+    return _add_release_param(params, release_id, table_alias=alias)
+
+
 async def build_summary_report(
     db: AsyncSession,
     project_id: Optional[uuid.UUID],
     days: int,
     mode: SummaryMode = "window",
+    release_id: Optional[str] = None,
 ) -> dict:
     """Compose the summary report for a project.
 
@@ -115,7 +143,9 @@ async def build_summary_report(
         suites = await _per_suite_breakdown_latest(db, project_id, period_start, now)
 
     flaky_count = await _count_flaky_tests(db, str(project_id), None)
-    top_failing = await _top_failing_tests(db, project_id, period_start, now, limit=10)
+    top_failing = await _top_failing_tests(
+        db, project_id, period_start, now, limit=10, release_id=release_id
+    )
     # Phase 5 enrichment (additive, no migration): attach the LATEST-RUN-ONLY
     # granular step snapshot to each top-failing test so reports/PDF can show
     # where the test failed. Batched — one canonical lookup + one steps fetch.
@@ -272,6 +302,7 @@ async def _window_totals(
     project_id: uuid.UUID,
     start: datetime,
     end: datetime,
+    release_id: Optional[str] = None,
 ) -> tuple[_Totals, int, int, Optional[datetime]]:
     """Project-wide unique-test totals across the window.
 
@@ -287,6 +318,10 @@ async def _window_totals(
     from test_runs because they're inherently run-scoped, not
     test-scoped.
     """
+    # The same fragment for every statement in this helper: a report whose
+    # headline was release-scoped and whose per-suite rows were not would
+    # answer two different questions under one heading.
+    release_filter = _release_filter({}, release_id)
     run_stmt = select(
         func.count(TestRun.id).label("runs"),
         func.coalesce(func.avg(TestRun.duration_ms), 0).label("avg_duration_ms"),
@@ -298,13 +333,19 @@ async def _window_totals(
         func.coalesce(func.sum(TestRun.broken_tests), 0).label("agg_broken"),
     ).where(
         TestRun.project_id == project_id,
+        # Core select, so the predicate is expressed directly rather than
+        # through the SQL fragment. `run_count`, `avg_duration_ms` and `latest`
+        # are run-scoped by nature, so a release-scoped report must narrow them
+        # too — otherwise the headline counts runs from every release while the
+        # test totals beside it count one.
+        *_release_predicate(release_id),
         TestRun.created_at >= start,
         TestRun.created_at < end,
     )
     run_row = (await db.execute(run_stmt)).one()
 
     uniq_stmt = text(
-        """
+        f"""
         WITH latest_per_fp AS (
             SELECT DISTINCT ON (tc.test_fingerprint)
                 tc.test_fingerprint,
@@ -314,6 +355,7 @@ async def _window_totals(
             WHERE tr.project_id = :project_id
               AND tr.created_at >= :start
               AND tr.created_at < :end
+              {release_filter}
               AND tc.test_fingerprint IS NOT NULL
             ORDER BY tc.test_fingerprint, tr.created_at DESC
         )
@@ -329,7 +371,7 @@ async def _window_totals(
     uniq_row = (
         await db.execute(
             uniq_stmt,
-            {"project_id": str(project_id), "start": start, "end": end},
+            _p(project_id, start, end, release_id),
         )
     ).one()
 
@@ -365,6 +407,7 @@ async def _latest_totals(
     project_id: uuid.UUID,
     start: datetime,
     end: datetime,
+    release_id: Optional[str] = None,
 ) -> tuple[_Totals, int, int, Optional[datetime]]:
     """Sum aggregates across the latest TestRun per primary_suite_name.
 
@@ -372,8 +415,12 @@ async def _latest_totals(
     still counts so the user sees their data — falls back to grouping
     by run id itself.
     """
+    # This query reads test_runs unaliased, so the predicate names the
+    # column directly rather than through "tr.".
+    release_filter_bare = _release_filter({}, release_id, alias="test_runs")
+    release_filter_bare = release_filter_bare.replace("test_runs.", "")
     query = text(
-        """
+        f"""
         WITH latest_per_suite AS (
             SELECT DISTINCT ON (COALESCE(primary_suite_name, id::text))
                 id, total_tests, passed_tests, failed_tests, skipped_tests,
@@ -382,6 +429,7 @@ async def _latest_totals(
             WHERE project_id = :project_id
               AND created_at >= :start
               AND created_at < :end
+              {release_filter_bare}
             ORDER BY COALESCE(primary_suite_name, id::text), created_at DESC
         )
         SELECT
@@ -399,7 +447,7 @@ async def _latest_totals(
     row = (
         await db.execute(
             query,
-            {"project_id": str(project_id), "start": start, "end": end},
+            _p(project_id, start, end, release_id),
         )
     ).one()
     return (
@@ -421,6 +469,7 @@ async def _per_suite_breakdown_window(
     project_id: uuid.UUID,
     start: datetime,
     end: datetime,
+    release_id: Optional[str] = None,
 ) -> list[dict]:
     """Per-suite stats across every test_case row in the window.
 
@@ -448,8 +497,11 @@ async def _per_suite_breakdown_window(
     The two sources are unioned and re-aggregated so a suite that
     appears in both is summed correctly (rather than appearing twice).
     """
+    # One fragment per statement in this helper, so a release-scoped
+    # headline cannot sit above per-suite rows that ignored it.
+    release_filter = _release_filter({}, release_id)
     query = text(
-        """
+        f"""
         WITH latest_per_fp AS (
             -- One row per (suite, fingerprint): the most recent
             -- execution in the window. Pass/fail buckets come from
@@ -489,6 +541,7 @@ async def _per_suite_breakdown_window(
             WHERE tr.project_id = :project_id
               AND tr.created_at >= :start
               AND tr.created_at < :end
+              {release_filter}
               AND effective_suite IS NOT NULL
               AND tc.test_fingerprint IS NOT NULL
             ORDER BY effective_suite, tc.test_fingerprint, tr.created_at DESC
@@ -518,6 +571,7 @@ async def _per_suite_breakdown_window(
             WHERE tr.project_id = :project_id
               AND tr.created_at >= :start
               AND tr.created_at < :end
+              {release_filter}
               AND tr.primary_suite_name IS NOT NULL
               AND TRIM(tr.primary_suite_name) <> ''
               AND NOT EXISTS (
@@ -572,7 +626,7 @@ async def _per_suite_breakdown_window(
     rows = (
         await db.execute(
             query,
-            {"project_id": str(project_id), "start": start, "end": end},
+            _p(project_id, start, end, release_id),
         )
     ).all()
     return [_suite_row_to_dict(r) for r in rows]
@@ -583,6 +637,7 @@ async def _per_suite_breakdown_latest(
     project_id: uuid.UUID,
     start: datetime,
     end: datetime,
+    release_id: Optional[str] = None,
 ) -> list[dict]:
     """Per-suite stats from each suite's most recent run only.
 
@@ -599,8 +654,11 @@ async def _per_suite_breakdown_latest(
     Without the second path, suites with active runs that haven't
     persisted per-test rows yet are silently invisible on the report.
     """
+    # One fragment per statement in this helper, so a release-scoped
+    # headline cannot sit above per-suite rows that ignored it.
+    release_filter = _release_filter({}, release_id)
     query = text(
-        """
+        f"""
         WITH all_candidates AS (
             -- Test-cases-driven candidates: every (suite, run) pair where
             -- per-test rows have landed for the run.
@@ -630,6 +688,7 @@ async def _per_suite_breakdown_latest(
             WHERE tr.project_id = :project_id
               AND tr.created_at >= :start
               AND tr.created_at < :end
+              {release_filter}
               AND COALESCE(
                     CASE
                         WHEN tr.trigger_source = 'live_stream'
@@ -649,6 +708,7 @@ async def _per_suite_breakdown_latest(
             WHERE tr.project_id = :project_id
               AND tr.created_at >= :start
               AND tr.created_at < :end
+              {release_filter}
               AND tr.primary_suite_name IS NOT NULL
               AND TRIM(tr.primary_suite_name) <> ''
               AND NOT EXISTS (
@@ -722,10 +782,22 @@ async def _per_suite_breakdown_latest(
     rows = (
         await db.execute(
             query,
-            {"project_id": str(project_id), "start": start, "end": end},
+            _p(project_id, start, end, release_id),
         )
     ).all()
     return [_suite_row_to_dict(r) for r in rows]
+
+
+def _p(project_id, start, end, release_id) -> dict:
+    """Params for this module's queries, WITH the release bind.
+
+    One builder, because the defect this fixes elsewhere in the codebase was a
+    fresh params dict that did not carry a bind the interpolated SQL referenced
+    — a StatementError, surfacing as a 500.
+    """
+    params: dict = {"project_id": str(project_id), "start": start, "end": end}
+    _release_filter(params, release_id)
+    return params
 
 
 def _suite_row_to_dict(r) -> dict:
@@ -757,6 +829,7 @@ async def _per_suite_step_success(
     project_id: uuid.UUID,
     start: datetime,
     end: datetime,
+    release_id: Optional[str] = None,
 ) -> dict[str, dict]:
     """Per-suite granular STEP success-rate (Phase 5 enrichment).
 
@@ -772,6 +845,9 @@ async def _per_suite_step_success(
     summed. One batched query — no N+1 over tests.
     """
     effective_suite = _effective_suite_sql()
+    # One fragment per statement in this helper, so a release-scoped
+    # headline cannot sit above per-suite rows that ignored it.
+    release_filter = _release_filter({}, release_id)
     query = text(
         f"""
         WITH tests_in_suite AS (
@@ -788,6 +864,7 @@ async def _per_suite_step_success(
             WHERE tr.project_id = :project_id
               AND tr.created_at >= :start
               AND tr.created_at < :end
+              {release_filter}
               AND tc.canonical_test_case_id IS NOT NULL
               AND {effective_suite} IS NOT NULL
         ),
@@ -815,7 +892,7 @@ async def _per_suite_step_success(
     rows = (
         await db.execute(
             query,
-            {"project_id": str(project_id), "start": start, "end": end},
+            _p(project_id, start, end, release_id),
         )
     ).all()
     out: dict[str, dict] = {}
@@ -839,6 +916,7 @@ async def _top_failing_tests(
     start: datetime,
     end: datetime,
     limit: int,
+    release_id: Optional[str] = None,
 ) -> list[dict]:
     """Top tests by failure count in the window. Grouped by (suite, class, name).
 
@@ -873,6 +951,12 @@ async def _top_failing_tests(
             TestCase.status.in_(
                 [TestStatus.FAILED.value, TestStatus.BROKEN.value]
             ),
+            # A Core select, so the predicate is built here rather than through
+            # the SQL fragment — but it is the same rule, and it has to be
+            # applied: a "top failing tests" list that ignored the release
+            # would name failures from other releases beside a headline scoped
+            # to this one.
+            *_release_predicate(release_id),
         )
         .group_by(
             effective_suite, TestCase.class_name, TestCase.test_name

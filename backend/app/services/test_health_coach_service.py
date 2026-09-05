@@ -30,6 +30,7 @@ from app.models.postgres import (
 from app.models.schemas import (
     FlakyCoachEntry,
     FlakyCoachResponse,
+    FlakyCoachScope,
     TestHealthFinding,
     TestHealthResponse,
     TestHealthViolation,
@@ -482,6 +483,7 @@ async def get_flaky_coach(
     db: AsyncSession,
     days: int = 30,
     limit: int = 50,
+    release_id: str | None = None,
 ) -> FlakyCoachResponse:
     """
     Project-level flaky test leaderboard ranked by impact.
@@ -624,14 +626,68 @@ async def get_flaky_coach(
     # migration is needed and the headline agrees with the other surfaces by
     # construction. Manual-triage rows carry a sentinel history and are counted
     # as flaky regardless: a human's call outranks the heuristic.
+    # INTERSECTION, not a rescope — the same decision S4b made for
+    # ``/flaky-scores``, and for the same reason.
+    #
+    # This leaderboard is a rolling-window statistic keyed on
+    # (project, fingerprint). Recomputing it per release would multiply the
+    # work while answering "no data" more often than it answered: the
+    # intermittency signal needs several observations of the same test, and a
+    # three-day hotfix rarely provides them.
+    #
+    # So the release selects WHICH already-ranked tests are shown, and each
+    # entry keeps its full-window impact score. That makes the result
+    # mixed-scope, which is why the caller is told so rather than left to infer
+    # it from a list that looks entirely release-scoped.
+    if release_id is not None:
+        ran = await _fingerprints_in_release(db, project_id, release_id)
+        entries = [e for e in entries if e.test_fingerprint in ran]
+
     return FlakyCoachResponse(
         project_id=str(project_id),
         total_flaky=sum(
             1 for e in entries if history_is_intermittent(e.status_history)
         ),
-        quarantine_candidates=quarantine_count,
+        quarantine_candidates=sum(
+            1 for e in entries if getattr(e, "quarantine_recommended", False)
+        ) if release_id is not None else quarantine_count,
         entries=entries,
+        scope=FlakyCoachScope(
+            membership="release" if release_id else "project",
+            score="project_window",
+            release_id=release_id,
+            note=(
+                "Impact scores are computed project-wide over the scoring "
+                "window and are NOT recomputed per release: one release rarely "
+                "provides enough observations of the same test. A release "
+                "filter selects which ranked tests are shown, not how they "
+                "were ranked."
+            ),
+        ),
     )
+
+
+async def _fingerprints_in_release(
+    db: AsyncSession, project_id: uuid.UUID, release_id: str
+) -> set[str]:
+    """Fingerprints that actually ran in this release, for the intersection.
+
+    Project-scoped on both sides: ``test_fingerprint`` is only unique within a
+    project, so an unscoped lookup would let another project's run admit a test
+    into this leaderboard.
+    """
+    from sqlalchemy import select as _select
+
+    from app.core.release_filter import release_predicate
+    from app.models.postgres import TestCase as _TestCase
+
+    stmt = (
+        _select(_TestCase.test_fingerprint)
+        .join(TestRun, TestRun.id == _TestCase.test_run_id)
+        .where(TestRun.project_id == project_id, *release_predicate(release_id))
+        .distinct()
+    )
+    return {row for row in (await db.execute(stmt)).scalars().all() if row}
 
 
 async def _load_manual_flaky_triage(

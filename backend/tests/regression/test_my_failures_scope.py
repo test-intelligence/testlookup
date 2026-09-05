@@ -193,6 +193,10 @@ async def test_list_team_scope_path_returns_empty_envelope_cleanly():
     result = await list_my_assigned_failures(
         project_id=None,
         days=30,
+        # Explicit: a DIRECT call gets FastAPI's `Query(None)` OBJECT as the
+        # default, not None, and the release resolver rejects it as a malformed
+        # UUID. FastAPI only substitutes the real value per request.
+        release_id=None,
         page=1,
         size=25,
         scope="team",
@@ -216,6 +220,10 @@ async def test_list_mine_does_not_query_when_count_zero():
     await list_my_assigned_failures(
         project_id=None,
         days=30,
+        # Explicit: a DIRECT call gets FastAPI's `Query(None)` OBJECT as the
+        # default, not None, and the release resolver rejects it as a malformed
+        # UUID. FastAPI only substitutes the real value per request.
+        release_id=None,
         page=1,
         size=25,
         scope="mine",

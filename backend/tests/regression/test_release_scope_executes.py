@@ -237,6 +237,96 @@ async def test_both_halves_of_coverage_share_one_scope():
     )
 
 
+# The summary report joined the release axis later than the analytics reads, and
+# it is a whole page's worth of numbers: five statements across six helpers. The
+# same two invariants apply, so it is checked by the same machinery rather than
+# a parallel set of assertions that could drift.
+SUMMARY_HELPERS = (
+    "_window_totals",
+    "_latest_totals",
+    "_per_suite_breakdown_window",
+    "_per_suite_breakdown_latest",
+    "_top_failing_tests",
+    "_per_suite_step_success",
+)
+
+
+@pytest.mark.parametrize("fn_name", SUMMARY_HELPERS)
+def test_every_summary_helper_takes_a_release(fn_name):
+    """A report whose headline is release-scoped and whose per-suite rows are
+    not answers two different questions under one heading — the coverage defect
+    (D2), one page over."""
+    from app.services import summary_report_service as srs
+
+    fn = getattr(srs, fn_name)
+    sig = inspect.signature(fn)
+    assert "release_id" in sig.parameters, (
+        f"{fn_name} cannot be told which release the report is about"
+    )
+    assert sig.parameters["release_id"].default is None, (
+        "required would break every existing caller, which is the opposite of "
+        "shipping this incrementally"
+    )
+
+
+@pytest.mark.parametrize("fn_name", SUMMARY_HELPERS)
+def test_every_summary_run_query_carries_the_filter(fn_name):
+    """Counted per statement, not 'the name appears in the function'."""
+    from app.services import summary_report_service as srs
+
+    src = inspect.getsource(getattr(srs, fn_name))
+
+    # This module writes SQL two ways, and BOTH have to be scoped. A skip here
+    # would be the vacuous kind: the first version of this test only understood
+    # raw SQL, so the one helper that uses a Core select reported "nothing to
+    # check" while being genuinely unfiltered.
+    statements = re.findall(r'f"""(.*?)"""', src, re.S)
+    run_backed = [st for st in statements if re.search(r"(FROM|JOIN)\s+test_runs", st)]
+    unfiltered = [
+        st for st in run_backed if not re.search(r"\{\w*release_filter\w*\}", st)
+    ]
+    assert not unfiltered, (
+        f"{len(unfiltered)} of {len(run_backed)} raw test_runs queries in "
+        f"{fn_name} omit the release filter, so one report would mix scopes"
+    )
+
+    uses_core = "select(" in src and "TestRun" in src
+    assert run_backed or uses_core, (
+        f"{fn_name} issues no recognisable run-backed query — this test no "
+        "longer understands how the module builds SQL"
+    )
+    if uses_core:
+        assert "_release_predicate" in src, (
+            f"{fn_name} builds a Core select over TestRun without the release "
+            "predicate — the same gap as an unfiltered raw query, in the form "
+            "the raw-SQL check cannot see"
+        )
+
+
+def test_the_summary_report_accepts_a_release():
+    from app.services import summary_report_service as srs
+
+    sig = inspect.signature(srs.build_summary_report)
+    assert "release_id" in sig.parameters
+    assert sig.parameters["release_id"].default is None
+
+
+def test_the_summary_report_reuses_the_one_release_rule():
+    """Not a second copy.
+
+    "Which runs belong to this release" is a conditional fragment plus the
+    Unattributed sentinel. Restating it here would let this page and the
+    analytics pages disagree about what a release contains.
+    """
+    from app.services import summary_report_service as srs
+
+    src = inspect.getsource(srs._release_filter)
+    assert "_add_release_param" in src, (
+        "the summary report has its own release predicate — it must share the "
+        "one in analytics_service"
+    )
+
+
 @pytest.mark.parametrize(
     "fn_name",
     ["coverage_stats", "suite_detail", "flaky_tests", "failure_categories",

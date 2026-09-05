@@ -5,6 +5,7 @@ Endpoints for per-run test health findings and project-level flaky coaching.
 """
 import logging
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -14,6 +15,7 @@ from app.core.deps import (
     require_project_access,
     require_role,
     require_run_access,
+    resolve_release_query_scope,
 )
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import Project, TestRun, User, UserRole
@@ -57,6 +59,11 @@ async def get_project_flaky_coach(
     limit: int = Query(default=50, ge=1, le=200),
     current_user: User = Depends(get_current_active_user),
     _: User = Depends(require_project_access()),
+    # Selects WHICH ranked tests are shown. It does NOT rescope the impact
+    # score — see the `scope` block in the response.
+    release_id: Optional[str] = Query(
+        None, description="Only flaky tests that ran in this release."
+    ),
 ):
     """
     Get project-level flaky test leaderboard with quarantine recommendations.
@@ -70,7 +77,10 @@ async def get_project_flaky_coach(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Project not found.",
             )
-        return await get_flaky_coach(project_id, db, days=days, limit=limit)
+        release = await resolve_release_query_scope(db, release_id, current_user)
+        return await get_flaky_coach(
+            project_id, db, days=days, limit=limit, release_id=release
+        )
 
 
 @router.post("/projects/{project_id}/flaky-coach/refresh")

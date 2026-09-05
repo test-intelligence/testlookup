@@ -24,10 +24,24 @@ CHART_LABELS = {
 }
 
 
-async def fetch_trend_data(db: AsyncSession, project_id: str, days: int) -> list[dict]:
+async def fetch_trend_data(
+    db: AsyncSession, project_id: str, days: int, release_id: str | None = None
+) -> list[dict]:
+    """Daily pass-rate trend for a project, optionally for one release.
+
+    ``/metrics/trends` — the chart this report is an export OF — has been
+    release-scoped since S4a. An emailed report that ignored the release would
+    disagree with the screen it was generated from, and unlike an on-screen
+    discrepancy this one leaves the product: it lands in an inbox, detached
+    from the filter that produced it.
+    """
     period_start = datetime.now(timezone.utc) - timedelta(days=days)
+    params: dict = {"project_id": str(project_id), "period_start": period_start}
+    from app.services.analytics_service import _add_release_param
+
+    release_filter = _add_release_param(params, release_id)
     query = text(
-        """
+        f"""
         SELECT
             DATE_TRUNC('day', tr.created_at)::date::text   AS date,
             COUNT(*) FILTER (WHERE tc.status = 'PASSED')   AS passed,
@@ -43,11 +57,12 @@ async def fetch_trend_data(db: AsyncSession, project_id: str, days: int) -> list
         JOIN test_runs tr ON tr.id = tc.test_run_id
         WHERE tr.project_id = :project_id
           AND tc.created_at >= :period_start
+          {release_filter}
         GROUP BY 1
         ORDER BY 1
         """
     )
-    result = await db.execute(query, {"project_id": str(project_id), "period_start": period_start})
+    result = await db.execute(query, params)
     return [dict(row._mapping) for row in result.fetchall()]
 
 
@@ -190,7 +205,9 @@ def send_email(recipient: str, subject: str, html_body: str) -> None:
 
 async def email_trends_report(db: AsyncSession, body) -> dict:
     project_name = await fetch_project_name(db, body.project_id)
-    trend_data = await fetch_trend_data(db, body.project_id, body.days)
+    trend_data = await fetch_trend_data(
+        db, body.project_id, body.days, getattr(body, "release_id", None)
+    )
     html = build_html_report(
         project_name=project_name,
         days=body.days,

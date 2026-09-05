@@ -54,6 +54,7 @@ from app.routers import (
     performance,
     projects,
     rag_generation,
+    release_attribution_rules,
     release_gate_policies,
     release_readiness,
     releases,
@@ -155,6 +156,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     scim.token_router,              # SCIM token management (admin-only, JWT-protected)
     identity_events.router,          # Identity audit events (admin-only, JWT-protected)
     release_gate_policies.router,    # Release gate policy CRUD (ENT-02)
+    release_attribution_rules.router,  # Attribution rules — ladder rung 3 (S3a)
     ownership.router,                # Service ownership rules (ENT-04)
     saved_views.router,              # Saved views (ENT-05)
     digests.router,                  # Digest subscriptions (ENT-05)

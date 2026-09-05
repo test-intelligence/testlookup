@@ -3452,12 +3452,30 @@ class FlakyCoachEntry(BaseModel):
     failing_step_detail: Optional[str] = None
 
 
+class FlakyCoachScope(BaseModel):
+    """What each number in the leaderboard is scoped to.
+
+    A filtered list LOOKS release-scoped, and here only half of it is:
+    membership is, the impact score is not. Stated in the payload rather than
+    only in the docs, because the number is what gets read — a reader who takes
+    a score as "how flaky during 2.4.0" would be wrong, and nothing in a bare
+    filtered list would tell them.
+    """
+
+    membership: str = "project"
+    score: str = "project_window"
+    release_id: Optional[str] = None
+    note: Optional[str] = None
+
+
 class FlakyCoachResponse(BaseModel):
     """Project-level flaky coach leaderboard."""
     project_id: str
     total_flaky: int = 0
     quarantine_candidates: int = 0
     entries: List[FlakyCoachEntry] = []
+    #: Additive: absent-by-default shape is unchanged for existing consumers.
+    scope: Optional[FlakyCoachScope] = None
 
 
 # ── Granular test-case history / flakiness / metadata (Phase 2) ──────────────

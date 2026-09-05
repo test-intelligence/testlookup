@@ -32,6 +32,9 @@ router = APIRouter(prefix="/api/v1/reports", tags=["Reports"])
 class EmailTrendsRequest(BaseModel):
     project_id: str
     days: int = 30
+    #: Scope the emailed report to one release, matching the on-screen chart it
+    #: exports. Omitted = every release, which is what it always did.
+    release_id: str | None = None
     recipient_email: EmailStr
     chart_ids: list[str] = []
 

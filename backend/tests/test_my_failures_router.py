@@ -123,7 +123,7 @@ async def test_list_returns_empty_when_count_is_zero():
 
     user = SimpleNamespace(id=uuid.uuid4())
     result = await list_my_assigned_failures(
-        project_id=None, days=30, page=1, size=25, db=db, current_user=user,
+        project_id=None, days=30, release_id=None, page=1, size=25, db=db, current_user=user,
     )
     assert result.total == 0
     assert result.items == []
@@ -178,7 +178,7 @@ async def test_list_hydrates_rows_and_builds_navigation_url():
 
     with _patch_run_seq_map():
         result = await list_my_assigned_failures(
-            project_id=None, days=30, page=1, size=25, db=db, current_user=user,
+            project_id=None, days=30, release_id=None, page=1, size=25, db=db, current_user=user,
         )
     assert result.total == 1
     assert len(result.items) == 1
@@ -227,7 +227,7 @@ async def test_list_truncates_long_error_message():
 
     with _patch_run_seq_map():
         result = await list_my_assigned_failures(
-            project_id=None, days=30, page=1, size=25, db=db, current_user=user,
+            project_id=None, days=30, release_id=None, page=1, size=25, db=db, current_user=user,
         )
     assert result.items[0].error_message is not None
     # 280-char cap with ellipsis = 280 chars total.
@@ -295,7 +295,7 @@ async def test_list_attaches_per_test_failure_count_from_grouping_query():
 
     with _patch_run_seq_map():
         result = await list_my_assigned_failures(
-            project_id=None, days=7, page=1, size=25, db=db, current_user=user,
+            project_id=None, days=7, release_id=None, page=1, size=25, db=db, current_user=user,
         )
 
     by_test = {item.test_name: item.failure_count for item in result.items}

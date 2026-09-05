@@ -1,5 +1,235 @@
 # Changelog
 
+## 2026-09-05 — Release axis: what is done, and what is still open
+
+`docs/` is gitignored, so the backlog that tracked this work never leaves the
+machine it was written on. The durable record belongs here.
+
+### The feature request that produced the two entries below
+
+**As a product manager, users with QA_LEAD or ADMIN should be able to set the
+active release for each project.** Delivered as
+`POST /api/v1/releases/{release_id}/activate`.
+
+Researching it turned up the shape this whole epic kept producing:
+`release_lifecycle_service.activate_release` was already written, complete and
+correct — including the load-bearing flush — with a `reason="manual"` default
+written for a caller that never arrived. Its only caller was
+`_create_auto_release`. The active release could be chosen FOR a user by the
+ingestion ladder and the rotation beat, and never BY them.
+
+That was the **seventh** instance in this epic of a finished service function
+with no path from a request. The others: `saved_view_release`,
+`release_phase_gate_service`, `release_defect_service`, `policy_resolution`,
+`sync_milestones`, `sync_fix_versions`. A transitive-reachability guard now
+covers the module-level version of it (`test_release_modules_are_reachable.py`),
+but it deliberately does NOT cover this one: `activate_release` had a caller and
+did execute — what was missing was a USER-facing way to invoke it, and no guard
+can tell "should also be user-invokable" from "correctly internal-only".
+
+### Where the attribution ladder now stands
+
+| Rung | State |
+|---|---|
+| 1 explicit client release_name | always worked |
+| 2 external match | reachable since `POST /releases/sync` — but only where GitHub or Jira is configured |
+| 3 rule match | reachable for the first time (this release) |
+| 4 cutoff window | settable since the S1 identity columns gained a writer |
+| 5 active release | always worked; now also settable by hand |
+| 6 unattributed | still an ABSENCE, not a stamped state — `LinkSource` has no `UNATTRIBUTED` member and the linker manufactures a release rather than leaving a run unattributed |
+
+### Still open
+
+* **No UI for any of it.** Attribution rules are API-only; `ReleasesPage.tsx`
+  has no surface for them, for the S1 identity columns, or for activation.
+* **The `scope` blocks are returned and nothing renders them.** `search` and the
+  flaky-coach leaderboard now declare how they are scoped; `AllReleasesBadge`
+  renders on two pages and neither is one of them. That is the visible half of
+  the S4b labelling requirement.
+* **No release integration test in CI.**
+* **`architecture/DATABASE_SCHEMA.md` no longer describes the system** — no
+  mention of `release_gate_decisions`, `primary_release_id`, `link_source` or
+  `sort_key`; its generator has not been re-run.
+* **`baseline_release_id` is now derived on create**, but existing releases
+  created before that have none and nothing backfills them.
+
+## 2026-09-05 — Rung 3 of the attribution ladder can finally fire
+
+S3a shipped the model (migration 0154), the four-value match vocabulary, the
+evaluator with its deterministic ordering, and the linker's call site — and no
+way to create a rule. With no router the table was always empty, so rung 3 could
+never fire on ANY deployment: projects that cannot send an explicit
+`release_name` fell straight past it to the active release, which cannot tell a
+hotfix branch from a release candidate from trunk CI.
+
+CRUD under `/api/v1/projects/{project_id}/attribution-rules`, QA_LEAD to write
+and project access to read. The matching logic is untouched.
+
+**`match_field` is validated against the enum.** The column is `String(30)`, so
+`"Branch"` would save cleanly and never match — the rule would sit in the list
+looking configured while the ladder fell past it, which is indistinguishable
+from "attribution just doesn't work". The test derives its cases from the enum,
+so a value added there is covered without anyone remembering to.
+
+**Rules list in EVALUATION order**, not creation order. Which rule wins is the
+whole question when two could match, and ties break on
+`(priority, created_at, id)` — without the tiebreakers two rules sharing a
+priority would attribute the same run differently between runs.
+
+**A preview endpoint, which earns its place.** The documented failure mode of an
+attribution rule is not that it misses — it is that it matches EVERYTHING, and
+every run still gets attributed so nothing looks wrong. `matched` against
+`considered` is the one number that separates a useful rule from one that
+captures the whole project, and `field_present` is reported too: a rule on a
+field most runs do not carry fires rarely and unpredictably, which reads as
+"broken" long after it was written. It evaluates with `rule_matches` — the
+ladder's own predicate — so a preview cannot disagree with what production will
+do.
+
+**Deleting a rule does not re-attribute past runs.** A link carries
+`link_source=rule_match` and the release it produced; rewriting that because a
+rule was retired would silently change what a past gate decision was based on.
+
+Mutation-tested 10/10, including a rule fetched without its project scope (the
+IDOR shape) and a preview that saves the rule it was asked to try.
+
+## 2026-09-05 — A QA lead can choose the project's active release
+
+Requested by product management: let QA_LEAD and ADMIN users set the active
+release for a project.
+
+The active release is where a run lands when nothing else claims it — the
+attribution ladder's terminal rung — and it has been a real, enforced concept
+since S0: one per project behind `ix_releases_project_active`, with
+`activated_at` / `deactivated_at` history that `resolve_active_release_at`
+reads.
+
+**It could only ever be chosen FOR the user.** `activate_release` was already
+written, complete and correct, with a `reason="manual"` default written for a
+caller that never arrived. Its only caller was `_create_auto_release`, and
+`is_active` appeared nowhere in the releases router — so the ingestion ladder
+and the rotation beat decided, and nobody else could. The seventh instance of
+this epic's shape: a finished service function with no path from a request.
+
+`POST /api/v1/releases/{release_id}/activate` closes it.
+
+**Both guards, not one.** `require_role` gates by ROLE and knows nothing about
+which project a release belongs to, so a QA lead of one project could otherwise
+redirect another project's attribution. `require_release_access` is what answers
+the path parameter — the same pair `PUT /{release_id}` already carries.
+
+**A finished release is refused.** `released` / `cancelled` / `archived` must not
+hold the flag, or the next unlabelled run is attributed to something already
+shipped and the misdated evidence sits in its gate decision looking legitimate.
+`TERMINAL_STATUSES` stays the single source of that list rather than being
+restated here, and a test fails if it is.
+
+**Idempotent.** Activating the already-active release returns 200 with
+`changed: false`. A double-click, or two people acting on the same stale page,
+is not an error — the requested state is the state.
+
+**Audited.** `release.activated` records the actor and the release displaced,
+because "who moved attribution for this project, and from what" is exactly the
+question asked afterwards.
+
+**The swap stays in the service, and a test enforces that.** It contains a flush
+between the demote and the promote: SQLAlchemy orders persistent UPDATEs by
+primary key and `Release.id` is a random uuid4, so without it half of all
+orderings present two active rows to a partial unique index — which is checked
+per statement and cannot be deferred. A router that wrote `is_active` itself
+would pass a happy-path test and fail in production about half the time.
+
+Mutation-tested 8/8.
+
+## 2026-09-05 — The remaining read surfaces join the release axis
+
+`/my-failures` and the emailed trends report now honour the release. Two more
+were assessed and deliberately left alone, which is the more useful half of this
+entry.
+
+**`/my-failures`** puts the predicate into the shared `base_filters` list, so
+the count badge and the table are scoped together by construction rather than by
+remembering — the "one response, two scopes" defect this epic produced twice is
+structurally unavailable there.
+
+**The emailed trends report** exports `/metrics/trends`, which has been
+release-scoped since S4a. A report that ignored the release would disagree with
+the screen it was generated from, and unlike an on-screen discrepancy this one
+LEAVES the product: it lands in an inbox with no filter attached to explain it.
+Same argument as the summary PDF.
+
+**`test_health` is INTERSECTED, not filtered.** It reads the
+flaky-coach cache: a rolling-window statistic keyed on `(project, fingerprint)`
+with no release dimension, whose scorer refuses to emit below five observations.
+That is exactly the situation S4b faced with `/flaky-scores`, so it gets the
+same answer: the release selects WHICH already-ranked tests are shown, and each
+keeps its full-window impact score. Bolting a filter onto the ranking would
+produce a per-release statistic that mostly says "no data".
+
+That makes the result mixed-scope, so it says so. The response carries a
+`scope` block — membership `release`, score `project_window` — because a
+filtered list LOOKS entirely release-scoped and a reader would otherwise take an
+impact number as "how flaky during 2.4.0". The intersection is project-scoped on
+both sides: `test_fingerprint` is unique only within a project, so an unscoped
+lookup would let another project's run admit a test into this leaderboard.
+
+**`search` is LABELLED, not scoped.** It is a discovery tool. Scoping it would
+return nothing for a test that exists but last ran in another release, which
+reads as "that test does not exist" — a user hunting for a test they wrote would
+conclude the product had lost it.
+
+So it declares itself release-agnostic in the payload, which is S4b's other half
+and design-gate finding 17: a surface that ignores a filter the header is
+showing has to say so, or the user reasonably assumes it applied. A test pins
+the decision, so anyone adding a release parameter later argues with the
+reasoning rather than silently scoping a discovery tool.
+
+The Core release predicate moved to `core/release_filter.py`, beside the
+sentinel. It lived in `summary_report_service` for exactly one commit before
+`my_failures` needed the same rule — which is the moment a local copy becomes
+two surfaces that can disagree about what a release contains.
+
+## 2026-09-05 — The summary report answers for the release it was asked about
+
+Reported from the deployment: `/reports/summary?release=unattributed` changed
+nothing on the page.
+
+The cause was not a scoping bug — the release had no path to that page at all.
+`useSummaryReport` sent `project_id`, `days` and `mode`, and neither
+`/api/v1/reports/summary` nor `build_summary_report` accepted a release on
+either side. S4a put six analytics endpoints on the release axis and this one
+was not among them.
+
+Now threaded through six helpers and seven query sites. The module writes SQL
+two ways and both are scoped: raw `text()` queries take the shared fragment,
+Core selects take `_release_predicate`, which returns `[]` when no release is
+asked for so the compiled SQL is byte-identical to before — the same NFR1
+property the fragment has, expressed the only way a Core `.where()` can express
+it. The predicate itself is imported from `analytics_service` rather than
+restated, because a second copy of "which runs belong to this release" is how
+this page and the analytics pages would come to disagree.
+
+**The PDF export is scoped too**, which surfaced by accident while fixing a
+test. A release-scoped report whose export is project-wide is the "one response,
+two scopes" defect in its worst form: the discrepancy leaves the product
+entirely, in a file somebody attaches to a sign-off.
+
+On the client the release goes into the SWR KEY as well as the request. Without
+that the first render after a selection is served from the cached all-releases
+report, so the page shows unfiltered numbers under a release filter until the
+next revalidation — which looks exactly like the bug that was reported.
+
+Mutation-tested 5/5. Two survivors on the first pass were real: the hook tests
+mock the service module, so deleting `release_id` from the param builder — and
+sending it as `null` on every call — were both invisible there. The `null` case
+matters beyond tidiness, because the backend fragment is conditional so the
+planner keeps using `ix_test_runs_project_release_created`.
+
+Three existing router tests failed on the way, all for one reason worth
+recording: calling a FastAPI handler DIRECTLY hands back the `Query` object as
+the default rather than `None`, and the release resolver then rejects it as a
+malformed UUID.
+
 ## 2026-09-05 — A release survives a link, but not the Back button
 
 Reported from the deployment: select a release on `/live`, click through to

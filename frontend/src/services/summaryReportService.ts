@@ -13,6 +13,8 @@ export interface SummaryReportParams {
   project_id: string | null
   days: number
   mode: SummaryReportMode
+  /** Scope every number to one release. Omitted = all releases. */
+  release_id?: string | null
 }
 
 export const summaryReportService = {
@@ -22,6 +24,11 @@ export const summaryReportService = {
         ...(params.project_id ? { project_id: params.project_id } : {}),
         days: params.days,
         mode: params.mode,
+        // Omitted entirely when there is no release, never sent as null: the
+        // backend fragment is conditional so that an absent release produces
+        // byte-identical SQL, and a `release_id=` on every request would undo
+        // that for callers who never asked for the feature.
+        ...(params.release_id ? { release_id: params.release_id } : {}),
       },
     }),
 
