@@ -12,6 +12,36 @@ from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from app.worker.celery_app import celery_app
 
+#: Digest schedules driven by a run landing, rather than by the clock.
+#:
+#: Derived from nothing — spelled here and asserted against ``DigestSchedule``
+#: by ``tests/regression/test_digest_schedule_vocab.py``, which now checks that
+#: every enum member is DISPATCHED somewhere and not merely ACCEPTED by the API.
+#: That distinction is the whole finding: the previous test derived its cases
+#: from the enum and asserted only that each one was accepted, so three
+#: members could be stored and never delivered.
+EVENT_DRIVEN_SCHEDULES = ("PER_RUN", "PER_SUITE", "PER_RELEASE")
+
+
+def run_matches_digest_scope(sub, run) -> bool:
+    """Whether this run falls inside an event-driven subscription's scope.
+
+    ``PER_RUN`` is unscoped by design — every run of the project. The other two
+    narrow it, and an UNSCOPED narrowing subscription is refused rather than
+    widened: a ``PER_SUITE`` row with no ``scope_value`` would deliver every
+    run in the project, which is what ``PER_RUN`` already is, and silently
+    turning one subscription into another is worse than delivering nothing.
+    """
+    if sub.schedule == "PER_SUITE":
+        wanted = (getattr(sub, "scope_value", None) or "").strip().lower()
+        actual = (getattr(run, "primary_suite_name", None) or "").strip().lower()
+        return bool(wanted) and wanted == actual
+    if sub.schedule == "PER_RELEASE":
+        wanted = (getattr(sub, "scope_value", None) or "").strip()
+        actual = str(getattr(run, "primary_release_id", None) or "")
+        return bool(wanted) and wanted == actual
+    return True
+
 logger = logging.getLogger(__name__)
 _slog = structlog.get_logger("worker.tasks")
 
@@ -2303,7 +2333,20 @@ def dispatch_ai_summary_email(
             dashboard_url=f"{settings.public_base_url}/runs/{test_run_id}/intelligence",
         )
 
-        # 2. EM-4: Dispatch to PER_RUN digest subscribers
+        # 2. EM-4 + F9: dispatch every EVENT-DRIVEN digest subscription.
+        #
+        # `PER_SUITE` and `PER_RELEASE` were offered in the UI (DigestsPage
+        # renders both, and PER_SUITE has its own scope input), accepted by the
+        # API, and stored -- and no dispatcher ever read them. Those
+        # subscriptions were silently undeliverable forever: a user subscribed,
+        # got a success confirmation, and never received anything.
+        #
+        # They belong here rather than in a schedule of their own because they
+        # are SCOPE FILTERS on this same run-completion event. The model said
+        # so all along: `scope_type` has documented "project | release | suite |
+        # global" since the column was added, and `scope_value` "suite name,
+        # release id, etc." -- the schema anticipated this and the dispatcher
+        # never used it.
         try:
             from app.models.postgres import DigestSubscription, User as _User
             from app.services.notification import email_service
@@ -2311,7 +2354,7 @@ def dispatch_ai_summary_email(
             async with AsyncSessionLocal() as db:
                 per_run_result = await db.execute(
                     select(DigestSubscription).where(
-                        DigestSubscription.schedule == "PER_RUN",
+                        DigestSubscription.schedule.in_(EVENT_DRIVEN_SCHEDULES),
                         DigestSubscription.is_active == True,  # noqa: E712
                         DigestSubscription.is_paused == False,  # noqa: E712
                     )
@@ -2321,6 +2364,8 @@ def dispatch_ai_summary_email(
                 for sub in per_run_subs:
                     # Scope check: global or matching project
                     if sub.project_id and str(sub.project_id) != project_id:
+                        continue
+                    if not run_matches_digest_scope(sub, run):
                         continue
                     # Trigger filter: failed_only skips all-green runs
                     if sub.trigger_filter == "failed_only" and _failed_tests == 0:

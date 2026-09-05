@@ -131,6 +131,99 @@ async def list_releases(
     return {"items": items, "total": len(items)}
 
 
+def _check_cutoff_window(start, end) -> None:
+    """A window that ends before it starts matches no run at all.
+
+    Rung 4 selects the OPEN release whose cutoff window contains the run's
+    execution time and tie-breaks on narrowness, so an inverted window is not
+    merely odd — it silently removes the release from that rung while still
+    looking configured on the release page.
+    """
+    if start and end and end < start:
+        raise HTTPException(
+            status_code=400,
+            detail="cutoff_end_at is before cutoff_start_at — that window matches no run.",
+        )
+
+
+async def resolve_baseline(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    supplied: Optional[str],
+    *,
+    sort_key: Optional[str],
+    self_id: Optional[uuid.UUID] = None,
+) -> Optional[uuid.UUID]:
+    """The release this one is compared against.
+
+    The model has documented this column as "defaults to the previous sort_key
+    but is overridable" since migration 0151, and nothing implemented either
+    half: no request could set it and nothing derived it, so
+    ``compare_to_baseline`` answered ``comparable: false, "this release has no
+    baseline"`` on every release ever created. A stated default that no code
+    applies is worse than no default, because the docstring is what the next
+    reader trusts.
+
+    A SUPPLIED id is validated against this project rather than trusted.
+    Releases belong to exactly one project, and a baseline from another one
+    would silently compare a release against a different team's numbers —
+    nothing at the database level prevents it, and a comparison is exactly the
+    wrong place to find out.
+
+    Returns None when there is no predecessor. The first release of a project
+    genuinely has none, and saying so is more useful than a zero delta that
+    implies one.
+    """
+    if supplied:
+        try:
+            wanted = uuid.UUID(supplied)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400, detail="baseline_release_id is not a valid id"
+            ) from exc
+        found = (
+            await db.execute(
+                select(Release).where(
+                    Release.id == wanted, Release.project_id == project_id
+                )
+            )
+        ).scalar_one_or_none()
+        if found is None:
+            raise HTTPException(
+                status_code=400,
+                detail="baseline_release_id names a release in a different project",
+            )
+        if self_id is not None and found.id == self_id:
+            # A release compared against itself reports a zero delta on every
+            # metric, which reads as "nothing changed" rather than as the
+            # nonsense it is.
+            raise HTTPException(
+                status_code=400,
+                detail="A release cannot be its own baseline.",
+            )
+        return found.id
+
+    if not sort_key:
+        # Nothing to be "previous" to: sort_key encodes the version, and a
+        # release with neither version nor a parseable name has no position in
+        # the order to look backwards from.
+        return None
+
+    previous = (
+        await db.execute(
+            select(Release)
+            .where(
+                Release.project_id == project_id,
+                Release.sort_key.isnot(None),
+                Release.sort_key < sort_key,
+            )
+            .order_by(Release.sort_key.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return previous.id if previous is not None else None
+
+
 async def create_release(db: AsyncSession, body) -> Release:
     """Stage a new release (and its initial phases). Handler commits + serializes."""
     # Project-existence guard. Without it, a stale ``activeProjectId`` on
@@ -146,6 +239,10 @@ async def create_release(db: AsyncSession, body) -> Release:
             detail=f"Project {body.project_id} not found — refresh the page or pick a different project.",
         )
     logger.info("creating_release", project_id=body.project_id, name=body.name)
+    _check_cutoff_window(
+        getattr(body, "cutoff_start_at", None), getattr(body, "cutoff_end_at", None)
+    )
+    sort_key = compute_sort_key(body.version, body.name)
     release = Release(
         project_id=project_uuid,
         name=body.name,
@@ -155,7 +252,20 @@ async def create_release(db: AsyncSession, body) -> Release:
         planned_date=body.planned_date,
         # Computed on write so ordering is an index scan rather than a Python
         # sort over every release in the project (migration 0151).
-        sort_key=compute_sort_key(body.version, body.name),
+        sort_key=sort_key,
+        # S1 identity. These shipped with migration 0151 and had no writer:
+        # the cutoff window is the attribution ladder's rung-4 input, so that
+        # rung could never fire on any deployment.
+        release_type=getattr(body, "release_type", None),
+        target_environment=getattr(body, "target_environment", None),
+        cutoff_start_at=getattr(body, "cutoff_start_at", None),
+        cutoff_end_at=getattr(body, "cutoff_end_at", None),
+        baseline_release_id=await resolve_baseline(
+            db,
+            project_uuid,
+            getattr(body, "baseline_release_id", None),
+            sort_key=sort_key,
+        ),
     )
     db.add(release)
     await db.flush()  # need release.id for child phases
@@ -316,6 +426,30 @@ async def update_release(db: AsyncSession, release_id: str, body) -> Release:
         # Auto-set released_at if not explicitly provided
         if "released_at" not in updates or not updates["released_at"]:
             updates["released_at"] = datetime.now()
+
+    if "baseline_release_id" in updates:
+        # Resolved, not setattr'd: the field arrives as a STRING and the column
+        # is a UUID, and it is a caller-supplied id like any other — so it is
+        # scoped to this release's project and refused if it names the release
+        # itself.
+        updates["baseline_release_id"] = await resolve_baseline(
+            db,
+            release.project_id,
+            updates["baseline_release_id"],
+            sort_key=release.sort_key,
+            self_id=release.id,
+        )
+
+    if "cutoff_start_at" in updates or "cutoff_end_at" in updates:
+        # Only when this request touches the window. A stored window was
+        # already validated when it was written, so re-checking it on every
+        # unrelated edit adds nothing and forces every caller to carry the
+        # fields — which is what broke two existing tests whose fake release
+        # models only the columns they exercise.
+        _check_cutoff_window(
+            updates.get("cutoff_start_at", getattr(release, "cutoff_start_at", None)),
+            updates.get("cutoff_end_at", getattr(release, "cutoff_end_at", None)),
+        )
 
     for field, value in updates.items():
         setattr(release, field, value)

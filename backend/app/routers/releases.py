@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -64,6 +64,15 @@ class PhaseUpdate(BaseModel):
     notes: Optional[str] = None
 
 
+#: major | minor | patch | hotfix | rc — the vocabulary the model documents.
+#:
+#: A closed set so a typo is a 422 rather than a stored value that silently
+#: matches no policy: `release_type` drives gate-policy resolution, and a
+#: release typed "Hotfix" would quietly fall back to the project default while
+#: reading, to anyone looking at the row, as though it were typed.
+ReleaseType = Literal["major", "minor", "patch", "hotfix", "rc"]
+
+
 class ReleaseIn(BaseModel):
     project_id: str
     name: str
@@ -73,6 +82,23 @@ class ReleaseIn(BaseModel):
     planned_date: Optional[datetime] = None
     phases: list[PhaseIn] = []
 
+    # ── S1 identity (migration 0151) ─────────────────────────────────────────
+    #
+    # These columns shipped with the migration and no way to set them: zero
+    # mentions in any router or schema. The consequence was not cosmetic —
+    # `cutoff_start_at`/`cutoff_end_at` are the attribution ladder's rung-4
+    # input, so that rung could never fire, and `baseline_release_id` is what
+    # release-over-release comparison needs, so it always answered "this
+    # release has no baseline".
+    release_type: Optional[ReleaseType] = None
+    target_environment: Optional[str] = Field(None, max_length=100)
+    cutoff_start_at: Optional[datetime] = None
+    cutoff_end_at: Optional[datetime] = None
+    #: Omit to inherit the previous release by sort_key — see
+    #: ``resolve_baseline``. Set it to override, which is what a hotfix needs:
+    #: its baseline is its parent release, not whatever shipped most recently.
+    baseline_release_id: Optional[str] = None
+
 
 class ReleaseUpdate(BaseModel):
     name: Optional[str] = None
@@ -81,6 +107,11 @@ class ReleaseUpdate(BaseModel):
     status: Optional[str] = None
     planned_date: Optional[datetime] = None
     released_at: Optional[datetime] = None
+    release_type: Optional[ReleaseType] = None
+    target_environment: Optional[str] = Field(None, max_length=100)
+    cutoff_start_at: Optional[datetime] = None
+    cutoff_end_at: Optional[datetime] = None
+    baseline_release_id: Optional[str] = None
 
 
 class LinkRunRequest(BaseModel):

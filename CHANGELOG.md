@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-09-04 — Two design-gate findings: a digest nobody receives, and columns nobody can set
+
+**The digest that never fires.** `DigestSchedule` declares six members. The
+dispatchers handled `PER_RUN` on run completion and `DAILY` / `WEEKLY` /
+`WEEKLY_RETRO` on the beat. `PER_RELEASE` and `PER_SUITE` had **no dispatcher at
+all** — while the UI offered both and `PER_SUITE` had its own scope input. A
+user could subscribe, receive a success confirmation, and never get anything,
+with no error anywhere.
+
+They dispatch now, as scope filters on the same run-completion event, which is
+what the model always intended: `scope_type` has documented "project | release |
+suite | global" since the column was added and no dispatcher ever read it. An
+UNSCOPED narrowing subscription delivers nothing rather than widening to every
+run — silently turning a `PER_SUITE` row into a `PER_RUN` one is worse than
+delivering nothing, because the user cannot tell it happened.
+
+`test_digest_schedule_vocab.py` was written for this exact bug class — its
+docstring says `WEEKLY_RETRO` was added to the enum while the beat was not
+updated — and it guards that every member is ACCEPTED by the API, which is the
+half that was never broken. The new guard derives from the same enum and asserts
+every member is DISPATCHED, reading only the selector expressions rather than
+string literals anywhere in the file.
+
+**The S1 columns nobody could set.** Migration 0151 added `release_type`,
+`target_environment`, `cutoff_start_at`, `cutoff_end_at` and
+`baseline_release_id`, and no router or schema mentioned any of them. Two were
+load-bearing: the cutoff window is the attribution ladder's rung-4 input, so
+that rung could never fire on any deployment, and `baseline_release_id` is what
+release-over-release comparison needs, so `compare_to_baseline` answered "this
+release has no baseline" for every release ever created.
+
+`baseline_release_id` now gets the default the model has documented since 0151 —
+the previous release by `sort_key` — with three guards the finding did not
+mention: a supplied baseline is scoped to the project (releases belong to
+exactly one, and a comparison is the wrong place to discover you are measuring
+against another team), a release cannot be its own baseline (a zero delta on
+every metric reads as "nothing changed"), and an inverted cutoff window is
+refused (rung 4 matches windows that CONTAIN a timestamp, so a backwards window
+silently removes the release from that rung while looking configured).
+
+Mutation-tested 8/8 and 13/13. Both scores took several rounds, and every
+survivor was a real gap rather than harness noise — including one where the
+dispatch guard reproduced the "the name appears somewhere" blindness it exists
+to close, and one where asserting `"project_id" in sql` was true even with the
+WHERE predicate deleted, because `select(Release)` names that column in its
+SELECT list.
+
 ## 2026-09-04 — The phase gate becomes reachable, and the worklist empties
 
 Last of the wiring fixes. `release_phase_gate_service` had no router and no
