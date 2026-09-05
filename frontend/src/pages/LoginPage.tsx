@@ -71,6 +71,16 @@ export default function LoginPage() {
   const from = location.state?.from?.pathname || '/overview';
   const isDev = import.meta.env.DEV;
 
+  // Live confirm-password check. The submit handler still blocks on a mismatch,
+  // but a toast is ephemeral and detached from the field — a screen-reader user
+  // (or anyone who blinks) can miss why registration refused. Surface it inline
+  // and tie it to the input so assistive tech announces it and points at the
+  // field that needs fixing. Only flag once they've started confirming.
+  const passwordsMismatch =
+    mode === 'register' &&
+    regConfirmPassword.length > 0 &&
+    regPassword !== regConfirmPassword;
+
   useEffect(() => {
     getSSOStatus().then(setSsoStatus).catch(() => { /* SSO not available */ });
   }, []);
@@ -484,11 +494,26 @@ export default function LoginPage() {
                   type="password"
                   required
                   minLength={8}
+                  aria-invalid={passwordsMismatch}
+                  aria-describedby={passwordsMismatch ? 'reg-confirm-error' : undefined}
                   value={regConfirmPassword}
                   onChange={(e) => setRegConfirmPassword(e.target.value)}
-                  className="mt-1 appearance-none block w-full px-3 py-2 border border-[var(--color-border)] rounded-md shadow-sm placeholder-[var(--color-text-faint)] text-[var(--color-text)] bg-[var(--color-bg-input)] focus:outline-none focus:ring-[var(--color-ring)] focus:border-[var(--color-ring)] sm:text-sm"
+                  className={`mt-1 appearance-none block w-full px-3 py-2 border rounded-md shadow-sm placeholder-[var(--color-text-faint)] text-[var(--color-text)] bg-[var(--color-bg-input)] focus:outline-none focus:ring-[var(--color-ring)] focus:border-[var(--color-ring)] sm:text-sm ${
+                    passwordsMismatch
+                      ? 'border-[var(--status-failed-bd)]'
+                      : 'border-[var(--color-border)]'
+                  }`}
                   placeholder="Repeat your password"
                 />
+                {passwordsMismatch && (
+                  <p
+                    id="reg-confirm-error"
+                    role="alert"
+                    className="mt-1 text-xs text-[var(--status-failed)]"
+                  >
+                    Passwords do not match.
+                  </p>
+                )}
               </div>
 
               <button

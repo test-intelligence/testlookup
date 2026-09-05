@@ -281,6 +281,50 @@ describe('LoginPage — challenge step behaviour', () => {
   })
 })
 
+describe('LoginPage — register password confirmation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function openRegister() {
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /^register$/i }))
+  }
+
+  it('flags a confirm-password mismatch inline and ties the error to the field', () => {
+    openRegister()
+
+    const confirm = screen.getByLabelText(/confirm password/i)
+    // No error before the user has typed a confirmation.
+    expect(confirm).toHaveAttribute('aria-invalid', 'false')
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    setValue(screen.getByLabelText(/^password \*/i), 'hunter22')
+    setValue(confirm, 'hunter23')
+
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent(/passwords do not match/i)
+    expect(alert).toHaveAttribute('id', 'reg-confirm-error')
+    // The input points assistive tech at the error message.
+    expect(confirm).toHaveAttribute('aria-invalid', 'true')
+    expect(confirm).toHaveAttribute('aria-describedby', 'reg-confirm-error')
+  })
+
+  it('clears the mismatch error once the two passwords agree', () => {
+    openRegister()
+
+    const confirm = screen.getByLabelText(/confirm password/i)
+    setValue(screen.getByLabelText(/^password \*/i), 'hunter22')
+    setValue(confirm, 'hunter23')
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+
+    setValue(confirm, 'hunter22')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(confirm).toHaveAttribute('aria-invalid', 'false')
+    expect(confirm).not.toHaveAttribute('aria-describedby')
+  })
+})
+
 describe('LoginPage — forced enrollment', () => {
   beforeEach(() => {
     vi.clearAllMocks()

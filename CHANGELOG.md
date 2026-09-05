@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-04 — say which password does not match, where the field is
+
+The register form blocked a confirm-password mismatch with a toast: ephemeral,
+detached from the field, and gone before a screen-reader user — or anyone who
+looks away — can read it, on the very first screen a self-hoster meets.
+
+The mismatch is now surfaced inline as a live `role="alert"` under the confirm
+field, with `aria-invalid` and `aria-describedby` tying the input to its error
+so assistive tech announces it and points at the field to fix. It clears the
+instant the two passwords agree. Presentation-only; the submit guard is
+unchanged.
+
 ## 2026-09-05 — A cross-day run no longer overlaps PASS RATE on /intelligence
 
 The "Timing" column in "Recent runs analyzed" overlapped the neighbouring PASS
