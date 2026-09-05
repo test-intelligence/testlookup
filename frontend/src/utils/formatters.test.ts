@@ -6,6 +6,7 @@ import {
   formatDuration,
   formatRunWhen,
   formatTimingRange,
+  timingRangeParts,
   isoTooltip,
   shortAgo,
 } from './formatters'
@@ -180,6 +181,42 @@ describe('formatTimingRange', () => {
   it("renders '—' when there is no usable start", () => {
     expect(formatTimingRange(null, new Date(2026, 7, 28))).toBe('—')
     expect(formatTimingRange('garbage', null)).toBe('—')
+  })
+})
+
+describe('timingRangeParts', () => {
+  it('flags a same-day range as not crossing a day and drops the repeated date', () => {
+    expect(
+      timingRangeParts(new Date(2026, 7, 28, 14, 32), new Date(2026, 7, 28, 14, 46)),
+    ).toEqual({ head: 'Aug 28, 14:32', tail: '14:46', crossDay: false })
+  })
+
+  it('flags a midnight-spanning range as cross-day via the instants, not the string', () => {
+    // The overlap fix stacks on this flag; it is computed from the two dates
+    // directly (isSameDay), so it holds even for a <24h run across midnight.
+    expect(
+      timingRangeParts(new Date(2026, 7, 28, 23, 50), new Date(2026, 7, 29, 0, 12)),
+    ).toEqual({ head: 'Aug 28, 23:50', tail: 'Aug 29, 00:12', crossDay: true })
+  })
+
+  it('flags a range crossing a month boundary as cross-day', () => {
+    const parts = timingRangeParts(new Date(2026, 7, 31, 23, 0), new Date(2026, 8, 1, 1, 0))
+    expect(parts?.crossDay).toBe(true)
+    expect(parts?.tail).toBe('Sep 1, 01:00')
+  })
+
+  it('leaves a still-running or unparseable end with a null tail and no cross-day', () => {
+    expect(timingRangeParts(new Date(2026, 7, 28, 14, 32), null)).toEqual({
+      head: 'Aug 28, 14:32',
+      tail: null,
+      crossDay: false,
+    })
+    expect(timingRangeParts(new Date(2026, 7, 28, 14, 32), 'garbage')?.tail).toBeNull()
+  })
+
+  it('returns null when there is no usable start', () => {
+    expect(timingRangeParts(null, new Date(2026, 7, 28))).toBeNull()
+    expect(timingRangeParts('garbage', null)).toBeNull()
   })
 })
 

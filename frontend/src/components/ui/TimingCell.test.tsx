@@ -26,7 +26,8 @@ describe('TimingCell', () => {
     const { container } = renderCell(<TimingCell started={new Date()} end={null} />)
     const cell = container.querySelector('td')
     expect(cell).not.toBeNull()
-    expect(cell?.className).not.toMatch(/\bhidden\b/)
+    // The standalone `hidden` display utility (not `overflow-hidden`).
+    expect(cell?.className.split(/\s+/)).not.toContain('hidden')
     expect(cell?.className).not.toMatch(/md:table-cell/)
   })
 
@@ -57,5 +58,36 @@ describe('TimingCell', () => {
   it('omits the duration line instead of printing a bogus 0ms', () => {
     renderCell(<TimingCell started={new Date(2026, 7, 28, 14, 32)} end={null} durationMs={null} />)
     expect(screen.queryByText(/0ms/)).not.toBeInTheDocument()
+  })
+
+  it('stacks a cross-day range onto two lines so it cannot overlap PASS RATE', () => {
+    // Regression (UX audit P1-3.1): a run spanning midnight formats to a
+    // ~230px string; on one nowrap line it bled LEFT over the next column in
+    // the 158px cell. The two ends now sit on separate right-aligned lines.
+    renderCell(
+      <TimingCell
+        started={new Date(2026, 7, 28, 23, 50)}
+        end={new Date(2026, 7, 29, 0, 12)}
+      />,
+    )
+    expect(screen.getByText('Aug 28, 23:50 →')).toBeInTheDocument()
+    expect(screen.getByText('Aug 29, 00:12')).toBeInTheDocument()
+    // The full range is NOT one text node, which is the overflow it caused.
+    expect(screen.queryByText('Aug 28, 23:50 → Aug 29, 00:12')).not.toBeInTheDocument()
+  })
+
+  it('keeps a same-day range on a single line', () => {
+    renderCell(
+      <TimingCell started={new Date(2026, 7, 28, 14, 32)} end={new Date(2026, 7, 28, 14, 46)} />,
+    )
+    expect(screen.getByText('Aug 28, 14:32 → 14:46')).toBeInTheDocument()
+    expect(screen.queryByText('Aug 28, 14:32 →')).not.toBeInTheDocument()
+  })
+
+  it('clamps overflow on the cell so an over-wide range clips rather than bleeding', () => {
+    const { container } = renderCell(
+      <TimingCell started={new Date(2026, 7, 28, 23, 50)} end={new Date(2026, 7, 29, 0, 12)} />,
+    )
+    expect(container.querySelector('td')?.className).toMatch(/overflow-hidden/)
   })
 })

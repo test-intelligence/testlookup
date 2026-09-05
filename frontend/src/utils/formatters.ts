@@ -125,6 +125,51 @@ export const formatCompactDateTime = (d?: string | Date | null): string => {
   return format(date, 'MMM d, HH:mm')
 }
 
+/** The two ends of a Timing range, pre-formatted, plus whether it crossed a day. */
+export interface TimingRangeParts {
+  /** Start stamp, always present: 'Aug 28, 23:50'. */
+  head: string
+  /**
+   * End stamp, or null when there is no parseable end (still running — the
+   * caller renders '…'). Time-only ('00:12') when same-day, date-qualified
+   * ('Aug 29, 00:12') when the run crossed a calendar day.
+   */
+  tail: string | null
+  /**
+   * True when start and end fall on different calendar days. Computed by
+   * comparing the two instants directly (`isSameDay`), NOT by sniffing the
+   * formatted string — so it cannot be broken by a change to how the stamps
+   * read. `TimingCell` uses it to stack the range onto two lines, because a
+   * cross-day range on one nowrap line (~230px) overflows its narrow column.
+   */
+  crossDay: boolean
+}
+
+/**
+ * Structured start→end range for a Timing cell. `formatTimingRange` collapses
+ * this to one string; `TimingCell` reads `crossDay` to choose its layout.
+ *
+ * Returns null when there is no parseable start — the caller renders the
+ * em-dash placeholder rather than 'Invalid Date'.
+ */
+export const timingRangeParts = (
+  start?: string | Date | null,
+  end?: string | Date | null,
+): TimingRangeParts | null => {
+  if (!start) return null
+  const from = new Date(start)
+  if (Number.isNaN(from.getTime())) return null
+
+  const head = format(from, 'MMM d, HH:mm')
+  if (!end) return { head, tail: null, crossDay: false }
+
+  const to = new Date(end)
+  if (Number.isNaN(to.getTime())) return { head, tail: null, crossDay: false }
+
+  const crossDay = !isSameDay(from, to)
+  return { head, tail: format(to, crossDay ? 'MMM d, HH:mm' : 'HH:mm'), crossDay }
+}
+
 /**
  * Collapsed start→end range for a single "Timing" cell.
  *
@@ -141,19 +186,9 @@ export const formatTimingRange = (
   start?: string | Date | null,
   end?: string | Date | null,
 ): string => {
-  if (!start) return '—'
-  const from = new Date(start)
-  if (Number.isNaN(from.getTime())) return '—'
-
-  const head = format(from, 'MMM d, HH:mm')
-  if (!end) return `${head} → …`
-
-  const to = new Date(end)
-  if (Number.isNaN(to.getTime())) return `${head} → …`
-
-  return isSameDay(from, to)
-    ? `${head} → ${format(to, 'HH:mm')}`
-    : `${head} → ${format(to, 'MMM d, HH:mm')}`
+  const parts = timingRangeParts(start, end)
+  if (!parts) return '—'
+  return `${parts.head} → ${parts.tail ?? '…'}`
 }
 
 /**

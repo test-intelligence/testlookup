@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-09-05 — A cross-day run no longer overlaps PASS RATE on /intelligence
+
+The "Timing" column in "Recent runs analyzed" overlapped the neighbouring PASS
+RATE column whenever a run spanned more than one day
+(`Aug 27, 20:23 → Aug 29, 16:04`). Same-day runs rendered fine. This is P1-3
+item 1 of the production-readiness UX audit.
+
+**Root cause.** The cell renders the range in a `whitespace-nowrap` span inside
+a `w-[158px] max-w-[158px]` column. A same-day range collapses to time-only on
+the second end and fits; a cross-day range repeats the full date and is ~230px.
+With `flex flex-col items-end` and no overflow clamp on the `<td>`, the over-wide
+nowrap text bled **leftward** over PASS RATE instead of clipping.
+
+**The fix — one component, no wider column.** `TimingCell` now stacks a cross-day
+range onto two right-aligned lines (`Aug 28, 23:50 →` / `Aug 29, 00:12`) and the
+cell carries `overflow-hidden` as a clamp. Widening the column to fit one line
+re-crowds the table at laptop widths, which is the problem this compact cell was
+built to solve, so it is deliberately not the answer. `/runs` and `/live` use the
+same component and inherit the fix.
+
+**Cross-day is detected from the instants, not the string.** A new
+`timingRangeParts` helper compares the two dates with `isSameDay` and exposes a
+`crossDay` flag; `formatTimingRange` is now built on it and its output is
+unchanged. The earlier handoff proposed sniffing the formatted end for a letter
+(`/[A-Za-z]/`), which couples the layout to how the stamp reads; comparing the
+calendar days directly is the same amount of code and cannot be broken by a
+future formatter change.
+
+Covered by four new `timingRangeParts` unit tests (same-day, midnight-spanning,
+a month-boundary crossing, still-running/unparseable, and no start) and three
+new `TimingCell` tests (cross-day stacks onto two lines and is no longer one
+text node, same-day stays single-line, and the cell clamps overflow). The
+existing "never breakpoint-hidden" guard was tightened so it checks for the
+standalone `hidden` utility rather than matching `overflow-hidden`.
 ## 2026-09-05 — Three pages under a release picker, and only two needed a label
 
 Closes the backlog item below. They looked like one problem and were two, which
@@ -537,7 +571,7 @@ deleting rows on the last page snaps back rather than showing an empty page;
 `Pagination.test.tsx` keeps its three existing tests passing and gains
 window-algorithm and size-picker cases.
 
-## Backlog — TimingCell cross-day overlap on /intelligence (not yet fixed)
+## Backlog — TimingCell cross-day overlap on /intelligence (FIXED 2026-09-05, see the top entry)
 
 Filed 2026-09-05 from a design handoff bundle
 (`design_handoff_timingcell_overlap_fix/`: a README spec plus a before/after
@@ -569,9 +603,10 @@ handoff is explicit that widening the column is NOT the answer: `w-[220px]`
 re-crowds the table at laptop widths, which is the original problem this
 component was built to solve.
 
-**One implementation note before anyone takes this.** The handoff detects the
-cross-day case by sniffing the formatted string — `/[A-Za-z]/.test(to)`, on the
-grounds that a same-day end is time-only. That is currently true and is pinned
+**One implementation note before anyone takes this** — acted on in the fix,
+which added a `timingRangeParts` helper comparing the two dates with `isSameDay`
+instead. The handoff detected the cross-day case by sniffing the formatted
+string — `/[A-Za-z]/.test(to)`, on the grounds that a same-day end is time-only. That is currently true and is pinned
 by `formatters.test.ts:161` ("collapses a same-day range", "REPEATS the date
 when the run crosses midnight"), so the heuristic works. But it couples the
 component to the formatter's output shape, and `TimingCell` already receives

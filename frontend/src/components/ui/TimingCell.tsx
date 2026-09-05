@@ -1,5 +1,5 @@
 import { clsx } from 'clsx'
-import { formatDuration, formatTimingRange, isoTooltip, shortAgo } from '@/utils/formatters'
+import { formatDuration, isoTooltip, shortAgo, timingRangeParts } from '@/utils/formatters'
 
 /**
  * One table cell carrying a run's whole timing story: when it started, when it
@@ -40,7 +40,8 @@ export function TimingCell({
   live?: boolean
   className?: string
 }) {
-  const hasStart = Boolean(started) && !Number.isNaN(new Date(started as string | Date).getTime())
+  const range = timingRangeParts(started, end)
+  const hasStart = range != null
   const duration = durationMs != null ? formatDuration(durationMs) : null
   // Only claim an age when there is a real start instant to measure from.
   const age = hasStart ? shortAgo(started as string | Date) : null
@@ -50,13 +51,29 @@ export function TimingCell({
 
   return (
     <td
-      className={clsx('px-3.5 py-2 text-right align-middle', className)}
+      // overflow-hidden clamps the range instead of letting an over-wide
+      // nowrap line bleed LEFT over the neighbouring PASS RATE column — the
+      // cross-day overlap this cell's stacking (below) is built to prevent.
+      className={clsx('px-3.5 py-2 text-right align-middle overflow-hidden', className)}
       title={isoTooltip(started, end, live)}
     >
       <div className="flex flex-col items-end gap-px leading-tight">
-        <span className="tabular-nums text-[var(--color-text)] whitespace-nowrap">
-          {formatTimingRange(started, end)}
-        </span>
+        {range == null ? (
+          <span className="tabular-nums text-[var(--color-text)]">—</span>
+        ) : range.crossDay ? (
+          // A cross-day range on one nowrap line is ~230px and overflows the
+          // 158px column, so stack it onto two right-aligned lines instead.
+          // Widening the column re-crowds the table at laptop widths, which is
+          // the problem this compact cell was built to solve.
+          <span className="tabular-nums text-[var(--color-text)] whitespace-nowrap text-right">
+            <span className="block">{range.head} →</span>
+            <span className="block">{range.tail}</span>
+          </span>
+        ) : (
+          <span className="tabular-nums text-[var(--color-text)] whitespace-nowrap">
+            {`${range.head} → ${range.tail ?? '…'}`}
+          </span>
+        )}
         {sub && (
           <span
             className={clsx(
