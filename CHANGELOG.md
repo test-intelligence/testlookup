@@ -26,6 +26,32 @@ so assistive tech announces it and points at the field to fix. It clears the
 instant the two passwords agree. Presentation-only; the submit guard is
 unchanged.
 
+## 2026-09-05 — A diagram guard that waited on a clock, and cannot fail locally
+
+`docs-diagrams.spec.ts` "a diagram that cannot be drawn leaves nothing behind on
+the page" failed once on CI and blocked **#962**, a PR about the onboarding
+progress bar with nothing to do with diagrams.
+
+**It waited a fixed second and then asserted.** The cleanup it checks is
+asynchronous — `MermaidDiagram` attaches `removeStray` to the render promise —
+so on a loaded runner the removal can land after the window closed. Replaced
+with a bounded `expect.poll`, which does not weaken anything: a node that is
+never removed still fails with the same message once the poll times out.
+
+**The more useful finding is that this test cannot fail on a dev machine.**
+Probed with `removeStray` deliberately disabled, the stray counts were still
+`{graphics: 0, nodes: 0}` — mermaid strands nothing in this harness locally. So
+the "3/3 passes locally" I first took as evidence of flakiness was evidence of
+nothing at all, and a green local run is not evidence the fix holds. That is now
+written into the test, along with what to check if it fires again: whether the
+survivor is a bare `body > svg`, which `removeStray` does not match because it
+removes only the ids it created.
+
+**So this is not filed as "fixed the flake".** The failure has only ever been
+observed on CI and could not be reproduced here. The poll addresses the most
+likely cause and the vacuity is recorded; if it recurs, the note says not to
+assume flake a second time.
+
 ## 2026-09-05 — A cross-day run no longer overlaps PASS RATE on /intelligence
 
 The "Timing" column in "Recent runs analyzed" overlapped the neighbouring PASS

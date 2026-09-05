@@ -161,17 +161,51 @@ test.describe('user guide diagrams', () => {
     await expect
       .poll(() => page.getByText(/could not be drawn/i).count(), { timeout: 60_000 })
       .toBeGreaterThan(0)
-    // Give any stray graphic time to be appended before asserting its absence.
+    // Give any stray graphic time to be APPEAR before asserting its absence —
+    // a test that checked immediately would pass against a cleanup that never
+    // ran, because mermaid had not yet added anything to remove.
     await page.waitForTimeout(1_000)
 
-    const stray = await page.evaluate(() => ({
-      graphics: (document.body.innerText.match(/Syntax error in text/g) || []).length,
-      nodes: document.querySelectorAll(
-        'body > div[id^="dmermaid"], body > div[id^="mermaid"], body > svg',
-      ).length,
-    }))
-    expect(stray.graphics, "mermaid's error graphic is stranded on the page").toBe(0)
-    expect(stray.nodes, 'mermaid left a scratch element under <body>').toBe(0)
+    // Then POLL for the removal rather than asserting once.
+    //
+    // The cleanup is asynchronous — `MermaidDiagram` attaches it to the render
+    // promise — so on a loaded runner it can land after the settle above. This
+    // failed once on CI (2026-09-05, PR #962, whose change had nothing to do
+    // with diagrams) and blocked an unrelated merge.
+    //
+    // This does NOT weaken the assertion: a node that is never removed still
+    // fails, with the same message, once the poll times out. Only a
+    // slow-but-correct cleanup stops being called a defect.
+    //
+    // MEASURED, and the result is worth knowing before trusting a green run
+    // here: on a local dev machine mermaid strands NOTHING in this harness —
+    // probed with the cleanup deliberately disabled and the counts were still
+    // {graphics: 0, nodes: 0}. So locally this assertion passes whether or not
+    // `removeStray` works, and a local green run is NOT evidence the fix holds.
+    // The stranding this guards has only ever been observed on CI. If it fires
+    // again, do not assume flake: capture the trace and check whether the
+    // survivor is a bare `body > svg`, which `removeStray` does not match — it
+    // removes only the ids it created.
+    const strayCounts = () =>
+      page.evaluate(() => ({
+        graphics: (document.body.innerText.match(/Syntax error in text/g) || []).length,
+        nodes: document.querySelectorAll(
+          'body > div[id^="dmermaid"], body > div[id^="mermaid"], body > svg',
+        ).length,
+      }))
+
+    await expect
+      .poll(async () => (await strayCounts()).graphics, {
+        timeout: 15_000,
+        message: "mermaid's error graphic is stranded on the page",
+      })
+      .toBe(0)
+    await expect
+      .poll(async () => (await strayCounts()).nodes, {
+        timeout: 15_000,
+        message: 'mermaid left a scratch element under <body>',
+      })
+      .toBe(0)
 
     // And the failure is still reported where the reader can act on it.
     await expect(page.locator('[data-broken]').getByText(/could not be drawn/i)).toBeVisible()
