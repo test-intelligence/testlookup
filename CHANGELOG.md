@@ -60,6 +60,24 @@ new `TimingCell` tests (cross-day stacks onto two lines and is no longer one
 text node, same-day stays single-line, and the cell clamps overflow). The
 existing "never breakpoint-hidden" guard was tightened so it checks for the
 standalone `hidden` utility rather than matching `overflow-hidden`.
+
+## 2026-09-03 — the setup-progress bar is an accessible progressbar
+
+The Getting Started "Setup Progress" bar was a bare styled `<div>` whose only
+signal was its CSS width. A screen-reader user reached it as an anonymous
+container — assistive tech could neither announce it as a progress indicator
+nor read how far setup had come, on the very page a first-run self-hoster is
+steered to.
+
+It now carries `role="progressbar"` with `aria-valuemin`/`aria-valuemax` and an
+`aria-valuenow` that tracks the visible fill. Because the backend folds skipped
+steps into that percentage (`_build_status` counts `status in ("completed",
+"skipped")`), a bar can read 100% while steps were only skipped — so the bar
+also exposes an `aria-valuetext` giving the same done-vs-skipped breakdown the
+sighted line below already shows (`100% — 2 of 3 steps completed, 1 skipped`),
+rather than a bare "100%". A regression test asserts the progressbar role, its
+value bounds, and the breakdown valuetext.
+
 ## 2026-09-05 — Three pages under a release picker, and only two needed a label
 
 Closes the backlog item below. They looked like one problem and were two, which

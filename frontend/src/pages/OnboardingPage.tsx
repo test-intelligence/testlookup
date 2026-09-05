@@ -204,7 +204,29 @@ export default function OnboardingPage() {
           <span className="text-sm text-[var(--color-text-secondary)] font-medium">Setup Progress</span>
           <span className="text-sm font-bold text-[var(--color-text)]">{progressPct}%</span>
         </div>
-        <div className="w-full h-2 bg-[var(--color-bg-secondary)] rounded-full overflow-hidden">
+        {/*
+          role=progressbar makes the setup bar an actual progress indicator for
+          assistive tech instead of an anonymous styled div. aria-valuenow tracks
+          the visible fill (progressPct), and aria-valuetext carries the same
+          done-vs-skipped nuance the sighted breakdown line below shows — the
+          backend folds skipped steps into progressPct, so the bar can read 100%
+          with steps only skipped, and a screen-reader user deserves that
+          distinction too, not a bare "100%".
+        */}
+        <div
+          className="w-full h-2 bg-[var(--color-bg-secondary)] rounded-full overflow-hidden"
+          role="progressbar"
+          aria-label="Setup progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={progressPct}
+          aria-valuetext={
+            totalCount > 0
+              ? `${progressPct}% — ${doneCount} of ${totalCount} ${totalCount === 1 ? 'step' : 'steps'} completed` +
+                (skippedCount > 0 ? `, ${skippedCount} skipped` : '')
+              : `${progressPct}%`
+          }
+        >
           <div
             className={clsx(
               'h-full rounded-full transition-all duration-500',

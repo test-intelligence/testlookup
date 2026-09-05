@@ -112,6 +112,48 @@ describe('OnboardingPage', () => {
     expect(screen.getByText(/1 skipped/)).toBeInTheDocument()
   })
 
+  it('exposes the setup bar as an accessible progressbar carrying the done/skipped breakdown', async () => {
+    // The setup bar used to be an anonymous styled div — assistive tech could
+    // neither announce it as progress nor read its value. It now carries
+    // role=progressbar with aria-valuenow tracking the visible fill, and an
+    // aria-valuetext that gives a screen-reader user the same done-vs-skipped
+    // nuance the sighted breakdown line shows (the backend folds skipped steps
+    // into the percentage, so 100% can hide steps only skipped).
+    mockProjectState.activeProjectId = 'proj-a11y'
+    mockProjectState.activeProject = { id: 'proj-a11y', name: 'A11y Project' }
+
+    const { onboardingService } = await import('@/services/onboardingService')
+
+    ;(onboardingService.detectProgress as ReturnType<typeof vi.fn>).mockResolvedValue({
+      project_id: 'proj-a11y',
+      steps: [
+        { key: 'create_project', label: 'Create Project', description: 'Add a project', status: 'completed', completed_at: '2026-04-03T15:00:00Z' },
+        { key: 'upload_run', label: 'Upload Run', description: 'Load a run', status: 'completed', completed_at: '2026-04-03T15:00:00Z' },
+        { key: 'connect_jira', label: 'Connect Jira', description: 'Link Jira', status: 'skipped', completed_at: null },
+      ],
+      completed_count: 3,
+      total_count: 3,
+      progress_pct: 100,
+      is_complete: true,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/getting-started']}>
+        <Routes>
+          <Route path="/getting-started" element={<OnboardingPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const bar = await screen.findByRole('progressbar', { name: /setup progress/i })
+    expect(bar).toHaveAttribute('aria-valuenow', '100')
+    expect(bar).toHaveAttribute('aria-valuemin', '0')
+    expect(bar).toHaveAttribute('aria-valuemax', '100')
+    // The valuetext distinguishes the 2 truly-completed steps from the 1 skipped
+    // one, rather than a bare "100%".
+    expect(bar).toHaveAttribute('aria-valuetext', '100% — 2 of 3 steps completed, 1 skipped')
+  })
+
   it('offers a Restore control for a skipped step and calls restoreStep', async () => {
     // A skip used to be a dead end — the card dimmed to opacity-50 with no
     // control. A self-hoster who skipped by accident must be able to reopen it.
