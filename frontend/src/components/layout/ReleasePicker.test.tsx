@@ -178,6 +178,43 @@ describe('ReleasePicker', () => {
       expect(screen.getByTestId('url')).toHaveTextContent(`release=${REL_1}`)
     })
 
+    it('KEEPS the filter when the user follows an in-app link', async () => {
+      // The reported bug: select a release on /live, click through to
+      // /coverage, and the filter was gone.
+      //
+      // In-app links do not carry `?release=`, so the param was absent while
+      // the picker's ref still held the selection — which read as "the URL
+      // moved under us" and cleared the store. A navigation that merely OMITS
+      // the param is not a request to drop the filter, and the selection is
+      // republished into the new page's URL so it stays shareable.
+      //
+      // The sibling test below covers the case that must still clear: Back.
+      render(
+        <MemoryRouter initialEntries={['/overview']}>
+          <ReleasePicker />
+          <UrlProbe />
+          <LinkTo to="/coverage" />
+        </MemoryRouter>,
+      )
+      await waitFor(() => expect(picker()).toBeEnabled())
+
+      fireEvent.change(picker(), { target: { value: REL_1 } })
+      await waitFor(() =>
+        expect(screen.getByTestId('url')).toHaveTextContent(`release=${REL_1}`),
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'go' }))
+      await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/coverage'))
+
+      expect(
+        useReleaseStore.getState().activeReleaseId,
+        'the release was dropped by following a link that did not carry it',
+      ).toBe(REL_1)
+      await waitFor(() =>
+        expect(screen.getByTestId('url')).toHaveTextContent(`release=${REL_1}`),
+      )
+    })
+
     it('clears the filter when the user navigates back past it', async () => {
       // Back/forward is the third way the URL moves without the picker acting,
       // after deep links and in-app navigation. Landing on a URL with no

@@ -1,5 +1,82 @@
 # Changelog
 
+## 2026-09-05 — A release survives a link, but not the Back button
+
+Reported from the deployment: select a release on `/live`, click through to
+`/coverage`, and the filter was gone.
+
+The picker's URL↔store sync treated an ABSENT `?release=` param as "the URL
+moved under us, it wins" and cleared the store. In-app links do not carry the
+param, so ordinary forward navigation was indistinguishable from an explicit
+clear.
+
+The obvious fix — never clear on a missing param — breaks a requirement that is
+equally right, and an existing test says so: navigating BACK past a
+release-carrying URL must clear, "or the filter outlives the page that carried
+it". Both hold, and they differ by navigation type. PUSH that omits the param
+keeps the selection and republishes it into the new URL, so it stays shareable;
+POP with no param clears, because the user asked for an earlier state and that
+state had no release.
+
+Two further conditions each earned their place by breaking something. React
+Router reports the FIRST render as POP, so without `lastWrittenRef !== null`
+every page load cleared a persisted selection — reintroducing one level up
+exactly what that ref was added to prevent. And the branch fired while the store
+was being reflected outward, so clearing the filter cleared it twice and never
+removed the param; it now requires the param to be genuinely absent.
+
+Mutation-tested 5/5, with each of the three conditions independently pinned. The
+regression test covers plain forward navigation, which had no coverage at all —
+the suite tested deep links and Back, and nothing in between.
+
+## 2026-09-05 — The phase gate enforces, behind a flag that finally exists
+
+W4 made the phase gate ANSWERABLE and obliged nobody: `update_phase` marked a
+phase completed without ever consulting it, and `status="skipped"` counted as
+done in the all-phases aggregate exactly like `completed`. A release could reach
+"all phases done" having gated none of them.
+
+Enforcement was held back because it is a breaking change to a live endpoint and
+the epic specified it behind a feature flag that did not exist — no release flag
+existed at all, which was blocking finding 1 of the design gate. Migration 0158
+seeds `release_phase_gate_enforcement`, **disabled**, so a deployment that does
+nothing sees no behaviour change.
+
+**Off by default and fails to off.** A gate that starts refusing because Redis
+blinked would block releases for a reason nobody can see or fix from the UI. The
+flag resolves through Redis with no database session at all, so the default path
+costs nothing — which the `all_done` performance pin
+(`db.execute.await_count == 1`) enforced twice while this was being written: the
+first version resolved the release's project before checking the flag and
+doubled the queries on every phase update, the second spent one on the flag
+lookup itself.
+
+**The refusal carries the gate's own blocking reasons.** Being told you may not
+proceed, without being told what to fix, is a worse product than no gate.
+
+**An override is always available and always audited** —
+`release.phase_gate_overridden`, with the actor, the verdict, and the reasons
+the gate gave. Enforcement without an override is an invariant people route
+around by marking the phase "skipped" instead, and then the gate has achieved
+nothing except a worse audit trail. The audit row preserves WHAT the gate
+objected to, because the verdict is recomputed from data that will have moved
+on.
+
+**Skipping stays allowed and stops being invisible.** It requires a reason and
+writes `release.phase_skipped`. Forbidding it would push people to lie about
+status, which is strictly worse than an honest recorded skip. A skip does not
+consult the gate: it is not a claim that the phase passed, and asking would
+refuse a legitimate skip on a phase nobody ran.
+
+Only TRANSITIONS are gated, so a form re-submitting its whole payload cannot
+make an already-completed phase permanently uneditable.
+
+Mutation-tested 12/12. The test that pinned enforcement as outstanding has been
+replaced — and it is worth recording that it would have kept passing: it
+asserted `"evaluate_phase" not in getsource(update_phase)`, and the enforcement
+went into a helper, so the string moved out from under it. It named its own
+replacement in the failure message rather than trusting the assertion.
+
 ## 2026-09-04 — End-to-end coverage for the release axis
 
 `release-gate-policy.spec.ts` covered the older per-run policy application. The

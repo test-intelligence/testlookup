@@ -54,6 +54,16 @@ class PhaseUpdate(BaseModel):
     name: Optional[str] = None
     phase_type: Optional[str] = None
     status: Optional[str] = None
+    #: Completing a phase whose gate does not say GO, on purpose.
+    #:
+    #: Enforcement without an override is an invariant that gets routed around:
+    #: a release manager who cannot ship marks the phase "skipped" instead, and
+    #: the gate has achieved nothing except a worse audit trail. The override
+    #: exists so the honest action is also the easy one — and it is RECORDED.
+    gate_override_reason: Optional[str] = Field(None, min_length=3, max_length=1000)
+    #: Why a phase is being skipped. A skip is a decision not to test something;
+    #: it stays allowed, but it stops being invisible.
+    skip_reason: Optional[str] = Field(None, min_length=3, max_length=1000)
     description: Optional[str] = None
     order_index: Optional[int] = None
     planned_start: Optional[datetime] = None
@@ -373,10 +383,15 @@ async def update_phase(
     phase_id: str,
     body: PhaseUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     __: User = Depends(require_release_access()),
 ):
-    phase, all_done = await release_service.update_phase(db, release_id, phase_id, body)
+    # The actor travels with the call: a gate override recorded against nobody
+    # is an audit row that answers "what" and not "who", which is the half that
+    # matters when somebody asks later why a phase shipped un-gated.
+    phase, all_done = await release_service.update_phase(
+        db, release_id, phase_id, body, actor=current_user
+    )
     await db.commit()
     await db.refresh(phase)
     result = serialize_model(phase)

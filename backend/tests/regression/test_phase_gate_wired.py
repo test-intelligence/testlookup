@@ -252,23 +252,62 @@ async def test_each_on_its_own_is_still_allowed(monkeypatch):
         )
 
 
-def test_the_gate_is_answerable_but_not_yet_enforced():
-    """States the scope boundary so this file is not read as evidence of more.
+def test_the_gate_is_now_enforced_behind_a_flag():
+    """Replaces the test that pinned enforcement as OUTSTANDING.
 
-    ``update_phase`` does not consult the gate before completing a phase, and
-    ``status="skipped"`` still counts as done in the ``all_done`` aggregate —
-    a second, silent route past it. Both need the feature flag the epic
-    specified and that does not exist, so both are deliberately outstanding
-    rather than half-done.
+    That test asserted ``"evaluate_phase" not in inspect.getsource(update_phase)``
+    and would have KEPT PASSING through this change, because the enforcement
+    went into a helper rather than into ``update_phase`` itself. It did not
+    catch its own subject moving — which is why it named its replacement in the
+    failure message instead of relying on the assertion alone.
+
+    What is pinned now: the gate is consulted, the consultation is governed by
+    a flag, and the flag defaults to off. ``test_phase_gate_enforcement.py``
+    covers the behaviour; this is the structural half.
     """
     import inspect
 
     from app.services import release_service
 
-    src = inspect.getsource(release_service.update_phase)
-    assert "evaluate_phase" not in src, (
-        "update_phase now consults the gate — that is the ENFORCEMENT change "
-        "this test documents as outstanding. If it shipped deliberately, "
-        "replace this test with one that pins the refusal behaviour and the "
-        "flag that governs it."
+    enforcement = inspect.getsource(release_service._enforce_phase_gate)
+    assert "evaluate_phase" in enforcement, (
+        "completing a phase no longer consults the gate — S6b's enforcement "
+        "has been removed or bypassed"
+    )
+    assert "_enforcement_enabled" in enforcement, (
+        "the gate is consulted unconditionally; a breaking change to a live "
+        "endpoint has to stay behind the flag it shipped with"
+    )
+
+    update = inspect.getsource(release_service.update_phase)
+    assert "_enforce_phase_gate" in update, (
+        "the enforcement helper exists but update_phase does not call it — "
+        "the same 'shipped complete with no caller' shape this epic kept "
+        "producing, one layer down"
+    )
+
+    flag = inspect.getsource(release_service._enforcement_enabled)
+    assert "release_phase_gate_enforcement" in flag
+
+
+def test_the_flag_is_seeded_disabled():
+    """A deployment that does nothing must see no behaviour change.
+
+    An enforcement flag that arrived enabled would start refusing phase
+    completions on every existing deployment the moment the migration ran,
+    which is precisely what holding this back was avoiding.
+    """
+    from pathlib import Path
+
+    from app.services import release_service
+
+    path = (
+        Path(release_service.__file__).resolve().parents[2]
+        / "migrations" / "versions" / "0158_phase_gate_enforcement_flag.py"
+    )
+    text = path.read_text(encoding="utf-8")
+    assert "release_phase_gate_enforcement" in text
+    assert "false, 100" in text, (
+        "the flag is not seeded disabled — enabling enforcement must be a "
+        "deliberate act, not a side effect of upgrading"
     )

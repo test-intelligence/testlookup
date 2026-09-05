@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigationType, useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useReleases } from '@/hooks/useReleases'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -120,6 +120,7 @@ export function ReleasePicker() {
   // fresh load with no param reflect a persisted selection outward rather than
   // clearing it.
   const lastWrittenRef = useRef<string | null>(null)
+  const navigationType = useNavigationType()
   useEffect(() => {
     const fromUrl = searchParams.get(RELEASE_PARAM)
 
@@ -129,13 +130,48 @@ export function ReleasePicker() {
     // either. Leave it alone and adopt it once a project resolves.
     if (isAllProjects) return
 
-    if (fromUrl !== lastWrittenRef.current) {
-      // The URL moved under us — a deep link, an in-app `<Link>`, or the back
-      // button. It wins.
+    if (fromUrl !== null && fromUrl !== lastWrittenRef.current) {
+      // The URL names a DIFFERENT release — a deep link, an in-app `<Link>`
+      // carrying one, or the back button. It wins.
       lastWrittenRef.current = fromUrl
       if (fromUrl !== activeReleaseId) {
         setActiveRelease(fromUrl, scopeProjectId)
       }
+      return
+    }
+
+    // An ABSENT param clears only when the user went BACK.
+    //
+    // Two navigations look identical from here — the param is gone either way —
+    // and they mean opposite things:
+    //
+    //   PUSH  (an in-app link, /live -> /coverage): the link simply does not
+    //         carry `?release=`. Clearing here was the reported bug — pick a
+    //         release, click to another page, filter gone. Falling through
+    //         lets the store win and the write-back below republishes the
+    //         selection into the new page's URL.
+    //
+    //   POP   (back/forward): the user is asking for an EARLIER state, and
+    //         that state had no release. Keeping it would make the filter
+    //         outlive the page that carried it, and Back would stop undoing
+    //         what it just did.
+    //
+    // The store still clears on an explicit "All releases", because that moves
+    // the STORE rather than the URL and never reaches this branch.
+    // Three conditions, and each one earned its place by breaking something:
+    //
+    //   `fromUrl === null`  — only an ABSENT param can mean "went back past
+    //       it". Without this the branch also fired while the store was being
+    //       reflected outward, so clearing the filter cleared it twice and
+    //       never removed the param.
+    //   `POP`               — a link that omits the param is not a request to
+    //       drop the filter. This is the reported bug.
+    //   `lastWrittenRef.current !== null` — separates a real Back from the
+    //       FIRST render, which React Router also reports as POP. Without it
+    //       every page load cleared a persisted selection.
+    if (fromUrl === null && navigationType === 'POP' && lastWrittenRef.current !== null) {
+      lastWrittenRef.current = null
+      if (activeReleaseId !== null) setActiveRelease(null, scopeProjectId)
       return
     }
 
@@ -162,6 +198,7 @@ export function ReleasePicker() {
     setSearchParams(next, { replace: true })
   }, [
     searchParams,
+    navigationType,
     activeReleaseId,
     isAllProjects,
     scopeProjectId,

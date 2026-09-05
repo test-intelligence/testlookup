@@ -23,6 +23,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.postgres import (
     LinkSource,
+    AccessAuditLog,
     Project,
     Release,
     ReleaseGateDecision,
@@ -633,7 +634,159 @@ async def add_phase(db: AsyncSession, release_id: str, body) -> ReleasePhase:
     return phase
 
 
-async def update_phase(db: AsyncSession, release_id: str, phase_id: str, body) -> tuple[ReleasePhase, bool]:
+#: Statuses that end a phase without the gate having approved it.
+#:
+#: ``skipped`` is the second, quieter route past a phase gate: it counts as
+#: "done" in the all-phases aggregate exactly like ``completed``, so a release
+#: could reach "all phases done" having gated none of them. Enforcement makes
+#: it require a reason rather than forbidding it — a skip is a legitimate
+#: decision not to test something, and blocking it would push people to lie
+#: about status instead, which is strictly worse than an honest recorded skip.
+GATE_BYPASSING_STATUSES = ("completed", "skipped")
+
+
+async def _enforcement_enabled() -> bool:
+    """Whether phase-gate enforcement is on for this deployment.
+
+    Deployment-wide, not per project, and resolved WITHOUT a project id — the
+    same shape ``compliance_pack_service`` uses for ``release_compliance_pack``.
+    That is deliberate on both counts: this flag exists to roll out a breaking
+    behaviour change (an endpoint that starts refusing), which is an operator's
+    decision rather than a per-team feature, and resolving it project-scoped
+    would force a release lookup on EVERY phase update just to discover the flag
+    is off.
+
+    That cost is not hypothetical: the first version of this resolved the
+    project first and doubled the queries on this endpoint, and a second
+    version spent one on the flag lookup itself — the ``all_done`` performance
+    pin (``db.execute.await_count == 1``) caught both.
+
+    Defaults to OFF and fails to OFF. An enforcement gate that starts refusing
+    because Redis blinked would block releases for a reason nobody can see, and
+    this endpoint worked without it for the product's whole life.
+    """
+    try:
+        from app.services.feature_flags import is_enabled
+
+        # No session passed on purpose. `is_enabled` checks Redis FIRST and
+        # only opens a short-lived session on a cache miss, so the common path
+        # touches no database at all — and the flag lookup stays outside the
+        # caller's unit of work, which it is not part of.
+        return await is_enabled("release_phase_gate_enforcement")
+    except Exception as exc:  # pragma: no cover - flag store optional in tests
+        logger.debug("phase_gate_flag_check_failed", error=str(exc))
+        return False
+
+
+async def _enforce_phase_gate(
+    db: AsyncSession,
+    release_id: str,
+    phase: ReleasePhase,
+    updates: dict,
+    actor=None,
+) -> None:
+    """Refuse to end a phase the gate has not approved, or record why not.
+
+    The gate has been ANSWERABLE since W4 (`GET /releases/{id}/phases/gate`) and
+    obliged nobody: ``update_phase`` would mark a phase completed without ever
+    consulting it. This is the other half.
+
+    Three outcomes, and the third is the one that makes this survivable:
+
+    * gate says GO -> completion proceeds silently.
+    * gate does not say GO and no override -> 409 carrying the gate's own
+      blocking reasons, so the caller is told what to fix rather than that they
+      may not proceed.
+    * an override reason is supplied -> completion proceeds and the override is
+      AUDITED. A gate with no override is one people route around.
+    """
+    new_status = updates.get("status")
+    if new_status not in GATE_BYPASSING_STATUSES:
+        return
+    if new_status == phase.status:
+        return  # not a transition; re-submitting the same status is not an act
+
+    if not await _enforcement_enabled():
+        # The default path. No project lookup, no gate evaluation, no extra
+        # query at all — a deployment that has not opted in pays nothing.
+        return
+
+    project_id = await _project_of_release(db, release_id)
+
+    if new_status == "skipped":
+        if not (updates.get("skip_reason") or "").strip():
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Skipping a phase needs a reason — it counts as done in the "
+                    "release's all-phases check, so an unexplained skip is "
+                    "indistinguishable from work that passed."
+                ),
+            )
+        _audit_phase(db, actor, project_id, "release.phase_skipped", phase, {
+            "reason": updates["skip_reason"],
+        })
+        return
+
+    # completed
+    from app.services import release_phase_gate_service
+
+    result = await release_phase_gate_service.evaluate_phase(
+        db, release_id, phase.id, record=False
+    )
+    if result.get("verdict") == "GO":
+        return
+
+    override = (updates.get("gate_override_reason") or "").strip()
+    if not override:
+        reasons = result.get("blocking_reasons") or []
+        detail = "; ".join(str(r) for r in reasons[:5]) or (
+            "the gate could not evaluate this phase"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This phase's gate says {result.get('verdict')}: {detail}. "
+                "Fix it, or supply gate_override_reason to complete it anyway."
+            ),
+        )
+
+    _audit_phase(db, actor, project_id, "release.phase_gate_overridden", phase, {
+        "verdict": result.get("verdict"),
+        "blocking_reasons": result.get("blocking_reasons"),
+        "reason": override,
+    })
+
+
+def _audit_phase(db, actor, project_id, action: str, phase, after: dict) -> None:
+    """Append-only record of a gate being bypassed.
+
+    An override nobody can find later is the same as no gate: the point is not
+    to prevent shipping, it is to make the decision visible afterwards.
+    """
+    db.add(
+        AccessAuditLog(
+            actor_user_id=getattr(actor, "id", None),
+            actor_name=getattr(actor, "username", None) or "system",
+            project_id=project_id,
+            action=action,
+            before_value={"phase_id": str(phase.id), "status": phase.status},
+            after_value=after,
+        )
+    )
+
+
+async def _project_of_release(db: AsyncSession, release_id: str):
+    return (
+        await db.execute(
+            select(Release.project_id).where(Release.id == uuid.UUID(release_id))
+        )
+    ).scalar_one_or_none()
+
+
+async def update_phase(
+    db: AsyncSession, release_id: str, phase_id: str, body, actor=None
+) -> tuple[ReleasePhase, bool]:
     """Stage updates to a phase. Returns (phase, all_phases_completed).
 
     The "all phases completed" flag is computed before commit so the handler
@@ -667,6 +820,11 @@ async def update_phase(db: AsyncSession, release_id: str, phase_id: str, body) -
 
     phase = await get_phase_or_404(db, release_id, phase_id)
 
+    # The gate, when enforcement is on. Placed after the phase is loaded (it
+    # needs the current status to tell a transition from a re-submission) and
+    # before any mutation, so a refusal leaves the row untouched.
+    await _enforce_phase_gate(db, release_id, phase, updates, actor=actor)
+
     # Check for duplicate name if renaming
     if "name" in updates:
         updates["name"] = updates["name"].strip()
@@ -692,6 +850,11 @@ async def update_phase(db: AsyncSession, release_id: str, phase_id: str, body) -
     if updates.get("status") == "completed" and phase.status != "completed":
         if "actual_end" not in updates:
             updates["actual_end"] = datetime.now()
+
+    # Control fields, not columns: they drive the gate above and are recorded
+    # in the audit trail, never written onto the phase row.
+    updates.pop("gate_override_reason", None)
+    updates.pop("skip_reason", None)
 
     for field, value in updates.items():
         setattr(phase, field, value)
