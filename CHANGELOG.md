@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-09-04 — End-to-end coverage for the release axis
+
+`release-gate-policy.spec.ts` covered the older per-run policy application. The
+release axis itself — the global picker, the filter reaching the pages it claims
+to filter, the Unattributed bucket, and the endpoints wired late in the epic —
+had none.
+
+Written to run against a LIVE backend, which is the point. Every defect this
+epic's confirmation gates found was invisible to unit tests: two 500s and two
+silent scope mixes, all sitting under passing source-assertion tests that never
+called the code. "The filter reaches the API and comes back 200 with a coherent
+payload" is the property those tests could not express.
+
+Nine tests. Both halves of NFR1 are covered — selecting a release MUST reach the
+API, and omitting one must send no `release_id` at all, because a bind that is
+always present costs the index for every user who never asked for the feature.
+Three are route-existence checks that fail loudly if `POST /releases/sync`, the
+phase gate, or the saved-view release verdict ever become unreachable again;
+each names the module that would be stranded, since "no caller" is the defect
+this epic kept producing.
+
+Mocks appear only where a live deployment cannot supply a precondition
+deterministically — a configured GitHub/Jira integration, a release with a
+recorded verdict. Where the live system can answer, it is asked: the offline
+sync refusal is asserted as a 503 rather than mocked, because a stock
+deployment has `AI_OFFLINE_MODE` on and the refusal IS the correct behaviour.
+
 ## 2026-09-04 — Vocabulary and documentation that describe what the code does
 
 Five design-gate findings, all the same shape: a name or a sentence that
