@@ -17,6 +17,7 @@ export type LoadErrorKind =
   | 'offline' // no HTTP response at all — backend down, DNS, timeout, CORS
   | 'unauthorized' // 401/403 — session expired or no access to this project
   | 'not_found' // 404 — the project or resource is gone
+  | 'rate_limited' // 429 — too many requests, backing off will clear it
   | 'server' // 5xx — the backend answered, and it answered badly
   | 'unknown'
 
@@ -82,6 +83,26 @@ export function describeLoadError(err: unknown): LoadErrorInfo {
       title: 'Not found',
       message: detail || 'This project or resource no longer exists.',
       retryable: false,
+    }
+  }
+
+  if (status === 429) {
+    // A rate limit is the one 4xx that is neither the user's fault nor a claim
+    // about their data: the backend throttles auth, MFA and ingest (see
+    // main.rate_limit_auth and ingestion_rate_limit), and a page-data fetch can
+    // trip the same limiter under load. The generic 4xx copy ("nothing below
+    // reflects your data") reads as a data error and hides the one fact that
+    // matters — waiting clears it — so give it honest, retryable copy. The
+    // backend's detail carries the Retry-After context when it sent one.
+    return {
+      kind: 'rate_limited',
+      status,
+      title: 'Too many requests',
+      message:
+        detail ||
+        'You are being rate limited, so this page held off rather than adding ' +
+          'to the load. Wait a moment, then retry — your data is unaffected.',
+      retryable: true,
     }
   }
 

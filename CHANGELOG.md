@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-05 — a rate limit is not a data error
+
+`describeLoadError` (the vocabulary every page's "we could not load this" panel
+speaks through `DataUnavailable`) folded HTTP 429 into its generic 4xx branch,
+so a throttled page-data fetch rendered "The request failed with HTTP 429.
+Nothing below reflects your data." — which reads as a data error and hides the
+one fact that matters: waiting clears it.
+
+The backend genuinely emits 429 (auth, MFA, and per-project ingest limiters),
+and a page fetch can trip the same limiter under load. 429 now has its own
+`rate_limited` kind with honest, retryable copy ("You are being rate limited …
+Wait a moment, then retry — your data is unaffected"), preferring the backend's
+`detail` when it carries Retry-After context. Presentation-only; the shared
+`DataUnavailable` panel already renders any kind by its title/message/retryable.
 ## 2026-09-04 — say which password does not match, where the field is
 
 The register form blocked a confirm-password mismatch with a toast: ephemeral,

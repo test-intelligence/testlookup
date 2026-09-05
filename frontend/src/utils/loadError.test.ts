@@ -39,6 +39,28 @@ describe('describeLoadError', () => {
     expect(info.retryable).toBe(false)
   })
 
+  it('reports 429 as rate limiting the user can retry, not a data error', () => {
+    const info = describeLoadError({ response: { status: 429, data: {} } })
+    expect(info.kind).toBe('rate_limited')
+    expect(info.status).toBe(429)
+    // Waiting clears it, so a retry is offered.
+    expect(info.retryable).toBe(true)
+    // The reassurance a rate limit needs and a generic 4xx does not give:
+    // this is not a claim about the user's data.
+    expect(info.message).toMatch(/rate limited/i)
+    expect(info.message).toMatch(/your data is unaffected/i)
+    // And it must not fall through to the generic "nothing reflects your data".
+    expect(info.message).not.toMatch(/nothing below reflects your data/i)
+  })
+
+  it('prefers the backend detail on a 429 (e.g. its Retry-After context)', () => {
+    const info = describeLoadError({
+      response: { status: 429, data: { detail: 'Too many attempts. Try again in 30s.' } },
+    })
+    expect(info.kind).toBe('rate_limited')
+    expect(info.message).toBe('Too many attempts. Try again in 30s.')
+  })
+
   it('prefers the backend detail string when it sent one', () => {
     const info = describeLoadError({
       response: { status: 500, data: { detail: 'aggregate query timed out' } },
