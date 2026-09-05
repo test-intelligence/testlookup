@@ -185,3 +185,84 @@ test.describe('Project scope — an empty filter is not an empty project', () =>
     ).toBeHidden();
   });
 });
+
+/**
+ * A surface that IGNORES the filter has to say so.
+ *
+ * The mirror image of the tests above. There, a link promised a destination
+ * that could not answer under the current scope. Here, a page answers happily
+ * and the answer is not scoped at all — search spans every release by design,
+ * because scoping it would return nothing for a test that exists but last ran
+ * elsewhere, which reads as "that test does not exist".
+ *
+ * The backend has declared this in its payload for a while, and its own comment
+ * claimed "the UI renders this as the all-releases badge". The UI did not.
+ */
+test.describe('Project scope — search says that it spans every release', () => {
+  test('the all-releases badge appears once a release is selected', async ({
+    page,
+    request,
+  }) => {
+    await performRealLogin(page);
+
+    const token = await page.evaluate(() => {
+      try {
+        return JSON.parse(localStorage.getItem('auth-storage') || '{}')?.state?.token ?? '';
+      } catch {
+        return '';
+      }
+    });
+    expect(token, 'no bearer token after login — the harness is broken').toBeTruthy();
+
+    // A project that actually has releases to choose from; the badge is
+    // deliberately invisible until one is selected.
+    const res = await request.get('/api/v1/runs?page=1&size=1', {
+      headers: { Authorization: `Bearer ${token}` },
+      failOnStatusCode: false,
+    });
+    expect(res.ok(), `runs lookup failed with ${res.status()}`).toBeTruthy();
+    const runs = (await res.json()).items ?? [];
+    expect(runs.length, 'no runs anywhere on this deployment').toBeGreaterThan(0);
+
+    await page.addInitScript((id) => {
+      localStorage.setItem(
+        'testlookup-active-project',
+        JSON.stringify({ state: { activeProjectId: id, activeProject: null }, version: 0 }),
+      );
+    }, runs[0].project_id as string);
+
+    // An empty query browses the most recent items, so there are results to
+    // label without depending on any particular test name existing.
+    await page.goto('/search?q=');
+
+    const picker = page.getByLabel('Filter by release');
+    await expect(picker).toBeEnabled();
+    const value = await picker.locator('option').nth(1).getAttribute('value');
+    if (!value) throw new Error('the picker offers no release for a pinned project');
+
+    // Located by the badge's own tooltip, NOT by its visible text: the release
+    // picker's default option is also the string "All releases", so
+    // getByText matches both and Playwright rejects the ambiguity. The title
+    // is what only the badge has.
+    const badge = page.locator('[title^="Not filtered by the selected release"]');
+
+    // Absent before the selection: with no release chosen there is no
+    // discrepancy to explain, and the page looks as it did before the release
+    // axis existed.
+    await expect(badge).toHaveCount(0);
+
+    await picker.selectOption(value);
+
+    await expect(
+      badge,
+      'search results are shown under a release filter that does not apply to them, with nothing saying so',
+    ).toBeVisible();
+
+    // And it carries the backend's own sentence, rather than a second copy
+    // written in the UI that drifts from it.
+    await expect(badge).toHaveAttribute(
+      'title',
+      /Search spans every release in the project by design/,
+    );
+  });
+});

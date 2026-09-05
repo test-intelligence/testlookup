@@ -127,6 +127,13 @@ def test_search_declares_itself_release_agnostic():
 
     Checked on the response the router builds: a comment explaining the
     decision is not something the UI can render.
+
+    The literal used to be inlined in this endpoint. It moved to a module
+    constant when `/search/global` — the endpoint behind the default "All"
+    chip, and therefore the path most searches take — turned out to declare
+    nothing at all. Two endpoints, the same behaviour, one of them honest. This
+    test follows the constant rather than pinning where the sentence is typed;
+    `test_search_declares_release_scope.py` holds BOTH endpoints to it.
     """
     import inspect
 
@@ -137,7 +144,12 @@ def test_search_declares_itself_release_agnostic():
         "search returns no scope block, so a user cannot tell whether the "
         "release filter they can see applied to these results"
     )
-    assert '"not_applicable"' in src
+    assert "RELEASE_SCOPE_DECLARATION" in src, (
+        "search builds its scope block from something other than the shared "
+        "declaration — a second copy drifts, and a stale sentence in one "
+        "payload looks like nothing is wrong"
+    )
+    assert router_mod.RELEASE_SCOPE_DECLARATION["release"] == "not_applicable"
 
 
 def test_search_takes_no_release_parameter():

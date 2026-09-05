@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SearchPage from './SearchPage'
 import type { GlobalSearchResponse, GlobalSearchResult, IndexStatus } from '@/types/search'
+import { useReleaseStore } from '@/store/releaseStore'
 
 // Per-test mock handles so we can swap return values without re-defining
 // the whole searchService shape each time.
@@ -443,5 +444,80 @@ describe('SearchPage', () => {
     await screen.findByText(/^84$/, { exact: false })
     // Runs chip stays on 39 (the project total), not 0.
     expect(screen.getByText(/^39$/, { exact: false })).toBeInTheDocument()
+  })
+})
+
+describe('SearchPage — declaring that it ignores the release filter', () => {
+  /**
+   * Search deliberately spans every release, and the release picker is visible
+   * in the TopBar on this page. Without saying so, a reader with 2.4.0 selected
+   * takes these results as 2.4.0's — and the one result they were hunting for,
+   * last run in 2.3.0, reads as proof the test is gone. That is the exact
+   * failure the backend's scope note describes.
+   *
+   * The reason is taken from the API rather than written here, so there is one
+   * sentence rather than two that drift.
+   */
+  const NOTE =
+    'Search spans every release in the project by design — a test you are ' +
+    'looking for may have last run in a different one.'
+
+  function withResults(scope?: { release: 'not_applicable'; note: string }) {
+    mockGlobalSearch.mockResolvedValue({
+      items: [makeResult()],
+      total: 1,
+      query: 'login',
+      search_type: 'keyword',
+      entity_counts: {},
+      page: 1,
+      size: 25,
+      pages: 1,
+      ...(scope ? { scope } : {}),
+    } as unknown as GlobalSearchResponse)
+  }
+
+  beforeEach(() => {
+    useReleaseStore.setState({
+      activeReleaseId: 'rel-1',
+      scopedProjectId: 'proj-1',
+    })
+  })
+
+  it('shows the all-releases badge when a release is selected', async () => {
+    withResults({ release: 'not_applicable', note: NOTE })
+    renderAt('/search?q=login')
+
+    expect(await screen.findByText('All releases')).toBeTruthy()
+  })
+
+  it('carries the API note into the badge, rather than its own copy', async () => {
+    withResults({ release: 'not_applicable', note: NOTE })
+    renderAt('/search?q=login')
+
+    const badge = await screen.findByText('All releases')
+    expect(badge.getAttribute('title')).toContain(NOTE)
+  })
+
+  it('says nothing when no release is selected', async () => {
+    // The control, and the badge's whole design: with no release chosen there
+    // is no discrepancy to explain, and the page looks as it did before the
+    // release axis existed.
+    useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
+    withResults({ release: 'not_applicable', note: NOTE })
+    renderAt('/search?q=login')
+
+    await screen.findByText(/Results/i)
+    expect(screen.queryByText('All releases')).toBeNull()
+  })
+
+  it('still renders the badge when the API sends no note', async () => {
+    // An older backend, or a cached response from before this shipped. The
+    // discrepancy is real either way; the badge falls back to its own generic
+    // tooltip rather than disappearing.
+    withResults(undefined)
+    renderAt('/search?q=login')
+
+    const badge = await screen.findByText('All releases')
+    expect(badge.getAttribute('title')).toContain('Not filtered by the selected release')
   })
 })

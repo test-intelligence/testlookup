@@ -13,9 +13,24 @@ export interface SearchResult {
   source_mode_used?: string
 }
 
+/**
+ * How a search result relates to the global release filter.
+ *
+ * Search deliberately ignores that filter — it is a discovery tool, and
+ * scoping it would return nothing for a test that exists but last ran in
+ * another release, which reads as "that test does not exist". The backend
+ * declares this in the payload so the UI can say it, rather than the UI
+ * keeping a second copy of the sentence that drifts from the first.
+ */
+export interface SearchScope {
+  release: 'not_applicable'
+  note: string
+}
+
 export interface SearchResponse extends PaginatedResponse<SearchResult> {
   query: string
   search_type: string
+  scope?: SearchScope
 }
 
 export interface IndexStatus {
@@ -50,4 +65,5 @@ export interface GlobalSearchResponse {
   page: number
   size: number
   pages: number
+  scope?: SearchScope
 }

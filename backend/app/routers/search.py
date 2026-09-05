@@ -28,6 +28,31 @@ from app.services.search_service import search_test_cases_query
 router = APIRouter(prefix="/api/v1/search", tags=["Search"])
 
 
+# Search is deliberately NOT release-scoped, and says so.
+#
+# Every other windowed read honours the header's release filter. This one must
+# not: search is a DISCOVERY tool, and scoping it would return nothing for a
+# test that exists but last ran in another release — which reads as "that test
+# does not exist". A user hunting for a test they know they wrote would
+# conclude the product had lost it.
+#
+# Saying so in the payload is the other half of the S4b decision: a surface
+# that ignores a filter the header is showing has to declare it, or the user
+# reasonably assumes it applied. The UI renders this as the all-releases badge.
+#
+# ONE definition for both search endpoints. It was inlined in `/search` only,
+# and `/global` — the endpoint behind the default "All" chip, so the path most
+# searches actually take — declared nothing at all. The two had the same
+# behaviour and different honesty, and a second copy would drift the same way.
+RELEASE_SCOPE_DECLARATION: dict[str, str] = {
+    "release": "not_applicable",
+    "note": (
+        "Search spans every release in the project by design — a test "
+        "you are looking for may have last run in a different one."
+    ),
+}
+
+
 @router.get("/index-status")
 async def get_index_status(
     project_id: str | None = None,
@@ -382,25 +407,7 @@ async def search_test_cases(
         "page": page,
         "size": size,
         "pages": pages,
-        # Search is deliberately NOT release-scoped, and says so.
-        #
-        # Every other windowed read honours the header's release filter. This
-        # one must not: search is a DISCOVERY tool, and scoping it would return
-        # nothing for a test that exists but last ran in another release —
-        # which reads as "that test does not exist". A user hunting for a test
-        # they know they wrote would conclude the product had lost it.
-        #
-        # Saying so in the payload is the other half of the S4b decision: a
-        # surface that ignores a filter the header is showing has to declare
-        # it, or the user reasonably assumes it applied. The UI renders this as
-        # the all-releases badge.
-        "scope": {
-            "release": "not_applicable",
-            "note": (
-                "Search spans every release in the project by design — a test "
-                "you are looking for may have last run in a different one."
-            ),
-        },
+        "scope": dict(RELEASE_SCOPE_DECLARATION),
     }
 
 
@@ -446,7 +453,7 @@ async def global_search_endpoint(
             )
         types = requested_types or None
 
-    return await global_search(
+    result = await global_search(
         db=db,
         q=q,
         project_id=str(scoped_project_id) if scoped_project_id else None,
@@ -456,3 +463,8 @@ async def global_search_endpoint(
         size=size,
         allowed_project_ids=allowed_project_ids,
     )
+    # Same behaviour as `/search`, so the same declaration. Attached here
+    # rather than in the service because it describes the HTTP contract, and
+    # `global_search` is also called from places that are not this endpoint.
+    result["scope"] = dict(RELEASE_SCOPE_DECLARATION)
+    return result

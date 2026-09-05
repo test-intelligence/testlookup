@@ -45,6 +45,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import { useNow } from '@/hooks/useNow'
 import PageShell from '@/components/layout/PageShell'
 import Pagination from '@/components/ui/Pagination'
@@ -1488,6 +1489,15 @@ export default function SearchPage() {
               <>
                 Results <span className="text-[11.5px] font-normal text-[var(--color-text-muted)] ml-2">
                   <strong>{Intl.NumberFormat().format(response.total)}</strong> across {scope === 'all' ? '6' : '1'} type{scope === 'all' ? 's' : ''}
+                </span>
+                {/* The header's release picker is visible on this page and does
+                    NOT apply here. Without saying so, a reader with 2.4.0
+                    selected takes these results as 2.4.0's — and the one result
+                    they were hunting for, last run in 2.3.0, looks like proof
+                    the test is gone. The reason comes from the API's own scope
+                    block so there is one sentence, not two that drift. */}
+                <span className="ml-2 align-middle">
+                  <AllReleasesBadge reason={response.scope?.note} />
                 </span>
               </>
             }

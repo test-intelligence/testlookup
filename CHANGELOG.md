@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026-09-05 — Search now says what it has always done
+
+Closes the "`scope` blocks are returned and nothing renders them" item from the
+release-axis backlog, and fixes a comment that had been claiming otherwise.
+
+**Search deliberately ignores the release filter**, and that is right: it is a
+discovery tool, and scoping it would return nothing for a test that exists but
+last ran in another release — which reads as "that test does not exist", so
+someone hunting for a test they know they wrote would conclude the product had
+lost it.
+
+The problem is that the release picker sits in the TopBar on every route, so a
+reader with 2.4.0 selected reasonably assumes it applied here too. S4b's answer
+was that a surface ignoring a visible filter has to declare it. `/api/v1/search`
+did declare it — in a payload nothing read. Its own comment said *"The UI
+renders this as the all-releases badge."* The UI did not: `AllReleasesBadge`
+rendered on `/overview` and `/reports/summary`, and `SearchPage` never imported
+it.
+
+**And the wrong endpoint was carrying the declaration.** `/search/global` — the
+one behind the default "All" chip, so the path most searches actually take —
+declared nothing at all. Two endpoints, identical behaviour, only one of them
+honest.
+
+* The declaration is now a single `RELEASE_SCOPE_DECLARATION` used by both,
+  handed out as `dict(...)` per response so nothing can mutate the shared
+  object into every future payload.
+* `SearchPage` renders the badge from **the API's own note**, not a second copy
+  of the sentence. The mutation control for that is explicit: replacing
+  `reason={response.scope?.note}` with a hardcoded string fails a test named for
+  exactly that failure.
+* The badge still renders with its generic tooltip when the response carries no
+  note — an older backend, or a cached response from before this shipped. The
+  discrepancy is real either way.
+
+One existing test had pinned the literal to the endpoint's source and broke on
+the refactor. Its intent was right, so it now follows the constant instead of
+where the sentence is typed, and says why in its docstring.
+
+Four unit tests on the page, five on the backend declaration, and an e2e that
+selects a release on `/search` and asserts the badge appears — after asserting
+it is **absent** beforehand, since a badge that always rendered would pass the
+first half and turn into furniture.
+
 ## 2026-09-05 — One e2e test was waiting for the wrong thing
 
 `release-epic.spec.ts` "a release-scoped request is actually sent for the
@@ -171,6 +215,43 @@ and the route.
 **The control that matters most is the one asserting a page NOT in the registry
 is untouched.** `/coverage` supports All Projects; if the fix had started
 demanding a project there, every other test here would still pass.
+
+## Backlog — three pages still show project-wide numbers unlabelled (not yet fixed)
+
+Found 2026-09-05 while fixing the search badge, by asking which read surfaces
+ignore the global release filter without saying so. Recorded rather than fixed,
+because each one is a product decision and not a defect with an obvious answer.
+
+**What the scan actually found, after two wrong turns worth recording.**
+
+Of 64 data hooks only three modules apply `useReleaseScope`, which looks
+alarming and is not: most are settings, users, integrations and other
+release-agnostic reads. Two narrower conclusions I drew and had to withdraw:
+
+* **`/defects` mixes scoped and unscoped data** — it does not. The
+  `useFailureCategories` match was in a COMMENT saying that call used to sit
+  there and was removed; the page derives everything from `useDefects`. A
+  substring match is not a call site.
+* **`FailureAnalysisPage` mixes** — it does not either. Its unscoped hooks are
+  `useSuspects(runId)` and `useJiraDefectMetadata`, both per-ENTITY lookups. A
+  run belongs to exactly one release, so filtering it by release is meaningless
+  rather than missing. "Unscoped project-wide statistic" and "per-entity lookup
+  where the filter does not apply" are different things, and only the first is
+  a labelling gap.
+
+**What survives.** `/defects`, `/quarantine` and `/my-failures` render
+project-wide statistics with the release picker visible and no
+`AllReleasesBadge`. This is the milder half of the problem the badge's own
+docstring describes — a page where nothing changes at least invites suspicion,
+unlike one where a neighbouring card visibly moves — but it is still the S4b
+labelling gap, and these are now the pages it applies to.
+
+**The decision each needs.** `/analytics/defects` accepts no `release_id`, so
+labelling is the only option without backend work. But release-aware defect
+logic already exists — `release_defect_service.blocking_defects` powers the
+release gate's verdict — so "defects in this release" has a definition already
+agreed. Whether the list should adopt it, or declare itself project-wide, is a
+product call. `/quarantine` and `/my-failures` are the same shape.
 
 ## Backlog — Production-readiness UX audit, P1-P3 (not yet implemented)
 
