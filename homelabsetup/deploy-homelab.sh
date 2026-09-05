@@ -31,7 +31,6 @@ NODES=("192.168.0.101" "192.168.0.102" "192.168.0.103")
 NODE_USER="labadmin"
 CONTROL_NODE="${NODES[0]}"
 MINIO_ACCESS="testlookup_minio"
-MCP_USER="mcp_service"
 
 # Colors
 RED='\033[0;31m'
@@ -619,6 +618,11 @@ log "Namespace $NAMESPACE ready."
 # ── Step 4: Generate and Apply Secrets ─────────────────────
 header "Step 4 — Generate and Apply Secrets"
 
+# Capture the deployment-owned legacy principal before any cleanup. Operators
+# that intentionally repurposed it can set KEEP_LEGACY_MCP_SERVICE_ACCOUNT=true.
+LEGACY_MCP_USER=$(kubectl -n "$NAMESPACE" get secret testlookup-secrets \
+  -o jsonpath='{.data.MCP_USERNAME}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+
 if kubectl -n "$NAMESPACE" get secret testlookup-secrets >/dev/null 2>&1; then
   log "Secret testlookup-secrets already exists. Skipping generation."
   warn "To regenerate: kubectl -n $NAMESPACE delete secret testlookup-secrets"
@@ -630,7 +634,6 @@ else
   PG_PASSWORD=$(openssl rand -base64 16 | tr -d '=/+' | head -c 24)
   MINIO_SECRET=$(openssl rand -base64 16 | tr -d '=/+' | head -c 24)
   WEBHOOK_SECRET=$(openssl rand -hex 32)
-  MCP_PASS=$(openssl rand -base64 12 | tr -d '=/+' | head -c 16)
 
   DATABASE_URL="postgresql+asyncpg://testlookup_user:${PG_PASSWORD}@testlookup-postgres:5432/testlookup"
   MONGO_URI="mongodb://testlookup-mongo:27017"
@@ -643,9 +646,7 @@ else
     --from-literal=MINIO_ACCESS_KEY="${MINIO_ACCESS}" \
     --from-literal=MINIO_SECRET_KEY="${MINIO_SECRET}" \
     --from-literal=MONGO_URI="${MONGO_URI}" \
-    --from-literal=WEBHOOK_SECRET="${WEBHOOK_SECRET}" \
-    --from-literal=MCP_USERNAME="${MCP_USER}" \
-    --from-literal=MCP_PASSWORD="${MCP_PASS}"
+    --from-literal=WEBHOOK_SECRET="${WEBHOOK_SECRET}"
 
   log "Secrets created."
   echo ""
@@ -655,8 +656,6 @@ else
   echo -e "${YELLOW}║${NC}  PostgreSQL password: ${PG_PASSWORD}"
   echo -e "${YELLOW}║${NC}  MinIO access key:    ${MINIO_ACCESS}"
   echo -e "${YELLOW}║${NC}  MinIO secret key:    ${MINIO_SECRET}"
-  echo -e "${YELLOW}║${NC}  MCP username:        ${MCP_USER}"
-  echo -e "${YELLOW}║${NC}  MCP password:        ${MCP_PASS}"
   echo -e "${YELLOW}╚══════════════════════════════════════════════════════╝${NC}"
   echo ""
 
@@ -668,8 +667,6 @@ else
 POSTGRES_PASSWORD=${PG_PASSWORD}
 MINIO_ACCESS_KEY=${MINIO_ACCESS}
 MINIO_SECRET_KEY=${MINIO_SECRET}
-MCP_USERNAME=${MCP_USER}
-MCP_PASSWORD=${MCP_PASS}
 DATABASE_URL=${DATABASE_URL}
 CREDS
   log "Credentials saved to homelabsetup/.homelab-credentials (do NOT commit this file)"
@@ -1190,63 +1187,40 @@ CREDS
   fi
 fi
 
-# ── Step 10b: Provision the MCP service account ────────────────────────────
-# Step 4 wrote MCP_USERNAME / MCP_PASSWORD into testlookup-secrets and the
-# banner above presents them as working credentials — but nothing ever created
-# the account, so every authenticated MCP tool answered 401. Read the values
-# back from the secret rather than from $MCP_PASS: on a re-run Step 4 is
-# skipped entirely and that variable is unset, which is exactly when this step
-# still needs to converge the account.
-header "Step 10b — Provision MCP Service Account"
-
-MCP_SVC_USER=$(kubectl -n "$NAMESPACE" get secret testlookup-secrets \
-  -o jsonpath='{.data.MCP_USERNAME}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
-MCP_SVC_PASS=$(kubectl -n "$NAMESPACE" get secret testlookup-secrets \
-  -o jsonpath='{.data.MCP_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
-MCP_SVC_ROLE="${MCP_SERVICE_ROLE:-QA_LEAD}"
-
-if [ -z "$MCP_SVC_USER" ] || [ -z "$MCP_SVC_PASS" ]; then
-  warn "MCP credentials not found in testlookup-secrets — skipping."
-  warn "The MCP server will return 401 on every authenticated tool until this runs."
-else
-  # Resolve the pod here rather than inheriting $BACKEND_POD from Step 10:
-  # that variable is only assigned inside Step 10's success branch, so when
-  # the admin step was skipped (backend not ready yet) this step reported
-  # "no backend pod" and silently did nothing — leaving every MCP tool 401ing.
-  # Observed on 2026-08-15.
-  MCP_BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend \
-    --field-selector=status.phase=Running \
-    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-  if [ -z "$MCP_BACKEND_POD" ]; then
-    wait_for_pods "app=testlookup-backend" 120 >/dev/null 2>&1 || true
-    MCP_BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend \
-      --field-selector=status.phase=Running \
-      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+# ── Retire the legacy process-wide MCP principal on upgrade ────────────────
+if [ -n "$LEGACY_MCP_USER" ]; then
+  if [ "${KEEP_LEGACY_MCP_SERVICE_ACCOUNT:-false}" = "true" ]; then
+    warn "Keeping legacy MCP account '$LEGACY_MCP_USER' by operator request."
+  else
+    if ! kubectl -n "$NAMESPACE" rollout status deployment/testlookup-mcp --timeout=240s; then
+      DEPLOY_DEGRADED=true
+      warn "MCP replacement not ready; legacy credentials were retained."
+      LEGACY_MCP_USER=""
+    fi
   fi
 fi
 
-if [ -n "${MCP_SVC_USER:-}" ] && [ -n "${MCP_SVC_PASS:-}" ] && [ -z "${MCP_BACKEND_POD:-}" ]; then
-  DEPLOY_DEGRADED=true
-  warn "No backend pod available — the MCP service account was NOT provisioned."
-  warn "Every authenticated MCP tool will return 401 until this runs:"
-  warn "  kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\"
-  warn "    env SERVICE_USERNAME=\"\$MCP_USERNAME\" SERVICE_PASSWORD=\"\$MCP_PASSWORD\" \\"
-  warn "        SERVICE_ROLE=$MCP_SVC_ROLE python < scripts/createServiceAccount.py"
-elif [ -n "${MCP_BACKEND_POD:-}" ]; then
-  log "Converging service account '$MCP_SVC_USER' (role $MCP_SVC_ROLE)..."
-  if MCP_SVC_OUTPUT=$(kubectl -n "$NAMESPACE" exec -i "$MCP_BACKEND_POD" -- \
-      env \
-        SERVICE_USERNAME="$MCP_SVC_USER" \
-        SERVICE_PASSWORD="$MCP_SVC_PASS" \
-        SERVICE_ROLE="$MCP_SVC_ROLE" \
-        python < "$REPO_ROOT/scripts/createServiceAccount.py" 2>&1); then
-    echo "$MCP_SVC_OUTPUT"
-  else
-    DEPLOY_DEGRADED=true
-    warn "createServiceAccount.py failed inside the backend pod. Output:"
-    echo "$MCP_SVC_OUTPUT"
-    warn "MCP tools will return 401 until this succeeds."
-  fi
+if [ -n "$LEGACY_MCP_USER" ] && [ "${KEEP_LEGACY_MCP_SERVICE_ACCOUNT:-false}" != "true" ]; then
+    LEGACY_BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend \
+      --field-selector=status.phase=Running \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    if [ -z "$LEGACY_BACKEND_POD" ]; then
+      DEPLOY_DEGRADED=true
+      warn "Cannot retire legacy MCP account: no running backend pod."
+    elif kubectl -n "$NAMESPACE" exec -i "$LEGACY_BACKEND_POD" -- \
+        env LEGACY_MCP_USERNAME="$LEGACY_MCP_USER" \
+        python < "$REPO_ROOT/scripts/retireLegacyMcpServiceAccount.py"; then
+      kubectl -n "$NAMESPACE" patch secret testlookup-secrets --type=merge \
+        -p='{"data":{"MCP_USERNAME":null,"MCP_PASSWORD":null}}'
+      if [ -f "$REPO_ROOT/homelabsetup/.homelab-credentials" ]; then
+        sed -i '/^MCP_USERNAME=/d;/^MCP_PASSWORD=/d' \
+          "$REPO_ROOT/homelabsetup/.homelab-credentials"
+      fi
+      log "Legacy MCP account retired and stored credentials removed."
+    else
+      DEPLOY_DEGRADED=true
+      warn "Legacy MCP account retirement failed; credentials were retained for retry."
+    fi
 fi
 
 # ── Step 11: Final Verification ────────────────────────────

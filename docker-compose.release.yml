@@ -362,11 +362,9 @@ services:
     container_name: testlookup_mcp
     restart: unless-stopped
     ports:
-      - "8002:8002"
+      - "127.0.0.1:8002:8002"
     environment:
       - TESTLOOKUP_API_URL=http://backend:8000
-      - TESTLOOKUP_USERNAME=${MCP_USERNAME:-}
-      - TESTLOOKUP_PASSWORD=${MCP_PASSWORD:-}
     depends_on:
       backend:
         condition: service_healthy

@@ -2,7 +2,7 @@
 
 The MCP (Model Context Protocol) server exposes TestLookup's full API surface to AI assistants, IDEs, and CI agents. It ships **62 tools**, **11 resources**, and **7 prompt workflows** across two transports (stdio for local clients, SSE for remote/CI).
 
-Beyond reads, the server carries **write-path tools** (PMF US-14.1) so an agent can close the triage loop end-to-end: propose/release quarantines, bulk-promote recovered tests, file deduplicated Jira defects with a dry-run preview, correct AI classifications, reassign failures, and manage notification policy. All writes execute under the configured login's server-side RBAC and are audit-logged with that identity — see the [agent cookbook](../user-guide/agent-cookbook.md) for worked recipes.
+Beyond reads, the server carries **write-path tools** (PMF US-14.1) so an agent can close the triage loop end-to-end: propose/release quarantines, bulk-promote recovered tests, file deduplicated Jira defects with a dry-run preview, correct AI classifications, reassign failures, and manage notification policy. Stdio writes execute under its configured login; network writes execute under each presenting caller's bearer token. Both use backend RBAC and are audit-logged with that identity — see the [agent cookbook](../user-guide/agent-cookbook.md) for worked recipes.
 
 The Agentic-plan AI-5 surface makes MCP a first-class agent workflow entry point: `start_investigation` / `get_investigation` / `list_investigations` drive the shadow-mode **Investigator agent** (it diagnoses; the calling agent acts via the write tools), the `testlookup://runs/{run_id}/investigation` resource carries a run's latest verdict, `record_fix_outcome` feeds merged/reverted fix outcomes back into the AI-F1 label system as `human_indirect` training signals, and the `fix_this_flaky_test` prompt packages the whole flaky-fix loop.
 
@@ -19,7 +19,7 @@ make mcp-start
 make mcp-sse              # or: make mcp-sse-docker
 ```
 
-The MCP server talks to the TestLookup backend at `http://localhost:8000` by default. Auth is via username/password (JWT auto-login) or can be pre-configured with a token.
+The MCP server talks to the TestLookup backend at `http://localhost:8000` by default. Local stdio clients can use username/password auto-login. Every network SSE client must send its own TestLookup access token; the server validates that token for each request and forwards the same caller identity to the backend.
 
 ## Client configuration
 
@@ -73,22 +73,29 @@ Point any MCP-capable CI agent at the SSE endpoint:
 {
   "mcpServers": {
     "testlookup": {
-      "url": "http://your-host:8002/sse"
+      "url": "https://your-host/sse",
+      "headers": {
+        "Authorization": "Bearer ${TESTLOOKUP_ACCESS_TOKEN}"
+      }
     }
   }
 }
 ```
 
-The SSE transport runs on port 8002 by default. In production, put it behind a reverse proxy with TLS.
+The SSE transport runs on port 8002 by default. Send the same bearer header on the SSE connection and its `/messages/` requests. In production, expose the full MCP host through TLS; a token is never accepted as a server-wide default and the network `login` tool cannot switch identity.
 
 ### Environment variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `TESTLOOKUP_API_URL` | `http://localhost:8000` | Backend URL |
-| `TESTLOOKUP_USERNAME` | -- | Auto-login username |
-| `TESTLOOKUP_PASSWORD` | -- | Auto-login password |
+| `TESTLOOKUP_USERNAME` | -- | Local stdio auto-login username; ignored as network identity |
+| `TESTLOOKUP_PASSWORD` | -- | Local stdio auto-login password; ignored as network identity |
 | `TESTLOOKUP_REQUEST_TIMEOUT` | `120.0` | HTTP timeout (seconds) |
+| `TESTLOOKUP_AUTH_TIMEOUT` | `5.0` | Backend token-validation/readiness timeout (seconds) |
+| `TESTLOOKUP_AUTH_MAX_CONNECTIONS` | `50` | Maximum concurrent backend authentication connections |
+| `TESTLOOKUP_MCP_ALLOWED_HOSTS` | loopback hosts | Comma-separated exact Host allowlist; set the public TLS ingress host |
+| `TESTLOOKUP_MCP_ALLOWED_ORIGINS` | -- | Comma-separated browser Origin allowlist, when Origin is sent |
 
 ## Demo prompts
 
@@ -324,10 +331,10 @@ Prompts are reusable investigation workflows that expand into sequences of tool 
 These are documented for transparency and tracked as follow-up work:
 
 - **Input validation**: tools accept any string for enum fields (status, resolution_status); backend validates but MCP tools don't pre-validate
-- **Token lifecycle**: session token is module-level mutable state; no explicit logout; relies on 401 detection for re-auth
+- **Stdio token lifecycle**: the single-client stdio token is process-local; it relies on 401 detection for re-auth
 - **Output format**: read tools return markdown strings, not structured JSON -- adequate for AI clients but less ideal for programmatic consumers. The US-14.1 write tools return structured dicts (`ok`, `action`, `status_code`/`detail` on failure); migrating reads to the same shape is future work
-- **Concurrency**: the stdio transport is single-threaded; SSE can serve multiple clients but the auth token cache is process-global
-- **Rate limiting**: no per-connection rate limit on the SSE transport -- deploy behind a reverse proxy in production
+- **Concurrency**: stdio is a single-client boundary; SSE validates and binds each connection to its presenting access-token `jti` and user
+- **Rate limiting**: packaged Kubernetes/OpenShift ingress applies connection/rate limits; apply equivalent controls at other public gateways
 
 ## Further reading
 

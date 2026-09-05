@@ -8,6 +8,10 @@ metadata:
     app.kubernetes.io/component: mcp-server
 spec:
   replicas: 1
+  # SSE session state is process-local. Recreate prevents a rolling update
+  # from briefly routing one session across two incompatible server processes.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: testlookup-mcp
@@ -26,18 +30,14 @@ spec:
           env:
             - name: TESTLOOKUP_API_URL
               value: "http://testlookup-backend:8000"
-            - name: TESTLOOKUP_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: testlookup-secrets
-                  key: MCP_USERNAME
-            - name: TESTLOOKUP_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: testlookup-secrets
-                  key: MCP_PASSWORD
             - name: TESTLOOKUP_REQUEST_TIMEOUT
               value: "120"
+            - name: TESTLOOKUP_AUTH_TIMEOUT
+              value: "5"
+            - name: TESTLOOKUP_AUTH_MAX_CONNECTIONS
+              value: "50"
+            - name: TESTLOOKUP_MCP_ALLOWED_HOSTS
+              value: "testlookup-mcp.example.com"
           command: ["python", "server.py", "--transport", "sse", "--port", "8002"]
           resources:
             requests:
@@ -46,14 +46,14 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "200m"
-          # /sse is a streaming endpoint that rejects plain HTTP GET probes
-          # with 421 — use a TCP probe to verify the server is listening.
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health/ready
               port: 8002
             initialDelaySeconds: 5
             periodSeconds: 10
             failureThreshold: 3
+            timeoutSeconds: 6
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -66,7 +66,8 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health/live
               port: 8002
             initialDelaySeconds: 15
             periodSeconds: 30

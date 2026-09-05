@@ -3,13 +3,12 @@
 Designed for kubectl stdin piping, same as scripts/createAdmin.py:
 
     kubectl -n testlookup exec -i deployment/testlookup-backend -- \
-        env SERVICE_USERNAME=mcp_service SERVICE_PASSWORD=... SERVICE_ROLE=QA_LEAD \
+        env SERVICE_USERNAME=ci_agent SERVICE_PASSWORD=... SERVICE_ROLE=QA_LEAD \
         python < ./scripts/createServiceAccount.py
 
-Why this exists: the deploy writes MCP_USERNAME / MCP_PASSWORD into
-``testlookup-secrets`` and prints them under a "SAVE THESE CREDENTIALS" banner,
-but nothing ever created the account. Every authenticated MCP tool returned
-401 against credentials for a user that did not exist.
+This helper remains available for machine integrations that intentionally own
+a service identity. Network MCP does not use it: every remote MCP request is
+authenticated with the presenting caller's TestLookup bearer token.
 
 Unlike createAdmin.py this CONVERGES an existing account. For a machine account
 the secret is the source of truth: if the stored password no longer matches it

@@ -35,7 +35,7 @@ Test Runner --> Ingest API (REST) --> Backend
 | **Backend to External LLMs** | LLM inference prompts | API key auth, HTTPS, PII-redacted input, gated by `AI_OFFLINE_MODE` |
 | **Backend to GitHub** | Check run posts | PAT auth, HTTPS, gated by `AI_OFFLINE_MODE` + `github_checks` flag |
 | **Backend to Webhook receivers** | Event payloads | HMAC-SHA256 signed, HTTPS recommended, gated by `AI_OFFLINE_MODE` + `outbound_webhooks` flag |
-| **MCP Server to Backend** | REST API calls | Same JWT/API key auth as any other client |
+| **MCP Server to Backend** | REST API calls | Stdio uses its configured JWT; network MCP validates and forwards each caller's JWT without a shared service identity |
 | **CLI to Backend** | REST API calls | Same JWT/API key auth |
 
 ## Offline mode guarantees
@@ -100,6 +100,6 @@ Secrets (PATs, SMTP credentials, LLM API keys) are stored via `secret_service` u
 
 1. **Ollama has no auth.** Anyone with network access to the Ollama port (default 11434) can send inference requests. Deploy behind a firewall or use Docker network isolation.
 2. **Redis has password auth but no TLS by default.** Production deployments should enable Redis TLS or use a private network.
-3. **The MCP SSE transport exposes the API over HTTP.** The stdio transport is implicitly local. SSE should be placed behind a reverse proxy with TLS and auth in production.
+3. **The MCP SSE transport exposes privileged tools over the network.** It requires a caller bearer token and binds the session to that credential. The stdio transport is implicitly local. SSE still belongs behind a TLS-terminating reverse proxy in production.
 4. **PII redaction is heuristic-based.** It catches common patterns but cannot guarantee 100% coverage of arbitrary user data embedded in test output. Customers with strict PII requirements should pre-sanitise test results before ingestion.
 5. **`AI_OFFLINE_MODE` is a runtime flag, not a build-time flag.** A misconfigured deployment could toggle it off. For air-gapped environments, consider network-level egress controls as a defence-in-depth layer.

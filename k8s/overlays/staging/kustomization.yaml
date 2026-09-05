@@ -116,7 +116,7 @@ patches:
   - patch: |-
       - op: replace
         path: /spec/maxReplicas
-        value: 2
+        value: 1
     target:
       kind: HorizontalPodAutoscaler
       name: testlookup-mcp-hpa

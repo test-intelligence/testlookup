@@ -88,6 +88,23 @@ patches:
       kind: ConfigMap
       name: testlookup-config
 
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: testlookup-mcp
+      spec:
+        template:
+          spec:
+            containers:
+              - name: mcp
+                env:
+                  - name: TESTLOOKUP_MCP_ALLOWED_HOSTS
+                    value: "testlookup-mcp.apps.example.com"
+    target:
+      kind: Deployment
+      name: testlookup-mcp
+
 images:
   - name: testlookup/backend
     newTag: "0.0.1"

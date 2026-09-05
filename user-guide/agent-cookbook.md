@@ -9,9 +9,9 @@ Everything here is **local-first**: the MCP server talks to *your* TestLookup ba
 The server lives in the repo's `mcp/` directory and supports two transports:
 
 - **stdio** — the client launches `python mcp/server.py` as a subprocess. Use for desktop clients and IDEs on the same machine.
-- **SSE** — `python mcp/server.py --transport sse` listens on port **8002** (`http://your-host:8002/sse`). Use for networked agents and CI. Put it behind a reverse proxy with TLS outside a lab.
+- **SSE** — `python mcp/server.py --transport sse` listens on port **8002** (`https://your-host/sse` behind the ingress). Use for networked agents and CI. Each client must attach its own TestLookup bearer token.
 
-It authenticates to the backend as a real TestLookup user via `TESTLOOKUP_USERNAME` / `TESTLOOKUP_PASSWORD` (JWT auto-login, transparent re-auth on expiry). **Create a dedicated user for your agent** and give it exactly the role its job needs — see [Security model](#security-model-rbac-and-audit) below.
+Stdio authenticates to the backend as the user in `TESTLOOKUP_USERNAME` / `TESTLOOKUP_PASSWORD` (JWT auto-login, transparent re-auth on expiry). Network SSE has no configured service identity: each client supplies its own access token. **Create a dedicated user for each agent** and give it exactly the role its job needs — see [Security model](#security-model-rbac-and-audit) below.
 
 ### Claude Code
 
@@ -46,22 +46,25 @@ Same block in `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global).
 ```json
 {
   "mcpServers": {
-    "testlookup": { "url": "http://your-host:8002/sse" }
+    "testlookup": {
+      "url": "https://your-host/sse",
+      "headers": { "Authorization": "Bearer ${TESTLOOKUP_ACCESS_TOKEN}" }
+    }
   }
 }
 ```
 
-Credentials are configured on the server process for SSE (env vars where it runs), not per-client.
+The access token is configured per SSE client and must be sent on both `/sse` and `/messages/`. Reconnect after rotating it. The server refuses an absent, expired, revoked, or cross-session token.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `TESTLOOKUP_API_URL` | `http://localhost:8000` | Backend URL |
-| `TESTLOOKUP_USERNAME` / `TESTLOOKUP_PASSWORD` | — | The agent's TestLookup login |
+| `TESTLOOKUP_USERNAME` / `TESTLOOKUP_PASSWORD` | — | Local stdio login only |
 | `TESTLOOKUP_REQUEST_TIMEOUT` | `120.0` | HTTP timeout (seconds) |
 
 ## Security model: RBAC and audit
 
-The MCP server holds **no privileges of its own** — every tool call becomes a REST call authenticated as the configured user, and the backend enforces role and project membership server-side exactly as it does for the web UI:
+The MCP server holds **no privileges of its own** — every tool call becomes a REST call authenticated as the stdio user or the network caller's bearer token, and the backend enforces role and project membership server-side exactly as it does for the web UI:
 
 - Quarantine writes (propose / approve / reject / release / promote) require **QA_LEAD+**; defect creation requires **QA_ENGINEER+**; reassignment requires **QA_LEAD/ADMIN on the failure's project**. An agent logged in as a VIEWER simply gets a 403 — the tools surface the backend's verdict rather than working around it.
 - Every write lands in the audit trail under the agent's user id (quarantine transitions write settings-audit entries; corrections write `ai_feedback` rows; defects record their creator), so "what did the agent do last night?" is answerable from **Settings → Audit**.

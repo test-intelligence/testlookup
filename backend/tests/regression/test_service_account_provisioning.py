@@ -1,34 +1,5 @@
-"""The MCP service account must exist, and must be able to see projects.
+"""Network MCP has no shared account; generic service accounts remain safe."""
 
-Found on the homelab after fixing the NetworkPolicy that blocked MCP from the
-backend. With connectivity restored, tool calls failed differently::
-
-    tools/call health_check -> "Backend unreachable at http://testlookup-backend:8000:
-                                Client error '401 Unauthorized' for .../auth/login"
-
-    MCP pod env: TESTLOOKUP_USERNAME=mcp_service   (secretKeyRef MCP_USERNAME)
-    psql: select count(*) from users where username='mcp_service'  ->  0
-
-`deploy-homelab.sh` generates `MCP_PASS`, writes `MCP_USERNAME`/`MCP_PASSWORD`
-into `testlookup-secrets`, prints them under a **"SAVE THESE CREDENTIALS —
-SHOWN ONLY ONCE"** banner and saves them to `.homelab-credentials` — but never
-created the account. The deploy handed the operator working-looking credentials
-for a user that did not exist.
-
-Creating it was not sufficient either. Non-admin users only see projects they
-are a member of, so a fresh QA_LEAD service account authenticated and then
-answered "No active projects found." for every listing tool while five projects
-existed, and `get_quarantine_stats` reported all zeros. It needs membership —
-and needs it for projects created *later*, which is why the flag exists and why
-project creation enrols them.
-
-Two guards, two classes:
-
-  * **a credential a deploy publishes must correspond to an account that
-    deploy creates** — otherwise the deploy is handing out a key to nothing;
-  * **a service account must be able to see projects created after it** —
-    otherwise it goes quietly blind as the deployment grows.
-"""
 from __future__ import annotations
 
 import pathlib
@@ -38,93 +9,158 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+
 REPO = pathlib.Path(__file__).resolve().parents[3]
 BACKEND = REPO / "backend"
-DEPLOY = REPO / "homelabsetup" / "deploy-homelab.sh"
-PROVISION = REPO / "scripts" / "createServiceAccount.py"
 PROJECTS_ROUTER = BACKEND / "app" / "routers" / "projects.py"
+PROVISION = REPO / "scripts" / "createServiceAccount.py"
+RETIRE = REPO / "scripts" / "retireLegacyMcpServiceAccount.py"
+RETIRE_SERVICE = BACKEND / "app" / "services" / "legacy_mcp_retirement.py"
 
 
-# ── The deploy must create what it publishes ────────────────────────────────
-
-
-def test_the_deploy_provisions_the_account_whose_credentials_it_prints():
-    """The regression. The secret was written; the user never was."""
-    script = DEPLOY.read_text(encoding="utf-8")
-    assert "MCP_USERNAME" in script, "deploy no longer writes MCP credentials"
-    # Must actually EXECUTE the script. Asserting the mere presence of the
-    # filename passed even with the invocation replaced by `true`, because the
-    # name also appears in the failure-help text — a vacuous guard.
-    assert re.search(
-        r"python\s*<\s*\"\$REPO_ROOT/scripts/createServiceAccount\.py\"", script
-    ), (
-        "deploy-homelab.sh writes MCP credentials into testlookup-secrets but "
-        "never runs createServiceAccount.py — every MCP tool 401s"
+def test_network_deploys_do_not_publish_or_provision_shared_mcp_credentials():
+    """A deployed network server must use the bearer token of each caller."""
+    paths = [
+        REPO / "docker-compose.yml",
+        REPO / "docker-compose.release.yml",
+        REPO / "k8s" / "base" / "mcp-deployment.yaml",
+        REPO / "k8s" / "base" / "secrets.yaml",
+    ]
+    forbidden = (
+        "MCP_USERNAME",
+        "MCP_PASSWORD",
+        "TESTLOOKUP_USERNAME",
+        "TESTLOOKUP_PASSWORD",
     )
+    for path in paths:
+        source = path.read_text(encoding="utf-8")
+        for name in forbidden:
+            assert name not in source, f"{path} still carries shared {name}"
 
+    for path in (
+        REPO / "scripts" / "deploy-k8s.sh",
+        REPO / "homelabsetup" / "deploy-homelab.sh",
+        REPO / "openshiftsetup" / "deploy-openshift-artifactory.sh",
+    ):
+        source = path.read_text(encoding="utf-8")
+        assert "--from-literal=MCP_USERNAME" not in source, path
+        assert "--from-literal=MCP_PASSWORD" not in source, path
+        assert "createServiceAccount.py" not in source, path
 
-def test_the_deploy_reads_the_password_from_the_secret_not_a_shell_var():
-    """Step 4 is skipped when the secret already exists, so $MCP_PASS is unset
-    on every re-run — which is precisely when the account still needs
-    converging. Reading the secret back is what makes the step idempotent."""
-    script = DEPLOY.read_text(encoding="utf-8")
-    # "Step 10b" appears in both the section comment and the header() call, so
-    # take everything after the LAST occurrence — splitting on the first only
-    # yields the comment block and the check passes/fails for the wrong reason.
-    block = script.split("Step 10b")[-1]
-    assert "jsonpath='{.data.MCP_PASSWORD}'" in block, (
-        "the provisioning step does not read the password from the secret"
+    docs = (
+        REPO / "installation.md",
+        REPO / "deploymentsteps.md",
+        REPO / "homelabsetup" / "DEPLOY_TESTLOOKUP.md",
+        REPO / "infra" / "cloudrun" / "mcp.env.example",
     )
-    assert "$MCP_PASS\"" not in block, (
-        "reading $MCP_PASS makes the step a no-op on re-runs, when Step 4 is "
-        "skipped and the variable is unset"
-    )
+    for path in docs:
+        source = path.read_text(encoding="utf-8")
+        assert "MCP_USERNAME" not in source, path
+        assert "MCP_PASSWORD" not in source, path
+        assert "mcp_service" not in source, path
 
 
-def test_provisioning_refuses_to_invent_a_password():
-    """A defaulted password on an account that can quarantine tests and trigger
-    analysis is worse than no account."""
+def test_mcp_server_enables_bearer_verification():
+    source = (REPO / "mcp" / "server.py").read_text(encoding="utf-8")
+    assert "token_verifier=TestLookupTokenVerifier()" in source
+    assert "auth=build_auth_settings()" in source
+
+
+def test_generic_provisioning_refuses_to_invent_a_password():
     src = PROVISION.read_text(encoding="utf-8")
     assert re.search(r"if not password:", src)
     assert "refusing to create a service" in src
 
 
-def test_provisioning_marks_the_account_as_a_service_account():
-    """The flag is what lets project creation find it later.
-
-    Both branches are checked separately. A single `x or y` assertion passed
-    with the flag deleted from the create branch, because the converge branch
-    still matched — so a freshly provisioned account would never be enrolled in
-    any project created after it.
-    """
+def test_generic_provisioning_marks_new_and_existing_accounts():
     src = PROVISION.read_text(encoding="utf-8")
     create_branch = src.split("if existing is None:")[1].split("changes = []")[0]
-    assert "is_service_account=True" in create_branch, (
-        "a newly created service account is not flagged, so project creation "
-        "will never enrol it"
-    )
     converge_branch = src.split("changes = []")[1]
-    assert "is_service_account = True" in converge_branch, (
-        "an account created before this flag existed is never back-filled"
-    )
+    assert "is_service_account=True" in create_branch
+    assert "is_service_account = True" in converge_branch
 
 
-def test_provisioning_enrolls_and_invalidates_the_membership_cache():
-    """The accessible-project set is cached for five minutes. An account
-    enrolled but not invalidated reports "no projects" — indistinguishable from
-    enrolment having failed. (This cost real debugging time when done by hand.)"""
+def test_generic_provisioning_enrolls_and_invalidates_membership_cache():
     src = PROVISION.read_text(encoding="utf-8")
     assert "_enroll_in_all_projects" in src
     assert "invalidate_membership_cache" in src
 
 
-# ── Projects created later must be visible ──────────────────────────────────
+def test_upgrade_retires_only_the_secret_named_machine_account():
+    retire = RETIRE_SERVICE.read_text(encoding="utf-8")
+    assert "User.username == username" in retire
+    assert "if not account.is_service_account" in retire
+    assert "account.is_active = False" in retire
+    assert "delete(ProjectMember)" in retire
+    assert "_revoke_family" in retire
+    wrapper = RETIRE.read_text(encoding="utf-8")
+    assert "await db.commit()" not in retire
+    assert "await db.commit()" in wrapper
+    assert "revoke_all_user_tokens" in wrapper
+
+    for path in (
+        REPO / "scripts" / "deploy-k8s.sh",
+        REPO / "homelabsetup" / "deploy-homelab.sh",
+        REPO / "openshiftsetup" / "deploy-openshift-artifactory.sh",
+    ):
+        deploy = path.read_text(encoding="utf-8")
+        assert "LEGACY_MCP_USER=" in deploy
+        assert "KEEP_LEGACY_MCP_SERVICE_ACCOUNT" in deploy
+        assert "retireLegacyMcpServiceAccount.py" in deploy
+        assert '--type=merge' in deploy
+        assert '"MCP_USERNAME":null,"MCP_PASSWORD":null' in deploy
+        rollout = re.search(r"rollout status[^\n]*testlookup-mcp", deploy)
+        assert rollout is not None, f"{path} does not gate retirement on MCP rollout"
+        retirement = deploy.index("retireLegacyMcpServiceAccount.py")
+        assert rollout.start() < retirement, f"{path} retires credentials before MCP is ready"
+
+
+@pytest.mark.asyncio
+async def test_legacy_retirement_is_idempotent_and_leaves_other_accounts(monkeypatch):
+    from app.services import legacy_mcp_retirement as retirement
+
+    legacy = MagicMock(id=uuid.uuid4(), username="mcp_service", is_service_account=True)
+    unrelated = MagicMock(id=uuid.uuid4(), username="ci_agent", is_active=True)
+    selected = MagicMock()
+    selected.scalar_one_or_none.return_value = legacy
+    deleted = MagicMock()
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=[selected, deleted, selected, deleted])
+    db.commit = AsyncMock()
+    revoke_refresh = AsyncMock()
+    monkeypatch.setattr(retirement, "_revoke_family", revoke_refresh)
+
+    first = await retirement.stage_legacy_account_retirement(db, "mcp_service")
+    second = await retirement.stage_legacy_account_retirement(db, "mcp_service")
+
+    assert first == second == ("retired", legacy.id)
+    assert legacy.is_active is False
+    assert unrelated.is_active is True
+    assert revoke_refresh.await_count == 2
+    statement = str(db.execute.await_args_list[0].args[0])
+    assert "users.username" in statement
+
+
+@pytest.mark.asyncio
+async def test_legacy_retirement_refuses_a_human_account(monkeypatch):
+    from app.services import legacy_mcp_retirement as retirement
+
+    human = MagicMock(id=uuid.uuid4(), username="mcp_service", is_service_account=False)
+    selected = MagicMock()
+    selected.scalar_one_or_none.return_value = human
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=selected)
+
+    with pytest.raises(RuntimeError, match="not marked as a service account"):
+        await retirement.stage_legacy_account_retirement(db, "mcp_service")
+
+
+# Generic machine accounts are still supported for integrations other than
+# network MCP and must keep their project-membership invariants.
 
 
 @pytest.mark.asyncio
 async def test_new_projects_enroll_every_active_service_account():
-    """Enrolling once at deploy time is not enough: without this, a project
-    created afterwards is invisible to the MCP server forever."""
     from app.services.service_account_service import enroll_service_accounts_in_project
 
     svc_id = uuid.uuid4()
@@ -152,8 +188,6 @@ async def test_new_projects_enroll_every_active_service_account():
 
 @pytest.mark.asyncio
 async def test_enrolment_is_idempotent():
-    """Re-running must not create duplicate memberships — there is a unique
-    constraint on (user_id, project_id) and hitting it would 500 the create."""
     from app.services.service_account_service import enroll_service_accounts_in_project
 
     svc_id = uuid.uuid4()
@@ -165,7 +199,7 @@ async def test_enrolment_is_idempotent():
     accounts_result = MagicMock()
     accounts_result.scalars.return_value.all.return_value = [account]
     members_result = MagicMock()
-    members_result.scalars.return_value.all.return_value = [svc_id]  # already a member
+    members_result.scalars.return_value.all.return_value = [svc_id]
     db.execute = AsyncMock(side_effect=[accounts_result, members_result])
 
     enrolled = await enroll_service_accounts_in_project(db, uuid.uuid4())
@@ -175,7 +209,6 @@ async def test_enrolment_is_idempotent():
 
 @pytest.mark.asyncio
 async def test_no_service_accounts_is_not_an_error():
-    """A deployment that never provisioned one must still create projects."""
     from app.services.service_account_service import enroll_service_accounts_in_project
 
     db = MagicMock()
@@ -186,9 +219,6 @@ async def test_no_service_accounts_is_not_an_error():
 
 
 def test_project_creation_wires_enrolment_and_cache_invalidation():
-    """The service stages; the router commits and then invalidates. Enrolling
-    without invalidating leaves the account blind for up to five minutes, which
-    is the same symptom as not enrolling at all."""
     src = PROJECTS_ROUTER.read_text(encoding="utf-8")
     body = src.split("async def create_project")[1].split("\n@router.")[0]
     assert "enroll_service_accounts_in_project" in body
@@ -196,15 +226,10 @@ def test_project_creation_wires_enrolment_and_cache_invalidation():
         r"for account_id in enrolled_service_accounts:\s*\n\s*await invalidate_membership_cache\(account_id\)",
         body,
     ), "enrolled service accounts never have their membership cache invalidated"
-    # Enrolment must be staged BEFORE the commit so it lands in the same
-    # transaction as the project itself.
     assert body.index("enroll_service_accounts_in_project(db") < body.index("await db.commit()")
 
 
 def test_service_accounts_are_not_given_admin():
-    """The operator picks the role. Granting ADMIN would bypass per-project
-    authorisation entirely and make the membership model meaningless for the
-    one account that talks to every project."""
     src = (BACKEND / "app" / "services" / "service_account_service.py").read_text(
         encoding="utf-8"
     )

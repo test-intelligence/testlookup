@@ -14,6 +14,7 @@ kind: Kustomization
 resources:
   - ../prod
   - managed-cert.yaml
+  - mcp-backend-config.yaml
 
 namespace: testlookup
 
@@ -44,6 +45,39 @@ patches:
       kind: Ingress
       name: testlookup-ingress
 
+  # GCE Ingress owns one load balancer/static IP. Add the MCP hostname to the
+  # primary Ingress, then delete the inherited nginx-only MCP Ingress.
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: testlookup-ingress
+      spec:
+        rules:
+          - host: testlookup-mcp.example.com
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: testlookup-mcp
+                      port:
+                        number: 8002
+    target:
+      kind: Ingress
+      name: testlookup-ingress
+
+  - patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: testlookup-mcp-ingress
+    target:
+      kind: Ingress
+      name: testlookup-mcp-ingress
+
   # ── PVCs: pin to standard-rwo (GKE default SSD-backed) ───────────────────
   - patch: |-
       - op: replace
@@ -51,6 +85,23 @@ patches:
         value: standard-rwo
     target:
       kind: PersistentVolumeClaim
+
+  # GCE external Application Load Balancers and health checks reach standalone
+  # NEG endpoints from these documented Google Front End source ranges.
+  - patch: |-
+      - op: add
+        path: /spec/ingress/0/from/-
+        value:
+          ipBlock:
+            cidr: 35.191.0.0/16
+      - op: add
+        path: /spec/ingress/0/from/-
+        value:
+          ipBlock:
+            cidr: 130.211.0.0/22
+    target:
+      kind: NetworkPolicy
+      name: allow-mcp
 
   # ── Backend Service: needs container-native LB annotation for GCE ─────────
   - patch: |-
@@ -74,6 +125,18 @@ patches:
     target:
       kind: Service
       name: testlookup-frontend
+
+  - patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: testlookup-mcp
+        annotations:
+          cloud.google.com/neg: '{"ingress": true}'
+          cloud.google.com/backend-config: '{"default":"testlookup-mcp-backend-config"}'
+    target:
+      kind: Service
+      name: testlookup-mcp
 
 images:
   # Replace PROJECT/REGION with your Artifact Registry path.

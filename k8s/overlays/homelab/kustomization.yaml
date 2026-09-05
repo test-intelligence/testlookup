@@ -27,6 +27,35 @@ patches:
       kind: Ingress
       name: testlookup-ingress
 
+  # MCP bearer tokens stay off the homelab's HTTP-only Traefik listener. Use a
+  # local kubectl port-forward instead of publishing MCP on the LAN.
+  - patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: testlookup-mcp-ingress
+    target:
+      kind: Ingress
+      name: testlookup-mcp-ingress
+
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: testlookup-mcp
+      spec:
+        template:
+          spec:
+            containers:
+              - name: mcp
+                env:
+                  - name: TESTLOOKUP_MCP_ALLOWED_HOSTS
+                    value: "127.0.0.1:*,localhost:*,[::1]:*"
+    target:
+      kind: Deployment
+      name: testlookup-mcp
+
   # ── Remove the base template Secret (homelab creates real secrets via kubectl) ──
   - patch: |-
       $patch: delete
@@ -120,6 +149,14 @@ patches:
         value: 2
     target:
       kind: HorizontalPodAutoscaler
+
+  - patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 1
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-mcp-hpa
 
   # ── Ollama PVC: use local-path StorageClass (K3s built-in) ────────────────
   - patch: |-

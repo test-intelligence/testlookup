@@ -133,6 +133,14 @@ patches:
     target:
       kind: HorizontalPodAutoscaler
 
+  - patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 1
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-mcp-hpa
+
   # ── Environment: HTTPS public URLs + offline AI gate ──────────────────────
   # ROUTE_HOST_FRONTEND_PLACEHOLDER is substituted by the deploy script. The
   # backend honours AI_OFFLINE_MODE=true so it never reaches for a hosted LLM
@@ -157,6 +165,23 @@ patches:
     target:
       kind: ConfigMap
       name: testlookup-config
+
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: testlookup-mcp
+      spec:
+        template:
+          spec:
+            containers:
+              - name: mcp
+                env:
+                  - name: TESTLOOKUP_MCP_ALLOWED_HOSTS
+                    value: "ROUTE_HOST_MCP_PLACEHOLDER"
+    target:
+      kind: Deployment
+      name: testlookup-mcp
 
 images:
   # ── App images (built locally, pushed to Artifactory) ─────────────────────

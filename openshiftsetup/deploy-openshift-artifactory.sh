@@ -297,6 +297,8 @@ fi
 
 # ── Step 6 — App secrets (random, generated once) ───────────────────────────
 header "Step 6 — Application secrets"
+LEGACY_MCP_USER=$("$KCLI" -n "$NAMESPACE" get secret testlookup-secrets \
+  -o jsonpath='{.data.MCP_USERNAME}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
 if "$KCLI" -n "$NAMESPACE" get secret testlookup-secrets >/dev/null 2>&1; then
   log "Secret testlookup-secrets already exists — keeping it."
 else
@@ -306,8 +308,6 @@ else
   MINIO_ACCESS="testlookup_minio"
   MINIO_SECRET=$(openssl rand -base64 16 | tr -d '=/+' | head -c 24)
   WEBHOOK_SECRET=$(openssl rand -hex 32)
-  MCP_USER="mcp_service"
-  MCP_PASS=$(openssl rand -base64 12 | tr -d '=/+' | head -c 16)
   DATABASE_URL="postgresql+asyncpg://testlookup_user:${PG_PASSWORD}@testlookup-postgres:5432/testlookup"
   MONGO_URI="mongodb://testlookup-mongo:27017"
 
@@ -319,9 +319,7 @@ else
     --from-literal=MINIO_ACCESS_KEY="${MINIO_ACCESS}" \
     --from-literal=MINIO_SECRET_KEY="${MINIO_SECRET}" \
     --from-literal=MONGO_URI="${MONGO_URI}" \
-    --from-literal=WEBHOOK_SECRET="${WEBHOOK_SECRET}" \
-    --from-literal=MCP_USERNAME="${MCP_USER}" \
-    --from-literal=MCP_PASSWORD="${MCP_PASS}"
+    --from-literal=WEBHOOK_SECRET="${WEBHOOK_SECRET}"
   log "Secrets created."
   mkdir -p "$(dirname "$CREDS_FILE")"
   cat > "$CREDS_FILE" <<CREDS
@@ -330,8 +328,6 @@ else
 POSTGRES_PASSWORD=${PG_PASSWORD}
 MINIO_ACCESS_KEY=${MINIO_ACCESS}
 MINIO_SECRET_KEY=${MINIO_SECRET}
-MCP_USERNAME=${MCP_USER}
-MCP_PASSWORD=${MCP_PASS}
 CREDS
   log "Credentials saved to $CREDS_FILE (gitignored)."
 fi
@@ -424,6 +420,32 @@ for app in postgres mongo redis minio chromadb; do
 done
 "$KCLI" -n "$NAMESPACE" rollout status deploy/testlookup-backend --timeout=300s \
   || warn "Backend not ready (it runs DB migrations on start). Check logs."
+"$KCLI" -n "$NAMESPACE" rollout status deploy/testlookup-mcp --timeout=300s \
+  || error "MCP replacement not ready; legacy credentials were retained."
+
+# Retire only the deployment-managed principal captured from the old Secret.
+if [ -n "$LEGACY_MCP_USER" ]; then
+  if [ "${KEEP_LEGACY_MCP_SERVICE_ACCOUNT:-false}" = "true" ]; then
+    warn "Keeping legacy MCP account '$LEGACY_MCP_USER' by operator request."
+  else
+    LEGACY_BACKEND_POD=$("$KCLI" -n "$NAMESPACE" get pod \
+      -l app=testlookup-backend --field-selector=status.phase=Running \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    if [ -z "$LEGACY_BACKEND_POD" ]; then
+      error "Cannot retire legacy MCP account: no running backend pod."
+    fi
+    "$KCLI" -n "$NAMESPACE" exec -i "$LEGACY_BACKEND_POD" -- \
+      env LEGACY_MCP_USERNAME="$LEGACY_MCP_USER" \
+      python < "$REPO_ROOT/scripts/retireLegacyMcpServiceAccount.py" \
+      || error "Legacy MCP account retirement failed; Secret keys were retained."
+    "$KCLI" -n "$NAMESPACE" patch secret testlookup-secrets --type=merge \
+      -p='{"data":{"MCP_USERNAME":null,"MCP_PASSWORD":null}}'
+    if [ -f "$CREDS_FILE" ]; then
+      sed -i '/^MCP_USERNAME=/d;/^MCP_PASSWORD=/d' "$CREDS_FILE"
+    fi
+    log "Legacy MCP account retired and stored credentials removed."
+  fi
+fi
 
 # ── Step 12 — MinIO buckets ─────────────────────────────────────────────────
 header "Step 12 — MinIO buckets"

@@ -33,9 +33,13 @@ kind: Route
 metadata:
   name: testlookup-mcp
   namespace: testlookup
+  annotations:
+    haproxy.router.openshift.io/timeout: "1h"
+    haproxy.router.openshift.io/rate-limit-connections: "true"
+    haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp: "20"
+    haproxy.router.openshift.io/rate-limit-connections.rate-tcp: "10"
 spec:
   host: testlookup-mcp.apps.example.com
-  path: /sse
   to:
     kind: Service
     name: testlookup-mcp
@@ -43,4 +47,4 @@ spec:
     targetPort: sse
   tls:
     termination: edge
-
+    insecureEdgeTerminationPolicy: Redirect

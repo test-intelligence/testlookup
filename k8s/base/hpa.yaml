@@ -223,6 +223,8 @@ spec:
       stabilizationWindowSeconds: 180
 ---
 # ── MCP Server ────────────────────────────────────────────────────────────────
+# Legacy SSE sessions are held in one process. Keep one replica until MCP uses
+# a shared/stateless session transport; otherwise /messages can hit a non-owner.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -234,7 +236,7 @@ spec:
     kind: Deployment
     name: testlookup-mcp
   minReplicas: 1
-  maxReplicas: 3
+  maxReplicas: 1
   metrics:
     - type: Resource
       resource:

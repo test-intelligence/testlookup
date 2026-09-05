@@ -1724,7 +1724,7 @@ Key variables:
 
 **Authentication & User Management**
 - `JWT_SECRET_KEY` — randomly generated secret for encoding authentication tokens
-- `MCP_USERNAME` / `MCP_PASSWORD` — credentials for the containerised MCP service
+- Network MCP has no shared credential; each client sends its own TestLookup bearer token over TLS. `TESTLOOKUP_USERNAME` / `TESTLOOKUP_PASSWORD` remain available only to a locally launched stdio server.
 
 **Observability**
 - `OTEL_ENABLED` — `true` (default) to enable OpenTelemetry tracing

@@ -592,8 +592,16 @@ jobs:
           cache: pip
           cache-dependency-path: mcp/requirements.txt
 
+      - name: Set up Go for Kustomize validation
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.22.7"
+          cache: false
+
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pyyaml
 
       - name: Syntax check all Python files
         run: |
@@ -637,6 +645,86 @@ jobs:
           TESTLOOKUP_API_URL: http://localhost:8000
           TESTLOOKUP_USERNAME: ""
           TESTLOOKUP_PASSWORD: ""
+
+      - name: Run MCP regression tests
+        run: python -m pytest tests -q
+
+      - name: Render and validate MCP deployment overlays
+        shell: bash
+        run: |
+          go install sigs.k8s.io/kustomize/kustomize/v5@v5.7.1
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          for overlay in base overlays/dev overlays/staging overlays/prod overlays/homelab overlays/openshift overlays/openshift-artifactory overlays/aws-eks overlays/gcp-gke overlays/azure-aks overlays/self-hosted; do
+            safe_name="${overlay//\//-}"
+            kustomize build "../k8s/${overlay}" > "/tmp/${safe_name}.yaml"
+          done
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          for path in sorted(Path("/tmp").glob("base.yaml")) + sorted(Path("/tmp").glob("overlays-*.yaml")):
+              documents = [doc for doc in yaml.safe_load_all(path.read_text()) if doc]
+              deployment = next(
+                  doc for doc in documents
+                  if doc.get("kind") == "Deployment"
+                  and doc["metadata"]["name"] == "testlookup-mcp"
+              )
+              env = {
+                  item["name"]: item.get("value")
+                  for item in deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])
+              }
+              assert "TESTLOOKUP_USERNAME" not in env, path
+              assert "TESTLOOKUP_PASSWORD" not in env, path
+              assert env.get("TESTLOOKUP_MCP_ALLOWED_HOSTS"), path
+              assert deployment["spec"].get("strategy", {}).get("type") == "Recreate", path
+              container = deployment["spec"]["template"]["spec"]["containers"][0]
+              readiness = container["readinessProbe"]
+              assert readiness["httpGet"]["path"] == "/health/ready", path
+              assert readiness.get("timeoutSeconds", 1) >= int(env["TESTLOOKUP_AUTH_TIMEOUT"]), path
+              hpa = next(
+                  doc for doc in documents
+                  if doc.get("kind") == "HorizontalPodAutoscaler"
+                  and doc["metadata"]["name"] == "testlookup-mcp-hpa"
+              )
+              assert hpa["spec"]["maxReplicas"] == 1, path
+
+              allowed_hosts = set(env["TESTLOOKUP_MCP_ALLOWED_HOSTS"].split(","))
+              exposed_hosts = set()
+              for doc in documents:
+                  if doc.get("kind") == "Ingress":
+                      for rule in doc.get("spec", {}).get("rules", []):
+                          for route in rule.get("http", {}).get("paths", []):
+                              service = route.get("backend", {}).get("service", {}).get("name")
+                              if service == "testlookup-mcp" and rule.get("host"):
+                                  exposed_hosts.add(rule["host"])
+                  elif doc.get("kind") == "Route" and doc.get("spec", {}).get("to", {}).get("name") == "testlookup-mcp":
+                      exposed_hosts.add(doc["spec"]["host"])
+                      assert doc.get("metadata", {}).get("annotations", {}).get("haproxy.router.openshift.io/timeout") == "1h", path
+              if path.name == "overlays-homelab.yaml":
+                  assert not exposed_hosts, (path, exposed_hosts)
+                  assert "127.0.0.1:*" in allowed_hosts and "localhost:*" in allowed_hosts
+              else:
+                  assert allowed_hosts <= exposed_hosts, (path, allowed_hosts, exposed_hosts)
+
+              if path.name == "overlays-aws-eks.yaml":
+                  mcp_ingress = next(doc for doc in documents if doc.get("kind") == "Ingress" and doc["metadata"]["name"] == "testlookup-mcp-ingress")
+                  assert mcp_ingress["spec"]["ingressClassName"] == "alb"
+                  assert mcp_ingress["metadata"]["annotations"]["alb.ingress.kubernetes.io/load-balancer-attributes"] == "idle_timeout.timeout_seconds=3600"
+                  policy = next(doc for doc in documents if doc.get("kind") == "NetworkPolicy" and doc["metadata"]["name"] == "allow-mcp")
+                  cidrs = {peer["ipBlock"]["cidr"] for peer in policy["spec"]["ingress"][0]["from"] if "ipBlock" in peer}
+                  assert "0.0.0.0/0" in cidrs
+              if path.name == "overlays-gcp-gke.yaml":
+                  assert all(doc.get("spec", {}).get("ingressClassName") != "nginx" for doc in documents if doc.get("kind") == "Ingress")
+                  mcp_service = next(doc for doc in documents if doc.get("kind") == "Service" and doc["metadata"]["name"] == "testlookup-mcp")
+                  assert mcp_service["metadata"]["annotations"]["cloud.google.com/neg"] == '{"ingress": true}'
+                  assert "testlookup-mcp-backend-config" in mcp_service["metadata"]["annotations"]["cloud.google.com/backend-config"]
+                  backend_config = next(doc for doc in documents if doc.get("kind") == "BackendConfig" and doc["metadata"]["name"] == "testlookup-mcp-backend-config")
+                  assert backend_config["spec"]["timeoutSec"] == 3600
+                  assert backend_config["spec"]["healthCheck"]["requestPath"] == "/health/live"
+                  policy = next(doc for doc in documents if doc.get("kind") == "NetworkPolicy" and doc["metadata"]["name"] == "allow-mcp")
+                  cidrs = {peer["ipBlock"]["cidr"] for peer in policy["spec"]["ingress"][0]["from"] if "ipBlock" in peer}
+                  assert {"35.191.0.0/16", "130.211.0.0/22"} <= cidrs
+          PY
 
   # ─────────────────────────────────────────────────────────────
   # JOB 4: Build & push Docker images (only on main branch)

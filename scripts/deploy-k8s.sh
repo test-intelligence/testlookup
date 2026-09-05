@@ -19,7 +19,6 @@
 #   - testlookup-secrets Secret created in the target namespace, with keys:
 #         APP_SECRET_KEY JWT_SECRET_KEY DATABASE_URL POSTGRES_PASSWORD
 #         MINIO_ACCESS_KEY MINIO_SECRET_KEY MONGO_URI WEBHOOK_SECRET
-#         MCP_USERNAME MCP_PASSWORD
 #   - Container images pushed to the registry referenced by the overlay
 # ============================================================================
 
@@ -31,6 +30,7 @@ REGISTRY=""
 NAMESPACE="testlookup"
 DRY_RUN=0
 SKIP_SECRETS_CHECK=0
+LEGACY_MCP_USER=""
 
 print_usage() {
   sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
@@ -112,9 +112,7 @@ ERROR: Secret testlookup-secrets is missing in namespace '$NAMESPACE'.
            --from-literal=MINIO_ACCESS_KEY='REPLACE' \\
            --from-literal=MINIO_SECRET_KEY='REPLACE' \\
            --from-literal=MONGO_URI='mongodb://user:pass@host:27017/testlookup_logs?authSource=admin' \\
-           --from-literal=WEBHOOK_SECRET=\$(openssl rand -hex 32) \\
-           --from-literal=MCP_USERNAME='mcp_service' \\
-           --from-literal=MCP_PASSWORD=\$(openssl rand -base64 16 | tr -d '=/+' | head -c 16)
+           --from-literal=WEBHOOK_SECRET=\$(openssl rand -hex 32)
 
        For cloud-native secret stores (AWS Secrets Manager, GCP Secret Manager,
        Azure Key Vault), see docs/deployment/<cloud>.md.
@@ -123,6 +121,10 @@ ERROR: Secret testlookup-secrets is missing in namespace '$NAMESPACE'.
 EOF
     exit 1
   fi
+fi
+if [[ $DRY_RUN -eq 0 ]]; then
+  LEGACY_MCP_USER=$(kubectl -n "$NAMESPACE" get secret testlookup-secrets \
+    -o jsonpath='{.data.MCP_USERNAME}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
 fi
 
 # ── Optional: override image registry on the fly ─────────────────────────────
@@ -164,6 +166,29 @@ kubectl apply -k "$OVERLAY"
 
 echo "==> Waiting for backend rollout..."
 kubectl -n "$NAMESPACE" rollout status deployment/testlookup-backend --timeout=300s
+
+echo "==> Waiting for MCP rollout..."
+kubectl -n "$NAMESPACE" rollout status deployment/testlookup-mcp --timeout=300s
+
+if [[ -n "$LEGACY_MCP_USER" ]]; then
+  if [[ "${KEEP_LEGACY_MCP_SERVICE_ACCOUNT:-false}" == "true" ]]; then
+    echo "WARN: keeping legacy MCP account '$LEGACY_MCP_USER' by operator request." >&2
+  else
+    LEGACY_BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod \
+      -l app=testlookup-backend --field-selector=status.phase=Running \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    [[ -n "$LEGACY_BACKEND_POD" ]] || {
+      echo "ERROR: no backend pod available to retire legacy MCP account" >&2
+      exit 1
+    }
+    kubectl -n "$NAMESPACE" exec -i "$LEGACY_BACKEND_POD" -- \
+      env LEGACY_MCP_USERNAME="$LEGACY_MCP_USER" \
+      python < scripts/retireLegacyMcpServiceAccount.py
+    kubectl -n "$NAMESPACE" patch secret testlookup-secrets --type=merge \
+      -p='{"data":{"MCP_USERNAME":null,"MCP_PASSWORD":null}}'
+    echo "==> Legacy MCP account retired and Secret credentials removed."
+  fi
+fi
 
 echo "==> Waiting for frontend rollout..."
 kubectl -n "$NAMESPACE" rollout status deployment/testlookup-frontend --timeout=180s

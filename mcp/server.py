@@ -34,7 +34,7 @@ Tool Domains:
   - Fix-outcome learning loop (record merged/reverted fix outcomes)
 
 Transport: stdio (default) or SSE
-Auth:      JWT via TESTLOOKUP_USERNAME / TESTLOOKUP_PASSWORD env vars
+Auth:      stdio uses configured credentials; SSE requires each caller's bearer token
 
 Usage:
     python server.py                    # stdio (Desktop Client)
@@ -65,6 +65,12 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from mcp.server.fastmcp import FastMCP  # type: ignore[import]
+from mcp.server.transport_security import TransportSecuritySettings
+from starlette.responses import JSONResponse
+
+import client as api
+from config import settings
+from token_verifier import TestLookupTokenVerifier, build_auth_settings
 
 from tools import auth, projects, runs, metrics, analytics, analysis, release
 from tools import intelligence, deep, search, reports
@@ -79,6 +85,23 @@ from prompts import templates
 
 mcp = FastMCP(
     name="TestLookup",
+    host="0.0.0.0",
+    port=8002,
+    token_verifier=TestLookupTokenVerifier(),
+    auth=build_auth_settings(),
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[
+            value.strip()
+            for value in settings.mcp_allowed_hosts.split(",")
+            if value.strip()
+        ],
+        allowed_origins=[
+            value.strip()
+            for value in settings.mcp_allowed_origins.split(",")
+            if value.strip()
+        ],
+    ),
     instructions=(
         "You are connected to TestLookup, a 360° software testing intelligence platform. "
         "You can query test quality metrics, investigate failures, check release readiness, "
@@ -120,6 +143,20 @@ mcp = FastMCP(
         "The `fix_this_flaky_test` prompt packages the whole flaky-fix workflow."
     ),
 )
+
+
+@mcp.custom_route("/health/live", methods=["GET"])
+async def live(_request):  # noqa: ANN001
+    """Process liveness; intentionally does not contact a dependency."""
+    return JSONResponse({"status": "alive"})
+
+
+@mcp.custom_route("/health/ready", methods=["GET"])
+async def ready(_request):  # noqa: ANN001
+    """Readiness follows the backend auth authority used by every handshake."""
+    if await api.backend_ready():
+        return JSONResponse({"status": "ready"})
+    return JSONResponse({"status": "unready"}, status_code=503)
 
 # ── Register Tools ────────────────────────────────────────────────────────────
 auth.register(mcp)

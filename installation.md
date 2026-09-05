@@ -76,13 +76,13 @@ Open only required ports:
 
 ```bash
 gcloud compute firewall-rules create testlookup-allow-web \
-  --allow=tcp:22,tcp:80,tcp:8000,tcp:8002 \
+  --allow=tcp:22,tcp:80,tcp:8000 \
   --target-tags=testlookup-web \
   --source-ranges=0.0.0.0/0
 ```
 
-> **Port 8002** is the MCP SSE server — open only if you need remote AI assistant access.
-> For local-only MCP Client use (stdio mode), do not expose port 8002.
+> The packaged MCP port is bound to VM loopback. Use the SSH tunnel below; do
+> not expose bearer-authenticated MCP over a public plaintext port.
 
 ### 3.2 Install Docker + Compose on VM
 
@@ -113,7 +113,7 @@ cd testlookup
 cp .env.gcp-vm.example .env
 ```
 
-Edit `.env` — set real secrets, `MCP_USERNAME`, `MCP_PASSWORD`, and the VM public IP for `VITE_API_BASE_URL`, then start:
+Edit `.env` — set real application secrets and the VM public IP for `VITE_API_BASE_URL`, then start:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.gcp-vm.yml up -d --build
@@ -137,17 +137,26 @@ Open:
 
 - `http://<VM_IP>` — frontend dashboard
 - `http://<VM_IP>:8000/docs` — backend API docs
-- `http://<VM_IP>:8002/sse` — MCP SSE endpoint (for AI assistant integration)
+- `http://127.0.0.1:8002/sse` through an SSH tunnel — MCP SSE endpoint
 
 ### 4.4 Connect your AI Assistant to the VM-hosted MCP
 
-On your local machine, add to your MCP client configuration:
+On your local machine, create an encrypted tunnel and leave it running:
+
+```bash
+gcloud compute ssh testlookup-vm --zone=<ZONE> -- -N -L 8002:127.0.0.1:8002
+```
+
+Then add a per-client TestLookup access token to your MCP configuration:
 
 ```json
 {
   "mcpServers": {
     "testlookup": {
-      "url": "http://<VM_IP>:8002/sse"
+      "url": "http://127.0.0.1:8002/sse",
+      "headers": {
+        "Authorization": "Bearer ${TESTLOOKUP_ACCESS_TOKEN}"
+      }
     }
   }
 }
@@ -195,7 +204,7 @@ Important: Cloud Run cannot host stateful local services like MongoDB/MinIO/Redi
 - MongoDB: MongoDB Atlas free/shared tier
 - Redis: Memorystore (paid) or external Redis provider for test usage
 - S3-compatible object storage: Cloud Storage S3 interoperability endpoint or external S3-compatible provider
-- MCP Server: Cloud Run service (SSE transport, `--no-allow-unauthenticated` recommended)
+- MCP Server: Cloud Run service (SSE transport with Cloud Run IAM plus caller bearer authentication)
 
 Use `docker-compose.gcp-vm.yml` with the runbook in `deploymentsteps.md` for full steps.
 
@@ -234,11 +243,13 @@ Notes:
 ## 7) Security baseline
 
 - Use strong random values for `APP_SECRET_KEY` and `JWT_SECRET_KEY`
-- Set `MCP_USERNAME` and `MCP_PASSWORD` — the MCP container authenticates to the backend using these
-- Restrict firewall to `22`, `80`, `443` once stable; only expose `8002` if remote MCP access is needed
+- Require each remote MCP client to send its own TestLookup bearer token and terminate TLS before the MCP service
+- Restrict firewall to `22`, `80`, `443` once stable; keep MCP port `8002` private
 - Do not expose database ports publicly
 - Rotate API keys and secrets periodically
-- On Cloud Run, deploy MCP with `--no-allow-unauthenticated` and use IAM to restrict invoker access
+- On Cloud Run, keep IAM enabled. Send the Cloud Run identity token in
+  `X-Serverless-Authorization` and the caller's TestLookup token in
+  `Authorization`; configure `TESTLOOKUP_MCP_ALLOWED_HOSTS` with the service host
 
 ---
 
@@ -295,7 +306,7 @@ docker compose -f docker-compose.yml -f docker-compose.gcp-vm.yml logs -f mcp
 docker compose exec mcp python -c "import httpx; import asyncio; print(asyncio.run(httpx.AsyncClient().get('http://backend:8000/health')))"
 ```
 
-- MCP authentication errors: verify `MCP_USERNAME` and `MCP_PASSWORD` in `.env` match a registered user (POST /api/v1/auth/register).
+- MCP authentication errors: obtain a TestLookup access token for the agent's own user and send it as `Authorization: Bearer <token>` on the SSE connection and message requests.
 
 ---
 
@@ -306,4 +317,3 @@ docker compose exec mcp python -c "import httpx; import asyncio; print(asyncio.r
 - `.github/workflows/deploy-*.yml` - the deployment pipelines those overlays are driven by
 - `Jenkinsfile` and `jenkins/` - Jenkins CI/CD reference
 - `README.md` - architecture and system diagram
-

@@ -1,0 +1,11 @@
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: testlookup-mcp-backend-config
+  namespace: testlookup
+spec:
+  timeoutSec: 3600
+  healthCheck:
+    type: HTTP
+    requestPath: /health/live
+    port: 8002

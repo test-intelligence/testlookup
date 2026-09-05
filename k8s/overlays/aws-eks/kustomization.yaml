@@ -32,6 +32,7 @@ patches:
           cert-manager.io/cluster-issuer: null
           # AWS ALB controller
           alb.ingress.kubernetes.io/scheme: internet-facing
+          alb.ingress.kubernetes.io/group.name: testlookup
           alb.ingress.kubernetes.io/target-type: ip
           alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
           alb.ingress.kubernetes.io/ssl-redirect: '443'
@@ -45,6 +46,34 @@ patches:
       kind: Ingress
       name: testlookup-ingress
 
+  # The MCP host joins the same ALB and keeps SSE connections open for one hour.
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: testlookup-mcp-ingress
+        annotations:
+          nginx.ingress.kubernetes.io/ssl-redirect: null
+          nginx.ingress.kubernetes.io/proxy-read-timeout: null
+          nginx.ingress.kubernetes.io/proxy-send-timeout: null
+          nginx.ingress.kubernetes.io/limit-rps: null
+          nginx.ingress.kubernetes.io/limit-connections: null
+          cert-manager.io/cluster-issuer: null
+          alb.ingress.kubernetes.io/scheme: internet-facing
+          alb.ingress.kubernetes.io/group.name: testlookup
+          alb.ingress.kubernetes.io/target-type: ip
+          alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+          alb.ingress.kubernetes.io/ssl-redirect: '443'
+          alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:REGION:ACCOUNT:certificate/REPLACE-ME
+          alb.ingress.kubernetes.io/healthcheck-path: /health/live
+          alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
+      spec:
+        ingressClassName: alb
+        tls: null
+    target:
+      kind: Ingress
+      name: testlookup-mcp-ingress
+
   # ── PVCs: pin to gp3 StorageClass (defined in storageclass.yaml) ──────────
   - patch: |-
       - op: replace
@@ -52,6 +81,18 @@ patches:
         value: gp3
     target:
       kind: PersistentVolumeClaim
+
+  # ALB target-type ip reaches pod IPs directly. The ALB security group is the
+  # network perimeter; bearer verification remains mandatory at the MCP pod.
+  - patch: |-
+      - op: add
+        path: /spec/ingress/0/from/-
+        value:
+          ipBlock:
+            cidr: 0.0.0.0/0
+    target:
+      kind: NetworkPolicy
+      name: allow-mcp
 
 images:
   # Replace ACCOUNT/REGION below with your ECR registry path before applying.

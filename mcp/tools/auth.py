@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import client as api  # type: ignore[import]
 from config import settings  # type: ignore[import]
 
@@ -44,15 +42,18 @@ def register(mcp) -> None:  # noqa: ANN001
     @mcp.tool()
     async def login(username: str, password: str) -> str:
         """
-        Authenticate against TestLookup and cache the JWT token for this session.
-        Call this first if the server was started without TESTLOOKUP_USERNAME/PASSWORD env vars,
-        or to switch users mid-session.
+        Authenticate a local stdio session and cache its JWT token.
+        Network sessions already carry a request-scoped bearer token and cannot
+        use this tool to switch or replace identity.
         """
-        import client as _api  # local import so we can mutate module state
-        _api._access_token = None
+        import client as _api  # local import so we can mutate stdio state
+        if _api._request_access_token() is not None:
+            return (
+                "Login is available only over the local stdio transport. "
+                "Network MCP sessions must reconnect with their own TestLookup bearer token."
+            )
+        _api._stdio_access_token = None
 
-        from config import settings as _s  # type: ignore[import]
-        # Temporarily override credentials for this call
         # Backend expects OAuth2 form-encoded data, not JSON
         resp = await _api._get_client().post(
             "/api/v1/auth/login",
@@ -62,7 +63,7 @@ def register(mcp) -> None:  # noqa: ANN001
             return f"Login failed (HTTP {resp.status_code}): {resp.text}"
 
         data = resp.json()
-        _api._access_token = data["access_token"]
+        _api._stdio_access_token = data["access_token"]
         return (
             f"Logged in as **{username}**.\n"
             f"Token expires in: {data.get('expires_in', 'unknown')}s\n"

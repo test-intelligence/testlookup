@@ -12,3 +12,4 @@ metadata:
 spec:
   domains:
     - testlookup.example.com   # REPLACE with your domain
+    - testlookup-mcp.example.com

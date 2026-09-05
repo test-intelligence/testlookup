@@ -144,31 +144,18 @@ def test_the_trust_auth_trap_is_recorded():
     )
 
 
-# ── 4. No step may depend on another step's variable ────────────────────────
+# ── 4. Network MCP must not provision a shared backend principal ────────────
 
 
-def test_the_mcp_step_resolves_its_own_backend_pod():
-    """It used $BACKEND_POD, assigned only inside the admin step's success
-    branch. When that step was skipped, provisioning silently did nothing."""
+def test_network_mcp_shared_principal_provisioning_is_removed():
+    """Remote callers authenticate independently; the deployment must not create
+    or report credentials for a process-wide MCP backend account."""
     src = _script()
-    block = src.split("Step 10b")[-1]
-    assert "MCP_BACKEND_POD=" in block, (
-        "the MCP step does not resolve a backend pod of its own"
-    )
-    assert not re.search(r'exec -i "\$BACKEND_POD"', block), (
-        "the MCP step still execs against $BACKEND_POD, which is only set inside "
-        "another step's success branch"
-    )
-
-
-def test_a_skipped_mcp_provisioning_is_degraded_not_silent():
-    """Silently skipping leaves every authenticated MCP tool returning 401 while
-    the deploy reports success."""
-    src = _script()
-    block = src.split("Step 10b")[-1]
-    assert block.count("DEPLOY_DEGRADED=true") >= 1, (
-        "failing to provision the MCP account does not affect the deploy outcome"
-    )
+    for forbidden in ("MCP_BACKEND_POD", "createServiceAccount.py"):
+        assert forbidden not in src, (
+            f"deploy script still contains shared MCP identity marker {forbidden!r}"
+        )
+    assert "retireLegacyMcpServiceAccount.py" in src
 
 
 # ── The parser must not be vacuous ──────────────────────────────────────────
@@ -182,7 +169,6 @@ def test_the_checks_are_actually_reading_the_script():
     src = _script()
     assert len(src) > 10_000, f"deploy script looks truncated ({len(src)} bytes)"
     for marker in (
-        "Step 10b",
         "Waiting for rollouts to complete",
         "Testing health endpoint",
         "# ── Summary",

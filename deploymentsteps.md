@@ -217,7 +217,7 @@ This allows you and your teammate to reach the application from your browsers:
 
 ```bash
 gcloud compute firewall-rules create testlookup-allow-web \
-  --allow=tcp:22,tcp:80,tcp:8000,tcp:8002 \
+  --allow=tcp:22,tcp:80,tcp:8000 \
   --target-tags=testlookup-web \
   --source-ranges=0.0.0.0/0 \
   --description="Allow SSH, frontend, and backend access"
@@ -227,7 +227,7 @@ gcloud compute firewall-rules create testlookup-allow-web \
 - `22` — SSH (secure remote access to the VM)
 - `80` — Frontend web dashboard
 - `8000` — Backend API and its documentation page
-- `8002` — MCP SSE endpoint (optional; expose only if required)
+- `8002` — MCP SSE endpoint, bound to VM loopback and reached through an SSH tunnel
 
 ---
 

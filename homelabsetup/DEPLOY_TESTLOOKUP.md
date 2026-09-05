@@ -350,8 +350,6 @@ PG_PASSWORD=$(openssl rand -base64 16 | tr -d '=/+' | head -c 24)
 MINIO_ACCESS="testlookup_minio"
 MINIO_SECRET=$(openssl rand -base64 16 | tr -d '=/+' | head -c 24)
 WEBHOOK_SECRET=$(openssl rand -hex 32)
-MCP_USER="mcp_service"
-MCP_PASS=$(openssl rand -base64 12 | tr -d '=/+' | head -c 16)
 
 DATABASE_URL="postgresql+asyncpg://testlookup_user:${PG_PASSWORD}@testlookup-postgres:5432/testlookup"
 MONGO_URI="mongodb://testlookup-mongo:27017"
@@ -365,15 +363,12 @@ kubectl -n testlookup create secret generic testlookup-secrets \
   --from-literal=MINIO_ACCESS_KEY="${MINIO_ACCESS}" \
   --from-literal=MINIO_SECRET_KEY="${MINIO_SECRET}" \
   --from-literal=MONGO_URI="${MONGO_URI}" \
-  --from-literal=WEBHOOK_SECRET="${WEBHOOK_SECRET}" \
-  --from-literal=MCP_USERNAME="${MCP_USER}" \
-  --from-literal=MCP_PASSWORD="${MCP_PASS}"
+  --from-literal=WEBHOOK_SECRET="${WEBHOOK_SECRET}"
 
 # IMPORTANT: Save these credentials — you'll need them later
 echo "============================================"
 echo "PostgreSQL password: ${PG_PASSWORD}"
 echo "MinIO credentials:   ${MINIO_ACCESS} / ${MINIO_SECRET}"
-echo "MCP credentials:     ${MCP_USER} / ${MCP_PASS}"
 echo "============================================"
 ```
 
@@ -607,6 +602,17 @@ curl -s -H "Host: testlookup.local" http://192.168.0.200/docs | head -5
 curl -s -H "Host: testlookup.local" http://192.168.0.200/ | head -5
 # -> Should return HTML (React SPA)
 ```
+
+The MCP endpoint carries each user's bearer token, so the HTTP-only homelab
+ingress does not publish it on the LAN. Open a local tunnel when an MCP client
+needs access:
+
+```bash
+kubectl -n testlookup port-forward service/testlookup-mcp 8002:8002
+```
+
+Connect the client to `http://127.0.0.1:8002/sse` and send its TestLookup access
+token as `Authorization: Bearer <token>`.
 
 ### Open in browser
 

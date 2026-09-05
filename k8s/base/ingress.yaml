@@ -83,3 +83,34 @@ spec:
                 name: testlookup-frontend
                 port:
                   number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: testlookup-mcp-ingress
+  namespace: testlookup
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/limit-rps: "10"
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - testlookup-mcp.example.com
+      secretName: testlookup-mcp-tls-cert
+  rules:
+    - host: testlookup-mcp.example.com
+      http:
+        paths:
+          # Route the complete host: SSE advertises /messages/ as a sibling path.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-mcp
+                port:
+                  number: 8002
