@@ -324,6 +324,55 @@ release gate's verdict — so "defects in this release" has a definition already
 agreed. Whether the list should adopt it, or declare itself project-wide, is a
 product call. `/quarantine` and `/my-failures` are the same shape.
 
+## Backlog — auto-select the project's active release (not yet implemented)
+
+Requested 2026-09-05: when a user picks a project in the dropdown, the picker
+should select that project's **active release** rather than defaulting to All
+releases.
+
+**The mechanism already exists, so this is not backend work.** `Release`
+has `is_active`, at most one per project behind the partial unique index
+`ix_releases_project_active`; `GET /releases?project_id=…` already returns
+`is_active` on each row; and `POST /releases/{id}/activate` shipped this session.
+`ReleasePicker` already fetches exactly that list, so the change is one effect —
+the one at `ReleasePicker.tsx:214` that currently CLEARS a release on a project
+switch would instead select the active one.
+
+**What has to be decided before writing it, because the data says the obvious
+answer is wrong.** On the homelab deployment, the active release for the project
+under test is `Default Release (Auth Service)` — the synthetic bucket that
+`link_run_or_default` assigns every UNLABELLED run to. Auto-selecting it would:
+
+* put most users into a view scoped to a fallback bucket whose name reads like a
+  real release, since it is named after their project;
+* and **exclude runs that were deliberately attributed to a real release** from
+  the default view, because those are not in the default bucket.
+
+That is the reverse of what the request is for. So the rule probably needs to
+skip auto-named / default releases (`is_auto_named` is on the model and returned
+by the API) and select only a release someone actually chose — which for many
+projects means selecting nothing, exactly as today.
+
+**Three smaller things it interacts with:**
+
+* **It flips the default request path.** Today omitting the release keeps the
+  SQL byte-identical for every existing caller (NFR1); auto-selecting means
+  effectively every request carries `release_id`. The index
+  `ix_test_runs_project_release_created` exists for that, but it stops being the
+  exceptional path.
+* **It must not override an explicit "All releases".** A user who deliberately
+  cleared the filter, switched project and switched back would have it silently
+  re-applied. That is the same class as the navigation bug fixed earlier this
+  session, where an absent URL param was read as an instruction rather than as
+  an absence — so it needs a recorded "the user chose none" state, not just a
+  null.
+* **Deep links change meaning over time.** A URL with no `?release=` would
+  acquire one at open time, so the same link shows different data before and
+  after a release rotation. Whether that is desirable is a product call.
+
+**Fallback:** a project with no active release keeps All releases, which is also
+what the picker already shows when a project has no releases at all.
+
 ## Backlog — Production-readiness UX audit, P1-P3 (not yet implemented)
 
 Filed 2026-09-05 from a design handoff bundle
