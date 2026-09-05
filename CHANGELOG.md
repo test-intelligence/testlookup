@@ -1,5 +1,61 @@
 # Changelog
 
+## 2026-09-05 — The release axis, checked against a real deployment
+
+The epic's e2e spec covered the release axis as it stood after the first pass.
+Five surfaces shipped after that and none of them was exercised anywhere except
+in unit tests that mock the layer underneath. This extends the spec to 15 tests
+and runs it against the homelab deployment.
+
+**The deployment moved first, and the probe proves it.** Before redeploying,
+`POST /releases/{id}/activate`, `GET /projects/{id}/attribution-rules` and its
+`/preview` all returned **404** — mounted nowhere. After, all three return
+**401**. That difference is the whole evidence that the code under test is the
+code running: a 401 means FastAPI resolved the route and ran the guard, a 404
+means the route does not exist. Migration head `0158`, 17/17 pods Running.
+
+**What the five new tests hold down**
+
+* **The summary report carries the release to the API.** The reported bug was
+  that `/reports/summary?release=…` changed nothing, because neither the router
+  nor the service accepted a release at all. Asserted on the WIRE, not on
+  rendered numbers — this deployment's data is not fixed, so "the totals
+  changed" is not a stable assertion, but "the request carried the filter" is
+  precisely the property that was missing.
+* **The release survives an in-app navigation.** Bug #1, by the journey a user
+  actually takes: click the Coverage link, not edit the URL. In-app links do not
+  carry `?release=`, and the picker used to read that absence as "clear it".
+* **A QA lead can set the active release**, and doing it twice is a no-op rather
+  than a conflict. `activate_release` shipped complete, correct and unreachable
+  for the whole life of the epic; a 404 here means it is unreachable again.
+* **Attribution rules list, preview and create** — ladder rung 3, which could
+  never fire because nothing could create a rule. The preview is asserted not to
+  persist what it was only asked to evaluate.
+* **A `match_field` the evaluator cannot read is refused.** The column is
+  `String(30)`; `"Branch"` would save cleanly and never match.
+
+**Every one of the five was mutation-checked, and one control did damage worth
+recording.** Each assertion was broken deliberately and confirmed red with the
+diagnostic it was written to print — a wrong route path, a filter substring that
+can never match, an expected value shifted by one suffix. The control on the
+refusal test sent a VALID `match_field` instead, expecting the 422 to disappear.
+It did: the endpoint returned 201 and left an **enabled catch-all rule**
+(`branch` `*` → release `x`) on a live project, which would have attributed
+every future run there to a release named `x`. Found by listing the rules
+afterwards, deleted (204, zero remaining), and re-verified after the full run.
+That is exactly the failure mode the preview endpoint exists to make visible,
+demonstrated accidentally on the real system — and a reminder that a positive
+control against a live deployment writes to it.
+
+**45/45 across chromium, firefox and webkit.**
+
+**Found on the way: CI has never linted a single spec file.** `npm run lint` is
+`eslint src`; `tests/` is outside that scope, so five `no-non-null-assertion`
+errors — two of them from this epic's own earlier e2e work — reached `main`
+unseen. The ones in this file are fixed properly (narrowing, not suppression);
+the rest are recorded in the backlog above, because widening the scope is a
+two-line change that is currently red for reasons unrelated to this work.
+
 ## 2026-09-05 — Release axis: what is done, and what is still open
 
 `docs/` is gitignored, so the backlog that tracked this work never leaves the
@@ -47,6 +103,12 @@ can tell "should also be user-invokable" from "correctly internal-only".
   renders on two pages and neither is one of them. That is the visible half of
   the S4b labelling requirement.
 * **No release integration test in CI.**
+* **CI lints `src` only, so no spec file has ever been linted.** `npm run lint`
+  is `eslint src`; `tests/` is outside it. Widening the scope is a two-line
+  change but currently RED — five `no-non-null-assertion` errors across
+  `auth.spec.ts` and three `probe-*.spec.ts` files, none of them from this work.
+  Until those are fixed the guard cannot be turned on, and lint errors in test
+  files reach `main` unseen.
 * **`architecture/DATABASE_SCHEMA.md` no longer describes the system** — no
   mention of `release_gate_decisions`, `primary_release_id`, `link_source` or
   `sort_key`; its generator has not been re-run.

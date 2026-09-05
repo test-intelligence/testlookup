@@ -136,8 +136,8 @@ test.describe('Release axis — the global filter', () => {
     // Whatever this deployment actually has — the suite must not depend on a
     // fixture release existing.
     const value = await picker.locator('option').nth(1).getAttribute('value');
-    expect(value, 'the picker offers no release for a pinned project').toBeTruthy();
-    await picker.selectOption(value!);
+    if (!value) throw new Error('the picker offers no release for a pinned project');
+    await picker.selectOption(value);
     await expect(page).toHaveURL(/release=/);
   });
 
@@ -186,8 +186,8 @@ test.describe('Release axis — the filter reaches the data', () => {
     const picker = page.getByLabel('Filter by release');
     await expect(picker).toBeEnabled();
     const value = await picker.locator('option').nth(1).getAttribute('value');
-    expect(value, 'the picker offers no release for a pinned project').toBeTruthy();
-    await picker.selectOption(value!);
+    if (!value) throw new Error('the picker offers no release for a pinned project');
+    await picker.selectOption(value);
     await page.waitForLoadState('networkidle');
 
     expect(
@@ -329,5 +329,198 @@ test.describe('Release axis — endpoints wired late in the epic', () => {
         }
       }
     }
+  });
+});
+
+test.describe('Release axis — the surfaces added after the first e2e pass', () => {
+  test.beforeEach(async ({ page }) => {
+    await performRealLogin(page);
+  });
+
+  test('the summary report carries the release to the API', async ({ page, request }) => {
+    // The reported bug: /reports/summary?release=... changed nothing, because
+    // neither the router nor the service accepted a release at all. Asserted on
+    // the WIRE rather than on rendered numbers: this deployment's data is not
+    // fixed, so "the totals changed" is not a stable assertion, but "the
+    // request carried the filter" is exactly the property that was missing.
+    const projectId = await firstProjectId(page, request);
+    await pinProject(page, projectId);
+
+    const scoped: string[] = [];
+    await page.route('**/api/v1/reports/summary**', async (route) => {
+      if (route.request().url().includes('release_id=')) scoped.push(route.request().url());
+      await route.continue();
+    });
+
+    await page.goto('/reports/summary');
+    const picker = page.getByLabel('Filter by release');
+    await expect(picker).toBeEnabled();
+    const value = await picker.locator('option').nth(1).getAttribute('value');
+    if (!value) throw new Error('the picker offers no release for a pinned project');
+
+    await picker.selectOption(value);
+    await page.waitForLoadState('networkidle');
+
+    expect(
+      scoped.length,
+      'the summary report was requested project-wide under a release filter',
+    ).toBeGreaterThan(0);
+  });
+
+  test('the release survives an in-app navigation', async ({ page, request }) => {
+    // Bug #1, end to end. In-app links do not carry `?release=`, and the picker
+    // used to read that absence as "clear the filter" — so the release vanished
+    // between pages. The unit test covers the mechanism; this covers the actual
+    // journey a user takes.
+    await pinProject(page, await firstProjectId(page, request));
+    await page.goto('/live');
+
+    const picker = page.getByLabel('Filter by release');
+    await expect(picker).toBeEnabled();
+    const value = await picker.locator('option').nth(1).getAttribute('value');
+    if (!value) throw new Error('no release to select on this project');
+    await picker.selectOption(value);
+    await expect(page).toHaveURL(/release=/);
+
+    // Navigate the way a user does, not by editing the URL.
+    await page.getByRole('link', { name: /coverage/i }).first().click();
+    await page.waitForLoadState('networkidle');
+
+    await expect(
+      page.getByLabel('Filter by release'),
+      'the release was dropped by moving between pages',
+    ).toHaveValue(value);
+  });
+
+  test('a QA lead can set the active release', async ({ page, request }) => {
+    // `activate_release` shipped complete with no route for the whole life of
+    // the epic. A 404 here means it is unreachable again.
+    const token = await bearer(page);
+    const projectId = await firstProjectId(page, request);
+
+    const list = await request.get(`/api/v1/releases?project_id=${projectId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      failOnStatusCode: false,
+    });
+    expect(list.ok(), `releases lookup failed with ${list.status()}`).toBeTruthy();
+    const body = await list.json();
+    const releases = Array.isArray(body) ? body : body.items ?? [];
+    expect(releases.length, 'no releases on this project to activate').toBeGreaterThan(0);
+
+    // A finished release is refused by design, so choose one that is not.
+    // Picking releases[0] blindly would turn a legitimate 409 into a red test
+    // and, worse, let a broken endpoint pass by looking like that refusal.
+    const TERMINAL = ['released', 'cancelled', 'archived'];
+    const target = releases.find((r: { status: string }) => !TERMINAL.includes(r.status));
+    expect(
+      target,
+      `every release on this project is terminal (${releases
+        .map((r: { status: string }) => r.status)
+        .join(', ')}) — nothing here can be activated`,
+    ).toBeTruthy();
+
+    const res = await request.post(`/api/v1/releases/${target.id}/activate`, {
+      headers: { Authorization: `Bearer ${token}` },
+      failOnStatusCode: false,
+    });
+
+    // The e2e user is ADMIN, which outranks QA_LEAD and bypasses project
+    // access — so 403 is not a legitimate outcome here, and accepting one
+    // would let the guard be wrong in the direction that locks users out.
+    expect(
+      res.status(),
+      `activate returned ${res.status()}: ${await res.text()}`,
+    ).toBe(200);
+
+    const out = await res.json();
+    expect(out.is_active).toBe(true);
+    expect(out).toHaveProperty('changed');
+
+    // Idempotent: the same call again must not error. A double-click, or two
+    // people on the same stale page, is not a conflict.
+    const again = await request.post(`/api/v1/releases/${target.id}/activate`, {
+      headers: { Authorization: `Bearer ${token}` },
+      failOnStatusCode: false,
+    });
+    expect(again.status()).toBe(200);
+    expect((await again.json()).changed).toBe(false);
+  });
+
+  test('attribution rules can be listed, previewed and created', async ({ page, request }) => {
+    // Ladder rung 3 could never fire because nothing could create a rule. The
+    // preview is exercised too: it is the safeguard against the documented
+    // failure mode, a rule that matches everything.
+    const token = await bearer(page);
+    const projectId = await firstProjectId(page, request);
+    const base = `/api/v1/projects/${projectId}/attribution-rules`;
+    const auth = { Authorization: `Bearer ${token}` };
+
+    const listed = await request.get(base, { headers: auth, failOnStatusCode: false });
+    expect(
+      listed.status(),
+      `listing attribution rules returned ${listed.status()}: ${await listed.text()}`,
+    ).toBe(200);
+
+    const preview = await request.post(`${base}/preview`, {
+      headers: auth,
+      data: {
+        name: 'e2e probe',
+        match_field: 'branch',
+        match_pattern: 'no-branch-matches-this-*',
+        target_release_name: 'e2e-probe-release',
+        priority: 9999,
+        is_enabled: false,
+      },
+      failOnStatusCode: false,
+    });
+    expect(
+      preview.status(),
+      `the rule preview returned ${preview.status()}: ${await preview.text()}`,
+    ).toBe(200);
+
+    const out = await preview.json();
+    expect(out).toHaveProperty('considered');
+    expect(out).toHaveProperty('matched');
+    expect(out).toHaveProperty('field_present');
+    expect(out.matched).toBeLessThanOrEqual(out.considered);
+    expect(
+      out.matched,
+      'a pattern no branch can match reported matches — the preview is not evaluating',
+    ).toBe(0);
+
+    // A preview must not persist the rule it was asked to try.
+    const after = await request.get(base, { headers: auth });
+    const body = await after.json();
+    const rules = Array.isArray(body) ? body : body.items ?? [];
+    expect(
+      rules.some((r: { name: string }) => r.name === 'e2e probe'),
+      'the preview saved the rule it was only asked to evaluate',
+    ).toBe(false);
+  });
+
+  test('a match_field the evaluator cannot read is refused', async ({ page, request }) => {
+    // The column is String(30), so the database accepts anything. A typo would
+    // store cleanly and never match — a rule sitting in the list looking
+    // configured while the ladder falls straight past it.
+    const token = await bearer(page);
+    const projectId = await firstProjectId(page, request);
+
+    const res = await request.post(`/api/v1/projects/${projectId}/attribution-rules`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: {
+        name: 'bad field',
+        match_field: 'Branch',
+        match_pattern: '*',
+        target_release_name: 'x',
+      },
+      failOnStatusCode: false,
+    });
+
+    expect(res.status(), 'a bad match_field was accepted').not.toBe(201);
+    expect(
+      res.status(),
+      `expected 422 for an unreadable match_field, got ${res.status()}`,
+    ).toBe(422);
+    expect(await res.text()).toContain('match_field');
   });
 });
