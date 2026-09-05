@@ -34,8 +34,19 @@ Nothing constrained a link to join a run and a release in the *same* project, so
 a caller with QA_LEAD on project A who knew a run id from project B could pull
 B's results into A's release — and from there into A's release scorecard and its
 signed compliance pack. The service layer now rejects that; this migration adds
-the denormalized ``project_id`` so it can be enforced by the database too, and
-sweeps for rows that already violate it.
+the denormalized ``project_id`` and sweeps for rows that already violate it.
+
+**What this does NOT do, despite what this paragraph used to say.** The column
+is added bare — no foreign key, no CHECK — so the database enforces nothing
+about it; the guarantee is the service layer's alone. Claiming otherwise here
+was worse than silence, because it is the sentence a reader consults before
+deciding whether they still need an application-level check.
+
+Real database enforcement needs a COMPOSITE foreign key
+(``(release_id, project_id) -> releases(id, project_id)`` and the same for
+``test_runs``), which in turn needs a unique constraint on ``(id, project_id)``
+on both of those tables. That is a migration of its own against two large
+tables, not a clause in this one.
 
 And ``release_test_run_links`` had an index on ``release_id`` only. The hot read
 is the other direction: ``fetch_release_map`` runs an ``IN`` over the run ids on

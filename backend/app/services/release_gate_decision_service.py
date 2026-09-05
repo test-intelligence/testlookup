@@ -94,6 +94,24 @@ async def record_decision(
         # and it would simply never match a status query again.
         raise ValueError(f"unknown verdict {verdict!r}; expected one of {VERDICTS}")
 
+    if verdict == "CONDITIONAL_GO" and not conditions_for_go:
+        # A conditional go with no conditions is the same as a GO, recorded
+        # under a word that implies somebody still has work to do. Whoever
+        # reads the scorecard cannot act on it and cannot tell it apart from a
+        # pass, which is the worst of both.
+        #
+        # NOTE: nothing in this product currently EMITS this verdict —
+        # `release_rollup_service.decide` returns only GO / NO_GO /
+        # NOT_EVALUATED, and `conditions_for_go` has no writer. The verdict
+        # stays in the vocabulary because the column and the AI council's
+        # recommendation both use it, and narrowing it here would reject a row
+        # a future caller is entitled to record. This guard makes sure that
+        # when one does, it arrives meaning something.
+        raise ValueError(
+            "CONDITIONAL_GO requires conditions_for_go; a conditional verdict "
+            "with no conditions is a GO wearing a different word"
+        )
+
     previous = await current_decision(db, release_id, phase_id=phase_id)
     if previous is not None:
         previous.is_current = False

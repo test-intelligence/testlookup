@@ -3029,7 +3029,22 @@ class Release(Base):
     version: Mapped[Optional[str]] = mapped_column(String(100))
     description: Mapped[Optional[str]] = mapped_column(Text)
 
-    # Status: planning|in_progress|released|cancelled
+    # Status: planning|in_progress|released|cancelled|archived
+    #
+    # ``archived`` was missing from this list while
+    # ``release_lifecycle_service.TERMINAL_STATUSES`` already branched on it —
+    # so the epic's "archive a decided release rather than delete it" rule
+    # referred to a state this comment said did not exist. Declared here now;
+    # that tuple remains the single source of truth for which of these are
+    # terminal.
+    #
+    # NOT constrained to a closed set, deliberately. Live rows and existing
+    # tests also carry ``ready``, ``pending`` and ``active``, so fronting this
+    # String column with a strict enum would 422 real data — the exact failure
+    # this codebase has hit before (a strict Pydantic enum over a String column
+    # silently rejecting a drifted value, and the UI showing an empty page with
+    # no toast). Closing the vocabulary needs a data audit and a migration of
+    # its own.
     status: Mapped[str] = mapped_column(String(30), default="planning")
 
     # Migration 0077: project-level default — used when ingestion / live
@@ -3115,9 +3130,18 @@ class Release(Base):
     # NULL means "ours", which is the common case (hand-created and
     # ingest-created releases) and not a gap to backfill.
     #
-    # When source_system is not local, name/version/dates/status are read-only
-    # in the UI — the external system is authoritative and an edit here would
-    # be silently overwritten by the next sync.
+    # When source_system is set, the NAME is the external system's — a local
+    # rename is reverted by the next sync, which writes `existing.name` from
+    # the milestone/fix-version title. `update_release` refuses it rather than
+    # accepting an edit that silently disappears later.
+    #
+    # This comment used to claim name/version/dates/status were all read-only.
+    # Only the name is: neither sync writes `version`, `planned_date` or
+    # `released_at`, and `status` is TestLookup's on PURPOSE — jira_release_sync
+    # explicitly declines to map Jira's `released` flag onto it, because an
+    # external tool must not be able to mark a release shipped that the gate
+    # never approved. Over-claiming here would have justified blocking edits
+    # the sync never touches.
     source_system: Mapped[Optional[str]] = mapped_column(String(20))
 
     #: The provider's STABLE id. Sync keys on this, never on the name:

@@ -26,12 +26,19 @@ would order them by whatever their first characters happen to be. Keeping the
 two populations in separate bands means an unparseable name always sorts after
 every real version, which is where a placeholder belongs.
 
-**numeric segments** — four groups zero-padded to five digits, so ``2.10.0``
-(``00002.00010.00000.00000``) correctly follows ``2.9.0``
-(``00002.00009.00000.00000``). Five digits covers versions up to 99999 per
-segment; four segments covers the ``1.2.3.4`` builds some teams ship. A version
-with fewer segments is padded with zeros, which is what makes ``2.4`` and
-``2.4.0`` compare equal — they are the same release named two ways.
+**numeric segments** — four groups zero-padded to ``SEGMENT_WIDTH`` digits, so
+``2.10.0`` (``000002.000010.000000.000000``) correctly follows ``2.9.0``
+(``000002.000009.000000.000000``). Six digits covers any plausible version
+component; four segments covers the ``1.2.3.4`` builds some teams ship. A
+version with fewer segments is padded with zeros, which is what makes ``2.4``
+and ``2.4.0`` compare equal — they are the same release named two ways.
+
+The width is stated as ``SEGMENT_WIDTH`` rather than spelled out, because this
+paragraph said "five digits" and gave five-digit examples while the constant
+had been 6 — so the documentation and the code disagreed about the one thing
+this module exists to define. The full key is
+``<band>|<segments>|<suffix>``; ``compute_sort_key("2.9.0", ...)`` returns
+``1|000002.000009.000000.000000|~``.
 
 **pre-release** — the subtle one. ``~`` (0x7E) sorts after every alphanumeric
 ASCII character, so encoding "has no pre-release" as ``~`` makes GA outrank its

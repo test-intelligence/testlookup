@@ -1,5 +1,99 @@
 # Changelog
 
+## 2026-09-04 — Vocabulary and documentation that describe what the code does
+
+Five design-gate findings, all the same shape: a name or a sentence that
+described something the code did not do. None is a crash. Each is a statement a
+future reader would have acted on, and each was false.
+
+**`CONDITIONAL_GO` is declared and unreachable.** `decide()` returns GO / NO_GO
+/ NOT_EVALUATED, and `conditions_for_go` has no writer. It stays in the
+vocabulary — the column and the AI council's recommendation both use it, so
+narrowing would reject a row a future caller is entitled to record — but
+`record_decision` now refuses a conditional verdict with no conditions, which is
+a GO wearing a different word. A test records the gap and says what to replace
+it with when the gate learns to emit one.
+
+**The "three spellings of unattributed" were not drift.** The audit suggested
+unifying `release_filter.UNATTRIBUTED`, `LinkSource.UNKNOWN` and
+`"unattributed_link"`. They denote three DIFFERENT states — the query sentinel,
+a link whose provenance is unrecoverable, and a run with no primary link row —
+and collapsing them would report a backfilled link and a missing one as the same
+thing. What was genuinely wrong is that two were bare literals, so the
+distinction lived only in whoever last read the line. Named now, with a test
+that they stay distinct.
+
+**`release_sort_key`'s docstring disagreed with its own constant** — "five
+digits", with five-digit examples, while `SEGMENT_WIDTH` was 6. The corrected
+worked example is now EXECUTED by a test: `compute_sort_key("2.9.0", …)` must
+literally appear in the docstring, so it cannot drift again.
+
+**Migration 0151 claimed database enforcement it does not have.** It said it
+added `project_id` "so it can be enforced by the database too"; the column is
+bare — no foreign key, no CHECK — and the guarantee is the service layer's
+alone. That sentence is what a reader consults before deciding whether an
+application-level check is still needed. Corrected, with what real enforcement
+would require (composite FKs, which need unique constraints on two large
+tables — a migration of its own).
+
+**A synced release could be renamed, and the rename silently vanished.** Both
+syncs write `existing.name` from the external title on every run, so the edit
+disappeared at the next sync with no error — the failure 0155's own docstring
+predicted and nothing prevented. `update_release` refuses it with a 409 naming
+the owning system.
+
+Narrowly the NAME, deliberately, and narrower than both the audit and the
+model's own comment. Neither sync writes version, dates or status, and `status`
+is TestLookup's ON PURPOSE — `jira_release_sync` declines to map Jira's
+`released` flag so an external tool cannot mark a release shipped that the gate
+never approved. Enforcing the comment as written would have blocked edits
+nothing would ever overwrite, including the one field the epic deliberately kept
+local. The comment now says what is true.
+
+## 2026-09-04 — What counts as evidence, and what survives a delete
+
+**UNKNOWN was counted as evidence.** `EVIDENCE_STATUSES` excluded SKIPPED with a
+stated reason and included UNKNOWN with none. UNKNOWN is not "ran with an
+indeterminate outcome": `ingestion._coerce_status` returns it for any status
+string the parser does not recognise, and the per-case mapper defaults to it
+when a report omits status entirely. It is the UNPARSEABLE bucket.
+
+Counting it meant a release whose report format nobody could read still cleared
+`MIN_EVIDENCE` and received a verdict with `measured: true` — the gate answering
+confidently from rows that say nothing. `_normalise` maps every unrecognised
+status to UNKNOWN too, so garbage propagated straight into the count.
+
+`analytics_service` already excluded UNKNOWN from all three of its buckets, so
+the release gate and the coverage report had diverged on exactly this axis.
+The epic required a pin for that and never got one; it exists now, and it reads
+`coverage_stats`' actual SQL rather than restating what it is assumed to do.
+
+**Deleting a release erased its verdicts.** `release_gate_decisions.release_id`
+is `ondelete=CASCADE`, so a plain DELETE silently erased every GO / NO_GO ever
+recorded, from an append-only table whose entire purpose is that history.
+`delete_release` now refuses with a 409 naming both the count and the
+alternative, and `archived` is documented on `Release.status` — the epic's
+"archive a decided release rather than delete it" rule previously pointed at a
+state the model's own comment said did not exist.
+
+Deliberately NOT the fix the audit prescribed. It called for changing the FK to
+RESTRICT; `releases.project_id` is itself CASCADE, so RESTRICT there would make
+any future project purge fail with an opaque IntegrityError at a layer with no
+useful error to give. The refusal lives in the service, where the active-release
+invariant is already enforced and where it can explain itself. The FK stays
+CASCADE and can now only fire for releases with no verdicts to lose.
+
+`Release.status` is also deliberately left unconstrained: live rows and existing
+tests carry `ready`, `pending` and `active` beyond the four documented values,
+so fronting that String column with a strict enum would 422 real data — the
+exact failure this codebase has hit before. Closing that vocabulary needs its
+own audit and migration.
+
+Mutation-tested 8/8. The one survivor was in the test rather than the code:
+`archived` was asserted by regexing the whole of `postgres.py`, and a different
+model at line 2468 also lists it — so the check passed with Release's own
+vocabulary narrowed back.
+
 ## 2026-09-04 — Two design-gate findings: a digest nobody receives, and columns nobody can set
 
 **The digest that never fires.** `DigestSchedule` declares six members. The

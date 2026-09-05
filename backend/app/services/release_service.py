@@ -25,6 +25,7 @@ from app.models.postgres import (
     LinkSource,
     Project,
     Release,
+    ReleaseGateDecision,
     ReleasePhase,
     ReleaseTestRunLink,
     TestRun,
@@ -427,6 +428,26 @@ async def update_release(db: AsyncSession, release_id: str, body) -> Release:
         if "released_at" not in updates or not updates["released_at"]:
             updates["released_at"] = datetime.now()
 
+    if "name" in updates and getattr(release, "source_system", None):
+        # The external system owns the name. Both syncs write `existing.name`
+        # from the milestone / fix-version title on every run, so accepting a
+        # rename here stores an edit that vanishes at the next sync with no
+        # error and no trace — the failure migration 0155's own docstring
+        # predicted and nothing prevented.
+        #
+        # Narrowly the NAME, deliberately. Neither sync writes version, dates
+        # or status, and status is TestLookup's by design, so refusing those
+        # too would block edits nothing would ever overwrite.
+        if (updates["name"] or "").strip() != (release.name or "").strip():
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"This release's name is managed by {release.source_system} "
+                    "and would be overwritten by the next sync. Rename it there "
+                    "instead."
+                ),
+            )
+
     if "baseline_release_id" in updates:
         # Resolved, not setattr'd: the field arrives as a STRING and the column
         # is a UUID, and it is a caller-supplied id like any other — so it is
@@ -481,6 +502,37 @@ async def delete_release(db: AsyncSession, release_id: str) -> None:
     invariant would otherwise lose to a plain DELETE.
     """
     release = await get_release_or_404(db, release_id)
+
+    # A release that has been judged keeps its judgements.
+    #
+    # ``release_gate_decisions.release_id`` is ``ondelete=CASCADE``, so deleting
+    # a release silently erases every GO / NO_GO ever recorded for it — from an
+    # append-only table whose whole purpose is that history. The epic's rule was
+    # "archive a decided release rather than delete it", and nothing enforced
+    # the first half or offered the second.
+    #
+    # Refused HERE rather than by changing the FK to RESTRICT, which the audit
+    # suggested: ``releases.project_id`` is itself CASCADE, so a RESTRICT here
+    # would make any future project purge fail with an opaque IntegrityError at
+    # a layer with no useful error to give. This is the same place the active-
+    # release invariant is enforced, and it can explain itself.
+    decided = (
+        await db.execute(
+            select(func.count(ReleaseGateDecision.id)).where(
+                ReleaseGateDecision.release_id == release.id
+            )
+        )
+    ).scalar() or 0
+    if decided:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This release has {decided} recorded gate decision(s). "
+                "Deleting it would erase that history — set its status to "
+                "'archived' instead."
+            ),
+        )
+
     if release.is_active:
         await release_lifecycle_service.rotate_on_close(
             db, release, reason="deleted"

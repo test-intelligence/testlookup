@@ -53,7 +53,14 @@ from typing import Any, Iterable, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import Release, ReleaseTestRunLink, TestCase, TestRun, TestStatus
+from app.models.postgres import (
+    LinkSource,
+    Release,
+    ReleaseTestRunLink,
+    TestCase,
+    TestRun,
+    TestStatus,
+)
 
 #: The five, in the order a scorecard reads them. Taken from ``TestStatus`` so a
 #: value added there cannot silently go unreported here — a rollup that omits a
@@ -65,8 +72,33 @@ STATUSES: tuple[str, ...] = tuple(s.value for s in TestStatus)
 #: SKIPPED is deliberately excluded: a skipped test tells you nothing about the
 #: code, and counting it as evidence is how a release with everything skipped
 #: reports full coverage and a perfect pass rate.
+#:
+#: UNKNOWN is excluded for the same reason, and used not to be. It is not "ran
+#: with an indeterminate outcome" — ``ingestion._coerce_status`` returns it for
+#: any status string the parser does not recognise, and
+#: ``ingestion.upsert_test_results`` defaults to it when a report omits status
+#: entirely. It is the UNPARSEABLE bucket.
+#:
+#: Counting it as evidence meant a release whose report format nobody could
+#: read still cleared ``MIN_EVIDENCE`` and received a verdict, with
+#: ``measured: true`` — the gate answering confidently from rows that say
+#: nothing. ``_normalise`` also maps every unrecognised status to UNKNOWN, so
+#: garbage propagated straight into the evidence count.
+#:
+#: ``analytics_service`` already excluded UNKNOWN from all three of its buckets
+#: (passed / failed+broken / skipped), so the release gate and the coverage
+#: report had diverged on exactly this axis. ``test_rollup_matches_coverage_vocabulary``
+#: is the pin that now holds them together.
 EVIDENCE_STATUSES = frozenset({TestStatus.PASSED.value, TestStatus.FAILED.value,
-                               TestStatus.BROKEN.value, TestStatus.UNKNOWN.value})
+                               TestStatus.BROKEN.value})
+
+#: ``attribution_mix`` bucket for a run with no PRIMARY link row.
+#:
+#: Distinct from ``LinkSource.UNKNOWN`` (a link exists, provenance lost) and
+#: from ``release_filter.UNATTRIBUTED`` (the query sentinel for runs no release
+#: claims). Named so the three cannot be conflated by a reader skimming for a
+#: string.
+NO_PRIMARY_LINK = "unattributed_link"
 
 #: Statuses that block a release on their own.
 #:
@@ -325,9 +357,25 @@ async def build_rollup(
         )
         .all()
     )
-    source_by_run = {str(run_id): (src or "unknown") for run_id, src in links}
+    # Three names for three DIFFERENT states, which is why they are not
+    # unified:
+    #
+    #   core.release_filter.UNATTRIBUTED ("unattributed")
+    #       the query sentinel — "runs no release claims at all"
+    #   LinkSource.UNKNOWN ("unknown")
+    #       a link EXISTS but its provenance is unrecoverable (pre-0150 backfill)
+    #   NO_PRIMARY_LINK ("unattributed_link")
+    #       the run is in this release's rollup but has no PRIMARY link row
+    #
+    # An audit flagged these as vocabulary drift. They are not: collapsing them
+    # would report a backfilled link and a missing one as the same thing. What
+    # was actually wrong is that two of them were bare literals here, so the
+    # distinction lived only in whoever last read this line.
+    source_by_run = {
+        str(run_id): (src or LinkSource.UNKNOWN.value) for run_id, src in links
+    }
     for run in runs:
-        rung = source_by_run.get(str(run.id), "unattributed_link")
+        rung = source_by_run.get(str(run.id), NO_PRIMARY_LINK)
         rollup.attribution_mix[rung] = rollup.attribution_mix.get(rung, 0) + 1
 
     # Four columns, not the whole row. ``TestCase`` maps 44 columns including

@@ -161,10 +161,15 @@ celery_app.conf.update(
         },
         # Migration 0150: prove the active-release invariant rather than
         # assume it. Hourly at :20 — frequent enough that a violation is
-        # repaired long before it can misattribute a day's runs, and
-        # deliberately clear of 02:00, when nightly-retention-purge is
-        # deleting test_runs: a sweep reading run→release membership while
-        # rows are disappearing underneath it observes a moving target.
+        # repaired long before it can misattribute a day's runs.
+        #
+        # The :20 offset does NOT avoid the nightly retention purge, and this
+        # comment used to claim it did. `crontab(minute=20)` fires EVERY hour,
+        # so it runs at 02:20 like every other hour; it is clear of the purge's
+        # start MINUTE, not of its window. A sweep reading run→release
+        # membership while retention deletes test_runs underneath it still
+        # observes a moving target — the sweep is idempotent and re-runs
+        # hourly, which is what actually makes that survivable.
         "reconcile-active-releases": {
             "task": "app.worker.tasks.reconcile_active_releases",
             "schedule": crontab(minute=20),
