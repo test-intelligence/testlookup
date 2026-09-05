@@ -3,6 +3,7 @@ import { Check, Copy, Key, Loader2, Plus, ShieldAlert, Trash2, X } from 'lucide-
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
+import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { apiKeyService } from '@/services/apiKeyService'
 import { refreshApiKeys, useApiKeys } from '@/hooks/useApiKeys'
@@ -322,10 +323,9 @@ export default function ApiKeysPage() {
     return (
       <div className="space-y-4">
         <PageHeader title="API Keys" subtitle="Generate streaming keys per project" />
-        <EmptyState
+        <ProjectRequiredEmptyState
           icon={<Key className="h-10 w-10" />}
-          title="Select a project"
-          description="API keys are scoped to a single project. Pick a project from the top bar to manage its keys."
+          description="API keys are scoped to a single project."
         />
       </div>
     )

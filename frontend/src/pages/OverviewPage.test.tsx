@@ -43,12 +43,27 @@ vi.mock('@/hooks/useAnalyticsView', () => ({
   }),
 }))
 
-const runsState: { windowed: unknown[]; newest: unknown[] | null } = { windowed: [], newest: [] }
+const runsState: {
+  windowed: unknown[]
+  newest: unknown[] | null
+  /** The UNFILTERED "has this project ever had a run" probe. `undefined` here
+   *  means "same as `newest`", which is what every pre-existing test assumes:
+   *  with no release selected the two calls are identical and SWR serves them
+   *  from one request. Set it to model a release filter that matches nothing
+   *  on a project that does have runs. */
+  everHad?: unknown[] | null
+} = { windowed: [], newest: [] }
 vi.mock('@/hooks/useRuns', () => ({
-  // Two calls with different params: the windowed list and the single newest
-  // run. Distinguished by `size`, exactly as the page does.
-  useRuns: vi.fn((params?: { size?: number }) => {
-    const items = params?.size === 1 ? runsState.newest : runsState.windowed
+  // Three shapes now: the windowed list, the release-scoped newest run, and
+  // the unfiltered lifetime probe. The first two are told apart by `size`,
+  // exactly as the page does; the third by its explicit opt-out.
+  useRuns: vi.fn((params?: { size?: number }, opts?: { ignoreGlobalRelease?: boolean }) => {
+    let items: unknown[] | null
+    if (opts?.ignoreGlobalRelease) {
+      items = runsState.everHad !== undefined ? runsState.everHad : runsState.newest
+    } else {
+      items = params?.size === 1 ? runsState.newest : runsState.windowed
+    }
     // `null` models a fetch SWR has not resolved yet (`data: undefined`). That
     // is not the same as an empty list, and the page must not read it as one.
     return { data: items === null ? undefined : { items } }
@@ -890,7 +905,11 @@ describe('OverviewPage — first-run guide dismissal is scoped to the project', 
     }
   })
 
-  async function renderEmptyProject(newest: unknown[] | null = []) {
+  async function renderEmptyProject(
+    newest: unknown[] | null = [],
+    everHad?: unknown[] | null,
+  ) {
+    runsState.everHad = everHad
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     mockDashboardData(useDashboardSummary, useTrendData)
     ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -944,6 +963,34 @@ describe('OverviewPage — first-run guide dismissal is scoped to the project', 
     expect(await screen.findByTestId('overview-empty-window')).toBeInTheDocument()
     // ...instead of the onboarding guide, not stacked on top of it.
     expect(screen.queryByText(/Welcome to TestLookup/i)).toBeNull()
+  })
+
+  it('stays hidden when a RELEASE filter is empty but the project has runs', async () => {
+    // Reported from the deployment against /overview?release=unattributed: a
+    // project with runs, none of them unattributed, was greeted with "Welcome
+    // to TestLookup - no test runs here yet" and the whole setup wizard,
+    // telling an established team to run `make quickstart`.
+    //
+    // The same shape as the window case above, through a different door. That
+    // one was fixed by asking for the newest run WITHOUT the day window; the
+    // release axis then wired a global release filter through the very same
+    // hook, so the lifetime probe silently became release-scoped again.
+    await renderEmptyProject(
+      // Nothing in the selected release...
+      [],
+      // ...but the project has a run.
+      [{ id: 'r1', created_at: new Date().toISOString() }],
+    )
+
+    expect(screen.queryByText(/Welcome to TestLookup/i)).toBeNull()
+  })
+
+  it('still shows for a project with no runs in ANY release', async () => {
+    // The control. A page that simply stopped rendering the guide would pass
+    // the test above, and a genuinely new project would lose its onboarding.
+    await renderEmptyProject([], [])
+
+    expect(await screen.findByText(/Welcome to TestLookup/i)).toBeInTheDocument()
   })
 
   it('stays hidden while the lifetime run fetch is still loading', async () => {

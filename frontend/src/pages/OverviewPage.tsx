@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import ScopedLink from '@/components/ui/ScopedLink'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
@@ -267,12 +268,17 @@ function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId, li
         </div>
       )}
       {linkTo && (
-        <Link
+        // ScopedLink, not Link: this card's number can be a CROSS-project
+        // aggregate while the destination shows one project at a time. The
+        // link still works — the destination now offers a picker — but it says
+        // so before the click instead of after it.
+        <ScopedLink
           to={linkTo}
-          className="text-[11px] text-[var(--color-accent)] hover:underline self-start -mt-0.5"
+          containerClassName="self-start -mt-0.5"
+          className="text-[11px] text-[var(--color-accent)] hover:underline"
         >
           {linkLabel ?? 'View all'} →
-        </Link>
+        </ScopedLink>
       )}
     </div>
   )
@@ -976,6 +982,18 @@ export default function OverviewPage() {
   // same silent 0/— for both. One row, and SWR keys on the params so it does
   // not collide with the windowed fetch above.
   const { data: newestRunPage } = useRuns({ page: 1, size: 1 })
+  // "Has this project EVER had a run?" — a question about the project, not
+  // about what the reader is currently filtered to. Separate from the query
+  // above because that one feeds the empty-window message, which SHOULD stay
+  // release-scoped: under a release filter, "your newest run is from <date>"
+  // has to mean the newest run in that release or the suggestion is useless.
+  //
+  // With no release selected both calls carry identical params and SWR serves
+  // them from one request.
+  const { data: everHadRunPage } = useRuns(
+    { page: 1, size: 1 },
+    { ignoreGlobalRelease: true },
+  )
   const recentRunItems = useMemo<TestRun[]>(() => recentRuns?.items ?? [], [recentRuns?.items])
   const suiteOptions = useMemo(() => collectSuiteOptions(recentRunItems), [recentRunItems])
   const latestRun = useMemo(
@@ -1054,8 +1072,11 @@ export default function OverviewPage() {
   // require it to have loaded. A failed fetch also stays undefined, hiding the
   // guide rather than falsely welcoming someone to a project they have used
   // for months.
-  const everHadRun = (newestRunPage?.items?.length ?? 0) > 0
-  const newestRunLoaded = newestRunPage !== undefined
+  // Reported: /overview?release=unattributed on a project that HAS runs but
+  // none in that bucket rendered "Welcome to TestLookup — no test runs here
+  // yet" with the full setup wizard. An empty FILTER read as an empty PROJECT.
+  const everHadRun = (everHadRunPage?.items?.length ?? 0) > 0
+  const newestRunLoaded = everHadRunPage !== undefined
   const isFreshInstall = !summaryLoading && newestRunLoaded && !everHadRun
   const showFirstRunGuide = isFreshInstall && !guideDismissed
 

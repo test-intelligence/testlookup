@@ -1,5 +1,177 @@
 # Changelog
 
+## 2026-09-05 — One e2e test was waiting for the wrong thing
+
+`release-epic.spec.ts` "a release-scoped request is actually sent for the
+analytics pages" counted matching requests seen before `networkidle` and then
+asserted the count. SWR can revalidate just after the network falls quiet, and
+by then the assertion has already run.
+
+It failed once in webkit inside the full 63-test run and passed **3/3 in
+isolation** — measured rather than re-run until green, because that signature is
+a harness race and not a broken filter. It now arms `waitForRequest` for the
+request it is actually asserting, before the selection that triggers it.
+Positive-controlled with a predicate that can never match, which fails with the
+message the test was written to print.
+
+63/63 across chromium, firefox and webkit against the deployment.
+
+## 2026-09-05 — An empty filter is not an empty project
+
+Reported on `/overview?release=unattributed`: a project **with** runs, none of
+them in that release bucket, was greeted with "Welcome to TestLookup — No test
+runs here yet" and the entire first-run setup wizard — telling an established
+team to run `make quickstart` and pointing them at the ingest API.
+
+**The page asks the right question through a hook that had quietly stopped
+answering it.** `OverviewPage` decides whether to show the wizard from
+`useRuns({ page: 1, size: 1 })` — "has this project EVER had a run?". The
+comment above that call has said for months that it deliberately omits the day
+window, because the page must tell "no runs in the last 7 days" from "no runs at
+all". Someone had already fixed this exact confusion once.
+
+Then the release axis wired a global release filter through `useRuns`, and the
+lifetime probe silently became release-scoped again. Empty filter, empty
+project, same wrong conclusion — through a different door.
+
+**The fix names the intent instead of omitting another parameter.** `useRuns`
+takes `{ ignoreGlobalRelease: true }`, documented as "ask about the PROJECT, not
+the current view", so the next global filter added to this hook has an obvious
+place to check. The effective release goes in the SWR deps as well as the
+params: both calls carry identical params, so without it they would share one
+cache entry and the filtered list could answer the lifetime question — the same
+bug wearing a cache.
+
+**The empty-window message deliberately keeps its release scope.** It is a
+separate query, because "your newest run is from <date>" has to mean the newest
+run *in the release you are looking at* or the suggestion to widen the window is
+useless. With no release selected the two calls are identical and SWR serves
+them from one request.
+
+Covered at both levels — three hook tests (the opt-out, a control proving
+ordinary callers still carry the release, and one proving the two get separate
+cache entries), two page tests, and an e2e that finds a project with runs
+through the API and asserts the wizard stays away under an empty release filter.
+Mutation-checked: pointing the probe back at the release-scoped query fails the
+page test by name. The control that a genuinely new project **still** gets its
+onboarding is what stops the fix from being "delete the wizard".
+
+## 2026-09-05 — A link now knows whether its destination can show anything
+
+Fixes the reported "Open flaky coach shows a blank page", and the class it
+belongs to. The backlog entry below has the full analysis; this is what shipped.
+
+**It was never blank.** It rendered "Select a project", an icon, and a sentence
+telling the reader to go and use the top bar — on a screen that had just
+replaced everything they came for. Two defects sat underneath, and neither is
+the one the report named.
+
+**Six pages, not one.** `FlakyCoachPage` was the page in the report, but
+`if (isAllProjects)` returns a bare prompt in six: `/flaky-coach`,
+`/settings/api-keys`, `/settings/github`, `/settings/gitlab`,
+`/settings/webhooks`, `/settings/retention`. Every one of them ends by naming a
+control on a different part of the screen.
+
+**And All Projects is the DEFAULT.** `projectStore` defaults `activeProjectId`
+to `ALL_PROJECTS_ID`, and its own comment says why: before 2026-05-15 the
+default was `null` and every page gating on `!project && !isAllProjects` was
+unusable for a first-time user. That fix was right for those pages. It just
+moved the problem — six pages gate on the opposite condition, so the default
+selection is precisely the state they refuse to render in.
+
+### What shipped
+
+* **`config/routeScope.ts`** — the registry. "This destination needs one
+  project" used to live only inside the destination, so every LINK to it had to
+  remember independently, and `OverviewPage` did not. Now it is somewhere a link
+  can ask. Declaring a route does not gate it; it states what the page already
+  does.
+* **`ScopedLink`** — the thing that asks. On `/overview` the "Flaky tests" KPI
+  holds a CROSS-project count and pointed at a page that cannot show any of it.
+  The link is **not hidden**: with the destination now offering a picker,
+  following it is a working route to that data, and hiding it would remove the
+  only path there. It carries a "· pick a project" qualifier and a title
+  explaining the extra step — deliberately not `aria-hidden`, since "one more
+  step before you see data" is exactly what a screen-reader user needs *before*
+  following a link.
+* **`ProjectRequiredEmptyState`** — the prompt, with the control that resolves
+  it. All six pages now use it. It keeps the exact title "Select a project"
+  because `GitLabIntegrationPage.test.tsx` and `RetentionPage.test.tsx` assert
+  that string and those assertions are still right.
+* **`routeScope.ratchet.test.ts`** — the part that makes it stick. It parses the
+  real route table out of `App.tsx`, resolves each route to its page source, and
+  checks the registry in **both** directions: an undeclared project-gated page
+  fails, and so does a stale declaration. A third check rejects the old
+  hand-rolled shape outright.
+
+### Things that went wrong on the way, and are worth keeping
+
+* **The prompt does no fetching of its own.** The first version refreshed the
+  project list on mount. Every route renders inside `AppLayout`, which mounts
+  `TopBar`, which already fetches that list into the shared store — so it was a
+  duplicate request on every render of a prompt. Removed; the component is now
+  pure-render against the store.
+* **It cannot tell "loading" from "none", so it claims neither.** An empty list
+  renders "No projects loaded", which is true whether the shared fetch is in
+  flight or the deployment genuinely has no projects.
+* **`readFileSync` in the ratchet type-checked under vitest and would have
+  broken `npm run build`.** `tsconfig.json` sets `types: ["vite/client"]` with no
+  `@types/node`, and the build is `tsc && vite build` — green locally, red in
+  CI. Now globbed through Vite with `?raw`, matching `formLabels.test.ts`.
+* **A shared `const` for the glob options broke collection silently.** Vite
+  requires an object literal and rejects an identifier — and it fails at
+  COLLECTION, so the file contributed **zero** tests while the run still
+  reported `Tests 17 passed`. Caught by reading the file count, not the tail.
+
+### The check found two more, in a worse place
+
+Running the link check for the first time turned up `FirstRunGuide` — the
+onboarding panel shown on a **fresh install**, to a user whose project selection
+is the `ALL_PROJECTS_ID` default. It pointed the newest possible user at two
+pages that refuse to render in exactly the state that user is in, and one of
+them is a step in the setup instructions:
+
+> Generate a project key under **Settings -> API Keys** and pass it as
+> `X-API-Key` above.
+
+Both are now scoped. The API-keys one uses `hintInTitleOnly`, because a visible
+"pick a project" lands mid-sentence and reads worse than no warning — and that
+sentence already says "a project key", so the scoping is in the prose.
+
+**The link check is textual, and its limits are written down where they matter.**
+The pattern is `<Link[^>]*to="..."` rather than a whitespace escape, so it spans
+NEWLINES — the API-keys instance is written across four lines, and a
+single-line pattern would have reported the app clean while the setup
+instructions still pointed into a dead end. A route passed as a PROP is
+invisible to text, so a file that renders `ScopedLink` anywhere is treated as
+having the mechanism; that is how `OverviewPage` hands `linkTo` to its local
+`KpiCard`. What stays undetectable is a plain `<Link to={variable}>` in a
+component that never imports `ScopedLink` — which is why the fix put the
+decision inside the link component rather than relying on this test to find
+them all.
+
+### Verification
+
+Registry, picker, link and ratchet are covered by unit tests, plus five e2e
+tests in `project-scope.spec.ts` that walk the reported journey — clicking the
+dashboard link rather than typing the URL, then choosing a project from the
+prompt and asserting the page actually loads. **15/15 across chromium, firefox
+and webkit against the deployment**, and the full frontend suite stays green.
+
+Each load-bearing assertion was mutation-checked and went red with the message
+it was written to print: dropping `/flaky-coach` from the registry, declaring a
+route that is not gated, a picker that renders without committing, and
+`setActiveProject(picked ?? null)` — which would map back to `ALL_PROJECTS_ID`
+and re-render the very prompt the user was trying to leave.
+
+Every detector carries a positive control, the link check included: reverting
+one `FirstRunGuide` link to a plain `<Link>` fails the ratchet, naming the file
+and the route.
+
+**The control that matters most is the one asserting a page NOT in the registry
+is untouched.** `/coverage` supports All Projects; if the fix had started
+demanding a project there, every other test here would still pass.
+
 ## Backlog — Production-readiness UX audit, P1-P3 (not yet implemented)
 
 Filed 2026-09-05 from a design handoff bundle
@@ -58,7 +230,7 @@ gate-decision Undo on RunIntelligencePage, and the typed-name confirmations on
 the existing danger zones. A UX pass that quietly regressed any of those would
 be a net loss, and naming them up front is the reason it would not.
 
-## Backlog — "Open flaky coach" leads to a dead end (not yet fixed)
+## Backlog — "Open flaky coach" leads to a dead end (FIXED 2026-09-05, see the entry above)
 
 Reported 2026-09-05: from `/overview` with no project chosen, the "Flaky tests"
 KPI card's **Open flaky coach** link lands on `/flaky-coach` showing nothing.

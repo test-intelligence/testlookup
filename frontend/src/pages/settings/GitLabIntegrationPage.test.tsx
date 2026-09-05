@@ -49,9 +49,18 @@ vi.mock('@/hooks/usePermissions', () => ({
 const storeState: {
   activeProjectId: string | null
   activeProject: { id: string; name: string } | null
+  // The All-Projects prompt now renders a project picker instead of telling
+  // the reader to go and find the top bar, so it selects these two as well.
+  // A mock that stops at the fields the page used to read makes the component
+  // crash on `projects.map` — which is the mock being out of date, not the
+  // component being unsafe.
+  projects: { id: string; name: string }[]
+  setActiveProject: (p: { id: string; name: string } | null) => void
 } = {
   activeProjectId: 'proj-1',
   activeProject: { id: 'proj-1', name: 'Checkout' },
+  projects: [{ id: 'proj-1', name: 'Checkout' }],
+  setActiveProject: vi.fn(),
 }
 vi.mock('@/store/projectStore', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/store/projectStore')>()

@@ -5,8 +5,32 @@ import { useReleaseScope } from './useReleaseScope'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
-export function useRuns(params?: Record<string, unknown>) {
-  const releaseId = useReleaseScope()
+interface UseRunsOptions {
+  /**
+   * Ask about the PROJECT, not the current view.
+   *
+   * The global release filter is right for anything the reader is looking at,
+   * and wrong for a question like "has this project ever had a run?" —
+   * `OverviewPage` asks exactly that to decide whether to show the first-run
+   * setup wizard. While it inherited the filter, `?release=unattributed` on a
+   * project with runs but none in that bucket returned zero rows, and a
+   * populated project was told "No test runs here yet" with setup instructions.
+   *
+   * Note the shape of that bug: the same call already opts out of the `days`
+   * window, with a comment saying it must tell "no runs in the last 7 days"
+   * from "no runs at all". The release axis reintroduced the identical
+   * confusion through a different door, which is why this is a named option
+   * rather than another quietly-omitted parameter.
+   */
+  ignoreGlobalRelease?: boolean
+}
+
+export function useRuns(
+  params?: Record<string, unknown>,
+  opts?: UseRunsOptions,
+) {
+  const globalReleaseId = useReleaseScope()
+  const releaseId = opts?.ignoreGlobalRelease ? null : globalReleaseId
   return useProjectScopedSWR(
     'runs',
     (projectId) =>
@@ -18,9 +42,10 @@ export function useRuns(params?: Record<string, unknown>) {
         ...params,
       }),
     { refreshInterval: REFRESH_INTERVALS.ACTIVE },
-    // In the deps, not just the params: without it, switching releases would
-    // reuse the previous release's cached run list under the new release's
-    // name.
+    // The EFFECTIVE release, in the deps and not just the params: without it,
+    // switching releases would reuse the previous release's cached run list
+    // under the new release's name — and an opted-out query would share a
+    // cache entry with the filtered one and get whichever landed first.
     [params, releaseId],
   )
 }

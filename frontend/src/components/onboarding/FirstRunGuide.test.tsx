@@ -17,6 +17,7 @@ import {
 } from './firstRunSteps'
 import { SUPPORTED_FORMATS } from '@/services/reportUploadService'
 import { backendUrl } from '@/services/api'
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 
 const copyMock = vi.fn(async (_value: string) => true)
 vi.mock('@/utils/clipboard', () => ({
@@ -32,6 +33,49 @@ function renderGuide(props = {}) {
 }
 
 describe('FirstRunGuide', () => {
+  describe('links to pages that need one project', () => {
+    // This panel is shown on a FRESH INSTALL, to a user whose project
+    // selection is the ALL_PROJECTS_ID default — so it was pointing the
+    // newest possible user at two pages that refuse to render in exactly the
+    // state that user is in. Worse than the reported instance on the
+    // dashboard, because one of them is a STEP IN THE SETUP INSTRUCTIONS:
+    // "Generate a project key under Settings -> API Keys".
+    beforeEach(() => {
+      useProjectStore.setState({
+        activeProjectId: ALL_PROJECTS_ID,
+        activeProject: null,
+      })
+    })
+
+    it('warns that Flaky coach needs a project before the click', () => {
+      renderGuide()
+      expect(screen.getByText(/pick a project/)).toBeTruthy()
+    })
+
+    it('warns about API Keys in the title, not mid-sentence', () => {
+      // The visible qualifier would land inside "Generate a project key under
+      // Settings -> API Keys and pass it as X-API-Key".
+      renderGuide()
+      const link = screen.getByRole('link', { name: /API Keys/ })
+      expect(link.getAttribute('title')).toMatch(/one project at a time/)
+    })
+
+    it('says nothing once a project is pinned', () => {
+      // The control. Without it, a component that always warned would pass
+      // both tests above and put a qualifier on the guide forever.
+      useProjectStore.setState({
+        activeProjectId: 'p-1',
+        activeProject: { id: 'p-1', name: 'Checkout' } as never,
+      })
+      renderGuide()
+
+      expect(screen.queryByText(/pick a project/)).toBeNull()
+      expect(
+        screen.getByRole('link', { name: /API Keys/ }).getAttribute('title'),
+      ).toBeNull()
+    })
+  })
+
   it('shows the three onboarding steps with copy-paste commands', () => {
     renderGuide()
     expect(screen.getByText(/Load the demo dataset/i)).toBeInTheDocument()

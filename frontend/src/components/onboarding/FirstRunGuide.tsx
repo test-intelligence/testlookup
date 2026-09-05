@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import ScopedLink from '@/components/ui/ScopedLink'
 import { Rocket, Copy, Check, AlertTriangle, ArrowRight, ListChecks, BookOpen, X } from 'lucide-react'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { backendUrl } from '@/services/api'
@@ -116,12 +117,13 @@ export default function FirstRunGuide({
                   <CommandRow command={s.apiCommand} />
                   <p className="mt-1.5 text-[11px] text-[var(--color-text-faint)]">
                     Generate a project key under{' '}
-                    <Link
+                    <ScopedLink
                       to="/settings/api-keys"
+                      hintInTitleOnly
                       className="text-[var(--color-accent)] hover:underline"
                     >
                       Settings → API Keys
-                    </Link>{' '}
+                    </ScopedLink>{' '}
                     and pass it as the <code className="font-mono">X-API-Key</code> above.
                   </p>
                 </>
@@ -135,9 +137,9 @@ export default function FirstRunGuide({
         <Link to="/failures" className="btn-secondary text-sm inline-flex items-center gap-1.5">
           Failure analysis <ArrowRight className="h-3.5 w-3.5" />
         </Link>
-        <Link to="/flaky-coach" className="btn-ghost text-sm inline-flex items-center gap-1.5">
+        <ScopedLink to="/flaky-coach" className="btn-ghost text-sm inline-flex items-center gap-1.5">
           Flaky coach <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
+        </ScopedLink>
         <Link to="/release-gate" className="btn-ghost text-sm inline-flex items-center gap-1.5">
           Release gate <ArrowRight className="h-3.5 w-3.5" />
         </Link>

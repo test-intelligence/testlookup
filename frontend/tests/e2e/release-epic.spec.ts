@@ -175,25 +175,36 @@ test.describe('Release axis — the filter reaches the data', () => {
     await performRealLogin(page);
     await pinProject(page, await firstProjectId(page, request));
 
-    const scoped: string[] = [];
-    await page.route('**/api/v1/analytics/**', async (route) => {
-      const url = route.request().url();
-      if (url.includes('release_id=')) scoped.push(url);
-      await route.continue();
-    });
-
     await page.goto('/coverage');
     const picker = page.getByLabel('Filter by release');
     await expect(picker).toBeEnabled();
     const value = await picker.locator('option').nth(1).getAttribute('value');
     if (!value) throw new Error('the picker offers no release for a pinned project');
+
+    // Wait for the REQUEST, not for the network to fall quiet.
+    //
+    // This counted matching requests seen before `networkidle` and then
+    // asserted the count. That is a race: SWR can revalidate just after the
+    // network settles, and the assertion had already run. It failed once in
+    // webkit inside the full 63-test run and passed 3/3 in isolation — the
+    // signature of waiting for the wrong thing, not of a broken filter.
+    //
+    // Armed BEFORE the selection so a fast response cannot land first.
+    const scopedRequest = page
+      .waitForRequest(
+        req =>
+          req.url().includes('/api/v1/analytics/') &&
+          req.url().includes('release_id='),
+        { timeout: 15_000 },
+      )
+      .catch(() => null);
+
     await picker.selectOption(value);
-    await page.waitForLoadState('networkidle');
 
     expect(
-      scoped.length,
+      await scopedRequest,
       'no analytics request carried release_id — the picker is not connected to the data',
-    ).toBeGreaterThan(0);
+    ).toBeTruthy();
   });
 
   test('omitting the release sends no release_id at all', async ({ page }) => {

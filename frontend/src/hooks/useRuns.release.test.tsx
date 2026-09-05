@@ -114,3 +114,59 @@ describe('useRuns release scoping', () => {
     expect(lastParams()).toMatchObject({ days: 7, status: 'failed', release_id: REL_1 })
   })
 })
+
+describe('useRuns — asking about the project rather than the view', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
+    mocked.projectState = { activeProjectId: PROJECT_A }
+    list.mockClear()
+  })
+
+  it('omits the global release when the caller opts out', async () => {
+    // Reported: /overview?release=unattributed on a project WITH runs but none
+    // in that bucket rendered "Welcome to TestLookup - no test runs here yet"
+    // and the whole setup wizard. The page asks "has this project ever had a
+    // run?" through this hook, and the answer was being filtered to a release.
+    useReleaseStore.getState().setActiveRelease(REL_1, PROJECT_A)
+
+    renderHook(() => useRuns({ page: 1, size: 1 }, { ignoreGlobalRelease: true }), {
+      wrapper,
+    })
+
+    await waitFor(() => expect(list).toHaveBeenCalled())
+    expect(lastParams()).not.toHaveProperty('release_id')
+  })
+
+  it('still carries the release for an ordinary caller', async () => {
+    // The control: a hook that had simply stopped sending `release_id` would
+    // pass the test above and silently unscope every run list in the app.
+    useReleaseStore.getState().setActiveRelease(REL_1, PROJECT_A)
+
+    renderHook(() => useRuns({ page: 1, size: 1 }), { wrapper })
+
+    await waitFor(() => expect(list).toHaveBeenCalled())
+    expect(lastParams().release_id).toBe(REL_1)
+  })
+
+  it('gives the opted-out query its own cache entry', async () => {
+    // Both calls carry identical params, so without the EFFECTIVE release in
+    // the SWR deps they would share one entry and whichever resolved first
+    // would answer both — the filtered list could answer "has this project
+    // ever had a run", which is the bug wearing a cache.
+    useReleaseStore.getState().setActiveRelease(REL_2, PROJECT_A)
+
+    renderHook(
+      () => {
+        useRuns({ page: 1, size: 1 })
+        useRuns({ page: 1, size: 1 }, { ignoreGlobalRelease: true })
+      },
+      { wrapper },
+    )
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    const sent = list.mock.calls.map(c => (c[1] as Record<string, unknown>).release_id)
+    expect(sent).toContain(REL_2)
+    expect(sent).toContain(undefined)
+  })
+})

@@ -7,6 +7,7 @@ import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
+import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import { useFlakyCoach } from '@/hooks/useTestHealth'
 import { testHealthService, FlakyCoachEntry } from '@/services/testHealthService'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
@@ -202,10 +203,9 @@ export default function FlakyCoachPage() {
           title="Flaky Coach"
           subtitle="Select a specific project to see flaky test coaching"
         />
-        <EmptyState
+        <ProjectRequiredEmptyState
           icon={<HeartPulse className="h-10 w-10" />}
-          title="Select a project"
-          description="Flaky Coach requires a specific project selection to analyze test history."
+          description="Flaky Coach analyses one project's test history at a time."
         />
       </div>
     )

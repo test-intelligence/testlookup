@@ -16,7 +16,7 @@ import toast from 'react-hot-toast'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import EmptyState from '@/components/ui/EmptyState'
+import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useGitlabIntegration, testGitlabConnection } from '@/hooks/useGitlabIntegration'
@@ -124,9 +124,8 @@ export default function GitLabIntegrationPage() {
           subtitle="Per-project GitLab merge-request + commit-status configuration"
           actions={<ExperimentalBadge />}
         />
-        <EmptyState
-          title="Select a project"
-          description="GitLab integration settings are configured per project. Switch the project selector in the top bar to continue."
+        <ProjectRequiredEmptyState
+          description="GitLab integration settings are configured per project."
         />
       </div>
     )

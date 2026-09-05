@@ -5,7 +5,7 @@ import toast from 'react-hot-toast'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import EmptyState from '@/components/ui/EmptyState'
+import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import {
@@ -90,9 +90,8 @@ export default function GitHubIntegrationPage() {
     return (
       <div className="space-y-4">
         <PageHeader title="GitHub Integration" subtitle="Per-project GitHub Checks API configuration" actions={<ExperimentalBadge />} />
-        <EmptyState
-          title="Select a project"
-          description="GitHub integration settings are configured per project. Switch the project selector in the top bar to continue."
+        <ProjectRequiredEmptyState
+          description="GitHub integration settings are configured per project."
         />
       </div>
     )
