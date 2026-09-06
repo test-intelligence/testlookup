@@ -15,4 +15,10 @@ describe('PageHeader', () => {
 
     expect(screen.getByRole('button', { name: 'New Project' })).toBeInTheDocument()
   })
+
+  it('sets the browser-tab title from the page heading', () => {
+    render(<PageHeader title="Release Gate" />)
+
+    expect(document.title).toBe('Release Gate · TestLookup')
+  })
 })

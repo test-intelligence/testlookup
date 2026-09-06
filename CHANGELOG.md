@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-06 — give every page its own browser-tab title
+
+Every routed page shared the single static `<title>` from `index.html`, so a
+self-hoster with Failures, the Release Gate and the Docs open in three tabs
+could not tell them apart, and every bookmark and history entry carried the
+identical label — small friction that compounds for the exact power user who
+keeps the tool open all day.
+
+A new `useDocumentTitle` hook drives `document.title` off the page heading and
+is called once from `PageHeader`, which nearly every page already renders — so
+each route gets a distinct, shareable tab title (`Release Gate · TestLookup`)
+with no per-page bookkeeping to drift out of sync. A blank heading collapses to
+the bare brand, and the hook deliberately does not restore on unmount (that
+would flash the base title between navigations). Presentation-only.
+
 ## 2026-09-05 — a rate limit is not a data error
 
 `describeLoadError` (the vocabulary every page's "we could not load this" panel
