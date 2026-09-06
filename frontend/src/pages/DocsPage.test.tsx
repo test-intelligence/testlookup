@@ -19,13 +19,13 @@
  * Content lives in `src/content/docs/*.md`; these tests read the same sources
  * the page renders, so a claim cannot be "tested" in a file the UI never shows.
  */
-import { act, render, screen, fireEvent } from '@testing-library/react'
+import { act, render, screen, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import DocsPage from './DocsPage'
 import { DOC_SOURCES } from '@/content/guide/sources'
-import { DOC_PAGES, DOC_GROUPS } from '@/content/guide/manifest'
+import { DOC_PAGES, DOC_GROUPS, adjacentDocPages } from '@/content/guide/manifest'
 import { anchorIds } from '@/content/guide/slug'
 import { copyTextToClipboard } from '@/utils/clipboard'
 
@@ -198,9 +198,12 @@ describe('rendering', () => {
 
   it('lists every topic in the navigation', () => {
     renderDocs()
+    // Scope to the sidebar: the sequential pager also renders a button for the
+    // adjacent topic's label, so a page-wide query would match two.
+    const sidebar = within(screen.getByRole('navigation', { name: /documentation sections/i }))
     for (const page of DOC_PAGES) {
       expect(
-        screen.getByRole('button', { name: new RegExp(page.label, 'i') }),
+        sidebar.getByRole('button', { name: new RegExp(page.label, 'i') }),
       ).toBeInTheDocument()
     }
   })
@@ -222,6 +225,67 @@ describe('rendering', () => {
     })
     expect(screen.getByRole('button', { name: /Flaky tests/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Administration$/i })).not.toBeInTheDocument()
+  })
+})
+
+// ── Sequential pager ─────────────────────────────────────────────────────────
+
+describe('adjacentDocPages', () => {
+  it('walks the reading order forward and back across the whole guide', () => {
+    // Chaining next from the first topic must visit every page exactly once,
+    // in DOC_PAGES order — a self-hoster reading straight through sees the whole
+    // guide with no topic skipped or repeated.
+    const visited: string[] = []
+    let cursor: string | undefined = DOC_PAGES[0].id
+    while (cursor) {
+      visited.push(cursor)
+      cursor = adjacentDocPages(cursor).next?.id
+      if (visited.length > DOC_PAGES.length + 1) break // guard a bad cycle
+    }
+    expect(visited).toEqual(DOC_PAGES.map((p) => p.id))
+  })
+
+  it('has no previous on the first topic and no next on the last', () => {
+    const first = adjacentDocPages(DOC_PAGES[0].id)
+    expect(first.prev).toBeUndefined()
+    expect(first.next?.id).toBe(DOC_PAGES[1].id)
+
+    const last = adjacentDocPages(DOC_PAGES[DOC_PAGES.length - 1].id)
+    expect(last.next).toBeUndefined()
+    expect(last.prev?.id).toBe(DOC_PAGES[DOC_PAGES.length - 2].id)
+  })
+
+  it('returns neither neighbour for an unknown id', () => {
+    // A fallback-to-default render must show no pager rather than link nowhere.
+    expect(adjacentDocPages('not-a-real-topic')).toEqual({})
+    expect(adjacentDocPages(undefined)).toEqual({})
+  })
+})
+
+describe('pager navigation', () => {
+  it('offers the next topic and moves to it client-side', () => {
+    renderDocs(`/docs/${DOC_PAGES[0].id}`)
+    const pager = screen.getByRole('navigation', { name: /documentation pages/i })
+    const next = within(pager).getByRole('button', { name: new RegExp(DOC_PAGES[1].label, 'i') })
+    fireEvent.click(next)
+    // The panel now shows the second topic — the group·summary line names it.
+    expect(screen.getByText(new RegExp(DOC_PAGES[1].summary.slice(0, 20), 'i'))).toBeInTheDocument()
+  })
+
+  it('offers previous and next on an interior topic', () => {
+    renderDocs(`/docs/${DOC_PAGES[2].id}`)
+    const pager = screen.getByRole('navigation', { name: /documentation pages/i })
+    expect(within(pager).getByRole('button', { name: new RegExp(DOC_PAGES[1].label, 'i') })).toBeInTheDocument()
+    expect(within(pager).getByRole('button', { name: new RegExp(DOC_PAGES[3].label, 'i') })).toBeInTheDocument()
+  })
+
+  it('shows no next link on the last topic', () => {
+    const last = DOC_PAGES[DOC_PAGES.length - 1]
+    renderDocs(`/docs/${last.id}`)
+    const pager = screen.getByRole('navigation', { name: /documentation pages/i })
+    // Previous is present; nothing links forward past the final topic.
+    expect(within(pager).getByRole('button', { name: new RegExp(DOC_PAGES[DOC_PAGES.length - 2].label, 'i') })).toBeInTheDocument()
+    expect(within(pager).queryByText(/^Next$/i)).toBeNull()
   })
 })
 

@@ -24,7 +24,7 @@ import { isValidElement, useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronRight, Copy, Search as SearchIcon } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Copy, Search as SearchIcon } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 import PageHeader from '@/components/ui/PageHeader'
@@ -34,6 +34,7 @@ import {
   DOC_GROUPS,
   DOC_PAGES,
   DEFAULT_DOC_ID,
+  adjacentDocPages,
   findDocPage,
   type DocPage,
 } from '@/content/guide/manifest'
@@ -309,6 +310,7 @@ export default function DocsPage() {
   const active: DocPage = findDocPage(docId) ?? findDocPage(DEFAULT_DOC_ID) ?? DOC_PAGES[0]
   const source = DOC_SOURCES[active.id] ?? ''
   const toc = useMemo(() => headingsOf(source), [source])
+  const { prev, next } = adjacentDocPages(active.id)
 
   // Scroll a `#fragment` deep link onto its heading once the Markdown is in the
   // DOM. This is what makes a cross-page anchor (e.g. a link to
@@ -443,6 +445,55 @@ export default function DocsPage() {
                 </p>
               )}
             </article>
+
+            {/*
+              Sequential pager. The sidebar groups topics by area, which never
+              tells a reader what comes NEXT; this lets someone read the guide
+              straight through — the common self-host first-read — without
+              returning to the sidebar to find the following topic. Ordering is
+              DOC_PAGES' reading order (see adjacentDocPages). A missing prev/next
+              (first/last topic) simply leaves that side empty, keeping the
+              present link on its usual edge via the spacer.
+            */}
+            {(prev || next) && (
+              <nav
+                aria-label="Documentation pages"
+                className="mt-6 pt-4 border-t border-[var(--color-border)] flex items-stretch justify-between gap-3"
+              >
+                {prev ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/docs/${prev.id}`)}
+                    rel="prev"
+                    className="group flex-1 min-w-0 flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-left transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-secondary)]"
+                  >
+                    <ChevronLeft className="h-4 w-4 flex-none text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)]" aria-hidden="true" />
+                    <span className="min-w-0">
+                      <span className="block text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">Previous</span>
+                      <span className="block truncate text-[13px] font-medium text-[var(--color-text)]">{prev.label}</span>
+                    </span>
+                  </button>
+                ) : (
+                  <span className="flex-1" aria-hidden="true" />
+                )}
+                {next ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/docs/${next.id}`)}
+                    rel="next"
+                    className="group flex-1 min-w-0 flex items-center justify-end gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-right transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-secondary)]"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">Next</span>
+                      <span className="block truncate text-[13px] font-medium text-[var(--color-text)]">{next.label}</span>
+                    </span>
+                    <ChevronRight className="h-4 w-4 flex-none text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)]" aria-hidden="true" />
+                  </button>
+                ) : (
+                  <span className="flex-1" aria-hidden="true" />
+                )}
+              </nav>
+            )}
           </div>
         </div>
       </div>

@@ -242,3 +242,30 @@ export const DEFAULT_DOC_ID = 'introduction'
 export function findDocPage(id: string | undefined): DocPage | undefined {
   return DOC_PAGES.find((p) => p.id === id)
 }
+
+/**
+ * The pages immediately before and after `id` in reading order — what a
+ * "Previous / Next" pager at the foot of a topic links to.
+ *
+ * `DOC_PAGES` is authored in the order a reader should move through the guide
+ * (Start here → Using TestLookup → How it decides → Reference), so sequential
+ * position in that array IS the reading sequence — no separate ordering to keep
+ * in sync. The first topic has no `prev` and the last has no `next`; an unknown
+ * or absent id yields `{}`, so a fallback-to-default render simply shows no
+ * pager rather than a link to nowhere.
+ *
+ * This lets a self-hoster read the documentation straight through without
+ * returning to the sidebar to hunt for the next topic — the sidebar groups by
+ * area, which does not tell you what comes next.
+ */
+export function adjacentDocPages(id: string | undefined): {
+  prev?: DocPage
+  next?: DocPage
+} {
+  const i = DOC_PAGES.findIndex((p) => p.id === id)
+  if (i === -1) return {}
+  return {
+    prev: i > 0 ? DOC_PAGES[i - 1] : undefined,
+    next: i < DOC_PAGES.length - 1 ? DOC_PAGES[i + 1] : undefined,
+  }
+}
