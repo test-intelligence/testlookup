@@ -112,8 +112,10 @@ export const useAuthStore = create<AuthState>()(
           if (status === 401 || status === 403) logout();
           else {
             const failures = get().refreshFailureCount + 1;
-            const retryAfter = Number((err as { response?: { headers?: { 'retry-after'?: string } } })?.response?.headers?.['retry-after']);
-            const retrySafe = (err as { response?: { headers?: Record<string, string> } })?.response?.headers?.['x-refresh-retry-safe'] === '1';
+            const headers = (err as { response?: { headers?: { get?: (name: string) => string | undefined } & Record<string, string> } })?.response?.headers;
+            const header = (name: string) => headers?.get?.(name) ?? headers?.[name.toLowerCase()] ?? headers?.[name];
+            const retryAfter = Number(header('retry-after'));
+            const retrySafe = header('x-refresh-retry-safe') === '1';
             if ((status === 429 || retrySafe) && failures < 6) {
               const delay = Number.isFinite(retryAfter) && retryAfter > 0
                 ? Math.min(60_000, Math.max(1_000, retryAfter * 1000))
