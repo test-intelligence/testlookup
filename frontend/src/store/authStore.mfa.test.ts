@@ -80,6 +80,16 @@ describe('authStore.fetchUser under MFA-era failures', () => {
     expect(useAuthStore.getState().refreshRequiresReauth).toBe(false)
   })
 
+  it('single-flights concurrent refresh calls', async () => {
+    let resolve!: (value: unknown) => void
+    mockPost.mockReturnValueOnce(new Promise((r) => { resolve = r }))
+    const first = useAuthStore.getState().refreshAccessToken()
+    const second = useAuthStore.getState().refreshAccessToken()
+    resolve({ data: { access_token: 'shared', refresh_token: 'shared-ref' } })
+    await Promise.all([first, second])
+    expect(mockPost).toHaveBeenCalledTimes(1)
+  })
+
   it.each([401, 403])('clears credentials on explicit refresh rejection %i', async (status) => {
     mockPost.mockRejectedValue(httpError(status))
     await useAuthStore.getState().refreshAccessToken()

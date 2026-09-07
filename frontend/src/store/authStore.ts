@@ -45,6 +45,8 @@ function normalizeUser(user: User): User {
   };
 }
 
+let refreshInFlight: Promise<string | null> | null = null;
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -92,6 +94,8 @@ export const useAuthStore = create<AuthState>()(
       },
 
       refreshAccessToken: async (): Promise<string | null> => {
+        if (refreshInFlight) return refreshInFlight;
+        refreshInFlight = (async (): Promise<string | null> => {
         const { refreshToken, logout, refreshRetryAt, refreshRequiresReauth, refreshRetryExhausted } = get();
         if (refreshRequiresReauth || refreshRetryExhausted || (refreshRetryAt && Date.now() < refreshRetryAt)) return null;
         if (!refreshToken) {
@@ -136,6 +140,8 @@ export const useAuthStore = create<AuthState>()(
           }
           return null;
         }
+        })();
+        try { return await refreshInFlight; } finally { refreshInFlight = null; }
       },
     }),
     {
