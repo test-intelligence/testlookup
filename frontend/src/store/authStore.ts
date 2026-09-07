@@ -75,7 +75,9 @@ export const useAuthStore = create<AuthState>()(
 
       logout: () => set({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }),
       logoutServer: async () => {
-        try { await api.post('/api/v1/auth/logout'); } finally { get().logout(); }
+        try { await api.post('/api/v1/auth/logout'); }
+        catch { /* local cleanup still completes when the server is unavailable */ }
+        finally { get().logout(); }
       },
 
       fetchUser: async () => {
