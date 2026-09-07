@@ -1,264 +1,79 @@
-name: TestLookup — Release (semver images)
-
-# ============================================================
-# Publish versioned GHCR images on a semver tag push.
-#
-# Trigger: pushing a tag that matches v*.*.* (e.g. v1.2.3).
-# Result:  the three app images (backend, frontend, mcp) are
-#          built once and pushed to GHCR tagged with the full
-#          semver and its moving aliases, plus the commit SHA:
-#
-#            tag v1.2.3  ->  :v1.2.3  :1.2.3  :1.2  :1  :sha-<sha>
-#
-# This is what makes TESTLOOKUP_VERSION real: docker-compose.release.yml
-# pulls ghcr.io/anandtopu/testlookup/{backend,frontend,mcp}:${TESTLOOKUP_VERSION},
-# so users can pin a published release tag instead of the moving `latest`.
-#
-# The main-push CI workflow (ci.yml) still publishes :latest and :sha-<sha>
-# on every merge to main; this workflow adds the immutable semver tags.
-#
-# NOTE: this does NOT create the git tag — tag first (and ideally bump the
-# VERSION file to match), then push the tag to fire this workflow. A guard
-# step warns when the tag and the VERSION file disagree.
-# ============================================================
+name: Promote verified release
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    tags: ["v*.*.*"]
 
-# Least-privilege by default; the build job opts into packages:write.
 permissions:
+  actions: read
   contents: read
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository }}
+  packages: write
 
 jobs:
-  build-release-images:
-    name: Build & Push Release Images
+  resolve-tag:
+    name: Resolve release tag to its commit
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      packages: write
-
-    env:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      version: ${{ steps.resolve.outputs.version }}
     steps:
       - uses: actions/checkout@v7
-
-      # Guard: the pushed tag should match the tracked VERSION file. This is a
-      # warning, not a hard failure, so an intentional out-of-band tag still
-      # releases — but a mismatch is almost always a forgotten VERSION bump.
-      - name: Verify tag matches VERSION file
+        with:
+          fetch-depth: 0
+      - id: resolve
+        name: Resolve and validate tag
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME#v}"
-          file="$(tr -d '[:space:]' < VERSION)"
-          echo "git tag (stripped) = '$tag'  ·  VERSION file = '$file'"
-          if [ "$tag" != "$file" ]; then
-            echo "::warning::Release tag '${GITHUB_REF_NAME}' does not match VERSION file '${file}'. Did you forget to bump VERSION?"
-          else
-            echo "Tag and VERSION agree. ✓"
-          fi
+          git fetch --tags --force
+          git fetch origin main
+          source_sha="$(git rev-list -n 1 "$GITHUB_REF_NAME")"
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Release tag must be strict semver" >&2; exit 1; }
+          git merge-base --is-ancestor "$source_sha" origin/main || { echo "Release tag must target a commit reachable from origin/main" >&2; exit 1; }
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$(tr -d '[:space:]' < VERSION)" == "$version" ]] || { echo "Release tag and VERSION must match" >&2; exit 1; }
+          printf 'source_sha=%s\nversion=%s\n' "$source_sha" "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
 
-      # Generate package-lock.json before the Docker build so npm ci works
-      # inside the frontend image. Mirrors ci.yml's build-images job — avoids
-      # committing a lockfile while keeping reproducible installs.
-      - name: Set up Node.js 20
-        uses: actions/setup-node@v7
-        with:
-          node-version: "20"
+  verify:
+    needs: resolve-tag
+    uses: ./.github/workflows/require-verified-sha.yml
+    with:
+      source_sha: ${{ needs.resolve-tag.outputs.source_sha }}
 
-      - name: Generate frontend package-lock.json
-        working-directory: ./frontend
-        run: npm install --package-lock-only
-
-      - name: Log in to Docker Hub (avoids pull rate limits on base images and buildkit)
-        uses: docker/login-action@v4.6.0
-        if: env.DOCKERHUB_USERNAME != ''
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
+  promote:
+    name: Promote verified digest set to release aliases
+    runs-on: ubuntu-latest
+    needs: [resolve-tag, verify]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download and validate the SHA-bound image manifest
+        # Artifact name is verified-images-${{ needs.resolve-tag.outputs.source_sha }}.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "${{ needs.verify.outputs.ci_run_id }}" --name "${{ needs.verify.outputs.artifact_name }}" --dir verified-images
+          python3 scripts/release/release_manifest.py validate --manifest verified-images/release-manifest.json --expected-source-sha "${{ needs.verify.outputs.source_sha }}"
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4.6.0
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4.3.0
-
-      # Derive image tags from the git tag. For a push of `v1.2.3` this emits
-      # the full semver (v1.2.3 / 1.2.3), the moving minor/major aliases
-      # (1.2 / 1), and the commit SHA (sha-<sha>). One metadata block is reused
-      # per image via the `images:` matrix substitution below.
-      - name: Extract metadata — backend
-        id: meta-backend
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend
-          tags: |
-            type=semver,pattern=v{{version}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,prefix=sha-
-
-      - name: Extract metadata — frontend
-        id: meta-frontend
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend
-          tags: |
-            type=semver,pattern=v{{version}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,prefix=sha-
-
-      - name: Extract metadata — mcp
-        id: meta-mcp
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp
-          tags: |
-            type=semver,pattern=v{{version}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,prefix=sha-
-
-      # Stage client SDKs into the backend build context so the production
-      # Dockerfile can bake them into the image at /app/client_sdks. Mirrors
-      # ci.yml's build-images job and the homelab deploy script — without it
-      # the `COPY --from=builder /app/__client_sdks_staged ./client_sdks`
-      # line in backend/Dockerfile fails during the production build.
-      - name: Stage client SDKs into backend context
+      - name: Install pinned crane
+        run: |
+          curl -fsSL https://github.com/google/go-containerregistry/releases/download/v0.20.6/go-containerregistry_Linux_x86_64.tar.gz | tar -xz crane
+          sudo install crane /usr/local/bin/crane
+      - name: Promote immutable digests without rebuilding
+        env:
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
         run: |
           set -euo pipefail
-          STAGED_SDK="./backend/__client_sdks_staged"
-          rm -rf "$STAGED_SDK"
-          mkdir -p "$STAGED_SDK"
-          rsync -a \
-            --exclude='.pytest_cache' \
-            --exclude='__pycache__' \
-            --exclude='*.pyc' \
-            --exclude='.venv' \
-            --exclude='venv' \
-            --exclude='node_modules' \
-            --exclude='.tox' \
-            --exclude='.mypy_cache' \
-            --exclude='.ruff_cache' \
-            --exclude='target' \
-            --exclude='build' \
-            --exclude='*.egg-info' \
-            --exclude='.coverage' \
-            --exclude='htmlcov' \
-            --exclude='.DS_Store' \
-            ./client/ "$STAGED_SDK/"
-          ls -la "$STAGED_SDK" | head -20
-
-      # Build provenance baked into the backend image so a running container
-      # can self-report its origin via GET /health/details. BUILD_REVISION is
-      # the full commit SHA; BUILD_DATE is the ISO-8601 UTC build timestamp.
-      - name: Capture build metadata
-        id: build-meta
-        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-
-      - name: Build & push backend
-        id: build-backend
-        uses: docker/build-push-action@v7
-        with:
-          context: ./backend
-          file: ./backend/Dockerfile
-          target: production
-          push: true
-          tags: ${{ steps.meta-backend.outputs.tags }}
-          labels: ${{ steps.meta-backend.outputs.labels }}
-          build-args: |
-            BUILD_REVISION=${{ github.sha }}
-            BUILD_DATE=${{ steps.build-meta.outputs.date }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          sbom: true
-          provenance: mode=max
-
-      - name: Build & push frontend
-        id: build-frontend
-        uses: docker/build-push-action@v7
-        with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
-          target: production
-          push: true
-          tags: ${{ steps.meta-frontend.outputs.tags }}
-          labels: ${{ steps.meta-frontend.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          sbom: true
-          provenance: mode=max
-
-      - name: Build & push MCP server
-        id: build-mcp
-        uses: docker/build-push-action@v7
-        with:
-          context: ./mcp
-          file: ./mcp/Dockerfile
-          push: true
-          tags: ${{ steps.meta-mcp.outputs.tags }}
-          labels: ${{ steps.meta-mcp.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          sbom: true
-          provenance: mode=max
-
-      # Surface each pushed image's content-addressable digest (sha256) plus the
-      # SBOM/provenance verification recipe. The images build with `sbom: true` +
-      # `provenance: mode=max`, but that supply-chain metadata is only actionable
-      # if an operator can find the digest to pin and inspect — a moving tag can be
-      # re-pushed to point at different bits, a digest cannot. Digests come from the
-      # build-push-action `digest` output (env-passed, not inlined into the shell).
-      - name: Release image summary
-        env:
-          BACKEND_DIGEST: ${{ steps.build-backend.outputs.digest }}
-          FRONTEND_DIGEST: ${{ steps.build-frontend.outputs.digest }}
-          MCP_DIGEST: ${{ steps.build-mcp.outputs.digest }}
-        run: |
-          {
-            echo "## Released images for \`${GITHUB_REF_NAME}\`"
-            echo ""
-            echo "Pushed to \`${REGISTRY}/${IMAGE_PREFIX}/{backend,frontend,mcp}\`:"
-            echo ""
-            echo '```'
-            echo "${{ steps.meta-backend.outputs.tags }}"
-            echo '```'
-            echo ""
-            echo "### Image digests"
-            echo ""
-            echo "Each image ships an SBOM and max-mode build provenance. Pin **by digest** (not just tag) so a re-pushed tag can never silently change the bits you run:"
-            echo ""
-            echo '```'
-            echo "${REGISTRY}/${IMAGE_PREFIX}/backend@${BACKEND_DIGEST}"
-            echo "${REGISTRY}/${IMAGE_PREFIX}/frontend@${FRONTEND_DIGEST}"
-            echo "${REGISTRY}/${IMAGE_PREFIX}/mcp@${MCP_DIGEST}"
-            echo '```'
-            echo ""
-            echo "Inspect the SBOM / provenance attestation for any of the above with:"
-            echo ""
-            echo '```'
-            echo "docker buildx imagetools inspect ${REGISTRY}/${IMAGE_PREFIX}/backend@${BACKEND_DIGEST} --format '{{json .SBOM}}'"
-            echo "docker buildx imagetools inspect ${REGISTRY}/${IMAGE_PREFIX}/backend@${BACKEND_DIGEST} --format '{{json .Provenance}}'"
-            echo '```'
-            echo ""
-            echo "Pin in \`docker-compose.release.yml\` via \`TESTLOOKUP_VERSION=${GITHUB_REF_NAME}\`."
-            echo ""
-            echo "### Upgrading an existing install"
-            echo ""
-            echo "\`make preflight TAG=${GITHUB_REF_NAME}\` (images / pending migrations / disk), \`make backup\`, then \`make upgrade TAG=${GITHUB_REF_NAME}\` — see the [administration guide](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/user-guide/administration.md#backup-restore--upgrades)."
-          } >> "$GITHUB_STEP_SUMMARY"
+          for component in backend frontend mcp; do
+            source_ref="$(jq -r ".images.$component.source_ref" verified-images/release-manifest.json)"
+            repository="${source_ref%@*}"
+            if existing="$(crane digest "$repository:$VERSION" 2>/dev/null)"; then
+              [[ "$existing" == "${source_ref##*@}" ]] || { echo "immutable release tag collision for $repository:$VERSION" >&2; exit 1; }
+              continue
+            fi
+            crane tag "$source_ref" "$VERSION"
+          done

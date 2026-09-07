@@ -882,6 +882,12 @@ jobs:
         postgres-integration,
         frontend-test,
         mcp-test,
+        k8s-image-pin-check,
+        image-manifest-drift,
+        sdk-cli-test,
+        java-sdk-test,
+        go-sdk-test,
+        js-sdk-test,
         mermaid-check,
         docs-diagram-render,
       ]
@@ -971,39 +977,66 @@ jobs:
           ls -la "$STAGED_SDK" | head -20
 
       - name: Build & push backend
+        id: build-backend
         uses: docker/build-push-action@v7
         with:
           context: ./backend
           file: ./backend/Dockerfile
           target: production
           push: true
+          sbom: true
+          provenance: mode=max
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:${{ github.sha }},${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Build & push frontend
+        id: build-frontend
         uses: docker/build-push-action@v7
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
           target: production
           push: true
+          sbom: true
+          provenance: mode=max
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ github.sha }},${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Build & push MCP server
+        id: build-mcp
         uses: docker/build-push-action@v7
         with:
           context: ./mcp
           file: ./mcp/Dockerfile
           push: true
+          sbom: true
+          provenance: mode=max
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp:${{ github.sha }},${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Create and validate verified image manifest
+        run: |
+          set -euo pipefail
+          python3 scripts/release/release_manifest.py create \
+            --source-sha "${GITHUB_SHA}" --version "${GITHUB_REF_NAME}" \
+            --image "backend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@${{ steps.build-backend.outputs.digest }}" \
+            --image "frontend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend@${{ steps.build-frontend.outputs.digest }}" \
+            --image "mcp=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp@${{ steps.build-mcp.outputs.digest }}" \
+            --output verified-images/release-manifest.json
+          python3 scripts/release/release_manifest.py validate --manifest verified-images/release-manifest.json --expected-source-sha "${GITHUB_SHA}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-images-${{ github.sha }}
+          path: verified-images/release-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: false
 
   # ─────────────────────────────────────────────────────────────
   # JOB 4: Deploy to dev (only on main branch, after images built)

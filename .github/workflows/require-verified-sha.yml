@@ -1,0 +1,50 @@
+name: Require verified release SHA
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Full commit SHA to authorize for release promotion.
+        required: true
+        type: string
+    outputs:
+      source_sha:
+        value: ${{ jobs.require.outputs.source_sha }}
+      ci_run_id:
+        value: ${{ jobs.require.outputs.ci_run_id }}
+      artifact_name:
+        value: ${{ jobs.require.outputs.artifact_name }}
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  require:
+    name: Require successful CI and immutable image manifest
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.verify.outputs.source_sha }}
+      ci_run_id: ${{ steps.verify.outputs.ci_run_id }}
+      artifact_name: ${{ steps.verify.outputs.artifact_name }}
+    steps:
+      - name: Verify the exact CI revision and its artifact
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "source_sha must be a lowercase full Git SHA" >&2; exit 1; }
+          artifact_name="verified-images-$SOURCE_SHA"
+          # Contract: the artifact is named verified-images-${{ inputs.source_sha }}.
+          artifact_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts?name=$artifact_name&per_page=100")"
+          mapfile -t candidates < <(jq -r '.artifacts[] | select(.expired == false) | .workflow_run.id' <<<"$artifact_json" | sort -u)
+          matches=()
+          for candidate in "${candidates[@]}"; do
+            run_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$candidate")"
+            if [[ "$(jq -r '.head_sha' <<<"$run_json")" == "$SOURCE_SHA" && "$(jq -r '.conclusion' <<<"$run_json")" == "success" && "$(jq -r '.event' <<<"$run_json")" == "push" && "$(jq -r '.head_branch' <<<"$run_json")" == "main" && "$(jq -r '.path' <<<"$run_json")" == ".github/workflows/ci.yml" ]]; then matches+=("$candidate"); fi
+          done
+          [[ "${#matches[@]}" -eq 1 ]] || { echo "Expected exactly one successful main ci.yml run for $SOURCE_SHA" >&2; exit 1; }
+          ci_run_id="${matches[0]}"
+          printf 'source_sha=%s\nci_run_id=%s\nartifact_name=%s\n' "$SOURCE_SHA" "$ci_run_id" "$artifact_name" >> "$GITHUB_OUTPUT"
