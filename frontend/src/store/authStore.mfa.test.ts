@@ -135,4 +135,31 @@ describe('authStore.fetchUser under MFA-era failures', () => {
     expect(useAuthStore.getState().isAuthenticated).toBe(true)
     expect(useAuthStore.getState().refreshRequiresReauth).toBe(true)
   })
+
+  it('does not resurrect a session from a late user response after logout', async () => {
+    let resolve!: (value: unknown) => void
+    mockGet.mockReturnValueOnce(new Promise((r) => { resolve = r }))
+    const pending = useAuthStore.getState().fetchUser()
+
+    useAuthStore.getState().logout()
+    resolve({ data: USER })
+    await pending
+
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(useAuthStore.getState().user).toBeNull()
+  })
+
+  it('does not apply a late refresh response after logout', async () => {
+    let resolve!: (value: unknown) => void
+    mockPost.mockReturnValueOnce(new Promise((r) => { resolve = r }))
+    const pending = useAuthStore.getState().refreshAccessToken()
+
+    useAuthStore.getState().logout()
+    resolve({ data: { access_token: 'stale', refresh_token: 'stale-ref' } })
+    await pending
+
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(useAuthStore.getState().token).toBeNull()
+    expect(useAuthStore.getState().refreshToken).toBeNull()
+  })
 })

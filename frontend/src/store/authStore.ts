@@ -83,12 +83,14 @@ export const useAuthStore = create<AuthState>()(
       },
 
       fetchUser: async () => {
-        const { token, logout } = get();
+        const { token, logout, sessionGeneration } = get();
         if (!token) return;
 
         try {
           const res = await api.get<User>('/api/v1/auth/me');
-          set({ user: normalizeUser(res.data), isAuthenticated: true });
+          if (get().token === token && get().sessionGeneration === sessionGeneration) {
+            set({ user: normalizeUser(res.data), isAuthenticated: true });
+          }
         } catch (err) {
           // Only clear auth on explicit auth rejections (401/403).
           // Network errors (status undefined) or server errors (5xx) should not
@@ -104,7 +106,7 @@ export const useAuthStore = create<AuthState>()(
       refreshAccessToken: async (): Promise<string | null> => {
         if (refreshInFlight) return refreshInFlight;
         refreshInFlight = (async (): Promise<string | null> => {
-        const { refreshToken, logout, refreshRetryAt, refreshRequiresReauth, refreshRetryExhausted } = get();
+        const { refreshToken, logout, refreshRetryAt, refreshRequiresReauth, refreshRetryExhausted, sessionGeneration } = get();
         if (refreshRequiresReauth || refreshRetryExhausted || (refreshRetryAt && Date.now() < refreshRetryAt)) return null;
         if (!refreshToken) {
           logout();
@@ -117,6 +119,7 @@ export const useAuthStore = create<AuthState>()(
             { refresh_token: refreshToken },
           );
           const { access_token, refresh_token } = res.data;
+          if (get().refreshToken !== refreshToken || get().sessionGeneration !== sessionGeneration) return null;
           set({ token: access_token, refreshToken: refresh_token, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false });
           return access_token;
         } catch (err) {
