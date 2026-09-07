@@ -49,6 +49,28 @@ async def _assert_fetchable(url: str) -> None:
         raise ConnectorFetchError(f"Refusing to fetch unsafe URL ({reason}): {url}")
 
 
+async def _read_response_bounded(response: httpx.Response) -> bytes:
+    """Read a response without allowing decompressed bytes to exceed the cap."""
+    declared = response.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > _MAX_RESPONSE_BYTES:
+        raise ConnectorFetchError(
+            f"Response too large ({int(declared) / 1024 / 1024:.1f} MB) "
+            f"— max {_MAX_RESPONSE_BYTES / 1024 / 1024:.0f} MB"
+        )
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > _MAX_RESPONSE_BYTES:
+            raise ConnectorFetchError(
+                f"Response too large ({total / 1024 / 1024:.1f} MB) "
+                f"— max {_MAX_RESPONSE_BYTES / 1024 / 1024:.0f} MB"
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 class URLConnector(KnowledgeConnectorBase):
     """Handles internal_url and external_url source types via HTTP GET."""
 
@@ -81,53 +103,50 @@ class URLConnector(KnowledgeConnectorBase):
             # Location points at cloud metadata / a private service, so every
             # hop must pass the SSRF guard *before* we request it — automatic
             # following would issue those requests for us, defeating the guard.
-            async with httpx.AsyncClient(
-                # Per-hop budget for the hand-walked redirect chain.
-                timeout=float(settings.KNOWLEDGE_SYNC_TIMEOUT_SECONDS),
-                follow_redirects=False,
-                verify=_http_verify(),
-            ) as client:
-                current = url
-                for _hop in range(_MAX_REDIRECTS + 1):
-                    resp = await client.get(
-                        current,
-                        headers={
-                            "User-Agent": "TestLookup-KnowledgeSync/1.0",
-                            "Accept": "text/html, text/plain, application/json, */*",
-                        },
-                    )
-                    location = resp.headers.get("location")
-                    if resp.is_redirect and location:
-                        nxt = urljoin(current, location)
-                        await _assert_fetchable(nxt)  # re-resolve every hop
-                        current = nxt
-                        continue
-                    break
-                else:
-                    raise ConnectorFetchError(
-                        f"Too many redirects (>{_MAX_REDIRECTS}) fetching URL: {url}"
-                    )
+            async with asyncio.timeout(float(settings.KNOWLEDGE_SYNC_TIMEOUT_SECONDS)):
+                async with httpx.AsyncClient(
+                    # Per-hop budget for the hand-walked redirect chain.
+                    timeout=float(settings.KNOWLEDGE_SYNC_TIMEOUT_SECONDS),
+                    follow_redirects=False,
+                    verify=_http_verify(),
+                ) as client:
+                    current = url
+                    for _hop in range(_MAX_REDIRECTS + 1):
+                        async with client.stream(
+                            "GET",
+                            current,
+                            headers={
+                                "User-Agent": "TestLookup-KnowledgeSync/1.0",
+                                "Accept": "text/html, text/plain, application/json, */*",
+                            },
+                        ) as resp:
+                            location = resp.headers.get("location")
+                            if resp.is_redirect and location:
+                                nxt = urljoin(current, location)
+                                await _assert_fetchable(nxt)  # re-resolve every hop
+                                current = nxt
+                                continue
 
-                if resp.status_code == 401 or resp.status_code == 403:
-                    raise ConnectorFetchError(f"Access denied to URL ({resp.status_code}): {url}")
-                if resp.status_code == 404:
-                    raise ConnectorFetchError(f"URL not found (404): {url}")
-                resp.raise_for_status()
+                            if resp.status_code == 401 or resp.status_code == 403:
+                                raise ConnectorFetchError(f"Access denied to URL ({resp.status_code}): {url}")
+                            if resp.status_code == 404:
+                                raise ConnectorFetchError(f"URL not found (404): {url}")
+                            resp.raise_for_status()
 
-                # Check content length
-                content_length = len(resp.content)
-                if content_length > _MAX_RESPONSE_BYTES:
-                    raise ConnectorFetchError(
-                        f"Response too large ({content_length / 1024 / 1024:.1f} MB) "
-                        f"— max {_MAX_RESPONSE_BYTES / 1024 / 1024:.0f} MB"
-                    )
-
-                content_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
-                body = resp.text
+                            content_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+                            raw_body = await _read_response_bounded(resp)
+                            encoding = resp.encoding or "utf-8"
+                            body = raw_body.decode(encoding, errors="replace")
+                            content_length = len(raw_body)
+                        break
+                    else:
+                        raise ConnectorFetchError(
+                            f"Too many redirects (>{_MAX_REDIRECTS}) fetching URL: {url}"
+                        )
 
         except ConnectorFetchError:
             raise
-        except httpx.TimeoutException:
+        except (httpx.TimeoutException, TimeoutError):
             raise ConnectorFetchError(f"Timeout fetching URL: {url}", retryable=True)
         except httpx.HTTPStatusError as exc:
             raise ConnectorFetchError(f"HTTP error {exc.response.status_code} for URL: {url}")
