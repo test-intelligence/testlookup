@@ -108,6 +108,7 @@ export default function TopBar() {
   const [searchVal, setSearchVal] = useState('')
   const [bellOpen, setBellOpen] = useState(false)
   const bellTriggerRef = useRef<HTMLButtonElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const { isAdmin } = usePermissions()
 
   const { data: unreadData } = useUnreadCount()
@@ -136,6 +137,25 @@ export default function TopBar() {
     }
   }
 
+  // "/" focuses the global search box — the canonical GitHub/GitLab-style
+  // focus-search key. Deliberately not ⌘/Ctrl-K: the search results page owns
+  // that combo for its own input (SearchPage.tsx), and a second global handler
+  // would fight it there. Guarded so it never steals a slash the user is
+  // actually typing into a field, textarea, contenteditable, or select.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
+      const target = e.target as HTMLElement | null
+      const tag = target?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable) return
+      e.preventDefault()
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const handleMarkAll = async () => {
     await notificationService.markAllRead()
     refreshLogs()
@@ -148,13 +168,25 @@ export default function TopBar() {
       <div className="flex-1 max-w-md relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-muted)] pointer-events-none" />
         <input
+          ref={searchInputRef}
           type="text"
           placeholder="Search tests, runs, defects… (Enter)"
-          className="input pl-9 h-9 text-sm"
+          className="input pl-9 pr-9 h-9 text-sm"
           value={searchVal}
           onChange={e => setSearchVal(e.target.value)}
           onKeyDown={handleSearch}
         />
+        {/* Shortcut hint — hidden once the box has a value so it never overlaps
+            typed text. pointer-events-none so it can't intercept the click that
+            would otherwise focus the input. */}
+        {!searchVal && (
+          <kbd
+            aria-hidden="true"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex items-center justify-center h-5 min-w-[1.25rem] px-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[11px] font-mono text-[var(--color-text-muted)]"
+          >
+            /
+          </kbd>
+        )}
       </div>
 
       {/* Project selector */}

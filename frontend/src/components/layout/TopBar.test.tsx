@@ -122,6 +122,47 @@ describe('TopBar', () => {
     expect(mocked.navigate).toHaveBeenCalledWith('/search?q=timeout%20issue')
   })
 
+  it('focuses the global search box when "/" is pressed', () => {
+    render(
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>,
+    )
+
+    const input = screen.getByPlaceholderText('Search tests, runs, defects… (Enter)')
+    expect(input).not.toHaveFocus()
+
+    fireEvent.keyDown(document.body, { key: '/' })
+    expect(input).toHaveFocus()
+  })
+
+  it('does not hijack "/" typed into another field', () => {
+    render(
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>,
+    )
+
+    const input = screen.getByPlaceholderText('Search tests, runs, defects… (Enter)')
+    const select = screen.getByRole('combobox', { name: /select project/i })
+
+    // A "/" originating in the project select must not yank focus to search.
+    fireEvent.keyDown(select, { key: '/' })
+    expect(input).not.toHaveFocus()
+  })
+
+  it('ignores "/" pressed with a modifier key', () => {
+    render(
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>,
+    )
+
+    const input = screen.getByPlaceholderText('Search tests, runs, defects… (Enter)')
+    fireEvent.keyDown(document.body, { key: '/', ctrlKey: true })
+    expect(input).not.toHaveFocus()
+  })
+
   it('loads and selects projects from selector', async () => {
     render(
       <MemoryRouter>
