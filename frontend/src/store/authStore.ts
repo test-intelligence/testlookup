@@ -81,7 +81,7 @@ export const useAuthStore = create<AuthState>()(
           // log the user out — they may be a transient connectivity issue and
           // the stored token may still be valid once the backend recovers.
           const status = (err as { response?: { status?: number } })?.response?.status;
-          if (status === 401 || status === 403) {
+          if ((status === 401 || status === 403) && !get().refreshRequiresReauth) {
             logout();
           }
         }
@@ -139,6 +139,8 @@ export const useAuthStore = create<AuthState>()(
         refreshToken: state.refreshToken,
         user: state.user,
         isAuthenticated: state.isAuthenticated,
+        refreshRequiresReauth: state.refreshRequiresReauth,
+        refreshError: state.refreshError,
       }),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);

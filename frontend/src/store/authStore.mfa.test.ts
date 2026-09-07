@@ -105,4 +105,12 @@ describe('authStore.fetchUser under MFA-era failures', () => {
     expect(useAuthStore.getState().isAuthenticated).toBe(false)
     expect(useAuthStore.getState().token).toBeNull()
   })
+
+  it('preserves the session when an original 401 follows an ambiguous refresh failure', async () => {
+    useAuthStore.setState({ refreshRequiresReauth: true, refreshError: 'Session refresh could not be confirmed.' })
+    mockGet.mockRejectedValue(httpError(401))
+    await useAuthStore.getState().fetchUser()
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+    expect(useAuthStore.getState().refreshRequiresReauth).toBe(true)
+  })
 })
