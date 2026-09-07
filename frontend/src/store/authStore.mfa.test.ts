@@ -30,7 +30,7 @@ const USER = {
 }
 
 function httpError(status: number) {
-  return { response: { status, data: { detail: 'nope' } } }
+  return { response: { status, data: { detail: 'nope' }, headers: status === 503 ? { 'x-refresh-retry-safe': '1' } : {} } }
 }
 
 describe('authStore.fetchUser under MFA-era failures', () => {
@@ -49,12 +49,17 @@ describe('authStore.fetchUser under MFA-era failures', () => {
     })
   })
 
-  it('preserves credentials and enters cooldown on refresh 503', async () => {
+  it('recovers after a safe refresh 503 cooldown', async () => {
     mockPost.mockRejectedValueOnce(httpError(503))
     await useAuthStore.getState().refreshAccessToken()
     expect(mockPost).toHaveBeenCalledTimes(1)
     expect(useAuthStore.getState().isAuthenticated).toBe(true)
     expect(useAuthStore.getState().refreshRetryAt).toBeGreaterThan(Date.now())
+    useAuthStore.setState({ refreshRetryAt: null })
+    mockPost.mockResolvedValueOnce({ data: { access_token: 'recovered', refresh_token: 'rotated' } })
+    await useAuthStore.getState().refreshAccessToken()
+    expect(mockPost).toHaveBeenCalledTimes(2)
+    expect(useAuthStore.getState().token).toBe('recovered')
   })
 
   it('requires reauthentication when refresh outcome is ambiguous', async () => {
