@@ -97,7 +97,7 @@ export const useAuthStore = create<AuthState>()(
           // log the user out — they may be a transient connectivity issue and
           // the stored token may still be valid once the backend recovers.
           const status = (err as { response?: { status?: number } })?.response?.status;
-          if ((status === 401 || status === 403) && !get().refreshRequiresReauth && !get().refreshError) {
+          if ((status === 401 || status === 403) && get().token === token && get().sessionGeneration === sessionGeneration && !get().refreshRequiresReauth && !get().refreshError) {
             logout();
           }
         }
@@ -128,6 +128,7 @@ export const useAuthStore = create<AuthState>()(
           // the rotated token may already have been committed server-side.
           // Preserve credentials and let the next request retry. Only an
           // explicit credential rejection means the session is invalid.
+          if (get().refreshToken !== refreshToken || get().sessionGeneration !== sessionGeneration) return null;
           if (status === 401 || status === 403) logout();
           else {
             const failures = get().refreshFailureCount + 1;
