@@ -3,11 +3,18 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
+import { SWRConfig } from 'swr'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { installGlobalErrorHandlers } from './utils/errorReporting'
 import './index.css'
 import './store/themeStore' // Apply saved theme on load (before first paint)
+import { useAuthStore } from './store/authStore'
+
+function SessionCacheBoundary() {
+  const generation = useAuthStore((state) => state.sessionGeneration)
+  return <SWRConfig key={generation} value={{ provider: () => new Map() }}><App /></SWRConfig>
+}
 
 // Install window.onerror + unhandledrejection listeners before anything renders
 installGlobalErrorHandlers()
@@ -18,7 +25,7 @@ ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <ErrorBoundary>
       <BrowserRouter>
-        <App />
+        <SessionCacheBoundary />
         <Toaster
           position="top-right"
           toastOptions={{

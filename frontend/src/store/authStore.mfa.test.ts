@@ -135,4 +135,60 @@ describe('authStore.fetchUser under MFA-era failures', () => {
     expect(useAuthStore.getState().isAuthenticated).toBe(true)
     expect(useAuthStore.getState().refreshRequiresReauth).toBe(true)
   })
+
+  it('does not resurrect a session from a late user response after logout', async () => {
+    let resolve!: (value: unknown) => void
+    mockGet.mockReturnValueOnce(new Promise((r) => { resolve = r }))
+    const pending = useAuthStore.getState().fetchUser()
+
+    useAuthStore.getState().logout()
+    resolve({ data: USER })
+    await pending
+
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(useAuthStore.getState().user).toBeNull()
+  })
+
+  it('does not apply a late refresh response after logout', async () => {
+    let resolve!: (value: unknown) => void
+    mockPost.mockReturnValueOnce(new Promise((r) => { resolve = r }))
+    const pending = useAuthStore.getState().refreshAccessToken()
+
+    useAuthStore.getState().logout()
+    resolve({ data: { access_token: 'stale', refresh_token: 'stale-ref' } })
+    await pending
+
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(useAuthStore.getState().token).toBeNull()
+    expect(useAuthStore.getState().refreshToken).toBeNull()
+  })
+
+  it('does not log out a replacement session on a late auth rejection', async () => {
+    let reject!: (reason: unknown) => void
+    mockGet.mockReturnValueOnce(new Promise((_resolve, r) => { reject = r }))
+    const pending = useAuthStore.getState().fetchUser()
+
+    useAuthStore.getState().setAuth('new-acc', 'new-ref', { ...USER, id: 'u2', email: 'new@example.com' })
+    reject(httpError(401))
+    await pending
+
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+    expect(useAuthStore.getState().token).toBe('new-acc')
+    expect(useAuthStore.getState().user?.id).toBe('u2')
+  })
+
+  it('does not update replacement-session retry state on a late refresh failure', async () => {
+    let reject!: (reason: unknown) => void
+    mockPost.mockReturnValueOnce(new Promise((_resolve, r) => { reject = r }))
+    const pending = useAuthStore.getState().refreshAccessToken()
+
+    useAuthStore.getState().setAuth('new-acc', 'new-ref', { ...USER, id: 'u2', email: 'new@example.com' })
+    reject(new Error('network down'))
+    await pending
+
+    expect(useAuthStore.getState().token).toBe('new-acc')
+    expect(useAuthStore.getState().refreshToken).toBe('new-ref')
+    expect(useAuthStore.getState().refreshFailureCount).toBe(0)
+    expect(useAuthStore.getState().refreshRequiresReauth).toBe(false)
+  })
 })

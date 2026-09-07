@@ -23,6 +23,7 @@ interface AuthState {
   refreshError: string | null;
   refreshRequiresReauth: boolean;
   refreshRetryExhausted: boolean;
+  sessionGeneration: number;
   retryRefresh: () => Promise<string | null>;
   _hasHydrated: boolean;
   setHasHydrated: (v: boolean) => void;
@@ -60,20 +61,21 @@ export const useAuthStore = create<AuthState>()(
       refreshError: null,
       refreshRequiresReauth: false,
       refreshRetryExhausted: false,
+      sessionGeneration: 0,
       retryRefresh: async () => { set({ refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }); return get().refreshAccessToken(); },
       _hasHydrated: false,
 
       setHasHydrated: (v) => set({ _hasHydrated: v }),
 
       setAuth: (token, refreshToken, user) =>
-        set({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }),
+        set((state) => ({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1 })),
 
       clearMustChangePassword: () =>
         set((state) =>
           state.user ? { user: { ...state.user, must_change_password: false } } : {}
         ),
 
-      logout: () => set({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }),
+      logout: () => set((state) => ({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1 })),
       logoutServer: async () => {
         try { await api.post('/api/v1/auth/logout'); }
         catch { /* local cleanup still completes when the server is unavailable */ }
@@ -81,19 +83,21 @@ export const useAuthStore = create<AuthState>()(
       },
 
       fetchUser: async () => {
-        const { token, logout } = get();
+        const { token, logout, sessionGeneration } = get();
         if (!token) return;
 
         try {
           const res = await api.get<User>('/api/v1/auth/me');
-          set({ user: normalizeUser(res.data), isAuthenticated: true });
+          if (get().token === token && get().sessionGeneration === sessionGeneration) {
+            set({ user: normalizeUser(res.data), isAuthenticated: true });
+          }
         } catch (err) {
           // Only clear auth on explicit auth rejections (401/403).
           // Network errors (status undefined) or server errors (5xx) should not
           // log the user out — they may be a transient connectivity issue and
           // the stored token may still be valid once the backend recovers.
           const status = (err as { response?: { status?: number } })?.response?.status;
-          if ((status === 401 || status === 403) && !get().refreshRequiresReauth && !get().refreshError) {
+          if ((status === 401 || status === 403) && get().token === token && get().sessionGeneration === sessionGeneration && !get().refreshRequiresReauth && !get().refreshError) {
             logout();
           }
         }
@@ -102,7 +106,7 @@ export const useAuthStore = create<AuthState>()(
       refreshAccessToken: async (): Promise<string | null> => {
         if (refreshInFlight) return refreshInFlight;
         refreshInFlight = (async (): Promise<string | null> => {
-        const { refreshToken, logout, refreshRetryAt, refreshRequiresReauth, refreshRetryExhausted } = get();
+        const { refreshToken, logout, refreshRetryAt, refreshRequiresReauth, refreshRetryExhausted, sessionGeneration } = get();
         if (refreshRequiresReauth || refreshRetryExhausted || (refreshRetryAt && Date.now() < refreshRetryAt)) return null;
         if (!refreshToken) {
           logout();
@@ -115,6 +119,7 @@ export const useAuthStore = create<AuthState>()(
             { refresh_token: refreshToken },
           );
           const { access_token, refresh_token } = res.data;
+          if (get().refreshToken !== refreshToken || get().sessionGeneration !== sessionGeneration) return null;
           set({ token: access_token, refreshToken: refresh_token, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false });
           return access_token;
         } catch (err) {
@@ -123,6 +128,7 @@ export const useAuthStore = create<AuthState>()(
           // the rotated token may already have been committed server-side.
           // Preserve credentials and let the next request retry. Only an
           // explicit credential rejection means the session is invalid.
+          if (get().refreshToken !== refreshToken || get().sessionGeneration !== sessionGeneration) return null;
           if (status === 401 || status === 403) logout();
           else {
             const failures = get().refreshFailureCount + 1;
