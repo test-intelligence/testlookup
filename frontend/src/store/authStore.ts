@@ -22,6 +22,7 @@ interface AuthState {
   refreshFailureCount: number;
   refreshError: string | null;
   refreshRequiresReauth: boolean;
+  retryRefresh: () => Promise<string | null>;
   _hasHydrated: boolean;
   setHasHydrated: (v: boolean) => void;
   setAuth: (token: string, refreshToken: string, user: User) => void;
@@ -54,6 +55,7 @@ export const useAuthStore = create<AuthState>()(
       refreshFailureCount: 0,
       refreshError: null,
       refreshRequiresReauth: false,
+      retryRefresh: async () => { set({ refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false }); return get().refreshAccessToken(); },
       _hasHydrated: false,
 
       setHasHydrated: (v) => set({ _hasHydrated: v }),
@@ -143,6 +145,8 @@ export const useAuthStore = create<AuthState>()(
         isAuthenticated: state.isAuthenticated,
         refreshRequiresReauth: state.refreshRequiresReauth,
         refreshError: state.refreshError,
+        refreshRetryAt: state.refreshRetryAt,
+        refreshFailureCount: state.refreshFailureCount,
       }),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
