@@ -11,8 +11,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGet = vi.fn()
+const mockPost = vi.fn()
 vi.mock('../services/api', () => ({
-  api: { get: (...args: unknown[]) => mockGet(...args), post: vi.fn() },
+  api: { get: (...args: unknown[]) => mockGet(...args), post: (...args: unknown[]) => mockPost(...args) },
 }))
 
 const { useAuthStore } = await import('./authStore')
@@ -29,18 +30,71 @@ const USER = {
 }
 
 function httpError(status: number) {
-  return { response: { status, data: { detail: 'nope' } } }
+  return { response: { status, data: { detail: 'nope' }, headers: status === 503 ? { 'x-refresh-retry-safe': '1' } : {} } }
 }
 
 describe('authStore.fetchUser under MFA-era failures', () => {
   beforeEach(() => {
     mockGet.mockReset()
+    mockPost.mockReset()
     useAuthStore.setState({
       token: 'acc',
       refreshToken: 'ref',
       user: USER,
       isAuthenticated: true,
+      refreshRetryAt: null,
+      refreshFailureCount: 0,
+      refreshError: null,
+      refreshRequiresReauth: false,
     })
+  })
+
+  it('recovers after a safe refresh 503 cooldown', async () => {
+    mockPost.mockRejectedValueOnce(httpError(503))
+    await useAuthStore.getState().refreshAccessToken()
+    expect(mockPost).toHaveBeenCalledTimes(1)
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+    expect(useAuthStore.getState().refreshRetryAt).toBeGreaterThan(Date.now())
+    useAuthStore.setState({ refreshRetryAt: null })
+    mockPost.mockResolvedValueOnce({ data: { access_token: 'recovered', refresh_token: 'rotated' } })
+    await useAuthStore.getState().refreshAccessToken()
+    expect(mockPost).toHaveBeenCalledTimes(2)
+    expect(useAuthStore.getState().token).toBe('recovered')
+  })
+
+  it('requires reauthentication when refresh outcome is ambiguous', async () => {
+    mockPost.mockRejectedValueOnce(new Error('Network Error'))
+    await useAuthStore.getState().refreshAccessToken()
+    expect(mockPost).toHaveBeenCalledTimes(1)
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+    expect(useAuthStore.getState().refreshRequiresReauth).toBe(true)
+    await useAuthStore.getState().refreshAccessToken()
+    expect(mockPost).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears refresh error state after a successful retry', async () => {
+    useAuthStore.setState({ refreshRetryAt: null, refreshFailureCount: 1, refreshError: 'temporary', refreshRequiresReauth: false })
+    mockPost.mockResolvedValueOnce({ data: { access_token: 'new-acc', refresh_token: 'new-ref' } })
+    await useAuthStore.getState().refreshAccessToken()
+    expect(useAuthStore.getState().refreshError).toBeNull()
+    expect(useAuthStore.getState().refreshRequiresReauth).toBe(false)
+  })
+
+  it('single-flights concurrent refresh calls', async () => {
+    let resolve!: (value: unknown) => void
+    mockPost.mockReturnValueOnce(new Promise((r) => { resolve = r }))
+    const first = useAuthStore.getState().refreshAccessToken()
+    const second = useAuthStore.getState().refreshAccessToken()
+    resolve({ data: { access_token: 'shared', refresh_token: 'shared-ref' } })
+    await Promise.all([first, second])
+    expect(mockPost).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([401, 403])('clears credentials on explicit refresh rejection %i', async (status) => {
+    mockPost.mockRejectedValue(httpError(status))
+    await useAuthStore.getState().refreshAccessToken()
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(useAuthStore.getState().token).toBeNull()
   })
 
   it('keeps the session on a 503 — "we cannot verify right now" is not "log out"', async () => {
@@ -65,5 +119,13 @@ describe('authStore.fetchUser under MFA-era failures', () => {
 
     expect(useAuthStore.getState().isAuthenticated).toBe(false)
     expect(useAuthStore.getState().token).toBeNull()
+  })
+
+  it('preserves the session when an original 401 follows an ambiguous refresh failure', async () => {
+    useAuthStore.setState({ refreshRequiresReauth: true, refreshError: 'Session refresh could not be confirmed.' })
+    mockGet.mockRejectedValue(httpError(401))
+    await useAuthStore.getState().fetchUser()
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+    expect(useAuthStore.getState().refreshRequiresReauth).toBe(true)
   })
 })

@@ -629,6 +629,7 @@ class TestUnreadableSeed:
             "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
         )
         assert resp.status_code == 503
+        assert resp.headers["X-Refresh-Retry-Safe"] == "1"
 
     async def test_status_reports_the_break_instead_of_reporting_healthy(self, db, client):
         user = await make_user(db, username="broken4")

@@ -7,7 +7,12 @@ export default function ProtectedRoute() {
   const hasHydrated = useAuthStore((s) => s._hasHydrated);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const token = useAuthStore((s) => s.token);
+  const refreshError = useAuthStore((s) => s.refreshError);
+  const refreshRequiresReauth = useAuthStore((s) => s.refreshRequiresReauth);
+  const refreshRetryExhausted = useAuthStore((s) => s.refreshRetryExhausted);
+  const retryRefresh = useAuthStore((s) => s.retryRefresh);
   const fetchUser = useAuthStore((s) => s.fetchUser);
+  const logout = useAuthStore((s) => s.logout);
   const location = useLocation();
 
   // Show a spinner only when we have a token but no cached auth state yet
@@ -55,5 +60,20 @@ export default function ProtectedRoute() {
     return <Navigate to="/reset-password" replace />;
   }
 
-  return <Outlet />;
+  return (
+    <>
+      {refreshError && (
+        <div role="alert" className="fixed inset-x-0 top-0 z-50 bg-[var(--status-broken-bg)] px-4 py-2 text-center text-sm text-[var(--status-broken)]">
+          {refreshError}
+          {refreshRequiresReauth && (
+            <button className="ml-2 font-semibold underline" onClick={logout}>Sign in</button>
+          )}
+          {refreshRetryExhausted && (
+            <button className="ml-2 font-semibold underline" onClick={() => void retryRefresh()}>Retry</button>
+          )}
+        </div>
+      )}
+      <Outlet />
+    </>
+  );
 }

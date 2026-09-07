@@ -495,6 +495,7 @@ async def refresh_tokens(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=mfa_service.SEED_UNREADABLE_DETAIL,
+            headers={"X-Refresh-Retry-Safe": "1"},
         )
     if requirement is mfa_service.LoginRequirement.ENROLL:
         logger.info("Refresh rejected — MFA enrollment now required: user_id=%s", user.id)

@@ -197,6 +197,7 @@ def configure_middlewares(app: FastAPI) -> None:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Webhook-Secret", "X-Request-ID"],
+        expose_headers=["X-Refresh-Retry-Safe", "Retry-After"],
     )
 
     # Import locally so middleware setup stays close to other app wiring.
