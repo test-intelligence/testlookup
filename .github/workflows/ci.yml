@@ -16,6 +16,15 @@ on:
   # dispatchable, and the chosen ref must carry it too.)
   workflow_dispatch:
 
+# A PR can receive several pushes while a full matrix is still running. Keep
+# only the newest commit for that PR; an older result is not mergeable once the
+# head changes, so canceling it avoids paying for duplicate runner minutes.
+# Pushes to main/develop use the ref as their group and remain uninterrupted so
+# an image publication or deployment cannot be cut off mid-rollout.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Default to least-privilege — every job must opt in to any write scope it needs.
 permissions:
   contents: read
