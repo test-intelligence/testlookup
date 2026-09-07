@@ -2903,6 +2903,8 @@ class LiveStreamIngestResponse(BaseModel):
 
 # ── Ingest Schemas (unified batch + file upload) ──────────────────────────────
 
+BUILD_NUMBER_MAX_LENGTH = 100
+
 class IngestTestResult(BaseModel):
     """A single test result in a JSON batch ingest."""
     test_name: str = Field(..., min_length=1, max_length=1000)
@@ -2919,7 +2921,7 @@ class IngestTestResult(BaseModel):
 class IngestPayload(BaseModel):
     """JSON batch ingest request body for POST /api/v1/ingest."""
     project_id: str = Field(..., description="Project UUID")
-    build_number: str = Field(..., min_length=1, max_length=255)
+    build_number: str = Field(..., min_length=1, max_length=BUILD_NUMBER_MAX_LENGTH)
     results: List[IngestTestResult] = Field(..., min_length=1, max_length=50_000)
     branch: Optional[str] = Field(None, max_length=255)
     commit_hash: Optional[str] = Field(None, max_length=64)

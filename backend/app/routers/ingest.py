@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_api_key_context, get_db, resolve_project_scope
 from app.models.postgres import User
-from app.models.schemas import IngestPayload, IngestResponse, UploadStatusResponse
+from app.models.schemas import BUILD_NUMBER_MAX_LENGTH, IngestPayload, IngestResponse, UploadStatusResponse
 
 router = APIRouter(prefix="/api/v1/ingest", tags=["Ingest"])
 logger = structlog.get_logger("routers.ingest")
@@ -192,7 +192,7 @@ _SUPPORTED_FORMATS = {
 async def ingest_file(
     file: UploadFile = File(...),
     project_id: str = Form(...),
-    build_number: str = Form(...),
+    build_number: str = Form(..., min_length=1, max_length=BUILD_NUMBER_MAX_LENGTH),
     # Bounded to match the JSON `IngestPayload` schema and the underlying
     # TestRun columns (branch String(255), commit_hash String(64)) / release
     # name String(255). Without these caps the multipart path let an over-long
