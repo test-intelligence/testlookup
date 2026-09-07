@@ -39,8 +39,8 @@ class _FakeResp:
     def __init__(self, *, status_code=200, headers=None, text="<html><body>ok</body></html>"):
         self.status_code = status_code
         self.headers = headers or {}
-        self.text = text
-        self.content = text.encode("utf-8")
+        self.encoding = "utf-8"
+        self._body = text.encode("utf-8")
         self.url = "https://example.com/final"
 
     @property
@@ -49,6 +49,20 @@ class _FakeResp:
 
     def raise_for_status(self):
         return None
+
+    async def aiter_bytes(self):
+        yield self._body
+
+
+class _StreamContext:
+    def __init__(self, response):
+        self.response = response
+
+    async def __aenter__(self):
+        return self.response
+
+    async def __aexit__(self, *exc):
+        return False
 
 
 def _client_returning(responses):
@@ -64,9 +78,9 @@ def _client_returning(responses):
         async def __aexit__(self, *exc):
             return False
 
-        async def get(self, url, headers=None):
+        def stream(self, method, url, headers=None):
             requested.append(url)
-            return queue.pop(0)
+            return _StreamContext(queue.pop(0))
 
     return _Client(), requested
 
@@ -144,3 +158,45 @@ async def test_public_single_hop_fetch_succeeds():
 
     assert "hello world" in result.raw_text
     assert requested == ["https://public.example/page"]
+
+
+@pytest.mark.asyncio
+async def test_declared_oversized_response_is_rejected_before_reading_body():
+    from app.services.connectors.url_connector import _read_response_bounded
+
+    response = _FakeResp(headers={"content-length": str(5 * 1024 * 1024 + 1)})
+    response.aiter_bytes = AsyncMock(side_effect=AssertionError("body should not be read"))
+
+    with pytest.raises(ConnectorFetchError, match="Response too large"):
+        await _read_response_bounded(response)
+    response.aiter_bytes.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unknown_length_response_stops_after_limit_plus_one_chunk():
+    from app.services.connectors.url_connector import _MAX_RESPONSE_BYTES, _read_response_bounded
+
+    class ChunkedResponse(_FakeResp):
+        async def aiter_bytes(self):
+            yield b"x" * _MAX_RESPONSE_BYTES
+            yield b"y"
+            raise AssertionError("stream was not stopped after the limit")
+
+    with pytest.raises(ConnectorFetchError, match="Response too large"):
+        await _read_response_bounded(ChunkedResponse())
+
+
+@pytest.mark.asyncio
+async def test_redirect_response_body_is_not_buffered():
+    redirect = _FakeResp(status_code=302, headers={"location": "https://public.example/final"})
+    redirect.aiter_bytes = AsyncMock(side_effect=AssertionError("redirect body should not be read"))
+    final = _FakeResp(status_code=200, headers={"content-type": "text/plain"}, text="ok")
+    client, requested = _client_returning([redirect, final])
+
+    with patch("httpx.AsyncClient", lambda *a, **k: client), \
+         patch("app.services.connectors.url_connector.is_safe_public_url", lambda _u: (True, "")):
+        result = await URLConnector().fetch_content("https://public.example/start")
+
+    assert result.raw_text == "ok"
+    redirect.aiter_bytes.assert_not_called()
+    assert requested == ["https://public.example/start", "https://public.example/final"]
