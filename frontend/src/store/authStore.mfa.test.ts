@@ -11,8 +11,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGet = vi.fn()
+const mockPost = vi.fn()
 vi.mock('../services/api', () => ({
-  api: { get: (...args: unknown[]) => mockGet(...args), post: vi.fn() },
+  api: { get: (...args: unknown[]) => mockGet(...args), post: (...args: unknown[]) => mockPost(...args) },
 }))
 
 const { useAuthStore } = await import('./authStore')
@@ -35,12 +36,29 @@ function httpError(status: number) {
 describe('authStore.fetchUser under MFA-era failures', () => {
   beforeEach(() => {
     mockGet.mockReset()
+    mockPost.mockReset()
     useAuthStore.setState({
       token: 'acc',
       refreshToken: 'ref',
       user: USER,
       isAuthenticated: true,
     })
+  })
+
+  it('preserves credentials on refresh 503 and network errors', async () => {
+    for (const error of [httpError(503), new Error('Network Error')]) {
+      mockPost.mockRejectedValueOnce(error)
+      await useAuthStore.getState().refreshAccessToken()
+      expect(useAuthStore.getState().isAuthenticated).toBe(true)
+      expect(useAuthStore.getState().token).toBe('acc')
+    }
+  })
+
+  it.each([401, 403])('clears credentials on explicit refresh rejection %i', async (status) => {
+    mockPost.mockRejectedValue(httpError(status))
+    await useAuthStore.getState().refreshAccessToken()
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(useAuthStore.getState().token).toBeNull()
   })
 
   it('keeps the session on a 503 — "we cannot verify right now" is not "log out"', async () => {

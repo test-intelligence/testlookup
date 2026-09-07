@@ -94,8 +94,13 @@ export const useAuthStore = create<AuthState>()(
           const { access_token, refresh_token } = res.data;
           set({ token: access_token, refreshToken: refresh_token });
           return access_token;
-        } catch {
-          logout();
+        } catch (err) {
+          const status = (err as { response?: { status?: number } })?.response?.status;
+          // A refresh failure is ambiguous for transient/network/server errors:
+          // the rotated token may already have been committed server-side.
+          // Preserve credentials and let the next request retry. Only an
+          // explicit credential rejection means the session is invalid.
+          if (status === 401 || status === 403) logout();
           return null;
         }
       },
