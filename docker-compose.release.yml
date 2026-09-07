@@ -223,6 +223,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
+      - LIVE_INGEST_SHARD_COUNT=8
       # Secure-by-default: a naive `docker compose up` (no .env) runs in
       # production mode (dev-login off, refuses default secrets).
       - APP_ENV=${APP_ENV:-production}
@@ -267,6 +268,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
+      - LIVE_INGEST_SHARD_COUNT=8
       - APP_ENV=${APP_ENV:-production}
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
     depends_on:
