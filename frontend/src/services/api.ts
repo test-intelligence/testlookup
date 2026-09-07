@@ -87,6 +87,7 @@ const NO_REFRESH_PATHS = new Set([
   '/api/v1/auth/refresh',
   '/api/v1/auth/register',
   '/api/v1/auth/dev-login',
+  '/api/v1/auth/logout',
 ])
 
 const NO_REFRESH_PREFIXES = ['/api/v1/auth/mfa/']

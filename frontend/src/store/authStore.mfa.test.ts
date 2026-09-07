@@ -90,6 +90,13 @@ describe('authStore.fetchUser under MFA-era failures', () => {
     expect(mockPost).toHaveBeenCalledTimes(1)
   })
 
+  it('revokes server session before clearing local state, even on failure', async () => {
+    mockPost.mockRejectedValueOnce(new Error('offline'))
+    await useAuthStore.getState().logoutServer()
+    expect(mockPost).toHaveBeenCalledWith('/api/v1/auth/logout')
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+  })
+
   it.each([401, 403])('clears credentials on explicit refresh rejection %i', async (status) => {
     mockPost.mockRejectedValue(httpError(status))
     await useAuthStore.getState().refreshAccessToken()

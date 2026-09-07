@@ -84,7 +84,7 @@ function UserProfileDropdown() {
           </div>
           <button
             role="menuitem"
-            onClick={() => useAuthStore.getState().logout()}
+            onClick={() => void (useAuthStore.getState().logoutServer?.() ?? useAuthStore.getState().logout())}
             className="w-full text-left px-4 py-2 text-sm text-[var(--status-failed)] hover:bg-[var(--color-bg-hover)]/50 flex items-center gap-2 transition-colors mt-1"
           >
             <LogOut className="w-4 h-4" />
