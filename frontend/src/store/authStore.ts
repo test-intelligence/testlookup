@@ -92,8 +92,8 @@ export const useAuthStore = create<AuthState>()(
       },
 
       refreshAccessToken: async (): Promise<string | null> => {
-        const { refreshToken, logout, refreshRetryAt, refreshRequiresReauth } = get();
-        if (refreshRequiresReauth || (refreshRetryAt && Date.now() < refreshRetryAt)) return null;
+        const { refreshToken, logout, refreshRetryAt, refreshRequiresReauth, refreshRetryExhausted } = get();
+        if (refreshRequiresReauth || refreshRetryExhausted || (refreshRetryAt && Date.now() < refreshRetryAt)) return null;
         if (!refreshToken) {
           logout();
           return null;
