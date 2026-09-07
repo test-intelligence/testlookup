@@ -112,10 +112,16 @@ export const useAuthStore = create<AuthState>()(
           if (status === 401 || status === 403) logout();
           else {
             const failures = get().refreshFailureCount + 1;
-            // The backend rotates the refresh token before responding. Any
-            // non-auth response may therefore be post-commit and unsafe to
-            // replay; preserve the shell but require explicit sign-in.
-            set({ refreshFailureCount: failures, refreshRetryAt: Number.POSITIVE_INFINITY, refreshRequiresReauth: true, refreshError: 'Session refresh could not be confirmed. Sign in again to continue.' });
+            const retryAfter = Number((err as { response?: { headers?: { 'retry-after'?: string } } })?.response?.headers?.['retry-after']);
+            if (status === 429 || status === 503) {
+              const delay = Number.isFinite(retryAfter) && retryAfter > 0
+                ? Math.min(60_000, Math.max(1_000, retryAfter * 1000))
+                : Math.min(60_000, 1000 * 2 ** Math.min(failures - 1, 6));
+              set({ refreshFailureCount: failures, refreshRetryAt: Date.now() + delay, refreshError: 'Session refresh is temporarily unavailable. Retry after the cooldown.' });
+            } else {
+              // Other responses may be post-commit and unsafe to replay.
+              set({ refreshFailureCount: failures, refreshRetryAt: Number.POSITIVE_INFINITY, refreshRequiresReauth: true, refreshError: 'Session refresh could not be confirmed. Sign in again to continue.' });
+            }
           }
           return null;
         }
