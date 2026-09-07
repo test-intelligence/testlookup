@@ -114,7 +114,7 @@ export const useAuthStore = create<AuthState>()(
             const failures = get().refreshFailureCount + 1;
             const retryAfter = Number((err as { response?: { headers?: { 'retry-after'?: string } } })?.response?.headers?.['retry-after']);
             const retrySafe = (err as { response?: { headers?: Record<string, string> } })?.response?.headers?.['x-refresh-retry-safe'] === '1';
-            if (status === 429 || retrySafe) {
+            if ((status === 429 || retrySafe) && failures < 6) {
               const delay = Number.isFinite(retryAfter) && retryAfter > 0
                 ? Math.min(60_000, Math.max(1_000, retryAfter * 1000))
                 : Math.min(60_000, 1000 * 2 ** Math.min(failures - 1, 6));
