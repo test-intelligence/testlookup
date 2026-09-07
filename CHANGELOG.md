@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-07 — press "/" to jump to the global search
+
+The global search box in the top bar had no keyboard path — a self-hoster who
+lives in the tool all day had to reach for the mouse every time, even though the
+box already coaches "(Enter)" to submit. It now focuses on the canonical
+GitHub/GitLab-style `/` key and shows a small `/` hint inside the box.
+
+Deliberately not `⌘/Ctrl-K`: the search results page already binds that combo to
+its own input, so a second global handler would fight it there. The `/` handler
+is guarded so it never swallows a slash the user is actually typing into a
+field, textarea, contenteditable node, or select. Presentation-only.
+
 ## 2026-09-05 — a rate limit is not a data error
 
 `describeLoadError` (the vocabulary every page's "we could not load this" panel
