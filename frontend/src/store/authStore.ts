@@ -22,6 +22,7 @@ interface AuthState {
   refreshFailureCount: number;
   refreshError: string | null;
   refreshRequiresReauth: boolean;
+  refreshRetryExhausted: boolean;
   retryRefresh: () => Promise<string | null>;
   _hasHydrated: boolean;
   setHasHydrated: (v: boolean) => void;
@@ -55,20 +56,21 @@ export const useAuthStore = create<AuthState>()(
       refreshFailureCount: 0,
       refreshError: null,
       refreshRequiresReauth: false,
-      retryRefresh: async () => { set({ refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false }); return get().refreshAccessToken(); },
+      refreshRetryExhausted: false,
+      retryRefresh: async () => { set({ refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }); return get().refreshAccessToken(); },
       _hasHydrated: false,
 
       setHasHydrated: (v) => set({ _hasHydrated: v }),
 
       setAuth: (token, refreshToken, user) =>
-        set({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false }),
+        set({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }),
 
       clearMustChangePassword: () =>
         set((state) =>
           state.user ? { user: { ...state.user, must_change_password: false } } : {}
         ),
 
-      logout: () => set({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false }),
+      logout: () => set({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }),
 
       fetchUser: async () => {
         const { token, logout } = get();
@@ -103,7 +105,7 @@ export const useAuthStore = create<AuthState>()(
             { refresh_token: refreshToken },
           );
           const { access_token, refresh_token } = res.data;
-          set({ token: access_token, refreshToken: refresh_token, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false });
+          set({ token: access_token, refreshToken: refresh_token, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false });
           return access_token;
         } catch (err) {
           const status = (err as { response?: { status?: number } })?.response?.status;
@@ -118,11 +120,15 @@ export const useAuthStore = create<AuthState>()(
             const header = (name: string) => headers?.get?.(name) ?? headers?.[name.toLowerCase()] ?? headers?.[name];
             const retryAfter = Number(header('retry-after'));
             const retrySafe = header('x-refresh-retry-safe') === '1';
-            if ((status === 429 || retrySafe) && failures < 6) {
+            if (status === 429 || retrySafe) {
+              if (failures >= 6) {
+                set({ refreshFailureCount: failures, refreshRetryAt: Number.POSITIVE_INFINITY, refreshRetryExhausted: true, refreshError: 'Session refresh is still unavailable. Try again when the service recovers.' });
+                return null;
+              }
               const delay = Number.isFinite(retryAfter) && retryAfter > 0
                 ? Math.min(60_000, Math.max(1_000, retryAfter * 1000))
                 : Math.min(60_000, 1000 * 2 ** Math.min(failures - 1, 6));
-              set({ refreshFailureCount: failures, refreshRetryAt: Date.now() + delay, refreshError: 'Session refresh is temporarily unavailable. Retry after the cooldown.' });
+              set({ refreshFailureCount: failures, refreshRetryAt: Date.now() + delay, refreshRetryExhausted: false, refreshError: 'Session refresh is temporarily unavailable. Retry after the cooldown.' });
             } else {
               // Other responses may be post-commit and unsafe to replay.
               set({ refreshFailureCount: failures, refreshRetryAt: Number.POSITIVE_INFINITY, refreshRequiresReauth: true, refreshError: 'Session refresh could not be confirmed. Sign in again to continue.' });
@@ -147,6 +153,7 @@ export const useAuthStore = create<AuthState>()(
         refreshError: state.refreshError,
         refreshRetryAt: state.refreshRetryAt,
         refreshFailureCount: state.refreshFailureCount,
+        refreshRetryExhausted: state.refreshRetryExhausted,
       }),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);

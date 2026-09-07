@@ -9,6 +9,8 @@ export default function ProtectedRoute() {
   const token = useAuthStore((s) => s.token);
   const refreshError = useAuthStore((s) => s.refreshError);
   const refreshRequiresReauth = useAuthStore((s) => s.refreshRequiresReauth);
+  const refreshRetryExhausted = useAuthStore((s) => s.refreshRetryExhausted);
+  const retryRefresh = useAuthStore((s) => s.retryRefresh);
   const fetchUser = useAuthStore((s) => s.fetchUser);
   const logout = useAuthStore((s) => s.logout);
   const location = useLocation();
@@ -65,6 +67,9 @@ export default function ProtectedRoute() {
           {refreshError}
           {refreshRequiresReauth && (
             <button className="ml-2 font-semibold underline" onClick={logout}>Sign in</button>
+          )}
+          {refreshRetryExhausted && (
+            <button className="ml-2 font-semibold underline" onClick={() => void retryRefresh()}>Retry</button>
           )}
         </div>
       )}
