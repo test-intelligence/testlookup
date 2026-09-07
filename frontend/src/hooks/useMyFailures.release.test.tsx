@@ -43,6 +43,7 @@ vi.mock('@/services/myFailuresService', () => ({
 import { myFailuresService } from '@/services/myFailuresService'
 import { useMyFailures, useMyFailuresCount, useMyFailuresCountUnscoped } from './useMyFailures'
 import { useReleaseStore } from '@/store/releaseStore'
+import { useAuthStore } from '@/store/authStore'
 
 const PROJECT_A = 'aaaaaaaa-0000-0000-0000-000000000001'
 const REL_1 = 'rrrrrrrr-0000-0000-0000-000000000001'
@@ -66,11 +67,19 @@ beforeEach(() => {
   localStorage.clear()
   useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
   mocked.projectState = { activeProjectId: PROJECT_A }
+  useAuthStore.setState({ user: { id: 'user-a' } as never })
   list.mockClear()
   count.mockClear()
 })
 
 describe('useMyFailures — the release the picker is showing', () => {
+  it('does not share the unscoped count key across users', async () => {
+    const { rerender } = renderHook(() => useMyFailuresCountUnscoped({ days: 30 }), { wrapper })
+    await waitFor(() => expect(count).toHaveBeenCalledTimes(1))
+    useAuthStore.setState({ user: { id: 'user-b' } as never })
+    rerender()
+    await waitFor(() => expect(count).toHaveBeenCalledTimes(2))
+  })
   it('sends the selected release', async () => {
     useReleaseStore.getState().setActiveRelease(REL_1, PROJECT_A)
 

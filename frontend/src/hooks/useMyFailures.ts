@@ -1,4 +1,5 @@
 import useSWR from 'swr'
+import { useAuthStore } from '@/store/authStore'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 import { useProjectScopedSWR } from './useProjectScopedSWR'
 import { myFailuresService } from '@/services/myFailuresService'
@@ -77,8 +78,9 @@ export function useReassignOptions(testCaseId: string | null) {
  * `useReleaseScope` returns null without a single pinned project anyway.
  */
 export function useMyFailuresCountUnscoped(params: { days?: number } = {}) {
+  const userId = useAuthStore((state) => state.user?.id ?? null)
   return useSWR(
-    ['my-failures-count-unscoped', params.days],
+    userId ? ['my-failures-count-unscoped', userId, params.days] : null,
     () => myFailuresService.count({ days: params.days }),
     { refreshInterval: REFRESH_INTERVALS.POLLING },
   )

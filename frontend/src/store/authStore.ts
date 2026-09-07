@@ -23,6 +23,7 @@ interface AuthState {
   refreshError: string | null;
   refreshRequiresReauth: boolean;
   refreshRetryExhausted: boolean;
+  sessionGeneration: number;
   retryRefresh: () => Promise<string | null>;
   _hasHydrated: boolean;
   setHasHydrated: (v: boolean) => void;
@@ -60,20 +61,21 @@ export const useAuthStore = create<AuthState>()(
       refreshError: null,
       refreshRequiresReauth: false,
       refreshRetryExhausted: false,
+      sessionGeneration: 0,
       retryRefresh: async () => { set({ refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }); return get().refreshAccessToken(); },
       _hasHydrated: false,
 
       setHasHydrated: (v) => set({ _hasHydrated: v }),
 
       setAuth: (token, refreshToken, user) =>
-        set({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }),
+        set((state) => ({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1 })),
 
       clearMustChangePassword: () =>
         set((state) =>
           state.user ? { user: { ...state.user, must_change_password: false } } : {}
         ),
 
-      logout: () => set({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }),
+      logout: () => set((state) => ({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1 })),
       logoutServer: async () => {
         try { await api.post('/api/v1/auth/logout'); }
         catch { /* local cleanup still completes when the server is unavailable */ }
