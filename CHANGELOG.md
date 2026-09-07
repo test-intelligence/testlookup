@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-07 — a run over an hour reads as hours, not "127m 3s"
+
+`formatDuration` — the shared elapsed-time formatter behind a run's total, the
+"Avg run duration" tile, and per-test-case durations — topped out at a minutes
+tier, so any run past an hour rendered as a bare minute count (`127m 3s`) that a
+reader has to divide by 60 in their head. A large CI suite routinely runs that
+long.
+
+Added an hours tier: an hour or more now reads `2h 7m`, dropping seconds at that
+magnitude for the same reason the second tier drops milliseconds — at that scale
+they are noise, not signal. Every sub-hour value is byte-for-byte unchanged, so
+no existing cell moves; only the previously unreadable long durations do.
+Presentation-only, pure helper.
+
 ## 2026-09-05 — a rate limit is not a data error
 
 `describeLoadError` (the vocabulary every page's "we could not load this" panel

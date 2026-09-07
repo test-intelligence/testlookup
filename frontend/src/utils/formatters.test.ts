@@ -100,10 +100,22 @@ describe('formatDuration', () => {
     expect(formatDuration(59_000)).toBe('59.0s')
   })
 
-  it('renders a minute or more as "Xm Ys"', () => {
+  it('renders a minute or more (but under an hour) as "Xm Ys"', () => {
     expect(formatDuration(60_000)).toBe('1m 0s')
     expect(formatDuration(90_000)).toBe('1m 30s')
     expect(formatDuration(125_000)).toBe('2m 5s')
+    // Just under the hour boundary stays in the minutes tier.
+    expect(formatDuration(3_599_000)).toBe('59m 59s')
+  })
+
+  it('renders an hour or more as "Xh Ym", dropping seconds', () => {
+    // A large CI suite routinely runs past an hour; the minutes tier rendered
+    // this as "127m 3s", which a reader has to divide by 60 in their head.
+    expect(formatDuration(3_600_000)).toBe('1h 0m')
+    expect(formatDuration(7_623_000)).toBe('2h 7m') // 2h07m03s → seconds dropped
+    expect(formatDuration(9_000_000)).toBe('2h 30m')
+    // Many hours: the hours count is not capped.
+    expect(formatDuration(90_000_000)).toBe('25h 0m')
   })
 })
 
