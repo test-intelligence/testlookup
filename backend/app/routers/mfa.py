@@ -155,7 +155,14 @@ async def _consume_mfa_token(user: User) -> None:
     remaining = settings.MFA_CHALLENGE_TTL_SECONDS
     if isinstance(exp, (int, float)):
         remaining = int(exp) - int(datetime.now(timezone.utc).timestamp())
-    await revoke_jti(str(jti), remaining)
+    try:
+        await revoke_jti(str(jti), remaining)
+    except RevocationUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Token revocation store unavailable; retry the MFA operation",
+            headers={"Retry-After": "5"},
+        ) from exc
 
 
 def _assert_not_locked(user: User) -> None:

@@ -85,6 +85,21 @@ _JTI_KEY = "auth:revoked_jti:{jti}"
 _USER_CUTOFF_KEY = "auth:tokens_valid_from:{user_id}"
 
 
+async def _durable_execute(statement: str, params: dict) -> list:
+    """Use Postgres as revocation authority; Redis remains only a cache."""
+    from sqlalchemy import text
+    from app.db.postgres import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(text(statement), params)
+        rows = result.fetchall() if result.returns_rows else []
+        await db.commit()
+        return rows
+
+
+def _durable_required() -> bool:
+    return settings.APP_ENV in ("staging", "production")
+
+
 class RevocationUnavailable(RuntimeError):
     """The revocation store could not be consulted for this request.
 
@@ -154,6 +169,12 @@ async def revoke_jti(jti: str, ttl_seconds: int) -> None:
     """
     if not jti:
         return
+    try:
+        await _durable_execute("INSERT INTO auth_token_revocations (jti, expires_at) VALUES (:jti, now() + (:ttl * interval '1 second')) ON CONFLICT (jti) DO NOTHING", {"jti": jti, "ttl": max(1, int(ttl_seconds))})
+    except Exception as exc:
+        logger.error("durable_revocation_unavailable", operation="revoke_jti", error=str(exc))
+        if _durable_required():
+            raise RevocationUnavailable("durable revocation store unavailable") from exc
     redis = await _redis()
     if redis is None:
         # Loud, not silent: the caller's logout LOOKS successful but this
@@ -183,6 +204,22 @@ async def is_jti_revoked(jti: str) -> bool:
     """
     if not jti:
         return False
+    try:
+        found = bool(await _durable_execute("SELECT 1 FROM auth_token_revocations WHERE jti=:jti AND (expires_at IS NULL OR expires_at > now())", {"jti": jti}))
+        if found:
+            return True
+        redis = await _redis()
+        if redis is None:
+            return _unavailable("is_jti_revoked") if _durable_required() else False
+        legacy = (await redis.get(_JTI_KEY.format(jti=jti))) is not None
+        if legacy:
+            # Bounded migration: import a legacy marker while its natural TTL remains.
+            await _durable_execute("INSERT INTO auth_token_revocations (jti, expires_at) VALUES (:jti, now() + (:ttl * interval '1 second')) ON CONFLICT (jti) DO NOTHING", {"jti": jti, "ttl": settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60})
+        return legacy
+    except Exception as exc:
+        logger.error("durable_revocation_unavailable", operation="is_jti_revoked", error=str(exc))
+        if _durable_required():
+            return _unavailable("is_jti_revoked", exc)
     redis = await _redis()
     if redis is None:
         return _unavailable("is_jti_revoked")
@@ -193,7 +230,7 @@ async def is_jti_revoked(jti: str) -> bool:
         return _unavailable("is_jti_revoked", exc)
 
 
-async def revoke_all_user_tokens(user_id: uuid.UUID) -> None:
+async def revoke_all_user_tokens(user_id: uuid.UUID, db=None) -> None:
     """
     Revoke every access token previously issued to ``user_id`` by writing a
     cutoff marker. Any token whose ``iat`` is earlier than this marker will
@@ -202,6 +239,16 @@ async def revoke_all_user_tokens(user_id: uuid.UUID) -> None:
     The TTL matches the access-token max lifetime so the marker self-prunes
     once it can no longer possibly invalidate a still-live token.
     """
+    try:
+        if db is not None:
+            from sqlalchemy import text
+            await db.execute(text("INSERT INTO auth_token_revocations (jti, user_id, valid_from) VALUES (:jti, :uid, now()) ON CONFLICT (jti) DO UPDATE SET valid_from=now()"), {"jti": f"cutoff:{user_id}", "uid": user_id})
+        else:
+            await _durable_execute("INSERT INTO auth_token_revocations (jti, user_id, valid_from) VALUES (:jti, :uid, now()) ON CONFLICT (jti) DO UPDATE SET valid_from=now()", {"jti": f"cutoff:{user_id}", "uid": user_id})
+    except Exception as exc:
+        logger.error("durable_revocation_unavailable", operation="revoke_all_user_tokens", error=str(exc))
+        if _durable_required():
+            raise RevocationUnavailable("durable revocation store unavailable") from exc
     redis = await _redis()
     if redis is None:
         _count("revocation_write_failed")
@@ -244,6 +291,27 @@ async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[int]) -
 
     Raises ``RevocationUnavailable`` when the store cannot be consulted.
     """
+    try:
+        rows = await _durable_execute("SELECT valid_from FROM auth_token_revocations WHERE jti=:jti AND user_id=:uid", {"jti": f"cutoff:{user_id}", "uid": user_id})
+        cutoff_value = rows[0][0] if rows else None
+        if cutoff_value is not None:
+            return token_iat is None or token_iat <= int(cutoff_value.timestamp())
+        # During the bounded migration window, honor legacy Redis markers too.
+        redis = await _redis()
+        if redis is None:
+            return False
+        legacy = await redis.get(_USER_CUTOFF_KEY.format(user_id=str(user_id)))
+        if legacy is None:
+            return False
+        if isinstance(legacy, bytes):
+            legacy = legacy.decode()
+        await _durable_execute("INSERT INTO auth_token_revocations (jti, user_id, valid_from) VALUES (:jti, :uid, to_timestamp(:cutoff)) ON CONFLICT (jti) DO NOTHING", {"jti": f"cutoff:{user_id}", "uid": user_id, "cutoff": int(legacy)})
+        return token_iat is None or token_iat <= int(legacy)
+    except Exception as exc:
+        logger.error("durable_revocation_unavailable", operation="is_token_before_cutoff", error=str(exc))
+        if _durable_required():
+            return _unavailable("is_token_before_cutoff", exc)
+    # Redis fallback is used only while an older installation is migrating.
     redis = await _redis()
     if redis is None:
         return _unavailable("is_token_before_cutoff")
@@ -259,6 +327,6 @@ async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[int]) -
         cutoff = int(cutoff_str)
         if token_iat is None:
             return True  # legacy token, any cutoff invalidates it
-        return token_iat < cutoff
+        return token_iat <= cutoff
     except Exception as exc:  # noqa: BLE001
         return _unavailable("is_token_before_cutoff", exc)

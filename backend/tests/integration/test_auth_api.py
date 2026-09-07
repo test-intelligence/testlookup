@@ -171,7 +171,8 @@ async def test_change_password_revokes_all_user_tokens(client, auth_as):
         fastapi_app.dependency_overrides.pop(get_db, None)
 
     assert resp.status_code == 204
-    revoke_all.assert_awaited_once_with(user.id)
+    assert revoke_all.await_count == 1
+    assert revoke_all.await_args.args[0] == user.id
     revoke_family.assert_awaited_once()
 
 
@@ -224,7 +225,8 @@ async def test_first_time_reset_revokes_bootstrap_token(client, override_db):
         fastapi_app.dependency_overrides.pop(get_current_active_user, None)
 
     assert resp.status_code == 204
-    revoke_all.assert_awaited_once_with(user.id)
+    assert revoke_all.await_count == 1
+    assert revoke_all.await_args.args[0] == user.id
     revoke_family.assert_awaited_once()
     # must_change_password should have been cleared on the user
     assert user.must_change_password is False
