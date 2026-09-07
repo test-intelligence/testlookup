@@ -249,7 +249,10 @@ services:
     <<: *app-backend-image
     container_name: testlookup_worker
     restart: unless-stopped
-    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q default,ingestion,ai_analysis --max-tasks-per-child=200
+    # Keep this subscription set in lockstep with celery_app routes and the
+    # default LIVE_INGEST_SHARD_COUNT=8. Missing one queue leaves work pending
+    # forever in a fresh release stack.
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q default,critical,ingestion,ingestion.shard.0,ingestion.shard.1,ingestion.shard.2,ingestion.shard.3,ingestion.shard.4,ingestion.shard.5,ingestion.shard.6,ingestion.shard.7,ai_analysis --max-tasks-per-child=200
     env_file:
       - .env
     environment:
