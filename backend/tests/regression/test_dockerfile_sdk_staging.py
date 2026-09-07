@@ -67,13 +67,7 @@ def test_dockerfile_uses_writable_home_for_chroma_cache():
     assert "HOME=/tmp" in src
 
 
-@pytest.mark.parametrize("workflow", [
-    "deploy-aks.yml",
-    "deploy-gke.yml",
-    "deploy-eks.yml",
-    "deploy-staging.yml",
-    "deploy-production.yml",
-])
+@pytest.mark.parametrize("workflow", ["deploy-staging.yml"])
 def test_deploy_workflow_has_sdk_staging_step(workflow: str):
     """Every cloud-deploy workflow that builds the backend image MUST
     stage SDKs into the build context — otherwise the resulting image

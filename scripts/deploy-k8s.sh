@@ -9,6 +9,7 @@
 #   --cloud=<name>         Required. Selects the kustomize overlay.
 #   --image-tag=<tag>      Override image tag (default: 0.0.1)
 #   --registry=<url>       Override container registry prefix (e.g.
+#   --release-manifest=<path> Deploy only the validated digest manifest.
 #                          123.dkr.ecr.us-east-1.amazonaws.com).
 #   --namespace=<ns>       Override target namespace (default: testlookup).
 #   --dry-run              Print rendered manifests without applying.
@@ -27,6 +28,7 @@ set -euo pipefail
 CLOUD=""
 IMAGE_TAG=""
 REGISTRY=""
+RELEASE_MANIFEST=""
 NAMESPACE="testlookup"
 DRY_RUN=0
 SKIP_SECRETS_CHECK=0
@@ -41,6 +43,7 @@ for arg in "$@"; do
     --cloud=*)              CLOUD="${arg#*=}" ;;
     --image-tag=*)          IMAGE_TAG="${arg#*=}" ;;
     --registry=*)           REGISTRY="${arg#*=}" ;;
+    --release-manifest=*)   RELEASE_MANIFEST="${arg#*=}" ;;
     --namespace=*)          NAMESPACE="${arg#*=}" ;;
     --dry-run)              DRY_RUN=1 ;;
     --skip-secrets-check)   SKIP_SECRETS_CHECK=1 ;;
@@ -129,7 +132,19 @@ fi
 
 # ── Optional: override image registry on the fly ─────────────────────────────
 TMP_OVERLAY=""
-if [[ -n "$REGISTRY" || -n "$IMAGE_TAG" ]]; then
+if [[ -n "$RELEASE_MANIFEST" ]]; then
+  [[ -f "$RELEASE_MANIFEST" ]] || { echo "ERROR: release manifest not found: $RELEASE_MANIFEST" >&2; exit 1; }
+  python3 scripts/release/release_manifest.py validate-materialized --manifest "$RELEASE_MANIFEST" >/dev/null
+  TMP_OVERLAY="$(mktemp -d)/overlay"
+  cp -r "$OVERLAY" "$TMP_OVERLAY"
+  pushd "$TMP_OVERLAY" >/dev/null
+  for img in backend frontend mcp; do
+    ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destination_refs"][sys.argv[2]])' "$OLDPWD/$RELEASE_MANIFEST" "$img")"
+    kubectl kustomize edit set image "testlookup/$img=$ref" 2>/dev/null || kustomize edit set image "testlookup/$img=$ref"
+  done
+  popd >/dev/null
+  OVERLAY="$TMP_OVERLAY"
+elif [[ -n "$REGISTRY" || -n "$IMAGE_TAG" ]]; then
   TMP_OVERLAY="$(mktemp -d)/overlay"
   cp -r "$OVERLAY" "$TMP_OVERLAY"
   pushd "$TMP_OVERLAY" >/dev/null
@@ -188,6 +203,19 @@ if [[ -n "$LEGACY_MCP_USER" ]]; then
       -p='{"data":{"MCP_USERNAME":null,"MCP_PASSWORD":null}}'
     echo "==> Legacy MCP account retired and Secret credentials removed."
   fi
+fi
+
+if [[ -n "$RELEASE_MANIFEST" && $DRY_RUN -eq 0 ]]; then
+  for deployment in testlookup-backend testlookup-frontend testlookup-mcp testlookup-celery-worker testlookup-celery-beat testlookup-celery-worker-low testlookup-celery-worker-high testlookup-celery-worker-child; do
+    kubectl -n "$NAMESPACE" rollout status "deployment/$deployment" --timeout=300s
+    image="$(kubectl -n "$NAMESPACE" get deployment "$deployment" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+    case "$deployment" in
+      testlookup-frontend) expected="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destination_refs"]["frontend"])' "$RELEASE_MANIFEST")" ;;
+      testlookup-mcp) expected="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destination_refs"]["mcp"])' "$RELEASE_MANIFEST")" ;;
+      *) expected="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destination_refs"]["backend"])' "$RELEASE_MANIFEST")" ;;
+    esac
+    [[ "$image" == "$expected" ]] || { echo "deployment/$deployment image $image does not match verified manifest $expected" >&2; exit 1; }
+  done
 fi
 
 echo "==> Waiting for frontend rollout..."
