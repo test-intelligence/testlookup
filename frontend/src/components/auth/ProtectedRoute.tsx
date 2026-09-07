@@ -61,7 +61,7 @@ export default function ProtectedRoute() {
   return (
     <>
       {refreshError && (
-        <div role="alert" className="fixed inset-x-0 top-0 z-50 bg-amber-100 px-4 py-2 text-center text-sm text-amber-900">
+        <div role="alert" className="fixed inset-x-0 top-0 z-50 bg-[var(--status-broken-bg)] px-4 py-2 text-center text-sm text-[var(--status-broken)]">
           {refreshError}
           {refreshRequiresReauth && (
             <button className="ml-2 font-semibold underline" onClick={logout}>Sign in</button>
