@@ -118,11 +118,26 @@ async def ingest_batch(
     await resolve_project_scope(db, current_user, str(target_project_id))
 
     from app.worker.tasks import ingest_uploaded_results
+    from app.db.storage import get_storage_provider
 
     run_id = await _resolve_run_id(db, target_project_id, payload.build_number)
+    import json
+    batch_storage_key = f"uploads/{target_project_id}/{run_id}/queued/{uuid.uuid4().hex}.json"
+    try:
+        await get_storage_provider().put_object(
+            batch_storage_key,
+            json.dumps(payload.model_dump(), separators=(",", ":")).encode("utf-8"),
+            content_type="application/json",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("batch_ingest_storage_failed", run_id=run_id, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Upload storage is temporarily unavailable",
+        ) from exc
     task = ingest_uploaded_results.delay(
         run_id=run_id,
-        payload=payload.model_dump(),
+        payload_storage_key=batch_storage_key,
         user_id=str(current_user.id),
     )
 
@@ -318,18 +333,29 @@ async def ingest_file(
                     ),
                 )
 
-    # Celery's JSON serializer can't carry raw bytes — base64-encode a zip;
-    # decode text otherwise. The worker branches on file_format == "archive".
-    if is_archive:
-        import base64
-        file_content_arg = base64.b64encode(content).decode("ascii")
-    else:
-        file_content_arg = content.decode("utf-8", errors="replace")
-
     # Same contract as the JSON path: a re-upload under an existing build
     # number must return the id it will actually land on, not a fresh one the
     # pipeline is about to discard.
     run_id = await _resolve_run_id(db, target_project_id, build_number)
+
+    # Keep large uploads out of the Celery broker.  The worker receives only
+    # this server-generated key and fetches the bytes from object storage.
+    from app.db.storage import get_storage_provider
+    queued_storage_key = (
+        f"uploads/{target_project_id}/{run_id}/queued/{uuid.uuid4().hex}"
+    )
+    try:
+        await get_storage_provider().put_object(
+            queued_storage_key,
+            content,
+            content_type="application/zip" if is_archive else "application/octet-stream",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("file_ingest_storage_failed", run_id=run_id, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Upload storage is temporarily unavailable",
+        ) from exc
 
     # US-8.1 — parse the optional supplied commit range (JSON string on the
     # multipart form). Malformed JSON is ignored rather than 400'd: attribution
@@ -353,11 +379,9 @@ async def ingest_file(
         except (ValueError, TypeError):
             logger.warning("file_ingest_commit_range_unparseable", run_id=run_id)
 
-    # NB: the raw upload is archived in the worker (off the request path), which
-    # already receives the bytes — see _archive_raw_upload. Keeps the 202 fast.
     task = ingest_uploaded_file.delay(
         run_id=run_id,
-        file_content=file_content_arg,
+        file_storage_key=queued_storage_key,
         file_name=file.filename or "unknown",
         file_format=detected_format,
         # Canonical UUID string so the worker's status writes match the seeded

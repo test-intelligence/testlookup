@@ -38,6 +38,23 @@ def mock_celery_dispatch():
         yield {"batch": batch_task, "file": file_task}
 
 
+@pytest.fixture(autouse=True)
+def mock_upload_storage():
+    """Keep API tests independent of a running MinIO service."""
+    class _Storage:
+        async def put_object(self, key, content, content_type="application/json", bucket=None):
+            self.last = (key, content, content_type)
+
+        async def delete_object(self, key, bucket=None):
+            return None
+
+        async def get_object_content(self, key, bucket=None):
+            return self.last[1]
+
+    with patch("app.db.storage.get_storage_provider", return_value=_Storage()):
+        yield
+
+
 # ── JSON batch ──────────────────────────────────────────────────────────────
 
 
@@ -258,9 +275,8 @@ async def test_upload_status_non_member_forbidden(client, auth_as):
 @pytest.mark.parametrize("requested_format", ["auto", "allure", "cypress"])
 async def test_ingest_file_zip_routes_to_archive(client, auth_as, requested_format):
     """A .zip upload is detected by magic bytes and dispatched as file_format=
-    'archive' with base64 content — REGARDLESS of the requested format (so it is
+    'archive' with an object-storage key — REGARDLESS of the requested format (so it is
     never mis-parsed as a single file and never 503s on the cypress gate)."""
-    import base64
     import io
     import zipfile
     from unittest.mock import AsyncMock, patch
@@ -290,8 +306,8 @@ async def test_ingest_file_zip_routes_to_archive(client, auth_as, requested_form
 
     assert resp.status_code == 202, resp.text  # never 503, even for format=cypress
     assert captured["file_format"] == "archive"
-    # content is base64 of the original zip (PK magic after decode)
-    assert base64.b64decode(captured["file_content"])[:4] == b"PK\x03\x04"
+    assert "file_content" not in captured
+    assert captured["file_storage_key"].startswith(f"uploads/{pid}/")
     # cypress/playwright disabled (is_enabled=False) → set passed to the worker to gate
     assert set(captured["disabled_formats"]) == {"cypress", "playwright"}
 
@@ -318,6 +334,36 @@ async def test_ingest_file_run_ai_flag_forwarded(client, auth_as):
     assert resp.status_code == 202, resp.text
     assert captured["run_ai"] is False
     assert "raw_archive_key" not in captured  # router no longer archives
+
+
+async def test_ingest_file_storage_failure_does_not_enqueue(client, auth_as):
+    """A storage outage fails before Celery, avoiding an orphaned queued job."""
+    from unittest.mock import AsyncMock, patch
+
+    pid = uuid.uuid4()
+    auth_as(accessible_projects={pid})
+    task = AsyncMock()
+    delay_called = False
+    def _unexpected_delay(**kw):
+        nonlocal delay_called
+        delay_called = True
+        raise AssertionError("must not enqueue")
+    task.delay = _unexpected_delay
+
+    class _BrokenStorage:
+        async def put_object(self, *args, **kwargs):
+            raise OSError("storage unavailable")
+
+    with patch("app.worker.tasks.ingest_uploaded_file", task), \
+         patch("app.db.storage.get_storage_provider", return_value=_BrokenStorage()):
+        resp = await client.post(
+            "/api/v1/ingest/file",
+            files={"file": ("x.xml", _MIN_JUNIT_XML, "application/xml")},
+            data={"project_id": str(pid), "build_number": "storage-down"},
+        )
+
+    assert resp.status_code == 503
+    assert delay_called is False
 
 
 async def test_ingest_file_run_ai_defaults_true(client, auth_as):

@@ -819,7 +819,10 @@ def ingest_test_run(self, sentinel_dict: dict, minio_prefix: str):
     max_retries=3,
     queue="ingestion",
 )
-def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
+def ingest_uploaded_results(
+    self, run_id: str, payload: dict = None, user_id: str = None,
+    payload_storage_key: str = None,
+):
     """
     Process a JSON batch of test results from POST /api/v1/ingest.
     Creates a TestRun, upserts test cases, runs post-ingestion pipeline.
@@ -832,6 +835,14 @@ def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
 
     async def _run():
         from app.db.postgres import AsyncSessionLocal
+        nonlocal payload
+        if payload_storage_key:
+            import json
+            from app.db.storage import get_storage_provider
+            raw_payload = await get_storage_provider().get_object_content(payload_storage_key)
+            payload = json.loads(raw_payload)
+        if not payload:
+            raise ValueError("Uploaded batch payload is missing")
 
         async with AsyncSessionLocal() as db:
             try:
@@ -870,6 +881,12 @@ def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
             build_number=payload["build_number"],
             release_name=payload.get("release_name"),
         )
+        if payload_storage_key:
+            try:
+                from app.db.storage import get_storage_provider
+                await get_storage_provider().delete_object(payload_storage_key)
+            except Exception as exc:  # noqa: BLE001 — cleanup is best effort
+                logger.warning("queued_batch_cleanup_failed key=%s error=%s", payload_storage_key, exc)
 
     logger.info("[Task %s] Processing uploaded batch: run=%s", self.request.id, run_id)
     try:
@@ -892,11 +909,12 @@ def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
 def ingest_uploaded_file(
     self,
     run_id: str,
-    file_content: str,
     file_name: str,
     file_format: str,
     project_id: str,
     build_number: str,
+    file_storage_key: str = None,
+    file_content: str = None,  # compatibility for tasks queued before M02
     branch: str = None,
     commit_hash: str = None,
     release_name: str = None,
@@ -935,6 +953,18 @@ def ingest_uploaded_file(
 
         from app.core import metrics as _m
         from app.db.postgres import AsyncSessionLocal
+
+        nonlocal file_content
+        if file_storage_key:
+            from app.db.storage import get_storage_provider
+            raw_content = await get_storage_provider().get_object_content(file_storage_key)
+            if file_format == "archive":
+                import base64
+                file_content = base64.b64encode(raw_content).decode("ascii")
+            else:
+                file_content = raw_content.decode("utf-8", errors="replace")
+        if not file_content:
+            raise ValueError("Uploaded file content is missing")
 
         _t0 = _time.monotonic()
 
@@ -1065,6 +1095,12 @@ def ingest_uploaded_file(
         )
         _m.uploads_total.labels(state="succeeded", format=file_format).inc()
         _m.upload_processing_seconds.observe(_time.monotonic() - _t0)
+        if file_storage_key:
+            try:
+                from app.db.storage import get_storage_provider
+                await get_storage_provider().delete_object(file_storage_key)
+            except Exception as exc:  # noqa: BLE001 — cleanup is best effort
+                logger.warning("queued_upload_cleanup_failed key=%s error=%s", file_storage_key, exc)
         return True
 
     logger.info("[Task %s] Processing uploaded file: %s (%s)", task_id, file_name, file_format)
