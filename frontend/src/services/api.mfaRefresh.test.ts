@@ -106,6 +106,7 @@ describe('shouldAttemptTokenRefresh', () => {
     '/api/v1/auth/refresh',
     '/api/v1/auth/register',
     '/api/v1/auth/dev-login',
+    '/api/v1/auth/logout',
   ])('excludes %s', (url) => {
     expect(shouldAttemptTokenRefresh(url)).toBe(false)
   })
