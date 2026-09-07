@@ -22,7 +22,7 @@ from app.core.security import (
     get_password_hash,
     verify_password,
 )
-from app.core.token_revocation import revoke_all_user_tokens, revoke_jti
+from app.core.token_revocation import RevocationUnavailable, revoke_all_user_tokens, revoke_jti
 from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, User, UserRole
 from app.services import mfa_service, ui_dismissal_service
@@ -437,8 +437,12 @@ async def first_time_reset(
     # password change so the bootstrap token used to call this endpoint
     # cannot be replayed after the password is set.
     await _revoke_refresh_family(db, current_user.id, reason="password_reset")
+    try:
+        await revoke_all_user_tokens(current_user.id, db)
+    except RevocationUnavailable as exc:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail="Token revocation store unavailable; password reset was not applied") from exc
     await db.commit()
-    await revoke_all_user_tokens(current_user.id)
     logger.info("First-time password reset completed: user_id=%s", current_user.id)
     return None
 
@@ -599,6 +603,9 @@ async def logout(
         # Skip the jti denylist entry — the refresh-token revocation below
         # still limits the blast radius.
         pass
+    except RevocationUnavailable as exc:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail="Token revocation store unavailable; logout was not applied") from exc
 
     await _revoke_refresh_family(db, current_user.id, reason="logout")
     await db.commit()
@@ -640,7 +647,11 @@ async def change_password(
     # signal — wipe refresh tokens in Postgres and set the access-token
     # cutoff in Redis so every previously-issued JWT is rejected.
     await _revoke_refresh_family(db, current_user.id, reason="password_change")
+    try:
+        await revoke_all_user_tokens(current_user.id, db)
+    except RevocationUnavailable as exc:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail="Token revocation store unavailable; password change was not applied") from exc
     await db.commit()
-    await revoke_all_user_tokens(current_user.id)
     logger.info("Password changed: user_id=%s", current_user.id)
     return None
