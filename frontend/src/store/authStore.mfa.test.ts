@@ -42,6 +42,9 @@ describe('authStore.fetchUser under MFA-era failures', () => {
       refreshToken: 'ref',
       user: USER,
       isAuthenticated: true,
+      refreshRetryAt: null,
+      refreshFailureCount: 0,
+      refreshError: null,
     })
   })
 

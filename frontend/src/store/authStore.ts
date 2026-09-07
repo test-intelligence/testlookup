@@ -18,6 +18,9 @@ interface AuthState {
   refreshToken: string | null;
   user: User | null;
   isAuthenticated: boolean;
+  refreshRetryAt: number | null;
+  refreshFailureCount: number;
+  refreshError: string | null;
   _hasHydrated: boolean;
   setHasHydrated: (v: boolean) => void;
   setAuth: (token: string, refreshToken: string, user: User) => void;
@@ -46,19 +49,22 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       user: null,
       isAuthenticated: false,
+      refreshRetryAt: null,
+      refreshFailureCount: 0,
+      refreshError: null,
       _hasHydrated: false,
 
       setHasHydrated: (v) => set({ _hasHydrated: v }),
 
       setAuth: (token, refreshToken, user) =>
-        set({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true }),
+        set({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null }),
 
       clearMustChangePassword: () =>
         set((state) =>
           state.user ? { user: { ...state.user, must_change_password: false } } : {}
         ),
 
-      logout: () => set({ token: null, refreshToken: null, user: null, isAuthenticated: false }),
+      logout: () => set({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null }),
 
       fetchUser: async () => {
         const { token, logout } = get();
@@ -80,7 +86,8 @@ export const useAuthStore = create<AuthState>()(
       },
 
       refreshAccessToken: async (): Promise<string | null> => {
-        const { refreshToken, logout } = get();
+        const { refreshToken, logout, refreshRetryAt } = get();
+        if (refreshRetryAt && Date.now() < refreshRetryAt) return null;
         if (!refreshToken) {
           logout();
           return null;
@@ -92,7 +99,7 @@ export const useAuthStore = create<AuthState>()(
             { refresh_token: refreshToken },
           );
           const { access_token, refresh_token } = res.data;
-          set({ token: access_token, refreshToken: refresh_token });
+          set({ token: access_token, refreshToken: refresh_token, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null });
           return access_token;
         } catch (err) {
           const status = (err as { response?: { status?: number } })?.response?.status;
@@ -101,6 +108,12 @@ export const useAuthStore = create<AuthState>()(
           // Preserve credentials and let the next request retry. Only an
           // explicit credential rejection means the session is invalid.
           if (status === 401 || status === 403) logout();
+          else {
+            const failures = get().refreshFailureCount + 1;
+            const retryAfter = Number((err as { response?: { headers?: { 'retry-after'?: string } } })?.response?.headers?.['retry-after']);
+            const delay = Number.isFinite(retryAfter) ? retryAfter * 1000 : Math.min(60_000, 1000 * 2 ** Math.min(failures - 1, 6));
+            set({ refreshFailureCount: failures, refreshRetryAt: Date.now() + delay, refreshError: 'Session refresh is temporarily unavailable. Retrying shortly.' });
+          }
           return null;
         }
       },
