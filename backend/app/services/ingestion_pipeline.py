@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import LaunchStatus, Project, TestCase, TestRun
+from app.models.schemas import BUILD_NUMBER_MAX_LENGTH
 from app.services.execution_time import resolve_execution_time
 from app.services.run_environment import normalize_environment
 from app.services.run_tombstone_service import run_is_tombstoned
@@ -35,6 +36,10 @@ async def _unique_build_number(db: AsyncSession, project_id: uuid.UUID, base: st
     instead of merging. The DB UNIQUE(project_id, build_number, jenkins_job)
     constraint remains the ultimate guard against a concurrent race.
     """
+    # Keep the canonical label and every collision suffix within the database
+    # column's 100-character limit. Boundary validation rejects longer labels
+    # at the API, while this defensive bound also protects internal callers.
+    base = base[:BUILD_NUMBER_MAX_LENGTH]
     candidate = base
     for n in range(2, 51):
         taken = (
@@ -47,9 +52,11 @@ async def _unique_build_number(db: AsyncSession, project_id: uuid.UUID, base: st
         ).first()
         if not taken:
             return candidate
-        candidate = f"{base}-{n}"
+        suffix = f"-{n}"
+        candidate = f"{base[:BUILD_NUMBER_MAX_LENGTH - len(suffix)]}{suffix}"
     # Pathological: 50 collisions — fall back to a guaranteed-unique token.
-    return f"{base}-{uuid.uuid4().hex[:8]}"
+    suffix = f"-{uuid.uuid4().hex[:8]}"
+    return f"{base[:BUILD_NUMBER_MAX_LENGTH - len(suffix)]}{suffix}"
 
 
 async def create_run_from_payload(

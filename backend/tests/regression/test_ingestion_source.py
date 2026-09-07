@@ -154,6 +154,24 @@ async def test_upload_keeps_label_when_free():
     assert run.build_number == 'upload-xyz'
 
 
+@pytest.mark.asyncio
+async def test_collision_suffix_preserves_storage_limit_for_max_label():
+    """A 100-character label remains valid when a manual collision is suffixed."""
+    from app.services.ingestion_pipeline import _unique_build_number
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        _Result(first=('row',)),
+        _Result(first=None),
+    ])
+    base = 'x' * 100
+
+    candidate = await _unique_build_number(db, uuid.uuid4(), base)
+
+    assert len(candidate) <= 100
+    assert candidate.endswith('-2')
+
+
 def test_summary_schema_exposes_ingestion_source():
     row = SimpleNamespace(
         id=uuid.uuid4(),

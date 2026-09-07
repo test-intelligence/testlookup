@@ -20,7 +20,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("jose")
 pytest.importorskip("asyncpg")
 
-from annotated_types import MaxLen  # noqa: E402
+from annotated_types import MaxLen, MinLen  # noqa: E402
 
 
 def _form_max_length(param_name: str) -> int | None:
@@ -38,9 +38,20 @@ def _form_max_length(param_name: str) -> int | None:
     return None
 
 
+def _form_min_length(param_name: str) -> int | None:
+    from app.routers.ingest import ingest_file
+
+    default = inspect.signature(ingest_file).parameters[param_name].default
+    for constraint in getattr(default, "metadata", []):
+        if isinstance(constraint, MinLen):
+            return constraint.min_length
+    return None
+
+
 @pytest.mark.parametrize(
     ("field", "expected"),
     [
+        ("build_number", 100),
         ("branch", 255),
         ("commit_hash", 64),
         ("release_name", 255),
@@ -55,9 +66,19 @@ def test_ingest_file_bounds_match_json_ingest_payload():
     from app.models.schemas import IngestPayload
 
     fields = IngestPayload.model_fields
-    for name in ("branch", "commit_hash", "release_name"):
+    for name in ("build_number", "branch", "commit_hash", "release_name"):
         schema_max = next(
             (m.max_length for m in fields[name].metadata if isinstance(m, MaxLen)),
             None,
         )
         assert _form_max_length(name) == schema_max, name
+
+
+def test_build_number_form_requires_non_empty_value_like_json():
+    from app.models.schemas import IngestPayload
+
+    schema_min = next(
+        (m.min_length for m in IngestPayload.model_fields["build_number"].metadata if isinstance(m, MinLen)),
+        None,
+    )
+    assert _form_min_length("build_number") == schema_min == 1
