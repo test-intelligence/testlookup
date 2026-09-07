@@ -29,6 +29,7 @@ interface AuthState {
   setAuth: (token: string, refreshToken: string, user: User) => void;
   clearMustChangePassword: () => void;
   logout: () => void;
+  logoutServer: () => Promise<void>;
   fetchUser: () => Promise<void>;
   refreshAccessToken: () => Promise<string | null>;
 }
@@ -73,6 +74,9 @@ export const useAuthStore = create<AuthState>()(
         ),
 
       logout: () => set({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }),
+      logoutServer: async () => {
+        try { await api.post('/api/v1/auth/logout'); } finally { get().logout(); }
+      },
 
       fetchUser: async () => {
         const { token, logout } = get();
