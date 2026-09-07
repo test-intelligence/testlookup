@@ -81,7 +81,7 @@ export const useAuthStore = create<AuthState>()(
           // log the user out — they may be a transient connectivity issue and
           // the stored token may still be valid once the backend recovers.
           const status = (err as { response?: { status?: number } })?.response?.status;
-          if ((status === 401 || status === 403) && !get().refreshRequiresReauth) {
+          if ((status === 401 || status === 403) && !get().refreshRequiresReauth && !get().refreshError) {
             logout();
           }
         }
@@ -112,17 +112,10 @@ export const useAuthStore = create<AuthState>()(
           if (status === 401 || status === 403) logout();
           else {
             const failures = get().refreshFailureCount + 1;
-            const retryAfter = Number((err as { response?: { headers?: { 'retry-after'?: string } } })?.response?.headers?.['retry-after']);
-            if (!status) {
-              set({ refreshFailureCount: failures, refreshRetryAt: Number.POSITIVE_INFINITY, refreshRequiresReauth: true, refreshError: 'Session refresh could not be confirmed. Sign in again to continue.' });
-            } else if (failures >= 6) {
-              set({ refreshFailureCount: failures, refreshRetryAt: Number.POSITIVE_INFINITY, refreshRequiresReauth: true, refreshError: 'Session refresh is unavailable. Sign in again to continue.' });
-            } else {
-              const delay = Number.isFinite(retryAfter) && retryAfter > 0
-                ? Math.min(60_000, Math.max(1_000, retryAfter * 1000))
-                : Math.min(60_000, 1000 * 2 ** Math.min(failures - 1, 6));
-              set({ refreshFailureCount: failures, refreshRetryAt: Date.now() + delay, refreshError: 'Session refresh is temporarily unavailable. Retry after the cooldown.' });
-            }
+            // The backend rotates the refresh token before responding. Any
+            // non-auth response may therefore be post-commit and unsafe to
+            // replay; preserve the shell but require explicit sign-in.
+            set({ refreshFailureCount: failures, refreshRetryAt: Number.POSITIVE_INFINITY, refreshRequiresReauth: true, refreshError: 'Session refresh could not be confirmed. Sign in again to continue.' });
           }
           return null;
         }
