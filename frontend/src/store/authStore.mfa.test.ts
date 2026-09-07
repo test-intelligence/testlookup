@@ -45,16 +45,34 @@ describe('authStore.fetchUser under MFA-era failures', () => {
       refreshRetryAt: null,
       refreshFailureCount: 0,
       refreshError: null,
+      refreshRequiresReauth: false,
     })
   })
 
-  it('preserves credentials on refresh 503 and network errors', async () => {
-    for (const error of [httpError(503), new Error('Network Error')]) {
-      mockPost.mockRejectedValueOnce(error)
-      await useAuthStore.getState().refreshAccessToken()
-      expect(useAuthStore.getState().isAuthenticated).toBe(true)
-      expect(useAuthStore.getState().token).toBe('acc')
-    }
+  it('preserves credentials and enters cooldown on refresh 503', async () => {
+    mockPost.mockRejectedValueOnce(httpError(503))
+    await useAuthStore.getState().refreshAccessToken()
+    expect(mockPost).toHaveBeenCalledTimes(1)
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+    expect(useAuthStore.getState().refreshRetryAt).toBeGreaterThan(Date.now())
+  })
+
+  it('requires reauthentication when refresh outcome is ambiguous', async () => {
+    mockPost.mockRejectedValueOnce(new Error('Network Error'))
+    await useAuthStore.getState().refreshAccessToken()
+    expect(mockPost).toHaveBeenCalledTimes(1)
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+    expect(useAuthStore.getState().refreshRequiresReauth).toBe(true)
+    await useAuthStore.getState().refreshAccessToken()
+    expect(mockPost).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears refresh error state after a successful retry', async () => {
+    useAuthStore.setState({ refreshRetryAt: null, refreshFailureCount: 1, refreshError: 'temporary', refreshRequiresReauth: false })
+    mockPost.mockResolvedValueOnce({ data: { access_token: 'new-acc', refresh_token: 'new-ref' } })
+    await useAuthStore.getState().refreshAccessToken()
+    expect(useAuthStore.getState().refreshError).toBeNull()
+    expect(useAuthStore.getState().refreshRequiresReauth).toBe(false)
   })
 
   it.each([401, 403])('clears credentials on explicit refresh rejection %i', async (status) => {
