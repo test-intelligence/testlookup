@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-08 — real-Redis upload-status test skips instead of failing when Redis is down
+
+`test_upload_status_lua_scripts_are_atomic_on_real_redis` connects to a live
+Redis (it is `@pytest.mark.integration`, but lives under `tests/regression/`, so
+the documented health-check command — `pytest tests/ --ignore=tests/integration`
+— does not deselect it). It probed the server with an unguarded `await
+client.ping()`, so when `REDIS_URL` is set but no Redis is reachable (exactly
+what the health-check command does), the test *failed* instead of *skipping* —
+a false red for every developer and CI-adjacent run without a live broker.
+
+It now guards the reachability probe in a `try/except` that `pytest.skip`s on any
+connection error, matching the convention every sibling integration test already
+uses (e.g. `test_celery_visibility_redelivery`). Where Redis *is* live (CI) the
+test runs unchanged. Added a regression test that patches the client factory so
+the probe raises and asserts the test skips rather than errors. Test-only.
+
 ## 2026-09-07 — press "/" to jump to the global search
 
 The global search box in the top bar had no keyboard path — a self-hoster who

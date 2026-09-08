@@ -25,6 +25,10 @@ async def test_upload_status_lua_scripts_are_atomic_on_real_redis():
     client = redis_asyncio.Redis.from_url(redis_url, decode_responses=True)
     try:
         await client.ping()
+    except Exception as exc:  # pragma: no cover - environment gate
+        await client.aclose()
+        pytest.skip(f"Redis unavailable: {type(exc).__name__}")
+    try:
         with patch("app.db.redis_client.get_redis", return_value=client):
             assert await upload_status.set_status(
                 terminal_task, state=upload_status.STATE_PENDING,
@@ -63,3 +67,31 @@ async def test_upload_status_lua_scripts_are_atomic_on_real_redis():
             f"upload:status:{pending_task}",
         )
         await client.aclose()
+
+
+class _PingFailsClient:
+    """Stand-in async Redis client whose reachability probe fails."""
+
+    async def ping(self):
+        raise ConnectionError("no redis here")
+
+    async def aclose(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_real_redis_test_skips_when_redis_unreachable(monkeypatch):
+    """When REDIS_URL is set but Redis cannot be reached, the real-Redis
+    integration test must SKIP — not FAIL — mirroring the reachability guard
+    every sibling integration test uses (e.g. test_celery_visibility_redelivery).
+    Otherwise the documented health-check command (which sets REDIS_URL without
+    provisioning Redis) reports a false red.
+    """
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr(
+        redis_asyncio.Redis,
+        "from_url",
+        lambda *args, **kwargs: _PingFailsClient(),
+    )
+    with pytest.raises(pytest.skip.Exception, match="Redis unavailable"):
+        await test_upload_status_lua_scripts_are_atomic_on_real_redis()
