@@ -678,8 +678,14 @@ async def recover_live_run_from_buffer(
             # keys don't pile up; the task drains them and deletes the key
             # itself on success.
             import json as _json
+            from app.services.ingestion_sanitization import (
+                sanitize_test_result_payload,
+            )
             for ev in archive:
-                await redis.rpush(list_key, _json.dumps(ev))
+                await redis.rpush(
+                    list_key,
+                    _json.dumps(sanitize_test_result_payload(ev)),
+                )
             await redis.expire(list_key, 3600)  # 1h is plenty for the worker
             buffer_len = len(archive)
             source = "archive"

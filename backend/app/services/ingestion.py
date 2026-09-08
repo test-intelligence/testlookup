@@ -473,9 +473,13 @@ async def _upsert_test_case(
     }
     status = status_map.get(case_data.get("status", "unknown").lower(), TestStatus.UNKNOWN)
 
-    # PR-3: Sanitize error_message before persistence
-    from app.services.privacy_service import sanitize_for_persistence as _sanitize  # noqa: PLC0415
-    _safe_error = _sanitize(case_data.get("error_message") or "")
+    # One policy for file, JSON, and live transports. This returns a copy so
+    # callers may safely reuse their normalized parser payload.
+    from app.services.ingestion_sanitization import (  # noqa: PLC0415
+        sanitize_test_result_payload,
+    )
+    _safe_case = sanitize_test_result_payload(case_data)
+    _safe_error = _safe_case.get("error_message")
 
     def _bounded_source_metadata(value):
         """Redact and cap source metadata before persistence/indexing."""
@@ -525,7 +529,7 @@ async def _upsert_test_case(
             story=case_data.get("story"),
             epic=case_data.get("epic"),
             owner=case_data.get("owner"),
-            tags=case_data.get("tags", []),
+            tags=_safe_case.get("tags", []),
             error_message=_safe_error,
             minio_s3_prefix=case_data.get("minio_s3_prefix"),
             has_attachments=bool(case_data.get("attachments")),
@@ -600,7 +604,7 @@ async def _upsert_test_case(
     )
     tc.retry_count = case_data.get("retry_count")
     tc.is_flaky_run = case_data.get("is_flaky") if case_data.get("is_flaky") is not None else None
-    tc.stack_trace = _sanitize(case_data.get("stack_trace") or "") or None
+    tc.stack_trace = _safe_case.get("stack_trace") or None
     tc.step_count = len(raw_steps) if "steps" in case_data else None
     tc.steps_present = bool(raw_steps)
     tc.has_attachments = bool(raw_attachments)

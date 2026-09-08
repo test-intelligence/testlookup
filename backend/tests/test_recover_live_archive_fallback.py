@@ -31,12 +31,15 @@ These tests pin:
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from app.services.privacy_service import sanitize_for_persistence
 
 
 def _run_row(
@@ -126,7 +129,12 @@ async def test_recover_falls_back_to_archive_within_15_days():
     from app.routers.runs import recover_live_run_from_buffer
 
     events = [
-        {"test_name": "test_a", "status": "PASSED"},
+        {
+            "test_name": "test_a",
+            "status": "PASSED",
+            "error_message": "login admin@corp.example password=Admin123!",
+            "stack_trace": "Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789",
+        },
         {"test_name": "test_b", "status": "FAILED"},
         {"test_name": "test_c", "status": "PASSED"},
     ]
@@ -152,6 +160,13 @@ async def test_recover_falls_back_to_archive_within_15_days():
     # Each event got pushed individually to preserve the same on-the-
     # wire JSON shape that the SDK originally writes.
     assert redis.rpush.await_count == len(events)
+    staged = json.loads(redis.rpush.await_args_list[0].args[1])
+    assert staged["error_message"] == sanitize_for_persistence(
+        events[0]["error_message"],
+    )
+    assert staged["stack_trace"] == sanitize_for_persistence(
+        events[0]["stack_trace"],
+    )
     # Short TTL on the staging key so it doesn't pile up.
     redis.expire.assert_awaited()
     task_mock.apply_async.assert_called_once()

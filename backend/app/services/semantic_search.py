@@ -149,14 +149,78 @@ def _doc_text(
     EXISTS match. Bounded to keep the embedded document from ballooning on
     deep/wide step trees.
     """
+    from app.services.ingestion_sanitization import sanitize_test_result_payload
+
+    safe_error = sanitize_test_result_payload({
+        "error_message": error_message,
+    })["error_message"]
+    safe_step_text = sanitize_test_result_payload({
+        "stack_trace": step_text,
+    })["stack_trace"]
     parts = [test_name]
     if suite_name:
         parts.append(suite_name)
-    if error_message:
-        parts.append(error_message[:500])
-    if step_text:
-        parts.append(step_text[:1000])
+    if safe_error:
+        parts.append(safe_error[:500])
+    if safe_step_text:
+        parts.append(safe_step_text[:1000])
     return " | ".join(parts)
+
+
+async def rebuild_test_case_search_for_m11(
+    db: AsyncSession,
+    *,
+    batch_size: int = 200,
+) -> int:
+    """Replace the derived search index and boundedly rebuild sanitized rows."""
+    client = await _get_chroma_client()
+    existing = await asyncio.to_thread(client.list_collections)
+    existing_names = {
+        item.name if hasattr(item, "name") else str(item)
+        for item in existing
+    }
+    if _COLLECTION_NAME in existing_names:
+        await asyncio.to_thread(client.delete_collection, name=_COLLECTION_NAME)
+    collection = await asyncio.to_thread(
+        client.get_or_create_collection,
+        _COLLECTION_NAME,
+    )
+    total = 0
+    last_id = None
+    last_row = None
+    while True:
+        query = (
+            select(
+                TestCase.id,
+                TestCase.test_name,
+                TestCase.suite_name,
+                TestCase.error_message,
+                TestCase.status,
+                TestCase.test_run_id,
+                TestRun.project_id,
+                TestCase.created_at,
+                _step_text_subq(),
+            )
+            .join(TestRun, TestRun.id == TestCase.test_run_id)
+            .where(
+                TestRun.id == TestCase.test_run_id,
+            )
+            .order_by(TestCase.created_at.asc(), TestCase.id.asc())
+            .limit(max(1, batch_size))
+        )
+        if last_id is not None:
+            query = query.where(_after_incremental_cursor(last_id))
+        rows = list((await db.execute(query)).all())
+        if not rows:
+            break
+        await _upsert_rows_to_collection(collection, rows)
+        total += len(rows)
+        last_row = rows[-1]
+        last_id = last_row.id
+    if last_row is not None:
+        _update_cursor([last_row])
+    await _publish_index_size(collection)
+    return total
 
 
 _REDIS_CURSOR_KEY = "testlookup:search:last_indexed_id"

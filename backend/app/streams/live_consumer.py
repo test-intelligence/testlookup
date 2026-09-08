@@ -46,6 +46,7 @@ from app.streams import (
     STALE_IDLE_MS,
 )
 from app.streams.live_run_state import RedisLiveRunState
+from app.services.ingestion_sanitization import sanitize_test_result_payload
 
 logger = logging.getLogger("streams.live_consumer")
 
@@ -337,20 +338,27 @@ class LiveEventStreamConsumer:
     ) -> None:
         """Publish an unprocessable message to the dead-letter queue."""
         redis = get_redis()
+        safe_data = sanitize_test_result_payload(data)
+        safe_error = sanitize_test_result_payload({"error_message": error})[
+            "error_message"
+        ]
         await redis.xadd(
             DLQ_STREAM,
             {
                 "source_stream":  LIVE_EVENTS_STREAM,
                 "original_msg_id": msg_id,
-                "original_data":  json.dumps(data),
-                "error":          error[:500],
+                "original_data":  json.dumps(safe_data),
+                "error":          safe_error[:500],
                 "attempt_count":  str(attempt),
             },
             maxlen=5000,
             approximate=True,
         )
         logger.error(
-            "Moved live event to DLQ: msg=%s attempts=%d error=%s", msg_id, attempt, error
+            "Moved live event to DLQ: msg=%s attempts=%d error=%s",
+            msg_id,
+            attempt,
+            safe_error,
         )
 
 

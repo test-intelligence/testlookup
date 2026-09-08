@@ -125,4 +125,4 @@ class Collections:
     DECISION_EVIDENCE_SNAPSHOTS = "decision_evidence_snapshots"
     DECISION_REPORTS = "decision_reports"
     DECISION_REPORT_ATTEMPTS = "decision_report_attempts"
-    LIVE_EXECUTION_EVENTS = "live_execution_events"  # Raw events from live runner
+    LIVE_EXECUTION_EVENTS = "live_execution_events"  # Sanitized events from live runner
