@@ -31,6 +31,10 @@ def _fake_db_no_existing_rows():
     exec_result.scalars.return_value.all.return_value = []
     db = AsyncMock()
     db.execute = AsyncMock(return_value=exec_result)
+    savepoint = AsyncMock()
+    savepoint.__aenter__ = AsyncMock(return_value=savepoint)
+    savepoint.__aexit__ = AsyncMock(return_value=False)
+    db.begin_nested = MagicMock(side_effect=lambda: savepoint)
     return db
 
 

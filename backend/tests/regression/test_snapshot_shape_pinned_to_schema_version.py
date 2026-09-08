@@ -37,7 +37,7 @@ import pytest
 
 pytestmark = pytest.mark.regression
 
-# The run block's keys as of CURRENT_SCHEMA_VERSION 4. If you change these,
+# The run block's keys as of CURRENT_SCHEMA_VERSION 5. If you change these,
 # bump the version in the same commit and update this list.
 EXPECTED_RUN_KEYS = {
     "id",
@@ -47,6 +47,10 @@ EXPECTED_RUN_KEYS = {
     "total_tests",
     "passed_tests",
     "failed_tests",
+    "ingestion_attempted_tests",
+    "ingestion_rejected_tests",
+    "ingestion_complete",
+    "ingestion_rejection_reasons",
     "broken_tests",
     "unknown_tests",
     "skipped_tests",
@@ -56,7 +60,7 @@ EXPECTED_RUN_KEYS = {
     "end_time",
     "ocp_namespace",
 }
-PINNED_AT_SCHEMA_VERSION = 4
+PINNED_AT_SCHEMA_VERSION = 5
 
 
 def _run_block_keys() -> set[str]:

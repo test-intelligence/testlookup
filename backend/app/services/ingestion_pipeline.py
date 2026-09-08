@@ -31,6 +31,40 @@ from app.services.ingestion import (
 
 logger = structlog.get_logger("services.ingestion_pipeline")
 
+# Persist enough samples to diagnose a malformed batch without allowing a
+# report with thousands of bad rows to grow one unbounded JSON value.
+MAX_INGESTION_REJECTION_SAMPLES = 20
+_PERSISTED_STATUS_LABELS = frozenset(
+    {"PASSED", "FAILED", "SKIPPED", "BROKEN", "UNKNOWN"}
+)
+
+
+def _safe_rejection_reason(
+    row_index: int,
+    fingerprint: str,
+    exc: Exception,
+) -> dict[str, Any]:
+    """Return bounded, non-sensitive metadata for one rejected test result.
+
+    Driver exception strings can contain SQL parameter values, and test names
+    can contain customer data. Persist the row position, already-hashed
+    fingerprint, exception class and stable driver code instead.
+    """
+    original = getattr(exc, "orig", None)
+    code = (
+        getattr(original, "sqlstate", None)
+        or getattr(original, "pgcode", None)
+        or getattr(exc, "code", None)
+    )
+    reason: dict[str, Any] = {
+        "row_index": row_index,
+        "fingerprint": fingerprint,
+        "error_type": type(exc).__name__[:100],
+    }
+    if code is not None:
+        reason["code"] = str(code)[:64]
+    return reason
+
 def _one_or_none(result):
     """Return one row; ambiguous legacy duplicates must not pick arbitrarily."""
     try:
@@ -336,7 +370,10 @@ async def _store_supplied_commit_range(
         )
 
 
-def _count_ingested_cases(framework: Optional[str], results: list[dict]) -> None:
+def _count_ingested_cases(
+    framework: Optional[str],
+    accepted_status_counts: dict[str, int],
+) -> None:
     """Record ingested cases by framework and outcome. Never raises.
 
     ``ingestion_test_cases_total`` was declared and never emitted, so the
@@ -344,24 +381,18 @@ def _count_ingested_cases(framework: Optional[str], results: list[dict]) -> None
     since it was written. An operator reading it during an ingestion stall saw
     the same picture as a quiet afternoon.
 
-    Counted from the collapsed ``results`` list, so a retry framework that
-    reports a failed attempt and its passing retry contributes ONE case with
-    the worst outcome -- matching what is persisted, rather than double-counting
-    the raw document.
+    Counts come from rows whose savepoint completed, so rejected source rows do
+    not inflate the dashboard above the durable run total.
     """
     try:
-        from collections import Counter as _Counter
-
         from app.core.metrics import ingestion_test_cases_total
 
         label = (framework or "unknown").strip().lower() or "unknown"
-        by_status = _Counter(
-            str(case.get("status") or "unknown").strip().lower() or "unknown"
-            for case in results
-        )
-        for status_label, n in by_status.items():
+        for status_label, n in accepted_status_counts.items():
+            if n <= 0:
+                continue
             ingestion_test_cases_total.labels(
-                framework=label, status=status_label
+                framework=label, status=status_label.strip().lower() or "unknown"
             ).inc(n)
     except Exception:  # noqa: BLE001 -- metrics must never break ingestion
         pass
@@ -423,35 +454,69 @@ async def ingest_test_results(
 
     count = 0
     failed = 0
-    for case_data, fingerprint in zip(results, fingerprints):
+    rejection_reasons: list[dict[str, Any]] = []
+    accepted_status_counts = {status: 0 for status in _PERSISTED_STATUS_LABELS}
+    for row_index, (case_data, fingerprint) in enumerate(zip(results, fingerprints)):
         if default_suite_name and not (case_data.get("suite_name") or "").strip():
             # Rebind to a copy — mutating the caller's dict in place injects the
             # backend default into the caller's results list and masks the "SDK
             # omitted suite_name" signal the primary_suite_name repair sweeps use.
             case_data = {**case_data, "suite_name": default_suite_name}
         try:
-            test_case = await _upsert_test_case(
-                db,
-                case_data,
-                run,
-                existing=existing_by_fp.get(fingerprint),
-                fingerprint=fingerprint,
-                existing_was_prefetched=True,
-            )
+            # A PostgreSQL error aborts the current transaction until rollback.
+            # Isolate the complete per-row write (case, history, steps and
+            # attachments) in a SAVEPOINT so one rejected row cannot poison
+            # later siblings or discard earlier accepted rows.
+            async with db.begin_nested():
+                test_case = await _upsert_test_case(
+                    db,
+                    case_data,
+                    run,
+                    existing=existing_by_fp.get(fingerprint),
+                    fingerprint=fingerprint,
+                    existing_was_prefetched=True,
+                )
+            # Do not cache a row until the savepoint committed successfully.
             existing_by_fp[fingerprint] = test_case
             count += 1
+            status_label = str(case_data.get("status") or "UNKNOWN").strip().upper()
+            if status_label not in _PERSISTED_STATUS_LABELS:
+                status_label = "UNKNOWN"
+            accepted_status_counts[status_label] += 1
         except Exception as e:
             failed += 1
+            reason = _safe_rejection_reason(row_index, fingerprint, e)
+            if len(rejection_reasons) < MAX_INGESTION_REJECTION_SAMPLES:
+                rejection_reasons.append(reason)
             logger.warning(
                 "Failed to upsert test case",
-                test_name=case_data.get("test_name"),
-                error=str(e),
+                row_index=row_index,
+                test_fingerprint=fingerprint,
+                error_type=reason["error_type"],
+                error_code=reason.get("code"),
             )
 
-    # Surface the failure signal: a run where EVERY row failed to upsert
-    # returns count=0 and otherwise looks identical to an empty payload —
-    # but it still flows to finalize_run and gets marked "complete". Without
-    # a loud signal the only trace is N scattered per-row warnings.
+    # Persist the outcome in the same outer transaction as the accepted rows.
+    # A retry replaces this snapshot, allowing a once-incomplete run to become
+    # complete when every source row is eventually accepted.
+    run.ingestion_attempted_tests = len(results)
+    run.ingestion_rejected_tests = failed
+    run.ingestion_complete = failed == 0
+    run.ingestion_rejection_reasons = rejection_reasons or None
+    if failed and count == 0 and results:
+        # Persist a safe terminal state before the aggregate finalizer runs.
+        # File uploads finalize without AI in this case, while direct callers
+        # still cannot leave an all-rejected run looking IN_PROGRESS.
+        run.status = LaunchStatus.STOPPED
+    # Advisory upload status is emitted before a fresh aggregate read would be
+    # useful. Keep exact accepted counts on this in-process object; durable run
+    # counts are independently recomputed by ``finalize_run``.
+    run._ingestion_accepted_status_counts = accepted_status_counts
+
+    # Surface the failure signal: a run where every row failed to upsert
+    # returns count=0 and otherwise looks identical to an empty payload.
+    # Durable outcome fields and aggregate finalization preserve the terminal
+    # state; this event keeps the operational failure visible in logs.
     if failed:
         if count == 0 and results:
             logger.error(
@@ -468,7 +533,10 @@ async def ingest_test_results(
                 failed=failed,
             )
 
-    _count_ingested_cases(getattr(run, "framework", None), results)
+    _count_ingested_cases(
+        getattr(run, "framework", None),
+        accepted_status_counts,
+    )
     return count
 
 

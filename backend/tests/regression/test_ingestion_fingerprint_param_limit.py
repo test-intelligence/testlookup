@@ -12,6 +12,14 @@ class _EmptyPrefetch:
         return []
 
 
+class _Savepoint:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("requested, expected_queries", [(32766, 4), (32767, 4), (50000, 5)])
 async def test_real_ingestion_prefetch_chunks_large_batches(monkeypatch, requested, expected_queries):
@@ -26,6 +34,7 @@ async def test_real_ingestion_prefetch_chunks_large_batches(monkeypatch, request
         execute=AsyncMock(return_value=_EmptyPrefetch()),
         add=MagicMock(),
         flush=AsyncMock(),
+        begin_nested=MagicMock(side_effect=_Savepoint),
     )
     monkeypatch.setattr(pipeline, "_upsert_test_case", AsyncMock())
 

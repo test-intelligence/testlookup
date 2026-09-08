@@ -101,6 +101,8 @@ async def evaluate_release(
             run_ids=rollup.run_ids,
             status_rollup=rollup.status_counts,
             attribution_mix=rollup.attribution_mix,
+            ingestion_complete=not bool(rollup.incomplete_runs),
+            incomplete_runs=rollup.incomplete_runs,
             baseline_release_id=baseline_id,
             blocking_reasons=blocking,
             created_by_id=created_by_id,
@@ -205,7 +207,12 @@ async def current_gate(
             "status_counts": decision.status_rollup or {},
             "attribution_mix": decision.attribution_mix or {},
             "run_count": len(decision.run_ids or []),
-            "measured": decision.evidence_count >= rollup_svc.MIN_EVIDENCE,
+            "measured": (
+                decision.evidence_count >= rollup_svc.MIN_EVIDENCE
+                and getattr(decision, "ingestion_complete", None) is not False
+            ),
+            "ingestion_complete": getattr(decision, "ingestion_complete", None),
+            "incomplete_runs": getattr(decision, "incomplete_runs", None) or {},
             "evidence_floor": rollup_svc.MIN_EVIDENCE,
         },
         # Says plainly that this is a stored verdict, not a live read. Without

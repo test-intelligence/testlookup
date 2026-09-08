@@ -36,6 +36,14 @@ class _ExecResult:
         return self._scalar
 
 
+class _Savepoint:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+
 @pytest.mark.asyncio
 async def test_ingest_test_results_prefetches_existing_rows_in_one_select(monkeypatch):
     """The prefetch issues exactly ONE SELECT regardless of row count,
@@ -63,6 +71,7 @@ async def test_ingest_test_results_prefetches_existing_rows_in_one_select(monkey
         execute=AsyncMock(side_effect=_fake_execute),
         add=MagicMock(),
         flush=AsyncMock(),
+        begin_nested=MagicMock(side_effect=_Savepoint),
     )
 
     # Stub out the per-row upsert so we don't touch SQLAlchemy ORM
@@ -113,6 +122,7 @@ async def test_ingest_test_results_passes_cached_existing_row_to_upsert(monkeypa
         execute=AsyncMock(side_effect=_fake_execute),
         add=MagicMock(),
         flush=AsyncMock(),
+        begin_nested=MagicMock(side_effect=_Savepoint),
     )
 
     handed: dict[str, object] = {}
@@ -168,6 +178,7 @@ async def test_ingest_test_results_1000_prefetched_misses_do_not_select_per_case
         execute=AsyncMock(return_value=_ExecResult(scalars=[])),
         add=MagicMock(),
         flush=AsyncMock(),
+        begin_nested=MagicMock(side_effect=_Savepoint),
     )
 
     assert await pipeline.ingest_test_results(db, run, results) == 1_000

@@ -68,24 +68,94 @@ async def test_set_status_swallows_redis_errors():
         await upload_status.set_status("t1", state=upload_status.STATE_PARSING)
 
 
-def test_summarize_upload_is_case_insensitive_and_uses_ingested_total():
-    """Parsers disagree on status casing (testng/allure lowercase,
-    cypress/playwright uppercase); the summary must count case-insensitively,
-    and total must reflect rows actually ingested, not parsed."""
+def test_summarize_upload_uses_only_accepted_status_counts():
+    """A rejected row must not make the breakdown exceed the accepted total."""
     from app.worker.tasks import _summarize_upload
 
-    results = [
-        {"status": "passed"}, {"status": "passed"},  # lowercase (testng/allure)
-        {"status": "FAILED"},                          # uppercase (cypress/pw)
-        {"status": "broken"}, {"status": "skipped"},
-    ]
-    summary = _summarize_upload(results, ingested=4)  # one row failed to upsert
+    summary = _summarize_upload(
+        ingested=4,
+        attempted=5,
+        rejected=1,
+        status_counts={"PASSED": 2, "FAILED": 1, "BROKEN": 1},
+    )
 
-    assert summary["total"] == 4         # ingested, NOT len(results)=5
+    assert summary["total"] == 4
+    assert summary["attempted"] == 5
+    assert summary["rejected"] == 1
+    assert summary["complete"] is False
     assert summary["passed"] == 2
     assert summary["failed"] == 1
     assert summary["broken"] == 1
-    assert summary["skipped"] == 1
+    assert summary["skipped"] == 0
+    assert sum(summary[key] for key in ("passed", "failed", "broken", "skipped", "unknown")) == 4
+
+
+def test_all_rejected_file_upload_finalizes_without_ai_before_reporting_failure():
+    """An all-rejected upload must still get end-time/release finalization."""
+    import asyncio
+    import uuid
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from app.services import ingestion_pipeline
+    from app.worker import tasks
+
+    run = SimpleNamespace(
+        id=uuid.uuid4(),
+        ingestion_attempted_tests=None,
+        ingestion_rejected_tests=0,
+        ingestion_complete=None,
+        ingestion_rejection_reasons=None,
+    )
+    finalizer = AsyncMock()
+    status_events: list[str] = []
+
+    @asynccontextmanager
+    async def _session():
+        yield AsyncMock()
+
+    async def _reject_all(_db, target_run, _results):
+        target_run.ingestion_attempted_tests = 1
+        target_run.ingestion_rejected_tests = 1
+        target_run.ingestion_complete = False
+        target_run.ingestion_rejection_reasons = [{"row_index": 0}]
+        return 0
+
+    async def _status(_task_id, *, state, **_kwargs):
+        status_events.append(state)
+
+    with (
+        patch.object(tasks, "_run_async", side_effect=asyncio.run),
+        patch.object(tasks, "_archive_raw_upload", new=AsyncMock(return_value=None)),
+        patch.object(
+            tasks,
+            "_parse_file_to_results",
+            return_value=[{"test_name": "bad", "status": "passed"}],
+        ),
+        patch.object(ingestion_pipeline, "create_run_from_payload", new=AsyncMock(return_value=run)),
+        patch.object(ingestion_pipeline, "ingest_test_results", side_effect=_reject_all),
+        patch.object(ingestion_pipeline, "finalize_run", finalizer),
+        patch("app.db.postgres.AsyncSessionLocal", _session),
+        patch("app.services.upload_status.set_status", side_effect=_status),
+        patch("app.core.metrics.uploads_total", MagicMock()),
+        patch("app.core.metrics.upload_failures_total", MagicMock()),
+    ):
+        tasks.ingest_uploaded_file.run(
+            run_id=str(run.id),
+            file_name="report.xml",
+            file_format="junit",
+            project_id=str(uuid.uuid4()),
+            build_number="build-1",
+            file_content="<testsuite />",
+            release_name="release-1",
+            run_ai=True,
+        )
+
+    finalizer.assert_awaited_once()
+    assert finalizer.await_args.kwargs["release_name"] == "release-1"
+    assert finalizer.await_args.kwargs["run_ai"] is False
+    assert status_events[-1] == upload_status.STATE_FAILED
 
 
 def test_parse_file_malformed_allure_raises():

@@ -236,9 +236,7 @@ class TestIngestionMetrics:
         before_pass = _counter(metrics.ingestion_test_cases_total, framework="junit", status="passed")
         before_fail = _counter(metrics.ingestion_test_cases_total, framework="junit", status="failed")
 
-        _count_ingested_cases("JUnit", [
-            {"status": "passed"}, {"status": "passed"}, {"status": "failed"},
-        ])
+        _count_ingested_cases("JUnit", {"PASSED": 2, "FAILED": 1})
 
         assert _counter(metrics.ingestion_test_cases_total, framework="junit", status="passed") == before_pass + 2
         assert _counter(metrics.ingestion_test_cases_total, framework="junit", status="failed") == before_fail + 1
@@ -247,7 +245,7 @@ class TestIngestionMetrics:
         from app.services.ingestion_pipeline import _count_ingested_cases
 
         before = _counter(metrics.ingestion_test_cases_total, framework="unknown", status="passed")
-        _count_ingested_cases(None, [{"status": "passed"}])
+        _count_ingested_cases(None, {"PASSED": 1})
         assert _counter(metrics.ingestion_test_cases_total, framework="unknown", status="passed") == before + 1
 
     def test_a_run_records_its_outcome_and_duration(self):

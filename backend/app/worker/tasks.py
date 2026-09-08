@@ -1070,6 +1070,17 @@ def ingest_uploaded_file(
                 await db.rollback()
                 raise
 
+        # Finalize even an all-rejected run so aggregates stamp end_time and
+        # release linking makes its incomplete evidence visible to the gate.
+        # AI analysis has no stored test row to inspect in that case.
+        await finalize_run(
+            run_id=run_id,
+            project_id=project_id,
+            build_number=build_number,
+            release_name=release_name,
+            run_ai=run_ai if count > 0 else False,
+        )
+
         # All rows failed to upsert despite a non-empty parse — surface as a
         # failure rather than a misleading "succeeded, 0 tests".
         if count == 0:
@@ -1082,17 +1093,14 @@ def ingest_uploaded_file(
             _emit_failed("ingest_error")
             return False
 
-        await finalize_run(
-            run_id=run_id,
-            project_id=project_id,
-            build_number=build_number,
-            release_name=release_name,
-            run_ai=run_ai,
+        # Counts reflect accepted rows only; attempted/rejected make a partial
+        # result explicit instead of letting the status breakdown exceed total.
+        summary = _summarize_upload(
+            ingested=count,
+            attempted=run.ingestion_attempted_tests,
+            rejected=run.ingestion_rejected_tests,
+            status_counts=getattr(run, "_ingestion_accepted_status_counts", {}),
         )
-        # Counts reflect what was actually ingested (total=count); per-status
-        # breakdown is computed case-insensitively because parsers disagree on
-        # casing (testng/allure emit lowercase; cypress/playwright uppercase).
-        summary = _summarize_upload(results, ingested=count)
         await upload_status.set_status(
             task_id, run_id=run_id, project_id=project_id,
             state=upload_status.STATE_SUCCEEDED, result=summary,
@@ -1254,23 +1262,29 @@ async def _archive_raw_upload(
         return None
 
 
-def _summarize_upload(results: list[dict], *, ingested: int) -> dict:
+def _summarize_upload(
+    *,
+    ingested: int,
+    attempted: int,
+    rejected: int,
+    status_counts: dict[str, int],
+) -> dict:
     """Build the SUCCEEDED-status result summary.
 
-    ``total`` reflects rows actually ingested (not parsed) so the UI count
-    matches the run. Per-status counts are case-insensitive because parsers
-    disagree on casing: testng/allure emit lowercase, cypress/playwright upper.
+    Every count describes accepted rows. The former implementation counted
+    statuses across parsed rows while reporting an accepted-only total, so one
+    rejected result could make the breakdown add up to more than ``total``.
     """
-    counts: dict[str, int] = {}
-    for r in results:
-        key = str(r.get("status") or "").upper()
-        counts[key] = counts.get(key, 0) + 1
     return {
         "total": ingested,
-        "passed": counts.get("PASSED", 0),
-        "failed": counts.get("FAILED", 0),
-        "skipped": counts.get("SKIPPED", 0),
-        "broken": counts.get("BROKEN", 0),
+        "attempted": attempted,
+        "rejected": rejected,
+        "complete": rejected == 0,
+        "passed": status_counts.get("PASSED", 0),
+        "failed": status_counts.get("FAILED", 0),
+        "skipped": status_counts.get("SKIPPED", 0),
+        "broken": status_counts.get("BROKEN", 0),
+        "unknown": status_counts.get("UNKNOWN", 0),
     }
 
 

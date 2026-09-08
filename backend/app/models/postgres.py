@@ -346,6 +346,22 @@ class TestRun(Base):
     # manual uploads and legacy rows; reusable API/CI ingests populate it.
     ingestion_identity: Mapped[Optional[str]] = mapped_column(String(64), index=True)
 
+    # Outcome of the most recent normalized batch ingest. ``NULL`` means the
+    # run predates this contract or came from a writer (for example live
+    # streaming) that does not use the batch pipeline.  Batch writers always
+    # set all four fields together before committing, so readers can distinguish
+    # a complete run from one that accepted only part of its report.
+    ingestion_attempted_tests: Mapped[Optional[int]] = mapped_column(Integer)
+    ingestion_rejected_tests: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    ingestion_complete: Mapped[Optional[bool]] = mapped_column(Boolean)
+    # Bounded, redacted samples only. The full rejected row and driver message
+    # may contain test data or SQL parameters and are deliberately not stored.
+    ingestion_rejection_reasons: Mapped[Optional[list]] = mapped_column(
+        JSONB, nullable=True
+    )
+
     # Environment this run executed against (migration 0129, roadmap Phase 0).
     # Optional on the wire — pre-0129 runs and callers that never send it keep
     # NULL, and readers derive a fallback key rather than pretending every old
@@ -4247,6 +4263,11 @@ class ReleaseGateDecision(Base):
     #: mostly from active-release fallback is weaker evidence than one built
     #: from explicit client names, and the scorecard says so.
     attribution_mix: Mapped[Optional[dict]] = mapped_column(JSON)
+    #: Whether every normalized source row in the selected batch runs was
+    #: accepted, plus the rejected count per incomplete run. Snapshotted so a
+    #: retry or retention cannot rewrite why a historical gate refused GO.
+    ingestion_complete: Mapped[Optional[bool]] = mapped_column(Boolean)
+    incomplete_runs: Mapped[Optional[dict]] = mapped_column(JSON)
 
     #: Provenance pointer. SET NULL: the snapshot below is the authority.
     policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(

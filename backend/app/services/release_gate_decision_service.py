@@ -69,6 +69,8 @@ async def record_decision(
     run_ids: Optional[list] = None,
     status_rollup: Optional[dict] = None,
     attribution_mix: Optional[dict] = None,
+    ingestion_complete: Optional[bool] = None,
+    incomplete_runs: Optional[dict] = None,
     policy_id: uuid.UUID | str | None = None,
     policy_snapshot: Optional[dict] = None,
     baseline_release_id: uuid.UUID | str | None = None,
@@ -135,6 +137,8 @@ async def record_decision(
         run_ids=run_ids,
         status_rollup=status_rollup,
         attribution_mix=attribution_mix,
+        ingestion_complete=ingestion_complete,
+        incomplete_runs=incomplete_runs,
         policy_id=policy_id,
         policy_snapshot=policy_snapshot,
         baseline_release_id=baseline_release_id,
@@ -179,4 +183,5 @@ def snapshot_is_self_contained(decision: ReleaseGateDecision) -> dict[str, Any]:
         "has_policy_snapshot": bool(decision.policy_snapshot),
         "has_status_rollup": bool(decision.status_rollup),
         "has_attribution_mix": bool(decision.attribution_mix),
+        "has_ingestion_completeness": decision.ingestion_complete is not None,
     }

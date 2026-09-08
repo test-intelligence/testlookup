@@ -572,6 +572,10 @@ class TestRunSummary(BaseModel):
     jenkins_job: Optional[str] = None
     trigger_source: Optional[str] = None
     ingestion_source: Optional[str] = None
+    ingestion_attempted_tests: Optional[int] = None
+    ingestion_rejected_tests: int = 0
+    ingestion_complete: Optional[bool] = None
+    ingestion_rejection_reasons: Optional[List[dict]] = None
     branch: Optional[str] = None
     status: LaunchStatus
     total_tests: int

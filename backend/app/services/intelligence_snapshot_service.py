@@ -47,7 +47,10 @@ logger = logging.getLogger("services.intelligence_snapshot")
 # measured on the deployment right after shipping it: 36 snapshots sat at
 # version 3, and the endpoint kept returning a payload with no
 # ``broken_tests`` even though the corrected code was live in the container.
-CURRENT_SCHEMA_VERSION = 4
+# 4 -> 5: the ``run`` block gained durable batch-ingestion completeness and
+# bounded rejection metadata. Older snapshots must be recomputed so release
+# evidence cannot look complete merely because it came from the cache.
+CURRENT_SCHEMA_VERSION = 5
 
 
 def _hash_json(value: object) -> str:

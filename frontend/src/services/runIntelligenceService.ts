@@ -8,6 +8,15 @@ export interface RunSummary {
   total_tests: number
   passed_tests: number
   failed_tests: number
+  ingestion_attempted_tests?: number | null
+  ingestion_rejected_tests?: number
+  ingestion_complete?: boolean | null
+  ingestion_rejection_reasons?: Array<{
+    row_index: number
+    fingerprint: string
+    error_type: string
+    code?: string
+  }> | null
   skipped_tests: number
   broken_tests: number
   unknown_tests?: number

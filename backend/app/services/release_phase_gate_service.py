@@ -86,6 +86,8 @@ async def evaluate_phase(
             run_ids=rollup.run_ids,
             status_rollup=rollup.status_counts,
             attribution_mix=rollup.attribution_mix,
+            ingestion_complete=not bool(rollup.incomplete_runs),
+            incomplete_runs=rollup.incomplete_runs,
             policy_snapshot=policy,
             blocking_reasons=blocking,
             created_by_id=created_by_id,

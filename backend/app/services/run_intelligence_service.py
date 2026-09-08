@@ -139,6 +139,10 @@ async def get_run_intelligence(
         "total_tests": run.total_tests,
         "passed_tests": run.passed_tests,
         "failed_tests": run.failed_tests,
+        "ingestion_attempted_tests": run.ingestion_attempted_tests,
+        "ingestion_rejected_tests": run.ingestion_rejected_tests,
+        "ingestion_complete": run.ingestion_complete,
+        "ingestion_rejection_reasons": run.ingestion_rejection_reasons,
         # BROKEN is a first-class outcome and belongs here for the same reason
         # it is on the ``/runs/{id}`` contract. Omitting it left the consumer
         # with total=10, passed=4, failed=4, skipped=1 — one test unaccounted

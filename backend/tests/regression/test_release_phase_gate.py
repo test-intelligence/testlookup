@@ -152,6 +152,28 @@ class TestAPopulatedPhaseDecidesNormally:
         assert result["may_exit"] is False
         assert result["blocking_reasons"]
 
+    def test_recorded_phase_snapshots_incomplete_ingestion(self, monkeypatch):
+        rollup = _rollup(**{f"t{i}": "PASSED" for i in range(9)})
+        rollup.incomplete_runs = {"partial-run": 2}
+        _stub(monkeypatch, rollup)
+        phase = _phase()
+        phase.project_id = uuid.uuid4()
+        captured = {}
+
+        async def _record(*args, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(id=uuid.uuid4())
+
+        monkeypatch.setattr(gate.decisions, "record_decision", _record)
+
+        result = asyncio.run(
+            gate.evaluate_phase(_Session(phase), "rel", phase.id, record=True)
+        )
+
+        assert result["verdict"] == "NOT_EVALUATED"
+        assert captured["ingestion_complete"] is False
+        assert captured["incomplete_runs"] == {"partial-run": 2}
+
 
 class TestThePhasePolicyLayersOverTheProject:
     def test_exit_criteria_override_only_the_keys_they_name(self, monkeypatch):

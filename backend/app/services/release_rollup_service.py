@@ -146,6 +146,10 @@ class ReleaseRollup:
     run_ids: list[str] = field(default_factory=list)
     #: How each run came to belong to the release — the attribution ladder rung.
     attribution_mix: dict[str, int] = field(default_factory=dict)
+    #: Batch runs that rejected at least one source result. A release may still
+    #: carry useful failure evidence from these runs, but it cannot be declared
+    #: clear because the missing rows could contain failures.
+    incomplete_runs: dict[str, int] = field(default_factory=dict)
     #: True when a cap was hit, so the numbers describe part of the release.
     #: A truncated rollup that did not say so would report a smaller, and
     #: possibly cleaner, release than the one that exists.
@@ -336,6 +340,10 @@ async def build_rollup(
     # the next with no write in between.
     runs.sort(key=lambda r: (_order_key(r), str(r.id)))
     rollup.run_ids = [str(r.id) for r in runs]
+    for run in runs:
+        rejected = int(getattr(run, "ingestion_rejected_tests", 0) or 0)
+        if getattr(run, "ingestion_complete", None) is False or rejected > 0:
+            rollup.incomplete_runs[str(run.id)] = rejected
 
     # The ladder rung comes from ``ReleaseTestRunLink.link_source``, NOT from
     # ``TestRun``. The first draft of this read ``run.release_link_source`` via
@@ -455,9 +463,14 @@ def decide(rollup: ReleaseRollup, *, min_evidence: int = MIN_EVIDENCE) -> tuple[
         for key, status in sorted(rollup.latest_by_test.items())
         if status in BLOCKING_STATUSES
     ]
-    if not blocking:
-        return "GO", []
-    return "NO_GO", blocking
+    if blocking:
+        return "NO_GO", blocking
+    if rollup.incomplete_runs:
+        return "NOT_EVALUATED", [
+            f"run {run_id} rejected {rejected} test result(s); release evidence is incomplete"
+            for run_id, rejected in sorted(rollup.incomplete_runs.items())
+        ]
+    return "GO", []
 
 
 def summarise(rollup: ReleaseRollup) -> dict[str, Any]:
@@ -467,6 +480,9 @@ def summarise(rollup: ReleaseRollup) -> dict[str, Any]:
     count it was computed over is the shape that lets "90% passed" stand for
     both a thorough release and one where nine of ten tests never ran.
     """
+    has_enough_evidence = rollup.evidence_count >= MIN_EVIDENCE
+    ingestion_complete = not bool(rollup.incomplete_runs)
+    measured = has_enough_evidence and ingestion_complete
     return {
         "denominator": rollup.denominator,
         "evidence_count": rollup.evidence_count,
@@ -476,7 +492,9 @@ def summarise(rollup: ReleaseRollup) -> dict[str, Any]:
         "run_count": len(rollup.run_ids),
         # States plainly whether the numbers above are worth reading, rather
         # than leaving a reader to infer it from a small denominator.
-        "measured": rollup.evidence_count >= MIN_EVIDENCE,
+        "measured": measured,
+        "ingestion_complete": ingestion_complete,
+        "incomplete_runs": dict(rollup.incomplete_runs),
         # The threshold travels with the answer. ``flaky_score`` publishes its
         # own so a reader can argue with it; a bare boolean asks to be trusted.
         "evidence_floor": MIN_EVIDENCE,
@@ -485,9 +503,13 @@ def summarise(rollup: ReleaseRollup) -> dict[str, Any]:
         # that reads as "no reason" rather than "no problem".
         "insufficient_reason": (
             None
-            if rollup.evidence_count >= MIN_EVIDENCE
-            else f"{rollup.evidence_count} of {rollup.denominator} tests carry evidence; "
-            f"{MIN_EVIDENCE} required"
+            if measured
+            else (
+                f"{rollup.evidence_count} of {rollup.denominator} tests carry evidence; "
+                f"{MIN_EVIDENCE} required"
+                if not has_enough_evidence
+                else f"{len(rollup.incomplete_runs)} run(s) rejected source results"
+            )
         ),
         # A partial rollup announces itself. Reported unconditionally so its
         # absence cannot be mistaken for a complete read.

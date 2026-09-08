@@ -104,6 +104,17 @@ def _make_run():
         total_tests=10,
         passed_tests=10,
         failed_tests=0,
+        ingestion_attempted_tests=11,
+        ingestion_rejected_tests=1,
+        ingestion_complete=False,
+        ingestion_rejection_reasons=[
+            {
+                "row_index": 4,
+                "fingerprint": "a" * 64,
+                "error_type": "IntegrityError",
+                "code": "23505",
+            }
+        ],
         skipped_tests=0,
         broken_tests=0,
         # Every outcome column the run block serialises. This stand-in is a
@@ -139,6 +150,17 @@ async def test_get_run_intelligence_no_overlapping_session_use():
     )
     assert isinstance(result, dict)
     assert result["run"]["id"] == str(run.id)
+    assert result["run"]["ingestion_attempted_tests"] == 11
+    assert result["run"]["ingestion_rejected_tests"] == 1
+    assert result["run"]["ingestion_complete"] is False
+    assert result["run"]["ingestion_rejection_reasons"] == [
+        {
+            "row_index": 4,
+            "fingerprint": "a" * 64,
+            "error_type": "IntegrityError",
+            "code": "23505",
+        }
+    ]
     # With no clusters/summary/analyses, the payload still assembles cleanly.
     assert result["failure_clusters"] == []
     assert result["category_breakdown"] == {}

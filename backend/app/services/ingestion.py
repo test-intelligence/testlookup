@@ -265,6 +265,14 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                 # rather than attempt a duplicate unique-key insert.
                 existing_by_fp[fingerprint] = test_case
 
+            # This path is atomic: any per-row exception escapes to the outer
+            # transaction handler and rolls the entire sentinel ingest back.
+            # A committed sentinel run therefore accepted every parsed row.
+            run.ingestion_attempted_tests = len(parsed_cases)
+            run.ingestion_rejected_tests = 0
+            run.ingestion_complete = True
+            run.ingestion_rejection_reasons = None
+
             # ── Enrich with OCP metadata ───────────────────
             if sentinel.ocp_pod_name and sentinel.ocp_namespace:
                 try:
@@ -951,6 +959,10 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
             func.sum((TestCase.status == TestStatus.SKIPPED).cast(Integer)).label("skipped"),
             func.sum((TestCase.status == TestStatus.BROKEN).cast(Integer)).label("broken"),
             func.sum((TestCase.status == TestStatus.UNKNOWN).cast(Integer)).label("unknown"),
+            select(TestRun.ingestion_complete)
+            .where(TestRun.id == run_id)
+            .scalar_subquery()
+            .label("ingestion_complete"),
         ).where(TestCase.test_run_id == run_id)
     )
     counts = result.one()
@@ -1007,6 +1019,12 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
     # fully-skipped suite) grades as STOPPED, not PASSED — see run_status
     # for the rationale. Shared with the live-stream close path for parity.
     run_status = terminal_run_status(executed, failed, broken, unknown)
+    if getattr(counts, "ingestion_complete", None) is False:
+        # Accepted rows still produce useful aggregates, but a run missing any
+        # source result is not a passing run. STOPPED makes the incomplete state
+        # visible to ordinary run lists while the dedicated ingestion fields
+        # explain why it stopped.
+        run_status = LaunchStatus.STOPPED
 
     values_to_update: dict = {
         "total_tests":   total,
