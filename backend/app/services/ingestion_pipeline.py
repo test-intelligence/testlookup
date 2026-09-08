@@ -29,6 +29,17 @@ from app.services.ingestion import (
 
 logger = structlog.get_logger("services.ingestion_pipeline")
 
+# asyncpg rejects statements with more than 32,767 bind parameters. Keep
+# fingerprint prefetch predicates comfortably below that ceiling, including
+# the run-id predicate bound alongside each IN list.
+FINGERPRINT_PREFETCH_CHUNK_SIZE = 10_000
+
+
+def _chunked(values: list[str], size: int = FINGERPRINT_PREFETCH_CHUNK_SIZE):
+    """Yield bounded, non-empty slices for driver-safe IN predicates."""
+    for offset in range(0, len(values), size):
+        yield values[offset:offset + size]
+
 
 def _one_or_none(result):
     """Return one row; ambiguous legacy duplicates must not pick arbitrarily."""
@@ -419,16 +430,17 @@ async def ingest_test_results(
         for case in results
     ]
     existing_by_fp: dict[str, TestCase] = {}
-    if fingerprints:
+    unique_fingerprints = list(dict.fromkeys(fingerprints))
+    for fingerprint_chunk in _chunked(unique_fingerprints):
         existing_rows = (
             await db.execute(
                 select(TestCase).where(
                     TestCase.test_run_id == run.id,
-                    TestCase.test_fingerprint.in_(fingerprints),
+                    TestCase.test_fingerprint.in_(fingerprint_chunk),
                 )
             )
         ).scalars().all()
-        existing_by_fp = {r.test_fingerprint: r for r in existing_rows}
+        existing_by_fp.update({r.test_fingerprint: r for r in existing_rows})
 
     count = 0
     failed = 0
@@ -595,13 +607,15 @@ async def finalize_run(
         # Fetch all test cases in this run whose fingerprint matches. Bounded
         # by the run so the query is cheap even when the fingerprint set is
         # large.
-        result = await d.execute(
-            select(TestCase).where(
-                TestCase.test_run_id == rid,
-                TestCase.test_fingerprint.in_(fingerprints),
+        rows = []
+        for fingerprint_chunk in _chunked(list(dict.fromkeys(fingerprints))):
+            result = await d.execute(
+                select(TestCase).where(
+                    TestCase.test_run_id == rid,
+                    TestCase.test_fingerprint.in_(fingerprint_chunk),
+                )
             )
-        )
-        rows = list(result.scalars().all())
+            rows.extend(result.scalars().all())
         if not rows:
             return
         for row in rows:
