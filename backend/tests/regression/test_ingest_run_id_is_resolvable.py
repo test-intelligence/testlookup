@@ -111,24 +111,21 @@ async def test_it_costs_at_most_one_query():
     assert db.queries == 1
 
 
-def test_both_ingest_paths_resolve_the_id():
-    """JSON batch and file upload both accept an explicit ``build_number`` and
-    both feed the same deduplicating pipeline, so fixing one would leave the
-    other returning a dead id."""
+def test_only_ci_batch_resolves_existing_build_ids():
+    """CI/JSON retries deduplicate by build label; manual uploads are isolated.
+    """
     import app.routers.ingest as ingest
 
-    for func in (ingest.ingest_batch, ingest.ingest_file):
-        assert "_resolve_run_id" in inspect.getsource(func), func.__name__
+    assert "_resolve_run_id" in inspect.getsource(ingest.ingest_batch)
+    assert "_resolve_run_id" not in inspect.getsource(ingest.ingest_file)
 
 
-def test_neither_path_still_mints_an_id_blind():
-    """The exact shape of the bug: ``uuid4()`` assigned straight to the value
-    that gets returned, with no dedup lookup in between."""
+def test_manual_path_mints_an_id_blind_by_design():
+    """Manual submissions intentionally mint a fresh ID before enqueueing."""
     import app.routers.ingest as ingest
 
-    for func in (ingest.ingest_batch, ingest.ingest_file):
-        source = inspect.getsource(func)
-        assert "run_id = str(uuid.uuid4())" not in source, func.__name__
+    assert "run_id = str(uuid.uuid4())" in inspect.getsource(ingest.ingest_file)
+    assert "run_id = str(uuid.uuid4())" not in inspect.getsource(ingest.ingest_batch)
 
 
 def test_the_remaining_race_is_documented_not_claimed_away():

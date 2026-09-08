@@ -333,10 +333,10 @@ async def ingest_file(
                     ),
                 )
 
-    # Same contract as the JSON path: a re-upload under an existing build
-    # number must return the id it will actually land on, not a fresh one the
-    # pipeline is about to discard.
-    run_id = await _resolve_run_id(db, target_project_id, build_number)
+    # Manual uploads are independent submissions. Mint one durable run ID per
+    # request so a repeated build label cannot resume an unrelated CI/SDK run.
+    # Celery retries keep this same ID and therefore resume only this job.
+    run_id = str(uuid.uuid4())
 
     # Keep large uploads out of the Celery broker.  The worker receives only
     # this server-generated key and fetches the bytes from object storage.

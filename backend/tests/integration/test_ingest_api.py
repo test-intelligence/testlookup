@@ -179,6 +179,28 @@ async def test_ingest_file_happy_path(client, auth_as, mock_celery_dispatch):
     assert resp.json()["run_id"]
 
 
+async def test_manual_upload_mints_fresh_run_when_build_label_exists(
+    client, auth_as, mock_celery_dispatch,
+):
+    """A manual upload must not resume an unrelated same-label run."""
+    project_id = uuid.uuid4()
+    existing_run_id = str(uuid.uuid4())
+    auth_as(accessible_projects={project_id})
+
+    with patch(
+        "app.routers.ingest._resolve_run_id",
+        AsyncMock(return_value=existing_run_id),
+    ):
+        resp = await client.post(
+            "/api/v1/ingest/file",
+            files={"file": ("results.xml", _MIN_JUNIT_XML, "application/xml")},
+            data={"project_id": str(project_id), "build_number": "same-label"},
+        )
+
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["run_id"] != existing_run_id
+
+
 async def test_ingest_file_rejects_oversized_payload(
     client, auth_as, mock_celery_dispatch
 ):
