@@ -69,9 +69,11 @@ async def test_ingest_test_results_prefetches_existing_rows_in_one_select(monkey
     # internals — count invocations + verify it received the cache.
     upsert_calls: list = []
 
-    async def _fake_upsert(db_arg, case_data, run_arg, *, existing, fingerprint):
+    async def _fake_upsert(
+        db_arg, case_data, run_arg, *, existing, fingerprint, existing_was_prefetched
+    ):
         upsert_calls.append(
-            (case_data.get("test_name"), existing, fingerprint)
+            (case_data.get("test_name"), existing, fingerprint, existing_was_prefetched)
         )
 
     monkeypatch.setattr(pipeline, "_upsert_test_case", _fake_upsert)
@@ -84,9 +86,10 @@ async def test_ingest_test_results_prefetches_existing_rows_in_one_select(monkey
     # Every upsert call received existing=None (because the prefetch
     # returned []) and a non-empty fingerprint.
     assert len(upsert_calls) == 50
-    for name, existing, fp in upsert_calls:
+    for name, existing, fp, existing_was_prefetched in upsert_calls:
         assert existing is None
         assert fp  # non-empty string
+        assert existing_was_prefetched is True
 
 
 @pytest.mark.asyncio
@@ -114,8 +117,14 @@ async def test_ingest_test_results_passes_cached_existing_row_to_upsert(monkeypa
 
     handed: dict[str, object] = {}
 
-    async def _fake_upsert(db_arg, case_data, run_arg, *, existing, fingerprint):
-        handed[case_data["test_name"]] = (existing, fingerprint)
+    async def _fake_upsert(
+        db_arg, case_data, run_arg, *, existing, fingerprint, existing_was_prefetched
+    ):
+        handed[case_data["test_name"]] = (
+            existing,
+            fingerprint,
+            existing_was_prefetched,
+        )
 
     monkeypatch.setattr(pipeline, "_upsert_test_case", _fake_upsert)
 
@@ -128,14 +137,42 @@ async def test_ingest_test_results_passes_cached_existing_row_to_upsert(monkeypa
         ],
     )
 
-    a_existing, a_fp = handed["test_a"]
-    b_existing, b_fp = handed["test_b"]
+    a_existing, a_fp, a_prefetched = handed["test_a"]
+    b_existing, b_fp, b_prefetched = handed["test_b"]
     # test_a's fingerprint matched → row supplied to upsert.
     assert a_existing is existing_row
     assert a_fp == fp_existing
+    assert a_prefetched is True
     # test_b's fingerprint didn't match → upsert gets None.
     assert b_existing is None
     assert b_fp == fp_new
+    assert b_prefetched is True
+
+
+@pytest.mark.asyncio
+async def test_ingest_test_results_1000_prefetched_misses_do_not_select_per_case():
+    """Exercise the real upsert path for an all-new 1,000-case report."""
+    from app.services import ingestion_pipeline as pipeline
+
+    run = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4(), framework=None)
+    results = [
+        {
+            "test_name": f"test_{i}",
+            "class_name": "S",
+            "status": "passed",
+            "suite_name": "smoke",
+        }
+        for i in range(1_000)
+    ]
+    db = SimpleNamespace(
+        execute=AsyncMock(return_value=_ExecResult(scalars=[])),
+        add=MagicMock(),
+        flush=AsyncMock(),
+    )
+
+    assert await pipeline.ingest_test_results(db, run, results) == 1_000
+    assert db.execute.await_count == 1
+    assert db.add.call_count == 2_000
 
 
 @pytest.mark.asyncio

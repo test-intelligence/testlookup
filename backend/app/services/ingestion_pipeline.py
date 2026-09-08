@@ -23,23 +23,13 @@ from app.services.execution_time import resolve_execution_time
 from app.services.run_environment import normalize_environment
 from app.services.run_tombstone_service import run_is_tombstoned
 from app.services.ingestion import (
+    _chunked,
+    _prefetch_test_cases,
     _update_run_aggregates,
     _upsert_test_case,
 )
 
 logger = structlog.get_logger("services.ingestion_pipeline")
-
-# asyncpg rejects statements with more than 32,767 bind parameters. Keep
-# fingerprint prefetch predicates comfortably below that ceiling, including
-# the run-id predicate bound alongside each IN list.
-FINGERPRINT_PREFETCH_CHUNK_SIZE = 10_000
-
-
-def _chunked(values: list[str], size: int = FINGERPRINT_PREFETCH_CHUNK_SIZE):
-    """Yield bounded, non-empty slices for driver-safe IN predicates."""
-    for offset in range(0, len(values), size):
-        yield values[offset:offset + size]
-
 
 def _one_or_none(result):
     """Return one row; ambiguous legacy duplicates must not pick arbitrarily."""
@@ -429,18 +419,7 @@ async def ingest_test_results(
         make_test_fingerprint(case.get("test_name", ""), case.get("class_name"))
         for case in results
     ]
-    existing_by_fp: dict[str, TestCase] = {}
-    unique_fingerprints = list(dict.fromkeys(fingerprints))
-    for fingerprint_chunk in _chunked(unique_fingerprints):
-        existing_rows = (
-            await db.execute(
-                select(TestCase).where(
-                    TestCase.test_run_id == run.id,
-                    TestCase.test_fingerprint.in_(fingerprint_chunk),
-                )
-            )
-        ).scalars().all()
-        existing_by_fp.update({r.test_fingerprint: r for r in existing_rows})
+    existing_by_fp = await _prefetch_test_cases(db, run.id, fingerprints)
 
     count = 0
     failed = 0
@@ -451,13 +430,15 @@ async def ingest_test_results(
             # omitted suite_name" signal the primary_suite_name repair sweeps use.
             case_data = {**case_data, "suite_name": default_suite_name}
         try:
-            await _upsert_test_case(
+            test_case = await _upsert_test_case(
                 db,
                 case_data,
                 run,
                 existing=existing_by_fp.get(fingerprint),
                 fingerprint=fingerprint,
+                existing_was_prefetched=True,
             )
+            existing_by_fp[fingerprint] = test_case
             count += 1
         except Exception as e:
             failed += 1

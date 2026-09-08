@@ -8,14 +8,14 @@ and passes `existing`/`fingerprint` through, mirroring
 `ingestion_pipeline.ingest_test_results`.
 
 These tests pin the contract the prefetch relies on: `_upsert_test_case` skips
-its SELECT when given a prefetched `existing`, and only falls back to a per-row
-SELECT when `existing` is None.
+its SELECT when the caller has completed a prefetch, including a known miss,
+and only falls back to a per-row SELECT when no prefetch occurred.
 """
 from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -43,12 +43,14 @@ async def test_upsert_with_prefetched_existing_issues_no_select():
         id=uuid.uuid4(), status=None, duration_ms=None, error_message=None,
         test_fingerprint="fp", test_name="t1",
     )
-    db = AsyncMock()
+    db = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)),
+        add=MagicMock(),
+        flush=AsyncMock(),
+    )
     # The history-dedup probe (one SELECT on TestCaseHistory, added after this
     # pin was first written) runs on the existing path; stub it to "no prior
     # history row" so a fresh one is inserted.
-    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
-
     tc = await _upsert_test_case(db, _case(), run, existing=existing, fingerprint="fp")
 
     # The prefetch eliminates the per-case TestCase SELECT — the only remaining
@@ -68,9 +70,12 @@ async def test_upsert_without_existing_falls_back_to_one_select():
         id=uuid.uuid4(), status=None, duration_ms=None, error_message=None,
         test_fingerprint="fp", test_name="t1",
     )
-    db = AsyncMock()
-    db.execute = AsyncMock(
-        return_value=SimpleNamespace(scalar_one_or_none=lambda: found)
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=SimpleNamespace(scalar_one_or_none=lambda: found)
+        ),
+        add=MagicMock(),
+        flush=AsyncMock(),
     )
 
     await _upsert_test_case(db, _case(), run)  # no existing/fingerprint
@@ -78,3 +83,37 @@ async def test_upsert_without_existing_falls_back_to_one_select():
     # Legacy path issues the inline per-case TestCase SELECT (what the prefetch
     # avoids) plus the history-dedup probe = two executes.
     assert db.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_upsert_with_prefetched_miss_issues_no_select():
+    """A known prefetch miss inserts directly instead of querying again."""
+    from app.services.ingestion import _upsert_test_case
+
+    run = SimpleNamespace(id=uuid.uuid4())
+    db = SimpleNamespace(
+        execute=AsyncMock(),
+        add=MagicMock(),
+        flush=AsyncMock(),
+    )
+
+    await _upsert_test_case(
+        db,
+        _case(),
+        run,
+        existing=None,
+        fingerprint="fp",
+        existing_was_prefetched=True,
+    )
+
+    assert db.execute.await_count == 0
+
+
+def test_sentinel_path_uses_bounded_prefetch_and_marks_misses_known():
+    """The MinIO path must share the bounded prefetch contract."""
+    import inspect
+    from app.services import ingestion
+
+    source = inspect.getsource(ingestion.process_sentinel)
+    assert "await _prefetch_test_cases" in source
+    assert "existing_was_prefetched=True" in source

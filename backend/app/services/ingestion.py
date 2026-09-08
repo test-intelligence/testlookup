@@ -35,6 +35,39 @@ from app.services.ocp_client import get_pod_metadata
 
 logger = structlog.get_logger("services.ingestion")
 
+# asyncpg rejects statements with more than 32,767 bind parameters. Keep
+# fingerprint prefetch predicates comfortably below that ceiling, including
+# the run-id predicate bound alongside each IN list.
+FINGERPRINT_PREFETCH_CHUNK_SIZE = 10_000
+
+
+def _chunked(values: list[str], size: int = FINGERPRINT_PREFETCH_CHUNK_SIZE):
+    """Yield bounded, non-empty slices for driver-safe IN predicates."""
+    for offset in range(0, len(values), size):
+        yield values[offset:offset + size]
+
+
+async def _prefetch_test_cases(
+    db,
+    test_run_id: uuid.UUID,
+    fingerprints: list[str],
+) -> dict[str, TestCase]:
+    """Load run-scoped cases in bounded queries, keyed by fingerprint."""
+    existing_by_fp: dict[str, TestCase] = {}
+    unique_fingerprints = list(dict.fromkeys(fingerprints))
+    for fingerprint_chunk in _chunked(unique_fingerprints):
+        existing_rows = (
+            await db.execute(
+                select(TestCase).where(
+                    TestCase.test_run_id == test_run_id,
+                    TestCase.test_fingerprint.in_(fingerprint_chunk),
+                )
+            )
+        ).scalars().all()
+        existing_by_fp.update({row.test_fingerprint: row for row in existing_rows})
+    return existing_by_fp
+
+
 # Import WebSocket manager lazily to avoid circular imports at module load time
 def _get_ws_manager():
     from app.routers.live import manager as ws_manager
@@ -219,23 +252,18 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                 make_test_fingerprint(c.get("test_name", ""), c.get("class_name"))
                 for c in parsed_cases
             ]
-            existing_by_fp: dict[str, TestCase] = {}
-            if case_fps:
-                existing_rows = (
-                    await db.execute(
-                        select(TestCase).where(
-                            TestCase.test_run_id == run.id,
-                            TestCase.test_fingerprint.in_(case_fps),
-                        )
-                    )
-                ).scalars().all()
-                existing_by_fp = {r.test_fingerprint: r for r in existing_rows}
+            existing_by_fp = await _prefetch_test_cases(db, run.id, case_fps)
             for case_data, fingerprint in zip(parsed_cases, case_fps):
-                await _upsert_test_case(
+                test_case = await _upsert_test_case(
                     db, case_data, run,
                     existing=existing_by_fp.get(fingerprint),
                     fingerprint=fingerprint,
+                    existing_was_prefetched=True,
                 )
+                # Preserve the existing same-batch retry behavior. A second
+                # occurrence must update the row just inserted by the first,
+                # rather than attempt a duplicate unique-key insert.
+                existing_by_fp[fingerprint] = test_case
 
             # ── Enrich with OCP metadata ───────────────────
             if sentinel.ocp_pod_name and sentinel.ocp_namespace:
@@ -441,14 +469,14 @@ async def _upsert_test_case(
     *,
     existing: Optional[TestCase] = None,
     fingerprint: Optional[str] = None,
+    existing_was_prefetched: bool = False,
 ) -> TestCase:
     """Upsert a test case — idempotent on (run_id, test_fingerprint).
 
-    ``existing`` and ``fingerprint`` may be supplied by the caller to
-    skip the per-row SELECT — the prefetch path in ``ingest_test_results``
-    fetches every row's existing TestCase in one query and passes the
-    match (or None) here. The unguarded call site still queries inline,
-    so this stays a drop-in replacement.
+    ``existing`` and ``fingerprint`` may be supplied by the caller to skip the
+    per-row SELECT. ``existing_was_prefetched`` distinguishes a known miss from
+    a caller that did not perform a lookup. Its default preserves the inline
+    lookup for direct callers.
     """
     if fingerprint is None:
         fingerprint = make_test_fingerprint(
@@ -456,7 +484,7 @@ async def _upsert_test_case(
             case_data.get("class_name"),
         )
 
-    if existing is None:
+    if existing is None and not existing_was_prefetched:
         result = await db.execute(
             select(TestCase).where(
                 TestCase.test_run_id == run.id,
