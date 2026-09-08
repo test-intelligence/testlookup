@@ -24,6 +24,10 @@ from app.models.schemas import (
     LiveStreamIngestResponse,
 )
 from app.services.async_utils import await_if_needed
+from app.services.ingestion_sanitization import (
+    sanitize_test_result_payload,
+    validate_live_identifier,
+)
 from app.services.run_status import terminal_run_status
 from app.services.run_tombstone_service import run_is_tombstoned
 
@@ -431,7 +435,7 @@ async def close_session(
         decoded: list = []
         for raw in raw_events:
             try:
-                decoded.append(json.loads(raw))
+                decoded.append(sanitize_test_result_payload(json.loads(raw)))
             except Exception:
                 continue
         if decoded:
@@ -545,7 +549,19 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
     """
     from app.streams import LIVE_TESTCASES_KEY, LIVE_STATE_KEY
 
-    accepted = await publish_event_batch(session_id=session_id, run_id=run_id, events=events)
+    session_id = validate_live_identifier("session_id", session_id)
+    run_id = validate_live_identifier("run_id", run_id)
+
+    normalized_events: list[dict] = []
+    for event in events:
+        event_dict = event.model_dump() if hasattr(event, "model_dump") else dict(event)
+        normalized_events.append(sanitize_test_result_payload(event_dict))
+
+    accepted = await publish_event_batch(
+        session_id=session_id,
+        run_id=run_id,
+        events=normalized_events,
+    )
 
     redis = get_redis()
     list_key = LIVE_TESTCASES_KEY.format(run_id=run_id)
@@ -557,8 +573,7 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
     pipe = redis.pipeline()
     test_event_count = 0
     countable_events = 0
-    for event in events:
-        event_dict: dict = event.model_dump() if hasattr(event, "model_dump") else dict(event)
+    for event_dict in normalized_events:
         # ``live_heartbeat`` is a keepalive that only exists to bump
         # last_event_at for the idle reaper. Counting it would inflate
         # events_received with idle noise, and a heartbeat-only batch must
@@ -676,6 +691,11 @@ async def resolve_project_id_for_session(
 
 
 async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchResponse:
+    try:
+        validate_live_identifier("session_id", batch.session_id)
+        validate_live_identifier("run_id", batch.run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     redis = get_redis()
     stored_session_id = await redis.get(SESSION_TOKEN_KEY.format(token=x_session_token))
     if not stored_session_id or not secrets.compare_digest(stored_session_id, batch.session_id):
@@ -710,6 +730,11 @@ async def ingest_via_api_key(
     call so the session row, Redis token, and run-state hash all come into
     being atomically.
     """
+    try:
+        validate_live_identifier("run_id", request.run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     project = await db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")

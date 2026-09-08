@@ -49,6 +49,24 @@ async def _get_or_create_collection(project_id: Optional[str] = None):
     )
 
 
+async def purge_all_m11_semantic_cache_collections() -> int:
+    """Delete derived AI cache collections that may contain pre-M11 evidence."""
+    client = await _get_chroma_client()
+    collections = await asyncio.to_thread(client.list_collections)
+    names = [
+        collection.name if hasattr(collection, "name") else str(collection)
+        for collection in collections
+    ]
+    targets = [
+        name
+        for name in names
+        if name == _COLLECTION_NAME or name.startswith(f"{_COLLECTION_NAME}_")
+    ]
+    for name in targets:
+        await asyncio.to_thread(client.delete_collection, name=name)
+    return len(targets)
+
+
 def _build_signature(test_name: str, error_message: str, stack_trace: str) -> str:
     """Build a searchable text signature from the failure inputs."""
     parts = [test_name.strip()]
@@ -172,9 +190,19 @@ async def semantic_cache_store(
             sanitize_persistence_payload,
             sanitize_reference_text,
         )
+        from app.services.ingestion_sanitization import sanitize_test_result_payload
 
+        safe_failure = sanitize_test_result_payload({
+            "error_message": error_message,
+            "stack_trace": stack_trace,
+        })
         signature, _, _ = sanitize_reference_text(
-            _build_signature(test_name, error_message, stack_trace), limit=6000
+            _build_signature(
+                test_name,
+                safe_failure["error_message"] or "",
+                safe_failure["stack_trace"] or "",
+            ),
+            limit=6000,
         )
 
         # Build a unique ID from the signature hash

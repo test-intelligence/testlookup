@@ -56,6 +56,7 @@ from app.db.redis_client import get_redis
 from app.models.postgres import LaunchStatus, TestCase, TestRun, TestStatus
 from app.streams import LIVE_TESTCASES_KEY
 from app.services.run_tombstone_service import run_is_tombstoned
+from app.services.ingestion_sanitization import sanitize_test_result_payload
 from app.streams.live_run_state import RedisLiveRunState
 
 logger = structlog.get_logger(__name__)
@@ -110,9 +111,10 @@ def _event_to_row(
     paths must produce identical row shapes so a buffer drained mid-run
     is indistinguishable from one drained at close.
     """
-    test_name = event.get("test_name") or ""
-    class_name = event.get("class_name") or ""
-    raw_status = (event.get("status") or "UNKNOWN").upper()
+    safe_event = sanitize_test_result_payload(event)
+    test_name = safe_event.get("test_name") or ""
+    class_name = safe_event.get("class_name") or ""
+    raw_status = (safe_event.get("status") or "UNKNOWN").upper()
     try:
         tc_status = TestStatus(raw_status)
     except ValueError:
@@ -125,12 +127,13 @@ def _event_to_row(
         "test_run_id": run_uuid,
         "test_fingerprint": fingerprint,
         "test_name": test_name[:1000],
-        "suite_name": _resolved_suite(event, default_suite),
+        "suite_name": _resolved_suite(safe_event, default_suite),
         "class_name": class_name[:500] or None,
         "status": tc_status.value if hasattr(tc_status, "value") else tc_status,
-        "duration_ms": event.get("duration_ms"),
-        "error_message": event.get("error_message"),
-        "tags": event.get("tags"),
+        "duration_ms": safe_event.get("duration_ms"),
+        "error_message": safe_event.get("error_message"),
+        "stack_trace": safe_event.get("stack_trace"),
+        "tags": safe_event.get("tags"),
     }
 
 

@@ -419,7 +419,7 @@ class TestRun(Base):
     primary_suite_name: Mapped[Optional[str]] = mapped_column(String(500), index=True)
     suite_names: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
-    # 15-day durable archive of the raw SDK events for live-stream runs.
+    # 15-day durable archive of sanitized SDK events for live-stream runs.
     # Written at session-close time so /runs/{id}/recover-live can replay
     # test_case rows long after the 25-hour Redis buffer TTL has lapsed
     # (migration 0086, 2026-05-16). Null for non-live runs and for live

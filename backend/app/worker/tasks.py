@@ -499,6 +499,7 @@ def persist_live_session(
         )
         from app.services.stream_service import canonical_test_run_uuid
         from app.services.run_status import terminal_run_status
+        from app.services.ingestion_sanitization import sanitize_test_result_payload
 
         redis = get_redis()
         list_key = LIVE_TESTCASES_KEY.format(run_id=run_id)
@@ -731,9 +732,10 @@ def persist_live_session(
             default_suite = session_suite_default or run_suite_default
             rows: list[dict] = []
             for event in sampled_events:
-                test_name  = event.get("test_name") or ""
-                class_name = event.get("class_name") or ""
-                raw_status = (event.get("status") or "UNKNOWN").upper()
+                safe_event = sanitize_test_result_payload(event)
+                test_name  = safe_event.get("test_name") or ""
+                class_name = safe_event.get("class_name") or ""
+                raw_status = (safe_event.get("status") or "UNKNOWN").upper()
 
                 try:
                     tc_status = TestStatus(raw_status)
@@ -744,7 +746,7 @@ def persist_live_session(
                     f"{test_name}:{class_name}".encode()
                 ).hexdigest()
 
-                event_suite = (event.get("suite_name") or "").strip()
+                event_suite = (safe_event.get("suite_name") or "").strip()
                 resolved_suite = (event_suite or default_suite or "")[:500] or None
 
                 rows.append({
@@ -755,9 +757,10 @@ def persist_live_session(
                     "suite_name": resolved_suite,
                     "class_name": class_name[:500] or None,
                     "status": tc_status.value if hasattr(tc_status, "value") else tc_status,
-                    "duration_ms": event.get("duration_ms"),
-                    "error_message": event.get("error_message"),
-                    "tags": event.get("tags"),
+                    "duration_ms": safe_event.get("duration_ms"),
+                    "error_message": safe_event.get("error_message"),
+                    "stack_trace": safe_event.get("stack_trace"),
+                    "tags": safe_event.get("tags"),
                 })
             if rows:
                 from sqlalchemy.dialects.postgresql import insert as _pg_insert
@@ -3487,7 +3490,12 @@ async def _send_to_dlq(task_name: str, task_id: str, kwargs: dict, error: str) -
     try:
         import json
         from app.db.redis_client import get_redis
+        from app.services.ingestion_sanitization import sanitize_test_result_payload
         from app.streams import DLQ_STREAM
+        safe_kwargs = sanitize_test_result_payload(kwargs)
+        safe_error = sanitize_test_result_payload({"error_message": error})[
+            "error_message"
+        ]
         redis = get_redis()
         await redis.xadd(
             DLQ_STREAM,
@@ -3495,13 +3503,18 @@ async def _send_to_dlq(task_name: str, task_id: str, kwargs: dict, error: str) -
                 "source": "celery",
                 "task_name": task_name,
                 "task_id": task_id,
-                "kwargs": json.dumps(kwargs),
-                "error": error[:500],
+                "kwargs": json.dumps(safe_kwargs),
+                "error": safe_error[:500],
             },
             maxlen=5000,
             approximate=True,
         )
-        logger.error("Moved failed task to DLQ: task=%s id=%s error=%s", task_name, task_id, error)
+        logger.error(
+            "Moved failed task to DLQ: task=%s id=%s error=%s",
+            task_name,
+            task_id,
+            safe_error,
+        )
     except Exception as dlq_exc:
         logger.error("Failed to write to DLQ: %s", dlq_exc)
 

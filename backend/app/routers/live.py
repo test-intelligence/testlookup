@@ -446,7 +446,18 @@ async def ingest_live_event(
     Protected by X-Webhook-Secret header.
     """
     from app.db.mongo import Collections, get_mongo_db
+    from app.services.ingestion_sanitization import (
+        LIVE_SANITIZATION_VERSION,
+        LIVE_SANITIZATION_VERSION_FIELD,
+        sanitize_test_result_payload,
+        validate_live_identifier,
+    )
     from app.streams.producer import publish_live_event
+
+    try:
+        run_id = validate_live_identifier("run_id", run_id)
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
 
     event_type = event.get("type", "test_result")
 
@@ -454,15 +465,23 @@ async def ingest_live_event(
     if event_type == "run_start" and not event.get("project_id"):
         raise HTTPException(400, detail="project_id required for run_start event")
 
-    # Persist raw event to MongoDB for audit trail (non-critical)
+    safe_event = sanitize_test_result_payload({**event, "run_id": run_id})
+    safe_event.pop("_id", None)
+
+    # Persist a sanitized event for the operational audit trail (non-critical).
+    # Raw evidence belongs in the project-scoped artifact store, not this
+    # shared live-events collection.
     try:
         db = get_mongo_db()
         await db[Collections.LIVE_EXECUTION_EVENTS].insert_one(
-            {"run_id": run_id, **event}
+            {
+                **safe_event,
+                LIVE_SANITIZATION_VERSION_FIELD: LIVE_SANITIZATION_VERSION,
+            }
         )
     except Exception:
         pass
 
     # Enqueue to Redis Stream — returns immediately regardless of processing load
-    await publish_live_event(run_id, event)
+    await publish_live_event(run_id, safe_event)
     return {"accepted": True, "run_id": run_id, "event_type": event_type}

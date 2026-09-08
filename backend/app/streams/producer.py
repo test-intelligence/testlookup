@@ -19,6 +19,10 @@ from app.streams import (
     LIVE_EVENTS_STREAM,
     LIVE_STREAM_MAXLEN,
 )
+from app.services.ingestion_sanitization import (
+    sanitize_test_result_payload,
+    validate_live_identifier,
+)
 
 logger = logging.getLogger("streams.producer")
 
@@ -30,6 +34,8 @@ async def publish_live_event(run_id: str, event: dict) -> str:
 
     Event types: run_start | test_result | run_complete
     """
+    run_id = validate_live_identifier("run_id", run_id)
+    event = sanitize_test_result_payload({**event, "run_id": run_id})
     redis = get_redis()
     msg_id = await redis.xadd(
         LIVE_EVENTS_STREAM,
@@ -66,6 +72,8 @@ async def publish_event_batch(session_id: str, run_id: str, events: list) -> int
 
     Returns the number of events successfully published.
     """
+    session_id = validate_live_identifier("session_id", session_id)
+    run_id = validate_live_identifier("run_id", run_id)
     redis = get_redis()
 
     # P3-8: Backpressure check — reject batch if consumer is lagging
@@ -89,6 +97,11 @@ async def publish_event_batch(session_id: str, run_id: str, events: list) -> int
     for event in events:
         # Accept both Pydantic models and raw dicts
         event_dict: dict = event.model_dump() if hasattr(event, "model_dump") else dict(event)
+        event_dict = sanitize_test_result_payload({
+            **event_dict,
+            "session_id": session_id,
+            "run_id": run_id,
+        })
         event_type = event_dict.get("event_type", "test_result")
         pipe.xadd(
             LIVE_EVENTS_STREAM,
@@ -170,14 +183,18 @@ async def publish_to_dlq(
     Move an unprocessable message to the dead-letter queue.
     DLQ entries are retained for 24h for manual inspection and replay.
     """
+    safe_data = sanitize_test_result_payload(original_data)
+    safe_error = sanitize_test_result_payload({"error_message": str(error)})[
+        "error_message"
+    ]
     redis = get_redis()
     msg_id = await redis.xadd(
         DLQ_STREAM,
         {
             "source_stream": source_stream,
             "original_msg_id": original_msg_id,
-            "original_data": json.dumps(original_data),
-            "error": str(error)[:1000],
+            "original_data": json.dumps(safe_data),
+            "error": safe_error[:1000],
             "attempt_count": str(attempt_count),
         },
         maxlen=DLQ_STREAM_MAXLEN,
@@ -185,7 +202,7 @@ async def publish_to_dlq(
     )
     logger.error(
         "DLQ: stream=%s msg=%s attempts=%d error=%s",
-        source_stream, original_msg_id, attempt_count, error,
+        source_stream, original_msg_id, attempt_count, safe_error,
     )
     return cast(str, msg_id)
 

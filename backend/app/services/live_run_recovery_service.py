@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.redis_client import get_redis
 from app.models.postgres import LiveSession, TestCase, TestRun
 from app.streams import LIVE_TESTCASES_KEY
+from app.services.ingestion_sanitization import sanitize_test_result_payload
 
 logger = structlog.get_logger(__name__)
 
@@ -42,7 +43,10 @@ async def _stage_archive_to_redis(run_id_str: str, events: list[dict]) -> int:
     redis = get_redis()
     list_key = LIVE_TESTCASES_KEY.format(run_id=run_id_str)
     for ev in events:
-        await redis.rpush(list_key, _json.dumps(ev))
+        await redis.rpush(
+            list_key,
+            _json.dumps(sanitize_test_result_payload(ev)),
+        )
     # 1h TTL — plenty for the worker to drain. The task LRANGEs the list
     # but does not delete it; the TTL keeps the staging key from leaking.
     await redis.expire(list_key, 3600)
