@@ -912,6 +912,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Resolve and validate manifest version
+        id: manifest-version
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "VERSION must contain strict semantic version X.Y.Z" >&2
+            exit 1
+          }
+          printf 'version=v%s\n' "$version" >> "$GITHUB_OUTPUT"
+
       # Generate package-lock.json before Docker build so npm ci works inside the image.
       # This avoids needing to commit a lockfile while still getting reproducible installs.
       - name: Set up Node.js 20
@@ -1033,7 +1044,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/release/release_manifest.py create \
-            --source-sha "${GITHUB_SHA}" --version "${GITHUB_REF_NAME}" \
+            --source-sha "${GITHUB_SHA}" --version "${{ steps.manifest-version.outputs.version }}" \
             --image "backend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@${{ steps.build-backend.outputs.digest }}" \
             --image "frontend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend@${{ steps.build-frontend.outputs.digest }}" \
             --image "mcp=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp@${{ steps.build-mcp.outputs.digest }}" \

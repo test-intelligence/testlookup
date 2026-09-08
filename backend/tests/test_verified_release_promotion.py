@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 VERIFIER = WORKFLOWS / "require-verified-sha.yml"
 RELEASE = WORKFLOWS / "release.yml"
+CI = WORKFLOWS / "ci.yml"
 CLOUD_DEPLOYS = tuple(
     WORKFLOWS / name
     for name in ("deploy-eks.yml", "deploy-gke.yml", "deploy-aks.yml")
@@ -205,3 +206,22 @@ def test_release_workflow_has_no_build_job_named_as_a_promotion_step():
         if "build" in name.lower() or "push" in name.lower()
     ]
     assert not bad_jobs, f"release.yml contains rebuild jobs: {bad_jobs}"
+
+
+def test_main_image_manifest_resolves_version_file_before_publishing_images():
+    """A main branch name is not a semantic release version."""
+    workflow = _yaml(CI)
+    steps = workflow["jobs"]["build-images"]["steps"]
+    step_by_name = {step.get("name"): step for step in steps}
+    names = [step.get("name") for step in steps]
+
+    resolve = step_by_name["Resolve and validate manifest version"]
+    assert resolve.get("id") == "manifest-version"
+    resolve_run = str(resolve.get("run", ""))
+    assert "VERSION" in resolve_run
+    assert "^[0-9]+\\.[0-9]+\\.[0-9]+$" in resolve_run
+    assert names.index("Resolve and validate manifest version") < names.index("Build & push backend")
+
+    create_run = str(step_by_name["Create and validate verified image manifest"].get("run", ""))
+    assert "steps.manifest-version.outputs.version" in create_run
+    assert "GITHUB_REF_NAME" not in create_run
