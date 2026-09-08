@@ -6,12 +6,14 @@ Used by:
   2. ingest_uploaded_results task — POST /api/v1/ingest (JSON batch)
   3. ingest_uploaded_file task — POST /api/v1/ingest/file (file upload)
 """
+import hashlib
 import uuid
 from datetime import datetime
 from typing import Any, Optional
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import AsyncSessionLocal
@@ -26,6 +28,41 @@ from app.services.ingestion import (
 )
 
 logger = structlog.get_logger("services.ingestion_pipeline")
+
+
+def _one_or_none(result):
+    """Return one row; ambiguous legacy duplicates must not pick arbitrarily."""
+    try:
+        return result.scalar_one_or_none()
+    except MultipleResultsFound:
+        return None
+
+
+def build_ingestion_identity(
+    *,
+    project_id: str | uuid.UUID,
+    build_number: str,
+    ingestion_source: str = "unknown",
+    ci_provider: Optional[str] = None,
+    ci_repo: Optional[str] = None,
+    ci_run_url: Optional[str] = None,
+    jenkins_job: Optional[str] = None,
+) -> str:
+    """Return a bounded, source-aware idempotency key for reusable ingests.
+
+    CI callers should send ci_run_url so parallel jobs sharing a build
+    label remain separate. Provider/repository/build are the deterministic
+    fallback for SDK callers without a run URL. Hashing keeps the DB key fixed
+    at 64 characters while descriptive CI fields stay on TestRun.
+    """
+    provider = (ci_provider or "").strip().lower()
+    repo = (ci_repo or "").strip().lower().strip("/")
+    run_url = (ci_run_url or "").strip().rstrip("/")
+    job = (jenkins_job or "").strip().lower()
+    source = (ingestion_source or "unknown").strip().lower()
+    run_key = run_url or "|".join((job, str(build_number).strip()))
+    canonical = "|".join(("v1", str(project_id), source, provider, repo, run_key))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 async def _unique_build_number(db: AsyncSession, project_id: uuid.UUID, base: str) -> str:
@@ -77,6 +114,7 @@ async def create_run_from_payload(
     pr_number: Optional[int] = None,
     ci_actor: Optional[str] = None,
     ci_run_url: Optional[str] = None,
+    jenkins_job: Optional[str] = None,
     # Optional (migration 0129). Absent means "not recorded", NOT "default" —
     # see services/run_environment.py for why that distinction is load-bearing.
     environment: Optional[str] = None,
@@ -92,9 +130,7 @@ async def create_run_from_payload(
     """
     Create a TestRun record for API-ingested data.
 
-    When ``reuse_existing`` is True (default — the SDK/CI batch path), this
-    upserts on (project_id, build_number): a run with the same build is reused
-    so a CI retry adds cases to the same run (idempotent re-ingest).
+    When ``reuse_existing`` is True (default — the SDK/CI batch path), this reuses the source-aware ingestion identity. A CI retry with the same provider/repository/run URL adds cases to the same run, while distinct CI run URLs remain separate even when their build labels match.
 
     When ``reuse_existing`` is False (the manual-upload path), it must NEVER
     merge into a pre-existing run — an operator-typed or timestamp-defaulted
@@ -105,6 +141,19 @@ async def create_run_from_payload(
     authoritative for the caller's 202 response and ``View run`` navigation.
     """
     pid = uuid.UUID(project_id)
+    ingestion_identity = (
+        build_ingestion_identity(
+            project_id=pid,
+            build_number=build_number,
+            ingestion_source=ingestion_source,
+            ci_provider=ci_provider,
+            ci_repo=ci_repo,
+            ci_run_url=ci_run_url,
+            jenkins_job=jenkins_job,
+        )
+        if reuse_existing
+        else None
+    )
 
     # Verify project exists
     result = await db.execute(select(Project).where(Project.id == pid))
@@ -151,14 +200,27 @@ async def create_run_from_payload(
 
     effective_build = build_number
     if reuse_existing:
-        # Check for existing run with same build_number
+        # Prefer the explicit source identity. The identity index guarantees
+        # at most one match for all rows written after migration 0160.
         result = await db.execute(
             select(TestRun).where(
                 TestRun.project_id == pid,
-                TestRun.build_number == build_number,
+                TestRun.ingestion_identity == ingestion_identity,
             )
         )
-        existing = result.scalar_one_or_none()
+        existing = _one_or_none(result)
+        if existing is None and not (ci_provider or ci_repo or ci_run_url or jenkins_job):
+            # Legacy rows have no identity. Reuse one only when the label is
+            # unambiguous; multiple historical jobs require a new canonical
+            # identity rather than silently appending to an arbitrary run.
+            legacy = await db.execute(
+                select(TestRun).where(
+                    TestRun.project_id == pid,
+                    TestRun.ingestion_identity.is_(None),
+                    TestRun.build_number == build_number,
+                )
+            )
+            existing = _one_or_none(legacy)
         if existing:
             # CI-context backfill (US-4.3): a CI retry may supply context the
             # first ingest lacked. Fill only NULL fields — never overwrite a
@@ -173,6 +235,8 @@ async def create_run_from_payload(
             ):
                 if value is not None and getattr(existing, field) is None:
                     setattr(existing, field, value)
+            if getattr(existing, "ingestion_identity", None) is None:
+                existing.ingestion_identity = ingestion_identity
             # US-8.1 — persist a caller-supplied commit range (air-gapped
             # attribution path). Staged under this session; caller commits.
             await _store_supplied_commit_range(db, existing, commit_range)
@@ -212,6 +276,8 @@ async def create_run_from_payload(
         pr_number=pr_number,
         ci_actor=ci_actor,
         ci_run_url=ci_run_url,
+        jenkins_job=jenkins_job,
+        ingestion_identity=ingestion_identity,
         environment=normalize_environment(environment),
         status=LaunchStatus.IN_PROGRESS,
         total_tests=0,
@@ -222,7 +288,25 @@ async def create_run_from_payload(
         start_time=resolve_execution_time(executed_at, context="upload"),
     )
     db.add(run)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # A concurrent request may pass the lookup before the winner commits.
+        # Roll back the failed insert and return the row protected by the
+        # unique identity index so callers converge on its canonical UUID.
+        await db.rollback()
+        if ingestion_identity is not None:
+            winner = (
+                await db.execute(
+                    select(TestRun).where(
+                        TestRun.project_id == pid,
+                        TestRun.ingestion_identity == ingestion_identity,
+                    )
+                )
+            ).scalar_one_or_none()
+            if winner is not None:
+                return winner
+        raise
     # US-8.1 — persist a caller-supplied commit range (air-gapped attribution
     # path). Staged under this session; the caller owns the commit.
     await _store_supplied_commit_range(db, run, commit_range)

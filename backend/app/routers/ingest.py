@@ -120,7 +120,15 @@ async def ingest_batch(
     from app.worker.tasks import ingest_uploaded_results
     from app.db.storage import get_storage_provider
 
-    run_id = await _resolve_run_id(db, target_project_id, payload.build_number)
+    run_id = await _resolve_run_id(
+        db,
+        target_project_id,
+        payload.build_number,
+        ci_provider=payload.ci_provider,
+        ci_repo=payload.ci_repo,
+        ci_run_url=payload.ci_run_url,
+        jenkins_job=payload.jenkins_job,
+    )
     import json
     batch_storage_key = f"uploads/{target_project_id}/{run_id}/queued/{uuid.uuid4().hex}.json"
     try:
@@ -156,7 +164,25 @@ async def ingest_batch(
     )
 
 
-async def _resolve_run_id(db, project_id, build_number: str | None) -> str:
+def _one_scalar_or_none(result):
+    """Return one id; ambiguous legacy duplicates must not pick arbitrarily."""
+    from sqlalchemy.exc import MultipleResultsFound
+    try:
+        return result.scalar_one_or_none()
+    except MultipleResultsFound:
+        return None
+
+
+async def _resolve_run_id(
+    db,
+    project_id,
+    build_number: str | None,
+    *,
+    ci_provider: str | None = None,
+    ci_repo: str | None = None,
+    ci_run_url: str | None = None,
+    jenkins_job: str | None = None,
+) -> str:
     """The run id this ingest will actually land on.
 
     Ingest is asynchronous — 202 plus a Celery task — so the router used to
@@ -170,26 +196,52 @@ async def _resolve_run_id(db, project_id, build_number: str | None) -> str:
     build number — so the callers most likely to hit it are the automated ones
     that POST results and then poll or link the run.
 
-    Returning the existing id makes the response truthful. A narrow race
-    remains: two concurrent ingests of the same *new* build number can both
-    find nothing here and mint different ids, and the pipeline will then keep
-    one. That is rarer and self-correcting, and it is not worth a lock on the
-    ingest hot path — but it is real, so it is written down rather than
-    claimed away.
+    Returning the existing id makes the response truthful. New deliveries
+    derive a deterministic UUID5 from the source identity, so concurrent first
+    deliveries submit the same primary key and the database identity index
+    selects one canonical row.
     """
     if not build_number:
         return str(uuid.uuid4())
     from app.models.postgres import TestRun
+    from app.services.ingestion_pipeline import build_ingestion_identity
 
-    existing = (
+    identity = build_ingestion_identity(
+        project_id=project_id,
+        build_number=build_number,
+        ingestion_source="sdk",
+        ci_provider=ci_provider,
+        ci_repo=ci_repo,
+        ci_run_url=ci_run_url,
+        jenkins_job=jenkins_job,
+    )
+    existing = _one_scalar_or_none(
         await db.execute(
             select(TestRun.id).where(
                 TestRun.project_id == project_id,
-                TestRun.build_number == build_number,
+                TestRun.ingestion_identity == identity,
             )
         )
-    ).scalar_one_or_none()
-    return str(existing) if existing else str(uuid.uuid4())
+    )
+    if existing:
+        return str(existing)
+    if not (ci_provider or ci_repo or ci_run_url or jenkins_job):
+        # Legacy rows have no identity. Reuse one only when the label is
+        # unambiguous; multiple historical jobs require a new canonical id.
+        legacy = _one_scalar_or_none(
+            await db.execute(
+                select(TestRun.id).where(
+                    TestRun.project_id == project_id,
+                    TestRun.ingestion_identity.is_(None),
+                    TestRun.build_number == build_number,
+                )
+            )
+        )
+        if legacy:
+            return str(legacy)
+    # UUID5 makes concurrent first deliveries for one identity submit the
+    # same primary key; the worker's unique index still returns the winner.
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"testlookup:{project_id}:{identity}"))
 
 
 _SUPPORTED_FORMATS = {
@@ -227,6 +279,7 @@ async def ingest_file(
     pr_number: int = Form(None, ge=1),
     ci_actor: str = Form(None, max_length=120),
     ci_run_url: str = Form(None, max_length=1000),
+    jenkins_job: str = Form(None, max_length=500),
     # Environment this run executed against (roadmap Phase 0). Optional —
     # omitting it records "not known" rather than a synthetic default.
     environment: str = Form(None, max_length=100),
@@ -399,6 +452,7 @@ async def ingest_file(
         pr_number=pr_number,
         ci_actor=ci_actor,
         ci_run_url=ci_run_url,
+        jenkins_job=jenkins_job,
         environment=environment,
         # ISO string, not a datetime: Celery serializes task kwargs as JSON.
         executed_at=executed_at.isoformat() if executed_at else None,

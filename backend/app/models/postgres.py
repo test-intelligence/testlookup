@@ -279,7 +279,23 @@ class TestRun(Base):
     """Represents a single CI/CD pipeline execution (Jenkins build)."""
     __tablename__ = "test_runs"
     __table_args__ = (
-        UniqueConstraint("project_id", "build_number", "jenkins_job", name="uq_test_run_build"),
+        # Historical rows without a source identity keep the legacy build
+        # uniqueness behavior. New source-aware ingests use the identity index
+        # below, allowing distinct CI jobs/URLs to share a build label.
+        Index(
+            "uq_test_runs_legacy_build",
+            "project_id", "build_number", "jenkins_job",
+            unique=True,
+            postgresql_where=text("ingestion_identity IS NULL"),
+        ),
+        # New reusable ingests carry an explicit source identity. Historical
+        # rows remain nullable so this index is safe to roll out additively.
+        Index(
+            "uq_test_runs_project_ingestion_identity",
+            "project_id", "ingestion_identity",
+            unique=True,
+            postgresql_where=text("ingestion_identity IS NOT NULL"),
+        ),
         Index("ix_test_runs_project_status", "project_id", "status"),
         Index("ix_test_runs_created_at", "created_at"),
         # P3-3: Composite index for analytics queries that filter by project + status + time range
@@ -326,6 +342,9 @@ class TestRun(Base):
     pr_number: Mapped[Optional[int]] = mapped_column(Integer)
     ci_actor: Mapped[Optional[str]] = mapped_column(String(120))
     ci_run_url: Mapped[Optional[str]] = mapped_column(String(1000))
+    # SHA-256 of the canonical source/project/build identity. Nullable for
+    # manual uploads and legacy rows; reusable API/CI ingests populate it.
+    ingestion_identity: Mapped[Optional[str]] = mapped_column(String(64), index=True)
 
     # Environment this run executed against (migration 0129, roadmap Phase 0).
     # Optional on the wire — pre-0129 runs and callers that never send it keep

@@ -862,6 +862,7 @@ def ingest_uploaded_results(
                     pr_number=payload.get("pr_number"),
                     ci_actor=payload.get("ci_actor"),
                     ci_run_url=payload.get("ci_run_url"),
+                    jenkins_job=payload.get("jenkins_job"),
                     environment=payload.get("environment"),
                     commit_range=payload.get("commit_range"),
                 )
@@ -876,7 +877,8 @@ def ingest_uploaded_results(
                 raise
 
         await finalize_run(
-            run_id=run_id,
+            # Use the canonical row returned after identity conflict handling.
+            run_id=str(run.id),
             project_id=payload["project_id"],
             build_number=payload["build_number"],
             release_name=payload.get("release_name"),
@@ -926,6 +928,7 @@ def ingest_uploaded_file(
     pr_number: int = None,
     ci_actor: str = None,
     ci_run_url: str = None,
+    jenkins_job: str = None,
     environment: str = None,
     # ISO-8601 string; defaulted so tasks queued before this shipped still
     # deserialize. None means "not supplied" and ingest time is used.
@@ -1048,6 +1051,7 @@ def ingest_uploaded_file(
                     pr_number=pr_number,
                     ci_actor=ci_actor,
                     ci_run_url=ci_run_url,
+                    jenkins_job=jenkins_job,
                     environment=environment,
                     executed_at=(
                         datetime.fromisoformat(executed_at) if executed_at else None

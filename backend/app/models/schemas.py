@@ -2935,6 +2935,7 @@ class IngestPayload(BaseModel):
     pr_number: Optional[int] = Field(None, ge=1)
     ci_actor: Optional[str] = Field(None, max_length=120)
     ci_run_url: Optional[str] = Field(None, max_length=1000)
+    jenkins_job: Optional[str] = Field(None, max_length=500)
     # Environment this run executed against (roadmap Phase 0, migration 0129).
     # Optional: omitting it means "not recorded", and readers derive a
     # best-effort key rather than assuming every silent run shared one

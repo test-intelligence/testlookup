@@ -128,8 +128,8 @@ def test_manual_path_mints_an_id_blind_by_design():
     assert "run_id = str(uuid.uuid4())" not in inspect.getsource(ingest.ingest_batch)
 
 
-def test_the_remaining_race_is_documented_not_claimed_away():
-    """Two concurrent ingests of the same NEW build number can still both miss
-    here. That is real; the fix must not pretend otherwise."""
+def test_new_identity_is_deterministic_for_concurrent_first_deliveries():
+    """The router derives one provisional UUID for one source identity."""
     source = inspect.getsource(_resolve_run_id)
-    assert "race" in source.lower()
+    assert "uuid.uuid5" in source
+    assert "ingestion_identity" in source

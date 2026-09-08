@@ -41,8 +41,9 @@ class _Result:
 
 def _mock_db(project):
     db = AsyncMock()
-    # 1st execute → project lookup; 2nd → existing-run check (None = create new)
-    db.execute = AsyncMock(side_effect=[_Result(project), _Result(None)])
+    # 1st execute → project lookup; 2nd → identity check; 3rd → legacy
+    # compatibility check (None = create new).
+    db.execute = AsyncMock(side_effect=[_Result(project), _Result(None), _Result(None)])
     db.flush = AsyncMock()
     db.add = MagicMock()
     return db
