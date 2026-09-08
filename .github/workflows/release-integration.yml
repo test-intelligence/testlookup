@@ -1,0 +1,44 @@
+name: Release branch integration gate
+
+on:
+  # Feature PRs target release/* first. This gate is intentionally small;
+  # the full matrix remains on the single release/* -> main promotion PR.
+  pull_request:
+    branches:
+      - 'release/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A force-push to the same PR supersedes the old gate run.
+  group: release-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Release - lightweight quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Run repository quality guards
+        run: python scripts/quality_gate.py
+      - name: Test repository quality guards
+        run: python -m pytest scripts/test_quality_gate.py -q
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Type-check frontend
+        working-directory: frontend
+        run: npm run type-check
