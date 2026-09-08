@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-08 — a way forward when the "select a project" prompt has no projects
+
+`ProjectRequiredEmptyState` — the prompt six single-project pages (Flaky Coach,
+API Keys, GitHub/GitLab, Webhooks, Retention) render while All Projects is active
+— replaced its old "go use the top bar" dead end with an in-place project picker.
+But the picker leaves one case unresolved: an empty project list. A fresh
+self-hoster who lands on one of these pages before any project exists — a
+bookmarked `/settings/api-keys`, a shared link — saw a picker reading "No
+projects loaded" with nothing to press, the very dead end this component exists
+to remove.
+
+The prompt now offers a "Create a project" link (to `/projects`) when, and only
+when, the list is empty. An established deployment, where choosing an existing
+project is the right move, is not nagged to make another. The link shows during a
+still-loading fetch too — a briefly visible escape hatch is a valid action, never
+a false claim that the deployment has no projects, so the component's "claims
+neither loading nor empty" invariant holds. Presentation-only.
+
 ## 2026-09-07 — press "/" to jump to the global search
 
 The global search box in the top bar had no keyboard path — a self-hoster who

@@ -11,7 +11,13 @@
  * this is the same dead end with a decorative select on it.
  */
 import { fireEvent, render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import type { ReactElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+// The prompt renders a `Create a project` Link when the list is empty, so its
+// tests mount it inside a router. AppLayout supplies one in the real app.
+const renderInRouter = (ui: ReactElement) => render(<MemoryRouter>{ui}</MemoryRouter>)
 
 const mocked = vi.hoisted(() => ({
   state: {
@@ -45,14 +51,14 @@ describe('ProjectRequiredEmptyState', () => {
     // findByText('Select a project'). Those assertions are still correct — the
     // prompt should keep saying what it says — so the string is part of the
     // contract, not an accident.
-    render(<ProjectRequiredEmptyState description="Per project." />)
+    renderInRouter(<ProjectRequiredEmptyState description="Per project." />)
     expect(screen.getByText('Select a project')).toBeTruthy()
   })
 
   it('says why THIS page needs one, not a generic sentence', () => {
     // A generic message gives the reader no way to tell a deliberate
     // restriction from a fault.
-    render(
+    renderInRouter(
       <ProjectRequiredEmptyState description="API keys are scoped to a single project." />,
     )
     expect(
@@ -61,7 +67,7 @@ describe('ProjectRequiredEmptyState', () => {
   })
 
   it('offers the projects to choose from', () => {
-    render(<ProjectRequiredEmptyState description="x" />)
+    renderInRouter(<ProjectRequiredEmptyState description="x" />)
     const picker = screen.getByLabelText('Choose a project to continue')
     expect(picker).toBeTruthy()
     expect(screen.getByRole('option', { name: 'Checkout' })).toBeTruthy()
@@ -71,7 +77,7 @@ describe('ProjectRequiredEmptyState', () => {
   it('actually changes the active project when one is chosen', () => {
     // The whole point. A picker that renders but does not commit is the dead
     // end again, now with a control that reads as broken.
-    render(<ProjectRequiredEmptyState description="x" />)
+    renderInRouter(<ProjectRequiredEmptyState description="x" />)
 
     fireEvent.change(screen.getByLabelText('Choose a project to continue'), {
       target: { value: 'p-2' },
@@ -84,7 +90,7 @@ describe('ProjectRequiredEmptyState', () => {
     // `setActiveProject(null)` maps back to ALL_PROJECTS_ID, which re-renders
     // this very prompt — a control that appears to do nothing. Guarding the
     // lookup rather than passing `?? null` is what prevents that.
-    render(<ProjectRequiredEmptyState description="x" />)
+    renderInRouter(<ProjectRequiredEmptyState description="x" />)
     // Drive the change handler with an id the store does not know, which is
     // what a stale option would produce.
     fireEvent.change(screen.getByLabelText('Choose a project to continue'), {
@@ -98,9 +104,29 @@ describe('ProjectRequiredEmptyState', () => {
     // The component cannot tell a fetch in flight from a deployment with no
     // projects, so it asserts neither.
     mocked.state.projects = []
-    render(<ProjectRequiredEmptyState description="x" />)
+    renderInRouter(<ProjectRequiredEmptyState description="x" />)
 
     expect(screen.getByText('No projects loaded')).toBeTruthy()
     expect(screen.queryByText(/loading/i)).toBeNull()
+  })
+
+  it('offers a create path when the list is empty — the one dead end the picker cannot resolve', () => {
+    // A picker of zero projects is the same "go find the control elsewhere"
+    // this component exists to remove. The fresh self-hoster who lands here
+    // before any project exists needs a way forward on THIS screen.
+    mocked.state.projects = []
+    renderInRouter(<ProjectRequiredEmptyState description="x" />)
+
+    const create = screen.getByRole('link', { name: 'Create a project' })
+    expect(create.getAttribute('href')).toBe('/projects')
+  })
+
+  it('does not nag an established deployment to create another project', () => {
+    // When projects exist, picking one is the right move; a create link would
+    // just be noise on the common case.
+    mocked.state.projects = [CHECKOUT, SEARCH]
+    renderInRouter(<ProjectRequiredEmptyState description="x" />)
+
+    expect(screen.queryByRole('link', { name: 'Create a project' })).toBeNull()
   })
 })
