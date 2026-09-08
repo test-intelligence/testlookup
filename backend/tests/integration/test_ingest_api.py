@@ -9,7 +9,7 @@ Covers the security fixes committed in 9f1cd7c:
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -31,7 +31,9 @@ def mock_celery_dispatch():
     batch_task = AsyncMock()
     batch_task.delay = lambda *a, **kw: type("T", (), {"id": "task-batch-1"})()
     file_task = AsyncMock()
-    file_task.delay = lambda *a, **kw: type("T", (), {"id": "task-file-1"})()
+    file_task.apply_async = (
+        lambda *, kwargs, task_id: type("T", (), {"id": task_id})()
+    )
 
     with patch("app.worker.tasks.ingest_uploaded_results", batch_task), \
          patch("app.worker.tasks.ingest_uploaded_file", file_task):
@@ -179,6 +181,89 @@ async def test_ingest_file_happy_path(client, auth_as, mock_celery_dispatch):
     assert resp.json()["run_id"]
 
 
+async def test_ingest_file_seeds_pending_before_worker_can_finish(client, auth_as):
+    """An eager worker cannot have its terminal result overwritten by pending."""
+    project_id = uuid.uuid4()
+    auth_as(accessible_projects={project_id})
+    status_record: dict = {}
+    events: list[str] = []
+
+    async def _set_status(task_id, *, state, **fields):
+        events.append(state)
+        status_record.clear()
+        status_record.update(task_id=task_id, state=state, **fields)
+        return True
+
+    def _finish_immediately(task_id: str):
+        events.append("publish")
+        status_record.clear()
+        status_record.update(
+            task_id=task_id,
+            state="succeeded",
+            result={"total": 1, "failed": 0},
+        )
+        return type("T", (), {"id": task_id})()
+
+    task = MagicMock()
+    task.delay.side_effect = lambda **_kwargs: _finish_immediately("legacy-task")
+    task.apply_async.side_effect = (
+        lambda *, kwargs, task_id: _finish_immediately(task_id)
+    )
+
+    with (
+        patch("app.worker.tasks.ingest_uploaded_file", task),
+        patch("app.services.upload_status.set_status", side_effect=_set_status),
+    ):
+        resp = await client.post(
+            "/api/v1/ingest/file",
+            files={"file": ("results.xml", _MIN_JUNIT_XML, "application/xml")},
+            data={"project_id": str(project_id), "build_number": "b-fast"},
+        )
+
+    assert resp.status_code == 202, resp.text
+    assert events[:2] == ["pending", "publish"]
+    assert status_record["state"] == "succeeded"
+    assert status_record["result"] == {"total": 1, "failed": 0}
+    task.apply_async.assert_called_once()
+    assert task.apply_async.call_args.kwargs["task_id"] == resp.json()["task_id"]
+
+
+async def test_ingest_file_dispatch_failure_clears_pending_status(client, auth_as):
+    project_id = uuid.uuid4()
+    auth_as(accessible_projects={project_id})
+    events: list[tuple[str, str]] = []
+
+    async def _set_status(task_id, *, state, **_fields):
+        events.append(("set", state))
+        return True
+
+    async def _clear_pending(task_id):
+        events.append(("clear", task_id))
+        return True
+
+    task = MagicMock()
+    task.apply_async.side_effect = RuntimeError("broker unavailable")
+    with (
+        patch("app.worker.tasks.ingest_uploaded_file", task),
+        patch("app.services.upload_status.set_status", side_effect=_set_status),
+        patch(
+            "app.services.upload_status.clear_pending_status",
+            side_effect=_clear_pending,
+            create=True,
+        ),
+    ):
+        resp = await client.post(
+            "/api/v1/ingest/file",
+            files={"file": ("results.xml", _MIN_JUNIT_XML, "application/xml")},
+            data={"project_id": str(project_id), "build_number": "b-no-broker"},
+        )
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "Upload could not be queued"
+    assert events[0] == ("set", "pending")
+    assert events[1][0] == "clear"
+
+
 async def test_manual_upload_mints_fresh_run_when_build_label_exists(
     client, auth_as, mock_celery_dispatch,
 ):
@@ -313,12 +398,12 @@ async def test_ingest_file_zip_routes_to_archive(client, auth_as, requested_form
 
     captured: dict = {}
 
-    def _delay(**kw):
-        captured.update(kw)
-        return type("T", (), {"id": "task-zip-1"})()
+    def _apply_async(*, kwargs, task_id):
+        captured.update(kwargs)
+        return type("T", (), {"id": task_id})()
 
     file_task = AsyncMock()
-    file_task.delay = _delay
+    file_task.apply_async = _apply_async
     with patch("app.worker.tasks.ingest_uploaded_file", file_task), \
          patch("app.services.feature_flags.is_enabled", AsyncMock(return_value=False)), \
          patch("app.services.upload_status.set_status", AsyncMock()):
@@ -346,7 +431,10 @@ async def test_ingest_file_run_ai_flag_forwarded(client, auth_as):
 
     captured: dict = {}
     file_task = AsyncMock()
-    file_task.delay = lambda **kw: captured.update(kw) or type("T", (), {"id": "t"})()
+    file_task.apply_async = (
+        lambda *, kwargs, task_id: captured.update(kwargs)
+        or type("T", (), {"id": task_id})()
+    )
     with patch("app.worker.tasks.ingest_uploaded_file", file_task), \
          patch("app.services.upload_status.set_status", AsyncMock()):
         files = {"file": ("x.xml", _MIN_JUNIT_XML, "application/xml")}
@@ -365,12 +453,12 @@ async def test_ingest_file_storage_failure_does_not_enqueue(client, auth_as):
     pid = uuid.uuid4()
     auth_as(accessible_projects={pid})
     task = AsyncMock()
-    delay_called = False
-    def _unexpected_delay(**kw):
-        nonlocal delay_called
-        delay_called = True
+    dispatch_called = False
+    def _unexpected_dispatch(**kw):
+        nonlocal dispatch_called
+        dispatch_called = True
         raise AssertionError("must not enqueue")
-    task.delay = _unexpected_delay
+    task.apply_async = _unexpected_dispatch
 
     class _BrokenStorage:
         async def put_object(self, *args, **kwargs):
@@ -385,7 +473,7 @@ async def test_ingest_file_storage_failure_does_not_enqueue(client, auth_as):
         )
 
     assert resp.status_code == 503
-    assert delay_called is False
+    assert dispatch_called is False
 
 
 async def test_ingest_file_run_ai_defaults_true(client, auth_as):
@@ -395,7 +483,10 @@ async def test_ingest_file_run_ai_defaults_true(client, auth_as):
     auth_as(accessible_projects={pid})
     captured: dict = {}
     file_task = AsyncMock()
-    file_task.delay = lambda **kw: captured.update(kw) or type("T", (), {"id": "t"})()
+    file_task.apply_async = (
+        lambda *, kwargs, task_id: captured.update(kwargs)
+        or type("T", (), {"id": task_id})()
+    )
     with patch("app.worker.tasks.ingest_uploaded_file", file_task), \
          patch("app.services.upload_status.set_status", AsyncMock()):
         files = {"file": ("x.xml", _MIN_JUNIT_XML, "application/xml")}

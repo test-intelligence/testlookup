@@ -432,13 +432,23 @@ async def ingest_file(
         except (ValueError, TypeError):
             logger.warning("file_ingest_commit_range_unparseable", run_id=run_id)
 
-    task = ingest_uploaded_file.delay(
+    # Allocate the Celery task ID and seed its status before publishing. A fast
+    # worker can otherwise finish before this request writes "pending", which
+    # would hide the terminal result from every subsequent poll.
+    task_id = str(uuid.uuid4())
+    from app.services import upload_status
+    await upload_status.set_status(
+        task_id, run_id=run_id, project_id=str(target_project_id),
+        state=upload_status.STATE_PENDING,
+    )
+
+    task_kwargs = dict(
         run_id=run_id,
         file_storage_key=queued_storage_key,
         file_name=file.filename or "unknown",
         file_format=detected_format,
-        # Canonical UUID string so the worker's status writes match the seeded
-        # 'pending' record and the project-scoped-key check in the status poll.
+        # Canonical UUID string so worker writes match the seeded record
+        # and the project-scoped-key check in the status poll.
         project_id=str(target_project_id),
         build_number=build_number,
         branch=branch,
@@ -458,14 +468,17 @@ async def ingest_file(
         executed_at=executed_at.isoformat() if executed_at else None,
         commit_range=commit_range_arg,
     )
-
-    # Seed a 'pending' status so the very first client poll (which may land
-    # before the worker starts) gets a record instead of a 404.
-    from app.services import upload_status
-    await upload_status.set_status(
-        task.id, run_id=run_id, project_id=str(target_project_id),
-        state=upload_status.STATE_PENDING,
-    )
+    try:
+        ingest_uploaded_file.apply_async(kwargs=task_kwargs, task_id=task_id)
+    except Exception as exc:  # noqa: BLE001 — normalize broker errors for clients
+        # Publish failures can be ambiguous. Delete only a record that is still
+        # pending; an already-started worker's parsing/terminal status survives.
+        await upload_status.clear_pending_status(task_id)
+        logger.error("file_ingest_dispatch_failed", run_id=run_id, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Upload could not be queued",
+        ) from exc
 
     logger.info(
         "file_ingest_accepted",
@@ -479,7 +492,7 @@ async def ingest_file(
 
     return IngestResponse(
         run_id=run_id,
-        task_id=task.id,
+        task_id=task_id,
         total_results=0,  # unknown until parsed
     )
 

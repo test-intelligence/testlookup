@@ -6,6 +6,7 @@ silent background run.
 """
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -25,8 +26,39 @@ def _fake_redis_with_store():
     async def _get(key):
         return store.get(key)
 
+    async def _eval(_script, _numkeys, key, *args):
+        if not args:
+            current_raw = store.get(key)
+            if current_raw and json.loads(current_raw).get("state") == upload_status.STATE_PENDING:
+                del store[key]
+                return 1
+            return 0
+
+        value, requested_state, _ttl = args
+        current_raw = store.get(key)
+        if current_raw:
+            current = json.loads(current_raw)
+            current_state = current.get("state")
+            ranks = {
+                upload_status.STATE_PENDING: 0,
+                upload_status.STATE_PARSING: 1,
+                upload_status.STATE_INGESTING: 2,
+                upload_status.STATE_SUCCEEDED: 3,
+                upload_status.STATE_FAILED: 3,
+            }
+            if current_state in {
+                upload_status.STATE_SUCCEEDED,
+                upload_status.STATE_FAILED,
+            }:
+                return 0
+            if ranks.get(requested_state, -1) < ranks.get(current_state, -1):
+                return 0
+        store[key] = value
+        return 1
+
     fake.set = AsyncMock(side_effect=_set)
     fake.get = AsyncMock(side_effect=_get)
+    fake.eval = AsyncMock(side_effect=_eval)
     return fake, store
 
 
@@ -47,7 +79,62 @@ async def test_set_and_get_status_roundtrip():
     assert rec["project_id"] == "p1"
     assert rec["result"] == {"total": 3, "passed": 2, "failed": 1}
     # Record carries a TTL so it self-expires.
-    assert fake.set.call_args.kwargs.get("ex") == upload_status.STATUS_TTL_SECONDS
+    assert int(fake.eval.await_args.args[-1]) == upload_status.STATUS_TTL_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_terminal_status_cannot_regress_to_pending_or_lose_result():
+    """A fast worker result must survive a late API-side pending write."""
+    fake, _ = _fake_redis_with_store()
+    with patch("app.db.redis_client.get_redis", return_value=fake):
+        written = await upload_status.set_status(
+            "fast-task",
+            run_id="run-1",
+            project_id="project-1",
+            state=upload_status.STATE_SUCCEEDED,
+            result={"total": 7, "failed": 0},
+        )
+        regressed = await upload_status.set_status(
+            "fast-task",
+            run_id="run-1",
+            project_id="project-1",
+            state=upload_status.STATE_PENDING,
+        )
+        record = await upload_status.get_status("fast-task")
+
+    assert written is True
+    assert regressed is False
+    assert record is not None
+    assert record["state"] == upload_status.STATE_SUCCEEDED
+    assert record["result"] == {"total": 7, "failed": 0}
+
+
+@pytest.mark.asyncio
+async def test_upload_status_only_moves_forward_and_terminal_is_immutable():
+    fake, _ = _fake_redis_with_store()
+    with patch("app.db.redis_client.get_redis", return_value=fake):
+        assert await upload_status.set_status(
+            "ordered", state=upload_status.STATE_PENDING,
+        ) is True
+        assert await upload_status.set_status(
+            "ordered", state=upload_status.STATE_INGESTING,
+        ) is True
+        assert await upload_status.set_status(
+            "ordered", state=upload_status.STATE_PARSING,
+        ) is False
+        assert await upload_status.set_status(
+            "ordered", state=upload_status.STATE_FAILED,
+            error={"code": "ingest_error"},
+        ) is True
+        assert await upload_status.set_status(
+            "ordered", state=upload_status.STATE_SUCCEEDED,
+            result={"total": 1},
+        ) is False
+        record = await upload_status.get_status("ordered")
+
+    assert record is not None
+    assert record["state"] == upload_status.STATE_FAILED
+    assert record["error"] == {"code": "ingest_error"}
 
 
 @pytest.mark.asyncio
@@ -62,10 +149,45 @@ async def test_get_status_missing_returns_none():
 async def test_set_status_swallows_redis_errors():
     """A Redis blip must never fail the ingest itself — status is advisory."""
     fake = AsyncMock()
-    fake.set = AsyncMock(side_effect=RuntimeError("redis down"))
+    fake.eval = AsyncMock(side_effect=RuntimeError("redis down"))
     with patch("app.db.redis_client.get_redis", return_value=fake):
         # Must not raise.
-        await upload_status.set_status("t1", state=upload_status.STATE_PARSING)
+        assert await upload_status.set_status(
+            "t1", state=upload_status.STATE_PARSING,
+        ) is False
+
+
+@pytest.mark.asyncio
+async def test_set_status_rejects_unknown_state_without_touching_redis():
+    fake = AsyncMock()
+    with patch("app.db.redis_client.get_redis", return_value=fake):
+        assert await upload_status.set_status("t1", state="finished-ish") is False
+
+    fake.eval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_clear_pending_status_never_deletes_worker_progress_or_result():
+    fake, _ = _fake_redis_with_store()
+    with patch("app.db.redis_client.get_redis", return_value=fake):
+        await upload_status.set_status("pending-task", state=upload_status.STATE_PENDING)
+        assert await upload_status.clear_pending_status("pending-task") is True
+        assert await upload_status.get_status("pending-task") is None
+
+        await upload_status.set_status("running-task", state=upload_status.STATE_PARSING)
+        assert await upload_status.clear_pending_status("running-task") is False
+        running = await upload_status.get_status("running-task")
+
+        await upload_status.set_status(
+            "done-task",
+            state=upload_status.STATE_SUCCEEDED,
+            result={"total": 1},
+        )
+        assert await upload_status.clear_pending_status("done-task") is False
+        done = await upload_status.get_status("done-task")
+
+    assert running is not None and running["state"] == upload_status.STATE_PARSING
+    assert done is not None and done["result"] == {"total": 1}
 
 
 def test_summarize_upload_uses_only_accepted_status_counts():
