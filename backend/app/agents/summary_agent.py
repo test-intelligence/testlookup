@@ -204,31 +204,44 @@ class SummaryAgent(BaseAgent):
 
             fallback_reason: str | None = None
             current_op = "generate_structured_report"
-            try:
-                structured = await self._generate_structured_report(
-                    run_data=run_data,
-                    anomaly_summary=anomaly_summary,
-                    anomalies=anomalies,
-                    analyses=analyses,
-                    similar_failures=similar_failures,
-                    stage_quality=stage_quality,
-                    stage_errors=stage_errors,
-                    pipeline_run_id=pipeline_run_id,
-                )
-            except Exception as exc:
-                fallback_reason = str(exc)
-                logger.warning(
-                    "summary_llm_unavailable_generating_deterministic_fallback_su",
-                    error=exc,
+            if state.get("_cost_budget_mode_override") in {"ml", "rules"}:
+                fallback_reason = (
+                    "LLM summary disabled by the pipeline cost-budget downgrade"
                 )
                 structured = self._build_fallback_structured_report(
                     run_data=run_data,
                     anomaly_summary=anomaly_summary,
                     anomalies=anomalies,
                     analyses=analyses,
-                    error_message=fallback_reason,
                     similar_failures=similar_failures,
+                    error_message=fallback_reason,
                 )
+            else:
+                try:
+                    structured = await self._generate_structured_report(
+                        run_data=run_data,
+                        anomaly_summary=anomaly_summary,
+                        anomalies=anomalies,
+                        analyses=analyses,
+                        similar_failures=similar_failures,
+                        stage_quality=stage_quality,
+                        stage_errors=stage_errors,
+                        pipeline_run_id=pipeline_run_id,
+                    )
+                except Exception as exc:
+                    fallback_reason = str(exc)
+                    logger.warning(
+                        "summary_llm_unavailable_generating_deterministic_fallback_su",
+                        error=exc,
+                    )
+                    structured = self._build_fallback_structured_report(
+                        run_data=run_data,
+                        anomaly_summary=anomaly_summary,
+                        anomalies=anomalies,
+                        analyses=analyses,
+                        error_message=fallback_reason,
+                        similar_failures=similar_failures,
+                    )
             summary_provenance["fallback_used"] = bool(fallback_reason)
             summary_provenance["fallback_reason_sha256"] = _hash_text(fallback_reason)
             structured["_provenance"] = summary_provenance

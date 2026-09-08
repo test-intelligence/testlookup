@@ -7,11 +7,49 @@ where every behaviour is deterministic and doesn't need a session.
 """
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.services import run_compare_service as svc
+
+
+@pytest.mark.asyncio
+async def test_fixed_run_suite_pair_ignores_later_runs():
+    project_id = uuid.uuid4()
+    right_id = uuid.uuid4()
+    right = SimpleNamespace(
+        id=right_id,
+        project_id=project_id,
+        primary_suite_name="unit",
+        branch="main",
+        end_time=datetime(2026, 9, 8, 12, tzinfo=timezone.utc),
+        created_at=datetime(2026, 9, 8, 11, tzinfo=timezone.utc),
+    )
+    previous = SimpleNamespace(id=uuid.uuid4(), branch="main")
+    right_result = MagicMock()
+    right_result.scalar_one_or_none.return_value = right
+    previous_result = MagicMock()
+    previous_result.scalar_one_or_none.return_value = previous
+    db = SimpleNamespace(
+        execute=AsyncMock(side_effect=[right_result, previous_result])
+    )
+
+    resolved = await svc.resolve_suite_pair_for_run(
+        db,
+        project_id=project_id,
+        suite_name="unit",
+        right_run_id=right_id,
+    )
+
+    assert resolved == (previous, right)
+    previous_statement = db.execute.await_args_list[1].args[0]
+    rendered = str(previous_statement)
+    assert "coalesce(test_runs.end_time, test_runs.created_at) <" in rendered
+    assert "test_runs.id !=" in rendered
 
 
 # ── _status_bucket ────────────────────────────────────────────────────────

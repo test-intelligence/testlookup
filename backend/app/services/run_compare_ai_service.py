@@ -9,7 +9,11 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.run_compare_agent import PROMPT_VERSION, RunCompareAgent
+from app.agents.run_compare_agent import (
+    PROMPT_VERSION,
+    RunCompareAgent,
+    build_validated_fallback_report,
+)
 from app.models.postgres import RunComparisonReport
 from app.services.run_compare_service import normalize_suite_name
 
@@ -61,6 +65,25 @@ async def get_cached_report(
     return None
 
 
+async def is_report_ready(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    left_run_id: uuid.UUID,
+    right_run_id: uuid.UUID,
+    suite_name: Optional[str],
+) -> bool:
+    """Return whether the exact persisted comparison is complete."""
+    row = await _get_row(
+        db,
+        project_id=project_id,
+        left_run_id=left_run_id,
+        right_run_id=right_run_id,
+        suite_name=suite_name,
+    )
+    return bool(row and row.status == "ready" and row.ai_report)
+
+
 async def mark_queued(
     db: AsyncSession,
     *,
@@ -109,7 +132,15 @@ async def generate_and_save_report(
     suite_name: Optional[str],
     compare_payload: dict[str, Any],
     created_by_user_id: Optional[uuid.UUID] = None,
+    deterministic_only: bool = False,
+    cost_budget_prechecked: bool = False,
 ) -> dict[str, Any]:
+    if not cost_budget_prechecked:
+        from app.services.llm_cost_budget import check_and_apply_cap
+
+        budget_decision = await check_and_apply_cap(project_id)
+        deterministic_only = deterministic_only or budget_decision.is_capped()
+
     await mark_queued(
         db,
         project_id=project_id,
@@ -119,8 +150,11 @@ async def generate_and_save_report(
         compare_payload=compare_payload,
         created_by_user_id=created_by_user_id,
     )
-    agent = RunCompareAgent()
-    report = await agent.generate(compare_payload)
+    if deterministic_only:
+        report = build_validated_fallback_report(compare_payload)
+    else:
+        agent = RunCompareAgent()
+        report = await agent.generate(compare_payload)
     row = await _get_row(
         db,
         project_id=project_id,

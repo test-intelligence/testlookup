@@ -241,6 +241,18 @@ async def get_run(
     return run
 
 
+@router.get("/{run_id}/downstream-status")
+async def get_run_downstream_status(
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
+):
+    """Expose durable publication state for required post-ingestion work."""
+    from app.services.run_downstream_outbox import downstream_status_for_run
+
+    return await downstream_status_for_run(db, run_id=run_id)
+
+
 @router.get("/{run_id}/tests", response_model=TestCaseListResponse)
 async def list_test_cases(
     run_id: uuid.UUID,

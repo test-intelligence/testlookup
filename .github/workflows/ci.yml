@@ -506,6 +506,7 @@ jobs:
           tests/integration/test_investigator_resume_postgres.py
           tests/integration/test_pipeline_resume_postgres.py
           tests/integration/test_report_eval_cycle_postgres.py
+          tests/integration/test_run_downstream_outbox_postgres.py
           tests/integration/test_dead_search_vector_removed_postgres.py
           tests/integration/test_search_step_index_postgres.py
           tests/integration/test_search_step_scope_postgres.py

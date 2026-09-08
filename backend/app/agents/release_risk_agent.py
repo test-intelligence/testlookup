@@ -291,7 +291,20 @@ class ReleaseRiskAgent(BaseAgent):
 
         # ── Step 2: LLM reasoning (non-blocking — failures gracefully degrade) ─
         # Cost optimization: skip LLM for extreme scores (saves ~10K tokens/day)
-        if composite < _EXTREME_GO_THRESHOLD:
+        deterministic_only = bool(state.get("_cost_budget_block")) or state.get(
+            "_cost_budget_mode_override"
+        ) in {"ml", "rules"}
+        if deterministic_only:
+            llm_extras = {
+                "reasoning": (
+                    f"Composite risk score {composite:.0f}/100. "
+                    "Narrative enrichment was skipped by the persisted cost-budget "
+                    "decision; the recommendation and risk score remain deterministic."
+                ),
+                "blocking_issues": self._deterministic_blocking_issues(dim_scores),
+                "conditions_for_go": [],
+            }
+        elif composite < _EXTREME_GO_THRESHOLD:
             llm_extras = {
                 "reasoning": (
                     f"Composite risk score {composite:.0f}/100 — all dimensions in the green zone. "

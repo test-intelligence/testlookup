@@ -134,8 +134,19 @@ class AnalysisAgent(BaseAgent):
         # entry so the Run Intelligence "Decision Trail" drawer explains
         # why the AI ran in reduced mode without operators having to grep
         # Prometheus.
-        from app.services.llm_cost_budget import check_and_apply_cap
-        cap_decision = await check_and_apply_cap(project_id)
+        from app.services.llm_cost_budget import CapDecision, check_and_apply_cap
+        if state.get("_cost_budget_prechecked"):
+            cap_decision = CapDecision(
+                action=str(state.get("_cost_budget_action") or "PRECHECKED"),
+                mode_override=state.get("_cost_budget_mode_override"),
+                block=bool(state.get("_cost_budget_block")),
+                rationale=str(state.get("_cost_budget_rationale") or ""),
+                utilization_pct=float(
+                    state.get("_cost_budget_utilization_pct") or 0.0
+                ),
+            )
+        else:
+            cap_decision = await check_and_apply_cap(project_id)
         if cap_decision.is_capped():
             await self.log_decision(
                 pipeline_run_id,

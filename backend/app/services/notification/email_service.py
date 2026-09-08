@@ -196,6 +196,7 @@ async def send_notification(
     event_type: str,
     metadata: dict | None = None,
     smtp_cfg: dict[str, Any] | None = None,
+    delivery_id: str | None = None,
 ) -> None:
     """
     Send an HTML + plain-text notification email via SMTP.
@@ -221,6 +222,10 @@ async def send_notification(
     msg["Subject"] = title
     msg["From"] = cfg.get("from_address", settings.SMTP_FROM)
     msg["To"] = to
+    if delivery_id:
+        # Stable across retries. SMTP itself is at-least-once, but downstream
+        # mail systems can use Message-ID to suppress an ambiguous resend.
+        msg["Message-ID"] = f"<{delivery_id}@notifications.testlookup>"
 
     msg.attach(MIMEText(_build_plain(title, body, meta), "plain"))
     msg.attach(MIMEText(_build_html(title, body, event_type, meta), "html"))

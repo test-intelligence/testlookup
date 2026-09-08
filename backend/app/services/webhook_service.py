@@ -35,12 +35,13 @@ import hashlib
 import hmac
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
 import structlog
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -52,6 +53,8 @@ from app.models.postgres import Project, User, WebhookDelivery, WebhookSubscript
 from app.services.url_safety import is_safe_public_url as _is_safe_public_url
 
 logger = structlog.get_logger("services.webhook")
+
+_MAX_WEBHOOK_DISPATCH_ATTEMPTS = 8
 
 
 # ── Event catalog ──────────────────────────────────────────────────────────
@@ -120,7 +123,11 @@ async def _assert_safe_target_url(target_url: str) -> None:
 # ── Feature-flag / offline gates ────────────────────────────────────────────
 
 
-async def _post_allowed() -> bool:
+class WebhookGateLookupError(RuntimeError):
+    """The outbound-webhook feature gate could not be resolved."""
+
+
+async def _post_allowed(*, raise_on_lookup_error: bool = False) -> bool:
     """``AI_OFFLINE_MODE`` is the hard kill switch — even with the feature
     flag on, an air-gapped deployment never egresses traffic."""
     if settings.AI_OFFLINE_MODE:
@@ -130,6 +137,10 @@ async def _post_allowed() -> bool:
         return await is_enabled("outbound_webhooks")
     except Exception as exc:
         logger.debug("outbound_webhooks flag check failed", error=str(exc))
+        if raise_on_lookup_error:
+            raise WebhookGateLookupError(
+                "outbound_webhooks feature flag lookup failed"
+            ) from exc
         return False
 
 
@@ -159,18 +170,74 @@ def _has_retry_budget(attempt_count: int, max_retries: Optional[int]) -> bool:
 
 async def _mark_delivery_failed(
     db: AsyncSession,
-    delivery: WebhookDelivery,
+    *,
+    delivery_id: uuid.UUID,
+    dispatch_token: uuid.UUID,
     error: str,
-    subscription: Optional[WebhookSubscription] = None,
-) -> None:
-    """Persist a terminal delivery failure, with subscription diagnostics."""
-    delivery.status = "FAILED"
-    delivery.error = error
-    if subscription is not None:
-        subscription.last_failure_at = datetime.now(timezone.utc)
-        subscription.last_error = error[:2000]
-        subscription.failure_count = int(subscription.failure_count or 0) + 1
+    subscription_id: uuid.UUID | None = None,
+) -> bool:
+    """Token-fence a terminal failure and its subscription diagnostics."""
+    now_failed = datetime.now(timezone.utc)
+    return await _transition_processing_delivery(
+        db,
+        delivery_id=delivery_id,
+        dispatch_token=dispatch_token,
+        delivery_values={
+            "status": "FAILED",
+            "error": error,
+            "dispatch_token": None,
+            "dispatch_lease_expires_at": None,
+            "next_dispatch_at": None,
+        },
+        subscription_id=subscription_id,
+        subscription_values=(
+            {
+                "last_failure_at": now_failed,
+                "last_error": error[:2000],
+                "failure_count": WebhookSubscription.failure_count + 1,
+            }
+            if subscription_id is not None
+            else None
+        ),
+    )
+
+
+async def _transition_processing_delivery(
+    db: AsyncSession,
+    *,
+    delivery_id: uuid.UUID,
+    dispatch_token: uuid.UUID,
+    delivery_values: dict[str, Any],
+    subscription_id: uuid.UUID | None = None,
+    subscription_values: dict[str, Any] | None = None,
+) -> bool:
+    """Commit an attempt outcome only while this worker still owns its lease.
+
+    Provider I/O happens without a database lock. A relay can reclaim the row
+    after the processing lease expires, so every outcome must compare the
+    original token as well as the PROCESSING state. Subscription counters are
+    updated in the same transaction only when that compare-and-set succeeds.
+    """
+    result = await db.execute(
+        update(WebhookDelivery)
+        .where(
+            WebhookDelivery.id == delivery_id,
+            WebhookDelivery.status == "PROCESSING",
+            WebhookDelivery.dispatch_token == dispatch_token,
+        )
+        .values(**delivery_values)
+    )
+    if int(getattr(result, "rowcount", 0) or 0) != 1:
+        await db.rollback()
+        return False
+    if subscription_id is not None and subscription_values:
+        await db.execute(
+            update(WebhookSubscription)
+            .where(WebhookSubscription.id == subscription_id)
+            .values(**subscription_values)
+        )
     await db.commit()
+    return True
 
 
 # ── Subscription CRUD ──────────────────────────────────────────────────────
@@ -373,6 +440,7 @@ async def replay_delivery(
 
         new_row = WebhookDelivery(
             subscription_id=original.subscription_id,
+            run_id=getattr(original, "run_id", None),
             event_type=original.event_type,
             event_payload=original.event_payload,
             status="PENDING",
@@ -392,25 +460,9 @@ async def replay_delivery(
             delivery_id=str(new_id),
             error=str(exc),
         )
-        try:
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(
-                    select(WebhookDelivery).where(WebhookDelivery.id == new_id)
-                )
-                failed_delivery = result.scalar_one_or_none()
-                if failed_delivery is not None:
-                    await _mark_delivery_failed(
-                        db,
-                        failed_delivery,
-                        "webhook replay enqueue failed",
-                    )
-        except Exception as persist_exc:  # noqa: BLE001 — preserve original failure
-            logger.warning(
-                "webhook replay enqueue failure state could not be persisted",
-                delivery_id=str(new_id),
-                error=str(persist_exc),
-            )
-        return None
+        # The committed PENDING row is the recovery contract. The periodic
+        # relay will publish it after the broker recovers.
+        return new_id
 
     logger.info(
         "webhook_delivery_replayed",
@@ -490,6 +542,8 @@ async def emit_event(
     *,
     project_id: uuid.UUID | str,
     payload: dict[str, Any],
+    delivery_scope: str | None = None,
+    raise_on_persistence_error: bool = False,
 ) -> int:
     """Public trigger — called from the pipeline at each event boundary.
 
@@ -499,19 +553,27 @@ async def emit_event(
 
     Gated by ``_post_allowed``: when the feature flag is off or
     ``AI_OFFLINE_MODE`` is on, returns 0 immediately without touching
-    the DB. Never raises — webhook fan-out is best-effort and must not
-    block the operation that triggered it.
+    the DB. Legacy callers remain best-effort. Durable outbox consumers pass
+    ``raise_on_persistence_error=True`` so PostgreSQL can retry a failed fan-out.
     """
     if event_type not in _SUPPORTED_EVENTS:
         logger.debug("emit_event called with unknown event", event_type=event_type)
         return 0
-    if not await _post_allowed():
+    if not await _post_allowed(
+        raise_on_lookup_error=raise_on_persistence_error
+    ):
         return 0
 
     try:
         pid = project_id if isinstance(project_id, uuid.UUID) else uuid.UUID(str(project_id))
     except (TypeError, ValueError):
         return 0
+    event_run_id: uuid.UUID | None = None
+    if event_type == "run.completed":
+        try:
+            event_run_id = uuid.UUID(str(payload.get("run_id")))
+        except (TypeError, ValueError, AttributeError):
+            event_run_id = None
 
     try:
         matched: list[WebhookSubscription] = []
@@ -531,17 +593,48 @@ async def emit_event(
             # celery task has a stable id to update. Under Celery backpressure,
             # rows may sit at PENDING for a few seconds — that's fine.
             deliveries: list[tuple[uuid.UUID, uuid.UUID]] = []
-            for sub in matched:
-                delivery = WebhookDelivery(
-                    subscription_id=sub.id,
-                    event_type=event_type,
-                    event_payload=payload,
-                    status="PENDING",
-                    attempt_count=0,
+            if delivery_scope and matched:
+                values = []
+                for sub in matched:
+                    material = f"{delivery_scope}:{sub.id}:{event_type}"
+                    values.append(
+                        {
+                            "id": uuid.uuid4(),
+                            "subscription_id": sub.id,
+                            "run_id": event_run_id,
+                            "event_type": event_type,
+                            "event_payload": payload,
+                            "delivery_key": hashlib.sha256(
+                                material.encode("utf-8")
+                            ).hexdigest(),
+                            "status": "PENDING",
+                            "attempt_count": 0,
+                            "dispatch_attempts": 0,
+                            "dispatch_failures": 0,
+                        }
+                    )
+                inserted = await db.execute(
+                    pg_insert(WebhookDelivery)
+                    .values(values)
+                    .on_conflict_do_nothing(
+                        index_elements=[WebhookDelivery.delivery_key]
+                    )
+                    .returning(WebhookDelivery.id, WebhookDelivery.subscription_id)
                 )
-                db.add(delivery)
-                await db.flush()
-                deliveries.append((delivery.id, sub.id))
+                deliveries = [(row.id, row.subscription_id) for row in inserted.all()]
+            else:
+                for sub in matched:
+                    delivery = WebhookDelivery(
+                        subscription_id=sub.id,
+                        run_id=event_run_id,
+                        event_type=event_type,
+                        event_payload=payload,
+                        status="PENDING",
+                        attempt_count=0,
+                    )
+                    db.add(delivery)
+                    await db.flush()
+                    deliveries.append((delivery.id, sub.id))
             if deliveries:
                 await db.commit()
     except Exception as exc:  # noqa: BLE001 — webhook fan-out is best-effort
@@ -552,6 +645,8 @@ async def emit_event(
             error_type=type(exc).__name__,
             error=str(exc),
         )
+        if raise_on_persistence_error:
+            raise
         return 0
 
     # Enqueue outside the session so celery errors don't roll back the
@@ -587,7 +682,146 @@ async def emit_event(
 # ── Delivery (called from celery worker) ────────────────────────────────────
 
 
-async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
+async def claim_pending_webhook_dispatches(
+    db: AsyncSession, *, limit: int = 200, lease_seconds: int = 120
+) -> list[WebhookDelivery]:
+    """Lease webhook rows whose original broker publication was lost."""
+    now = datetime.now(timezone.utc)
+    bounded_limit = max(1, min(int(limit), 500))
+    due_filter = or_(
+        and_(
+            WebhookDelivery.status == "PENDING",
+            or_(
+                WebhookDelivery.next_dispatch_at.is_(None),
+                WebhookDelivery.next_dispatch_at <= now,
+            ),
+        ),
+        and_(
+            WebhookDelivery.status.in_({"SENDING", "PROCESSING"}),
+            WebhookDelivery.dispatch_lease_expires_at <= now,
+        ),
+    )
+    ranked_due = (
+        select(
+            WebhookDelivery.id.label("id"),
+            func.row_number()
+            .over(
+                partition_by=WebhookSubscription.project_id,
+                order_by=(WebhookDelivery.created_at, WebhookDelivery.id),
+            )
+            .label("tenant_rank"),
+        )
+        .join(
+            WebhookSubscription,
+            WebhookSubscription.id == WebhookDelivery.subscription_id,
+        )
+        .where(due_filter)
+        .cte("ranked_webhook_due")
+    )
+    result = await db.execute(
+        select(WebhookDelivery)
+        .join(ranked_due, ranked_due.c.id == WebhookDelivery.id)
+        .order_by(
+            ranked_due.c.tenant_rank,
+            WebhookDelivery.created_at,
+            WebhookDelivery.id,
+        )
+        .with_for_update(skip_locked=True, of=WebhookDelivery)
+        .limit(bounded_limit)
+    )
+    claimed: list[WebhookDelivery] = []
+    for row in result.scalars().all():
+        due = row.next_dispatch_at is None or row.next_dispatch_at <= now
+        expired = (
+            row.dispatch_lease_expires_at is not None
+            and row.dispatch_lease_expires_at <= now
+        )
+        if not (
+            (row.status == "PENDING" and due)
+            or (row.status in {"SENDING", "PROCESSING"} and expired)
+        ):
+            continue
+        if (
+            row.status == "PENDING"
+            and int(row.dispatch_failures or 0) >= _MAX_WEBHOOK_DISPATCH_ATTEMPTS
+        ):
+            row.status = "FAILED"
+            row.error = row.error or "webhook dispatch attempts exhausted"
+            row.dispatch_lease_expires_at = None
+            row.next_dispatch_at = None
+            continue
+        previous_status = row.status
+        row.status = "SENDING"
+        row.dispatch_attempts = int(row.dispatch_attempts or 0) + 1
+        # Preserve a published message's token across queue-wait recovery so
+        # either the original or republished copy remains executable. A worker
+        # whose processing lease expired is fenced with a new token.
+        if previous_status == "PROCESSING" or row.dispatch_token is None:
+            row.dispatch_token = uuid.uuid4()
+        row.dispatch_lease_expires_at = now + timedelta(
+            seconds=max(10, min(int(lease_seconds), 900))
+        )
+        row.next_dispatch_at = row.dispatch_lease_expires_at
+        claimed.append(row)
+    return claimed
+
+
+async def relay_pending_webhook_deliveries(*, limit: int = 200) -> dict[str, int]:
+    """Recover committed webhook rows that have no live broker delivery."""
+    async with AsyncSessionLocal() as db:
+        rows = await claim_pending_webhook_dispatches(db, limit=limit)
+        await db.commit()
+
+    published = failed = 0
+    from app.worker.tasks import deliver_webhook as _deliver
+
+    for row in rows:
+        token = row.dispatch_token
+        if token is None:
+            failed += 1
+            continue
+        try:
+            _deliver.apply_async(
+                kwargs={
+                    "delivery_id": str(row.id),
+                    "dispatch_token": str(token),
+                },
+                queue="default",
+                task_id=f"webhook-delivery-{row.id}",
+            )
+            published += 1
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            async with AsyncSessionLocal() as db:
+                locked = (
+                    await db.execute(
+                        select(WebhookDelivery)
+                        .where(WebhookDelivery.id == row.id)
+                        .with_for_update()
+                    )
+                ).scalar_one_or_none()
+                if (
+                    locked is not None
+                    and locked.status == "SENDING"
+                    and locked.dispatch_token == token
+                ):
+                    locked.dispatch_failures = int(locked.dispatch_failures or 0) + 1
+                    exhausted = locked.dispatch_failures >= _MAX_WEBHOOK_DISPATCH_ATTEMPTS
+                    locked.status = "FAILED" if exhausted else "PENDING"
+                    locked.error = f"broker_{type(exc).__name__}"
+                    locked.dispatch_lease_expires_at = None
+                    locked.next_dispatch_at = None if exhausted else datetime.now(timezone.utc) + timedelta(
+                        seconds=min(300, 2 ** min(int(locked.dispatch_attempts or 0), 8))
+                    )
+                    await db.commit()
+    return {"claimed": len(rows), "published": published, "failed": failed}
+
+
+async def deliver(
+    delivery_id: uuid.UUID,
+    *,
+    dispatch_token: uuid.UUID | None = None,
+) -> dict[str, Any]:
     """Perform a single delivery attempt for a ``WebhookDelivery`` row.
 
     This is called from the ``deliver_webhook`` Celery task. Returns a
@@ -601,11 +835,37 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
     async with AsyncSessionLocal() as db:
         delivery = (
             await db.execute(
-                select(WebhookDelivery).where(WebhookDelivery.id == delivery_id)
+                select(WebhookDelivery)
+                .where(WebhookDelivery.id == delivery_id)
+                .with_for_update()
             )
         ).scalar_one_or_none()
         if delivery is None:
             return {"skipped": "delivery_row_missing"}
+        if delivery.status in {"SUCCESS", "FAILED", "DLQ"}:
+            return {"skipped": "delivery_already_terminal"}
+        if dispatch_token is None:
+            if delivery.status != "PENDING":
+                return {"skipped": "delivery_already_claimed"}
+            delivery.status = "PROCESSING"
+            delivery.dispatch_attempts = int(
+                getattr(delivery, "dispatch_attempts", 0) or 0
+            ) + 1
+            delivery.dispatch_token = uuid.uuid4()
+        elif (
+            delivery.status != "SENDING"
+            or delivery.dispatch_token != dispatch_token
+        ):
+            return {"skipped": "stale_dispatch_token"}
+        else:
+            delivery.status = "PROCESSING"
+        delivery.dispatch_lease_expires_at = datetime.now(timezone.utc) + timedelta(
+            seconds=900
+        )
+        active_dispatch_token = delivery.dispatch_token
+        if active_dispatch_token is None:  # defensive: every claimed row owns a token
+            return {"skipped": "missing_dispatch_token"}
+        await db.commit()
 
         subscription = (
             await db.execute(
@@ -615,17 +875,46 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
             )
         ).scalar_one_or_none()
         if subscription is None or not subscription.enabled:
-            delivery.status = "FAILED"
-            delivery.error = "subscription missing or disabled"
-            await db.commit()
+            changed = await _mark_delivery_failed(
+                db,
+                delivery_id=delivery.id,
+                dispatch_token=active_dispatch_token,
+                error="subscription missing or disabled",
+            )
+            if not changed:
+                return {"skipped": "stale_dispatch_token"}
             return {"error": "subscription missing or disabled"}
 
         # Feature flag / offline re-check — an admin may have disabled
         # webhooks between enqueue and delivery.
-        if not await _post_allowed():
-            await _mark_delivery_failed(
-                db, delivery, "webhooks disabled or offline mode"
+        try:
+            post_allowed = await _post_allowed(raise_on_lookup_error=True)
+        except WebhookGateLookupError as exc:
+            retry_at = datetime.now(timezone.utc) + timedelta(seconds=30)
+            changed = await _transition_processing_delivery(
+                db,
+                delivery_id=delivery.id,
+                dispatch_token=active_dispatch_token,
+                delivery_values={
+                    "status": "PENDING",
+                    "error": str(exc),
+                    "dispatch_token": None,
+                    "dispatch_lease_expires_at": None,
+                    "next_dispatch_at": retry_at,
+                },
             )
+            if not changed:
+                return {"skipped": "stale_dispatch_token"}
+            return {"retry": True, "error": str(exc)}
+        if not post_allowed:
+            changed = await _mark_delivery_failed(
+                db,
+                delivery_id=delivery.id,
+                dispatch_token=active_dispatch_token,
+                error="webhooks disabled or offline mode",
+            )
+            if not changed:
+                return {"skipped": "stale_dispatch_token"}
             return {"error": "gated"}
 
         # SSRF guard at the egress boundary. create/update validate too, but a
@@ -636,9 +925,15 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
             _is_safe_public_url, subscription.target_url
         )
         if not safe:
-            delivery.status = "FAILED"
-            delivery.error = f"blocked unsafe target URL: {reason}"
-            await db.commit()
+            changed = await _mark_delivery_failed(
+                db,
+                delivery_id=delivery.id,
+                dispatch_token=active_dispatch_token,
+                error=f"blocked unsafe target URL: {reason}",
+                subscription_id=subscription.id,
+            )
+            if not changed:
+                return {"skipped": "stale_dispatch_token"}
             from app.core.metrics import webhook_delivery_attempts_total
             webhook_delivery_attempts_total.labels(
                 event_type=delivery.event_type,
@@ -654,12 +949,15 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
                 db, SECRET_SCOPE, _secret_key(subscription.id),
             )
             if not hmac_secret:
-                await _mark_delivery_failed(
+                changed = await _mark_delivery_failed(
                     db,
-                    delivery,
-                    "configured signing secret unavailable",
-                    subscription,
+                    delivery_id=delivery.id,
+                    dispatch_token=active_dispatch_token,
+                    error="configured signing secret unavailable",
+                    subscription_id=subscription.id,
                 )
+                if not changed:
+                    return {"skipped": "stale_dispatch_token"}
                 from app.core.metrics import webhook_delivery_attempts_total
                 webhook_delivery_attempts_total.labels(
                     event_type=delivery.event_type,
@@ -686,7 +984,14 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
         if hmac_secret:
             headers["X-TestLookup-Signature"] = compute_signature(hmac_secret, body)
 
-        delivery.attempt_count = int(delivery.attempt_count or 0) + 1
+        attempt_count = int(delivery.attempt_count or 0) + 1
+        if not await _transition_processing_delivery(
+            db,
+            delivery_id=delivery.id,
+            dispatch_token=active_dispatch_token,
+            delivery_values={"attempt_count": attempt_count},
+        ):
+            return {"skipped": "stale_dispatch_token"}
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -696,15 +1001,35 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
                     headers=headers,
                 )
         except Exception as exc:
-            delivery.error = f"{type(exc).__name__}: {str(exc)[:1800]}"
-            should_retry = _has_retry_budget(
-                delivery.attempt_count, subscription.max_retries
+            error = f"{type(exc).__name__}: {str(exc)[:1800]}"
+            should_retry = _has_retry_budget(attempt_count, subscription.max_retries)
+            now_failed = datetime.now(timezone.utc)
+            next_dispatch_at = (
+                now_failed
+                + timedelta(seconds=min(480, 30 * (2 ** max(attempt_count - 1, 0))))
+                if should_retry
+                else None
             )
-            delivery.status = "PENDING" if should_retry else "DLQ"
-            subscription.last_failure_at = datetime.now(timezone.utc)
-            subscription.last_error = delivery.error[:2000]
-            subscription.failure_count = int(subscription.failure_count or 0) + 1
-            await db.commit()
+            changed = await _transition_processing_delivery(
+                db,
+                delivery_id=delivery.id,
+                dispatch_token=active_dispatch_token,
+                delivery_values={
+                    "status": "PENDING" if should_retry else "DLQ",
+                    "error": error,
+                    "dispatch_token": None,
+                    "dispatch_lease_expires_at": None,
+                    "next_dispatch_at": next_dispatch_at,
+                },
+                subscription_id=subscription.id,
+                subscription_values={
+                    "last_failure_at": now_failed,
+                    "last_error": error[:2000],
+                    "failure_count": WebhookSubscription.failure_count + 1,
+                },
+            )
+            if not changed:
+                return {"skipped": "stale_dispatch_token"}
             from app.core.metrics import webhook_delivery_attempts_total
             webhook_delivery_attempts_total.labels(
                 event_type=delivery.event_type,
@@ -712,18 +1037,34 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
             ).inc()
             return {"retry": should_retry, "error": str(exc)}
 
-        delivery.http_status = resp.status_code
-        delivery.response_preview = (resp.text or "")[:2000]
+        response_preview = (resp.text or "")[:2000]
 
         if 200 <= resp.status_code < 300:
-            delivery.status = "SUCCESS"
-            delivery.delivered_at = datetime.now(timezone.utc)
-            delivery.error = None
-            subscription.last_delivered_at = delivery.delivered_at
-            subscription.last_error = None
-            subscription.last_failure_at = None
-            subscription.total_delivered = int(subscription.total_delivered or 0) + 1
-            await db.commit()
+            delivered_at = datetime.now(timezone.utc)
+            changed = await _transition_processing_delivery(
+                db,
+                delivery_id=delivery.id,
+                dispatch_token=active_dispatch_token,
+                delivery_values={
+                    "status": "SUCCESS",
+                    "http_status": resp.status_code,
+                    "response_preview": response_preview,
+                    "delivered_at": delivered_at,
+                    "error": None,
+                    "dispatch_token": None,
+                    "dispatch_lease_expires_at": None,
+                    "next_dispatch_at": None,
+                },
+                subscription_id=subscription.id,
+                subscription_values={
+                    "last_delivered_at": delivered_at,
+                    "last_error": None,
+                    "last_failure_at": None,
+                    "total_delivered": WebhookSubscription.total_delivered + 1,
+                },
+            )
+            if not changed:
+                return {"skipped": "stale_dispatch_token"}
             from app.core.metrics import webhook_delivery_attempts_total
             webhook_delivery_attempts_total.labels(
                 event_type=delivery.event_type,
@@ -733,28 +1074,44 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
 
         # Non-2xx — retry on 5xx/429, mark FAILED on 4xx (customer bug).
         retryable = resp.status_code in (408, 425, 429, 500, 502, 503, 504)
-        delivery.error = f"HTTP {resp.status_code}: {delivery.response_preview[:200]}"
-        subscription.last_failure_at = datetime.now(timezone.utc)
-        subscription.last_error = delivery.error[:2000]
-        subscription.failure_count = int(subscription.failure_count or 0) + 1
-
-        if retryable and _has_retry_budget(
-            delivery.attempt_count, subscription.max_retries
-        ):
-            delivery.status = "PENDING"  # Celery task will retry with backoff
-            await db.commit()
-            from app.core.metrics import webhook_delivery_attempts_total
-            webhook_delivery_attempts_total.labels(
-                event_type=delivery.event_type,
-                result="retry",
-            ).inc()
-            return {"retry": True, "http_status": resp.status_code}
-
-        delivery.status = "DLQ" if retryable else "FAILED"
-        await db.commit()
+        error = f"HTTP {resp.status_code}: {response_preview[:200]}"
+        should_retry = retryable and _has_retry_budget(
+            attempt_count, subscription.max_retries
+        )
+        now_failed = datetime.now(timezone.utc)
+        final_status = "PENDING" if should_retry else ("DLQ" if retryable else "FAILED")
+        changed = await _transition_processing_delivery(
+            db,
+            delivery_id=delivery.id,
+            dispatch_token=active_dispatch_token,
+            delivery_values={
+                "status": final_status,
+                "http_status": resp.status_code,
+                "response_preview": response_preview,
+                "error": error,
+                "dispatch_token": None,
+                "dispatch_lease_expires_at": None,
+                "next_dispatch_at": (
+                    now_failed
+                    + timedelta(seconds=min(480, 30 * (2 ** max(attempt_count - 1, 0))))
+                    if should_retry
+                    else None
+                ),
+            },
+            subscription_id=subscription.id,
+            subscription_values={
+                "last_failure_at": now_failed,
+                "last_error": error[:2000],
+                "failure_count": WebhookSubscription.failure_count + 1,
+            },
+        )
+        if not changed:
+            return {"skipped": "stale_dispatch_token"}
         from app.core.metrics import webhook_delivery_attempts_total
         webhook_delivery_attempts_total.labels(
             event_type=delivery.event_type,
-            result="failure",
+            result="retry" if should_retry else "failure",
         ).inc()
-        return {"status": delivery.status, "http_status": resp.status_code}
+        if should_retry:
+            return {"retry": True, "http_status": resp.status_code}
+        return {"status": final_status, "http_status": resp.status_code}

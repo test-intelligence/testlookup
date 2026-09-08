@@ -78,19 +78,42 @@ async def test_deliver_blocks_unsafe_target_without_posting():
     )
 
     class _Res:
-        def __init__(self, val):
+        def __init__(self, val=None, *, rowcount=0):
             self._val = val
+            self.rowcount = rowcount
 
         def scalar_one_or_none(self):
             return self._val
 
     class _FakeDB:
         async def execute(self, stmt):
-            # First execute → delivery, second → subscription.
             self._n = getattr(self, "_n", 0) + 1
-            return _Res(delivery if self._n == 1 else sub)
+            if self._n == 1:
+                return _Res(delivery)
+            if self._n == 2:
+                return _Res(sub)
+
+            # Token-fenced outcome persistence uses Core UPDATEs rather than
+            # mutating the selected ORM object. Mirror the successful CAS so
+            # the fixture still verifies both the durable failure state and
+            # the absence of provider I/O.
+            if getattr(getattr(stmt, "table", None), "name", None) == "webhook_deliveries":
+                params = stmt.compile().params
+                for key in (
+                    "status",
+                    "error",
+                    "dispatch_token",
+                    "dispatch_lease_expires_at",
+                    "next_dispatch_at",
+                ):
+                    if key in params:
+                        setattr(delivery, key, params[key])
+            return _Res(rowcount=1)
 
         async def commit(self):
+            pass
+
+        async def rollback(self):
             pass
 
         async def __aenter__(self):

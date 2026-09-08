@@ -46,6 +46,42 @@ def _stage(plan: dict) -> dict:
     return next(s for s in plan["stages"] if s["stage"] == "defect_commander")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "budget_state",
+    [
+        {"_cost_budget_mode_override": "ml", "_cost_budget_block": False},
+        {"_cost_budget_mode_override": "rules", "_cost_budget_block": False},
+        {"_cost_budget_mode_override": None, "_cost_budget_block": True},
+    ],
+)
+async def test_cost_budget_state_never_constructs_llm_for_jira_content(
+    monkeypatch,
+    budget_state,
+):
+    from types import SimpleNamespace
+
+    from app.services import defect_promotion_service
+
+    get_llm = AsyncMock(side_effect=AssertionError("LLM must remain gated"))
+    monkeypatch.setattr(defect_promotion_service, "get_llm", get_llm)
+    cluster = SimpleNamespace(
+        label="checkout timeout",
+        size=3,
+        representative_error="request timed out",
+    )
+
+    content = await DefectCommander._jira_content_for_state(
+        budget_state,
+        cluster,
+        [],
+    )
+
+    get_llm.assert_not_awaited()
+    assert content["title"] == "checkout timeout"
+    assert content["component"] == "Unknown"
+
+
 # ── Default off ──────────────────────────────────────────────────────────────
 
 

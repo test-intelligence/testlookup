@@ -102,6 +102,11 @@ async def test_dispatch_node_persists_cluster_authority_before_staging(monkeypat
             "member_test_ids": [str(uuid4())],
         }],
         "cluster_child_settings": {"enabled": True},
+        "_cost_budget_action": "DOWNGRADE_RULES",
+        "_cost_budget_mode_override": "rules",
+        "_cost_budget_block": False,
+        "_cost_budget_rationale": "monthly cap",
+        "_cost_budget_utilization_pct": 100.0,
     }
 
     result = await workflow.cluster_investigation_dispatch_node(state)
@@ -109,6 +114,58 @@ async def test_dispatch_node_persists_cluster_authority_before_staging(monkeypat
     assert calls == ["persist", "stage"]
     assert result["cluster_investigation_plan"]["planner_sha256"] == "a" * 64
     assert result["completed_stages"] == ["cluster_investigation_dispatch"]
+    assert stage.await_args.kwargs["cost_budget_decision"] == {
+        "action": "DOWNGRADE_RULES",
+        "mode_override": "rules",
+        "block": False,
+        "rationale": "monthly cap",
+        "utilization_pct": 100.0,
+    }
+
+
+def test_parent_downgrade_removes_llm_budget_from_every_cluster_child():
+    from app.services.agent_planner import build_cluster_investigation_plan
+
+    parent_id, project_id, run_id = uuid4(), uuid4(), uuid4()
+    decision = {
+        "action": "DOWNGRADE_RULES",
+        "mode_override": "rules",
+        "block": False,
+    }
+    parent = SimpleNamespace(
+        execution_metadata={"cost_budget_decision": decision}
+    )
+    settings = {
+        "aggregate_budget": {
+            "max_llm_calls": 8,
+            "max_tokens": 24_000,
+            "max_cost_usd": 3.0,
+            "max_seconds": 300,
+        }
+    }
+    capped = orchestrator._apply_parent_cost_budget(parent, settings, decision)
+    plan = build_cluster_investigation_plan(
+        parent_pipeline_run_id=parent_id,
+        project_id=project_id,
+        run_id=run_id,
+        clusters=[
+            {
+                "failure_cluster_id": str(uuid4()),
+                "cluster_id": f"cluster-{index}",
+                "member_test_ids": [str(uuid4())],
+            }
+            for index in range(2)
+        ],
+        aggregate_budget=capped["aggregate_budget"],
+        max_children=2,
+    )
+
+    assert plan["selected"]
+    for task in plan["selected"]:
+        assert task["budget"]["max_llm_calls"] == 0
+        assert task["budget"]["max_tokens"] == 0
+        assert task["budget"]["max_cost_usd"] == 0.0
+    assert settings["aggregate_budget"]["max_llm_calls"] == 8
 
 
 @pytest.mark.asyncio

@@ -94,6 +94,54 @@ def _persisted_cluster_child_settings(
     return dict(persisted)
 
 
+def _apply_parent_cost_budget(
+    parent_pipeline: AgentPipelineRun,
+    settings_snapshot: dict[str, Any],
+    supplied_decision: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Remove child LLM capacity when the parent pipeline was downgraded.
+
+    Prefer the decision persisted on the parent pipeline. The supplied state
+    snapshot closes the narrow case where execution-context persistence was
+    temporarily unavailable; once child intents are committed, their zeroed
+    budget is itself durable.
+    """
+    metadata = (
+        parent_pipeline.execution_metadata
+        if isinstance(parent_pipeline.execution_metadata, dict)
+        else {}
+    )
+    persisted = metadata.get("cost_budget_decision")
+    if isinstance(persisted, dict) and isinstance(supplied_decision, dict):
+        persisted_core = {
+            key: persisted.get(key) for key in ("action", "mode_override", "block")
+        }
+        supplied_core = {
+            key: supplied_decision.get(key)
+            for key in ("action", "mode_override", "block")
+        }
+        if persisted_core != supplied_core:
+            raise ValueError("cost_budget_decision_mismatch")
+    decision = persisted if isinstance(persisted, dict) else supplied_decision
+    snapshot = dict(settings_snapshot)
+    if not isinstance(decision, dict):
+        return snapshot
+    downgraded = decision.get("mode_override") in {"ml", "rules"}
+    if not downgraded and not bool(decision.get("block")):
+        return snapshot
+    aggregate = dict(snapshot.get("aggregate_budget") or {})
+    aggregate.update(
+        {
+            "max_llm_calls": 0,
+            "max_tokens": 0,
+            "max_cost_usd": 0.0,
+        }
+    )
+    snapshot["aggregate_budget"] = aggregate
+    snapshot["cost_budget_decision"] = dict(decision)
+    return snapshot
+
+
 async def resolve_cluster_child_settings(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -173,6 +221,7 @@ async def stage_cluster_investigations(
     project_id: str,
     run_id: str,
     frozen_settings: dict[str, Any],
+    cost_budget_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create/reuse selected children, parent task rows, and outbox atomically."""
     parent_id = uuid.UUID(str(parent_pipeline_run_id))
@@ -199,6 +248,11 @@ async def stage_cluster_investigations(
             raise ValueError("parent_pipeline_authority_invalid")
         frozen_settings = _persisted_cluster_child_settings(
             parent_pipeline, frozen_settings
+        )
+        frozen_settings = _apply_parent_cost_budget(
+            parent_pipeline,
+            frozen_settings,
+            cost_budget_decision,
         )
         enabled = bool(frozen_settings.get("enabled"))
         aggregate_budget = frozen_settings.get("aggregate_budget") or {}

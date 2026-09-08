@@ -1,13 +1,15 @@
 """Celery background tasks for ingestion and AI analysis."""
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import random
 import time
 import uuid
 from typing import Any, cast
 
 import structlog
+from celery import Task
+from celery.exceptions import Retry
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from app.worker.celery_app import celery_app
@@ -130,6 +132,88 @@ def _run_async(coro):
         loop.close()
 
 
+class DownstreamTrackedTask(Task):
+    """Tie outbox publication to the consumer's durable business outcome.
+
+    Direct callers have no tracking headers and retain the task's historical
+    Celery retry behaviour.  Outbox deliveries let PostgreSQL own retries so a
+    Celery retry and the relay cannot race one another.
+    """
+
+    abstract = True
+
+    def __call__(self, *args, **kwargs):
+        headers = getattr(self.request, "headers", None) or {}
+        raw_outbox_id = headers.get("downstream_outbox_id")
+        raw_token = headers.get("downstream_dispatch_token")
+        if not raw_outbox_id or not raw_token:
+            return super().__call__(*args, **kwargs)
+
+        from app.services.run_downstream_outbox import (
+            begin_downstream_execution,
+            complete_downstream_execution,
+            defer_downstream_execution,
+            fail_downstream_execution,
+        )
+
+        outbox_id = uuid.UUID(str(raw_outbox_id))
+        dispatch_token = uuid.UUID(str(raw_token))
+        claimed = _run_async(
+            begin_downstream_execution(
+                outbox_id=outbox_id,
+                dispatch_token=dispatch_token,
+                task_id=str(self.request.id or ""),
+            )
+        )
+        if not claimed:
+            return {"duplicate": True, "downstream_outbox_id": str(outbox_id)}
+
+        try:
+            result = super().__call__(*args, **kwargs)
+        except Retry as exc:
+            retry_exc = exc.exc
+            if getattr(retry_exc, "defer_downstream_without_failure", False):
+                _run_async(
+                    defer_downstream_execution(
+                        outbox_id=outbox_id,
+                        dispatch_token=dispatch_token,
+                        reason=f"task_{type(retry_exc).__name__}",
+                    )
+                )
+            else:
+                _run_async(
+                    fail_downstream_execution(
+                        outbox_id=outbox_id,
+                        dispatch_token=dispatch_token,
+                        error_code=(
+                            f"task_{type(retry_exc).__name__}"
+                            if retry_exc
+                            else "task_retry"
+                        ),
+                    )
+                )
+            return {"deferred": True, "downstream_outbox_id": str(outbox_id)}
+        except Exception as exc:  # noqa: BLE001
+            _run_async(
+                fail_downstream_execution(
+                    outbox_id=outbox_id,
+                    dispatch_token=dispatch_token,
+                    error_code=f"task_{type(exc).__name__}",
+                )
+            )
+            return {"deferred": True, "downstream_outbox_id": str(outbox_id)}
+
+        completed = _run_async(
+            complete_downstream_execution(
+                outbox_id=outbox_id,
+                dispatch_token=dispatch_token,
+            )
+        )
+        if not completed:
+            raise RuntimeError("downstream_completion_fence_lost")
+        return result
+
+
 def _bind_task_context(task, **extra):
     """Bind structured logging context for a Celery task (observability improvement)."""
     clear_contextvars()
@@ -146,6 +230,31 @@ def _exponential_backoff(attempt: int, base: int = 30, cap: int = 600) -> int:
     delay = min(base * (2 ** attempt), cap)
     jitter = delay * 0.2 * random.random()
     return int(delay + jitter)
+
+
+def _live_run_completion_time(
+    completed_at: str | None,
+    *,
+    existing_end_time: datetime | None,
+    worker_time: datetime,
+) -> datetime:
+    """Resolve the immutable live-session completion time for persistence.
+
+    New durable payloads carry the timestamp captured by ``close_session``.
+    Legacy payloads preserve a terminal run's existing value; only a genuinely
+    missing timestamp falls back to worker execution time.
+    """
+    if completed_at:
+        try:
+            parsed = datetime.fromisoformat(str(completed_at).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("invalid_live_session_completed_at") from exc
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    if existing_end_time is not None:
+        return existing_end_time
+    return worker_time
 
 
 def _beat_span(task_name: str):
@@ -293,7 +402,50 @@ def _release_dedup_for_retry(dedup_key: str, dedup_owner: str, task_id: str) -> 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
 
 @celery_app.task(
+    name="app.worker.tasks.dispatch_run_completed_webhook",
+    base=DownstreamTrackedTask,
+    bind=True,
+    max_retries=2,
+    default_retry_delay=15,
+    queue="default",
+)
+def dispatch_run_completed_webhook(
+    self,
+    project_id: str,
+    payload: dict,
+):
+    """Persist and publish an idempotent run.completed webhook emission."""
+    from app.services.webhook_service import emit_event
+
+    headers = getattr(self.request, "headers", None) or {}
+    outbox_id = headers.get("downstream_outbox_id")
+    if not outbox_id:
+        raise RuntimeError("run_completed_webhook_requires_outbox_identity")
+    try:
+        return _run_async(
+            emit_event(
+                "run.completed",
+                project_id=project_id,
+                payload=payload,
+                delivery_scope=(
+                    f"run-completed:{project_id}:{payload.get('run_id')}:v1"
+                ),
+                raise_on_persistence_error=True,
+            )
+        )
+    except Exception as exc:
+        logger.error(
+            "[Task %s] run.completed webhook emission failed: %s",
+            self.request.id,
+            exc,
+            exc_info=True,
+        )
+        raise self.retry(exc=exc)
+
+
+@celery_app.task(
     name="app.worker.tasks.persist_live_session",
+    base=DownstreamTrackedTask,
     bind=True,
     max_retries=3,
     queue="ingestion",
@@ -309,6 +461,7 @@ def persist_live_session(
     commit_hash: str = "",
     final_state: dict | None = None,
     suite_name: str | None = None,
+    completed_at: str | None = None,
 ):
     """
     Persist a completed live execution session to PostgreSQL.
@@ -452,14 +605,17 @@ def persist_live_session(
             ).scalar() or 0
             if existing_tc_count > 0 and not events:
                 logger.info(
-                    "[Task %s] Skipping persist for run=%s — %d TestCase rows already "
-                    "present and buffer is empty (incremental drain or earlier retry)",
+                    "[Task %s] Persistence already complete for run=%s — %d TestCase "
+                    "rows present; resuming idempotent finalization",
                     self.request.id, run_id, existing_tc_count,
                 )
-                # Genuine no-op — a previous tick already drained
-                # everything OR this is a duplicate close_session
-                # retry. Skip finalize_run too; running it a second
-                # time double-fires auto-tagging + suite_sync.
+                from app.services.ingestion_pipeline import finalize_run
+
+                await finalize_run(
+                    run_id=str(run_uuid),
+                    project_id=str(proj_uuid),
+                    build_number=build_number,
+                )
                 return
 
             # Upsert TestRun — skip if already exists (idempotent)
@@ -474,6 +630,11 @@ def persist_live_session(
                 logger.info("[live] skipping tombstoned run %s", run_uuid)
                 return
             if run is None:
+                run_completed_at = _live_run_completion_time(
+                    completed_at,
+                    existing_end_time=None,
+                    worker_time=now,
+                )
                 run = TestRun(
                     id=run_uuid,
                     project_id=proj_uuid,
@@ -492,12 +653,17 @@ def persist_live_session(
                     pass_rate=pass_rate,
                     primary_suite_name=session_suite,
                     suite_names=[session_suite] if session_suite else None,
-                    start_time=now,
-                    end_time=now,
+                    start_time=run_completed_at,
+                    end_time=run_completed_at,
                 )
                 db.add(run)
                 await db.flush()   # assigns DB id before we reference it in TestCase FKs
             else:
+                run_completed_at = _live_run_completion_time(
+                    completed_at,
+                    existing_end_time=run.end_time,
+                    worker_time=now,
+                )
                 # Update aggregates on the existing row
                 run.status       = run_status
                 run.total_tests  = total
@@ -507,7 +673,7 @@ def persist_live_session(
                 run.broken_tests  = broken
                 run.unknown_tests = unknown
                 run.pass_rate     = pass_rate
-                run.end_time      = now
+                run.end_time      = run_completed_at
                 # Stamp primary_suite_name if upsert_test_run never ran
                 # for this session (race window: session opens + closes
                 # without the periodic upsert firing).
@@ -705,22 +871,13 @@ def persist_live_session(
         # and notifications. Skipping finalize_run for live-stream runs is
         # why /suites was empty even with test_cases populated. Mirror the
         # API path here so live runs participate in the full pipeline.
-        try:
-            from app.services.ingestion_pipeline import finalize_run
-            await finalize_run(
-                run_id=str(run_uuid),
-                project_id=str(proj_uuid),
-                build_number=build_number,
-            )
-        except Exception as exc:
-            # finalize_run runs each step inside an isolated session and
-            # logs its own failures; an outer failure here is unexpected.
-            # Don't fail the task — TestCase rows are already committed and
-            # the next persist retry will short-circuit on the dedup check.
-            logger.warning(
-                "[Task %s] finalize_run failed after live persist run=%s: %s",
-                self.request.id, run_id, exc,
-            )
+        from app.services.ingestion_pipeline import finalize_run
+
+        await finalize_run(
+            run_id=str(run_uuid),
+            project_id=str(proj_uuid),
+            build_number=build_number,
+        )
 
         # ── Clean up Redis buffer ─────────────────────────────────────────────
         # Guarded: rows are already committed, so a Redis blip here must not
@@ -1522,6 +1679,7 @@ def run_ai_analysis(self, test_case_id: str, test_name: str, **kwargs):
 
 @celery_app.task(
     name="app.worker.tasks.dispatch_run_notifications",
+    base=DownstreamTrackedTask,
     bind=True,
     max_retries=2,
     default_retry_delay=15,
@@ -1547,6 +1705,8 @@ def dispatch_run_notifications(
     import uuid as _uuid
     from app.core.config import settings
     from app.services.notification.manager import dispatch_run_notifications as _dispatch
+    request_headers = getattr(self.request, "headers", None) or {}
+    downstream_outbox_id = request_headers.get("downstream_outbox_id")
 
     if not dashboard_url or dashboard_url == "#":
         dashboard_url = f"{settings.public_base_url}/runs/{run_id}"
@@ -1562,6 +1722,11 @@ def dispatch_run_notifications(
             failed_tests=failed_tests,
             project_name=project_name,
             dashboard_url=dashboard_url,
+            delivery_scope=(
+                f"run-outbox:{downstream_outbox_id}"
+                if downstream_outbox_id
+                else None
+            ),
         ))
     except Exception as exc:
         logger.error("[Task %s] Notification dispatch failed: %s", self.request.id, exc, exc_info=True)
@@ -1570,6 +1735,7 @@ def dispatch_run_notifications(
 
 @celery_app.task(
     name="app.worker.tasks.dispatch_transition_notifications",
+    base=DownstreamTrackedTask,
     bind=True,
     max_retries=2,
     default_retry_delay=15,
@@ -1584,7 +1750,10 @@ def dispatch_transition_notifications(self, run_id: str):
     nothing.
     """
     import uuid as _uuid
-    from app.services.notification_transitions import evaluate_run_transitions
+    from app.services.notification_transitions import (
+        TransitionOrderPending,
+        evaluate_run_transitions,
+    )
 
     logger.info("[Task %s] Evaluating transition notifications for run=%s", self.request.id, run_id)
 
@@ -1609,6 +1778,13 @@ def dispatch_transition_notifications(self, run_id: str):
         result = _run_async(evaluate_run_transitions(_uuid.UUID(run_id)))
         logger.info("[Task %s] Transition evaluation done: %s", self.request.id, result)
         return result
+    except TransitionOrderPending as exc:
+        logger.info(
+            "[Task %s] Transition evaluation waiting for an older run: %s",
+            self.request.id,
+            exc,
+        )
+        raise self.retry(exc=exc, countdown=5, max_retries=100)
     except Exception as exc:
         logger.error("[Task %s] Transition notification dispatch failed: %s", self.request.id, exc, exc_info=True)
         raise self.retry(exc=exc)
@@ -1616,6 +1792,7 @@ def dispatch_transition_notifications(self, run_id: str):
 
 @celery_app.task(
     name="app.worker.tasks.run_agent_pipeline",
+    base=DownstreamTrackedTask,
     bind=True,
     max_retries=2,
     queue="ai_analysis",
@@ -1640,26 +1817,75 @@ def run_agent_pipeline(
     # Include workflow_type in dedup key so a deep run isn't blocked by a prior offline run
     dedup_key = f"testlookup:dedup:pipeline:{test_run_id}:{workflow_type}"
     dedup_owner = str(self.request.id)
+    request_headers = getattr(self.request, "headers", None) or {}
+    source_outbox_id = request_headers.get("downstream_outbox_id")
+    cost_budget_mode_override = request_headers.get("ai_mode_override")
+    durable_pipeline_id = (
+        str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"testlookup:agent-pipeline:{source_outbox_id}",
+            )
+        )
+        if source_outbox_id
+        else None
+    )
 
     async def _run():
-        if await _is_duplicate(dedup_key, ttl=7200, owner=dedup_owner):
+        if durable_pipeline_id:
+            from app.db.postgres import AsyncSessionLocal
+            from app.services.run_downstream_outbox import (
+                repair_terminal_ai_summary_operation,
+            )
+
+            async with AsyncSessionLocal() as db:
+                repaired = await repair_terminal_ai_summary_operation(
+                    db,
+                    pipeline_run_id=uuid.UUID(durable_pipeline_id),
+                    run_id=uuid.UUID(test_run_id),
+                    project_id=uuid.UUID(project_id),
+                    build_number=build_number,
+                )
+                if repaired is not None:
+                    await db.commit()
+                    return {
+                        "completed_stages": (
+                            ["summary"] if repaired["summary_completed"] else []
+                        ),
+                        "errors": [],
+                        "duplicate": True,
+                        "terminal_replay": True,
+                        **repaired,
+                    }
+
+        # A durable outbox delivery must establish/check its deterministic SQL
+        # pipeline identity. A Redis key from a concurrent manual/debounced
+        # request is not proof that this requested operation completed, and
+        # treating it as such would let DownstreamTrackedTask close the outbox
+        # without any matching AgentPipelineRun. Direct callers retain the
+        # short-lived Redis admission guard.
+        if not source_outbox_id and await _is_duplicate(dedup_key, ttl=7200, owner=dedup_owner):
             logger.info(
                 "[Task %s] Skipping duplicate pipeline for run=%s type=%s",
                 self.request.id, test_run_id, workflow_type,
             )
             return {"completed_stages": [], "error_count": 0, "duplicate": True}
 
-        if workflow_type == "deep":
+        if workflow_type == "deep" and not source_outbox_id:
             return await run_deep_pipeline(
                 test_run_id=test_run_id,
                 project_id=project_id,
                 build_number=build_number,
+                cost_budget_mode_override=cost_budget_mode_override,
             )
         return await run_offline_pipeline(
             test_run_id=test_run_id,
             project_id=project_id,
             build_number=build_number,
             workflow_type=workflow_type,
+            pipeline_run_id=durable_pipeline_id,
+            create_if_missing=durable_pipeline_id is not None,
+            cost_budget_mode_override=cost_budget_mode_override,
         )
 
     logger.info(
@@ -1704,22 +1930,6 @@ def run_agent_pipeline(
                 self.request.id,
                 type(inv_exc).__name__,
             )
-
-        # EM-1: Dispatch AI summary email after pipeline completes
-        if "summary" in stages_done:
-            try:
-                dispatch_ai_summary_email.delay(
-                    test_run_id=test_run_id,
-                    project_id=project_id,
-                    build_number=build_number,
-                )
-                logger.debug("[Task %s] AI summary email queued for run %s", self.request.id, test_run_id)
-            except Exception as email_exc:
-                logger.warning(
-                    "[Task %s] AI summary email dispatch failed (non-blocking, %s)",
-                    self.request.id,
-                    type(email_exc).__name__,
-                )
 
         return {"completed_stages": stages_done, "error_count": len(errors)}
     except Exception as exc:
@@ -1954,6 +2164,104 @@ def relay_agent_action_dispatch_outbox(self):
         )
         raise RuntimeError(
             f"{type(exc).__name__}: action dispatch relay failed"
+        ) from None
+
+
+@celery_app.task(
+    name="app.worker.tasks.relay_run_downstream_outbox",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=120,
+)
+def relay_run_downstream_outbox(self):
+    """Publish durable post-ingestion intents whose retry time has arrived."""
+    _bind_task_context(self)
+    from app.services.run_downstream_outbox import relay_downstream_outbox
+
+    try:
+        return _run_async(relay_downstream_outbox())
+    except Exception as exc:  # noqa: BLE001
+        _slog.error(
+            "run_downstream_outbox_relay_failed",
+            error_type=type(exc).__name__,
+        )
+        raise RuntimeError(
+            f"{type(exc).__name__}: run downstream outbox relay failed"
+        ) from None
+
+
+@celery_app.task(
+    name="app.worker.tasks.recover_waiting_run_finalizations",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=1860,
+)
+def recover_waiting_run_finalizations(self):
+    """Resume finalization after a worker died before opening its child gate."""
+    _bind_task_context(self)
+    from app.services.run_downstream_outbox import recover_waiting_finalizations
+
+    try:
+        return _run_async(recover_waiting_finalizations())
+    except Exception as exc:  # noqa: BLE001
+        _slog.error(
+            "waiting_run_finalization_recovery_failed",
+            error_type=type(exc).__name__,
+        )
+        raise RuntimeError(
+            f"{type(exc).__name__}: waiting run finalization recovery failed"
+        ) from None
+
+
+@celery_app.task(
+    name="app.worker.tasks.relay_pending_webhook_deliveries",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=120,
+)
+def relay_pending_webhook_deliveries(self):
+    """Republish webhook rows stranded before broker acceptance."""
+    _bind_task_context(self)
+    from app.services.webhook_service import relay_pending_webhook_deliveries as _relay
+
+    try:
+        return _run_async(_relay())
+    except Exception as exc:  # noqa: BLE001
+        _slog.error(
+            "webhook_delivery_relay_failed",
+            error_type=type(exc).__name__,
+        )
+        raise RuntimeError(
+            f"{type(exc).__name__}: webhook delivery relay failed"
+        ) from None
+
+
+@celery_app.task(
+    name="app.worker.tasks.relay_pending_notification_deliveries",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=180,
+)
+def relay_pending_notification_deliveries(self):
+    """Deliver and retry durable per-channel notification children."""
+    _bind_task_context(self)
+    from app.services.notification.manager import (
+        relay_pending_notification_deliveries as _relay,
+    )
+
+    try:
+        return _run_async(_relay())
+    except Exception as exc:  # noqa: BLE001
+        _slog.error(
+            "notification_delivery_relay_failed",
+            error_type=type(exc).__name__,
+        )
+        raise RuntimeError(
+            f"{type(exc).__name__}: notification delivery relay failed"
         ) from None
 
 
@@ -2214,6 +2522,7 @@ def generate_run_compare_report(
 
 @celery_app.task(
     name="app.worker.tasks.precompute_suite_comparisons_for_run",
+    base=DownstreamTrackedTask,
     bind=True,
     max_retries=1,
     queue="ai_analysis",
@@ -2227,12 +2536,22 @@ def precompute_suite_comparisons_for_run(self, test_run_id: str, project_id: str
         import uuid as _uuid
         from sqlalchemy import func, select
         from app.db.postgres import AsyncSessionLocal
-        from app.models.postgres import TestCase
-        from app.services import run_compare_ai_service, run_compare_service
+        from app.models.postgres import TestCase, TestRun
+        from app.services import (
+            llm_cost_budget,
+            run_compare_ai_service,
+            run_compare_service,
+        )
 
         rid = _uuid.UUID(test_run_id)
         pid = _uuid.UUID(project_id)
         generated = 0
+        already_ready = 0
+        skipped_no_baseline = 0
+        budget_actions: list[str] = []
+        deterministic_fallbacks = 0
+        last_cost_budget_mode_override = None
+        failures: list[tuple[str, Exception]] = []
         async with AsyncSessionLocal() as db:
             suites_result = await db.execute(
                 select(TestCase.suite_name)
@@ -2243,21 +2562,59 @@ def precompute_suite_comparisons_for_run(self, test_run_id: str, project_id: str
                 )
                 .distinct()
             )
-            suites = [row.suite_name for row in suites_result.all() if row.suite_name]
+            primary_suite = (
+                await db.execute(
+                    select(TestRun.primary_suite_name).where(
+                        TestRun.id == rid,
+                        TestRun.project_id == pid,
+                    )
+                )
+            ).scalar_one_or_none()
+            suites_by_key: dict[str, str] = {}
+            for raw_suite in [
+                *(row.suite_name for row in suites_result.all()),
+                primary_suite,
+            ]:
+                display_name = str(raw_suite or "").strip()
+                suite_key = run_compare_service.normalize_suite_name(display_name)
+                if suite_key:
+                    suites_by_key.setdefault(suite_key, display_name)
+            suites = sorted(
+                suites_by_key.values(),
+                key=lambda value: (value.casefold(), value),
+            )
             for suite in suites:
                 try:
-                    previous, latest = await run_compare_service.resolve_latest_suite_pair(
+                    previous, latest = await run_compare_service.resolve_suite_pair_for_run(
                         db,
                         project_id=pid,
                         suite_name=suite,
+                        right_run_id=rid,
                     )
-                    if latest.id != rid:
+                except LookupError:
+                    await db.rollback()
+                    skipped_no_baseline += 1
+                    continue
+
+                compare_payload = None
+                try:
+                    if await run_compare_ai_service.is_report_ready(
+                        db,
+                        project_id=pid,
+                        left_run_id=previous.id,
+                        right_run_id=latest.id,
+                        suite_name=suite,
+                    ):
+                        already_ready += 1
                         continue
                     selection = {
                         "mode": "latest_vs_previous",
                         "scope": "suite",
                         "suite_name": suite,
-                        "selection_reason": "Precomputed after run completion for the latest suite run on this branch.",
+                        "selection_reason": (
+                            "Precomputed for the dispatched suite run and its "
+                            "preceding run on the same branch."
+                        ),
                         "project_id": pid,
                         "branch": latest.branch,
                         "branch_mismatch": previous.branch != latest.branch,
@@ -2270,6 +2627,16 @@ def precompute_suite_comparisons_for_run(self, test_run_id: str, project_id: str
                         suite_name=suite,
                         selection=selection,
                     )
+                    # Re-evaluate immediately before each possible LLM call.
+                    # A run may contain many suites, and usage from this or a
+                    # concurrent worker can cross the cap while the loop is in
+                    # progress. Any capped decision, including HARD_BLOCK,
+                    # still materialises the zero-LLM deterministic report so
+                    # the durable suite-comparison operation remains truthful.
+                    budget_decision = await llm_cost_budget.check_and_apply_cap(pid)
+                    budget_actions.append(str(budget_decision.action))
+                    last_cost_budget_mode_override = budget_decision.mode_override
+                    deterministic_only = budget_decision.is_capped()
                     await run_compare_ai_service.generate_and_save_report(
                         db,
                         project_id=pid,
@@ -2277,13 +2644,62 @@ def precompute_suite_comparisons_for_run(self, test_run_id: str, project_id: str
                         right_run_id=latest.id,
                         suite_name=suite,
                         compare_payload=compare_payload,
+                        deterministic_only=deterministic_only,
+                        cost_budget_prechecked=True,
                     )
+                    deterministic_fallbacks += int(deterministic_only)
+                    if not await run_compare_ai_service.is_report_ready(
+                        db,
+                        project_id=pid,
+                        left_run_id=previous.id,
+                        right_run_id=latest.id,
+                        suite_name=suite,
+                    ):
+                        raise RuntimeError(
+                            "suite comparison generator returned without a ready report"
+                        )
+                    await db.commit()
                     generated += 1
-                except LookupError:
-                    continue
                 except Exception as exc:
+                    await db.rollback()
+                    if compare_payload is not None:
+                        try:
+                            await run_compare_ai_service.mark_failed(
+                                db,
+                                project_id=pid,
+                                left_run_id=previous.id,
+                                right_run_id=latest.id,
+                                suite_name=suite,
+                                compare_payload=compare_payload,
+                                error_message=(
+                                    f"{type(exc).__name__}: {exc}"
+                                )[:1000],
+                            )
+                            await db.commit()
+                        except Exception as persist_exc:
+                            await db.rollback()
+                            logger.warning(
+                                "[Task %s] Could not persist failed suite comparison %s: %s",
+                                self.request.id,
+                                suite,
+                                persist_exc,
+                            )
+                    failures.append((suite, exc))
                     logger.warning("[Task %s] Suite comparison precompute failed for %s: %s", self.request.id, suite, exc)
-        return {"generated": generated}
+        if failures:
+            failed_suites = ", ".join(suite for suite, _exc in failures[:10])
+            raise RuntimeError(
+                f"Suite comparison reports remain incomplete for: {failed_suites}"
+            )
+        return {
+            "generated": generated,
+            "already_ready": already_ready,
+            "skipped_no_baseline": skipped_no_baseline,
+            "budget_action": budget_actions[-1] if budget_actions else "NOT_EVALUATED",
+            "budget_actions": budget_actions,
+            "deterministic_fallbacks": deterministic_fallbacks,
+            "cost_budget_mode_override": last_cost_budget_mode_override,
+        }
 
     try:
         return _run_async(_run())
@@ -2294,6 +2710,7 @@ def precompute_suite_comparisons_for_run(self, test_run_id: str, project_id: str
 
 @celery_app.task(
     name="app.worker.tasks.dispatch_ai_summary_email",
+    base=DownstreamTrackedTask,
     bind=True,
     max_retries=2,
     default_retry_delay=30,
@@ -2309,24 +2726,13 @@ def dispatch_ai_summary_email(
     EM-1: Send AI executive-summary email after the pipeline completes.
 
     Loads the run summary (MongoDB or fallback) and dispatches to users
-    subscribed to AI_ANALYSIS_COMPLETE notifications. Deduplicates per run.
+    subscribed to AI_ANALYSIS_COMPLETE notifications. Durable child delivery
+    keys deduplicate retries per run.
     """
     _bind_task_context(self, run_id=test_run_id, project_id=project_id)
     import uuid as _uuid
 
-    from datetime import datetime, timezone
-
-    dedup_key = f"testlookup:dedup:ai_email:{test_run_id}"
-    dedup_owner = str(self.request.id)
-
     async def _dispatch():
-        # Dedup check. owner= so this task's own retry can reacquire: without
-        # it a transient failure leaves the lock standing and the retry
-        # reports success without sending anything.
-        if await _is_duplicate(dedup_key, ttl=3600, owner=dedup_owner):
-            logger.info("[AI Email] Skipping duplicate for run %s", test_run_id)
-            return
-
         from app.db.postgres import AsyncSessionLocal
         from app.db.mongo import get_mongo_db, Collections
         from app.models.postgres import Project as _Project, TestRun as _TestRun
@@ -2336,8 +2742,7 @@ def dispatch_ai_summary_email(
             # Load run and project
             run = (await db.execute(select(_TestRun).where(_TestRun.id == _uuid.UUID(test_run_id)))).scalar_one_or_none()
             if not run:
-                logger.warning("[AI Email] Run %s not found", test_run_id)
-                return
+                raise RuntimeError(f"AI summary run {test_run_id} not found")
 
             project = (await db.execute(select(_Project).where(_Project.id == run.project_id))).scalar_one_or_none()
             project_name = project.name if project else str(run.project_id)
@@ -2367,7 +2772,12 @@ def dispatch_ai_summary_email(
                     executive_panel = fallback.executive_panel
 
         from app.core.config import settings
-        from app.services.notification.manager import dispatch_ai_summary_notifications
+        from app.services.notification.manager import (
+            dispatch_ai_summary_notifications,
+            stage_explicit_notification_deliveries,
+        )
+
+        delivery_scope = f"ai-summary:{test_run_id}:v1"
 
         _pass_rate = float(run.pass_rate or 0) if run else 0.0
         _total_tests = int(run.total_tests or 0) if run else 0
@@ -2385,6 +2795,7 @@ def dispatch_ai_summary_email(
             total_tests=_total_tests,
             failed_tests=_failed_tests,
             dashboard_url=f"{settings.public_base_url}/runs/{test_run_id}/intelligence",
+            delivery_scope=f"{delivery_scope}:preferences",
         )
 
         # 2. EM-4 + F9: dispatch every EVENT-DRIVEN digest subscription.
@@ -2401,54 +2812,47 @@ def dispatch_ai_summary_email(
         # global" since the column was added, and `scope_value` "suite name,
         # release id, etc." -- the schema anticipated this and the dispatcher
         # never used it.
-        try:
-            from app.models.postgres import DigestSubscription, User as _User
-            from app.services.notification import email_service
+        from app.models.postgres import DigestSubscription, User as _User
 
-            async with AsyncSessionLocal() as db:
-                per_run_result = await db.execute(
-                    select(DigestSubscription).where(
-                        DigestSubscription.schedule.in_(EVENT_DRIVEN_SCHEDULES),
-                        DigestSubscription.is_active == True,  # noqa: E712
-                        DigestSubscription.is_paused == False,  # noqa: E712
-                    )
+        async with AsyncSessionLocal() as db:
+            per_run_result = await db.execute(
+                select(DigestSubscription, _User.email)
+                .join(_User, _User.id == DigestSubscription.user_id)
+                .where(
+                    DigestSubscription.schedule.in_(EVENT_DRIVEN_SCHEDULES),
+                    DigestSubscription.is_active == True,  # noqa: E712
+                    DigestSubscription.is_paused == False,  # noqa: E712
                 )
-                per_run_subs = per_run_result.scalars().all()
+            )
+            digest_deliveries = []
 
-                for sub in per_run_subs:
-                    # Scope check: global or matching project
-                    if sub.project_id and str(sub.project_id) != project_id:
-                        continue
-                    if not run_matches_digest_scope(sub, run):
-                        continue
-                    # Trigger filter: failed_only skips all-green runs
-                    if sub.trigger_filter == "failed_only" and _failed_tests == 0:
-                        continue
-                    if sub.trigger_filter == "degraded_only" and _pass_rate >= 90:
-                        continue
+            for sub, user_email in per_run_result.all():
+                # Scope check: global or matching project
+                if sub.project_id and str(sub.project_id) != project_id:
+                    continue
+                if not run_matches_digest_scope(sub, run):
+                    continue
+                # Trigger filter: failed_only skips all-green runs
+                if sub.trigger_filter == "failed_only" and _failed_tests == 0:
+                    continue
+                if sub.trigger_filter == "degraded_only" and _pass_rate >= 90:
+                    continue
 
-                    # Get user email
-                    user = (await db.execute(select(_User).where(_User.id == sub.user_id))).scalar_one_or_none()
-                    if not user or not user.email:
-                        continue
+                if not user_email:
+                    continue
 
-                    # Dedup per (subscription, run). Deliberately NOT
-                    # owner-scoped and never released: sending mail is
-                    # irreversible, so a retry of the parent task must not
-                    # re-deliver to a subscriber who already received it.
-                    # at-most-once: retry suppression is the point here.
-                    sub_dedup = f"testlookup:dedup:per_run_email:{sub.id}:{test_run_id}"
-                    if await _is_duplicate(sub_dedup, ttl=3600):
-                        continue
-
-                    title = f"🤖 AI Summary — Build {build_number} ({project_name})"
-
-                    await email_service.send_notification(
-                        to=user.email,
-                        title=title,
-                        body=executive_summary,
-                        event_type="ai_analysis_complete",
-                        metadata={
+                title = f"🤖 AI Summary — Build {build_number} ({project_name})"
+                digest_deliveries.append(
+                    {
+                        "route_id": str(sub.id),
+                        "user_id": sub.user_id,
+                        "channel_type": "email",
+                        "target": user_email,
+                        "event_type": "ai_analysis_complete",
+                        "title": title,
+                        "body": executive_summary,
+                        "digest_subscription_id": str(sub.id),
+                        "metadata": {
                             "project_name": project_name,
                             "build_number": build_number,
                             "pass_rate": _pass_rate,
@@ -2457,23 +2861,16 @@ def dispatch_ai_summary_email(
                             "dashboard_url": f"{settings.public_base_url}/runs/{test_run_id}/intelligence",
                             "executive_panel": executive_panel,
                         },
-                    )
-                    # Update delivery tracking atomically so concurrent
-                    # PER_RUN dispatches (different runs landing at the same
-                    # time) cannot lose a delivery_count increment.
-                    from sqlalchemy import update as _sql_update
-                    await db.execute(
-                        _sql_update(DigestSubscription)
-                        .where(DigestSubscription.id == sub.id)
-                        .values(
-                            delivery_count=DigestSubscription.delivery_count + 1,
-                            last_delivered_at=datetime.now(timezone.utc),
-                        )
-                    )
-                    await db.commit()
-                    logger.debug("[AI Email] Per-run email sent to %s for run %s (sub %s)", user.email, test_run_id, sub.id)
-        except Exception as sub_exc:
-            logger.warning("[AI Email] Per-run subscription dispatch failed (non-blocking): %s", sub_exc)
+                    }
+                )
+            await stage_explicit_notification_deliveries(
+                db,
+                project_id=_uuid.UUID(project_id),
+                run_id=_uuid.UUID(test_run_id),
+                delivery_scope=f"{delivery_scope}:digests",
+                deliveries=digest_deliveries,
+            )
+            await db.commit()
 
         # TG-5/6: Apply AI-derived signal tags after analysis
         try:
@@ -2484,13 +2881,12 @@ def dispatch_ai_summary_email(
         except Exception as tag_exc:
             logger.warning("[AI Email] Post-analysis auto-tagging failed (non-blocking): %s", tag_exc)
 
-        logger.info("[AI Email] Summary email dispatched for run %s (build %s)", test_run_id, build_number)
+        logger.info("[AI Email] Summary notification intents staged for run %s (build %s)", test_run_id, build_number)
 
     try:
         _run_async(_dispatch())
     except Exception as exc:
         logger.error("[AI Email] Failed for run %s: %s", test_run_id, exc)
-        _release_dedup_for_retry(dedup_key, dedup_owner, self.request.id)
         countdown = _exponential_backoff(self.request.retries)
         raise self.retry(exc=exc, countdown=countdown)
 
@@ -2923,7 +3319,11 @@ def refresh_perf_baselines(self) -> dict:
     max_retries=5,
     default_retry_delay=30,
 )
-def deliver_webhook(self, delivery_id: str) -> dict:
+def deliver_webhook(
+    self,
+    delivery_id: str,
+    dispatch_token: str | None = None,
+) -> dict:
     """Deliver a single webhook subscription event.
 
     Delegates the actual HTTP work to ``webhook_service.deliver`` which
@@ -2936,7 +3336,12 @@ def deliver_webhook(self, delivery_id: str) -> dict:
     async def _run():
         from app.services.webhook_service import deliver
         try:
-            return await deliver(_uuid_mod.UUID(delivery_id))
+            return await deliver(
+                _uuid_mod.UUID(delivery_id),
+                dispatch_token=(
+                    _uuid_mod.UUID(dispatch_token) if dispatch_token else None
+                ),
+            )
         except Exception as exc:
             logger.warning(
                 "[Task %s] deliver_webhook unhandled error: %s",
@@ -2951,6 +3356,11 @@ def deliver_webhook(self, delivery_id: str) -> dict:
     result = cast(dict, _run_async(_run()))
 
     if result.get("retry"):
+        if dispatch_token:
+            # SQL relay owns retries for leased deliveries. Reusing this
+            # token through Celery.retry would be rejected after deliver()
+            # returns the row to PENDING and would race the periodic relay.
+            return {**result, "deferred_to_relay": True}
         # Exponential backoff — 30s, 60s, 120s, 240s, 480s. The webhook
         # service already knows whether the subscription has retries left;
         # we only reach this branch when it signals retry=True.

@@ -467,7 +467,28 @@ async def _resolve_defect_owner_from_memory(
     return ownership
 
 
-async def _generate_jira_content(cluster: FailureCluster, analyses: list[AIAnalysis]) -> dict:
+def _deterministic_jira_content(cluster: FailureCluster) -> dict[str, Any]:
+    """Build Jira-ready content without constructing an LLM client."""
+    return {
+        "title": cluster.label[:80],
+        "description": f"Failure cluster '{cluster.label}' with {cluster.size} failures.",
+        "severity": "HIGH",
+        "component": "Unknown",
+        "owner_team": "Unknown",
+        "labels": ["automated-test", "cluster-promoted"],
+        "duplicate_hint": cluster.label[:100],
+    }
+
+
+async def _generate_jira_content(
+    cluster: FailureCluster,
+    analyses: list[AIAnalysis],
+    *,
+    deterministic_only: bool = False,
+) -> dict:
+    if deterministic_only:
+        return _deterministic_jira_content(cluster)
+
     analyses_json = json.dumps(
         [
             {
@@ -514,15 +535,7 @@ async def _generate_jira_content(cluster: FailureCluster, analyses: list[AIAnaly
     except Exception as exc:
         logger.warning("LLM defect content generation failed: %s", exc)
 
-    return {
-        "title": cluster.label[:80],
-        "description": f"Failure cluster '{cluster.label}' with {cluster.size} failures.",
-        "severity": "HIGH",
-        "component": "Unknown",
-        "owner_team": "Unknown",
-        "labels": ["automated-test", "cluster-promoted"],
-        "duplicate_hint": cluster.label[:100],
-    }
+    return _deterministic_jira_content(cluster)
 
 
 async def _find_duplicate_semantic(

@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import sys
 import uuid
+from datetime import datetime, timedelta, timezone
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -116,6 +117,21 @@ async def test_post_allowed_true_when_online_and_flagged():
 
 
 @pytest.mark.asyncio
+async def test_post_allowed_can_surface_transient_flag_lookup_failure():
+    from unittest.mock import AsyncMock, patch
+
+    from app.core.config import settings
+
+    with patch.object(settings, "AI_OFFLINE_MODE", False), patch(
+        "app.services.feature_flags.is_enabled",
+        AsyncMock(side_effect=ConnectionError("feature store unavailable")),
+    ):
+        assert await svc._post_allowed() is False
+        with pytest.raises(svc.WebhookGateLookupError):
+            await svc._post_allowed(raise_on_lookup_error=True)
+
+
+@pytest.mark.asyncio
 async def test_emit_event_returns_zero_when_disabled():
     """emit_event should be a zero-DB-touch no-op when gated off."""
     import uuid as _u
@@ -134,6 +150,23 @@ async def test_emit_event_returns_zero_when_disabled():
     assert count == 0
     # We should never have touched the DB.
     fake_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_durable_emit_retries_transient_feature_flag_lookup_failure(monkeypatch):
+    gate = AsyncMock(side_effect=svc.WebhookGateLookupError("lookup failed"))
+    monkeypatch.setattr(svc, "_post_allowed", gate)
+
+    with pytest.raises(svc.WebhookGateLookupError, match="lookup failed"):
+        await svc.emit_event(
+            "run.completed",
+            project_id=uuid.uuid4(),
+            payload={"run_id": str(uuid.uuid4())},
+            delivery_scope="run-completed:stable:v1",
+            raise_on_persistence_error=True,
+        )
+
+    gate.assert_awaited_once_with(raise_on_lookup_error=True)
 
 
 @pytest.mark.asyncio
@@ -173,6 +206,77 @@ async def test_emit_event_database_failure_is_best_effort(monkeypatch):
     )
 
     assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_durable_emit_event_propagates_persistence_failure(monkeypatch):
+    class _BrokenSession:
+        async def __aenter__(self):
+            raise RuntimeError("webhook database unavailable")
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _BrokenSession)
+    monkeypatch.setattr(svc, "_post_allowed", AsyncMock(return_value=True))
+
+    with pytest.raises(RuntimeError, match="webhook database unavailable"):
+        await svc.emit_event(
+            "run.completed",
+            project_id=uuid.uuid4(),
+            payload={"run_id": str(uuid.uuid4())},
+            delivery_scope=f"run-outbox:{uuid.uuid4()}",
+            raise_on_persistence_error=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_durable_emit_event_inserts_and_publishes_once(monkeypatch):
+    subscription = SimpleNamespace(id=uuid.uuid4(), events=["run.completed"])
+    delivery_id = uuid.uuid4()
+
+    preferences = Mock()
+    preferences.scalars.return_value.all.return_value = [subscription]
+    inserted = Mock()
+    inserted.all.return_value = [
+        SimpleNamespace(id=delivery_id, subscription_id=subscription.id)
+    ]
+    duplicate = Mock()
+    duplicate.all.return_value = []
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[preferences, inserted, preferences, duplicate]
+        ),
+        commit=AsyncMock(),
+    )
+
+    class _Session:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *_args):
+            return False
+
+    from app.worker import tasks as worker_tasks
+
+    publish = Mock()
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _Session)
+    monkeypatch.setattr(svc, "_post_allowed", AsyncMock(return_value=True))
+    monkeypatch.setattr(worker_tasks.deliver_webhook, "delay", publish)
+
+    kwargs = {
+        "project_id": uuid.uuid4(),
+        "payload": {"run_id": str(uuid.uuid4())},
+        "delivery_scope": f"run-outbox:{uuid.uuid4()}",
+        "raise_on_persistence_error": True,
+    }
+    assert await svc.emit_event("run.completed", **kwargs) == 1
+    assert await svc.emit_event("run.completed", **kwargs) == 0
+    publish.assert_called_once_with(delivery_id=str(delivery_id))
+    insert_statement = db.execute.await_args_list[1].args[0]
+    assert uuid.UUID(kwargs["payload"]["run_id"]) in (
+        insert_statement.compile().params.values()
+    )
 
 
 @pytest.mark.asyncio
@@ -241,7 +345,7 @@ async def test_emit_event_dispatches_later_subscriptions_after_enqueue_failure(
 
 
 @pytest.mark.asyncio
-async def test_replay_enqueue_failure_marks_new_delivery_failed(monkeypatch):
+async def test_replay_enqueue_failure_leaves_recoverable_pending_row(monkeypatch):
     original = SimpleNamespace(
         id=uuid.uuid4(),
         subscription_id=uuid.uuid4(),
@@ -259,11 +363,8 @@ async def test_replay_enqueue_failure_marks_new_delivery_failed(monkeypatch):
             return self.value
 
     class _Session:
-        def __init__(self, replay_lookup=False):
-            self.replay_lookup = replay_lookup
-
         async def execute(self, _statement):
-            return _Result(created[0] if self.replay_lookup else original)
+            return _Result(original)
 
         def add(self, row):
             created.append(row)
@@ -280,20 +381,18 @@ async def test_replay_enqueue_failure_marks_new_delivery_failed(monkeypatch):
         async def __aexit__(self, *_args):
             return False
 
-    sessions = iter((_Session(), _Session(replay_lookup=True)))
     worker_tasks = ModuleType("app.worker.tasks")
     worker_tasks.deliver_webhook = SimpleNamespace(
         delay=Mock(side_effect=RuntimeError("broker unavailable"))
     )
     monkeypatch.setitem(sys.modules, "app.worker.tasks", worker_tasks)
-    monkeypatch.setattr(svc, "AsyncSessionLocal", lambda: next(sessions))
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _Session)
     monkeypatch.setattr(svc, "_post_allowed", AsyncMock(return_value=True))
 
     replay_id = await svc.replay_delivery(original.id)
 
-    assert replay_id is None
-    assert created[0].status == "FAILED"
-    assert created[0].error == "webhook replay enqueue failed"
+    assert replay_id == created[0].id
+    assert created[0].status == "PENDING"
 
 
 @pytest.mark.asyncio
@@ -382,11 +481,189 @@ async def test_deliver_respects_zero_retry_budget(
     )
     monkeypatch.setattr(svc.httpx, "AsyncClient", _Client)
 
+    async def _apply_transition(
+        _db,
+        *,
+        delivery_values,
+        subscription_values=None,
+        **_kwargs,
+    ):
+        for name, value in delivery_values.items():
+            setattr(delivery, name, value)
+        if subscription_values:
+            for name, value in subscription_values.items():
+                if name != "failure_count":
+                    setattr(subscription, name, value)
+        return True
+
+    monkeypatch.setattr(svc, "_transition_processing_delivery", _apply_transition)
+
     result = await svc.deliver(delivery.id)
 
     assert result.get("retry") is not True
     assert delivery.attempt_count == 1
     assert delivery.status == expected_status
+
+
+@pytest.mark.asyncio
+async def test_stale_worker_cannot_record_success_or_increment_subscription(monkeypatch):
+    """A worker that loses its token during provider I/O cannot win afterward."""
+    subscription = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        enabled=True,
+        has_secret=False,
+        target_url="https://hooks.example.test/testlookup",
+        max_retries=5,
+        total_delivered=0,
+    )
+    delivery = SimpleNamespace(
+        id=uuid.uuid4(),
+        subscription_id=subscription.id,
+        event_type="run.completed",
+        event_payload={"run_id": str(uuid.uuid4())},
+        status="PENDING",
+        attempt_count=0,
+    )
+
+    class _Result:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class _Session:
+        calls = 0
+
+        async def execute(self, _statement):
+            self.calls += 1
+            return _Result(delivery if self.calls == 1 else subscription)
+
+        async def commit(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class _Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, *_args, **_kwargs):
+            return SimpleNamespace(status_code=200, text="accepted")
+
+    transition = AsyncMock(side_effect=[True, False])
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _Session)
+    monkeypatch.setattr(svc, "_post_allowed", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        svc.asyncio,
+        "to_thread",
+        AsyncMock(return_value=(True, "public target")),
+    )
+    monkeypatch.setattr(svc.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(svc, "_transition_processing_delivery", transition)
+
+    result = await svc.deliver(delivery.id)
+
+    assert result == {"skipped": "stale_dispatch_token"}
+    assert transition.await_count == 2
+    assert transition.await_args_list[1].kwargs["delivery_values"]["status"] == "SUCCESS"
+    assert subscription.total_delivered == 0
+
+
+@pytest.mark.asyncio
+async def test_processing_transition_uses_token_compare_and_set():
+    token = uuid.uuid4()
+    db = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(rowcount=0)),
+        rollback=AsyncMock(),
+        commit=AsyncMock(),
+    )
+
+    changed = await svc._transition_processing_delivery(
+        db,
+        delivery_id=uuid.uuid4(),
+        dispatch_token=token,
+        delivery_values={"status": "SUCCESS"},
+        subscription_id=uuid.uuid4(),
+        subscription_values={"total_delivered": 99},
+    )
+
+    assert changed is False
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+    assert db.execute.await_count == 1
+    statement = db.execute.await_args.args[0]
+    compiled = statement.compile()
+    sql = str(compiled)
+    assert "webhook_deliveries.id" in sql
+    assert "webhook_deliveries.status" in sql
+    assert "webhook_deliveries.dispatch_token" in sql
+    assert token in compiled.params.values()
+    assert "PROCESSING" in compiled.params.values()
+
+
+@pytest.mark.asyncio
+async def test_delivery_retries_when_feature_flag_store_is_unavailable(monkeypatch):
+    subscription = SimpleNamespace(
+        id=uuid.uuid4(),
+        enabled=True,
+    )
+    delivery = SimpleNamespace(
+        id=uuid.uuid4(),
+        subscription_id=subscription.id,
+        status="PENDING",
+        dispatch_attempts=0,
+        dispatch_token=None,
+    )
+
+    class _Result:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class _Session:
+        calls = 0
+
+        async def execute(self, _statement):
+            self.calls += 1
+            return _Result(delivery if self.calls == 1 else subscription)
+
+        async def commit(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    transition = AsyncMock(return_value=True)
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _Session)
+    monkeypatch.setattr(
+        svc,
+        "_post_allowed",
+        AsyncMock(side_effect=svc.WebhookGateLookupError("feature store unavailable")),
+    )
+    monkeypatch.setattr(svc, "_transition_processing_delivery", transition)
+
+    result = await svc.deliver(delivery.id)
+
+    assert result["retry"] is True
+    assert "feature store unavailable" in result["error"]
+    assert transition.await_args.kwargs["delivery_values"]["status"] == "PENDING"
 
 
 @pytest.mark.asyncio
@@ -467,10 +744,174 @@ async def test_deliver_does_not_send_unsigned_when_configured_secret_is_missing(
     )
     monkeypatch.setattr(secret_service, "read_secret", AsyncMock(return_value=None))
     monkeypatch.setattr(svc.httpx, "AsyncClient", _Client)
+    terminalize = AsyncMock(return_value=True)
+    monkeypatch.setattr(svc, "_mark_delivery_failed", terminalize)
 
     result = await svc.deliver(delivery.id)
 
     post.assert_not_awaited()
     assert result == {"error": "signing_secret_unavailable"}
-    assert delivery.status == "FAILED"
-    assert "signing secret unavailable" in delivery.error
+    assert terminalize.await_args.kwargs["delivery_id"] == delivery.id
+    assert terminalize.await_args.kwargs["dispatch_token"] == delivery.dispatch_token
+    assert terminalize.await_args.kwargs["subscription_id"] == subscription.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preflight", ["disabled", "unsafe", "missing_secret"])
+async def test_stale_webhook_preflight_worker_cannot_terminalize_new_lease(
+    monkeypatch,
+    preflight,
+):
+    from app.services import secret_service
+
+    subscription = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        enabled=preflight != "disabled",
+        has_secret=preflight == "missing_secret",
+        target_url="https://hooks.example.test/testlookup",
+        max_retries=5,
+    )
+    delivery = SimpleNamespace(
+        id=uuid.uuid4(),
+        subscription_id=subscription.id,
+        event_type="run.completed",
+        event_payload={"ok": True},
+        status="PENDING",
+        attempt_count=0,
+        dispatch_token=None,
+    )
+
+    class _Result:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class _Session:
+        calls = 0
+
+        async def execute(self, _statement):
+            self.calls += 1
+            return _Result(delivery if self.calls == 1 else subscription)
+
+        async def commit(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    terminalize = AsyncMock(return_value=False)
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _Session)
+    monkeypatch.setattr(svc, "_mark_delivery_failed", terminalize)
+    monkeypatch.setattr(svc, "_post_allowed", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        svc.asyncio,
+        "to_thread",
+        AsyncMock(
+            return_value=(
+                preflight != "unsafe",
+                "private target" if preflight == "unsafe" else "public target",
+            )
+        ),
+    )
+    monkeypatch.setattr(secret_service, "read_secret", AsyncMock(return_value=None))
+
+    result = await svc.deliver(delivery.id)
+
+    assert result == {"skipped": "stale_dispatch_token"}
+    terminalize.assert_awaited_once()
+    assert terminalize.await_args.kwargs["dispatch_token"] is not None
+
+
+@pytest.mark.asyncio
+async def test_pending_webhook_relay_recovers_lost_broker_publish(monkeypatch):
+    from app.worker import tasks as worker_tasks
+
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        dispatch_token=uuid.uuid4(),
+    )
+    db = SimpleNamespace(commit=AsyncMock())
+
+    class _Session:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *_args):
+            return False
+
+    publish = Mock()
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _Session)
+    monkeypatch.setattr(
+        svc,
+        "claim_pending_webhook_dispatches",
+        AsyncMock(return_value=[row]),
+    )
+    monkeypatch.setattr(worker_tasks.deliver_webhook, "apply_async", publish)
+
+    result = await svc.relay_pending_webhook_deliveries()
+
+    assert result == {"claimed": 1, "published": 1, "failed": 0}
+    publish.assert_called_once_with(
+        kwargs={
+            "delivery_id": str(row.id),
+            "dispatch_token": str(row.dispatch_token),
+        },
+        queue="default",
+        task_id=f"webhook-delivery-{row.id}",
+    )
+
+
+@pytest.mark.asyncio
+async def test_expired_accepted_webhook_publish_reuses_token_without_exhaustion():
+    token = uuid.uuid4()
+    expired = datetime.now(timezone.utc) - timedelta(seconds=1)
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="SENDING",
+        dispatch_attempts=svc._MAX_WEBHOOK_DISPATCH_ATTEMPTS,
+        dispatch_failures=0,
+        dispatch_token=token,
+        dispatch_lease_expires_at=expired,
+        next_dispatch_at=expired,
+        error=None,
+    )
+    result = Mock()
+    result.scalars.return_value.all.return_value = [row]
+    db = SimpleNamespace(execute=AsyncMock(return_value=result))
+
+    claimed = await svc.claim_pending_webhook_dispatches(db, limit=1)
+
+    assert claimed == [row]
+    assert row.status == "SENDING"
+    assert row.dispatch_attempts == svc._MAX_WEBHOOK_DISPATCH_ATTEMPTS + 1
+    assert row.dispatch_failures == 0
+    assert row.dispatch_token == token
+
+
+@pytest.mark.asyncio
+async def test_terminal_webhook_delivery_suppresses_duplicate_send(monkeypatch):
+    delivery = SimpleNamespace(id=uuid.uuid4(), status="SUCCESS")
+    result = Mock()
+    result.scalar_one_or_none.return_value = delivery
+
+    class _Session:
+        async def execute(self, _statement):
+            return result
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(svc, "AsyncSessionLocal", _Session)
+
+    assert await svc.deliver(delivery.id) == {
+        "skipped": "delivery_already_terminal"
+    }

@@ -101,6 +101,7 @@ async def send_notification(
     body: str,
     event_type: str,
     metadata: dict | None = None,
+    delivery_id: str | None = None,
 ) -> None:
     """
     POST a Block Kit message to a Slack incoming webhook URL.
@@ -123,7 +124,10 @@ async def send_notification(
 
     from app.core.http_client import get_http_client
     client = get_http_client()
-    response = await client.post(webhook_url, json=payload, timeout=10.0)
+    request_kwargs = {"json": payload, "timeout": 10.0}
+    if delivery_id:
+        request_kwargs["headers"] = {"X-TestLookup-Delivery": delivery_id}
+    response = await client.post(webhook_url, **request_kwargs)
     response.raise_for_status()
 
     logger.info("Slack notification sent — event=%s", event_type)

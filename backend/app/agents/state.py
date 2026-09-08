@@ -156,6 +156,12 @@ class WorkflowState(TypedDict):
     analysis_mode_requested: str  # configured value at pipeline start (env/UI)
     analysis_mode_resolved: str   # effective engine frozen for this pipeline
     analysis_mode_resolution: dict  # probe/config snapshot for audit replay
+    _cost_budget_prechecked: bool  # one pipeline-wide cap decision was persisted
+    _cost_budget_action: Optional[str]
+    _cost_budget_rationale: Optional[str]
+    _cost_budget_utilization_pct: Optional[float]
+    _cost_budget_mode_override: Optional[str]
+    _cost_budget_block: bool
     _workflow_route_decisions: list[dict]  # sync router decisions persisted in pipeline metadata
     _checkpoint_stages: list[str]  # stage outputs restored from a previous authorized checkpoint
     _checkpoint_replay_metadata: dict[str, dict]  # replay hashes/version breadcrumbs for restored stages

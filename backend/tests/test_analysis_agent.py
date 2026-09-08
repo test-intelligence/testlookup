@@ -1,5 +1,6 @@
 """Unit tests for AnalysisAgent — fallback, validation, sanitization, retry, priority."""
 import asyncio
+import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -708,6 +709,67 @@ class TestProgressiveFallback:
 
 
 class TestAnalysisAgentRun:
+    @pytest.mark.asyncio
+    async def test_durable_pipeline_honors_hard_cost_cap(self, monkeypatch):
+        from app.services.llm_cost_budget import CapDecision
+
+        agent = AnalysisAgent()
+        agent.mark_stage_running = AsyncMock()  # type: ignore[method-assign]
+        agent.mark_stage_done = AsyncMock()  # type: ignore[method-assign]
+        agent.broadcast_progress = AsyncMock()  # type: ignore[method-assign]
+        agent.log_decision = AsyncMock()  # type: ignore[method-assign]
+        agent._analyse_one = AsyncMock()  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            "app.services.llm_cost_budget.check_and_apply_cap",
+            AsyncMock(
+                return_value=CapDecision(
+                    action="HARD_BLOCK",
+                    block=True,
+                    rationale="daily cap reached",
+                )
+            ),
+        )
+        state = {
+            "pipeline_run_id": "pipe-budget-block",
+            "project_id": str(uuid.uuid4()),
+            "failed_test_ids": ["tc-1"],
+        }
+
+        result = await agent.run(state)
+
+        agent._analyse_one.assert_not_awaited()
+        assert result["stage_quality"] == "cost_budget_blocked"
+        assert state["_cost_budget_block"] is True
+
+    @pytest.mark.asyncio
+    async def test_durable_pipeline_threads_cost_downgrade_into_state(self, monkeypatch):
+        from app.services.llm_cost_budget import CapDecision
+
+        agent = AnalysisAgent()
+        agent.mark_stage_running = AsyncMock()  # type: ignore[method-assign]
+        agent.mark_stage_done = AsyncMock()  # type: ignore[method-assign]
+        agent.broadcast_progress = AsyncMock()  # type: ignore[method-assign]
+        agent.log_decision = AsyncMock()  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            "app.services.llm_cost_budget.check_and_apply_cap",
+            AsyncMock(
+                return_value=CapDecision(
+                    action="AUTO_DOWNGRADE_TO_RULES",
+                    mode_override="rules",
+                    rationale="soft cap reached",
+                )
+            ),
+        )
+        state = {
+            "pipeline_run_id": "pipe-budget-rules",
+            "project_id": str(uuid.uuid4()),
+            "failed_test_ids": [],
+        }
+
+        await agent.run(state)
+
+        assert state["_cost_budget_mode_override"] == "rules"
+
     @pytest.mark.asyncio
     async def test_run_with_empty_failed_ids(self):
         agent = AnalysisAgent()

@@ -498,78 +498,24 @@ async def close_session(
             f"live_session_release_link_failed session_id={session_id}: {rel_err}"
         )
 
-    # stage-only: handler commits the LiveSession close, the upserted
-    # TestRun, and any release link together.
+    # Stage-only: the handler commits the LiveSession close, TestRun, release
+    # link, and persistence intent atomically. The scheduled relay owns broker
+    # publication, so a broker outage cannot turn a successful close into lost
+    # work. ``persist_live_session`` invokes finalize_run, which stages the AI
+    # and notification work after the test rows are durable.
+    from app.services.run_downstream_outbox import stage_live_persist_operation
 
-    try:
-        from app.worker.tasks import persist_live_session
-        from app.worker.ingestion_routing import queue_for_project
-
-        # Phase 2.4 — route per-project to a shard queue so one noisy
-        # project can't starve another's persist throughput. Falls back
-        # to the legacy ``ingestion`` queue when sharding is disabled
-        # (``LIVE_INGEST_SHARD_COUNT=0`` — used in tests).
-        target_queue = queue_for_project(str(session.project_id))
-
-        persist_live_session.apply_async(
-            kwargs={
-                "run_id": session.run_id,
-                "project_id": str(session.project_id),
-                "build_number": session.build_number or session_id,
-                "client_name": session.client_name,
-                "framework": session.framework or "",
-                "branch": session.branch or "",
-                "commit_hash": session.commit_hash or "",
-                "final_state": state or {},
-                "suite_name": session.suite_name or None,
-            },
-            queue=target_queue,
-            priority=7,
-        )
-        logger.info(
-            f"queued_persist_live_session session_id={session_id} queue={target_queue}"
-        )
-    except Exception as exc:
-        logger.warning(
-            f"persist_live_session_queue_failed session_id={session_id}: {exc}"
-        )
-
-    try:
-        # ``session.run_id`` is the SDK-supplied slug (e.g. ``local-abc12345``),
-        # not necessarily a UUID. The pipeline task writes to
-        # ``agent_pipeline_runs.test_run_id`` which is ``UUID(as_uuid=True)``
-        # with an FK to ``test_runs.id``. Passing the raw slug here caused
-        # the task to silently fail on insert and no AgentPipelineRun row
-        # was ever created — so the /agents page showed "No agent pipelines
-        # yet" for every live_stream run whose SDK didn't use UUID slugs.
-        # Convert to the canonical UUID the same way upsert_test_run and
-        # persist_live_session do.
-        canonical_run_uuid = canonical_test_run_uuid(session.run_id)
-
-        # Phase 3 — route through the debouncer so per-project bursts
-        # don't fire 500 LLM pipelines at once. The debouncer also
-        # applies the daily $10 LLM budget cap (services/llm_cost_budget)
-        # before fanning out, so projects over budget transparently
-        # degrade to rules/ml instead of falling off the cliff.
-        # ``AI_PIPELINE_DEBOUNCE_ENABLED=False`` reverts to immediate
-        # dispatch for tests + any deploy that hasn't enabled the beat
-        # schedule yet.
-        from app.services.ai_pipeline_debouncer import enqueue_pipeline_for_run
-
-        await enqueue_pipeline_for_run(
-            project_id=str(session.project_id),
-            test_run_id=str(canonical_run_uuid),
-            build_number=session.build_number or session_id,
-            workflow_type="offline",
-        )
-        logger.info(
-            f"ai_pipeline_queued_from_live session_id={session_id} "
-            f"session_run_id={session.run_id} canonical_run_id={canonical_run_uuid}"
-        )
-    except Exception as exc:
-        logger.warning(
-            f"ai_pipeline_queue_failed session_id={session_id}: {exc}"
-        )
+    canonical_run_uuid = canonical_test_run_uuid(session.run_id)
+    await stage_live_persist_operation(
+        db,
+        canonical_run_id=canonical_run_uuid,
+        session=session,
+        final_state=state or {},
+    )
+    logger.info(
+        f"staged_persist_live_session session_id={session_id} "
+        f"canonical_run_id={canonical_run_uuid}"
+    )
 
 
 async def _resolve_project_id_for_run(run_id: str) -> Optional[str]:

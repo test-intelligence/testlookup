@@ -94,7 +94,7 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "unit of work; commit at the end of the full parse/persist cycle.",
     ),
     "ingestion_pipeline.py": (
-        2,
+        3,
         "Outermost orchestration used by both the ingest router and Celery "
         "tasks. After the 2026-04-14 data-corruption fix, finalize_run commits "
         "the run-aggregates update in its own session and then runs each "
@@ -103,6 +103,13 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "the second commit. A single-commit model re-introduced the bug where "
         "a failing post-step left the SQLAlchemy session in a rollback-required "
         "state and poisoned subsequent steps.",
+    ),
+    "run_downstream_outbox.py": (
+        7,
+        "Scheduled Celery relay and tracked-consumer lifecycle owner. Each "
+        "transition opens an isolated AsyncSessionLocal because no HTTP "
+        "request transaction exists and durable publication/execution state "
+        "must survive broker or worker failure.",
     ),
     "integration_probe_service.py": (
         1,
@@ -127,9 +134,12 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "been restored to its full form (fix/restore-rag-knowledge-services).",
     ),
     "notification/manager.py": (
-        1,
+        4,
         "Called exclusively from Celery tasks (dispatch_run_notifications "
-        "and siblings) via AsyncSessionLocal — not from request handlers.",
+        "and siblings) via AsyncSessionLocal. Durable outbox deliveries commit "
+        "their identity and lease before external I/O, then commit the "
+        "token-fenced provider outcome in its own beat-owned session; legacy "
+        "unscoped dispatch keeps its single terminal commit.",
     ),
     "prompt_registry.py": (
         1,
@@ -303,18 +313,16 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "site.",
     ),
     "webhook_service.py": (
-        10,
+        7,
         "Tier 2-6 (post 2026-05-16 P1 follow-up cleanup): subscription "
         "CRUD is now stage-only — create/update/delete_subscription let "
         "get_db commit the primary mutation; the audit row uses a fresh "
         "session inside ``_audit`` (P2-4 pattern) so audit failure no "
-        "longer rolls back the subscription. The 10 remaining commits are "
+        "longer rolls back the subscription. The 7 remaining commits are "
         "all on isolated sessions: replay_delivery (1, enqueue-after-commit), "
-        "emit_event (1, enqueue-after-commit), deliver_webhook (7, each "
-        "branch of the Celery task that records delivery outcome on its "
-        "own session — incl. the SSRF-blocked-target branch added in the "
-        "webhook-service review), and ``_audit``'s own fresh-session commit "
-        "(1). Ratcheted 14 → 9 → 10.",
+        "emit_event (1, enqueue-after-commit), deliver_webhook (4, with all "
+        "terminal branches sharing a token-fenced outcome helper), and "
+        "``_audit``'s own fresh-session commit (1). Ratcheted 14 → 9 → 10 → 7.",
     ),
     "perf_regression_service.py": (
         1,
@@ -551,7 +559,10 @@ def test_allowlist_total_is_bounded() -> None:
     # the rollback that produced the failure, so open_job and close_job each
     # own an independent AsyncSessionLocal. Making them stage-only would make
     # the table structurally incapable of recording the outcomes it exists for.
-    assert total <= 73, (
+    # Raised 73 -> 84 on 2026-09-08 for H12's durable run/webhook relays and
+    # the finalization readiness commit. These are worker-owned recovery
+    # boundaries with no request transaction to own their state transitions.
+    assert total <= 84, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )

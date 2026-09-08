@@ -1310,18 +1310,13 @@ async def test_stream_service_close_session_marks_complete_and_queues_followup_w
     session = _fake_live_session(session_id, project_id, str(uuid.uuid4()), release_name="Release 5")
     db = FakeAsyncDB([])
     db.get = AsyncMock(return_value=session)
-    persist_task = SimpleNamespace(apply_async=Mock())
-    pipeline_task = SimpleNamespace(apply_async=Mock())
     # ``_close_session`` now goes through ``link_run_or_default`` so it can
     # fall back to the project's default release when session.release_name
     # is blank. The mock exposes that entry point.
     release_linker = SimpleNamespace(link_run_or_default=AsyncMock())
     live_state_module = SimpleNamespace(RedisLiveRunState=SimpleNamespace(complete=AsyncMock(return_value={"passed": 4, "failed": 1, "total": 5})))
-    # Phase 3 (2026-05-16) — close_session now enqueues the AI pipeline
-    # via the debouncer instead of calling ``run_agent_pipeline.apply_async``
-    # directly. Stub the debouncer so we can assert on its call instead
-    # of the legacy direct dispatch.
-    debouncer_module = SimpleNamespace(enqueue_pipeline_for_run=AsyncMock(return_value="debounced"))
+    # H12: close stages persistence in PostgreSQL; the relay publishes later.
+    stage_persist = AsyncMock(return_value=True)
 
     with (
         patch.object(stream_service, "upsert_test_run", AsyncMock()) as upsert_mock,
@@ -1330,12 +1325,11 @@ async def test_stream_service_close_session_marks_complete_and_queues_followup_w
             {
                 "app.streams.live_run_state": live_state_module,
                 "app.services.release_linker": release_linker,
-                "app.services.ai_pipeline_debouncer": debouncer_module,
-                "app.worker.tasks": SimpleNamespace(
-                    persist_live_session=persist_task,
-                    run_agent_pipeline=pipeline_task,
-                ),
             },
+        ),
+        patch(
+            "app.services.run_downstream_outbox.stage_live_persist_operation",
+            new=stage_persist,
         ),
     ):
         await stream_service.close_session(db, str(session_id))
@@ -1347,12 +1341,9 @@ async def test_stream_service_close_session_marks_complete_and_queues_followup_w
     release_linker.link_run_or_default.assert_awaited_once()
     # Item #2: service stages; router handler commits.
     db.commit.assert_not_awaited()
-    persist_task.apply_async.assert_called_once()
-    # Phase 3 — pipeline trigger now routes through the debouncer.
-    # ``pipeline_task.apply_async`` is NOT called directly here; the
-    # beat task drains the SortedSet later.
-    debouncer_module.enqueue_pipeline_for_run.assert_awaited_once()
-    pipeline_task.apply_async.assert_not_called()
+    stage_persist.assert_awaited_once()
+    assert stage_persist.await_args.kwargs["session"] is session
+    assert stage_persist.await_args.kwargs["final_state"]["total"] == 5
 
 
 @pytest.mark.asyncio

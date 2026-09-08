@@ -24,16 +24,11 @@ The default batch keeps today's behaviour (``NotificationPreference`` fan-out
 via the notification manager) plus an "unowned" note line that nudges
 ownership coverage.
 
-Audit: every team-channel delivery writes a ``NotificationLog`` row with
-``routed_team`` set (``routing_fallback`` NULL); the default batch's rows are
-written by the manager as before, and the fallback reasons are additionally
-logged via structlog with stable kwargs (``transition_routing_decision``).
-
-Transaction model: ``record_team_delivery_logs`` is Celery-task-owned — it
-runs inside ``evaluate_run_transitions`` (the ``dispatch_transition_
-notifications`` worker task) on its own ``AsyncSessionLocal`` and commits the
-audit rows itself (see the allowlist entry in
-``tests/test_architectural_transaction_boundaries.py``).
+Audit: every team-channel delivery is staged as a durable ``NotificationLog``
+row with ``routed_team`` set and delivered by the shared leased relay. The
+default batch's rows are written by the manager, and fallback reasons are
+additionally logged via structlog with stable kwargs
+(``transition_routing_decision``).
 """
 from __future__ import annotations
 

@@ -437,6 +437,100 @@ class TestRun(Base):
     test_cases: Mapped[list["TestCase"]] = relationship("TestCase", back_populates="test_run", lazy="dynamic")
 
 
+class RunDownstreamOutbox(Base):
+    """Durable intent to publish one post-ingestion operation."""
+
+    __tablename__ = "run_downstream_outbox"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "operation",
+            "input_version",
+            name="uq_run_downstream_operation_version",
+        ),
+        Index(
+            "ix_run_downstream_outbox_due_project",
+            "status",
+            "next_attempt_at",
+            "project_id",
+            "created_at",
+        ),
+        CheckConstraint(
+            "status IN ('waiting', 'pending', 'sending', 'published', "
+            "'processing', 'completed', 'failed')",
+            name="ck_run_downstream_outbox_status",
+        ),
+        CheckConstraint(
+            "attempts >= 0",
+            name="ck_run_downstream_outbox_attempts_nonnegative",
+        ),
+        CheckConstraint(
+            "dispatch_failures >= 0",
+            name="ck_run_downstream_outbox_dispatch_failures_nonnegative",
+        ),
+        CheckConstraint(
+            "execution_attempts >= 0",
+            name="ck_run_downstream_outbox_execution_attempts_nonnegative",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    operation: Mapped[str] = mapped_column(String(60), nullable=False)
+    input_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    queue: Mapped[str] = mapped_column(String(80), nullable=False, default="default")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    dispatch_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    execution_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dispatch_token: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    processing_task_id: Mapped[Optional[str]] = mapped_column(
+        String(80), nullable=True
+    )
+    published_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    processing_started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completion_detail: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now()
+    )
+
+
 class TestCase(Base):
     """Individual test case result within a run."""
     __tablename__ = "test_cases"
@@ -2164,12 +2258,42 @@ class NotificationLog(Base):
     __table_args__ = (
         Index("ix_notif_log_user_created", "user_id", "created_at"),
         Index("ix_notif_log_project", "project_id"),
+        Index(
+            "uq_notification_log_delivery_key",
+            "delivery_key",
+            unique=True,
+        ),
+        Index(
+            "ix_notification_log_delivery_due",
+            "status",
+            "next_delivery_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
+    preference_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("notification_preferences.id", ondelete="SET NULL"), nullable=True
+    )
+    delivery_key: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    delivery_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    delivery_attempts: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0"
+    )
+    delivery_token: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    delivery_started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    delivery_lease_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_delivery_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     channel: Mapped[str] = mapped_column(String(20), nullable=False)
     event_type: Mapped[str] = mapped_column(String(50), nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -2185,6 +2309,9 @@ class NotificationLog(Base):
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 # ── Test Case Management ──────────────────────────────────────────────────────
@@ -5296,18 +5423,48 @@ class WebhookDelivery(Base):
     __table_args__ = (
         Index("ix_webhook_delivery_sub_created", "subscription_id", "created_at"),
         Index("ix_webhook_delivery_status", "status", "created_at"),
+        Index(
+            "ix_webhook_delivery_dispatch_due",
+            "status",
+            "next_dispatch_at",
+        ),
+        Index(
+            "uq_webhook_delivery_delivery_key",
+            "delivery_key",
+            unique=True,
+        ),
+        Index("ix_webhook_delivery_run_id", "run_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     subscription_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("webhook_subscriptions.id", ondelete="CASCADE"), nullable=False,
     )
+    run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     event_payload: Mapped[Optional[dict]] = mapped_column(JSONB)  # full JSON sent to the target
+    delivery_key: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
-    # PENDING | SUCCESS | FAILED (retries exhausted) | DLQ (hit max and aborted)
+    # PENDING | SENDING | PROCESSING | SUCCESS | FAILED | DLQ
     status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    dispatch_attempts: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0"
+    )
+    dispatch_failures: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0"
+    )
+    next_dispatch_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dispatch_lease_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dispatch_token: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
     http_status: Mapped[Optional[int]] = mapped_column(Integer)
     response_preview: Mapped[Optional[str]] = mapped_column(String(2000))
     error: Mapped[Optional[str]] = mapped_column(Text)

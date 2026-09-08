@@ -244,6 +244,22 @@ celery_app.conf.update(
             "task": "app.worker.tasks.relay_agent_action_dispatch_outbox",
             "schedule": crontab(minute="*"),
         },
+        "relay-run-downstream-outbox": {
+            "task": "app.worker.tasks.relay_run_downstream_outbox",
+            "schedule": crontab(minute="*"),
+        },
+        "recover-waiting-run-finalizations": {
+            "task": "app.worker.tasks.recover_waiting_run_finalizations",
+            "schedule": crontab(minute="*"),
+        },
+        "relay-pending-webhook-deliveries": {
+            "task": "app.worker.tasks.relay_pending_webhook_deliveries",
+            "schedule": crontab(minute="*"),
+        },
+        "relay-pending-notification-deliveries": {
+            "task": "app.worker.tasks.relay_pending_notification_deliveries",
+            "schedule": crontab(minute="*"),
+        },
         # Tier 1 item 3: flaky-test quarantine maintenance (nightly at 04:00 UTC).
         # No-op until the ``flaky_auto_quarantine`` feature flag is enabled.
         "nightly-flaky-quarantine-maintenance": {

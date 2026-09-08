@@ -41,6 +41,22 @@ class DefectCommander(BaseAgent):
     stage_name = "defect_commander"
 
     @staticmethod
+    async def _jira_content_for_state(
+        state: dict,
+        cluster: FailureCluster,
+        analyses: list[AIAnalysis],
+    ) -> dict:
+        """Honor the pipeline-wide cost decision for Jira enrichment."""
+        deterministic_only = bool(state.get("_cost_budget_block")) or state.get(
+            "_cost_budget_mode_override"
+        ) in {"ml", "rules"}
+        return await _generate_jira_content(
+            cluster,
+            analyses,
+            deterministic_only=deterministic_only,
+        )
+
+    @staticmethod
     def select_cluster_id(state: dict) -> Optional[str]:
         """Pick the one cluster to promote, deterministically.
 
@@ -230,8 +246,9 @@ class DefectCommander(BaseAgent):
         composite = round(composite, 1)
         severity = _composite_to_severity(composite)
 
-        # LLM: generate Jira-ready defect content
-        jira_content = await _generate_jira_content(cluster, analyses)
+        # A pipeline-wide cost downgrade applies to every descendant,
+        # including this optional deep specialist.
+        jira_content = await self._jira_content_for_state(state, cluster, analyses)
 
         # Persist as Defect record
         defect_id = await self._persist_defect(

@@ -75,19 +75,29 @@ class RunCompareAgent:
             # propagate the original LLM failure as a 500 from the compare
             # endpoint. Use kwargs.
             logger.warning("run_compare_ai_report_fallback_used", error=str(exc))
-            fallback["status"] = "ready"
-            fallback["fallback_used"] = True
-            fallback["markdown_report"] = _markdown_from_report(fallback)
-            return validate_agent_contract(
-                RunCompareAgentOutput,
-                fallback,
-                agent_name="run_compare",
-                agent_version="v1",
-                fallback_used=True,
-                confidence=int(fallback.get("confidence") or 0),
-                evidence_refs=[{"type": "risk_level", "id": str(fallback.get("risk_level"))}],
-                decision_reason="run_compare_deterministic_fallback",
-            )
+            return build_validated_fallback_report(compare_payload)
+
+
+def build_validated_fallback_report(
+    compare_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the contract-valid deterministic report without creating an LLM."""
+    fallback = build_fallback_report(compare_payload)
+    fallback["status"] = "ready"
+    fallback["fallback_used"] = True
+    fallback["markdown_report"] = _markdown_from_report(fallback)
+    return validate_agent_contract(
+        RunCompareAgentOutput,
+        fallback,
+        agent_name="run_compare",
+        agent_version="v1",
+        fallback_used=True,
+        confidence=int(fallback.get("confidence") or 0),
+        evidence_refs=[
+            {"type": "risk_level", "id": str(fallback.get("risk_level"))}
+        ],
+        decision_reason="run_compare_deterministic_fallback",
+    )
 
 
 def _top_deltas(compare_payload: dict[str, Any], classification: str, limit: int = 8) -> list[dict[str, Any]]:

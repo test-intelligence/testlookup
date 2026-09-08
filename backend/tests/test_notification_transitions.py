@@ -26,6 +26,7 @@ from __future__ import annotations
 import sys
 import types
 import uuid
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -53,6 +54,85 @@ RUN_A = uuid.UUID("00000000-0000-0000-0000-00000000000a")
 RUN_B = uuid.UUID("00000000-0000-0000-0000-00000000000b")
 RUN_C = uuid.UUID("00000000-0000-0000-0000-00000000000c")
 RUN_D = uuid.UUID("00000000-0000-0000-0000-00000000000d")
+
+
+@pytest.mark.asyncio
+async def test_newer_run_waits_when_older_transition_is_still_in_flight():
+    from sqlalchemy.dialects import postgresql
+
+    older_operation_id = uuid.uuid4()
+
+    class _OrderDB:
+        def __init__(self, result):
+            self.result = result
+            self.statement = None
+
+        async def execute(self, statement):
+            self.statement = statement
+            return SimpleNamespace(scalar_one_or_none=lambda: self.result)
+
+    project_id = uuid.uuid4()
+    base = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+    older_run = SimpleNamespace(
+        id=RUN_A,
+        project_id=project_id,
+        end_time=base,
+        created_at=base,
+    )
+    newer_run = SimpleNamespace(
+        id=RUN_B,
+        project_id=project_id,
+        end_time=base + timedelta(seconds=1),
+        created_at=base + timedelta(seconds=1),
+    )
+
+    newer_db = _OrderDB(older_operation_id)
+    with pytest.raises(nt.TransitionOrderPending, match="older_transition_run_pending"):
+        await nt._ensure_transition_order(newer_db, newer_run)
+
+    sql = str(newer_db.statement.compile(dialect=postgresql.dialect()))
+    assert "run_downstream_outbox" in sql
+    assert "test_runs" in sql
+    compiled_params = str(newer_db.statement.compile().params)
+    assert "transition_notifications" in compiled_params
+    for status in {
+        "waiting",
+        "pending",
+        "sending",
+        "published",
+        "processing",
+        "failed",
+    }:
+        assert status in compiled_params
+
+    # Once no earlier live intent remains, the older run and the retried newer
+    # run are both admitted in chronological order.
+    await nt._ensure_transition_order(_OrderDB(None), older_run)
+    await nt._ensure_transition_order(_OrderDB(None), newer_run)
+
+
+@pytest.mark.asyncio
+async def test_transition_state_rows_are_selected_for_update():
+    from sqlalchemy.dialects import postgresql
+
+    state = _state("fp-lock")
+
+    class _LockDB:
+        def __init__(self):
+            self.statement = None
+
+        async def execute(self, statement):
+            self.statement = statement
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [state]))
+
+    db = _LockDB()
+    result = await nt._load_or_seed_states(
+        db, uuid.uuid4(), ["fp-lock"], set()
+    )
+
+    sql = str(db.statement.compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE" in sql
+    assert result == {"fp-lock": state}
 
 
 def _state(fp: str = "fp1", **overrides):
@@ -265,6 +345,216 @@ def test_render_caps_lines_with_overflow():
     lines = body.splitlines()
     assert len(lines) == nt.MAX_TRANSITION_LINES + 1
     assert lines[-1] == "…and 4 more transitions"
+
+
+# ── Durable transition delivery ordering (H12) ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_transition_default_fanout_uses_stable_delivery_scope(monkeypatch):
+    stage = AsyncMock()
+    monkeypatch.setattr(mgr, "stage_scoped_preference_deliveries", stage)
+    db = SimpleNamespace()
+
+    event = nt.TransitionEvent(
+        event=NotificationEventType.TEST_RECOVERED.value,
+        fingerprint="fp1",
+        test_name="test_recovered",
+    )
+    result = await nt._dispatch_transition_events(
+        db=db,
+        run_id=RUN_A,
+        project_id=uuid.uuid4(),
+        project_name="acme",
+        build_number="42",
+        events=[event],
+        cluster_by_tc={},
+        recent_failed_builds={},
+        team_channels={},
+        ownership_rules=[],
+        owner_map=None,
+        delivery_scope=f"transition-run:{RUN_A}",
+    )
+
+    assert result == {
+        "events": 1,
+        "clusters": 0,
+        "team_batches": 0,
+        "default_events": 1,
+    }
+    stage.assert_awaited_once()
+    assert stage.await_args.args == (db,)
+    assert stage.await_args.kwargs["delivery_scope"] == f"transition-run:{RUN_A}"
+
+
+@pytest.mark.asyncio
+async def test_team_transition_stages_durable_route_snapshot(monkeypatch):
+    from app.services import notification_routing as routing
+
+    event = nt.TransitionEvent(
+        event=NotificationEventType.TEST_RECOVERED.value,
+        fingerprint="fp1",
+        test_name="test_recovered",
+    )
+    team_batch = routing.TeamBatch(
+        recovered=[event],
+        channel=routing.TeamChannelInfo(
+            team_name="payments",
+            channel_type=NotificationChannel.SLACK.value,
+            target="https://hooks.slack.test/team-secret",
+        ),
+    )
+    monkeypatch.setattr(
+        routing,
+        "partition_transitions",
+        lambda *args: ([team_batch], routing.TransitionBatch()),
+    )
+    direct_send = AsyncMock()
+    monkeypatch.setattr(routing, "send_to_team_channel", direct_send)
+    stage = AsyncMock()
+    monkeypatch.setattr(mgr, "stage_team_notification_deliveries", stage)
+    load = AsyncMock()
+    monkeypatch.setattr(mgr, "_load_and_notify", load)
+
+    result = await nt._dispatch_transition_events(
+        db=SimpleNamespace(),
+        run_id=RUN_A,
+        project_id=uuid.uuid4(),
+        project_name="acme",
+        build_number="42",
+        events=[event],
+        cluster_by_tc={},
+        recent_failed_builds={},
+        team_channels={"payments": team_batch.channel},
+        ownership_rules=[SimpleNamespace()],
+        owner_map=None,
+        delivery_scope=f"transition-run:{RUN_A}",
+    )
+
+    assert result["team_batches"] == 1
+    direct_send.assert_not_awaited()
+    load.assert_not_awaited()
+    stage.assert_awaited_once()
+    assert stage.await_args.kwargs["delivery_scope"] == f"transition-run:{RUN_A}"
+    delivery = stage.await_args.kwargs["deliveries"][0]
+    assert delivery["team_name"] == "payments"
+    assert delivery["channel_type"] == NotificationChannel.SLACK.value
+    assert delivery["target"] == "https://hooks.slack.test/team-secret"
+    assert delivery["fallback"]["delivery_scope"] == (
+        f"transition-run:{RUN_A}:team-fallback:payments"
+    )
+    assert delivery["fallback"]["events"] == [
+        NotificationEventType.TEST_RECOVERED.value
+    ]
+
+
+class _TransitionRunDB:
+    def __init__(self, order: list[str]):
+        project_id = uuid.uuid4()
+        self._results = iter([
+            SimpleNamespace(
+                scalar_one_or_none=lambda: SimpleNamespace(
+                    project_id=project_id,
+                    build_number="42",
+                )
+            ),
+            SimpleNamespace(
+                scalar_one_or_none=lambda: SimpleNamespace(
+                    name="acme",
+                    component_owner_map=None,
+                )
+            ),
+            SimpleNamespace(
+                all=lambda: [SimpleNamespace(
+                    id=uuid.uuid4(),
+                    test_fingerprint="fp1",
+                    status="PASSED",
+                    test_name="test_recovered",
+                    suite_name="suite",
+                )]
+            ),
+        ])
+        self.order = order
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def execute(self, *args, **kwargs):
+        return next(self._results)
+
+    async def commit(self):
+        self.order.append("state_commit")
+
+
+def _patch_transition_evaluation(monkeypatch, db, dispatch):
+    import app.db.postgres as postgres
+    import app.services.github_pr_comment_service as github_pr_comment
+    import app.services.notification_routing as notification_routing
+    import app.services.ownership_resolver_service as ownership_resolver
+
+    event = nt.TransitionEvent(
+        event=NotificationEventType.TEST_RECOVERED.value,
+        fingerprint="fp1",
+        test_name="test_recovered",
+    )
+    policy = SimpleNamespace(
+        transitions_enabled=True,
+        enabled_events=[NotificationEventType.TEST_RECOVERED.value],
+        consecutive_failure_threshold=2,
+    )
+    monkeypatch.setattr(postgres, "AsyncSessionLocal", lambda: db)
+    monkeypatch.setattr(nt, "get_effective_policy", AsyncMock(return_value=policy))
+    monkeypatch.setattr(nt, "_load_or_seed_states", AsyncMock(return_value={}))
+    monkeypatch.setattr(nt, "evaluate_case_transitions", lambda **kwargs: [event])
+    monkeypatch.setattr(
+        github_pr_comment,
+        "_flaky_fingerprints",
+        AsyncMock(return_value=set()),
+    )
+    monkeypatch.setattr(
+        notification_routing,
+        "load_team_channels",
+        AsyncMock(return_value={}),
+    )
+    monkeypatch.setattr(
+        ownership_resolver,
+        "load_rules_for_project",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(nt, "_dispatch_transition_events", dispatch)
+
+
+@pytest.mark.asyncio
+async def test_transition_state_commits_only_after_delivery_intent_staging(monkeypatch):
+    order: list[str] = []
+    db = _TransitionRunDB(order)
+
+    async def _stage(**kwargs):
+        order.append("child_staged")
+        assert kwargs["delivery_scope"] == f"transition-run:{RUN_A}"
+        return {"events": 1}
+
+    dispatch = AsyncMock(side_effect=_stage)
+    _patch_transition_evaluation(monkeypatch, db, dispatch)
+
+    assert await nt.evaluate_run_transitions(RUN_A) == {"events": 1}
+    assert order == ["child_staged", "state_commit"]
+
+
+@pytest.mark.asyncio
+async def test_transition_state_is_not_committed_when_child_staging_fails(monkeypatch):
+    order: list[str] = []
+    db = _TransitionRunDB(order)
+    dispatch = AsyncMock(side_effect=RuntimeError("child staging failed"))
+    _patch_transition_evaluation(monkeypatch, db, dispatch)
+
+    with pytest.raises(RuntimeError, match="child staging failed"):
+        await nt.evaluate_run_transitions(RUN_A)
+
+    assert order == []
 
 
 # ── Policy resolution ───────────────────────────────────────────────────────

@@ -164,10 +164,11 @@ def test_persist_live_session_invokes_finalize_run():
     assert call["build_number"] == build_number
 
 
-def test_persist_live_session_skip_when_already_persisted():
+def test_persist_live_session_resumes_finalize_when_already_persisted():
     """When test_cases already exist for the canonical run uuid, the
-    persister short-circuits and must NOT call finalize_run a second
-    time (which would double-fire auto-tagging, suite_sync, etc.)."""
+    persister resumes finalization. A prior attempt may have committed rows and
+    crashed before finalization, so returning here would permanently lose the
+    outbox-backed downstream work."""
     pytest.importorskip("celery")
 
     from app.worker import tasks as worker_tasks
@@ -205,5 +206,9 @@ def test_persist_live_session_skip_when_already_persisted():
     if not result.successful():
         raise AssertionError(f"persist_live_session task failed: {result.traceback}")
 
-    finalize_mock.assert_not_awaited()
+    finalize_mock.assert_awaited_once_with(
+        run_id=run_id,
+        project_id=project_id,
+        build_number="b",
+    )
     assert not fake_session.committed

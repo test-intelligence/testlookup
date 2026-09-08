@@ -208,7 +208,10 @@ class RegressionWatchman(BaseAgent):
 
         # Step 2: LLM refines uncertain cases
         uncertain = {k: v for k, v in det_results.items() if v.get("confidence", 100) < 70}
-        if uncertain:
+        deterministic_only = bool(state.get("_cost_budget_block")) or state.get(
+            "_cost_budget_mode_override"
+        ) in {"ml", "rules"}
+        if uncertain and not deterministic_only:
             llm_results = await self._llm_classify(uncertain, failure_clusters, history)
             det_results.update(llm_results)
 

@@ -333,6 +333,22 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                     run_id=str(run.id), error=str(rel_err),
                 )
 
+            from app.models.postgres import Project as _Project
+            from app.services.run_downstream_outbox import stage_finalize_operations
+
+            project_result = await db.execute(
+                select(_Project).where(_Project.id == run.project_id)
+            )
+            project = project_result.scalar_one_or_none()
+            if project is None:
+                raise RuntimeError("sentinel project disappeared before outbox staging")
+            await stage_finalize_operations(
+                db,
+                run=run,
+                project=project,
+                run_ai=True,
+                ready=True,
+            )
             await db.commit()
             logger.info(f"Ingestion complete: {len(parsed_cases)} test cases processed")
 
@@ -351,59 +367,6 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                 })
             except Exception as ws_err:
                 logger.debug(f"WS broadcast skipped: {ws_err}")
-
-            # Enqueue async notifications (email / Slack / Teams)
-            try:
-                from app.worker.tasks import dispatch_run_notifications as _notify_task
-                from app.models.postgres import Project as _Project
-                async with AsyncSessionLocal() as _db:
-                    _proj_result = await _db.execute(
-                        select(_Project).where(_Project.id == run.project_id)
-                    )
-                    _project = _proj_result.scalar_one_or_none()
-                    _project_name = _project.name if _project else str(run.project_id)
-
-                _notify_task.delay(
-                    project_id=str(run.project_id),
-                    run_id=str(run.id),
-                    build_number=run.build_number,
-                    pass_rate=float(run.pass_rate or 0),
-                    total_tests=int(run.total_tests or 0),
-                    failed_tests=int(run.failed_tests or 0),
-                    project_name=_project_name,
-                )
-            except Exception as notify_err:
-                logger.warning(
-                    "run_notifications_enqueue_failed", error=str(notify_err),
-                )
-
-            # Transition-based notifications (PMF US-7.1/US-7.2) — own task,
-            # own isolation, idempotent per (fingerprint, run).
-            try:
-                from app.worker.tasks import (
-                    dispatch_transition_notifications as _transitions_task,
-                )
-                _transitions_task.delay(run_id=str(run.id))
-            except Exception as trans_err:
-                logger.warning(
-                    "transition_notifications_enqueue_failed",
-                    error=str(trans_err),
-                )
-
-            # Trigger the multi-agent analysis pipeline
-            try:
-                from app.worker.tasks import run_agent_pipeline as _pipeline_task
-                _pipeline_task.delay(
-                    test_run_id=str(run.id),
-                    project_id=str(run.project_id),
-                    build_number=run.build_number,
-                    workflow_type="offline",
-                )
-                logger.info("agent_pipeline_queued", run_id=str(run.id))
-            except Exception as pipeline_err:
-                logger.warning(
-                    "agent_pipeline_queue_failed", error=str(pipeline_err),
-                )
 
         except Exception as e:
             await db.rollback()

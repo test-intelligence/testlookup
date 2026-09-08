@@ -561,6 +561,23 @@ async def finalize_run(
     async with AsyncSessionLocal() as db:
         try:
             await _update_run_aggregates(db, rid)
+            run_result = await db.execute(select(TestRun).where(TestRun.id == rid))
+            run_for_dispatch = run_result.scalar_one_or_none()
+            project_result = await db.execute(select(Project).where(Project.id == pid))
+            project_for_dispatch = project_result.scalar_one_or_none()
+            if run_for_dispatch is None or project_for_dispatch is None:
+                raise RuntimeError("finalized run or project disappeared before outbox staging")
+            from app.services.run_downstream_outbox import stage_finalize_operations
+
+            # Children remain non-dispatchable until every required finalize
+            # step below has observed the durable run state.
+            await stage_finalize_operations(
+                db,
+                run=run_for_dispatch,
+                project=project_for_dispatch,
+                run_ai=run_ai,
+                ready=False,
+            )
             await db.commit()
         except Exception:
             await db.rollback()
@@ -798,99 +815,26 @@ async def finalize_run(
         lambda d: resolve_commit_range(d, rid),
     )
 
-    # Fetch run for notification data
+    # This is the readiness gate: a relay cannot observe the child intents as
+    # pending until finalization has reached its end. If this commit fails, the
+    # owning Celery task retries finalization and activates the same unique rows.
+    await _activate_finalize_children(rid)
+
+    logger.info(
+        "post_ingestion_operations_staged",
+        run_id=run_id,
+        ai_requested=run_ai,
+    )
+
+
+async def _activate_finalize_children(run_id: uuid.UUID) -> None:
+    """Commit the readiness gate, surfacing failure to the owning worker."""
+    from app.services.run_downstream_outbox import activate_finalize_operations
+
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(TestRun).where(TestRun.id == rid))
-        run = result.scalar_one_or_none()
-        if not run:
-            logger.warning("Run not found for post-ingestion", run_id=run_id)
-            return
-
-    # Tier 2 item 6 — fan out the ``run.completed`` event to any
-    # customer-managed webhook subscriptions. Gated by feature flag +
-    # AI_OFFLINE_MODE. Failures land in per-subscription last_error for
-    # the settings UI; ingestion never blocks on delivery.
-    try:
-        from app.services.webhook_service import emit_event
-        await emit_event(
-            "run.completed",
-            project_id=pid,
-            payload={
-                "run_id": str(rid),
-                "project_id": str(pid),
-                "build_number": run.build_number,
-                "branch": run.branch,
-                "commit_hash": run.commit_hash,
-                "total_tests": int(run.total_tests or 0),
-                "passed_tests": int(run.passed_tests or 0),
-                "failed_tests": int(run.failed_tests or 0),
-                "broken_tests": int(run.broken_tests or 0),
-                "skipped_tests": int(run.skipped_tests or 0),
-                "pass_rate": float(run.pass_rate or 0.0),
-                "status": run.status,
-                "start_time": run.start_time.isoformat() if run.start_time else None,
-                "end_time": run.end_time.isoformat() if run.end_time else None,
-            },
-        )
-    except Exception as wh_exc:
-        logger.warning(
-            "webhook_emit_run_completed_failed",
-            run_id=str(rid),
-            error=str(wh_exc),
-        )
-
-    # Enqueue notifications
-    try:
-        from app.worker.tasks import dispatch_run_notifications as _notify
-        result_proj = None
-        async with AsyncSessionLocal() as db:
-            r = await db.execute(select(Project).where(Project.id == pid))
-            result_proj = r.scalar_one_or_none()
-        _notify.delay(
-            project_id=str(pid),
-            run_id=str(rid),
-            build_number=build_number,
-            pass_rate=float(run.pass_rate or 0),
-            total_tests=int(run.total_tests or 0),
-            failed_tests=int(run.failed_tests or 0),
-            project_name=result_proj.name if result_proj else str(pid),
-        )
-    except Exception as e:
-        logger.warning("notification_enqueue_failed", error=str(e))
-
-    # PMF US-7.1/US-7.2 — transition-based notifications. Same isolation
-    # contract as the per-run dispatch above: evaluation runs in its own
-    # Celery task, is idempotent per (fingerprint, run) via the
-    # notification_test_states stamp, and never blocks finalization.
-    try:
-        from app.worker.tasks import dispatch_transition_notifications as _transitions
-        _transitions.delay(run_id=str(rid))
-    except Exception as e:
-        logger.warning("transition_notification_enqueue_failed", error=str(e))
-
-    # Trigger agent pipeline (unless the caller opted out, e.g. a manual upload
-    # with "skip AI analysis" or a bulk historical import).
-    if run_ai:
         try:
-            from app.worker.tasks import run_agent_pipeline as _pipeline
-            _pipeline.delay(
-                test_run_id=str(rid),
-                project_id=str(pid),
-                build_number=build_number,
-                workflow_type="offline",
-            )
-            logger.info("agent_pipeline_queued", run_id=run_id)
-        except Exception as e:
-            logger.warning("agent_pipeline_queue_failed", error=str(e))
-    else:
-        logger.info("agent_pipeline_skipped", run_id=run_id)
-
-    # Precompute latest-vs-previous suite comparison reports so the default
-    # nightly view is ready before users arrive in the morning. This is
-    # best-effort and never blocks ingestion finalization.
-    try:
-        from app.worker.tasks import precompute_suite_comparisons_for_run as _suite_compare
-        _suite_compare.delay(test_run_id=str(rid), project_id=str(pid))
-        logger.info("suite_comparison_precompute_queued", run_id=run_id)
-    except Exception as e:
-        logger.warning("suite_comparison_precompute_queue_failed", error=str(e))
+            await activate_finalize_operations(db, run_id=run_id)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise

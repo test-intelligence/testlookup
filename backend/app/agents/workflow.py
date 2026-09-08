@@ -333,6 +333,13 @@ async def cluster_investigation_dispatch_node(state: WorkflowState) -> dict:
         project_id=state["project_id"],
         run_id=state["test_run_id"],
         frozen_settings=dict(state.get("cluster_child_settings") or {}),
+        cost_budget_decision={
+            "action": state.get("_cost_budget_action"),
+            "mode_override": state.get("_cost_budget_mode_override"),
+            "block": bool(state.get("_cost_budget_block")),
+            "rationale": state.get("_cost_budget_rationale"),
+            "utilization_pct": state.get("_cost_budget_utilization_pct"),
+        },
     )
     return {
         "cluster_investigation_plan": plan,
@@ -1273,6 +1280,7 @@ async def _claim_pipeline_resume(pipeline_run_id: str) -> dict[str, Any] | None:
             "regression_watchman_settings": metadata.get("regression_watchman_settings") or {"enabled": False},
             "change_ownership_settings": metadata.get("change_ownership_settings") or {"enabled": False},
             "analysis_mode_resolution": mode_snapshot,
+            "cost_budget_decision": metadata.get("cost_budget_decision") or {},
             "resume_attempt": resume_attempt,
         }
 
@@ -1303,6 +1311,7 @@ async def resume_pipeline(pipeline_run_id: str, build_number: str = "resume") ->
 async def _persist_execution_context(
     pipeline_run_id: str,
     mode_snapshot: dict[str, Any],
+    cost_budget_snapshot: dict[str, Any] | None = None,
 ) -> None:
     """Persist mode routing before graph execution can fail."""
     if not pipeline_run_id or not isinstance(mode_snapshot, dict):
@@ -1323,6 +1332,8 @@ async def _persist_execution_context(
                 "analysis_mode_resolved": mode_snapshot.get("resolved"),
                 "analysis_mode_resolution": mode_snapshot,
             })
+            if cost_budget_snapshot is not None:
+                metadata["cost_budget_decision"] = cost_budget_snapshot
             pipeline.execution_metadata = metadata
             await db.commit()
     except Exception as exc:
@@ -1332,6 +1343,97 @@ async def _persist_execution_context(
             pipeline_run_id=pipeline_run_id,
             error_type=type(exc).__name__,
         )
+
+
+async def _prepare_pipeline_cost_budget(
+    *,
+    pipeline_run_id: str,
+    project_id: str,
+    pipeline_setup: dict[str, Any],
+    mode_snapshot: dict[str, Any],
+    cost_budget_mode_override: str | None,
+) -> dict[str, Any]:
+    """Resolve and durably persist one cost decision for the whole pipeline."""
+    persisted = pipeline_setup.get("cost_budget_decision")
+    if (
+        pipeline_setup.get("resume_attempt")
+        and isinstance(persisted, dict)
+        and persisted.get("action")
+    ):
+        snapshot = dict(persisted)
+    elif cost_budget_mode_override in {"ml", "rules"}:
+        snapshot = {
+            "action": "PRECHECKED_DOWNGRADE",
+            "mode_override": cost_budget_mode_override,
+            "block": False,
+            "rationale": "Cost budget was evaluated before durable task dispatch",
+            "utilization_pct": None,
+        }
+    else:
+        from app.services.llm_cost_budget import check_and_apply_cap
+
+        decision = await check_and_apply_cap(project_id)
+        snapshot = {
+            "action": decision.action,
+            "mode_override": decision.mode_override,
+            "block": bool(decision.block),
+            "rationale": decision.rationale,
+            "utilization_pct": decision.utilization_pct,
+        }
+
+    await _persist_execution_context(pipeline_run_id, mode_snapshot, snapshot)
+    return snapshot
+
+
+def _apply_pipeline_cost_budget(
+    state: dict[str, Any], snapshot: dict[str, Any]
+) -> None:
+    """Apply the authoritative decision after any checkpoint state is restored."""
+    state.update(
+        {
+            "_cost_budget_prechecked": True,
+            "_cost_budget_action": snapshot.get("action"),
+            "_cost_budget_rationale": snapshot.get("rationale"),
+            "_cost_budget_utilization_pct": snapshot.get("utilization_pct"),
+            "_cost_budget_mode_override": snapshot.get("mode_override"),
+            "_cost_budget_block": bool(snapshot.get("block")),
+        }
+    )
+
+
+async def _complete_cost_budget_block(
+    *,
+    pipeline_run_id: str,
+    workflow_type: str,
+    state: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Complete a hard-blocked pipeline without entering any agent graph."""
+    if not state.get("_cost_budget_block"):
+        return None
+
+    state.update(
+        {
+            "stage_quality": "cost_budget_blocked",
+            "execution_path": ExecutionPath.CONDITIONAL_SKIP,
+            "skipped_stages": list(
+                (state.get("workflow_plan") or {}).get("stages") or []
+            ),
+            "errors": [],
+            "current_stage": "completed",
+            "cost_budget_blocked": True,
+        }
+    )
+    await _mark_pipeline_done(pipeline_run_id, success=True, final_state=state)
+    await emit_event(
+        pipeline_run_id,
+        "pipeline_completed",
+        detail={
+            "workflow_type": workflow_type,
+            "cost_budget_blocked": True,
+            "budget_action": state.get("_cost_budget_action"),
+        },
+    )
+    return state
 
 
 def _safe_serialize(data: dict) -> dict:
@@ -1587,6 +1689,8 @@ async def run_offline_pipeline(
     workflow_type: str = "offline",
     *,
     pipeline_run_id: str | None = None,
+    create_if_missing: bool = False,
+    cost_budget_mode_override: str | None = None,
 ) -> dict:
     """
     Execute the full offline analysis pipeline for a completed test run.
@@ -1598,7 +1702,22 @@ async def run_offline_pipeline(
     if pipeline_run_id is not None:
         pipeline_setup = await _claim_pipeline_resume(pipeline_run_id)
         if pipeline_setup is None:
-            raise ValueError("pipeline_not_resumable")
+            async with AsyncSessionLocal() as db:
+                existing = await db.get(AgentPipelineRun, pipeline_run_id)
+            if existing is not None and existing.status == "completed":
+                return {
+                    "completed_stages": [],
+                    "errors": [],
+                    "duplicate": True,
+                    "pipeline_run_id": str(existing.id),
+                }
+            if not create_if_missing or existing is not None:
+                raise ValueError("pipeline_not_resumable")
+            if not test_run_id or not project_id:
+                raise ValueError("test_run_and_project_required")
+            pipeline_setup = await _create_pipeline_run(
+                pipeline_run_id, test_run_id, project_id, workflow_type
+            )
         test_run_id = pipeline_setup["test_run_id"]
         project_id = pipeline_setup["project_id"]
     else:
@@ -1619,7 +1738,13 @@ async def run_offline_pipeline(
         mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
     else:
         mode_snapshot = await _resolve_analysis_mode_snapshot()
-    await _persist_execution_context(pipeline_run_id, mode_snapshot)
+    cost_budget_snapshot = await _prepare_pipeline_cost_budget(
+        pipeline_run_id=pipeline_run_id,
+        project_id=project_id,
+        pipeline_setup=pipeline_setup,
+        mode_snapshot=mode_snapshot,
+        cost_budget_mode_override=cost_budget_mode_override,
+    )
 
     initial_state: WorkflowState = {
         "pipeline_run_id":    pipeline_run_id,
@@ -1705,6 +1830,7 @@ async def run_offline_pipeline(
             pipeline_run_id=pipeline_run_id,
             checkpoint_stages=checkpoint_stages,
         )
+    _apply_pipeline_cost_budget(cast(dict[str, Any], initial_state), cost_budget_snapshot)
 
     if workflow_type == "deep":
         app = _deep_app
@@ -1712,6 +1838,14 @@ async def run_offline_pipeline(
         app = _live_app
     else:
         app = _offline_app
+
+    blocked_state = await _complete_cost_budget_block(
+        pipeline_run_id=pipeline_run_id,
+        workflow_type=workflow_type,
+        state=cast(dict[str, Any], initial_state),
+    )
+    if blocked_state is not None:
+        return blocked_state
 
     try:
         logger.info(
@@ -1788,6 +1922,7 @@ async def run_deep_pipeline(
     build_number: str = "resume",
     *,
     pipeline_run_id: str | None = None,
+    cost_budget_mode_override: str | None = None,
 ) -> dict:
     """
     Execute the deep investigation pipeline with clustering, flaky sentinel,
@@ -1814,7 +1949,13 @@ async def run_deep_pipeline(
         mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
     else:
         mode_snapshot = await _resolve_analysis_mode_snapshot()
-    await _persist_execution_context(pipeline_run_id, mode_snapshot)
+    cost_budget_snapshot = await _prepare_pipeline_cost_budget(
+        pipeline_run_id=pipeline_run_id,
+        project_id=project_id,
+        pipeline_setup=pipeline_setup,
+        mode_snapshot=mode_snapshot,
+        cost_budget_mode_override=cost_budget_mode_override,
+    )
 
     initial_state: WorkflowState = {
         "pipeline_run_id":    pipeline_run_id,
@@ -1897,6 +2038,15 @@ async def run_deep_pipeline(
             pipeline_run_id=pipeline_run_id,
             checkpoint_stages=checkpoint_stages,
         )
+    _apply_pipeline_cost_budget(cast(dict[str, Any], initial_state), cost_budget_snapshot)
+
+    blocked_state = await _complete_cost_budget_block(
+        pipeline_run_id=pipeline_run_id,
+        workflow_type="deep",
+        state=cast(dict[str, Any], initial_state),
+    )
+    if blocked_state is not None:
+        return blocked_state
 
     try:
         logger.info(
@@ -2341,6 +2491,7 @@ async def _mark_pipeline_done(
         )
         run = result.scalar_one_or_none()
         if run:
+            summary_completed = False
             if success:
                 # WF-3: Check for partial completion — some stages may have failed
                 # while the pipeline overall didn't raise an exception
@@ -2351,6 +2502,10 @@ async def _mark_pipeline_done(
                 )
                 stages = stage_results.scalars().all()
                 has_failed_stages = any(s.status == "failed" for s in stages)
+                summary_completed = any(
+                    s.stage_name == "summary" and s.status == "completed"
+                    for s in stages
+                )
                 run.status = "partial" if has_failed_stages else "completed"
             else:
                 run.status = "failed"
@@ -2414,6 +2569,14 @@ async def _mark_pipeline_done(
                     "analysis_mode_requested": final_state.get("analysis_mode_requested"),
                     "analysis_mode_resolved": final_state.get("analysis_mode_resolved"),
                     "analysis_mode_resolution": final_state.get("analysis_mode_resolution", {}),
+                    # The cap is a pipeline-wide execution decision. A partial
+                    # pipeline may later resume under this same identity, so
+                    # terminalization must not discard the snapshot persisted
+                    # before graph execution and let replay re-evaluate into a
+                    # less restrictive mode.
+                    "cost_budget_decision": prior_metadata.get(
+                        "cost_budget_decision", {}
+                    ),
                     "checkpoint_stages": final_state.get("_checkpoint_stages", []),
                     "checkpoint_replay_metadata": final_state.get(
                         "_checkpoint_replay_metadata", {}
@@ -2454,6 +2617,17 @@ async def _mark_pipeline_done(
                     reason="pipeline_failed" if not success else "pipeline_terminalized",
                 )
                 run.execution_metadata = prior_metadata
+            if success and summary_completed and final_state:
+                from app.services.run_downstream_outbox import (
+                    stage_ai_summary_notification_operation,
+                )
+
+                await stage_ai_summary_notification_operation(
+                    db,
+                    run_id=uuid.UUID(str(run.test_run_id)),
+                    project_id=uuid.UUID(str(final_state["project_id"])),
+                    build_number=str(final_state.get("build_number") or ""),
+                )
         # Mark stages that were never reached (still "pending") as "skipped".
         # Also tag them with a conditional_skip execution_path so the UI shows
         # "not on active pipeline branch" rather than a generic skipped badge.

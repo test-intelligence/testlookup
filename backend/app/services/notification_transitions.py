@@ -41,9 +41,9 @@ needed.
 Transaction model: Celery-task-owned — the engine opens its own
 ``AsyncSessionLocal`` and commits the state-store update itself (see the
 allowlist entry in ``tests/test_architectural_transaction_boundaries.py``).
-Delivery reuses ``notification.manager._load_and_notify`` (channel fan-out,
-NotificationLog audit rows, per-user routing via the existing
-``NotificationPreference.events`` lists).
+Delivery stages durable ``NotificationLog`` children through the same session
+that advances transition state (channel fan-out and per-user routing still use
+the existing ``NotificationPreference.events`` lists).
 """
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,12 +61,61 @@ from app.models.postgres import (
     NotificationEventType,
     NotificationTestState,
     NotificationTransitionPolicy,
+    RunDownstreamOutbox,
     TestCase,
     TestRun,
     TestStatus,
 )
 
 logger = structlog.get_logger("services.notification_transitions")
+
+
+class TransitionOrderPending(RuntimeError):
+    """A newer run must be deferred until an older transition is durable."""
+
+    defer_downstream_without_failure = True
+
+
+async def _ensure_transition_order(db: AsyncSession, run: TestRun) -> None:
+    """Reject out-of-order state mutation while an older operation is unresolved."""
+    current_order = getattr(run, "end_time", None) or getattr(
+        run, "created_at", None
+    )
+    if current_order is None:
+        return
+    older_transition = (
+        await db.execute(
+            select(RunDownstreamOutbox.id)
+            .join(TestRun, TestRun.id == RunDownstreamOutbox.run_id)
+            .where(
+                RunDownstreamOutbox.project_id == run.project_id,
+                RunDownstreamOutbox.run_id != run.id,
+                RunDownstreamOutbox.operation == "transition_notifications",
+                RunDownstreamOutbox.status.in_(
+                    {
+                        "waiting",
+                        "pending",
+                        "sending",
+                        "published",
+                        "processing",
+                        # A terminally failed predecessor is a chronological
+                        # gap, not permission to apply newer state. Operators
+                        # can explicitly repair it by returning that outbox row
+                        # to pending; once it completes, later runs proceed.
+                        "failed",
+                    }
+                ),
+                tuple_(
+                    func.coalesce(TestRun.end_time, TestRun.created_at),
+                    TestRun.id,
+                )
+                < tuple_(current_order, run.id),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if older_transition is not None:
+        raise TransitionOrderPending("older_transition_run_pending")
 
 
 # All transition event values, in render order. The last two are the
@@ -202,7 +251,7 @@ async def _load_or_seed_states(
             select(NotificationTestState).where(
                 NotificationTestState.project_id == project_id,
                 NotificationTestState.test_fingerprint.in_(fingerprints),
-            )
+            ).with_for_update()
         )
     ).scalars().all()
     states_by_fp: dict[str, Any] = {s.test_fingerprint: s for s in state_rows}
@@ -237,7 +286,7 @@ async def _load_or_seed_states(
             select(NotificationTestState).where(
                 NotificationTestState.project_id == project_id,
                 NotificationTestState.test_fingerprint.in_(missing),
-            )
+            ).with_for_update()
         )
     ).scalars().all()
     for row in seeded:
@@ -494,6 +543,226 @@ def render_transition_message(
     return title, "\n".join(lines)
 
 
+async def _dispatch_transition_events(
+    *,
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    project_id: uuid.UUID,
+    project_name: str,
+    build_number: str,
+    events: list[TransitionEvent],
+    cluster_by_tc: dict[uuid.UUID, tuple[str, str]],
+    recent_failed_builds: dict[str, list[str]],
+    team_channels: dict[str, Any],
+    ownership_rules: list[Any],
+    owner_map: Optional[dict],
+    delivery_scope: str,
+) -> dict[str, Any]:
+    """Create recoverable transition deliveries before state is stamped."""
+    if not events:
+        return {"events": 0}
+
+    from app.core.config import settings
+    from app.services import notification_routing as routing
+
+    dashboard_url = f"{settings.public_base_url}/runs/{run_id}"
+    newly_failing = [
+        event
+        for event in events
+        if event.event == NotificationEventType.TEST_NEWLY_FAILING.value
+    ]
+    recovered = [
+        event
+        for event in events
+        if event.event == NotificationEventType.TEST_RECOVERED.value
+    ]
+    newly_flaky = [
+        event
+        for event in events
+        if event.event == NotificationEventType.TEST_NEWLY_FLAKY.value
+    ]
+    groups, singles = group_newly_failing(newly_failing, cluster_by_tc)
+    metadata = {
+        "project_name": project_name,
+        "build_number": build_number,
+        "dashboard_url": dashboard_url,
+        "transition_events": sorted({event.event for event in events}),
+        "transition_count": len(events),
+    }
+
+    if team_channels or ownership_rules:
+        from app.services.ownership_resolver_service import resolve_test_ownership
+
+        def _team_of(event: TransitionEvent) -> Optional[str]:
+            resolution = resolve_test_ownership(
+                ownership_rules,
+                {
+                    "suite_name": event.suite_name or "",
+                    "component": event.suite_name or "",
+                    "path": event.test_name or "",
+                },
+                owner_map,
+            )
+            return resolution.team_name
+
+        team_batches, default_batch = routing.partition_transitions(
+            groups,
+            singles,
+            recovered,
+            newly_flaky,
+            _team_of,
+            team_channels,
+        )
+    else:
+        team_batches = []
+        default_batch = routing.TransitionBatch(
+            groups=list(groups),
+            singles=list(singles),
+            recovered=list(recovered),
+            newly_flaky=list(newly_flaky),
+        )
+
+    # Team routes use the same durable, leased NotificationLog relay as the
+    # default preference fan-out. The target is snapshotted with the child so
+    # later configuration changes cannot strand an accepted delivery.
+    team_deliveries: list[dict[str, Any]] = []
+    for batch in team_batches:
+        if batch.channel is None:
+            default_batch.merge(batch, routing.FALLBACK_ROUTING_ERROR)
+            continue
+        title, body = render_transition_message(
+            project_name=project_name,
+            build_number=build_number,
+            groups=batch.groups,
+            single_failing=batch.singles,
+            recovered=batch.recovered,
+            newly_flaky=batch.newly_flaky,
+            dashboard_url=dashboard_url,
+            recent_failed_builds=recent_failed_builds,
+            team_name=batch.channel.team_name,
+        )
+        batch_events = batch.event_values()
+        batch_event = next(
+            (value for value in TRANSITION_EVENT_VALUES if value in batch_events),
+            NotificationEventType.TEST_NEWLY_FAILING.value,
+        )
+        fallback_title, fallback_body = render_transition_message(
+            project_name=project_name,
+            build_number=build_number,
+            groups=batch.groups,
+            single_failing=batch.singles,
+            recovered=batch.recovered,
+            newly_flaky=batch.newly_flaky,
+            dashboard_url=dashboard_url,
+            recent_failed_builds=recent_failed_builds,
+        )
+        fallback_note = routing.render_unowned_note(
+            {routing.FALLBACK_DELIVERY_FAILED: batch.event_count}
+        )
+        if fallback_note:
+            fallback_body = f"{fallback_body}\n{fallback_note}"
+        team_deliveries.append(
+            {
+                "team_name": batch.channel.team_name,
+                "channel_type": batch.channel.channel_type,
+                "target": batch.channel.target,
+                "event_type": batch_event,
+                "title": title,
+                "body": body,
+                "metadata": metadata,
+                "fallback": {
+                    "delivery_scope": (
+                        f"{delivery_scope}:team-fallback:{batch.channel.team_name}"
+                    ),
+                    "events": sorted(batch_events),
+                    "title": fallback_title,
+                    "body": fallback_body,
+                    "metadata": metadata,
+                },
+            }
+        )
+        logger.info(
+            "transition_routing_decision",
+            run_id=str(run_id),
+            project_id=str(project_id),
+            routed_team=batch.channel.team_name,
+            channel_type=batch.channel.channel_type,
+            events=batch.event_count,
+            fallback_reason=None,
+        )
+
+    if team_deliveries:
+        from app.services.notification.manager import (
+            stage_team_notification_deliveries,
+        )
+
+        await stage_team_notification_deliveries(
+            db,
+            project_id=project_id,
+            run_id=run_id,
+            delivery_scope=delivery_scope,
+            deliveries=team_deliveries,
+        )
+
+    if not default_batch.is_empty:
+        title, body = render_transition_message(
+            project_name=project_name,
+            build_number=build_number,
+            groups=default_batch.groups,
+            single_failing=default_batch.singles,
+            recovered=default_batch.recovered,
+            newly_flaky=default_batch.newly_flaky,
+            dashboard_url=dashboard_url,
+            recent_failed_builds=recent_failed_builds,
+        )
+        note = routing.render_unowned_note(default_batch.fallback_counts)
+        if note:
+            body = f"{body}\n{note}" if body else note
+        event_members = [
+            NotificationEventType(value)
+            for value in sorted(default_batch.event_values())
+        ]
+        logger.info(
+            "transition_routing_decision",
+            run_id=str(run_id),
+            project_id=str(project_id),
+            routed_team=None,
+            channel_type="default",
+            events=default_batch.event_count,
+            fallback_counts=default_batch.fallback_counts or None,
+        )
+
+        from app.services.notification.manager import (
+            stage_scoped_preference_deliveries,
+        )
+
+        await stage_scoped_preference_deliveries(
+            db,
+            project_id=project_id,
+            run_id=run_id,
+            events=event_members,
+            build_title_fn=lambda _event: (title, body),
+            metadata=metadata,
+            delivery_scope=delivery_scope,
+        )
+
+    logger.info(
+        "transition_notifications_dispatched",
+        run_id=str(run_id),
+        project_id=str(project_id),
+        events=len(events),
+        clusters=len(groups),
+        team_batches=len(team_batches),
+        default_events=default_batch.event_count,
+    )
+    return {
+        "events": len(events),
+        "clusters": len(groups),
+        "team_batches": len(team_batches),
+        "default_events": default_batch.event_count,
+    }
+
+
 # ── Orchestrator (Celery entry point) ───────────────────────────────────────
 
 
@@ -506,7 +775,6 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
     called with an injected request session — it owns its transaction
     (Celery-task-owned, see module docstring).
     """
-    from app.core.config import settings
     from app.db.postgres import AsyncSessionLocal
 
     events: list[TransitionEvent] = []
@@ -533,9 +801,18 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
 
         from app.models.postgres import Project
         project = (
-            await db.execute(select(Project).where(Project.id == project_id))
+            await db.execute(
+                select(Project)
+                .where(Project.id == project_id)
+                .with_for_update()
+            )
         ).scalar_one_or_none()
         project_name = project.name if project else str(project_id)
+
+        # Project-row locking provides mutual exclusion. The durable outbox
+        # check also enforces chronological mutation when the newer worker won
+        # that lock race.
+        await _ensure_transition_order(db, run)
 
         case_rows = (
             await db.execute(
@@ -680,8 +957,29 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
                 )
                 ownership_rules, owner_map, team_channels = [], None, {}
 
-        # Persist the state-store advance regardless of whether anything
-        # fires — the stamp is what makes re-finalization idempotent.
+        # Stage/deliver the transition notification before making the state
+        # stamp durable. Scoped default and team deliveries are inserted
+        # idempotently. If this phase raises, closing the session rolls the
+        # state advance back so the owning outbox retry recomputes the same
+        # events instead of suppressing them via last_run_id.
+        delivery_result = await _dispatch_transition_events(
+            db=db,
+            run_id=run_id,
+            project_id=project_id,
+            project_name=project_name,
+            build_number=build_number,
+            events=events,
+            cluster_by_tc=cluster_by_tc,
+            recent_failed_builds=recent_failed_builds,
+            team_channels=team_channels,
+            ownership_rules=ownership_rules,
+            owner_map=owner_map,
+            delivery_scope=f"transition-run:{run_id}",
+        )
+
+        # The state stamp and corresponding child intents become durable in the
+        # same transaction. A retry recomputes the events and conflicts on the
+        # same stable delivery keys before committing the state again.
         await db.commit()
 
     # AI-1 auto-trigger (shadow): newly-failing transitions enqueue an
@@ -700,164 +998,7 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
                 error=str(exc),
             )
 
-    if not events:
-        return {"events": 0}
-
-    dashboard_url = f"{settings.public_base_url}/runs/{run_id}"
-
-    newly_failing = [
-        e for e in events
-        if e.event == NotificationEventType.TEST_NEWLY_FAILING.value
-    ]
-    recovered = [
-        e for e in events
-        if e.event == NotificationEventType.TEST_RECOVERED.value
-    ]
-    newly_flaky = [
-        e for e in events
-        if e.event == NotificationEventType.TEST_NEWLY_FLAKY.value
-    ]
-
-    groups, singles = group_newly_failing(newly_failing, cluster_by_tc)
-
-    present_events = sorted({e.event for e in events})
-    metadata = {
-        "project_name": project_name,
-        "build_number": build_number,
-        "dashboard_url": dashboard_url,
-        "transition_events": present_events,
-        "transition_count": len(events),
-    }
-
-    # ── Ownership routing (US-7.3) ──────────────────────────────────────────
-    # Partition the batch by owner team; deliver owned events directly to
-    # the team's channel and everything else through the default
-    # preference fan-out (today's behaviour) with an "unowned" note.
-    # Routing is engaged only when the project uses ownership at all
-    # (rules or team channels exist) — otherwise the default path is
-    # byte-identical to the pre-US-7.3 message.
-    from app.services import notification_routing as routing
-
-    if team_channels or ownership_rules:
-        from app.services.ownership_resolver_service import resolve_test_ownership
-
-        def _team_of(ev: TransitionEvent) -> Optional[str]:
-            resolution = resolve_test_ownership(
-                ownership_rules,
-                {
-                    "suite_name": ev.suite_name or "",
-                    "component": ev.suite_name or "",
-                    "path": ev.test_name or "",
-                },
-                owner_map,
-            )
-            return resolution.team_name
-
-        team_batches, default_batch = routing.partition_transitions(
-            groups, singles, recovered, newly_flaky, _team_of, team_channels,
-        )
-    else:
-        team_batches = []
-        default_batch = routing.TransitionBatch(
-            groups=list(groups), singles=list(singles),
-            recovered=list(recovered), newly_flaky=list(newly_flaky),
-        )
-
-    # Team-channel deliveries. A failed delivery merges the batch back
-    # into the default fan-out (fail open — never drop an event).
-    log_entries: list[tuple] = []
-    for batch in team_batches:
-        if batch.channel is None:  # defensive — partition always sets it
-            default_batch.merge(batch, routing.FALLBACK_ROUTING_ERROR)
-            continue
-        b_title, b_body = render_transition_message(
-            project_name=project_name,
-            build_number=build_number,
-            groups=batch.groups,
-            single_failing=batch.singles,
-            recovered=batch.recovered,
-            newly_flaky=batch.newly_flaky,
-            dashboard_url=dashboard_url,
-            recent_failed_builds=recent_failed_builds,
-            team_name=batch.channel.team_name,
-        )
-        batch_events = batch.event_values()
-        batch_event = next(
-            (v for v in TRANSITION_EVENT_VALUES if v in batch_events),
-            NotificationEventType.TEST_NEWLY_FAILING.value,
-        )
-        status, error_detail = await routing.send_to_team_channel(
-            batch.channel, b_title, b_body, batch_event, metadata,
-        )
-        log_entries.append(
-            (batch.channel, batch_event, b_title, b_body, status, error_detail)
-        )
-        logger.info(
-            "transition_routing_decision",
-            run_id=str(run_id),
-            project_id=str(project_id),
-            routed_team=batch.channel.team_name,
-            channel_type=batch.channel.channel_type,
-            events=batch.event_count,
-            fallback_reason=(
-                None if status == "sent" else routing.FALLBACK_DELIVERY_FAILED
-            ),
-        )
-        if status != "sent":
-            default_batch.merge(batch, routing.FALLBACK_DELIVERY_FAILED)
-
-    await routing.record_team_delivery_logs(project_id, run_id, log_entries)
-
-    # Default fan-out — one batched message per channel per run:
-    # subscribers of ANY present event receive the whole (unrouted)
-    # summary once, plus the ownership-coverage note when events fell back.
-    if not default_batch.is_empty:
-        title, body = render_transition_message(
-            project_name=project_name,
-            build_number=build_number,
-            groups=default_batch.groups,
-            single_failing=default_batch.singles,
-            recovered=default_batch.recovered,
-            newly_flaky=default_batch.newly_flaky,
-            dashboard_url=dashboard_url,
-            recent_failed_builds=recent_failed_builds,
-        )
-        note = routing.render_unowned_note(default_batch.fallback_counts)
-        if note:
-            body = f"{body}\n{note}" if body else note
-        default_events = sorted(default_batch.event_values())
-        event_members = [NotificationEventType(v) for v in default_events]
-        logger.info(
-            "transition_routing_decision",
-            run_id=str(run_id),
-            project_id=str(project_id),
-            routed_team=None,
-            channel_type="default",
-            events=default_batch.event_count,
-            fallback_counts=default_batch.fallback_counts or None,
-        )
-
-        from app.services.notification.manager import _load_and_notify
-        await _load_and_notify(
-            project_id, run_id, event_members,
-            lambda _event: (title, body),
-            metadata,
-        )
-    logger.info(
-        "transition_notifications_dispatched",
-        run_id=str(run_id),
-        project_id=str(project_id),
-        events=len(events),
-        clusters=len(groups),
-        team_batches=len(team_batches),
-        default_events=default_batch.event_count,
-    )
-    return {
-        "events": len(events),
-        "clusters": len(groups),
-        "team_batches": len(team_batches),
-        "default_events": default_batch.event_count,
-    }
+    return delivery_result
 
 
 # ── Quarantine workflow hook (event-driven, not run-batched) ────────────────

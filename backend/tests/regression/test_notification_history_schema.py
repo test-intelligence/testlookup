@@ -20,6 +20,14 @@ def test_notification_log_projection_contains_only_migrated_columns() -> None:
         "user_id",
         "project_id",
         "run_id",
+        "preference_id",
+        "delivery_key",
+        "delivery_metadata",
+        "delivery_attempts",
+        "delivery_token",
+        "delivery_started_at",
+        "delivery_lease_expires_at",
+        "next_delivery_at",
         "channel",
         "event_type",
         "title",
@@ -31,6 +39,7 @@ def test_notification_log_projection_contains_only_migrated_columns() -> None:
         "is_read",
         "sent_at",
         "created_at",
+        "updated_at",
     }
 
     assert {column.name for column in NotificationLog.__table__.columns} == expected

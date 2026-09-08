@@ -214,9 +214,15 @@ class AnomalyDetectionAgent(BaseAgent):
                     })
 
             # ── 5. LLM structured summary (presentation only) ────────────────────
-            anomaly_summary, llm_calls = await self._generate_summary(
-                anomalies, current_pass_rate, total_tests
-            )
+            if state.get("_cost_budget_mode_override") in {"ml", "rules"}:
+                anomaly_summary = self._deterministic_summary(
+                    anomalies, current_pass_rate, total_tests
+                )
+                llm_calls = 0
+            else:
+                anomaly_summary, llm_calls = await self._generate_summary(
+                    anomalies, current_pass_rate, total_tests
+                )
 
             duration_s = round(time.perf_counter() - _start, 2)
             log.info(
@@ -707,10 +713,23 @@ class AnomalyDetectionAgent(BaseAgent):
                 fallback="deterministic_template",
             )
             # Deterministic fallback — always works regardless of LLM availability
-            high = [a for a in anomalies if a.get("severity") == "HIGH"]
-            return (
-                f"⚠️ {len(anomalies)} anomaly(ies) detected "
-                f"({len(high)} high-severity). "
-                f"Pass rate: {pass_rate:.1f}%. "
-                f"Top issue: {anomalies[0]['description']}"
+            return self._deterministic_summary(
+                anomalies, pass_rate, total_tests
             ), 0
+
+    @staticmethod
+    def _deterministic_summary(
+        anomalies: list[dict], pass_rate: float, total_tests: int
+    ) -> str:
+        if not anomalies:
+            return (
+                f"✅ No anomalies detected. Pass rate: {pass_rate:.1f}% "
+                f"across {total_tests} tests."
+            )
+        high = [a for a in anomalies if a.get("severity") == "HIGH"]
+        return (
+            f"⚠️ {len(anomalies)} anomaly(ies) detected "
+            f"({len(high)} high-severity). "
+            f"Pass rate: {pass_rate:.1f}%. "
+            f"Top issue: {anomalies[0]['description']}"
+        )

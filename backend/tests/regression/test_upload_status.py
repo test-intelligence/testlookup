@@ -306,26 +306,36 @@ async def test_failed_status_carries_structured_error():
 
 @pytest.mark.asyncio
 async def test_finalize_run_gates_ai_pipeline_on_run_ai():
-    """MRU-8: finalize_run(run_ai=False) must NOT enqueue the agent pipeline;
-    run_ai=True must. The other steps are best-effort and run on a mock session."""
+    """MRU-8: the durable finalization intent preserves the run_ai choice."""
     import uuid as _uuid
-    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from app.services import ingestion_pipeline as ip
+    from app.services import run_downstream_outbox as outbox
 
-    @asynccontextmanager
-    async def _sess():
-        yield AsyncMock()
+    run = SimpleNamespace(
+        id=_uuid.uuid4(),
+        project_id=_uuid.uuid4(),
+        build_number="b",
+        pass_rate=100.0,
+        total_tests=1,
+        failed_tests=0,
+    )
+    project = SimpleNamespace(name="test")
+    staged = AsyncMock(return_value=True)
 
-    common = dict(run_id=str(_uuid.uuid4()), project_id=str(_uuid.uuid4()), build_number="b")
-    with patch.object(ip, "AsyncSessionLocal", _sess), \
-         patch.object(ip, "_update_run_aggregates", AsyncMock()), \
-         patch("app.worker.tasks.run_agent_pipeline") as pipeline, \
-         patch("app.worker.tasks.dispatch_run_notifications", MagicMock()), \
-         patch("app.worker.tasks.precompute_suite_comparisons_for_run", MagicMock()):
-        await ip.finalize_run(**common, run_ai=False)
-        pipeline.delay.assert_not_called()
+    with patch.object(outbox, "stage_downstream_operation", staged):
+        await outbox.stage_finalize_operations(
+            MagicMock(), run=run, project=project, run_ai=False
+        )
+        assert {"agent_pipeline", "suite_comparison"}.isdisjoint({
+            call.kwargs["operation"] for call in staged.await_args_list
+        })
 
-        await ip.finalize_run(**common, run_ai=True)
-        pipeline.delay.assert_called_once()
+        staged.reset_mock()
+        await outbox.stage_finalize_operations(
+            MagicMock(), run=run, project=project, run_ai=True
+        )
+        assert {"agent_pipeline", "suite_comparison"}.issubset({
+            call.kwargs["operation"] for call in staged.await_args_list
+        })

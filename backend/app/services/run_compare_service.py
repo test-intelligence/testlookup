@@ -476,6 +476,83 @@ async def resolve_latest_suite_pair(
     return previous, latest
 
 
+async def resolve_suite_pair_for_run(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    suite_name: str,
+    right_run_id: uuid.UUID,
+) -> tuple[TestRun, TestRun]:
+    """Resolve the predecessor of a fixed run for retry-stable precomputation.
+
+    A later run may finish while a comparison task is retrying. Anchoring the
+    right side prevents that later run from silently changing or suppressing
+    the report the durable task was created to produce.
+    """
+    suite_key = normalize_suite_name(suite_name)
+    if not suite_key:
+        raise ValueError("suite_name is required")
+
+    right_result = await db.execute(
+        select(TestRun).where(
+            TestRun.id == right_run_id,
+            TestRun.project_id == project_id,
+            TestRun.status != LaunchStatus.IN_PROGRESS,
+        )
+    )
+    right = right_result.scalar_one_or_none()
+    if right is None:
+        raise LookupError(f"Completed run {right_run_id} was not found")
+    run_level_match = normalize_suite_name(right.primary_suite_name) == suite_key
+    if not run_level_match and not await ensure_run_has_suite(
+        db, right_run_id, suite_name
+    ):
+        raise LookupError(f"Run {right_run_id} does not contain suite {suite_name}")
+
+    suite_exists = (
+        select(TestCase.id)
+        .where(
+            TestCase.test_run_id == TestRun.id,
+            func.lower(func.trim(TestCase.suite_name)) == suite_key,
+        )
+        .exists()
+    )
+    suite_match = or_(
+        func.lower(func.trim(TestRun.primary_suite_name)) == suite_key,
+        suite_exists,
+    )
+    branch_filter = (
+        TestRun.branch.is_(None)
+        if right.branch is None
+        else TestRun.branch == right.branch
+    )
+    right_time = right.end_time or right.created_at
+    previous_result = await db.execute(
+        select(TestRun)
+        .where(
+            TestRun.project_id == project_id,
+            TestRun.id != right.id,
+            TestRun.status != LaunchStatus.IN_PROGRESS,
+            branch_filter,
+            suite_match,
+            func.coalesce(TestRun.end_time, TestRun.created_at) < right_time,
+        )
+        .order_by(
+            func.coalesce(TestRun.end_time, TestRun.created_at).desc(),
+            TestRun.id,
+        )
+        .limit(1)
+    )
+    previous = previous_result.scalar_one_or_none()
+    if previous is None:
+        branch_label = right.branch or "no branch"
+        raise LookupError(
+            f"At least two completed runs are required to compare suite "
+            f"{suite_name} on branch {branch_label}"
+        )
+    return previous, right
+
+
 async def compare_runs(
     db: AsyncSession,
     left_id: uuid.UUID,
