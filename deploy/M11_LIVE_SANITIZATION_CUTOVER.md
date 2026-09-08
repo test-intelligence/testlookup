@@ -31,7 +31,8 @@ images are built and pinned by immutable digest:
 
    The command keyset-pages PostgreSQL archives, live `test_cases`, and MongoDB;
    purges the fully consumed live Stream without replay; preserves DLQ Stream
-   IDs; preserves live-buffer ordering and TTLs; deletes and boundedly rebuilds
+   IDs; sanitizes and checkpoint-migrates each legacy live-buffer LIST into its
+   stable per-run evidence Stream; deletes and boundedly rebuilds
    the complete search index from sanitized SQL (including inactive projects,
    which removes stale/orphaned documents); and deletes the derived per-project AI
    semantic-cache collections. It can be rerun safely after interruption.
@@ -48,9 +49,16 @@ images are built and pinned by immutable digest:
    `ai_analysis_cache_*` were deleted. Confirm that the original email,
    password, token, Basic/Bearer value, IPv4, and IPv6 are absent. Confirm the purged
    `testlookup:stream:live_events` has zero pending entries and reading `>` from
-   its consumer group does not deliver acknowledged history.
-7. Resume the new live stream consumer, Celery workers, and API deployment.
-8. Submit a new synthetic failed-test canary. Inspect every store listed above,
+   its consumer group does not deliver acknowledged history. Confirm each
+   per-run evidence entry is a sanitized batch manifest whose event IDs match
+   its `session_id`, `batch_id`, and zero-based event indexes.
+7. Follow [H02/H03 stable live protocol cutover](H02_H03_STABLE_LIVE_CUTOVER.md)
+   to drain the migrated evidence Stream and remove legacy LISTs. Do not remove
+   a LIST merely because migration completed: the new persistence consumer must
+   first report zero lag, zero pending entries, and zero outstanding events in
+   the run's batch-state Hash.
+8. Resume the new live stream consumer, Celery workers, and API deployment.
+9. Submit a new synthetic failed-test canary. Inspect every store listed above,
    including the newly written live Stream entry, and confirm the raw canaries
    are absent before ending the maintenance window.
 

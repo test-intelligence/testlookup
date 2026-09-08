@@ -938,22 +938,55 @@ async def test_stream_service_create_session_stores_token_and_initializes_live_s
 
 @pytest.mark.asyncio
 async def test_stream_service_ingest_event_batch_validates_and_refreshes_token():
+    session_id = "11111111-1111-1111-1111-111111111111"
     pipe_mock = AsyncMock()
     pipe_mock.rpush = MagicMock()
     pipe_mock.expire = MagicMock()
     pipe_mock.execute = AsyncMock()
-    redis = SimpleNamespace(get=AsyncMock(return_value="sess-1"), expire=AsyncMock(), pipeline=MagicMock(return_value=pipe_mock))
-    batch = SimpleNamespace(session_id="sess-1", run_id="run-1", events=[{"event_type": "test_result"}])
+    redis = SimpleNamespace(get=AsyncMock(return_value=session_id), expire=AsyncMock(), pipeline=MagicMock(return_value=pipe_mock))
+    batch = SimpleNamespace(session_id=session_id, run_id="run-1", events=[{"event_type": "test_result"}])
+    session = SimpleNamespace(id=uuid.UUID(session_id), run_id="run-1")
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return SimpleNamespace(get=AsyncMock(return_value=session))
+
+        async def __aexit__(self, *_args):
+            return False
 
     with (
         patch.object(stream_service, "get_redis", return_value=redis),
-        patch.object(stream_service, "publish_event_batch", AsyncMock(return_value=1)) as publish_mock,
+        patch.object(stream_service, "_persist_event_batch", AsyncMock(return_value=1)) as publish_mock,
+        patch("app.db.postgres.AsyncSessionLocal", return_value=_SessionContext()),
     ):
         result = await stream_service.ingest_event_batch(batch, "token-123")
 
     assert result.accepted == 1
     publish_mock.assert_awaited_once()
+    assert publish_mock.await_args.kwargs["run_id"] == session_id
     redis.expire.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_service_token_batch_rejects_run_id_mismatch():
+    session_id = "11111111-1111-1111-1111-111111111111"
+    redis = SimpleNamespace(get=AsyncMock(return_value=session_id))
+    batch = SimpleNamespace(session_id=session_id, run_id="spoofed", events=[])
+    session = SimpleNamespace(id=uuid.UUID(session_id), run_id="owned-run")
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return SimpleNamespace(get=AsyncMock(return_value=session))
+
+        async def __aexit__(self, *_args):
+            return False
+
+    with (
+        patch.object(stream_service, "get_redis", return_value=redis),
+        patch("app.db.postgres.AsyncSessionLocal", return_value=_SessionContext()),
+    ):
+        with pytest.raises(stream_service.LiveBatchConflictError, match="does not belong"):
+            await stream_service.ingest_event_batch(batch, "token-123")
 
 
 @pytest.mark.asyncio
@@ -990,14 +1023,17 @@ async def test_stream_service_ingest_via_api_key_creates_session_on_first_call()
     pipe_mock.hincrby = MagicMock()
     pipe_mock.hset = MagicMock()
     pipe_mock.execute = AsyncMock()
-    redis = SimpleNamespace(setex=AsyncMock(), pipeline=MagicMock(return_value=pipe_mock))
+    redis = SimpleNamespace(
+        setex=AsyncMock(), hset=AsyncMock(),
+        pipeline=MagicMock(return_value=pipe_mock),
+    )
 
     live_state_module = SimpleNamespace(RedisLiveRunState=SimpleNamespace(start=AsyncMock()))
     release_linker_module = SimpleNamespace(resolve_or_create_release=AsyncMock())
 
     with (
         patch.object(stream_service, "get_redis", return_value=redis),
-        patch.object(stream_service, "publish_event_batch", AsyncMock(return_value=1)) as publish_mock,
+        patch.object(stream_service, "_persist_event_batch", AsyncMock(return_value=1)) as publish_mock,
         patch.dict(sys.modules, {
             "app.streams.live_run_state": live_state_module,
             "app.services.release_linker": release_linker_module,
@@ -1064,7 +1100,7 @@ async def test_stream_service_ingest_via_api_key_reuses_existing_session():
 
     with (
         patch.object(stream_service, "get_redis", return_value=redis),
-        patch.object(stream_service, "publish_event_batch", AsyncMock(return_value=1)),
+        patch.object(stream_service, "_persist_event_batch", AsyncMock(return_value=1)),
     ):
         result = await stream_service.ingest_via_api_key(
             db=db,
@@ -1118,7 +1154,7 @@ async def test_stream_service_ingest_via_api_key_run_complete_triggers_close():
 
     with (
         patch.object(stream_service, "get_redis", return_value=redis),
-        patch.object(stream_service, "publish_event_batch", AsyncMock(return_value=2)),
+        patch.object(stream_service, "_persist_event_batch", AsyncMock(return_value=2)),
         patch.object(stream_service, "close_session", AsyncMock()) as close_mock,
     ):
         result = await stream_service.ingest_via_api_key(
@@ -1164,7 +1200,7 @@ async def test_stream_service_ingest_via_api_key_no_close_without_run_complete()
 
     with (
         patch.object(stream_service, "get_redis", return_value=redis),
-        patch.object(stream_service, "publish_event_batch", AsyncMock(return_value=1)),
+        patch.object(stream_service, "_persist_event_batch", AsyncMock(return_value=1)),
         patch.object(stream_service, "close_session", AsyncMock()) as close_mock,
     ):
         await stream_service.ingest_via_api_key(
@@ -1200,12 +1236,19 @@ async def test_stream_service_ingest_via_api_key_409s_finalised_run_id():
 
     from fastapi import HTTPException as _HTTPException
 
-    with pytest.raises(_HTTPException) as exc_info:
+    with (
+        patch.object(
+            stream_service,
+            "_persist_event_batch",
+            AsyncMock(side_effect=stream_service.LiveBatchConflictError(
+                "run_id 'ci-build-1' is closed"
+            )),
+        ),
+        pytest.raises(_HTTPException) as exc_info,
+    ):
         await stream_service.ingest_via_api_key(
-            db=db,
-            project_id=project_id,
-            api_key_name="ci-runner-key",
-            request=request,
+            db=db, project_id=project_id,
+            api_key_name="ci-runner-key", request=request,
         )
     assert exc_info.value.status_code == 409
     assert "ci-build-1" in str(exc_info.value.detail)
@@ -1317,9 +1360,14 @@ async def test_stream_service_close_session_marks_complete_and_queues_followup_w
     live_state_module = SimpleNamespace(RedisLiveRunState=SimpleNamespace(complete=AsyncMock(return_value={"passed": 4, "failed": 1, "total": 5})))
     # H12: close stages persistence in PostgreSQL; the relay publishes later.
     stage_persist = AsyncMock(return_value=True)
+    redis = SimpleNamespace(
+        eval=AsyncMock(return_value=[b"closing", b'{"total":5,"failed":1,"passed":4,"skipped":0,"broken":0,"unknown":0,"events_received":5}', b"0"]),
+        lrange=AsyncMock(return_value=[]),
+    )
 
     with (
         patch.object(stream_service, "upsert_test_run", AsyncMock()) as upsert_mock,
+        patch.object(stream_service, "get_redis", return_value=redis),
         patch.dict(
             sys.modules,
             {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import ARRAY, BigInteger, and_, case, cast, false, func, or_, select
@@ -510,8 +511,8 @@ async def list_run_test_cases(
     )
 
     # Live-buffer fallback. While a live-stream run is in progress, its
-    # per-test rows live in the Redis event buffer (LIVE_TESTCASES_KEY)
-    # and are only materialised into ``test_cases`` by the Phase 4.5
+    # per-test rows live in the per-run durable evidence Stream (with a
+    # legacy LIST mirror during cutover) and are materialised by the
     # drainer (every 30s) or at close_session. If the drainer hasn't
     # ticked yet — or Celery delivery is degraded — the run-detail page
     # and the summary report show an empty table even though /live shows
@@ -548,30 +549,111 @@ async def _live_buffer_test_cases(
 
     try:
         from app.db.redis_client import get_redis
-        from app.streams import LIVE_TESTCASES_KEY
+        from app.streams import LIVE_EVIDENCE_STREAM_KEY, LIVE_TESTCASES_KEY
+        from app.services.ingestion_sanitization import sanitize_test_result_payload
     except Exception:
         return None
 
     try:
         redis = get_redis()
+        from app.core.config import settings as _settings
+
+        stream_key = LIVE_EVIDENCE_STREAM_KEY.format(run_id=str(run_id))
         list_key = LIVE_TESTCASES_KEY.format(run_id=str(run_id))
-        raw_entries = await redis.lrange(list_key, 0, -1)
+        events: list[dict] = []
+
+        # Prefer the durable per-run Stream.  Its committed prefix is trimmed
+        # by the drainer, so these are precisely the events not yet visible in
+        # PostgreSQL.  During rolling upgrades an empty Stream/group key may
+        # coexist with a legacy LIST; fall back when no test-result payload was
+        # recoverable from the Stream.
+        try:
+            # One Stream row represents one batch. Bound the Redis reply by the
+            # configured per-run evidence capacity; when operators explicitly
+            # disable that limit, retain a defensive 50k-record read ceiling.
+            stream_record_cap = int(
+                _settings.LIVE_BUFFER_MAX_EVENTS_PER_RUN or 50_000
+            )
+            stream_entries = await redis.xrange(
+                stream_key,
+                min="-",
+                max="+",
+                count=max(1, stream_record_cap),
+            )
+        except Exception:
+            stream_entries = []
+
+        def _stream_field(fields: dict, name: str, default=None):
+            return fields.get(name, fields.get(name.encode(), default))
+
+        def _text(value):
+            return value.decode(errors="replace") if isinstance(value, bytes) else value
+
+        for _message_id, fields in stream_entries or []:
+            # Current producers append exactly one manifest per accepted batch.
+            # Expand it for the run-detail projection.  Validate cardinality so
+            # a torn/corrupt manifest cannot present a partial batch as truth.
+            raw_manifest = _stream_field(fields, "events_json")
+            if raw_manifest is not None:
+                try:
+                    manifest = _json.loads(_text(raw_manifest))
+                    event_ids = _json.loads(
+                        _text(_stream_field(fields, "event_ids_json", "[]"))
+                    )
+                    event_count = int(
+                        _text(_stream_field(fields, "event_count", "-1"))
+                    )
+                except Exception:
+                    continue
+                if (
+                    not isinstance(manifest, list)
+                    or not isinstance(event_ids, list)
+                    or len(manifest) != event_count
+                    or len(event_ids) != event_count
+                ):
+                    continue
+                events.extend(
+                    sanitize_test_result_payload(event)
+                    for event in manifest
+                    if isinstance(event, Mapping)
+                    and event.get("event_type", "test_result") == "test_result"
+                )
+                continue
+
+            # Rolling-upgrade fallback for the earlier one-entry-per-event
+            # stream shape.
+            event_type = _text(
+                _stream_field(fields, "event_type", "test_result")
+            )
+            if event_type != "test_result":
+                continue
+            try:
+                payload = _json.loads(
+                    _text(_stream_field(fields, "payload", "{}"))
+                )
+            except Exception:
+                continue
+            events.append(sanitize_test_result_payload(payload))
+
+        if not events:
+            raw_entries = await redis.lrange(list_key, 0, -1)
+            for raw in raw_entries:
+                try:
+                    events.append(sanitize_test_result_payload(_json.loads(raw)))
+                except Exception:
+                    continue
     except Exception:
         # Redis unavailable — fall back to the empty DB result rather than 500.
         return None
 
-    if not raw_entries:
+    if not events:
         return None
 
     status_filter = status.upper() if status else None
     suite_lower = suite.strip().lower() if suite else None
 
     rows: list[dict] = []
-    for raw in raw_entries:
-        try:
-            ev = _json.loads(raw)
-        except Exception:
-            continue
+    for ev in events:
         if ev.get("event_type") and ev.get("event_type") != "test_result":
             # Skip heartbeats / logs / metrics — only test_result rows
             # belong in the per-test table.

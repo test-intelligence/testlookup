@@ -1,4 +1,9 @@
-# Redis 7 — in-cluster for the air-gapped OpenShift deploy (ephemeral cache).
+# Redis 7 — durable broker and live-evidence store for air-gapped OpenShift.
+#
+# The live evidence Streams and Celery broker state are accepted work, not a
+# disposable cache. AOF plus a PVC survives pod replacement; volatile-lru
+# protects TTL-less evidence/broker keys while still allowing bounded caches
+# with TTLs to be evicted under pressure.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,7 +26,16 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
-          command: ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+          command:
+            - redis-server
+            - --appendonly
+            - "yes"
+            - --appendfsync
+            - everysec
+            - --maxmemory
+            - 512mb
+            - --maxmemory-policy
+            - volatile-lru
           ports:
             - containerPort: 6379
           resources:
@@ -41,3 +55,22 @@ spec:
               command: ["redis-cli", "ping"]
             initialDelaySeconds: 15
             periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: redis-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: testlookup
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: STORAGE_CLASS_PLACEHOLDER
+  resources:
+    requests:
+      storage: 5Gi

@@ -1,20 +1,9 @@
 """Regression: live-session release linking dropped for slug run_ids.
 
-Bug (found 2026-05-30 multi-pass review, `live-stream-ingestion` audit
-finding #1): ``stream_service.close_session`` linked the run to its release
-via ``link_run_or_default(test_run_id=uuid.UUID(session.run_id))``. But
-``session.run_id`` is the SDK-supplied **slug** (e.g. ``local-abc12345``),
-not a UUID — and the TestRun row is persisted under
-``canonical_test_run_uuid(session.run_id)`` everywhere else. So
-``uuid.UUID(slug)`` raised ``ValueError``, which the surrounding broad
-``except`` swallowed → **release linking was silently skipped for every
-slug-based live run** (and only worked by coincidence for UUID-form slugs).
-
-Fix: pass ``canonical_test_run_uuid(session.run_id)`` — the same uuid the
-TestRun is written under — so the link targets the real row.
-
-If this test fails because someone reverted the call site to
-``uuid.UUID(session.run_id)``, restore the canonical conversion.
+``LiveSession.id`` is the internal run UUID shared with ``TestRun.id``.
+``LiveSession.run_id`` is only the SDK-supplied display slug and may be
+non-UUID. Release linking must therefore use ``session.id`` directly; deriving
+identity from the external slug silently drops links or creates collisions.
 """
 from __future__ import annotations
 
@@ -35,7 +24,6 @@ def test_uuid_of_sdk_slug_would_raise():
 @pytest.mark.asyncio
 async def test_release_link_uses_canonical_uuid_for_slug_run():
     from app.services import stream_service
-    from app.services.stream_service import canonical_test_run_uuid
 
     session_uuid = uuid.uuid4()           # the LiveSession PK (a real UUID)
     slug = "local-abc12345"               # the run_id slug — NOT a UUID
@@ -62,7 +50,10 @@ async def test_release_link_uses_canonical_uuid_for_slug_run():
 
     # Empty buffer → the event-archive block short-circuits before any
     # db.execute / TestRun select.
-    fake_redis = SimpleNamespace(lrange=AsyncMock(return_value=[]))
+    fake_redis = SimpleNamespace(
+        eval=AsyncMock(return_value=[b"closing", b'{"total":0,"failed":0,"passed":0,"skipped":0,"broken":0,"unknown":0,"events_received":0}', b"0"]),
+        lrange=AsyncMock(return_value=[]),
+    )
 
     captured: dict = {}
 
@@ -95,7 +86,7 @@ async def test_release_link_uses_canonical_uuid_for_slug_run():
         "being skipped for slug run_ids (see this file's docstring)."
     )
     # And it must be the canonical uuid the TestRun is actually written under.
-    assert captured["test_run_id"] == canonical_test_run_uuid(slug)
+    assert captured["test_run_id"] == session_uuid
     assert isinstance(captured["test_run_id"], uuid.UUID)
     stage_persist.assert_awaited_once()
-    assert stage_persist.await_args.kwargs["canonical_run_id"] == canonical_test_run_uuid(slug)
+    assert stage_persist.await_args.kwargs["canonical_run_id"] == session_uuid

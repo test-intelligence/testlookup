@@ -415,14 +415,11 @@ async def test_live_batch_sanitizes_both_redis_stream_and_buffer(monkeypatch):
         **NESTED_SECRETS,
     }
     original = dict(event)
-    producer = AsyncMock(return_value=1)
-    pipe = _Pipeline()
     redis = MagicMock()
-    redis.pipeline.return_value = pipe
+    redis.eval = AsyncMock(return_value=[b"accepted", b"1"])
     monkeypatch.setattr(stream_service.settings, "LIVE_BUFFER_MAX_EVENTS_PER_RUN", 50_000)
 
     with (
-        patch.object(stream_service, "publish_event_batch", producer),
         patch.object(stream_service, "get_redis", return_value=redis),
         patch.object(
             stream_service,
@@ -432,8 +429,11 @@ async def test_live_batch_sanitizes_both_redis_stream_and_buffer(monkeypatch):
     ):
         await stream_service._persist_event_batch("session-1", "run-1", [event])
 
-    published = producer.await_args.kwargs["events"][0]
-    buffered = json.loads(next(c[1][1] for c in pipe.calls if c[0] == "rpush"))
+    eval_args = redis.eval.await_args.args
+    manifest = json.loads(eval_args[32])
+    wire = json.loads(eval_args[34])
+    published = manifest[0]
+    buffered = json.loads(wire[0]["legacy_entry"])
     _assert_failure_fields_are_safe(published)
     _assert_failure_fields_are_safe(buffered)
     _assert_no_raw_canaries(published)
@@ -524,16 +524,25 @@ class _RedisWithLegacyEvent:
         return None
 
 
-def test_close_worker_sanitizes_legacy_buffer_before_sql():
-    """The terminal persister applies the same policy as file ingestion."""
+def test_close_worker_projects_through_the_sanitizing_drainer():
+    """Terminal persistence must not bypass the sanitizer-aware drainer."""
     pytest.importorskip("celery")
     from app.worker import tasks
 
     session = _CapturingSession()
+    drain = AsyncMock(return_value=1)
     with (
         patch("app.db.postgres.AsyncSessionLocal", return_value=session),
-        patch("app.db.redis_client.get_redis", return_value=_RedisWithLegacyEvent()),
+        patch.object(
+            tasks,
+            "_drain_live_evidence_before_finalize",
+            new=drain,
+        ),
         patch("app.services.ingestion_pipeline.finalize_run", new=AsyncMock()),
+        patch(
+            "app.services.stream_service.finalize_closed_session_redis",
+            new=AsyncMock(),
+        ),
         patch(
             "app.services.high_volume_detector.is_high_volume",
             new=AsyncMock(return_value=False),
@@ -548,18 +557,19 @@ def test_close_worker_sanitizes_legacy_buffer_before_sql():
 
     if not result.successful():
         raise AssertionError(result.traceback)
+    drain.assert_awaited_once()
     insert_params = next(
         params for statement, params in session.executions
         if params and getattr(getattr(statement, "table", None), "name", None) == "test_cases"
     )
-    _assert_failure_fields_are_safe(insert_params[0])
+    _assert_no_raw_canaries(insert_params[0])
 
 
 @pytest.mark.asyncio
 async def test_archive_recovery_restages_only_sanitized_events(monkeypatch):
     from app.services import live_run_recovery_service
 
-    redis = SimpleNamespace(rpush=AsyncMock(), expire=AsyncMock())
+    redis = SimpleNamespace(eval=AsyncMock(return_value=[b"accepted", b"1"]))
     monkeypatch.setattr(live_run_recovery_service, "get_redis", lambda: redis)
 
     await live_run_recovery_service._stage_archive_to_redis(
@@ -572,7 +582,7 @@ async def test_archive_recovery_restages_only_sanitized_events(monkeypatch):
         }],
     )
 
-    staged = json.loads(redis.rpush.await_args.args[1])
+    staged = json.loads(redis.eval.await_args.args[17])[0]
     _assert_failure_fields_are_safe(staged)
 
 
@@ -580,12 +590,14 @@ async def test_archive_recovery_restages_only_sanitized_events(monkeypatch):
 async def test_archive_recovery_restages_scalar_as_safe_mapping(monkeypatch):
     from app.services import live_run_recovery_service
 
-    redis = SimpleNamespace(rpush=AsyncMock(), expire=AsyncMock())
+    redis = SimpleNamespace(eval=AsyncMock(return_value=[b"accepted", b"1"]))
     monkeypatch.setattr(live_run_recovery_service, "get_redis", lambda: redis)
 
     await live_run_recovery_service._stage_archive_to_redis("legacy-run", [1])
 
-    assert json.loads(redis.rpush.await_args.args[1]) == {
+    staged = json.loads(redis.eval.await_args.args[17])[0]
+    staged.pop("run_id")
+    assert staged == {
         "_redacted": "[REDACTED]",
     }
 
@@ -696,6 +708,7 @@ async def test_live_batch_persists_only_sanitized_evidence_in_real_redis(monkeyp
 
     suffix = uuid.uuid4().hex
     stream_key = f"testlookup:m11:stream:{suffix}"
+    dispatch_key = f"testlookup:m11:dispatch:{suffix}"
     dlq_key = f"testlookup:m11:dlq:{suffix}"
     group_name = f"m11-{suffix}"
     list_template = f"testlookup:m11:list:{suffix}:{{run_id}}"
@@ -703,12 +716,14 @@ async def test_live_batch_persists_only_sanitized_evidence_in_real_redis(monkeyp
     run_id = f"run-{suffix}"
     list_key = list_template.format(run_id=run_id)
     state_key = state_template.format(run_id=run_id)
+    dedupe_key = streams.LIVE_BATCH_DEDUP_KEY.format(run_id=run_id)
     client = redis_asyncio.Redis.from_url(redis_url, decode_responses=True)
     try:
         await client.ping()
         monkeypatch.setattr(producer, "get_redis", lambda: client)
         monkeypatch.setattr(stream_service, "get_redis", lambda: client)
-        monkeypatch.setattr(producer, "LIVE_EVENTS_STREAM", stream_key)
+        monkeypatch.setattr(streams, "LIVE_EVENTS_STREAM", dispatch_key)
+        monkeypatch.setattr(streams, "LIVE_EVIDENCE_STREAM_KEY", stream_key)
         monkeypatch.setattr(streams, "LIVE_TESTCASES_KEY", list_template)
         monkeypatch.setattr(streams, "LIVE_STATE_KEY", state_template)
         monkeypatch.setattr(
@@ -732,13 +747,18 @@ async def test_live_batch_persists_only_sanitized_evidence_in_real_redis(monkeyp
 
         stream_rows = await client.xrange(stream_key)
         buffered_rows = await client.lrange(list_key, 0, -1)
-        assert len(stream_rows) == len(buffered_rows) == 1
-        stream_payload = json.loads(stream_rows[0][1]["payload"])
-        buffer_payload = json.loads(buffered_rows[0])
+        assert len(stream_rows) == 1
+        assert buffered_rows == [], (
+            "current writers must use the lossless evidence stream instead of "
+            "creating a second legacy LIST copy"
+        )
+        assert await client.ttl(stream_key) == -1, (
+            "accepted evidence must remain non-expiring until its PostgreSQL "
+            "watermark is committed and the drainer acknowledges it"
+        )
+        stream_payload = json.loads(stream_rows[0][1]["events_json"])[0]
         _assert_failure_fields_are_safe(stream_payload)
-        _assert_failure_fields_are_safe(buffer_payload)
         _assert_no_raw_canaries(stream_payload)
-        _assert_no_raw_canaries(buffer_payload)
 
         legacy_payload = {
             "test_name": "legacy",
@@ -797,7 +817,17 @@ async def test_live_batch_persists_only_sanitized_evidence_in_real_redis(monkeyp
         _assert_no_raw_canaries(scrubbed_stream)
         _assert_no_raw_canaries(scrubbed_list)
     finally:
-        await client.delete(stream_key, dlq_key, list_key, state_key)
+        await client.delete(
+            stream_key,
+            dispatch_key,
+            dlq_key,
+            list_key,
+            state_key,
+            dedupe_key,
+            *(f"{dedupe_key}:{suffix}" for suffix in (
+                "pending", "passed", "failed", "skipped", "broken", "unknown", "received"
+            )),
+        )
         await client.aclose()
 
 
@@ -867,7 +897,7 @@ async def test_close_session_sanitizes_legacy_buffer_before_event_archive(monkey
         get=AsyncMock(return_value=session),
         execute=AsyncMock(return_value=result),
     )
-    redis = SimpleNamespace(lrange=AsyncMock(return_value=[json.dumps({
+    redis = SimpleNamespace(eval=AsyncMock(return_value=[b"closing", b'{"total":1,"failed":1,"passed":0,"skipped":0,"broken":0,"unknown":0,"events_received":1}', b"1"]), lrange=AsyncMock(return_value=[json.dumps({
         "test_name": "checkout",
         "error_message": RAW_ERROR,
         "stack_trace": RAW_STACK,

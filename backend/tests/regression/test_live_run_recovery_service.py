@@ -34,7 +34,7 @@ pytestmark = pytest.mark.regression
 
 
 class _FakeRedis:
-    """Records rpush/expire calls; ``llen`` is scripted per key."""
+    """Records Stream staging; lengths are scripted per Redis key."""
 
     def __init__(self, lengths: dict[str, int] | None = None):
         self._lengths = lengths or {}
@@ -44,9 +44,23 @@ class _FakeRedis:
     async def llen(self, key):
         return self._lengths.get(key, 0)
 
-    async def rpush(self, key, value):
+    async def xlen(self, key):
+        return self._lengths.get(key, 0)
+
+    async def eval(self, *_args):
+        key = _args[2]
+        value = {
+            "batch_digest": _args[12],
+            "event_count": _args[13],
+            "batch_id": _args[14],
+            "session_id": _args[15],
+            "run_id": _args[16],
+            "events_json": _args[17],
+            "event_ids_json": _args[18],
+            "trim_legacy": "0",
+        }
         self.pushed.append((key, value))
-        return len(self.pushed)
+        return ["accepted", value["event_count"], "1-0"]
 
     async def expire(self, key, ttl):
         self.expires.append((key, ttl))
@@ -66,6 +80,7 @@ def _run(**overrides):
         failed_tests=1,
         skipped_tests=0,
         broken_tests=0,
+        unknown_tests=0,
         total_tests=2,
         primary_suite_name="Smoke",
     )
@@ -165,24 +180,24 @@ class TestTheDoubleInsertGuard:
         counts = await svc.auto_recover_completed_runs(_db([run]))
 
         assert counts["recovered"] == 1
-        assert len(redis.pushed) == 3, "every archived event must be staged"
-        expected_key = svc.LIVE_TESTCASES_KEY.format(run_id=str(run.id))
+        assert len(redis.pushed) == 1, "the archive must be one atomic batch record"
+        expected_key = svc.LIVE_EVIDENCE_STREAM_KEY.format(run_id=str(run.id))
         assert {k for k, _ in redis.pushed} == {expected_key}
 
     @pytest.mark.asyncio
-    async def test_the_staging_key_gets_a_ttl_so_it_cannot_leak(
+    async def test_archive_staging_uses_the_durable_stream_without_a_ttl(
         self, monkeypatch, dispatched
     ):
-        """The worker LRANGEs the list and does not delete it. Without the TTL
-        every recovered run leaves a staging key in Redis for ever."""
+        """Recovery evidence must survive until the drainer commits it."""
         run = _run()
         redis = _FakeRedis()
         monkeypatch.setattr(svc, "get_redis", lambda: redis)
 
         await svc.auto_recover_completed_runs(_db([run]))
 
-        expected_key = svc.LIVE_TESTCASES_KEY.format(run_id=str(run.id))
-        assert redis.expires == [(expected_key, 3600)]
+        expected_key = svc.LIVE_EVIDENCE_STREAM_KEY.format(run_id=str(run.id))
+        assert {key for key, _ in redis.pushed} == {expected_key}
+        assert redis.expires == []
 
 
 class TestTheDispatch:
@@ -190,7 +205,14 @@ class TestTheDispatch:
     async def test_the_final_state_carries_the_run_aggregates(self, monkeypatch, dispatched):
         """The aggregates survived the failed handoff; they are what makes the
         recovered run reconcile with what the user already saw."""
-        run = _run(passed_tests=5, failed_tests=2, skipped_tests=1, broken_tests=3, total_tests=11)
+        run = _run(
+            passed_tests=5,
+            failed_tests=2,
+            skipped_tests=1,
+            broken_tests=3,
+            unknown_tests=4,
+            total_tests=15,
+        )
         monkeypatch.setattr(svc, "get_redis", lambda: _FakeRedis())
 
         await svc.auto_recover_completed_runs(_db([run]))
@@ -198,7 +220,12 @@ class TestTheDispatch:
         assert len(dispatched) == 1
         kwargs = dispatched[0]["kwargs"]
         assert kwargs["final_state"] == {
-            "passed": 5, "failed": 2, "skipped": 1, "broken": 3, "total": 11,
+            "passed": 5,
+            "failed": 2,
+            "skipped": 1,
+            "broken": 3,
+            "unknown": 4,
+            "total": 15,
         }
         assert kwargs["run_id"] == str(run.id)
         assert kwargs["project_id"] == str(run.project_id)
@@ -207,14 +234,25 @@ class TestTheDispatch:
     async def test_missing_aggregates_become_zero_not_none(self, monkeypatch, dispatched):
         """`persist_live_session` does arithmetic on these. None would raise
         inside the worker, where the failure is a retry loop, not a 500."""
-        run = _run(passed_tests=None, failed_tests=None, skipped_tests=None,
-                   broken_tests=None, total_tests=None)
+        run = _run(
+            passed_tests=None,
+            failed_tests=None,
+            skipped_tests=None,
+            broken_tests=None,
+            unknown_tests=None,
+            total_tests=None,
+        )
         monkeypatch.setattr(svc, "get_redis", lambda: _FakeRedis())
 
         await svc.auto_recover_completed_runs(_db([run]))
 
         assert dispatched[0]["kwargs"]["final_state"] == {
-            "passed": 0, "failed": 0, "skipped": 0, "broken": 0, "total": 0,
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "broken": 0,
+            "unknown": 0,
+            "total": 0,
         }
 
     @pytest.mark.asyncio
@@ -381,6 +419,18 @@ class TestSuiteNameRepairWrites:
         counts = await svc.repair_clobbered_primary_suite_names(db)
 
         assert counts["repaired"] == 1
+
+    @pytest.mark.asyncio
+    async def test_external_display_slug_does_not_drive_the_identity_join(self):
+        """A client slug can differ from the internal LiveSession/TestRun UUID."""
+        db = _rows_db([])
+
+        await svc.repair_clobbered_primary_suite_names(db)
+
+        statement = db.execute.await_args_list[0].args[0]
+        sql = str(statement)
+        assert "live_sessions.id = test_runs.id" in sql
+        assert "live_sessions.run_id" not in sql
 
     @pytest.mark.asyncio
     async def test_it_repairs_each_differing_row_and_skips_the_rest(self):

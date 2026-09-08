@@ -1,9 +1,9 @@
 # Redis 7 — deployed inside the K3s cluster for homelab.
 #
-# Redis is the Celery broker as well as the cache. AOF plus a local-path PVC
-# keeps queued child dispatches recoverable across a pod restart. volatile-lru
-# avoids silently evicting TTL-less broker/session keys under cache pressure;
-# ephemeral cache entries must carry a TTL.
+# Redis is the Celery broker, live-evidence authority, and cache. AOF plus a
+# local-path PVC keeps queued work and accepted evidence recoverable across a
+# pod restart. volatile-lru avoids silently evicting TTL-less broker/evidence
+# keys under cache pressure; ephemeral cache entries must carry a TTL.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

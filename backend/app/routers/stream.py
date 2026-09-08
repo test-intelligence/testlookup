@@ -89,6 +89,7 @@ async def close_session(
         db, session_id, bound_project_id=bound_project_id,
     )
     await db.commit()
+    await stream_service.finalize_closed_session_redis(session_id)
 
 
 @router.post("/events/batch", response_model=stream_service.LiveEventBatchResponse, status_code=202)
@@ -139,6 +140,14 @@ async def ingest_via_api_key(
         request=payload,
     )
     await db.commit()
+    has_run_complete = any(
+        (
+            event.model_dump() if hasattr(event, "model_dump") else dict(event)
+        ).get("event_type") == "run_complete"
+        for event in payload.events
+    )
+    if has_run_complete:
+        await stream_service.finalize_closed_session_redis(response.session_id)
     return response
 
 

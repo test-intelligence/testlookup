@@ -18,7 +18,7 @@ def test_phase3_database_gate_is_build_authoritative():
     jobs = workflow["jobs"]
     integration = jobs["postgres-integration"]
 
-    assert set(integration["services"]) == {"postgres", "mongo"}
+    assert set(integration["services"]) == {"postgres", "mongo", "redis"}
     run_steps = [step["run"] for step in integration["steps"] if "run" in step]
     suite = next(run for run in run_steps if "test_agent_action_ledger_postgres.py" in run)
     assert "test_decision_report_supersession_postgres_mongo.py" in suite
@@ -33,4 +33,5 @@ def test_phase3_database_gate_is_build_authoritative():
         "postgresql+asyncpg://"
     )
     assert test_env["MONGO_URI"] == "mongodb://localhost:27017"
+    assert test_env["REDIS_URL"] == "redis://localhost:6379/0"
     assert "postgres-integration" in jobs["build-images"]["needs"]

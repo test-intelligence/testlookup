@@ -45,6 +45,9 @@ package testlookup
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -485,9 +488,12 @@ func (s *Session) flushOnce(ctx context.Context) {
 }
 
 func (s *Session) postBatch(ctx context.Context, events []liveEvent) {
+	// Generate once before marshaling/retrying. The server derives each stable
+	// event ID from this batch ID and the event's list index.
 	payload := batchPayload{
 		SessionID: s.SessionID,
 		RunID:     s.RunID,
+		BatchID:   newProtocolID(),
 		Events:    events,
 	}
 	body, err := json.Marshal(payload)
@@ -594,10 +600,31 @@ type liveEvent struct {
 type batchPayload struct {
 	SessionID string      `json:"session_id"`
 	RunID     string      `json:"run_id"`
+	BatchID   string      `json:"batch_id"`
 	Events    []liveEvent `json:"events"`
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
+
+var protocolIDFallback atomic.Uint64
+
+// newProtocolID returns an RFC 4122 version 4 UUID. Existing public Record APIs
+// cannot surface entropy errors, so the OS-random failure path fills the UUID
+// bytes from a process-local timestamp/counter pair.
+func newProtocolID() string {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		binary.BigEndian.PutUint64(value[0:8], uint64(time.Now().UnixNano()))
+		binary.BigEndian.PutUint64(value[8:16], protocolIDFallback.Add(1))
+	}
+	value[6] = (value[6] & 0x0f) | 0x40
+	value[8] = (value[8] & 0x3f) | 0x80
+	encoded := hex.EncodeToString(value[:])
+	return fmt.Sprintf(
+		"%s-%s-%s-%s-%s",
+		encoded[0:8], encoded[8:12], encoded[12:16], encoded[16:20], encoded[20:32],
+	)
+}
 
 func env(key, defaultVal string) string {
 	if v := os.Getenv(key); v != "" {

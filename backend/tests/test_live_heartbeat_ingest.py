@@ -21,6 +21,7 @@ implementation directly.
 from __future__ import annotations
 
 import importlib
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -63,15 +64,10 @@ async def test_heartbeat_event_refreshes_last_event_at_without_counters():
     of the event type."""
     from app.services import stream_service
 
-    pipe = _FakePipeline()
     redis = MagicMock()
-    redis.pipeline = MagicMock(return_value=pipe)
+    redis.eval = AsyncMock(return_value=[b"accepted", b"1"])
 
-    with patch.object(stream_service, "get_redis", return_value=redis), \
-         patch.object(stream_service, "publish_event_batch",
-                      new=AsyncMock(return_value=1)), \
-         patch.object(stream_service, "await_if_needed",
-                      new=AsyncMock(side_effect=lambda x: x)):
+    with patch.object(stream_service, "get_redis", return_value=redis):
         events = [SimpleNamespace(model_dump=lambda: {
             "event_type": "live_heartbeat",
             "timestamp_ms": 1_700_000_000_000,
@@ -81,13 +77,11 @@ async def test_heartbeat_event_refreshes_last_event_at_without_counters():
         )
 
     assert accepted == 1
-    names = pipe.names_called()
-    # last_event_at refresh is the only Redis write a heartbeat triggers.
-    assert "hset" in names
-    # No counter bumps and no test-list pushes — those would corrupt
-    # /runs / /live aggregates.
-    assert "hincrby" not in names
-    assert "rpush" not in names
+    argv = redis.eval.await_args.args
+    # Lua ARGV 6 is countable_events; heartbeat is excluded.
+    assert argv[19] == "0"
+    # The heartbeat's legacy LIST payload is empty, so Lua does not RPUSH it.
+    assert json.loads(argv[34])[0]["legacy_entry"] == ""
 
 
 @pytest.mark.asyncio
@@ -96,15 +90,10 @@ async def test_test_result_still_bumps_counters_and_pushes_list():
     broken the real ``test_result`` path."""
     from app.services import stream_service
 
-    pipe = _FakePipeline()
     redis = MagicMock()
-    redis.pipeline = MagicMock(return_value=pipe)
+    redis.eval = AsyncMock(return_value=[b"accepted", b"1"])
 
-    with patch.object(stream_service, "get_redis", return_value=redis), \
-         patch.object(stream_service, "publish_event_batch",
-                      new=AsyncMock(return_value=1)), \
-         patch.object(stream_service, "await_if_needed",
-                      new=AsyncMock(side_effect=lambda x: x)):
+    with patch.object(stream_service, "get_redis", return_value=redis):
         events = [SimpleNamespace(model_dump=lambda: {
             "event_type": "test_result",
             "test_name": "test_x",
@@ -115,10 +104,10 @@ async def test_test_result_still_bumps_counters_and_pushes_list():
             session_id="s", run_id="r", events=events,
         )
 
-    names = pipe.names_called()
-    assert "rpush" in names
-    assert "hincrby" in names
-    assert "hset" in names
+    argv = redis.eval.await_args.args
+    assert argv[19] == "1"  # countable_events
+    assert argv[21] == "1"  # PASSED delta
+    assert json.loads(argv[34])[0]["legacy_entry"] != ""
 
 
 # ── live consumer dispatcher ──────────────────────────────────────────────

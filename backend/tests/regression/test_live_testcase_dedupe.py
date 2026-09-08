@@ -145,6 +145,15 @@ def test_persist_placeholder_insert_uses_on_conflict_do_nothing():
             "app.services.ingestion_pipeline.finalize_run",
             new=AsyncMock(),
         ),
+        patch(
+            "app.services.stream_service.finalize_closed_session_redis",
+            new=AsyncMock(),
+        ),
+        patch.object(
+            worker_tasks,
+            "_drain_live_evidence_before_finalize",
+            new=AsyncMock(return_value=0),
+        ),
     ):
         result = worker_tasks.persist_live_session.apply(kwargs={
             "run_id": run_id,

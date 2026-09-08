@@ -16,6 +16,7 @@ DB / Redis are mocked — pure unit tests, no live infra required.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from types import SimpleNamespace
@@ -185,7 +186,10 @@ async def test_drain_happy_path_inserts_rows_and_ltrims(monkeypatch):
     assert run_row.status == LaunchStatus.IN_PROGRESS
     assert run_row.primary_suite_name == "Smoke"
     # Bulk insert called with 3 rows.
-    inserts = [e for e in session.executes if e[0] == "insert"]
+    inserts = [
+        e for e in session.executes
+        if e[0] == "insert" and e[1] and "test_fingerprint" in e[1][0]
+    ]
     assert len(inserts) == 1
     assert len(inserts[0][1]) == 3
     # LTRIM uses the drained count as the new head: ltrim(key, 3, -1).
@@ -225,7 +229,10 @@ async def test_drain_uses_state_aggregates_not_event_counts(monkeypatch):
     assert run_row.total_tests == 162_000
     assert run_row.passed_tests == 162_000
     # Per-test rows still come from the buffer slice.
-    inserts = [e for e in session.executes if e[0] == "insert"]
+    inserts = [
+        e for e in session.executes
+        if e[0] == "insert" and e[1] and "test_fingerprint" in e[1][0]
+    ]
     assert len(inserts[0][1]) == 10
 
 
@@ -395,3 +402,90 @@ async def test_drain_all_active_runs_tolerates_per_run_failures(monkeypatch):
     assert result["runs_scanned"] == 2
     assert result["errors"] == 1
     assert result["drained"] == 7
+
+
+@pytest.mark.asyncio
+async def test_stream_drain_commits_before_fenced_exact_ack(monkeypatch):
+    """The evidence stream is acknowledged only after PostgreSQL commit."""
+    from app.services import live_session_drainer as drainer
+
+    order: list[str] = []
+    payload = {"event_type": "test_result", "test_name": "streamed", "status": "PASSED"}
+    session_id = "session-1"
+    batch_id = "batch-1"
+    event_id = hashlib.sha256(f"{session_id}\0{batch_id}\0{0}".encode()).hexdigest()
+    event = {
+        "batch_id": "batch-1",
+        "batch_digest": hashlib.sha256(
+            json.dumps([payload], sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "event_count": "1",
+        "session_id": session_id,
+        "run_id": "run-stream",
+        "events_json": json.dumps([{**payload, "run_id": "run-stream"}], sort_keys=True, separators=(",", ":")),
+        "event_ids_json": json.dumps([event_id]),
+        "trim_legacy": "1",
+    }
+
+    class Redis:
+        async def set(self, *_args, **_kwargs): return True
+        async def exists(self, _key): return 1
+        async def eval(self, script, *_args):
+            if "XPENDING" in script:
+                order.append("ack-exact")
+                return [b"acknowledged", b"1"]
+            order.append("release" if "DEL" in script else "renew")
+            return 1
+        async def xgroup_create(self, *_args, **_kwargs): return True
+        async def xautoclaim(self, *_args, **_kwargs): return ("0-0", [], [])
+        async def xreadgroup(self, *_args, **_kwargs):
+            return [["stream", [["10-0", event]]]]
+        async def xack(self, *_args): order.append("ack")
+        async def xtrim(self, *_args, **kwargs):
+            order.append(f"trim:{kwargs['minid']}")
+        async def xdel(self, *_args): order.append("delete-watermark")
+
+    redis = Redis()
+    session = _FakeSession(existing_run=None)
+    original_commit = session.commit
+
+    async def commit():
+        order.append("commit")
+        await original_commit()
+
+    session.commit = commit
+    _patch_targets(monkeypatch, redis, session, state={"passed": 1, "total": 1})
+    monkeypatch.setattr(drainer, "run_is_tombstoned", AsyncMock(return_value=False))
+
+    result = await drainer.drain_run_buffer(
+        "run-stream", str(uuid.uuid4()), max_events=10
+    )
+
+    assert result["drained"] == 1
+    assert order.index("commit") < order.index("ack-exact")
+    assert "XTRIM" not in drainer._ACK_BATCH_LUA
+    assert "XACK" in drainer._ACK_BATCH_LUA and "XDEL" in drainer._ACK_BATCH_LUA
+    inserted = [
+        payload for kind, payload in session.executes
+        if kind == "insert" and payload and "test_fingerprint" in payload[0]
+    ]
+    assert inserted[0][0]["test_name"] == "streamed"
+
+
+@pytest.mark.asyncio
+async def test_lock_release_compares_the_random_owner_token(monkeypatch):
+    from app.services import live_session_drainer as drainer
+
+    redis = SimpleNamespace(set=AsyncMock(return_value=True), eval=AsyncMock(return_value=1))
+    monkeypatch.setattr(drainer.secrets, "token_urlsafe", lambda _n: "unique-owner")
+
+    token = await drainer._acquire_lock(redis, "run-1")
+    await drainer._release_lock(redis, "run-1", token)
+
+    assert token == "unique-owner"
+    redis.set.assert_awaited_once_with(
+        "testlookup:live:drain_lock:run-1", "unique-owner", nx=True, ex=90
+    )
+    release_args = redis.eval.await_args.args
+    assert "GET" in release_args[0] and "DEL" in release_args[0]
+    assert release_args[-1] == "unique-owner"

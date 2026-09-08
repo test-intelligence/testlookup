@@ -371,6 +371,15 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     defaults:
       run:
         working-directory: ./backend
@@ -486,6 +495,7 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
           TESTLOOKUP_POSTGRES_TEST_DSN: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
           MONGO_URI: mongodb://localhost:27017
+          REDIS_URL: redis://localhost:6379/0
           APP_SECRET_KEY: test-secret-key-for-ci
           JWT_SECRET_KEY: test-jwt-key-for-ci
           AI_OFFLINE_MODE: "true"
@@ -517,6 +527,8 @@ jobs:
           tests/integration/test_protected_artifact_cascade_postgres.py
           tests/integration/test_purge_executor_against_real_postgres.py
           tests/integration/test_run_deletion_postgres_mongo.py
+          tests/integration/test_live_evidence_crash_replay_postgres_redis.py
+          tests/integration/test_live_recovery_protocol_postgres_redis.py
           tests/regression/test_notification_history_schema.py
 
   # ─────────────────────────────────────────────────────────────

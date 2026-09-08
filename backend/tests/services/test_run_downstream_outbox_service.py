@@ -168,7 +168,7 @@ async def test_live_persistence_payload_is_durable_and_versioned(monkeypatch):
     kwargs = first.kwargs
     assert kwargs["run_id"] == run_id
     assert kwargs["operation"] == "persist_live_session"
-    assert kwargs["payload"]["run_id"] == "sdk-run-42"
+    assert kwargs["payload"]["run_id"] == str(run_id)
     assert kwargs["payload"]["final_state"] == state
     assert kwargs["payload"]["completed_at"] == completed_at.isoformat()
     assert kwargs["queue"].startswith("ingestion")
@@ -1611,8 +1611,18 @@ def test_terminal_pipeline_retry_repairs_ai_child_before_parent_completion(monke
             return False
 
     import app.db.postgres as postgres
+    from celery.app.task import Task as CeleryTask
 
     monkeypatch.setattr(postgres, "AsyncSessionLocal", lambda: _SessionContext())
+    # Direct Celery task calls push a fresh empty request in this local harness,
+    # hiding the delivery headers from the task body. The worker tracer keeps
+    # one request context. Model that production behavior while still invoking
+    # DownstreamTrackedTask.__call__ and its parent completion hooks.
+    monkeypatch.setattr(
+        CeleryTask,
+        "__call__",
+        lambda self, *args, **kwargs: self.run(*args, **kwargs),
+    )
     task = tasks.run_agent_pipeline
     task.push_request(
         id=f"run-downstream-{outbox_id}",

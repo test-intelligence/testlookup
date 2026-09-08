@@ -13,7 +13,8 @@ visible symptom is "/suites and /search show no data from SDK runs".
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -116,6 +117,7 @@ def test_persist_live_session_invokes_finalize_run():
     ])
     fake_redis = _FakeRedis()
     finalize_calls = []
+    redis_close_finalize = AsyncMock()
 
     async def _capturing_finalize(**kwargs):
         finalize_calls.append(kwargs)
@@ -136,6 +138,15 @@ def test_persist_live_session_invokes_finalize_run():
             "app.services.ingestion_pipeline.finalize_run",
             new=AsyncMock(side_effect=_capturing_finalize),
         ),
+        patch(
+            "app.services.stream_service.finalize_closed_session_redis",
+            new=redis_close_finalize,
+        ),
+        patch.object(
+            worker_tasks,
+            "_drain_live_evidence_before_finalize",
+            new=AsyncMock(return_value=0),
+        ),
     ):
         # Invoke the task synchronously in-process. The bound task wrapper
         # handles ``self``; we provide an empty final_state so the buffer-
@@ -153,6 +164,7 @@ def test_persist_live_session_invokes_finalize_run():
         raise AssertionError(f"persist_live_session task failed: {result.traceback}")
 
     assert fake_session.committed, "Expected TestCase rows to be committed"
+    redis_close_finalize.assert_awaited_once_with(run_id)
     assert len(finalize_calls) == 1, (
         f"Expected finalize_run to be called exactly once; got {len(finalize_calls)}. "
         "If this assertion failed, /suites will be empty for all live-stream runs — "
@@ -176,11 +188,19 @@ def test_persist_live_session_resumes_finalize_when_already_persisted():
     run_id = str(uuid.uuid4())
     project_id = str(uuid.uuid4())
 
-    # dedup count = 5 → skip path. No further execute() calls expected.
-    fake_session = _FakeSession(results=[_FakeExecResult(scalar=5)])
+    existing_run = SimpleNamespace(
+        end_time=None,
+        primary_suite_name=None,
+        suite_names=None,
+    )
+    fake_session = _FakeSession(results=[
+        _FakeExecResult(scalar=5),
+        _FakeExecResult(scalar=existing_run),
+    ])
     fake_redis = _FakeRedis()
 
     finalize_mock = AsyncMock()
+    redis_close_finalize = AsyncMock()
 
     with (
         patch(
@@ -195,12 +215,21 @@ def test_persist_live_session_resumes_finalize_when_already_persisted():
             "app.services.ingestion_pipeline.finalize_run",
             new=finalize_mock,
         ),
+        patch(
+            "app.services.stream_service.finalize_closed_session_redis",
+            new=redis_close_finalize,
+        ),
+        patch.object(
+            worker_tasks,
+            "_drain_live_evidence_before_finalize",
+            new=AsyncMock(return_value=5),
+        ),
     ):
         result = worker_tasks.persist_live_session.apply(kwargs={
             "run_id": run_id,
             "project_id": project_id,
             "build_number": "b",
-            "final_state": {},
+            "final_state": {"total": 5, "passed": 5},
         })
 
     if not result.successful():
@@ -211,4 +240,74 @@ def test_persist_live_session_resumes_finalize_when_already_persisted():
         project_id=project_id,
         build_number="b",
     )
-    assert not fake_session.committed
+    redis_close_finalize.assert_awaited_once_with(run_id)
+    assert fake_session.committed
+    assert existing_run.total_tests == 5
+    assert str(existing_run.status) in {"LaunchStatus.PASSED", "PASSED"}
+
+
+def test_persist_live_session_retry_repairs_failed_postcommit_redis_finalize():
+    """The committed outbox worker retries the post-commit Redis transition.
+
+    A lost Redis connection after the API commit must leave the gate durable
+    and TTL-less until this worker can idempotently mark it closed.
+    """
+    pytest.importorskip("celery")
+    from celery.exceptions import Retry
+
+    from app.worker import tasks as worker_tasks
+
+    run_id = str(uuid.uuid4())
+    project_id = str(uuid.uuid4())
+    sessions: list[_FakeSession] = []
+
+    def _session_factory():
+        session = _FakeSession(results=[
+            _FakeExecResult(scalar=0),
+            _FakeExecResult(scalar=None),
+        ])
+        sessions.append(session)
+        return session
+
+    finalize_attempts: list[str] = []
+    retry_requested = MagicMock(side_effect=Retry("retry requested"))
+
+    async def _flaky_redis_finalize(candidate_run_id: str):
+        assert sessions[-1].committed
+        finalize_attempts.append(candidate_run_id)
+        if len(finalize_attempts) == 1:
+            raise RuntimeError("redis unavailable after PostgreSQL commit")
+
+    with (
+        patch("app.db.postgres.AsyncSessionLocal", side_effect=_session_factory),
+        patch(
+            "app.services.stream_service.finalize_closed_session_redis",
+            new=AsyncMock(side_effect=_flaky_redis_finalize),
+        ),
+        patch(
+            "app.services.ingestion_pipeline.finalize_run",
+            new=AsyncMock(),
+        ),
+        patch.object(
+            worker_tasks,
+            "_drain_live_evidence_before_finalize",
+            new=AsyncMock(return_value=0),
+        ),
+        patch.object(worker_tasks.persist_live_session, "retry", retry_requested),
+    ):
+        kwargs = {
+            "run_id": run_id,
+            "project_id": project_id,
+            "build_number": "postcommit-repair",
+            "final_state": {},
+        }
+        # Invoke the task body directly and replace Celery's version-dependent
+        # eager retry runner with the Retry control-flow signal a worker uses.
+        with pytest.raises(Retry):
+            worker_tasks.persist_live_session.run(**kwargs)
+        worker_tasks.persist_live_session.run(**kwargs)
+
+    retry_requested.assert_called_once()
+    assert finalize_attempts == [run_id, run_id]
+    assert len(sessions) == 2
+    assert all(session.committed for session in sessions)

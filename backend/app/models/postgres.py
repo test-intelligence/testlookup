@@ -437,6 +437,86 @@ class TestRun(Base):
     test_cases: Mapped[list["TestCase"]] = relationship("TestCase", back_populates="test_run", lazy="dynamic")
 
 
+class LiveIngestionAttempt(Base):
+    """Durable record that an accepted live batch reached projection."""
+
+    __tablename__ = "live_ingestion_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id", "batch_id", name="uq_live_ingestion_attempt_session_batch"
+        ),
+        Index("ix_live_ingestion_attempt_run_created", "run_id", "created_at"),
+        CheckConstraint("event_count >= 0", name="ck_live_ingestion_attempt_count"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    session_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    batch_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    first_event_id: Mapped[Optional[str]] = mapped_column(String(64))
+    last_event_id: Mapped[Optional[str]] = mapped_column(String(64))
+    first_stream_id: Mapped[Optional[str]] = mapped_column(String(64))
+    last_stream_id: Mapped[Optional[str]] = mapped_column(String(64))
+    projected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class LiveEventReceipt(Base):
+    """Per-event idempotency receipt and bounded sanitized attempt evidence."""
+
+    __tablename__ = "live_event_receipts"
+    __table_args__ = (
+        UniqueConstraint("event_id", name="uq_live_event_receipt_event"),
+        Index("ix_live_event_receipt_run_stream", "run_id", "stream_id"),
+        CheckConstraint("event_index >= 0", name="ck_live_event_receipt_index"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    attempt_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("live_ingestion_attempts.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    stream_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    projected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class LiveProjectionCheckpoint(Base):
+    """Committed per-run high watermark for Redis evidence projection."""
+
+    __tablename__ = "live_projection_checkpoints"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    stream_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    consumer_group: Mapped[str] = mapped_column(String(100), nullable=False)
+    last_stream_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
 class RunDownstreamOutbox(Base):
     """Durable intent to publish one post-ingestion operation."""
 

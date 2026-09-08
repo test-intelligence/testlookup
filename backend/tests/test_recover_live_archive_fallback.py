@@ -50,6 +50,7 @@ def _run_row(
     failed_tests=1,
     skipped_tests=0,
     broken_tests=0,
+    unknown_tests=0,
 ):
     # Aggregates are parametrised (2026-05-20): the recover endpoint now
     # only 422s when buffer + archive are empty AND every aggregate is
@@ -66,7 +67,14 @@ def _run_row(
         failed_tests=failed_tests,
         skipped_tests=skipped_tests,
         broken_tests=broken_tests,
-        total_tests=passed_tests + failed_tests + skipped_tests + broken_tests,
+        unknown_tests=unknown_tests,
+        total_tests=(
+            passed_tests
+            + failed_tests
+            + skipped_tests
+            + broken_tests
+            + unknown_tests
+        ),
         event_archive=event_archive,
         event_archive_at=event_archive_at,
         # Added 2026-05-19: ``routers/runs.py::recover_live_run_from_buffer``
@@ -100,11 +108,12 @@ async def test_recover_uses_redis_when_buffer_is_fresh():
     db = _mk_db(run)
 
     redis = AsyncMock()
+    redis.xlen = AsyncMock(return_value=0)
     redis.llen = AsyncMock(return_value=12)
-    redis.rpush = AsyncMock()
-    redis.expire = AsyncMock()
+    redis.eval = AsyncMock()
 
     with patch("app.db.redis_client.get_redis", return_value=redis), \
+         patch("app.services.live_run_recovery_service.get_redis", return_value=redis), \
          patch("app.worker.tasks.persist_live_session") as task_mock:
         task_mock.apply_async = MagicMock()
         result = await recover_live_run_from_buffer(
@@ -114,10 +123,39 @@ async def test_recover_uses_redis_when_buffer_is_fresh():
     assert result["queued"] is True
     assert result["source"] == "redis"
     assert result["buffered_events"] == 12
-    # Archive path didn't fire — rpush only happens when staging the
-    # archive back into Redis.
-    redis.rpush.assert_not_called()
+    # Archive path did not fire, so no recovery batch was admitted.
+    redis.eval.assert_not_awaited()
     task_mock.apply_async.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_recover_reports_stream_batch_and_event_counts_separately():
+    from app.routers.runs import recover_live_run_from_buffer
+
+    run = _run_row(event_archive=None, event_archive_at=None)
+    db = _mk_db(run)
+    redis = AsyncMock()
+    redis.xlen = AsyncMock(return_value=2)
+    redis.xrange = AsyncMock(return_value=[
+        ("1-0", {"event_count": "3"}),
+        ("2-0", {"event_count": "4"}),
+    ])
+    redis.llen = AsyncMock(side_effect=AssertionError("legacy fallback used"))
+
+    with (
+        patch("app.db.redis_client.get_redis", return_value=redis),
+        patch("app.worker.tasks.persist_live_session") as task_mock,
+    ):
+        task_mock.apply_async = MagicMock()
+        result = await recover_live_run_from_buffer(
+            run_id=run.id,
+            db=db,
+            _=SimpleNamespace(id=uuid.uuid4()),
+        )
+
+    assert result["buffered_events"] == 7
+    assert result["buffered_batches"] == 2
+    assert result["source"] == "redis"
 
 
 @pytest.mark.asyncio
@@ -139,15 +177,20 @@ async def test_recover_falls_back_to_archive_within_15_days():
         {"test_name": "test_c", "status": "PASSED"},
     ]
     archived_at = datetime.now(timezone.utc) - timedelta(days=5)
-    run = _run_row(event_archive=events, event_archive_at=archived_at)
+    run = _run_row(
+        event_archive=events,
+        event_archive_at=archived_at,
+        unknown_tests=2,
+    )
     db = _mk_db(run)
 
     redis = AsyncMock()
+    redis.xlen = AsyncMock(return_value=0)
     redis.llen = AsyncMock(return_value=0)  # buffer expired
-    redis.rpush = AsyncMock()
-    redis.expire = AsyncMock()
+    redis.eval = AsyncMock(return_value=["accepted", str(len(events)), "1-0"])
 
     with patch("app.db.redis_client.get_redis", return_value=redis), \
+         patch("app.services.live_run_recovery_service.get_redis", return_value=redis), \
          patch("app.worker.tasks.persist_live_session") as task_mock:
         task_mock.apply_async = MagicMock()
         result = await recover_live_run_from_buffer(
@@ -157,19 +200,18 @@ async def test_recover_falls_back_to_archive_within_15_days():
     assert result["queued"] is True
     assert result["source"] == "archive"
     assert result["buffered_events"] == len(events)
-    # Each event got pushed individually to preserve the same on-the-
-    # wire JSON shape that the SDK originally writes.
-    assert redis.rpush.await_count == len(events)
-    staged = json.loads(redis.rpush.await_args_list[0].args[1])
+    assert result["buffered_batches"] == 1
+    # Recovery writes the same one-manifest-per-batch shape as the producer.
+    assert redis.eval.await_count == 1
+    staged = json.loads(redis.eval.await_args.args[17])[0]
     assert staged["error_message"] == sanitize_for_persistence(
         events[0]["error_message"],
     )
     assert staged["stack_trace"] == sanitize_for_persistence(
         events[0]["stack_trace"],
     )
-    # Short TTL on the staging key so it doesn't pile up.
-    redis.expire.assert_awaited()
     task_mock.apply_async.assert_called_once()
+    assert task_mock.apply_async.call_args.kwargs["kwargs"]["final_state"]["unknown"] == 2
 
 
 @pytest.mark.asyncio
@@ -181,8 +223,8 @@ async def test_recover_ignores_expired_archive_falls_back_to_synthesis():
     user still gets placeholder rows from the run's aggregates.
 
     Pins two things:
-      * Staleness is enforced — ``rpush`` (the archive-replay staging
-        write) is never called for an out-of-window archive.
+      * Staleness is enforced — recovery batch admission is never called
+        for an out-of-window archive.
       * The recover path stays usable for old runs: synthesis covers
         the gap rather than dead-ending the user on a 422."""
     from app.routers.runs import recover_live_run_from_buffer
@@ -197,9 +239,9 @@ async def test_recover_ignores_expired_archive_falls_back_to_synthesis():
     db = _mk_db(run)
 
     redis = AsyncMock()
+    redis.xlen = AsyncMock(return_value=0)
     redis.llen = AsyncMock(return_value=0)
-    redis.rpush = AsyncMock()
-    redis.expire = AsyncMock()
+    redis.eval = AsyncMock()
 
     with patch("app.db.redis_client.get_redis", return_value=redis), \
          patch("app.worker.tasks.persist_live_session") as task_mock, \
@@ -214,7 +256,7 @@ async def test_recover_ignores_expired_archive_falls_back_to_synthesis():
     assert result["source"] == "synthesis"
     assert result["buffered_events"] == 0
     # The stale archive must not be staged back into Redis.
-    redis.rpush.assert_not_called()
+    redis.eval.assert_not_awaited()
     # The persist task is still queued so its synthesis branch fires.
     task_mock.apply_async.assert_called_once()
 
@@ -242,6 +284,7 @@ async def test_recover_rejects_when_no_redis_no_archive_and_zero_aggregates():
     db = _mk_db(run)
 
     redis = AsyncMock()
+    redis.xlen = AsyncMock(return_value=0)
     redis.llen = AsyncMock(return_value=0)
 
     with patch("app.db.redis_client.get_redis", return_value=redis):

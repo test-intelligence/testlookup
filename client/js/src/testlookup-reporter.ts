@@ -145,6 +145,20 @@ interface SessionCreateResponse {
   created_at: string
 }
 
+/** Generate a browser- and Node-compatible RFC 4122 UUID for wire identity. */
+function newProtocolId(): string {
+  const cryptoApi = globalThis.crypto
+  if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID()
+  if (!cryptoApi?.getRandomValues) {
+    throw new Error('TestLookup requires Web Crypto to generate replay-safe batch IDs')
+  }
+  const bytes = cryptoApi.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
 // ── TestLookupReporter ─────────────────────────────────────────────────────────
 
 /**
@@ -447,9 +461,12 @@ export class LiveSession {
   }
 
   private async _postBatch(events: LiveEvent[]): Promise<void> {
+    // Create the batch identity once, before retrying. The server derives each
+    // stable event ID from this value and the event's list position.
     const payload = {
       session_id: this.sessionId,
       run_id:     this.runId,
+      batch_id:   newProtocolId(),
       events,
     }
 
@@ -475,18 +492,33 @@ export class LiveSession {
           return
         }
 
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        if (!resp.ok) {
+          const httpError = new Error(`HTTP ${resp.status}`) as Error & {
+            retryable?: boolean
+            retryAfterMs?: number
+          }
+          httpError.retryable = resp.status === 429 || resp.status === 503 || resp.status >= 500
+          const retryAfter = resp.headers?.get('Retry-After')
+          if (retryAfter && /^\d+(\.\d+)?$/.test(retryAfter)) {
+            httpError.retryAfterMs = Math.max(0, Number(retryAfter) * 1_000)
+          }
+          throw httpError
+        }
 
         const data = await resp.json() as { accepted?: number }
         this._stats.sent += data.accepted ?? events.length
         return
       } catch (err: unknown) {
         clearTimeout(timer)
+        const typedError = err as Error & { retryable?: boolean; retryAfterMs?: number }
         const isTransient =
           err instanceof TypeError ||
-          (err as Error)?.name === 'AbortError'
+          typedError?.name === 'AbortError' ||
+          typedError?.retryable === true
 
-        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)
+        const delay = typedError?.retryAfterMs ?? (
+          RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)
+        )
         if (attempt === MAX_RETRIES || !isTransient) {
           console.error(
             `[TestLookup] Batch POST failed after ${attempt} attempt(s) (${events.length} events lost):`,

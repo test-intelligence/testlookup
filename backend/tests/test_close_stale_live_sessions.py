@@ -78,10 +78,18 @@ def test_reaper_keeps_session_with_recent_last_event(monkeypatch):
     from app.worker import tasks as worker_tasks
 
     now = datetime.now(timezone.utc)
-    fresh = _mock_session("r1", now - timedelta(minutes=2))
+    # The row itself is old enough to reap; only the fresh UUID-keyed Redis
+    # heartbeat proves it is still active.
+    fresh = _mock_session("r1", now - timedelta(minutes=30))
+    assert str(fresh.id) != fresh.run_id
     db = _make_db([fresh])
 
     close_mock = AsyncMock()
+    state_get = AsyncMock(side_effect=lambda key: (
+        {"last_event_at": (now - timedelta(seconds=30)).isoformat()}
+        if key == str(fresh.id)
+        else None
+    ))
 
     class _FakeAsyncSessionLocal:
         async def __aenter__(self_inner):
@@ -95,14 +103,14 @@ def test_reaper_keeps_session_with_recent_last_event(monkeypatch):
     )
 
     with patch("app.db.postgres.AsyncSessionLocal", return_value=_FakeAsyncSessionLocal()), \
-         patch("app.streams.live_run_state.RedisLiveRunState.get",
-               new=AsyncMock(return_value={"last_event_at": (now - timedelta(seconds=30)).isoformat()})), \
+         patch("app.streams.live_run_state.RedisLiveRunState.get", new=state_get), \
          patch("app.services.stream_service.close_session", new=close_mock):
         result = worker_tasks.close_stale_live_sessions.run(idle_minutes=5)
 
     assert result["closed"] == 0
     assert result["skipped_recent"] == 1
     close_mock.assert_not_called()
+    state_get.assert_awaited_once_with(str(fresh.id))
 
 
 def test_reaper_closes_session_past_cutoff(monkeypatch):
@@ -115,6 +123,7 @@ def test_reaper_closes_session_past_cutoff(monkeypatch):
     db = _make_db([stale])
 
     close_mock = AsyncMock()
+    finalize_mock = AsyncMock()
 
     class _FakeAsyncSessionLocal:
         async def __aenter__(self_inner):
@@ -125,12 +134,14 @@ def test_reaper_closes_session_past_cutoff(monkeypatch):
     with patch("app.db.postgres.AsyncSessionLocal", return_value=_FakeAsyncSessionLocal()), \
          patch("app.streams.live_run_state.RedisLiveRunState.get",
                new=AsyncMock(return_value={"last_event_at": (now - timedelta(minutes=15)).isoformat()})), \
-         patch("app.services.stream_service.close_session", new=close_mock):
+         patch("app.services.stream_service.close_session", new=close_mock), \
+         patch("app.services.stream_service.finalize_closed_session_redis", new=finalize_mock):
         result = worker_tasks.close_stale_live_sessions.run(idle_minutes=5)
 
     assert result["closed"] == 1
     assert result["skipped_recent"] == 0
     close_mock.assert_awaited_once()
+    finalize_mock.assert_awaited_once_with(str(stale.id))
 
 
 def test_reaper_closes_session_with_no_redis_state_past_started_cutoff(monkeypatch):
@@ -147,6 +158,7 @@ def test_reaper_closes_session_with_no_redis_state_past_started_cutoff(monkeypat
     db = _make_db([doa])
 
     close_mock = AsyncMock()
+    finalize_mock = AsyncMock()
 
     class _FakeAsyncSessionLocal:
         async def __aenter__(self_inner):
@@ -157,11 +169,13 @@ def test_reaper_closes_session_with_no_redis_state_past_started_cutoff(monkeypat
     with patch("app.db.postgres.AsyncSessionLocal", return_value=_FakeAsyncSessionLocal()), \
          patch("app.streams.live_run_state.RedisLiveRunState.get",
                new=AsyncMock(return_value=None)), \
-         patch("app.services.stream_service.close_session", new=close_mock):
+         patch("app.services.stream_service.close_session", new=close_mock), \
+         patch("app.services.stream_service.finalize_closed_session_redis", new=finalize_mock):
         result = worker_tasks.close_stale_live_sessions.run(idle_minutes=5)
 
     assert result["closed"] == 1
     close_mock.assert_awaited_once()
+    finalize_mock.assert_awaited_once_with(str(doa.id))
 
 
 def test_reaper_keeps_brand_new_doa_session_within_cutoff(monkeypatch):

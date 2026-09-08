@@ -74,7 +74,9 @@ class TestTheDedupUsesIt:
         )
 
     def test_the_live_session_loop_is_canonicalised(self):
-        assert "canonical_test_run_uuid(str(session.run_id))" in SOURCE
+        assert "canonical = session.id" in SOURCE, (
+            "completed LiveSession rows must deduplicate by the internal session UUID"
+        )
 
     def test_the_testrun_loop_compares_uuids(self):
         """``TestRun.id`` is already a UUID — comparing ``str(run.id)`` against

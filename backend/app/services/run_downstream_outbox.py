@@ -513,7 +513,10 @@ async def stage_live_persist_operation(
     from app.worker.ingestion_routing import queue_for_project
 
     payload = {
-        "run_id": str(session.run_id),
+        # The worker drains Redis by the internal run identity.  Keep the
+        # client-supplied display slug on LiveSession; it is not a durable key
+        # and may not equal the canonical TestRun UUID.
+        "run_id": str(canonical_run_id),
         "project_id": str(session.project_id),
         "build_number": str(session.build_number or session.id),
         "client_name": str(session.client_name or ""),

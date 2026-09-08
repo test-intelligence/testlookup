@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
@@ -751,6 +752,9 @@ public class TestLookupReporter {
                 ObjectNode payload = MAPPER.createObjectNode();
                 payload.put("session_id", sessionId);
                 payload.put("run_id",     runId);
+                // The server derives stable event IDs from this batch ID and
+                // each event's list index, so list order is part of identity.
+                payload.put("batch_id",   UUID.randomUUID().toString());
                 ArrayNode arr = payload.putArray("events");
                 events.forEach(arr::add);
                 String body = MAPPER.writeValueAsString(payload);

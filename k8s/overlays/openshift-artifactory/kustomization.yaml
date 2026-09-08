@@ -54,7 +54,7 @@ patches:
       name: testlookup-secrets
 
   # ── Re-point the base Ollama PVC at the cluster's storage class ───────────
-  # The 5 infra PVCs (postgres/mongo/minio/chromadb + redis is ephemeral)
+  # The 6 infra PVCs (postgres/mongo/redis/minio/chromadb + Ollama)
   # carry STORAGE_CLASS_PLACEHOLDER directly in their local manifests. The
   # Ollama PVC comes from ../../base (hardcoded ``standard``), so it needs an
   # explicit re-point here. The deploy script substitutes the placeholder in

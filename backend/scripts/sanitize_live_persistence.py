@@ -12,14 +12,23 @@ from app.db.mongo import Collections, close_mongo, get_mongo_db
 from app.db.postgres import get_session_factory
 from app.db.redis_client import close_redis, get_redis
 from app.services.live_persistence_scrub import (
+    migrate_redis_list_to_evidence_stream,
     purge_drained_live_stream,
+    remove_drained_legacy_redis_list,
     scrub_mongo_live_events,
     scrub_postgres_archive_batch,
     scrub_postgres_test_case_batch,
-    scrub_redis_list,
     scrub_unconsumed_redis_stream,
 )
-from app.streams import DLQ_STREAM, LIVE_EVENTS_STREAM, LIVE_GROUP, LIVE_TESTCASES_KEY
+from app.services.ingestion_sanitization import validate_live_identifier
+from app.streams import (
+    DLQ_STREAM,
+    LIVE_EVENTS_STREAM,
+    LIVE_EVIDENCE_GROUP,
+    LIVE_EVIDENCE_STREAM_KEY,
+    LIVE_GROUP,
+    LIVE_TESTCASES_KEY,
+)
 
 
 async def _scrub_postgres(batch_size: int) -> tuple[int, int]:
@@ -74,43 +83,135 @@ async def _scrub_chroma(batch_size: int) -> tuple[int, int]:
     return reindexed_rows, purged_cache_collections
 
 
-async def _scrub_redis(batch_size: int) -> tuple[int, int]:
-    redis = get_redis()
-    stream_rows = await purge_drained_live_stream(
-        redis,
-        LIVE_EVENTS_STREAM,
-        group_name=LIVE_GROUP,
-    )
-    stream_rows += await scrub_unconsumed_redis_stream(
-        redis,
-        DLQ_STREAM,
-        batch_size=batch_size,
-    )
+def _run_id_from_legacy_list_key(list_key: str) -> str:
+    prefix, suffix = LIVE_TESTCASES_KEY.split("{run_id}", 1)
+    if not list_key.startswith(prefix) or (suffix and not list_key.endswith(suffix)):
+        raise RuntimeError(f"unexpected legacy live-evidence key: {list_key!r}")
+    end = len(list_key) - len(suffix) if suffix else len(list_key)
+    run_id = list_key[len(prefix):end]
+    if not run_id:
+        raise RuntimeError(f"legacy live-evidence key has no run ID: {list_key!r}")
+    return validate_live_identifier("run_id", run_id)
 
-    list_rows = 0
-    list_pattern = LIVE_TESTCASES_KEY.format(run_id="*")
-    async for list_key in redis.scan_iter(match=list_pattern, count=batch_size):
-        list_rows += await scrub_redis_list(
+
+async def _scrub_redis(
+    batch_size: int,
+    *,
+    cleanup_drained_legacy_lists: bool = False,
+    legacy_lists_only: bool = False,
+) -> tuple[int, int]:
+    redis = get_redis()
+    if cleanup_drained_legacy_lists:
+        removed_lists = 0
+        list_pattern = LIVE_TESTCASES_KEY.format(run_id="*")
+        # Redis SCAN may skip keys when the keyspace changes during iteration.
+        # Repeat complete passes until one sees no remaining legacy LIST.
+        while True:
+            found_list = False
+            async for raw_list_key in redis.scan_iter(
+                match=list_pattern,
+                count=batch_size,
+            ):
+                found_list = True
+                list_key = (
+                    raw_list_key.decode()
+                    if isinstance(raw_list_key, bytes)
+                    else str(raw_list_key)
+                )
+                run_id = _run_id_from_legacy_list_key(list_key)
+                removed_lists += await remove_drained_legacy_redis_list(
+                    redis,
+                    list_key,
+                    LIVE_EVIDENCE_STREAM_KEY.format(run_id=run_id),
+                    group_name=LIVE_EVIDENCE_GROUP,
+                )
+            if not found_list:
+                break
+        return 0, removed_lists
+
+    stream_rows = 0
+    if not legacy_lists_only:
+        stream_rows = await purge_drained_live_stream(
             redis,
-            list_key,
+            LIVE_EVENTS_STREAM,
+            group_name=LIVE_GROUP,
+        )
+        stream_rows += await scrub_unconsumed_redis_stream(
+            redis,
+            DLQ_STREAM,
             batch_size=batch_size,
         )
-    return stream_rows, list_rows
+
+    migrated_rows = 0
+    list_pattern = LIVE_TESTCASES_KEY.format(run_id="*")
+    # Creating evidence Streams and checkpoints mutates the keyspace while
+    # SCAN runs. Repeat until a complete pass migrates no rows; that final,
+    # read-only pass guarantees every frozen legacy LIST was visited.
+    while True:
+        pass_migrated = 0
+        async for raw_list_key in redis.scan_iter(
+            match=list_pattern,
+            count=batch_size,
+        ):
+            list_key = (
+                raw_list_key.decode()
+                if isinstance(raw_list_key, bytes)
+                else str(raw_list_key)
+            )
+            run_id = _run_id_from_legacy_list_key(list_key)
+            pass_migrated += await migrate_redis_list_to_evidence_stream(
+                redis,
+                list_key,
+                LIVE_EVIDENCE_STREAM_KEY.format(run_id=run_id),
+                run_id=run_id,
+                batch_size=batch_size,
+            )
+        migrated_rows += pass_migrated
+        if pass_migrated == 0:
+            break
+    return stream_rows, migrated_rows
 
 
-async def main(batch_size: int) -> None:
+async def main(
+    batch_size: int,
+    *,
+    cleanup_drained_legacy_lists: bool = False,
+    migrate_legacy_lists_only: bool = False,
+) -> None:
     try:
+        if cleanup_drained_legacy_lists:
+            _stream_rows, removed_lists = await _scrub_redis(
+                batch_size,
+                cleanup_drained_legacy_lists=True,
+            )
+            print(
+                "Live evidence legacy cleanup complete: "
+                f"redis_lists_removed={removed_lists}"
+            )
+            return
+        if migrate_legacy_lists_only:
+            _stream_rows, migrated_rows = await _scrub_redis(
+                batch_size,
+                legacy_lists_only=True,
+            )
+            print(
+                "Live evidence legacy migration complete: "
+                f"redis_evidence_rows_migrated={migrated_rows}"
+            )
+            return
+
         postgres_archives, postgres_cases = await _scrub_postgres(batch_size)
         mongo_rows = await _scrub_mongo(batch_size)
         chroma_rows, chroma_cache_collections = await _scrub_chroma(batch_size)
-        redis_stream_rows, redis_list_rows = await _scrub_redis(batch_size)
+        redis_stream_rows, redis_migrated_rows = await _scrub_redis(batch_size)
         print(
             "M11 live persistence scrub complete: "
             f"postgres_archives={postgres_archives} "
             f"postgres_test_cases={postgres_cases} mongo_documents={mongo_rows} "
             f"chroma_search_rows={chroma_rows} "
             f"chroma_cache_collections={chroma_cache_collections} "
-            f"redis_stream_rows={redis_stream_rows} redis_list_rows={redis_list_rows}"
+            f"redis_stream_rows={redis_stream_rows} "
+            f"redis_evidence_rows_migrated={redis_migrated_rows}"
         )
     finally:
         await close_redis()
@@ -125,7 +226,27 @@ if __name__ == "__main__":
         action="store_true",
         help="required safety acknowledgement for Redis key replacement",
     )
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
+        "--migrate-legacy-live-lists-only",
+        action="store_true",
+        help="checkpoint-migrate legacy live LISTs without rerunning other M11 stores",
+    )
+    modes.add_argument(
+        "--cleanup-drained-legacy-lists",
+        action="store_true",
+        help=(
+            "remove migrated LISTs only after the live-persistence-v1 group "
+            "has zero lag and zero pending entries"
+        ),
+    )
     args = parser.parse_args()
     if not args.confirm_live_writers_paused:
         parser.error("pause API/live consumers and pass --confirm-live-writers-paused")
-    asyncio.run(main(max(1, args.batch_size)))
+    asyncio.run(
+        main(
+            max(1, args.batch_size),
+            cleanup_drained_legacy_lists=args.cleanup_drained_legacy_lists,
+            migrate_legacy_lists_only=args.migrate_legacy_live_lists_only,
+        )
+    )

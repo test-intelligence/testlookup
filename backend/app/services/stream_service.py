@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import secrets
@@ -23,7 +24,6 @@ from app.models.schemas import (
     LiveStreamIngestRequest,
     LiveStreamIngestResponse,
 )
-from app.services.async_utils import await_if_needed
 from app.services.ingestion_sanitization import (
     sanitize_test_result_payload,
     validate_live_identifier,
@@ -56,6 +56,318 @@ def _warn_buffer_cap_disabled() -> None:
 
 SESSION_TTL = 86_400
 SESSION_TOKEN_KEY = "live:session:{token}"
+
+_LIVE_LEGACY_BUFFER_TTL_SECONDS = 90_000
+_DEDUPE_CLOSED_FIELD = "__closed__"
+_CLOSED_DEDUPE_RETENTION_SECONDS = 15 * 24 * 60 * 60
+_CLOSE_ADMISSION_LUA = r"""
+local kind = redis.call('TYPE', KEYS[1])['ok']
+if kind ~= 'none' and kind ~= 'hash' then return {'wrongtype', kind} end
+for i = 2, 8 do
+  local set_kind = redis.call('TYPE', KEYS[i])['ok']
+  if set_kind ~= 'none' and set_kind ~= 'set' then return {'wrongtype', KEYS[i]} end
+end
+if redis.call('HEXISTS', KEYS[1], '__admitting__') == 1 then
+  return {'busy', 'admission in progress'}
+end
+redis.call('HSET', KEYS[1], '__gate__', 'closing', ARGV[1], ARGV[2])
+local snapshot = cjson.encode({
+  passed = redis.call('SCARD', KEYS[3]), failed = redis.call('SCARD', KEYS[4]),
+  skipped = redis.call('SCARD', KEYS[5]), broken = redis.call('SCARD', KEYS[6]),
+  unknown = redis.call('SCARD', KEYS[7]),
+  events_received = redis.call('SCARD', KEYS[8]),
+  total = redis.call('SCARD', KEYS[3]) + redis.call('SCARD', KEYS[4])
+    + redis.call('SCARD', KEYS[5]) + redis.call('SCARD', KEYS[6])
+    + redis.call('SCARD', KEYS[7])
+})
+return {'closing', snapshot, tostring(redis.call('SCARD', KEYS[2]))}
+"""
+_FINALIZE_CLOSE_LUA = r"""
+local kind = redis.call('TYPE', KEYS[1])['ok']
+if kind ~= 'none' and kind ~= 'hash' then return {'wrongtype', kind} end
+for i = 2, 8 do
+  local set_kind = redis.call('TYPE', KEYS[i])['ok']
+  if set_kind ~= 'none' and set_kind ~= 'set' then return {'wrongtype', KEYS[i]} end
+end
+if tonumber(ARGV[1]) == nil or tonumber(ARGV[1]) <= 0 then return {'invalid', 'retention'} end
+redis.call('HSET', KEYS[1], '__gate__', 'closed')
+if redis.call('SCARD', KEYS[2]) == 0 then
+  for i = 1, 8 do redis.call('EXPIRE', KEYS[i], ARGV[1]) end
+end
+return {'closed', tostring(redis.call('SCARD', KEYS[2]))}
+"""
+
+
+class LiveEvidenceCapacityError(HTTPException):
+    """The complete batch cannot fit in the run's durable Redis evidence."""
+
+    def __init__(self, detail: str):
+        super().__init__(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=detail,
+            headers={"Retry-After": "1"},
+        )
+
+
+class LiveBatchConflictError(HTTPException):
+    """A caller reused a batch identity for different event content."""
+
+    def __init__(self, detail: str):
+        super().__init__(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+
+def _canonical_event_json(value) -> str:
+    """Stable JSON used by both legacy batch and event identity derivation."""
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+
+def _legacy_batch_id(session_id: str, run_id: str, events: list[dict]) -> str:
+    """Derive retry-stable identity for clients that predate ``batch_id``."""
+    preimage = f"{session_id}\0{run_id}\0{_canonical_event_json(events)}"
+    return "legacy-" + hashlib.sha256(preimage.encode("utf-8")).hexdigest()
+
+
+def _stable_event_id(session_id: str, batch_id: str, index: int) -> str:
+    preimage = f"{session_id}\0{batch_id}\0{index}"
+    return hashlib.sha256(preimage.encode("utf-8")).hexdigest()
+
+
+def _batch_digest(events: list[dict]) -> str:
+    return hashlib.sha256(_canonical_event_json(events).encode("utf-8")).hexdigest()
+
+
+def _dedupe_field(session_id: str, batch_id: str) -> str:
+    preimage = f"{session_id}\0{batch_id}".encode("utf-8")
+    return "batch:" + hashlib.sha256(preimage).hexdigest()
+
+
+def _validated_batch_id(value: object) -> str:
+    batch_id = str(value)
+    if not batch_id or len(batch_id) > 255:
+        raise ValueError("batch_id must contain 1-255 characters")
+    if any(ord(char) < 32 or ord(char) == 127 for char in batch_id):
+        raise ValueError("batch_id contains control characters")
+    return batch_id
+
+
+# One server-side transaction owns admission. A rejected batch changes no
+# stream, list, counter, TTL or dedupe state; a retry of an accepted batch
+# returns the original count without applying any side effect twice.
+_ADMIT_LIVE_BATCH_LUA = r"""
+local expected_types = {
+  'stream', 'hash', 'hash', 'list', 'stream',
+  'set', 'set', 'set', 'set', 'set', 'set', 'set'
+}
+for i = 1, 12 do
+  local actual = redis.call('TYPE', KEYS[i])['ok']
+  if actual ~= 'none' and actual ~= expected_types[i] then
+    return {'wrongtype', KEYS[i]}
+  end
+end
+
+local dedupe_field = ARGV[16]
+local event_count = tonumber(ARGV[13])
+local capacity = tonumber(ARGV[3])
+local ok_events, events = pcall(cjson.decode, ARGV[19])
+local ok_ids, event_ids = pcall(cjson.decode, ARGV[20])
+local ok_wire, wire_events = pcall(cjson.decode, ARGV[21])
+if not ok_events or not ok_ids or not ok_wire
+   or type(events) ~= 'table' or type(event_ids) ~= 'table'
+   or type(wire_events) ~= 'table' or #events ~= event_count
+   or #event_ids ~= event_count or #wire_events ~= event_count then
+  return {'invalid', 'batch encoding'}
+end
+for i = 1, 5 do
+  if tonumber(ARGV[7 + i]) == nil then
+    return {'invalid', 'counter'}
+  end
+end
+
+local existing = redis.call('HGET', KEYS[3], dedupe_field)
+local stream_id = nil
+local recovering = false
+if existing then
+  local ok, receipt = pcall(cjson.decode, existing)
+  if not ok then
+    return {'corrupt', 'dedupe receipt'}
+  end
+  if receipt['digest'] ~= ARGV[15] or tonumber(receipt['count']) ~= tonumber(ARGV[13]) then
+    return {'collision', tostring(receipt['count'] or '')}
+  end
+  if receipt['state'] == 'accepted' or receipt['state'] == 'projected' then
+    if redis.call('HGET', KEYS[3], '__admitting__') == dedupe_field then
+      redis.call('HDEL', KEYS[3], '__admitting__')
+    end
+    return {'duplicate', tostring(receipt['count']), tostring(receipt['stream_id'])}
+  end
+  if receipt['state'] ~= 'staged'
+     or redis.call('HGET', KEYS[3], '__admitting__') ~= dedupe_field then
+    return {'corrupt', 'admission receipt'}
+  end
+  stream_id = tostring(receipt['stream_id'])
+  recovering = true
+end
+
+-- Duplicate lookup deliberately precedes the close fence: a retry of the
+-- accepted closing batch must still converge after the session is closed.
+local gate = redis.call('HGET', KEYS[3], '__gate__') or 'open'
+if not recovering and gate ~= 'open' then
+  return {'closed', '0'}
+end
+
+local pending_total = redis.call('SCARD', KEYS[6])
+if not recovering and capacity > 0 and pending_total + event_count > capacity then
+  return {'capacity', tostring(pending_total)}
+end
+
+if not stream_id then
+  if redis.call('HEXISTS', KEYS[3], '__admitting__') == 1 then
+    return {'busy', 'another batch admission is recovering'}
+  end
+  local now = redis.call('TIME')
+  local milliseconds = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+  local sequence = 0
+  local tail = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
+  if #tail == 1 then
+    local last_ms, last_sequence = string.match(tail[1][1], '^(%d+)%-(%d+)$')
+    last_ms = tonumber(last_ms)
+    last_sequence = tonumber(last_sequence)
+    if milliseconds < last_ms then milliseconds = last_ms end
+    if milliseconds == last_ms then sequence = last_sequence + 1 end
+  end
+  stream_id = tostring(milliseconds) .. '-' .. tostring(sequence)
+  local admitting = cjson.encode({
+    digest = ARGV[15], count = event_count,
+    state = 'staged', stream_id = stream_id,
+    batch_id = ARGV[14], session_id = ARGV[1], run_id = ARGV[2],
+    events_json = ARGV[19], event_ids_json = ARGV[20],
+    passed = tonumber(ARGV[8]), failed = tonumber(ARGV[9]),
+    skipped = tonumber(ARGV[10]), broken = tonumber(ARGV[11]),
+    unknown = tonumber(ARGV[12]), countable = tonumber(ARGV[6]),
+    last_event_at = ARGV[5], current_test = ARGV[7]
+  })
+  redis.call(
+    'HSET', KEYS[3], dedupe_field, admitting,
+    '__admitting__', dedupe_field, '__gate__', 'open'
+  )
+end
+local exact = redis.call('XRANGE', KEYS[1], stream_id, stream_id, 'COUNT', 1)
+if #exact == 0 then
+  redis.call(
+    'XADD', KEYS[1], stream_id,
+    'batch_id', ARGV[14],
+    'batch_digest', ARGV[15],
+    'event_count', ARGV[13],
+    'session_id', ARGV[1],
+    'run_id', ARGV[2],
+    'events_json', ARGV[19],
+    'event_ids_json', ARGV[20],
+    'trim_legacy', '0'
+  )
+end
+
+for i = 1, #event_ids do
+  local event_id = event_ids[i]
+  local event = events[i]
+  redis.call('SADD', KEYS[6], event_id)
+  if event['event_type'] ~= 'live_heartbeat' then
+    redis.call('SADD', KEYS[12], event_id)
+  end
+  if event['event_type'] == 'test_result' then
+    local outcome = string.upper(tostring(event['status'] or 'UNKNOWN'))
+    if outcome == 'PASSED' then redis.call('SADD', KEYS[7], event_id)
+    elseif outcome == 'FAILED' then redis.call('SADD', KEYS[8], event_id)
+    elseif outcome == 'SKIPPED' then redis.call('SADD', KEYS[9], event_id)
+    elseif outcome == 'BROKEN' then redis.call('SADD', KEYS[10], event_id)
+    else redis.call('SADD', KEYS[11], event_id) end
+  end
+end
+redis.call(
+  'HSET', KEYS[2],
+  'passed', redis.call('SCARD', KEYS[7]),
+  'failed', redis.call('SCARD', KEYS[8]),
+  'skipped', redis.call('SCARD', KEYS[9]),
+  'broken', redis.call('SCARD', KEYS[10]),
+  'unknown', redis.call('SCARD', KEYS[11]),
+  'events_received', redis.call('SCARD', KEYS[12]),
+  'last_event_at', ARGV[5], 'current_test', ARGV[7]
+)
+redis.call('EXPIRE', KEYS[2], ARGV[23])
+local receipt = cjson.encode({
+  digest = ARGV[15], count = event_count, state = 'accepted', stream_id = stream_id
+})
+redis.call('HSET', KEYS[3], dedupe_field, receipt)
+redis.call('HDEL', KEYS[3], '__admitting__')
+return {'accepted', tostring(event_count), stream_id}
+"""
+
+_RECONCILE_STAGED_BATCH_LUA = r"""
+local expected_types = {
+  'stream', 'hash', 'hash', 'list', 'stream',
+  'set', 'set', 'set', 'set', 'set', 'set', 'set'
+}
+for i = 1, 12 do
+  local actual = redis.call('TYPE', KEYS[i])['ok']
+  if actual ~= 'none' and actual ~= expected_types[i] then
+    return {'wrongtype', KEYS[i]}
+  end
+end
+local field = redis.call('HGET', KEYS[3], '__admitting__')
+if not field then return {'idle', '0'} end
+local encoded = redis.call('HGET', KEYS[3], field)
+local ok, receipt = pcall(cjson.decode, encoded or '')
+if not ok then return {'corrupt', '0'} end
+if receipt['state'] == 'accepted' or receipt['state'] == 'projected' then
+  redis.call('HDEL', KEYS[3], '__admitting__')
+  return {'reconciled', tostring(receipt['count'])}
+end
+if receipt['state'] ~= 'staged' then return {'corrupt', '0'} end
+local events_ok, events = pcall(cjson.decode, receipt['events_json'] or '')
+local ids_ok, ids = pcall(cjson.decode, receipt['event_ids_json'] or '')
+if not events_ok or not ids_ok or #events ~= tonumber(receipt['count'])
+   or #ids ~= tonumber(receipt['count']) then return {'corrupt', '0'} end
+local exact = redis.call('XRANGE', KEYS[1], receipt['stream_id'], receipt['stream_id'], 'COUNT', 1)
+if #exact == 0 then
+  redis.call(
+    'XADD', KEYS[1], receipt['stream_id'],
+    'batch_id', receipt['batch_id'], 'batch_digest', receipt['digest'],
+    'event_count', tostring(receipt['count']), 'session_id', receipt['session_id'],
+    'run_id', receipt['run_id'], 'events_json', receipt['events_json'],
+    'event_ids_json', receipt['event_ids_json'], 'trim_legacy', '0'
+  )
+end
+for i = 1, #ids do
+  redis.call('SADD', KEYS[6], ids[i])
+  if events[i]['event_type'] ~= 'live_heartbeat' then redis.call('SADD', KEYS[12], ids[i]) end
+  if events[i]['event_type'] == 'test_result' then
+    local outcome = string.upper(tostring(events[i]['status'] or 'UNKNOWN'))
+    if outcome == 'PASSED' then redis.call('SADD', KEYS[7], ids[i])
+    elseif outcome == 'FAILED' then redis.call('SADD', KEYS[8], ids[i])
+    elseif outcome == 'SKIPPED' then redis.call('SADD', KEYS[9], ids[i])
+    elseif outcome == 'BROKEN' then redis.call('SADD', KEYS[10], ids[i])
+    else redis.call('SADD', KEYS[11], ids[i]) end
+  end
+end
+redis.call(
+  'HSET', KEYS[2], 'passed', redis.call('SCARD', KEYS[7]),
+  'failed', redis.call('SCARD', KEYS[8]), 'skipped', redis.call('SCARD', KEYS[9]),
+  'broken', redis.call('SCARD', KEYS[10]), 'unknown', redis.call('SCARD', KEYS[11]),
+  'events_received', redis.call('SCARD', KEYS[12]),
+  'last_event_at', receipt['last_event_at'], 'current_test', receipt['current_test']
+)
+redis.call('EXPIRE', KEYS[2], 86400)
+redis.call('HSET', KEYS[3], field, cjson.encode({
+  digest = receipt['digest'], count = receipt['count'], state = 'accepted',
+  stream_id = receipt['stream_id']
+}))
+redis.call('HDEL', KEYS[3], '__admitting__')
+return {'reconciled', tostring(receipt['count'])}
+"""
 
 
 def hash_token(token: str) -> str:
@@ -344,7 +656,7 @@ async def get_session(
 
     from app.streams.live_run_state import RedisLiveRunState
 
-    live_stats = await RedisLiveRunState.get(session.run_id) or {}
+    live_stats = await RedisLiveRunState.get(str(session.id)) or {}
     return {
         "session_id": str(session.id),
         "run_id": session.run_id,
@@ -366,6 +678,36 @@ async def get_session(
         "completed_at": session.completed_at.isoformat() if session.completed_at else None,
         "live_stats": live_stats,
     }
+
+
+async def finalize_closed_session_redis(session_id: str) -> None:
+    """Mark a committed close durable and enable bounded Redis retention.
+
+    Callers must invoke this only after their PostgreSQL commit succeeds. The
+    Lua transition is idempotent, so a retry after a lost response is safe.
+    """
+    internal_run_id = str(uuid.UUID(session_id))
+    from app.streams import LIVE_BATCH_DEDUP_KEY
+
+    redis = get_redis()
+    ledger_key = LIVE_BATCH_DEDUP_KEY.format(run_id=internal_run_id)
+    ledger_sets = [
+        f"{ledger_key}:{suffix}"
+        for suffix in (
+            "pending", "passed", "failed", "skipped",
+            "broken", "unknown", "received",
+        )
+    ]
+    result = await redis.eval(
+        _FINALIZE_CLOSE_LUA,
+        8,
+        ledger_key,
+        *ledger_sets,
+        _CLOSED_DEDUPE_RETENTION_SECONDS,
+    )
+    outcome = result[0].decode() if isinstance(result[0], bytes) else result[0]
+    if outcome != "closed":
+        raise RuntimeError(f"live close finalization failed: {outcome}")
 
 
 async def close_session(
@@ -404,7 +746,71 @@ async def close_session(
 
     from app.streams.live_run_state import RedisLiveRunState
 
-    state = await RedisLiveRunState.complete(session.run_id)
+    internal_run_id = str(session.id)
+    redis = get_redis()
+    from app.streams import (
+        LIVE_BATCH_DEDUP_KEY,
+        LIVE_EVENTS_STREAM,
+        LIVE_EVIDENCE_STREAM_KEY,
+        LIVE_STATE_KEY,
+        LIVE_TESTCASES_KEY,
+    )
+
+    ledger_key = LIVE_BATCH_DEDUP_KEY.format(run_id=internal_run_id)
+    ledger_sets = [
+        f"{ledger_key}:{suffix}"
+        for suffix in ("pending", "passed", "failed", "skipped", "broken", "unknown", "received")
+    ]
+
+    # This Hash is TTL-less durable admission state. HSET is atomic relative
+    # to the batch-admission Lua script: a new batch loses to the close fence,
+    # while a byte-identical retry is resolved from its existing receipt first.
+    close_result = await redis.eval(
+        _CLOSE_ADMISSION_LUA,
+        8,
+        ledger_key,
+        *ledger_sets,
+        _DEDUPE_CLOSED_FIELD,
+        datetime.now(timezone.utc).isoformat(),
+    )
+    close_status = close_result[0]
+    if isinstance(close_status, bytes):
+        close_status = close_status.decode()
+    if close_status == "busy":
+        reconcile_keys = [
+            LIVE_EVIDENCE_STREAM_KEY.format(run_id=internal_run_id),
+            LIVE_STATE_KEY.format(run_id=internal_run_id), ledger_key,
+            LIVE_TESTCASES_KEY.format(run_id=internal_run_id), LIVE_EVENTS_STREAM,
+            *ledger_sets,
+        ]
+        reconciled = await redis.eval(
+            _RECONCILE_STAGED_BATCH_LUA, 12, *reconcile_keys
+        )
+        reconcile_status = reconciled[0].decode() if isinstance(reconciled[0], bytes) else reconciled[0]
+        if reconcile_status != "reconciled":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="live batch admission is still in progress; retry close",
+                headers={"Retry-After": "1"},
+            )
+        close_result = await redis.eval(
+            _CLOSE_ADMISSION_LUA, 8, ledger_key, *ledger_sets,
+            _DEDUPE_CLOSED_FIELD, datetime.now(timezone.utc).isoformat(),
+        )
+        close_status = close_result[0].decode() if isinstance(close_result[0], bytes) else close_result[0]
+    if close_status != "closing":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="live admission close fence is unavailable",
+            headers={"Retry-After": "1"},
+        )
+    state = await RedisLiveRunState.complete(internal_run_id)
+    ledger_snapshot = json.loads(
+        close_result[1].decode()
+        if isinstance(close_result[1], bytes)
+        else close_result[1]
+    )
+    state = {**(state or {}), **ledger_snapshot}
     now = datetime.now(timezone.utc)
     session.status = "completed"
     session.completed_at = now
@@ -429,17 +835,60 @@ async def close_session(
     try:
         from app.streams import LIVE_TESTCASES_KEY
 
-        redis = get_redis()
-        list_key = LIVE_TESTCASES_KEY.format(run_id=session.run_id)
-        raw_events = await redis.lrange(list_key, 0, -1)
+        from app.models.postgres import LiveEventReceipt
+        from app.services.live_session_drainer import _decode_stream_entries
+        from app.streams import LIVE_EVIDENCE_STREAM_KEY
+
+        list_key = LIVE_TESTCASES_KEY.format(run_id=internal_run_id)
+        stream_key = LIVE_EVIDENCE_STREAM_KEY.format(run_id=internal_run_id)
         decoded: list = []
+        seen_event_ids: set[str] = set()
+
+        # Entries already projected and XDEL'd remain recoverable from their
+        # PostgreSQL receipts. Pending batch manifests are added below.
+        try:
+            receipt_result = await db.execute(
+                    select(LiveEventReceipt.event_id, LiveEventReceipt.payload)
+                    .where(LiveEventReceipt.run_id == session.id)
+                    .order_by(LiveEventReceipt.projected_at, LiveEventReceipt.event_index)
+                )
+            receipt_rows = receipt_result.all()
+            if inspect.isawaitable(receipt_rows):
+                receipt_rows = await receipt_rows
+            for event_id, payload in receipt_rows:
+                seen_event_ids.add(str(event_id))
+                decoded.append(sanitize_test_result_payload(payload))
+        except Exception as receipt_error:
+            logger.warning(
+                "live_event_archive_receipt_read_failed session_id=%s error=%s",
+                session_id,
+                receipt_error,
+            )
+
+        if hasattr(redis, "xrange"):
+            batch_rows = await redis.xrange(stream_key, min="-", max="+")
+            for item in _decode_stream_entries(
+                [(str(stream_id), fields) for stream_id, fields in batch_rows]
+            ):
+                if item["event_type"] != "test_result" or item["event_id"] in seen_event_ids:
+                    continue
+                seen_event_ids.add(item["event_id"])
+                decoded.append(item["payload"])
+
+        raw_events = await redis.lrange(list_key, 0, -1)
         for raw in raw_events:
             try:
-                decoded.append(sanitize_test_result_payload(json.loads(raw)))
+                payload = sanitize_test_result_payload(json.loads(raw))
+                event_id = str(payload.pop("_event_id", ""))
+                if event_id and event_id in seen_event_ids:
+                    continue
+                if event_id:
+                    seen_event_ids.add(event_id)
+                decoded.append(payload)
             except Exception:
                 continue
         if decoded:
-            run_uuid = canonical_test_run_uuid(session.run_id)
+            run_uuid = session.id
             tr = (
                 await db.execute(select(TestRun).where(TestRun.id == run_uuid))
             ).scalar_one_or_none()
@@ -481,7 +930,7 @@ async def close_session(
             # so the release link must target the SAME uuid. Using
             # uuid.UUID(session.run_id) raised ValueError on every slug run,
             # silently skipping release linking via the broad except below.
-            test_run_id=canonical_test_run_uuid(session.run_id),
+            test_run_id=session.id,
             # Live sessions are the one path that carries a real execution
             # time: started_at is stamped when the session opened, not at
             # ingest. So the as-of lookup is genuinely accurate here — a long
@@ -509,7 +958,7 @@ async def close_session(
     # and notification work after the test rows are durable.
     from app.services.run_downstream_outbox import stage_live_persist_operation
 
-    canonical_run_uuid = canonical_test_run_uuid(session.run_id)
+    canonical_run_uuid = session.id
     await stage_live_persist_operation(
         db,
         canonical_run_id=canonical_run_uuid,
@@ -537,17 +986,29 @@ async def _resolve_project_id_for_run(run_id: str) -> Optional[str]:
         return None
 
 
-async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
-    """Publish events to Redis Streams and update the live-state hash.
+async def _persist_event_batch(
+    session_id: str,
+    run_id: str,
+    events,
+    *,
+    batch_id: Optional[str] = None,
+) -> int:
+    """Atomically admit a complete live batch into run-isolated evidence.
 
-    Shared by the session-token path (``ingest_event_batch``) and the
-    API-key path (``ingest_via_api_key``). Buffering test_result events into
-    the Redis list and HINCRBY-ing the counter hash must happen here —
-    synchronously in the HTTP handler — not in the async stream consumer,
-    because close_session() / persist_live_session can be dispatched before
-    the consumer processes the stream (race condition).
+    The Lua transaction makes capacity, deduplication, durable append, the
+    rolling legacy LIST write and aggregate updates one decision. Writers do
+    not trim either evidence buffer: only the drainer may remove committed
+    evidence. ``batch_id`` is supplied by current SDKs; older SDK payloads get
+    a deterministic content identity so a byte-equivalent retry converges.
     """
-    from app.streams import LIVE_TESTCASES_KEY, LIVE_STATE_KEY
+    from app.streams import (
+        LIVE_BATCH_DEDUP_KEY,
+        LIVE_EVENTS_STREAM,
+        LIVE_EVIDENCE_STREAM_KEY,
+        LIVE_STATE_KEY,
+        LIVE_STREAM_MAXLEN,
+        LIVE_TESTCASES_KEY,
+    )
 
     session_id = validate_live_identifier("session_id", session_id)
     run_id = validate_live_identifier("run_id", run_id)
@@ -557,23 +1018,30 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
         event_dict = event.model_dump() if hasattr(event, "model_dump") else dict(event)
         normalized_events.append(sanitize_test_result_payload(event_dict))
 
-    accepted = await publish_event_batch(
-        session_id=session_id,
-        run_id=run_id,
-        events=normalized_events,
-    )
-
     redis = get_redis()
+    resolved_batch_id = _validated_batch_id(
+        batch_id or _legacy_batch_id(session_id, run_id, normalized_events)
+    )
+    evidence_key = LIVE_EVIDENCE_STREAM_KEY.format(run_id=run_id)
     list_key = LIVE_TESTCASES_KEY.format(run_id=run_id)
     state_key = LIVE_STATE_KEY.format(run_id=run_id)
-    counter_map = {"PASSED": "passed", "FAILED": "failed", "SKIPPED": "skipped", "BROKEN": "broken"}
+    dedup_key = LIVE_BATCH_DEDUP_KEY.format(run_id=run_id)
+    counter_map = {
+        "PASSED": "passed",
+        "FAILED": "failed",
+        "SKIPPED": "skipped",
+        "BROKEN": "broken",
+    }
     now = datetime.now(timezone.utc).isoformat()
     last_test_name = ""
-
-    pipe = redis.pipeline()
     test_event_count = 0
     countable_events = 0
-    for event_dict in normalized_events:
+    counters = {name: 0 for name in (*counter_map.values(), "unknown")}
+    event_ids: list[str] = []
+    wire_events: list[dict[str, str]] = []
+    for index, event_dict in enumerate(normalized_events):
+        event_id = _stable_event_id(session_id, resolved_batch_id, index)
+        event_ids.append(event_id)
         # ``live_heartbeat`` is a keepalive that only exists to bump
         # last_event_at for the idle reaper. Counting it would inflate
         # events_received with idle noise, and a heartbeat-only batch must
@@ -582,7 +1050,7 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
             countable_events += 1
         if event_dict.get("event_type") == "test_result":
             test_event_count += 1
-            entry = json.dumps({
+            legacy_entry = _canonical_event_json({
                 "test_name":     event_dict.get("test_name", ""),
                 "status":        event_dict.get("status", "UNKNOWN"),
                 "duration_ms":   event_dict.get("duration_ms", 0),
@@ -592,57 +1060,144 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
                 "stack_trace":   event_dict.get("stack_trace"),
                 "tags":          event_dict.get("tags"),
                 "timestamp_ms":  event_dict.get("timestamp_ms"),
+                "_event_id":     event_id,
+                "_batch_id":     resolved_batch_id,
+                "_event_index":  index,
             })
-            await await_if_needed(pipe.rpush(list_key, entry))
             status_upper = (event_dict.get("status") or "UNKNOWN").upper()
-            counter_field = counter_map.get(status_upper)
-            if counter_field:
-                await await_if_needed(pipe.hincrby(state_key, counter_field, 1))
+            counter_field = counter_map.get(status_upper, "unknown")
+            counters[counter_field] += 1
             last_test_name = event_dict.get("test_name") or last_test_name
+        else:
+            legacy_entry = ""
+        event_type = event_dict.get("event_type", "test_result")
+        payload = _canonical_event_json({**event_dict, "run_id": run_id})
+        wire_events.append({
+            "event_type": str(event_type),
+            "payload": payload,
+            "legacy_entry": legacy_entry,
+        })
 
-    # Phase 2.1 — bound the per-run list to LIVE_BUFFER_MAX_EVENTS_PER_RUN
-    # so a single long-lived run can't grow the Redis footprint unbounded
-    # even while it's within rate-limit budget. ``LTRIM`` keeps the
-    # NEWEST events (oldest get evicted) so the dashboard always shows
-    # the most recent activity. The trade-off: if persist_live_session
-    # is delayed past the buffer cap, the dropped events are lost for
-    # the per-test rollup. Aggregates remain accurate because they
-    # come from HINCRBY counters that we DON'T trim. See
-    # docs/SCALABLE_INGESTION_DESIGN.md § Phase 2.
     buffer_cap = settings.LIVE_BUFFER_MAX_EVENTS_PER_RUN
-    if buffer_cap > 0:
-        # LTRIM start=-N keeps the last N entries. Cheap O(1) operation
-        # on Redis Lists; we run it on every batch so the cap is enforced
-        # as soon as it's exceeded rather than only at TTL refresh.
-        await await_if_needed(pipe.ltrim(list_key, -buffer_cap, -1))
-    elif not _buffer_cap_disabled_warned:
-        # cap <= 0 disables backpressure entirely (unbounded per-run list).
-        # Surface it once so a misconfigured deploy is observable rather than
-        # silently dropping the safeguard.
+    if buffer_cap <= 0 and not _buffer_cap_disabled_warned:
         _warn_buffer_cap_disabled()
-    await await_if_needed(pipe.expire(list_key, 90_000))  # 25 h TTL — same as consumer's buffer
-    if last_test_name:
-        await await_if_needed(pipe.hset(state_key, mapping={"last_event_at": now, "current_test": last_test_name}))
-    else:
-        await await_if_needed(pipe.hset(state_key, "last_event_at", now))
-    # ``live_sessions.events_received`` is returned by GET /stream/sessions/{id}
-    # and is in the published schema, but nothing ever incremented it — it read
-    # 0 for every real session while seed_dev_data wrote a plausible non-zero,
-    # which is what kept it looking populated. Count it here, on the hash the
-    # hot path already writes, so the field costs one extra pipeline op rather
-    # than a database round trip per batch.
-    if countable_events:
-        await await_if_needed(
-            pipe.hincrby(state_key, "events_received", countable_events)
+
+    args = [
+        session_id,
+        run_id,
+        str(buffer_cap),
+        str(LIVE_STREAM_MAXLEN),
+        now,
+        str(countable_events),
+        last_test_name,
+        str(counters["passed"]),
+        str(counters["failed"]),
+        str(counters["skipped"]),
+        str(counters["broken"]),
+        str(counters["unknown"]),
+        str(len(normalized_events)),
+        resolved_batch_id,
+        _batch_digest(normalized_events),
+        _dedupe_field(session_id, resolved_batch_id),
+        _DEDUPE_CLOSED_FIELD,
+        "",
+        _canonical_event_json(
+            [{**event, "run_id": run_id} for event in normalized_events]
+        ),
+        _canonical_event_json(event_ids),
+        _canonical_event_json(wire_events),
+        str(_LIVE_LEGACY_BUFFER_TTL_SECONDS),
+        str(86_400),
+    ]
+    redis_keys = [
+        evidence_key,
+        state_key,
+        dedup_key,
+        list_key,
+        LIVE_EVENTS_STREAM,
+        f"{dedup_key}:pending",
+        f"{dedup_key}:passed",
+        f"{dedup_key}:failed",
+        f"{dedup_key}:skipped",
+        f"{dedup_key}:broken",
+        f"{dedup_key}:unknown",
+        f"{dedup_key}:received",
+    ]
+    response = await redis.eval(_ADMIT_LIVE_BATCH_LUA, 12, *redis_keys, *args)
+    initial_outcome = (
+        response[0].decode() if isinstance(response[0], bytes) else response[0]
+    )
+    if initial_outcome == "busy":
+        reconciled = await redis.eval(
+            _RECONCILE_STAGED_BATCH_LUA, 12, *redis_keys
         )
-    await await_if_needed(pipe.expire(state_key, 86_400))
-    await pipe.execute()
+        reconcile_status = (
+            reconciled[0].decode()
+            if isinstance(reconciled[0], bytes)
+            else reconciled[0]
+        )
+        if reconcile_status not in {"reconciled", "idle"}:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="staged live admission could not be reconciled",
+                headers={"Retry-After": "1"},
+            )
+        response = await redis.eval(_ADMIT_LIVE_BATCH_LUA, 12, *redis_keys, *args)
+    outcome = response[0]
+    if isinstance(outcome, bytes):
+        outcome = outcome.decode()
+    value = response[1]
+    if isinstance(value, bytes):
+        value = value.decode()
+    if outcome == "capacity":
+        raise LiveEvidenceCapacityError(
+            f"run evidence at {value}/{buffer_cap}; retry after persistence drains"
+        )
+    if outcome == "collision":
+        raise LiveBatchConflictError(
+            f"batch_id {resolved_batch_id!r} was already used with different content"
+        )
+    if outcome == "closed":
+        raise LiveBatchConflictError("live session is closed")
+    if outcome != "accepted" and outcome != "duplicate":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="live evidence storage is unavailable",
+            headers={"Retry-After": "1"},
+        )
+    accepted = int(value)
+
+    # Live counters and websocket fan-out are rebuildable views. Keep them
+    # outside the durable admission state machine so a command-boundary error
+    # can never create a second evidence record or inflate capacity. A lost
+    # view update may make the in-flight UI briefly stale; PostgreSQL projection
+    # and close-time receipt recovery remain authoritative.
+    if outcome == "accepted" and hasattr(redis, "pipeline"):
+        try:
+            pipe = redis.pipeline(transaction=False)
+            for wire_event in wire_events:
+                pipe.xadd(
+                    LIVE_EVENTS_STREAM,
+                    {
+                        "run_id": run_id,
+                        "session_id": session_id,
+                        "event_type": wire_event["event_type"],
+                        "payload": wire_event["payload"],
+                    },
+                    maxlen=LIVE_STREAM_MAXLEN,
+                    approximate=True,
+                )
+            await pipe.execute()
+        except Exception as exc:
+            logger.warning(
+                "live_derived_view_update_failed run_id=%s error=%s", run_id, exc,
+            )
 
     # Phase 4.1 — feed the high-volume detector with the test_result event
     # count from this batch (counted in the loop above — no second model_dump
     # pass). Project_id is looked up lazily (one cached DB read per run) and
     # never blocks the ingest path — ``record_test_events`` swallows its errors.
-    if test_event_count > 0:
+    if outcome == "accepted" and test_event_count > 0:
         try:
             from app.services.high_volume_detector import record_test_events
             project_id = await _resolve_project_id_for_run(run_id)
@@ -698,14 +1253,35 @@ async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchRespo
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     redis = get_redis()
     stored_session_id = await redis.get(SESSION_TOKEN_KEY.format(token=x_session_token))
+    stored_session_id = (
+        stored_session_id.decode()
+        if isinstance(stored_session_id, bytes)
+        else stored_session_id
+    )
     if not stored_session_id or not secrets.compare_digest(stored_session_id, batch.session_id):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired session token",
         )
 
+    from app.db.postgres import AsyncSessionLocal
+
+    try:
+        session_uuid = uuid.UUID(batch.session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid session_id format") from exc
+    async with AsyncSessionLocal() as db:
+        session = await db.get(LiveSession, session_uuid)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.run_id != batch.run_id:
+        raise LiveBatchConflictError("run_id does not belong to this live session")
+
     accepted = await _persist_event_batch(
-        session_id=batch.session_id, run_id=batch.run_id, events=batch.events
+        session_id=batch.session_id,
+        run_id=str(session.id),
+        events=batch.events,
+        batch_id=getattr(batch, "batch_id", None),
     )
 
     await redis.expire(SESSION_TOKEN_KEY.format(token=x_session_token), SESSION_TTL)
@@ -757,17 +1333,6 @@ async def ingest_via_api_key(
             .limit(1)
         )
     ).scalar_one_or_none()
-
-    if existing is not None and existing.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"run_id {request.run_id!r} has already finalised "
-                f"(status={existing.status!r}). Pick a new run_id — including "
-                "the CI build number or commit SHA in the run_id keeps it "
-                "unique per run."
-            ),
-        )
 
     meta = request.meta
     created_session = False
@@ -832,11 +1397,18 @@ async def ingest_via_api_key(
             from app.streams.live_run_state import RedisLiveRunState
 
             await RedisLiveRunState.start(
-                run_id=request.run_id,
+                run_id=str(session_uuid),
                 project_id=str(project_id),
                 build_number=(meta.build_number if meta else None) or request.run_id,
                 total_tests=(meta.total_tests if meta else None) or 0,
                 launch_name=(meta.launch_name.strip() if meta and meta.launch_name else None),
+            )
+            from app.streams import LIVE_STATE_KEY
+
+            await redis.hset(
+                LIVE_STATE_KEY.format(run_id=session_uuid),
+                "display_run_id",
+                request.run_id,
             )
 
             # Auto-create the release record so it shows up in release tracking
@@ -861,7 +1433,10 @@ async def ingest_via_api_key(
         session = existing
 
     accepted = await _persist_event_batch(
-        session_id=str(session.id), run_id=request.run_id, events=request.events
+        session_id=str(session.id),
+        run_id=str(session.id),
+        events=request.events,
+        batch_id=getattr(request, "batch_id", None),
     )
 
     # Detect a run_complete event and finalize the session in the same handler.
@@ -890,8 +1465,9 @@ async def ingest_via_api_key(
 
 def build_live_session_state(payload: dict) -> LiveSessionState:
     raw_run_id = payload.get("run_id", "")
+    display_run_id = payload.get("display_run_id") or raw_run_id
     return LiveSessionState(
-        run_id=raw_run_id,
+        run_id=display_run_id,
         test_run_id=str(canonical_test_run_uuid(raw_run_id)) if raw_run_id else None,
         project_id=payload.get("project_id", ""),
         build_number=payload.get("build_number", ""),
@@ -917,7 +1493,7 @@ def build_completed_session_state(session) -> LiveSessionState:
     final_state = (session.extra_metadata or {}).get("final_state", {})
     return LiveSessionState(
         run_id=session.run_id,
-        test_run_id=str(canonical_test_run_uuid(session.run_id)) if session.run_id else None,
+        test_run_id=str(session.id),
         project_id=str(session.project_id),
         build_number=session.build_number or "",
         status="completed",
@@ -1071,7 +1647,7 @@ async def list_active_sessions(
     seen_run_ids = set(active_run_ids)
     completed_sessions = []
     for session in db_sessions:
-        canonical = canonical_test_run_uuid(str(session.run_id))
+        canonical = session.id
         if canonical in seen_run_ids:
             continue
         seen_run_ids.add(canonical)
@@ -1136,7 +1712,7 @@ async def list_active_sessions(
 
 
 async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -> None:
-    run_uuid = canonical_test_run_uuid(session.run_id)
+    run_uuid = session.id
 
     passed = int(state.get("passed", 0))
     failed = int(state.get("failed", 0))

@@ -401,6 +401,92 @@ def _release_dedup_for_retry(dedup_key: str, dedup_owner: str, task_id: str) -> 
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
 
+async def _drain_live_evidence_before_finalize(
+    *,
+    run_id: str,
+    project_id: str,
+    build_number: str,
+    suite_name: str | None,
+) -> int:
+    """Project every durable live event before the terminal finalizer runs.
+
+    Current producers append to a per-run Redis Stream and mirror test results
+    to the legacy LIST during the rolling upgrade.  The drainer owns the only
+    safe acknowledgement boundary: it commits PostgreSQL first, then ACKs and
+    trims only through that committed watermark.  This close-time loop keeps
+    calling that boundary until both sources are empty.
+
+    A legacy-only run can encounter an empty Stream created by the consumer
+    group.  In that case the drainer correctly prefers the Stream but cannot
+    see the LIST, so migrate the frozen LIST into the Stream and resume.  The
+    migration is checkpointed and WATCH-protected; cleanup is attempted only
+    through its acknowledged-drain verifier.
+    """
+    from app.db.redis_client import get_redis
+    from app.services.live_persistence_scrub import (
+        migrate_redis_list_to_evidence_stream,
+        remove_drained_legacy_redis_list,
+    )
+    from app.services.live_session_drainer import drain_run_buffer
+    from app.streams import (
+        LIVE_EVIDENCE_GROUP,
+        LIVE_EVIDENCE_STREAM_KEY,
+        LIVE_TESTCASES_KEY,
+    )
+
+    redis = get_redis()
+    stream_key = LIVE_EVIDENCE_STREAM_KEY.format(run_id=run_id)
+    list_key = LIVE_TESTCASES_KEY.format(run_id=run_id)
+    total_drained = 0
+
+    while True:
+        outcome = await drain_run_buffer(
+            run_id=run_id,
+            project_id=project_id,
+            build_number=build_number,
+            suite_name=suite_name,
+        )
+        drained = int(outcome.get("drained", 0) or 0)
+        total_drained += drained
+        if drained:
+            continue
+
+        stream_length = int(await redis.xlen(stream_key) or 0)
+        legacy_length = int(await redis.llen(list_key) or 0)
+        if stream_length:
+            # A pending entry from a crashed consumer is not claimable until
+            # its idle timeout elapses.  Finalizing now would strand it; make
+            # Celery retry instead.
+            raise RuntimeError(
+                f"live evidence stream still contains {stream_length} "
+                "uncommitted entry(s)"
+            )
+        if not legacy_length:
+            return total_drained
+
+        migrated = await migrate_redis_list_to_evidence_stream(
+            redis,
+            list_key,
+            stream_key,
+            run_id=run_id,
+        )
+        if migrated:
+            continue
+
+        # A completed checkpoint with an empty Stream means all migrated rows
+        # were committed and acknowledged.  This verifier refuses deletion if
+        # lag/pending/topology changed, so it cannot erase later evidence.
+        removed = await remove_drained_legacy_redis_list(
+            redis,
+            list_key,
+            stream_key,
+            group_name=LIVE_EVIDENCE_GROUP,
+        )
+        if removed:
+            continue
+        raise RuntimeError("legacy live evidence remains after migration")
+
+
 @celery_app.task(
     name="app.worker.tasks.dispatch_run_completed_webhook",
     base=DownstreamTrackedTask,
@@ -466,7 +552,8 @@ def persist_live_session(
     """
     Persist a completed live execution session to PostgreSQL.
 
-    Reads the test-event buffer from Redis (LIVE_TESTCASES_KEY) and creates:
+    Drains the per-run durable evidence Stream (with legacy LIST migration)
+    and creates:
       - One TestRun row (with aggregated counts from final_state / Redis data)
       - One TestCase row per event
 
@@ -474,58 +561,49 @@ def persist_live_session(
     Deduplicates by run_id so retries are safe.
     """
     import hashlib
-    import json
     import uuid as _uuid_mod
     from datetime import datetime, timezone
 
     final_state = final_state or {}
 
     async def _run():
-        # Idempotency rule: skip only when persistence has actually completed
-        # — i.e., TestCase rows already exist for this run's canonical UUID.
-        # Determined by a single COUNT(*) query, **on the same session as
-        # the writes below**. A previous version opened a separate
-        # AsyncSessionLocal() for the count, which under asyncpg's
-        # connection pool raced with the main session's writes and raised
-        # "asyncpg.InterfaceError: cannot perform operation: another
-        # operation is in progress" — silently dropping retries.
+        # Keep the row-count/reconciliation queries on the same session as the
+        # terminal aggregate update. A previous version opened a separate
+        # session and raced asyncpg's connection pool during retries.
         from sqlalchemy import select as _sel, func as _func
 
         from app.db.postgres import AsyncSessionLocal
-        from app.db.redis_client import get_redis
-        from app.streams import LIVE_TESTCASES_KEY
         from app.models.postgres import (
             TestCase, TestRun, TestStatus,
         )
-        from app.services.stream_service import canonical_test_run_uuid
+        from app.services.stream_service import (
+            canonical_test_run_uuid,
+            finalize_closed_session_redis,
+        )
         from app.services.run_status import terminal_run_status
         from app.services.ingestion_sanitization import sanitize_test_result_payload
 
-        redis = get_redis()
-        list_key = LIVE_TESTCASES_KEY.format(run_id=run_id)
-
-        # ── Read buffered test events ─────────────────────────────────────────
-        raw_entries = await redis.lrange(list_key, 0, -1)
-        events = []
-        for raw in raw_entries:
-            try:
-                events.append(json.loads(raw))
-            except Exception:
-                pass
+        # Project through the shared durable drainer before terminal state is
+        # materialised. Only that service may ACK or trim evidence because it
+        # commits PostgreSQL before advancing the Redis watermark.
+        drained = await _drain_live_evidence_before_finalize(
+            run_id=run_id,
+            project_id=project_id,
+            build_number=build_number,
+            suite_name=suite_name,
+        )
+        events: list[dict] = []
 
         logger.info(
-            "[Task %s] Persisting live session: run=%s events=%d",
-            self.request.id, run_id, len(events),
+            "[Task %s] Persisting live session: run=%s drained=%d",
+            self.request.id, run_id, drained,
         )
 
         # ── Compute aggregate counts ──────────────────────────────────────────
         # ``final_state`` comes from the authoritative HINCRBY counters
-        # (LIVE_STATE_KEY hash). It's accurate even when the per-test
-        # buffer hit its LTRIM cap mid-run or got partially drained by
-        # the Phase 4.5 incremental-drain task. Prefer it whenever a
-        # ``total`` was reported; only fall back to event-derived counts
-        # for legacy paths that never populated final_state (e.g.
-        # ``recover_live_run_from_buffer``).
+        # (LIVE_STATE_KEY hash). Prefer it whenever a total was reported.
+        # Legacy recovery without those counters is reconciled from the rows
+        # the durable drainer committed below.
         fs_total = final_state.get("total")
         if fs_total is not None and int(fs_total) > 0:
             passed  = int(final_state.get("passed",  0) or 0)
@@ -591,34 +669,51 @@ def persist_live_session(
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select
 
-            # Idempotency check. Phase 4.5 incremental drain means a run
-            # can legitimately have BOTH existing TestCase rows AND a
-            # non-empty buffer (the tail of events that landed between
-            # the last drain tick and close_session). So we only skip
-            # when there's truly nothing left to do: buffer empty AND
-            # rows already present. The "buffer empty + rows present"
-            # path covers Celery retries firing this task twice for the
-            # same close, plus the legacy manual-recovery flow.
+            # The drainer may have created rows in this task or on an earlier
+            # tick. Count them before deciding whether placeholder recovery is
+            # needed; terminal aggregates and finalization still run on retry.
             existing_tc_count = (
                 await db.execute(
                     _sel(_func.count(TestCase.id)).where(TestCase.test_run_id == run_uuid)
                 )
             ).scalar() or 0
-            if existing_tc_count > 0 and not events:
-                logger.info(
-                    "[Task %s] Persistence already complete for run=%s — %d TestCase "
-                    "rows present; resuming idempotent finalization",
-                    self.request.id, run_id, existing_tc_count,
+            if total <= 0 and existing_tc_count > 0:
+                # Legacy/manual recovery may not have a Redis counter hash or
+                # final_state.  The drainer has already committed the durable
+                # evidence, so reconstruct terminal aggregates from those rows
+                # instead of overwriting the run with zeroes.
+                aggregate_rows = (
+                    await db.execute(
+                        _sel(TestCase.status, _func.count(TestCase.id))
+                        .where(TestCase.test_run_id == run_uuid)
+                        .group_by(TestCase.status)
+                    )
+                ).all()
+                status_counts = {
+                    (
+                        status.value
+                        if hasattr(status, "value")
+                        else str(status)
+                    ).upper(): int(count or 0)
+                    for status, count in aggregate_rows
+                }
+                passed = status_counts.get(TestStatus.PASSED.value, 0)
+                failed = status_counts.get(TestStatus.FAILED.value, 0)
+                skipped = status_counts.get(TestStatus.SKIPPED.value, 0)
+                broken = status_counts.get(TestStatus.BROKEN.value, 0)
+                unknown = status_counts.get(TestStatus.UNKNOWN.value, 0)
+                total = passed + failed + skipped + broken + unknown
+                pass_rate = (
+                    round(passed / (passed + failed + broken) * 100, 2)
+                    if (passed + failed + broken) > 0
+                    else None
                 )
-                from app.services.ingestion_pipeline import finalize_run
-
-                await finalize_run(
-                    run_id=str(run_uuid),
-                    project_id=str(proj_uuid),
-                    build_number=build_number,
+                run_status = terminal_run_status(
+                    passed + failed + broken,
+                    failed,
+                    broken,
+                    unknown,
                 )
-                return
-
             # Upsert TestRun — skip if already exists (idempotent)
             existing = await db.execute(select(TestRun).where(TestRun.id == run_uuid))
             run = existing.scalar_one_or_none()
@@ -776,7 +871,7 @@ def persist_live_session(
                 for offset in range(0, len(rows), chunk_size):
                     chunk = rows[offset:offset + chunk_size]
                     await db.execute(stmt, chunk)
-            else:
+            elif existing_tc_count == 0:
                 # Buffer was empty but final_state reports tests ran.
                 # This happens when the SDK only sends a ``run_complete``
                 # event without per-test ``test_result`` events, or when
@@ -861,6 +956,12 @@ def persist_live_session(
                     )
 
             await db.commit()
+            # The close transaction and its durable outbox intent are now
+            # committed. Finalize the Redis close only at this point. This
+            # outbox-backed task is retryable, so it also repairs a process
+            # crash or Redis failure between the API commit and its immediate
+            # best-effort finalizer call.
+            await finalize_closed_session_redis(str(run_uuid))
             logger.info(
                 "[Task %s] Persisted run=%s tests=%d passed=%d failed=%d",
                 self.request.id, run_id, total, passed, failed,
@@ -882,17 +983,6 @@ def persist_live_session(
             build_number=build_number,
         )
 
-        # ── Clean up Redis buffer ─────────────────────────────────────────────
-        # Guarded: rows are already committed, so a Redis blip here must not
-        # raise and trigger a spurious full-task retry (which would re-run the
-        # dedup-skip path anyway). The 25h TTL reclaims the buffer regardless.
-        try:
-            await redis.delete(list_key)
-        except Exception as exc:
-            logger.warning(
-                "[Task %s] buffer cleanup failed for run=%s (TTL will reclaim): %s",
-                self.request.id, run_id, exc,
-            )
 
     try:
         _run_async(_run())
@@ -3996,7 +4086,7 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
     from sqlalchemy import select
     from app.db.postgres import AsyncSessionLocal
     from app.models.postgres import LiveSession
-    from app.services.stream_service import close_session
+    from app.services.stream_service import close_session, finalize_closed_session_redis
     from app.streams.live_run_state import RedisLiveRunState
 
     async def _sweep() -> dict:
@@ -4013,7 +4103,7 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
 
             for session in active:
                 try:
-                    state = await RedisLiveRunState.get(session.run_id)
+                    state = await RedisLiveRunState.get(str(session.id))
                     last_event_iso = (state or {}).get("last_event_at")
                     is_idle = True
                     if last_event_iso:
@@ -4051,6 +4141,7 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
 
                     await close_session(db, str(session.id))
                     await db.commit()
+                    await finalize_closed_session_redis(str(session.id))
                     closed += 1
                 except Exception as exc:
                     errors += 1

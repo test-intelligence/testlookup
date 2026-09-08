@@ -589,7 +589,6 @@ async def recover_live_run_from_buffer(
     live run / no buffer left in Redis).
     """
     from sqlalchemy import func
-    from app.streams import LIVE_TESTCASES_KEY
     from app.db.redis_client import get_redis
     from app.models.postgres import TestCase
     from app.worker.tasks import persist_live_session
@@ -626,8 +625,14 @@ async def recover_live_run_from_buffer(
     # just stage the payload back into Redis when source 2 wins so the
     # task can keep its single read path.
     redis = get_redis()
-    list_key = LIVE_TESTCASES_KEY.format(run_id=str(run_id))
-    buffer_len = await redis.llen(list_key)
+    from app.services.live_run_recovery_service import (
+        buffered_live_evidence_counts,
+    )
+
+    buffer_len, batch_count, _buffer_source = await buffered_live_evidence_counts(
+        redis,
+        str(run_id),
+    )
     source = "redis"
 
     if not buffer_len:
@@ -658,6 +663,7 @@ async def recover_live_run_from_buffer(
                 + int(run.failed_tests or 0)
                 + int(run.skipped_tests or 0)
                 + int(run.broken_tests or 0)
+                + int(getattr(run, "unknown_tests", 0) or 0)
             )
             if total_reported <= 0:
                 raise HTTPException(
@@ -673,21 +679,15 @@ async def recover_live_run_from_buffer(
             # ``total_reported`` placeholder rows.
             source = "synthesis"
         else:
-            # Stage archived events back into Redis so persist_live_session
-            # can read from its usual location. Use a short TTL so staging
-            # keys don't pile up; the task drains them and deletes the key
-            # itself on success.
-            import json as _json
-            from app.services.ingestion_sanitization import (
-                sanitize_test_result_payload,
+            # Stage into the durable Stream.  This remains visible even when a
+            # previous consumer group created an empty stream key, which used
+            # to mask a recovery LIST from the stream-first drainer.
+            from app.services.live_run_recovery_service import (
+                _stage_archive_to_redis,
             )
-            for ev in archive:
-                await redis.rpush(
-                    list_key,
-                    _json.dumps(sanitize_test_result_payload(ev)),
-                )
-            await redis.expire(list_key, 3600)  # 1h is plenty for the worker
-            buffer_len = len(archive)
+
+            buffer_len = await _stage_archive_to_redis(str(run_id), archive)
+            batch_count = 1 if buffer_len else 0
             source = "archive"
 
     # Phase 2.4 — same per-project shard routing the close_session path
@@ -706,6 +706,7 @@ async def recover_live_run_from_buffer(
                 "failed": run.failed_tests or 0,
                 "skipped": run.skipped_tests or 0,
                 "broken": run.broken_tests or 0,
+                "unknown": getattr(run, "unknown_tests", 0) or 0,
                 "total": run.total_tests or 0,
             },
             "suite_name": run.primary_suite_name or None,
@@ -729,6 +730,7 @@ async def recover_live_run_from_buffer(
         "queued": True,
         "run_id": str(run_id),
         "buffered_events": buffer_len,
+        "buffered_batches": batch_count,
         "source": source,
         "message": message,
     }

@@ -1,6 +1,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# This overlay does not deploy Redis. Before applying it, the platform overlay
+# must provide a durable endpoint behind the ``testlookup-redis`` Service and
+# authenticated Redis URLs. The H02/H03 cutover runbook defines the required
+# persistence, backup, failover, and non-eviction contract; a cache-only Redis
+# service is not valid for live evidence or the Celery broker.
 resources:
   - ../../base
   - route.yaml

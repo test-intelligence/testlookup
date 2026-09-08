@@ -37,6 +37,16 @@ The async context manager flushes on exit and posts a `run_complete` event so
 the run finalises server-side and shows up on every TestLookup page (Runs,
 Overview, Coverage, Failures, Trends).
 
+## Replay-safe live identity
+
+All bundled SDKs serialize a client-generated `batch_id` once before the first
+POST and reuse it verbatim for transport and backpressure retries. The server
+derives each event's canonical identity as SHA-256 of `session_id`, `batch_id`,
+and its zero-based position in the batch, so event order is part of the wire
+contract and cannot change on retry. Servers accept `batch_id` as optional so
+older SDKs remain wire-compatible; new SDKs always send it so commit-before-ack
+recovery can deduplicate ambiguous delivery without discarding distinct events.
+
 ### pytest plugin — auto-registers
 
 Drop a `testlookup.properties` next to your `pytest.ini` and run `pytest` —

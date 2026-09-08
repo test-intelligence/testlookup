@@ -20,9 +20,10 @@ data you demo with, and wrong in the data you run with.
 Same class as the summary agent's `_fallback_used`, which was read from a key
 nothing wrote: **a value reported to consumers that no code path produces.**
 
-The counter now lives on the Redis state hash the ingest path already writes —
-one extra pipeline op, no database round trip per batch — and is copied onto
-the column when the session closes, so it survives the hash's TTL.
+Stable event IDs now live in a per-run Redis SET. Admission uses ``SADD`` and
+projects the absolute ``SCARD`` into the live-state cache, so retrying the same
+batch cannot increment the value twice. The close fence derives its snapshot
+from that authoritative SET and copies it to PostgreSQL.
 
 The guards are: the count is incremented on ingest, it is readable *during* the
 run (not only after close), it is persisted at close, and — the class ratchet —
@@ -43,14 +44,12 @@ LIVE_RUN_STATE = BACKEND / "app" / "streams" / "live_run_state.py"
 # ── The count is actually produced ──────────────────────────────────────────
 
 
-def test_the_ingest_path_increments_the_counter():
-    """The regression. Nothing wrote this field at all."""
+def test_the_ingest_path_records_and_projects_the_counter_idempotently():
+    """Stable SET membership makes the ingest count retry-safe."""
     src = STREAM_SERVICE.read_text(encoding="utf-8")
-    body = src.split("async def _persist_event_batch")[1].split("\nasync def ")[0]
-    assert re.search(r'hincrby\(\s*state_key,\s*["\']events_received["\']', body), (
-        "_persist_event_batch does not increment events_received, so the field "
-        "the API publishes stays 0 for every real session"
-    )
+    assert "redis.call('SADD', KEYS[12], event_id)" in src
+    assert "'events_received', redis.call('SCARD', KEYS[12])" in src
+    assert "events_received = redis.call('SCARD', KEYS[8])" in src
 
 
 def test_keepalives_are_not_counted_as_events():
@@ -64,10 +63,12 @@ def test_keepalives_are_not_counted_as_events():
     assert "live_heartbeat" in body, (
         "_persist_event_batch counts events without excluding keepalives"
     )
-    assert re.search(r"hincrby\(\s*state_key,\s*[\"']events_received[\"']", body)
-    assert not re.search(
-        r'hincrby\(\s*state_key,\s*["\']events_received["\'],\s*accepted\s*\)', body
-    ), "counting `accepted` includes heartbeats"
+    assert "if event['event_type'] ~= 'live_heartbeat' then" in src
+    assert "redis.call('SADD', KEYS[12], event_id)" in src
+    received_block = src.split(
+        "if event['event_type'] ~= 'live_heartbeat' then", 1
+    )[1].split("end", 1)[0]
+    assert "redis.call('SADD', KEYS[12], event_id)" in received_block
 
 
 def test_the_counter_is_typed_as_an_int_when_read_back():

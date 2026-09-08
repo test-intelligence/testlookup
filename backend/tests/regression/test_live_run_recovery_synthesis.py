@@ -145,9 +145,9 @@ async def test_recover_live_falls_back_to_synthesis_when_no_buffer_no_archive():
     ])
 
     fake_redis = AsyncMock()
+    fake_redis.xlen = AsyncMock(return_value=0)
     fake_redis.llen = AsyncMock(return_value=0)
-    fake_redis.rpush = AsyncMock()
-    fake_redis.expire = AsyncMock()
+    fake_redis.xadd = AsyncMock()
 
     queued = {}
     def _apply_async(**kwargs):
@@ -191,6 +191,7 @@ async def test_recover_live_still_422s_when_aggregates_are_zero():
     ])
 
     fake_redis = AsyncMock()
+    fake_redis.xlen = AsyncMock(return_value=0)
     fake_redis.llen = AsyncMock(return_value=0)
 
     with patch("app.db.redis_client.get_redis", return_value=fake_redis):

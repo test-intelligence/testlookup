@@ -50,6 +50,7 @@ import logging
 import os
 import socket
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
@@ -94,6 +95,11 @@ READ_TIMEOUT       = 30.0
 # would be falsely closed mid-flight. 30s is well under the reaper threshold
 # so genuinely-dead clients still get reaped promptly.
 HEARTBEAT_INTERVAL = 30.0      # seconds
+
+
+def _new_protocol_id() -> str:
+    """Return an opaque UUID used for replay-safe batch identity."""
+    return str(uuid.uuid4())
 
 
 # ── Retry policy helpers ──────────────────────────────────────────────────────
@@ -813,9 +819,12 @@ class LiveSession:
         time is capped at ``MAX_RETRY_TOTAL_SECONDS`` so a misconfigured
         project surfaces a hard failure instead of buffering forever.
         """
+        # Freeze identity before entering the retry loop. The server derives
+        # each stable event ID from this batch ID and the event's list index.
         payload = {
             "session_id": self.session_id,
             "run_id": self.run_id,
+            "batch_id": _new_protocol_id(),
             "events": events,
         }
         headers = {"X-Session-Token": self.session_token}
@@ -1301,7 +1310,13 @@ class LiveStream:
         retry with exponential backoff, cumulative retry time capped at
         ``MAX_RETRY_TOTAL_SECONDS``.
         """
-        payload: dict[str, Any] = {"run_id": self._run_id, "events": events}
+        # Generate the batch identity once, before the retry loop. The server
+        # derives stable event identity from batch_id plus list position.
+        payload: dict[str, Any] = {
+            "run_id": self._run_id,
+            "batch_id": _new_protocol_id(),
+            "events": events,
+        }
         if self._meta:
             payload["meta"] = self._meta
         deadline_started = time.monotonic()

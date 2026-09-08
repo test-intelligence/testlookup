@@ -2857,8 +2857,18 @@ class LiveEventBatch(BaseModel):
     A batch of events sent from a client machine.
     Batching amortises HTTP overhead — 50–1000 events per call is recommended.
     """
-    session_id: str
-    run_id: str
+    session_id: str = Field(..., min_length=1, max_length=255)
+    run_id: str = Field(..., min_length=1, max_length=100)
+    batch_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=255,
+        pattern=r"^[^\x00-\x1f\x7f]+$",
+        description=(
+            "Client-generated identity for this batch. The same value must be reused "
+            "for every HTTP retry; omitted for legacy callers."
+        ),
+    )
     events: List[LiveEvent] = Field(..., min_length=1, max_length=1000)
 
 
@@ -2893,7 +2903,17 @@ class LiveStreamIngestRequest(BaseModel):
     call for a given ``(project_id, run_id)`` pair auto-creates the session;
     subsequent calls reuse it. Clients never call ``/sessions`` themselves.
     """
-    run_id: str = Field(..., min_length=1, max_length=255)
+    run_id: str = Field(..., min_length=1, max_length=100)
+    batch_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=255,
+        pattern=r"^[^\x00-\x1f\x7f]+$",
+        description=(
+            "Client-generated identity for this batch. The same value must be reused "
+            "for every HTTP retry; omitted for legacy callers."
+        ),
+    )
     events: List[LiveEvent] = Field(..., min_length=1, max_length=1000)
     meta: Optional[LiveStreamMeta] = None
 
