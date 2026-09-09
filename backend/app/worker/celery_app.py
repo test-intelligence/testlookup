@@ -24,6 +24,17 @@ celery_app = Celery(
     include=["app.worker.tasks", "app.worker.training_tasks"],
 )
 
+
+@celery_app.task(bind=True, name="app.worker.celery_app.queue_delivery_probe")
+def queue_delivery_probe(self, correlation_id: str) -> dict[str, str]:
+    """Return transport attribution for the release queue-consumption proof."""
+    delivery = self.request.delivery_info or {}
+    return {
+        "correlation_id": str(correlation_id),
+        "routing_key": str(delivery.get("routing_key") or ""),
+        "worker": str(self.request.hostname or ""),
+    }
+
 # ── Priority queues ────────────────────────────────────────────────────────────
 # critical  (9)  — live test analysis, immediate user-facing results
 # ingestion (7)  — test report parsing from MinIO
