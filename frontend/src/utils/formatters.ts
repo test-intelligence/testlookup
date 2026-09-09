@@ -69,15 +69,26 @@ export const dayTimeAgo = (dayOnly?: string | null): string => {
  * Human duration for a millisecond count. '—' means *no value* (missing, NaN,
  * or an invalid negative from clock skew); a genuine zero renders '0ms', not
  * '—'. A test step that ran in under a millisecond has a KNOWN, instantaneous
- * duration — collapsing it into the same dash used for "unknown" told the
- * reader the step wasn't timed when it was (the old `if (!ms)` guard treated
- * `0` as falsy).
+ * duration. Collapsing it into the same dash used for "unknown" told the
+ * reader the step wasn't timed when it was. Output is tiered so each scale
+ * drops the unit below the
+ * noise floor: sub-second in ms, sub-minute as one-decimal seconds, sub-hour as
+ * whole minutes + seconds, and an hour or more as whole hours + minutes.
+ *
+ * The hours tier matters because this formats real run durations — a run's
+ * total, the "Avg run duration" tile, a slow test case — and a large CI suite
+ * routinely runs past an hour. Without it a 2h07m run read as `127m 3s`, which
+ * a human has to divide in their head; `2h 7m` is legible at a glance. Seconds
+ * are dropped at the hour scale for the same reason ms are dropped past a
+ * second — at that magnitude they are noise, not signal. Sub-hour output is
+ * unchanged.
  */
 export const formatDuration = (ms?: number | null): string => {
   if (ms == null || Number.isNaN(ms) || ms < 0) return '—'
   if (ms < 1000) return `${ms}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
-  return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`
+  return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`
 }
 
 export const formatPassRate = (rate?: number | null): string =>

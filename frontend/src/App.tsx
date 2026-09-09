@@ -6,6 +6,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useWebVitals } from '@/hooks/useWebVitals'
 import { usePermissions } from '@/hooks/usePermissions'
+import { DocumentTitleRouteKeyContext, useRouteDocumentTitle } from '@/hooks/useDocumentTitle'
 import LoginPage from '@/pages/LoginPage'
 import ResetPasswordPage from '@/pages/ResetPasswordPage'
 
@@ -296,8 +297,10 @@ function ManagementGuard({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   useWebVitals()
+  const documentTitleRouteKey = useRouteDocumentTitle()
 
   return (
+    <DocumentTitleRouteKeyContext.Provider value={documentTitleRouteKey}>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedRoute />}>
@@ -323,5 +326,6 @@ export default function App() {
         <Route path="*" element={<Navigate to="/overview" replace />} />
       </Route>
     </Routes>
+    </DocumentTitleRouteKeyContext.Provider>
   )
 }

@@ -15,6 +15,23 @@ connection error, matching the convention every sibling integration test already
 uses (e.g. `test_celery_visibility_redelivery`). Where Redis *is* live (CI) the
 test runs unchanged. Added a regression test that patches the client factory so
 the probe raises and asserts the test skips rather than errors. Test-only.
+## 2026-09-08 — a way forward when the "select a project" prompt has no projects
+
+`ProjectRequiredEmptyState` — the prompt six single-project pages (Flaky Coach,
+API Keys, GitHub/GitLab, Webhooks, Retention) render while All Projects is active
+— replaced its old "go use the top bar" dead end with an in-place project picker.
+But the picker leaves one case unresolved: an empty project list. A fresh
+self-hoster who lands on one of these pages before any project exists — a
+bookmarked `/settings/api-keys`, a shared link — saw a picker reading "No
+projects loaded" with nothing to press, the very dead end this component exists
+to remove.
+
+The prompt now offers a "Create a project" link (to `/projects`) when, and only
+when, the list is empty. An established deployment, where choosing an existing
+project is the right move, is not nagged to make another. The link shows during a
+still-loading fetch too — a briefly visible escape hatch is a valid action, never
+a false claim that the deployment has no projects, so the component's "claims
+neither loading nor empty" invariant holds. Presentation-only.
 
 ## 2026-09-07 — press "/" to jump to the global search
 
@@ -27,6 +44,50 @@ Deliberately not `⌘/Ctrl-K`: the search results page already binds that combo 
 its own input, so a second global handler would fight it there. The `/` handler
 is guarded so it never swallows a slash the user is actually typing into a
 field, textarea, contenteditable node, or select. Presentation-only.
+## 2026-09-06 — let the docs be read straight through
+
+The in-app documentation reader (`/docs`) had a sidebar that groups topics by
+area and an on-page table of contents, but no way to move to the *next* topic:
+grouping tells a reader what an area contains, never what comes after the page
+they are on. A self-hoster reading the guide front-to-back — the common
+first-read — had to return to the sidebar and hunt for the following topic after
+every page.
+
+Added a sequential Previous / Next pager at the foot of each topic, driven by a
+new pure `adjacentDocPages(id)` helper over `DOC_PAGES` (whose array order *is*
+the intended reading order: Start here → Using TestLookup → How it decides →
+Reference). The first topic shows no Previous and the last shows no Next; an
+unknown id yields no neighbours, so a fallback-to-default render simply omits the
+pager rather than linking nowhere. Presentation-only and additive — theme-token
+styled, navigates client-side, and keyed off the same manifest the sidebar and
+routing already use.
+## 2026-09-06 — give every page its own browser-tab title
+
+Every routed page shared the single static `<title>` from `index.html`, so a
+self-hoster with Failures, the Release Gate and the Docs open in three tabs
+could not tell them apart, and every bookmark and history entry carried the
+identical label — small friction that compounds for the exact power user who
+keeps the tool open all day.
+
+A new `useDocumentTitle` hook drives `document.title` off the page heading and
+is called once from `PageHeader`, which nearly every page already renders — so
+each route gets a distinct, shareable tab title (`Release Gate · TestLookup`)
+with no per-page bookkeeping to drift out of sync. A blank heading collapses to
+the bare brand, and the hook deliberately does not restore on unmount (that
+would flash the base title between navigations). Presentation-only.
+## 2026-09-07 — a run over an hour reads as hours, not "127m 3s"
+
+`formatDuration` — the shared elapsed-time formatter behind a run's total, the
+"Avg run duration" tile, and per-test-case durations — topped out at a minutes
+tier, so any run past an hour rendered as a bare minute count (`127m 3s`) that a
+reader has to divide by 60 in their head. A large CI suite routinely runs that
+long.
+
+Added an hours tier: an hour or more now reads `2h 7m`, dropping seconds at that
+magnitude for the same reason the second tier drops milliseconds — at that scale
+they are noise, not signal. Every sub-hour value is byte-for-byte unchanged, so
+no existing cell moves; only the previously unreadable long durations do.
+Presentation-only, pure helper.
 
 ## 2026-09-05 — a rate limit is not a data error
 

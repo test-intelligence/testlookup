@@ -1,0 +1,7 @@
+target-version = "py311"
+
+[lint]
+# Keep Ruff's historical default policy explicit. This prevents tool upgrades
+# from silently enabling thousands of additional rules; rule-set changes
+# should be reviewed and adopted separately from dependency updates.
+select = ["E4", "E7", "E9", "F"]
