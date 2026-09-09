@@ -28,7 +28,7 @@ async def test_idp_probe_reports_actual_http_health(
     monkeypatch.setattr(url_safety, "assert_public_url", safety)
     client = MagicMock()
     client.get = AsyncMock(return_value=SimpleNamespace(status_code=status_code))
-    monkeypatch.setattr(http_client, "get_http_client", lambda: client)
+    monkeypatch.setattr(http_client, "get_public_http_client", lambda: client)
 
     healthy, detail = await sso_service.probe_idp_endpoint("https://idp.example/sso")
 
@@ -50,7 +50,7 @@ async def test_idp_probe_reports_connection_failure(monkeypatch):
     monkeypatch.setattr(url_safety, "assert_public_url", AsyncMock())
     client = MagicMock()
     client.get = AsyncMock(side_effect=ConnectionError("DNS failed"))
-    monkeypatch.setattr(http_client, "get_http_client", lambda: client)
+    monkeypatch.setattr(http_client, "get_public_http_client", lambda: client)
 
     healthy, detail = await sso_service.probe_idp_endpoint("https://missing.example/sso")
 
@@ -72,7 +72,7 @@ async def test_idp_probe_blocks_private_target_before_request(monkeypatch):
         AsyncMock(side_effect=ValueError("target resolves to a non-public address")),
     )
     client_factory = MagicMock()
-    monkeypatch.setattr(http_client, "get_http_client", client_factory)
+    monkeypatch.setattr(http_client, "get_public_http_client", client_factory)
 
     healthy, detail = await sso_service.probe_idp_endpoint("http://127.0.0.1:6379")
 

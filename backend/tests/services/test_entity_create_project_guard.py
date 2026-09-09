@@ -127,7 +127,7 @@ async def test_create_source_404s_when_project_missing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_create_subscription_404s_when_project_missing(monkeypatch):
-    from app.services.webhook_service import create_subscription
+    from app.services import webhook_service
 
     # The function calls validate_events first; the test payload uses a
     # known-valid event so validation doesn't short-circuit before the
@@ -136,9 +136,10 @@ async def test_create_subscription_404s_when_project_missing(monkeypatch):
     db.add = MagicMock()
     db.flush = AsyncMock()
     db.get = AsyncMock(return_value=None)
+    monkeypatch.setattr(webhook_service, "_assert_safe_target_url", AsyncMock())
 
     with pytest.raises(HTTPException) as exc_info:
-        await create_subscription(
+        await webhook_service.create_subscription(
             db,
             project_id=uuid.uuid4(),
             actor=_fake_user(),

@@ -1,4 +1,5 @@
 """Slack notifications via incoming webhooks (Block Kit)."""
+
 import logging
 
 
@@ -62,15 +63,25 @@ def _build_blocks(
     # Stats fields
     fields = []
     if metadata.get("project_name"):
-        fields.append({"type": "mrkdwn", "text": f"*Project*\n{metadata['project_name']}"})
+        fields.append(
+            {"type": "mrkdwn", "text": f"*Project*\n{metadata['project_name']}"}
+        )
     if metadata.get("build_number"):
-        fields.append({"type": "mrkdwn", "text": f"*Build*\n#{metadata['build_number']}"})
+        fields.append(
+            {"type": "mrkdwn", "text": f"*Build*\n#{metadata['build_number']}"}
+        )
     if metadata.get("pass_rate") is not None:
-        fields.append({"type": "mrkdwn", "text": f"*Pass rate*\n{metadata['pass_rate']:.1f}%"})
+        fields.append(
+            {"type": "mrkdwn", "text": f"*Pass rate*\n{metadata['pass_rate']:.1f}%"}
+        )
     if metadata.get("total_tests"):
-        fields.append({"type": "mrkdwn", "text": f"*Total tests*\n{metadata['total_tests']}"})
+        fields.append(
+            {"type": "mrkdwn", "text": f"*Total tests*\n{metadata['total_tests']}"}
+        )
     if metadata.get("failed_tests"):
-        fields.append({"type": "mrkdwn", "text": f"*Failed*\n{metadata['failed_tests']}"})
+        fields.append(
+            {"type": "mrkdwn", "text": f"*Failed*\n{metadata['failed_tests']}"}
+        )
 
     if fields:
         # Slack supports max 10 fields per section; chunk if needed
@@ -80,17 +91,23 @@ def _build_blocks(
     dashboard_url = metadata.get("dashboard_url")
     if dashboard_url and dashboard_url != "#":
         blocks.append({"type": "divider"})
-        blocks.append({
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "View in Dashboard", "emoji": True},
-                    "url": dashboard_url,
-                    "style": "primary",
-                }
-            ],
-        })
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "View in Dashboard",
+                            "emoji": True,
+                        },
+                        "url": dashboard_url,
+                        "style": "primary",
+                    }
+                ],
+            }
+        )
 
     return blocks
 
@@ -122,12 +139,17 @@ async def send_notification(
         ],
     }
 
-    from app.core.http_client import get_http_client
-    client = get_http_client()
-    request_kwargs = {"json": payload, "timeout": 10.0}
-    if delivery_id:
-        request_kwargs["headers"] = {"X-TestLookup-Delivery": delivery_id}
-    response = await client.post(webhook_url, **request_kwargs)
+    from app.core.http_client import get_public_http_client
+
+    client = get_public_http_client()
+    headers = {"X-TestLookup-Delivery": delivery_id} if delivery_id else None
+    response = await client.post(
+        webhook_url,
+        json=payload,
+        headers=headers,
+        timeout=10.0,
+        follow_redirects=False,
+    )
     response.raise_for_status()
 
     logger.info("Slack notification sent — event=%s", event_type)
