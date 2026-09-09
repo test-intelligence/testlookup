@@ -104,7 +104,7 @@ python-dateutil==2.9.0.post0
 pytz==2026.3.post1
 structlog==26.1.0
 tenacity==9.1.4
-click==8.1.8
+click==8.5.0
 
 # ── Export: Excel / Word / PDF ───────────────────────────────
 openpyxl==3.1.5           # Excel export (.xlsx)
