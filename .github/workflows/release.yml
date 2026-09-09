@@ -7,7 +7,6 @@ on:
 permissions:
   actions: read
   contents: read
-  packages: write
 
 jobs:
   resolve-tag:
@@ -39,10 +38,58 @@ jobs:
     with:
       source_sha: ${{ needs.resolve-tag.outputs.source_sha }}
 
+  scan-verified-images:
+    name: Scan verified release image digests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [resolve-tag, verify]
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download and validate the SHA-bound image manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "${{ needs.verify.outputs.ci_run_id }}" --name "${{ needs.verify.outputs.artifact_name }}" --dir verified-images
+          python3 scripts/release/release_manifest.py validate --manifest verified-images/release-manifest.json --expected-source-sha "${{ needs.verify.outputs.source_sha }}"
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install checksum-verified Trivy 0.74.0
+        env:
+          TRIVY_ARCHIVE_SHA256: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+        run: |
+          set -euo pipefail
+          curl -fsSLo trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz
+          echo "$TRIVY_ARCHIVE_SHA256  trivy.tar.gz" | sha256sum --check --strict
+          tar -xzf trivy.tar.gz trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
+      - name: Scan exact release digests and generate SBOM evidence
+        run: python3 scripts/release/scan_release_images.py --manifest verified-images/release-manifest.json --output-dir release-security
+      - name: Retain release security evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-security-${{ needs.resolve-tag.outputs.source_sha }}
+          path: release-security/
+          if-no-files-found: error
+          retention-days: 90
+
   promote:
     name: Promote verified digest set to release aliases
     runs-on: ubuntu-latest
-    needs: [resolve-tag, verify]
+    needs: [resolve-tag, verify, scan-verified-images]
+    permissions:
+      actions: read
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v7
       - name: Download and validate the SHA-bound image manifest
