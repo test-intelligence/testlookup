@@ -359,9 +359,11 @@ async def test_cutover_cleanup_repeats_scan_after_deleting_keys(monkeypatch):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_legacy_list_migration_is_atomic_on_real_redis():
+    if os.environ.get("TESTLOOKUP_RUN_REDIS_INTEGRATION") != "1":
+        pytest.skip("real Redis integration tests are not enabled")
     redis_url = os.environ.get("REDIS_URL", "").strip()
     if not redis_url:
-        pytest.skip("REDIS_URL is not configured")
+        pytest.fail("REDIS_URL must be configured for real Redis integration tests")
     redis_asyncio = pytest.importorskip("redis.asyncio")
     from app.services.live_persistence_scrub import (
         migrate_redis_list_to_evidence_stream,
@@ -375,6 +377,11 @@ async def test_legacy_list_migration_is_atomic_on_real_redis():
     stream_key = f"testlookup:live:evidence:{run_id}"
     group = "live-persistence-v1"
     client = redis_asyncio.Redis.from_url(redis_url, decode_responses=True)
+    try:
+        await client.ping()
+    except Exception:
+        await client.aclose()
+        raise
     try:
         await client.rpush(
             list_key,
@@ -523,3 +530,40 @@ def test_cutover_runbook_orders_consumers_migration_drain_cleanup_producers():
         runbook.index("Deploy and resume the new producers"),
     ]
     assert positions == sorted(positions)
+
+
+@pytest.mark.asyncio
+async def test_legacy_list_migration_real_redis_test_skips_without_explicit_opt_in(
+    monkeypatch,
+):
+    monkeypatch.delenv("TESTLOOKUP_RUN_REDIS_INTEGRATION", raising=False)
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    with pytest.raises(pytest.skip.Exception, match="not enabled"):
+        await test_legacy_list_migration_is_atomic_on_real_redis()
+
+
+class _PingFailsClient:
+    def __init__(self):
+        self.closed = False
+
+    async def ping(self):
+        raise ConnectionError("no redis here")
+
+    async def aclose(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_legacy_list_migration_real_redis_test_fails_when_opted_in_and_unreachable(
+    monkeypatch,
+):
+    redis_asyncio = pytest.importorskip("redis.asyncio")
+    client = _PingFailsClient()
+    monkeypatch.setenv("TESTLOOKUP_RUN_REDIS_INTEGRATION", "1")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr(redis_asyncio.Redis, "from_url", lambda *args, **kwargs: client)
+
+    with pytest.raises(ConnectionError, match="no redis here"):
+        await test_legacy_list_migration_is_atomic_on_real_redis()
+
+    assert client.closed

@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-09 — two more real-Redis regression tests skip instead of failing when Redis is down
+
+The 2026-09-08 fix added a reachability guard to one real-Redis integration
+test, but two siblings under `tests/regression/` had the same defect:
+`test_live_batch_persists_only_sanitized_evidence_in_real_redis`
+(`test_live_ingestion_sanitization.py`) and
+`test_legacy_list_migration_is_atomic_on_real_redis`
+(`test_live_protocol_cutover.py`). Both are `@pytest.mark.integration` but live
+under `tests/regression/`, so the documented health-check command — `pytest
+tests/ --ignore=tests/integration` — does not deselect them. Each opened a
+client and went straight into Redis work (an unguarded `ping()` inside the main
+`try`, or a first `rpush`) with no reachability probe, so when `REDIS_URL` is
+set but no Redis is reachable — exactly what the health-check command does — the
+test *failed* (and its cleanup `finally` re-failed against the dead connection)
+instead of *skipping*, a false red for every developer and CI-adjacent run
+without a live broker.
+
+Each test now requires the explicit `TESTLOOKUP_RUN_REDIS_INTEGRATION=1` opt-in.
+The authoritative CI job sets that flag and treats missing, unreachable, or
+misconfigured Redis as a failure; ordinary local runs skip before connecting.
+This prevents local false reds without hiding authentication, protocol, or
+service failures in CI. Test-only.
+
 ## 2026-09-08 — real-Redis upload-status test skips instead of failing when Redis is down
 
 `test_upload_status_lua_scripts_are_atomic_on_real_redis` connects to a live

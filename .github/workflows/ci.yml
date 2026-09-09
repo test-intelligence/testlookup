@@ -292,6 +292,7 @@ jobs:
           MONGO_URI: mongodb://localhost:27017
           REDIS_URL: redis://localhost:6379/0
           CELERY_BROKER_URL: redis://localhost:6379/0
+          TESTLOOKUP_RUN_REDIS_INTEGRATION: "1"
           LLM_PROVIDER: ollama
           LLM_MODEL: qwen2.5:7b
           AI_OFFLINE_MODE: "true"
