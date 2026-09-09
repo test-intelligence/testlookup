@@ -3267,6 +3267,11 @@ def reindex_search(self, project_id: str | None = None, full: bool = False) -> d
                 count = await index_test_cases(db, project_id=project_id)
             else:
                 count = await index_incremental(db, project_id=project_id)
+            # A full rebuild returning None has retained its durable checkpoint
+            # and released (or will expire) its lease. Raise so Celery retries
+            # that checkpoint instead of recording a successful incomplete job.
+            if full and count is None:
+                raise RuntimeError("full semantic reindex did not complete")
         # `count is None` means the indexer could not report a number — the
         # vector store was unreachable, or the embedder failed partway. It is
         # NOT "indexed nothing", and this result is what whoever triggered the

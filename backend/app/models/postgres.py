@@ -611,6 +611,85 @@ class RunDownstreamOutbox(Base):
     )
 
 
+class SemanticReindexJob(Base):
+    """Durable, fenced progress for one global or project semantic rebuild."""
+
+    __tablename__ = "semantic_reindex_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'finalizing', 'succeeded')",
+            name="ck_semantic_reindex_job_status",
+        ),
+        CheckConstraint(
+            "state_version = 1",
+            name="ck_semantic_reindex_job_state_version",
+        ),
+        CheckConstraint(
+            "processed_count >= 0",
+            name="ck_semantic_reindex_job_processed_count",
+        ),
+        UniqueConstraint("job_id", name="uq_semantic_reindex_jobs_job_id"),
+        Index(
+            "ix_semantic_reindex_jobs_status_lease",
+            "status", "lease_expires_at",
+        ),
+    )
+
+    # One reusable row per scope. A newly started rebuild replaces the completed
+    # job fields and increments the fence, so an old worker can never checkpoint
+    # into the new job.
+    scope_key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, default=uuid.uuid4
+    )
+    state_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="running", server_default="running"
+    )
+    high_water_created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    high_water_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    cursor_created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    cursor_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    processed_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    lease_owner: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    fence_token: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=1, server_default="1"
+    )
+    last_error: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
 class TestCase(Base):
     """Individual test case result within a run."""
     __tablename__ = "test_cases"
@@ -632,6 +711,7 @@ class TestCase(Base):
         Index("ix_test_cases_run_suite", "test_run_id", "suite_name"),
         Index("ix_test_cases_fingerprint", "test_fingerprint"),
         Index("ix_test_cases_canonical", "canonical_test_case_id"),
+        Index("ix_test_cases_semantic_reindex_keyset", "created_at", "id"),
         # Hot path: ``/my-failures`` filters by ``assigned_to_user_id +
         # triage_status = 'PENDING_REVIEW'``. Composite index keeps the
         # inbox query a single index scan (added migration 0088).
