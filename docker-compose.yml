@@ -306,6 +306,8 @@ services:
     command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q default,ingestion,ai_analysis --max-tasks-per-child=200
     volumes:
       - ./backend:/app
+    tmpfs:
+      - /tmp/prometheus-multiproc:mode=1777
     env_file:
       - .env
     environment:
@@ -322,6 +324,8 @@ services:
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
       - APP_ENV=${APP_ENV:-production}
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc
+      - WORKER_METRICS_PORT=9100
     depends_on:
       - backend
       - redis
@@ -346,6 +350,8 @@ services:
     command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=1 --prefetch-multiplier=1 -Q agent_children --max-tasks-per-child=25
     volumes:
       - ./backend:/app
+    tmpfs:
+      - /tmp/prometheus-multiproc:mode=1777
     env_file:
       - .env
     environment:
@@ -362,6 +368,8 @@ services:
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
       - APP_ENV=${APP_ENV:-production}
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc
+      - WORKER_METRICS_PORT=9100
     depends_on:
       - backend
       - redis

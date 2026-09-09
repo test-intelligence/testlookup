@@ -146,19 +146,11 @@ def test_a_skip_is_not_treated_as_a_failure():
     )
 
 
-def test_the_stale_prometheus_series_is_scheduled_for_drop():
-    """The gauge has no value meaning 'not monitored'.
-
-    Its documented scale is 1=healthy / 0.5=degraded / 0=down, so a skipped
-    provider previously kept its last reading indefinitely — ollama pinned at
-    1.0 for five days. 0.0 would read as "down"; an absent series is the
-    honest answer.
-    """
+def test_the_stale_prometheus_series_becomes_explicitly_skipped():
+    """Multiprocess metrics cannot remove labels, so status is one-hot."""
     branch = _skipped_branch()
-    assert "metric_updates.append((r.provider, None))" in branch, (
-        "the Prometheus series for a skipped provider is left at its last "
-        "value, which is the same stale-verdict bug one layer over"
-    )
+    assert 'INTEGRATION_HEALTH_VALUES["skipped"]' in branch
+    assert "integration_health_gauge.remove" not in _persist_source()
 
 
 def test_the_skipped_status_the_ui_styles_is_actually_reachable():

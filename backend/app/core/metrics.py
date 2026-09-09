@@ -7,7 +7,7 @@ by prometheus-fastapi-instrumentator.
 All metric objects are module-level singletons — import directly:
     from app.core.metrics import ingestion_runs_total, pipeline_stage_duration_seconds
 """
-from prometheus_client import Counter, Gauge, Histogram, Info
+from prometheus_client import Counter, Gauge, Histogram
 
 # ── Ingestion ─────────────────────────────────────────────────────────────────
 
@@ -68,6 +68,7 @@ active_pipeline_runs = Gauge(
     "testlookup_active_pipeline_runs",
     "Pipeline runs currently in progress",
     ["workflow_type"],
+    multiprocess_mode="livesum",
 )
 
 pipeline_execution_context_persist_failures_total = Counter(
@@ -180,6 +181,7 @@ celery_tasks_total = Counter(
 websocket_connections_active = Gauge(
     "testlookup_websocket_connections_active",
     "Number of active WebSocket connections (summed across all projects)",
+    multiprocess_mode="livesum",
 )
 
 live_fanout_published_total = Counter(
@@ -200,6 +202,7 @@ live_fanout_replay_total = Counter(
 live_fanout_subscriber_ready = Gauge(
     "testlookup_live_fanout_subscriber_ready",
     "Whether this API process has initialized its Redis fan-out subscriber",
+    multiprocess_mode="livesum",
 )
 
 # ── Run Intelligence (Epic 11) ────────────────────────────────────────────────
@@ -248,6 +251,7 @@ semantic_search_duration_seconds = Histogram(
 search_index_documents = Gauge(
     "testlookup_search_index_documents",
     "Number of documents in the ChromaDB search index",
+    multiprocess_mode="mostrecent",
 )
 
 # ── Defect Promotion (Epic 11) ───────────────────────────────────────────────
@@ -297,8 +301,9 @@ secret_read_failures_total = Counter(
 
 integration_health_gauge = Gauge(
     "testlookup_integration_health",
-    "Integration provider health status (1=healthy, 0.5=degraded, 0=down)",
-    ["provider"],  # jira | splunk | ocp | slack | teams | chromadb | ollama
+    "Integration provider health (1=healthy, 0.5=degraded, 0=down, -1=skipped)",
+    ["provider"],
+    multiprocess_mode="mostrecent",
 )
 
 feature_flag_evaluations_total = Counter(
@@ -325,6 +330,7 @@ test_cases_by_state = Gauge(
     "testlookup_test_cases_by_state",
     "Current authored test cases in each governed lifecycle state",
     ["project", "state"],
+    multiprocess_mode="mostrecent",
 )
 
 test_case_promotions_total = Counter(
@@ -343,6 +349,7 @@ automation_cases_orphaned = Gauge(
     "testlookup_automation_cases_orphaned",
     "Deleted automation canonical cases awaiting retirement confirmation",
     ["project"],
+    multiprocess_mode="mostrecent",
 )
 
 # ── Tier 0-2 operations (Phase E-3, 2026-04-15) ─────────────────────────────
@@ -399,9 +406,11 @@ orphan_test_suites_total = Counter(
 
 # ── Service Metadata ──────────────────────────────────────────────────────────
 
-app_info = Info(
-    "testlookup_app",
+app_info = Gauge(
+    "testlookup_app_info",
     "TestLookup static application metadata",
+    ["version", "env", "llm_provider"],
+    multiprocess_mode="mostrecent",
 )
 
 
@@ -425,6 +434,7 @@ celery_queue_length = Gauge(
     "celery_queue_length",
     "Pending tasks per Celery queue, read from the Redis broker at scrape time",
     ["queue_name"],
+    multiprocess_mode="mostrecent",
 )
 
 

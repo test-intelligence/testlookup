@@ -17,6 +17,14 @@ from app.core.http_client import get_http_client
 logger = logging.getLogger("services.integration_probe")
 
 ALERT_THRESHOLD = 3  # consecutive failures before alerting
+INTEGRATION_HEALTH_VALUES = {
+    "healthy": 1.0,
+    "degraded": 0.5,
+    "down": 0.0,
+    "auth_error": 0.0,
+    "timeout": 0.0,
+    "skipped": -1.0,
+}
 
 
 @dataclass
@@ -329,7 +337,7 @@ async def persist_probe_results(
     from app.models.postgres import IntegrationHealthCheck, IntegrationProbeResult
 
     now = datetime.now(timezone.utc)
-    metric_updates: list[tuple[str, float | None]] = []
+    metric_updates: list[tuple[str, float]] = []
 
     async with AsyncSessionLocal() as db:
         for r in results:
@@ -370,15 +378,12 @@ async def persist_probe_results(
                 hc.message = r.message
                 hc.response_ms = None
 
-                # Stage removal of the Prometheus series too. The gauge is documented as
-                # 1=healthy / 0.5=degraded / 0=down and has no value meaning
-                # "not monitored", so a skipped provider previously kept its
-                # last reading forever — ollama sat pinned at 1.0 for five
-                # days. An absent series is the honest answer; 0.0 would read
-                # as "down" and 1.0 is a lie. Nothing in infra/ alerts on this
-                # gauge today, so removing the series breaks no rule. Apply it
-                # only after commit so metrics cannot advertise unpersisted state.
-                metric_updates.append((r.provider, None))
+                # A one-hot status is multiprocess-safe: prometheus_client does
+                # not implement Gauge.remove() in multiprocess mode, so absence
+                # cannot reliably represent "skipped".
+                metric_updates.append(
+                    (r.provider, INTEGRATION_HEALTH_VALUES["skipped"])
+                )
                 continue
 
             # Insert history record
@@ -412,19 +417,14 @@ async def persist_probe_results(
                 hc.consecutive_failures = (hc.consecutive_failures or 0) + 1
 
             # Stage the Prometheus gauge update until the transaction commits.
-            gauge_value = 1.0 if r.status == "healthy" else 0.5 if r.status == "degraded" else 0.0
-            metric_updates.append((r.provider, gauge_value))
+            # Resolve the declared status before commit. An unknown producer
+            # value must not commit history and then fail while publishing it.
+            metric_updates.append((r.provider, INTEGRATION_HEALTH_VALUES[r.status]))
 
         await db.commit()
 
     for provider, gauge_value in metric_updates:
-        if gauge_value is None:
-            try:
-                integration_health_gauge.remove(provider)
-            except KeyError:
-                pass  # never had a series in this process — nothing to drop
-        else:
-            integration_health_gauge.labels(provider=provider).set(gauge_value)
+        integration_health_gauge.labels(provider=provider).set(gauge_value)
 
     # Check for alerts
     await _check_alerts(results)

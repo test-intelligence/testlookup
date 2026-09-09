@@ -44,13 +44,11 @@ if settings.OTEL_ENABLED:
 if settings.METRICS_ENABLED:
     from app.core.metrics import app_info  # noqa: PLC0415
 
-    app_info.info(
-        {
-            "version": settings.APP_VERSION,
-            "env": settings.APP_ENV,
-            "llm_provider": settings.LLM_PROVIDER,
-        }
-    )
+    app_info.labels(
+        version=settings.APP_VERSION,
+        env=settings.APP_ENV,
+        llm_provider=settings.LLM_PROVIDER,
+    ).set(1)
 
 # ── Rate limiter (login brute-force protection) ───────────────
 limiter = Limiter(key_func=get_remote_address, default_limits=[])

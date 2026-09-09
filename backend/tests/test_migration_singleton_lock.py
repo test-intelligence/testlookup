@@ -46,7 +46,8 @@ def test_every_backend_container_entrypoint_remains_lock_protected():
     commands = [
         line
         for line in dockerfile.splitlines()
-        if line.startswith("CMD ") and "uvicorn" in line
+        if line.startswith("CMD ")
+        and ("uvicorn app.main:app" in line or "gunicorn -c gunicorn_conf.py app.main:app" in line)
     ]
     assert len(commands) == 2
     assert all("alembic upgrade head" in command for command in commands)

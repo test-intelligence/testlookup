@@ -14,6 +14,21 @@ from app.services import integration_probe_service  # noqa: E402
 pytestmark = pytest.mark.regression
 
 
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("healthy", 1.0),
+        ("degraded", 0.5),
+        ("down", 0.0),
+        ("auth_error", 0.0),
+        ("timeout", 0.0),
+        ("skipped", -1.0),
+    ],
+)
+def test_every_probe_status_has_a_metric_value(status: str, expected: float) -> None:
+    assert integration_probe_service.INTEGRATION_HEALTH_VALUES[status] == expected
+
+
 class _ScalarResult:
     def __init__(self, value: object) -> None:
         self._value = value
@@ -60,10 +75,6 @@ class _RecordingGauge:
 
     def set(self, value: float) -> None:
         self.calls.append(("set", self.provider, value))
-
-    def remove(self, provider: str) -> None:
-        self.calls.append(("remove", provider, None))
-
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["healthy", "skipped"])

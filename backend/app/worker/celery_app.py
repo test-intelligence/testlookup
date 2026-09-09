@@ -1,8 +1,10 @@
 """Celery application configuration."""
 from datetime import timedelta
+from pathlib import Path
 
 from celery import Celery
 from celery.signals import (
+    celeryd_init,
     task_postrun,
     task_prerun,
     worker_process_init,
@@ -522,6 +524,35 @@ def _reset_db_pool_after_fork(**_kwargs: object) -> None:
 _TASK_STARTED_AT: dict[str, float] = {}
 
 
+@celeryd_init.connect
+def _prepare_worker_metrics_directory(**_kwargs: object) -> None:
+    """Remove metrics from an earlier worker parent before it forks children.
+
+    Kubernetes ``emptyDir`` survives a container restart in the same pod, and
+    Compose may restart a container without recreating its tmpfs mount. Keeping
+    those files would make the replacement worker report the previous process
+    group's counters again. ``celeryd_init`` runs once in the parent before the
+    prefork pool starts, so it cannot race with live child observations.
+    """
+    import os
+
+    multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if not multiproc_dir:
+        return
+    try:
+        for entry in os.scandir(multiproc_dir):
+            if entry.is_file() and entry.name.endswith(".db"):
+                os.unlink(entry.path)
+    except OSError as exc:
+        import structlog
+
+        structlog.get_logger(__name__).error(
+            "worker_metrics_directory_reset_failed",
+            directory=multiproc_dir,
+            error=str(exc),
+        )
+
+
 @task_prerun.connect
 def _record_task_start(task_id=None, task=None, **_kwargs: object) -> None:
     import time
@@ -644,8 +675,60 @@ def _start_metrics_server(**_kwargs: object) -> None:
         multiprocess.MultiProcessCollector(registry)
         port = int(os.environ.get("WORKER_METRICS_PORT", "9100"))
         start_http_server(port, registry=registry)
-    except Exception:  # noqa: BLE001 — a metrics port must never stop a worker
-        pass
+        _start_metrics_file_guard()
+    except Exception as exc:  # noqa: BLE001 — a metrics port must never stop a worker
+        import structlog
+
+        structlog.get_logger(__name__).error(
+            "worker_metrics_server_start_failed",
+            port=os.environ.get("WORKER_METRICS_PORT", "9100"),
+            error=str(exc),
+        )
+
+
+def _start_metrics_file_guard() -> None:
+    """Recycle the worker before dead-child metric files become unbounded.
+
+    Counter and histogram files cannot be deleted when a prefork child exits:
+    doing so would lose completed task observations. The orchestrator already
+    restarts workers, so a bounded container lifecycle preserves observations
+    until the final scrape and lets Prometheus handle the subsequent reset.
+    """
+    import os
+    import signal
+    import threading
+
+    metric_dir = Path(os.environ["PROMETHEUS_MULTIPROC_DIR"])
+    max_files = int(os.environ.get("WORKER_METRICS_MAX_FILES", "256"))
+    interval = float(os.environ.get("WORKER_METRICS_FILE_CHECK_SECONDS", "60"))
+    final_scrape_grace = float(
+        os.environ.get("WORKER_METRICS_FINAL_SCRAPE_GRACE_SECONDS", "65")
+    )
+
+    def guard() -> None:
+        import structlog
+
+        logger = structlog.get_logger(__name__)
+        while True:
+            if len(list(metric_dir.glob("*.db"))) > max_files:
+                logger.warning(
+                    "worker_metrics_file_limit_reached",
+                    directory=str(metric_dir),
+                    max_files=max_files,
+                )
+                # Prometheus scrapes workers every 30 seconds in the shipped config.
+                # Keep the complete registry available for two final scrapes
+                # before asking Celery to shut down gracefully.
+                threading.Event().wait(final_scrape_grace)
+                os.kill(os.getpid(), signal.SIGTERM)
+                return
+            threading.Event().wait(interval)
+
+    threading.Thread(
+        target=guard,
+        name="prometheus-multiproc-file-guard",
+        daemon=True,
+    ).start()
 
 
 @worker_process_shutdown.connect
