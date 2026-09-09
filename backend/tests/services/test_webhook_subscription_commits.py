@@ -100,15 +100,19 @@ def _stub_secret_store(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_create_subscription_flushes_but_does_not_commit(_stub_audit_session):
+async def test_create_subscription_flushes_but_does_not_commit(
+    _stub_audit_session, monkeypatch,
+):
     """The router (Depends(get_db)) commits once at request end."""
-    from app.services.webhook_service import create_subscription
+    from app.services import webhook_service
+
+    monkeypatch.setattr(webhook_service, "_assert_safe_target_url", AsyncMock())
 
     db = _fake_caller_db()
     actor = _fake_actor()
     project_id = uuid.uuid4()
 
-    await create_subscription(
+    await webhook_service.create_subscription(
         db,
         project_id=project_id,
         actor=actor,
