@@ -45,6 +45,36 @@ def test_shard_for_project_is_deterministic(enable_sharding):
     assert len(repeated) == 1
 
 
+def test_explicit_count_helper_preserves_existing_routing_contract():
+    from app.worker.ingestion_routing import shard_for_count
+
+    assert shard_for_count("11111111-1111-1111-1111-111111111111", 8) == 2
+    assert shard_for_count("proj-1", 8) == 3
+    assert shard_for_count("all-projects", 8) == 3
+
+
+def test_modulo_growth_from_eight_to_nine_remaps_most_projects():
+    from app.worker.ingestion_routing import shard_for_count
+
+    projects = [f"project-{index:05d}" for index in range(10_000)]
+    moved = sum(
+        shard_for_count(project, 8) != shard_for_count(project, 9)
+        for project in projects
+    )
+
+    # Fixed corpus pins the real algorithm: 8 -> 9 moves about 8/9, not 1/8.
+    assert moved == 8_918
+
+
+def test_shard_change_queue_union_covers_old_and_new_counts():
+    from app.worker.ingestion_routing import shard_change_queue_union
+
+    expected = ["ingestion", *[f"ingestion.shard.{index}" for index in range(9)]]
+    assert shard_change_queue_union(8, 9) == expected
+    assert shard_change_queue_union(9, 8) == expected
+    assert shard_change_queue_union(0, 0) == ["ingestion"]
+
+
 def test_shard_for_project_distributes_uniformly(enable_sharding):
     """Hash-based routing must spread projects across the shard count
     without obvious skew. With 1000 random project IDs and 8 shards,

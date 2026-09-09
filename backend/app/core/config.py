@@ -163,9 +163,8 @@ class Settings(BaseSettings):
     PERSIST_LIVE_BULK_INSERT_CHUNK: int = 1_000
     # Number of Celery shards for live-stream persist tasks. Workers
     # subscribe to ``ingestion.shard.<i>`` queues; tasks route by
-    # ``hash(project_id) mod N``. Increase to widen horizontal worker
-    # capacity without touching the consumer code. Set to 0 to fall
-    # back to the legacy single-queue routing (used by tests).
+    # ``hash(project_id) mod N``. Changing N remaps most projects; follow the
+    # pause-and-drain runbook first. Set 0 for legacy single-queue routing.
     LIVE_INGEST_SHARD_COUNT: int = 8
 
     # ── Phase 4.5 incremental drain (2026-05-18) ──────────────
