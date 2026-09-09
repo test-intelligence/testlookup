@@ -28,6 +28,14 @@ SENSITIVE_KEYS: frozenset[str] = frozenset({
     "refresh_token", "private_key", "secret_key", "credential",
     "credentials", "cookie", "hashed_password", "jwt", "bearer",
     "smtp_password", "minio_secret_key", "webhook_secret",
+    # OAuth / integration secrets. Matching here is EXACT (see
+    # _redact_value), so "client_secret" was not covered by "secret" and
+    # leaked through every caller of redact_dict — found by the activity
+    # ledger's parameterised leak test, but the gap was equally present in
+    # the audit dashboard, which redacts with this same function.
+    "client_secret", "signing_secret", "personal_access_token",
+    "private_token", "session_token", "id_token", "encryption_key",
+    "ssh_key", "deploy_key", "webhook_token",
     # PII (PR-2)
     "email", "email_address", "phone", "phone_number", "mobile",
     "ssn", "social_security", "social_security_number",

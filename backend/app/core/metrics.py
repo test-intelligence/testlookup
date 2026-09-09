@@ -493,3 +493,26 @@ release_primary_drift_total = Counter(
     "Runs whose denormalized primary_release_id disagreed with their primary link",
     ["outcome"],  # repaired | repair_failed
 )
+
+
+# ── Project activity ledger (epic ACT) ────────────────────────────────────────
+# The ledger is best-effort by design: a write failure is swallowed so it can
+# never fail the user's mutation. These two counters are therefore the ONLY way
+# an operator can tell a quiet ledger ("nothing happened") from a broken one
+# ("every write is being dropped"). Both are incremented in
+# services/activity/service.py — declaration without emission would export a
+# confident 0.0 and read as health.
+
+activity_events_written_total = Counter(
+    "testlookup_activity_events_written_total",
+    "Activity ledger rows successfully written",
+    ["category"],
+)
+
+activity_events_dropped_total = Counter(
+    "testlookup_activity_events_dropped_total",
+    "Activity ledger rows dropped, by reason",
+    # unregistered_event | actor_type_not_allowed | bad_project_id | duplicate
+    # | no_session_for_outcome | outcome_write_failed | attempt_write_failed
+    ["reason"],
+)

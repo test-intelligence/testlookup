@@ -14,6 +14,7 @@ from sqlalchemy import (
     Index,
     Integer,
     JSON,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -5542,7 +5543,7 @@ class WebhookSubscription(Base):
 
     # Array of event types this subscription wants — e.g.
     # ``["run.completed", "defect.promoted"]``. Validated server-side
-    # against the ``_SUPPORTED_EVENTS`` set in
+    # against the ``SUPPORTED_EVENTS`` set in
     # ``services/webhook_service.py`` before insert/update.
     events: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
 
@@ -6268,3 +6269,145 @@ class ProjectLlmUsage(Base):
     last_updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
     )
+
+
+# ── Project Activity Ledger (epic ACT) ───────────────────────────────────────
+
+
+class ProjectActivityEvent(Base):
+    """Append-only, project-scoped product feed of everything that happens.
+
+    **This is a derived read surface, not the compliance record.** The four
+    compliance tables (``access_audit_logs``, ``settings_audit_log``,
+    ``test_case_audit_logs``, ``identity_events``) keep their role and their
+    retention guarantees; where a ledger row mirrors one of them it carries
+    ``source_table`` / ``source_id`` so a reader can get back to the row that
+    legally matters.
+
+    **Append-only by application convention, not by database enforcement** —
+    same boundary as the other audit tables, held by the
+    ``backend.audit-write-discipline`` quality gate
+    (``scripts/quality_gate.py``), which fails CI on application code that
+    UPDATEs this table or DELETEs from it outside
+    ``services/retention_service.py``.
+
+    Rows ARE removed by the US-11.4 retention purge on the **audit clock**
+    (``ProjectRetentionPolicy.audit_days``; floor 365 days, validated to be
+    >= ``runs_days`` so ledger rows outlive the runs they describe), and only
+    for projects that explicitly enabled a policy.
+
+    ``ON DELETE CASCADE`` on ``project_id`` is deliberate and has one visible
+    consequence: there is no ``project.deleted`` event here, because the row
+    would be deleted by the very thing it records. That event goes to
+    ``access_audit_logs``, whose FK is ON DELETE SET NULL.
+
+    ``entity_id`` is TEXT, not UUID, on purpose: live-stream sessions address
+    runs by slug (``LiveSession.run_id``), and forcing a cast here would either
+    drop those events or 500 the ingest path.
+    """
+
+    __tablename__ = "project_activity_events"
+    __table_args__ = (
+        # The feed, and each of its filters, in the keyset order
+        # (occurred_at DESC, id DESC). Every filter is an ANDed column on THIS
+        # table — never an OR across tables, which is what forced a Seq Scan on
+        # the search path and is documented in the epic as trap T9.
+        Index("ix_pae_project_time", "project_id", "occurred_at", "id"),
+        Index("ix_pae_project_category_time", "project_id", "category", "occurred_at", "id"),
+        Index("ix_pae_project_entity", "project_id", "entity_type", "entity_id", "occurred_at"),
+        Index("ix_pae_project_actor", "project_id", "actor_id", "occurred_at"),
+        Index(
+            "ix_pae_project_release",
+            "project_id",
+            "release_id",
+            "occurred_at",
+            postgresql_where=text("release_id IS NOT NULL"),
+        ),
+        Index("ix_pae_project_event_type", "project_id", "event_type", "occurred_at"),
+        Index("ix_pae_group_key", "project_id", "group_key"),
+        # The two closed vocabularies get DB-level CHECKs. ``event_type`` does
+        # NOT: it is validated in Python against the registry so that adding an
+        # event is a code change rather than a migration, and a row whose name
+        # was later retired still reads back.
+        #
+        # These literals are duplicated in ``services/activity/events.py`` and
+        # in migration 0165 because models must not import services. The three
+        # are held together by
+        # ``tests/test_activity_events.py::test_vocabularies_agree_everywhere``,
+        # which fails CI the moment one of them drifts.
+        CheckConstraint(
+            "category IN ('runs', 'analysis', 'release', 'quality', "
+            "'configuration', 'membership', 'test_management', 'integration', "
+            "'agent', 'system')",
+            name="ck_pae_category",
+        ),
+        CheckConstraint(
+            "actor_type IN ('user', 'api_key', 'service_account', 'system', "
+            "'agent')",
+            name="ck_pae_actor_type",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    release_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("releases.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    #: When the thing actually happened. Producers may pass a true time (a
+    #: worker recording a run that finished before the task was picked up);
+    #: otherwise it defaults to now(). The feed orders on this, not on
+    #: ``recorded_at``.
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    #: When the row was written. Kept separately so a backdated event cannot
+    #: hide when the system learned about it.
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+
+    category: Mapped[str] = mapped_column(String(20), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    schema_version: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
+
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    #: Snapshot, so the feed still names who did it after the user is deleted.
+    actor_name: Mapped[Optional[str]] = mapped_column(String(200))
+    #: API key prefix, agent name, or Celery task name — whatever identifies a
+    #: non-human actor. Never the key itself.
+    actor_ref: Mapped[Optional[str]] = mapped_column(String(120))
+
+    entity_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    #: Snapshot for rendering after the entity is gone.
+    entity_label: Mapped[Optional[str]] = mapped_column(String(300))
+
+    target_type: Mapped[Optional[str]] = mapped_column(String(40))
+    target_id: Mapped[Optional[str]] = mapped_column(String(120))
+
+    #: The human sentence shown in the feed. Redacted at write time and
+    #: trigram-indexed for ``?q=``.
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    #: {"before": {...}, "after": {...}, "changed_fields": [...]} — redacted at
+    #: write time, never at read time. Returned only by the single-event
+    #: endpoint, never by the feed.
+    diff: Mapped[Optional[dict]] = mapped_column(JSON)
+    #: Small display facts for the row: counts, reason, PR number, ticket key.
+    context: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    #: The compliance row this mirrors, when there is one.
+    source_table: Mapped[Optional[str]] = mapped_column(String(40))
+    source_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+    #: Correlates with the structlog request id, for tracing a feed row back to
+    #: the request that produced it.
+    request_id: Mapped[Optional[str]] = mapped_column(String(64))
+    #: Producer-set key for bulk bursts and for the 60-second duplicate
+    #: suppression that makes retried Celery tasks idempotent.
+    group_key: Mapped[Optional[str]] = mapped_column(String(120))

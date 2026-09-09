@@ -409,7 +409,7 @@ async def test_webhook_target_emits_registered_event_with_prefill(online, monkey
     from app.services import webhook_service
 
     # The event must be in the authoritative registry…
-    assert "defect.create_requested" in webhook_service._SUPPORTED_EVENTS
+    assert "defect.create_requested" in webhook_service.SUPPORTED_EVENTS
     assert any(
         e["event_type"] == "defect.create_requested"
         for e in webhook_service.list_supported_events()

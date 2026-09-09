@@ -17,6 +17,7 @@ from app.routers import (
     admin_maintenance,
     admin_storage,
     analysis_report,
+    activity,
     analyze,
     analytics,
     api_keys,
@@ -162,6 +163,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     digests.router,                  # Digest subscriptions (ENT-05)
     integration_health.router,       # Integration health probes (OPS-01)
     audit_dashboard.router,          # Unified audit dashboard (OPS-04)
+    activity.router,                 # Project activity ledger (epic ACT)
     ai_evaluation.router,            # AI evaluation dashboards (OPS-02)
     performance.router,              # Performance budgets & config (OPS-03)
     agent_memory.router,             # Unified agent memory & recall (P3)
