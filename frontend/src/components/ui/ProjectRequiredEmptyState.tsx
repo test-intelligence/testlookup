@@ -21,6 +21,7 @@
  * `findByText` stays unambiguous.
  */
 import type { ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { FolderOpen } from 'lucide-react'
 import EmptyState from './EmptyState'
 import { useProjectStore } from '@/store/projectStore'
@@ -84,6 +85,29 @@ export default function ProjectRequiredEmptyState({ description, icon }: Props) 
               </option>
             ))}
           </select>
+          {/*
+            The one dead end the picker above cannot resolve: an empty list.
+            A picker of zero projects is the same "go find the control
+            elsewhere" the rest of this component exists to remove — the
+            reader has nothing to choose and no way forward on this screen.
+            This is exactly the fresh self-hoster who lands on a single-project
+            page (a bookmarked /settings/api-keys, a link) before any project
+            exists. Offer the create path in place instead of sending them to
+            hunt the top bar. Scoped to the empty case so an established
+            deployment, where picking an existing project is the right move,
+            is not nagged to make another. It shows during a still-loading
+            fetch too — that briefly-visible escape hatch is a valid action,
+            never a false claim that the deployment has none, keeping the
+            "claims neither loading nor empty" invariant intact.
+          */}
+          {projects.length === 0 && (
+            <Link
+              to="/projects"
+              className="text-xs text-[var(--color-accent)] hover:underline"
+            >
+              Create a project
+            </Link>
+          )}
         </label>
       }
     />
