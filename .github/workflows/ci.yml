@@ -637,7 +637,7 @@ jobs:
 
       - name: Retain large-ingestion release evidence
         if: always() && steps.ingestion-boundary-scope.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: h06-postgres-boundary-${{ github.sha }}
           path: |
@@ -1192,7 +1192,7 @@ jobs:
             --image "mcp=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp@${{ steps.build-mcp.outputs.digest }}" \
             --output verified-images/release-manifest.json
           python3 scripts/release/release_manifest.py validate --manifest verified-images/release-manifest.json --expected-source-sha "${GITHUB_SHA}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: verified-images-${{ github.sha }}
           path: verified-images/release-manifest.json
