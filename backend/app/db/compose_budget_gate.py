@@ -5,6 +5,10 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 def calculate(environment: Mapping[str, str]) -> dict[str, int]:
     value = lambda name: int(environment[name])  # noqa: E731 - compact required lookup
@@ -41,9 +45,10 @@ def calculate(environment: Mapping[str, str]) -> dict[str, int]:
 
 def main() -> int:
     result = calculate(os.environ)
-    print(
-        "Compose PostgreSQL budget verified: "
-        f"required={result['required']} usable={result['usable']}"
+    logger.info(
+        "compose_postgresql_budget_verified",
+        required=result["required"],
+        usable=result["usable"],
     )
     return 0
 
