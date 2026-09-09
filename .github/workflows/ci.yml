@@ -15,6 +15,12 @@ on:
   # (GitHub requires this trigger on the default branch for the workflow to be
   # dispatchable, and the chosen ref must carry it too.)
   workflow_dispatch:
+    inputs:
+      run_large_ingestion_boundary:
+        description: Run the PostgreSQL 32,767 / 50,000 result release proof
+        required: false
+        type: boolean
+        default: false
 
 # A PR can receive several pushes while a full matrix is still running. Keep
 # only the newest commit for that PR; an older result is not mergeable once the
@@ -348,6 +354,7 @@ jobs:
   postgres-integration:
     name: Backend — PostgreSQL/Mongo integration and rollback
     runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     services:
       postgres:
@@ -533,6 +540,112 @@ jobs:
           tests/integration/test_live_fanout_redis.py
           tests/integration/test_live_recovery_protocol_postgres_redis.py
           tests/regression/test_notification_history_schema.py
+
+      - name: Detect changes requiring the large-ingestion release proof
+        id: ingestion-boundary-scope
+        working-directory: .
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+          REQUESTED: ${{ inputs.run_large_ingestion_boundary || false }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$REQUESTED" == "true" ]]; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            base_sha="$PR_BASE_SHA"
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
+            base_sha="$PUSH_BASE_SHA"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$base_sha" =~ ^0+$ ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git fetch --no-tags --depth=1 origin "$base_sha"
+          if git diff --quiet "$base_sha" HEAD -- \
+            .github/workflows/ci.yml \
+            backend/app/services/ingestion.py \
+            backend/app/services/ingestion_pipeline.py \
+            backend/app/models/postgres.py \
+            backend/migrations/versions \
+            backend/requirements.txt \
+            backend/tests/regression/test_ingestion_fingerprint_param_limit.py \
+            backend/tests/integration/test_ingestion_fingerprint_boundary_postgres.py; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # This proof writes 82,767 test cases and history rows through real
+      # SQLAlchemy savepoints and asyncpg. Relevant PRs prove the candidate;
+      # the matching main push gates image publication and release promotion.
+      - name: Release matrix — asyncpg 32,767 / 50,000 result boundaries
+        if: steps.ingestion-boundary-scope.outputs.run == 'true'
+        env:
+          DATABASE_URL: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
+          TESTLOOKUP_POSTGRES_TEST_DSN: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
+          APP_SECRET_KEY: test-secret-key-for-ci
+          JWT_SECRET_KEY: test-jwt-key-for-ci
+          AI_OFFLINE_MODE: "true"
+          TESTLOOKUP_H06_EVIDENCE_PATH: test-results/h06-postgres-boundary.jsonl
+          TESTLOOKUP_REQUIRE_H06_BOUNDARY: "true"
+        run: |
+          mkdir -p test-results
+          pytest -m integration -v -s --tb=short \
+            --junitxml=test-results/h06-postgres-boundary.xml \
+            tests/integration/test_ingestion_fingerprint_boundary_postgres.py
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("test-results/h06-postgres-boundary.jsonl")
+          records = [json.loads(line) for line in path.read_text().splitlines()]
+          assert {record["requested"] for record in records} == {32_767, 50_000}
+          assert len(records) == 2
+          assert all(record["source_sha"] == os.environ["GITHUB_SHA"] for record in records)
+          assert all(record["accepted"] == record["requested"] for record in records)
+          assert all(record["test_cases"] == record["requested"] for record in records)
+          assert all(record["distinct_fingerprints"] == record["requested"] for record in records)
+          assert all(record["history_rows"] == record["requested"] for record in records)
+          assert all(record["ingestion_complete"] is True for record in records)
+          assert all(record["terminal_status"] == "FAILED" for record in records)
+          assert all(record["driver"] == "asyncpg" for record in records)
+          assert all(str(record["database"]).startswith("PostgreSQL ") for record in records)
+
+          summary = {
+              "source_sha": os.environ["GITHUB_SHA"],
+              "result": "passed",
+              "requested_boundaries": [32_767, 50_000],
+              "records": records,
+          }
+          target = Path("test-results/h06-postgres-boundary-summary.json")
+          temporary = target.with_suffix(".tmp")
+          temporary.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+          temporary.replace(target)
+          PY
+
+      - name: Retain large-ingestion release evidence
+        if: always() && steps.ingestion-boundary-scope.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: h06-postgres-boundary-${{ github.sha }}
+          path: |
+            backend/test-results/h06-postgres-boundary.xml
+            backend/test-results/h06-postgres-boundary.jsonl
+            backend/test-results/h06-postgres-boundary-summary.json
+          if-no-files-found: error
+          retention-days: 90
 
   # ─────────────────────────────────────────────────────────────
   # JOB 2: Frontend tests and type check

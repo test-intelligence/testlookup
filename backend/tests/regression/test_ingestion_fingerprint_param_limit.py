@@ -22,7 +22,7 @@ class _Savepoint:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("requested, expected_queries", [(32766, 4), (32767, 4), (50000, 5)])
-async def test_real_ingestion_prefetch_chunks_large_batches(monkeypatch, requested, expected_queries):
+async def test_ingestion_prefetch_chunks_large_batches(monkeypatch, requested, expected_queries):
     from app.services import ingestion_pipeline as pipeline
 
     run = SimpleNamespace(id=__import__('uuid').uuid4(), project_id=__import__('uuid').uuid4(), framework=None)
