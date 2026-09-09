@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_accessible_project_ids, get_current_active_user, require_project_access, require_role
 from app.db.postgres import get_db
+from app.services.activity.service import ActorRef, record as record_activity
 from app.models.postgres import (
     Project,
     ProjectMember,
@@ -137,6 +138,19 @@ async def create_project(
     )
     await ensure_active_release_for_new_project(db, project)
 
+    # Epic ACT — the ledger's own first row for this project. Staged on this
+    # session so it shares the create transaction: if the project does not
+    # exist, neither does the event saying it was created.
+    await record_activity(
+        db,
+        project_id=project.id,
+        event_type="project.created",
+        actor=ActorRef.from_user(current_user),
+        entity_id=project.id,
+        entity_label=project.name,
+        context={"slug": project.slug},
+    )
+
     await db.commit()
     await db.refresh(project)
 
@@ -178,6 +192,7 @@ async def update_project(
     project_id: uuid.UUID,
     payload: ProjectUpdate,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Update a project's attributes. Only non-None fields are applied. Requires QA_LEAD or higher."""
     result = await db.execute(select(Project).where(Project.id == project_id))
@@ -198,8 +213,26 @@ async def update_project(
             db, updates["default_qa_lead_user_id"], project.id,
         )
 
+    before = {field: getattr(project, field, None) for field in updates}
     for field, value in updates.items():
         setattr(project, field, value)
+
+    # Epic ACT. Staged on THIS session, before the commit, so the ledger row
+    # and the change it describes land together or not at all — a
+    # "settings changed" row for an update that rolled back would be a lie.
+    # An empty diff means nothing effectively changed, and emits nothing.
+    if updates:
+        await record_activity(
+            db,
+            project_id=project.id,
+            event_type="project.updated",
+            actor=ActorRef.from_user(current_user),
+            entity_id=project.id,
+            entity_label=project.name,
+            before=before,
+            after=updates,
+            context={"changed": ", ".join(sorted(updates))},
+        )
 
     await db.commit()
     await db.refresh(project)

@@ -196,10 +196,10 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("release.linked_run", "release", "release", "A run was linked to release {entity_label}"),
     _spec("release.synced_external", "release", "release", "Release {entity_label} synced from {provider}"),
     # ── quality ─────────────────────────────────────────────────────────────
-    _spec("quarantine.requested", "quality", "quarantine", "Quarantine requested for {entity_label}"),
-    _spec("quarantine.approved", "quality", "quarantine", "Quarantine approved for {entity_label}"),
-    _spec("quarantine.rejected", "quality", "quarantine", "Quarantine rejected for {entity_label}"),
-    _spec("quarantine.released", "quality", "quarantine", "{entity_label} was released from quarantine"),
+    _spec("quarantine.requested", "quality", "quarantine", "Quarantine requested for {entity_label}", "attempt"),
+    _spec("quarantine.approved", "quality", "quarantine", "Quarantine approved for {entity_label}", "attempt"),
+    _spec("quarantine.rejected", "quality", "quarantine", "Quarantine rejected for {entity_label}", "attempt"),
+    _spec("quarantine.released", "quality", "quarantine", "{entity_label} was released from quarantine", "attempt"),
     _spec("defect.promoted", "quality", "defect", "Failure cluster promoted to defect {entity_label}"),
     _spec("defect.create_requested", "quality", "defect", "Defect ticket requested for {entity_label}"),
     _spec("defect.ticket_created", "quality", "defect", "Ticket {ticket_key} created for {entity_label}"),
@@ -272,7 +272,7 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("agent.action_executed", "agent", "agent_action", "{actor_name} executed an action on {entity_label}", "outcome", frozenset({"agent"})),
     _spec("agent.action_denied", "agent", "agent_action", "Agent action on {entity_label} was denied", "outcome", _ANY_WRITER),
     # ── system ──────────────────────────────────────────────────────────────
-    _spec("activity.exported", "system", "export", "Activity history exported ({row_count} rows, {format})"),
+    _spec("activity.exported", "system", "export", "Activity history exported ({row_count} rows, {format})", "attempt"),
     _spec("compliance_pack.generated", "system", "export", "Compliance pack {entity_label} was generated"),
     _spec("report.exported", "system", "export", "Report {entity_label} was exported"),
     _spec("report.shared", "system", "export", "Report {entity_label} was shared"),

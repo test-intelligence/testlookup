@@ -210,3 +210,115 @@ def test_events_by_category_covers_the_whole_registry() -> None:
     grouped = E.events_by_category()
     flat = [e["event_type"] for group in grouped.values() for e in group]
     assert sorted(flat) == sorted(E.ACTIVITY_EVENTS)
+
+
+# ── Call-site discipline ─────────────────────────────────────────────────────
+
+
+#: Sentinel for a call site whose ``event_type`` is computed, not a literal.
+_COMPUTED = "<computed>"
+
+#: Modules that legitimately compute event_type from a mapping. Each MUST have
+#: a behavioural test proving a row actually lands, because the static scan
+#: below cannot see which events they emit. This list is not a waiver — it is a
+#: pointer to the test that does the checking instead.
+_DYNAMIC_SITES_COVERED = {
+    # _record_quarantine_activity maps a SettingsAuditLog action to an event.
+    # Covered by test_activity_producers.py::
+    #   test_quarantine_mirror_writes_a_row_for_each_human_action
+    ("services/flaky_quarantine_service.py", _COMPUTED),
+}
+
+
+def _activity_record_call_sites() -> list[tuple[str, int, str, bool]]:
+    """Every ``record(...)`` call in app/, as (file, line, event_type, db_is_none).
+
+    A static scan rather than a runtime assertion, because the bug it catches
+    is silent: an outcome-mode event recorded with no session is DROPPED and
+    counted, so the feature looks implemented and the feed stays empty. Only a
+    test that exercised that exact producer would ever notice.
+    """
+    import ast
+
+    app_dir = REPO_BACKEND / "app"
+    found: list[tuple[str, int, str, bool]] = []
+    for path in app_dir.rglob("*.py"):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = getattr(func, "id", None) or getattr(func, "attr", None)
+            if name not in {"record", "record_activity"}:
+                continue
+            event_type = None
+            for kw in node.keywords:
+                if kw.arg != "event_type":
+                    continue
+                if isinstance(kw.value, ast.Constant):
+                    event_type = kw.value.value
+                else:
+                    # A computed event_type. Recorded as a sentinel rather than
+                    # skipped: skipping made this scan pass vacuously over the
+                    # quarantine mirror while the exact bug it exists to catch
+                    # was live in that file.
+                    event_type = _COMPUTED
+            if not isinstance(event_type, str):
+                continue
+            db_is_none = bool(
+                node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value is None
+            )
+            found.append(
+                (str(path.relative_to(app_dir)), node.lineno, event_type, db_is_none)
+            )
+    return found
+
+
+def test_call_sites_are_found_at_all() -> None:
+    """Guards the scan itself. If the AST walk silently matched nothing, the
+    discipline test below would pass vacuously forever."""
+    sites = _activity_record_call_sites()
+    assert len(sites) >= 5, f"Expected producer call sites, found {len(sites)}"
+
+
+def test_sessionless_call_sites_only_use_attempt_mode_events() -> None:
+    """``record(None, ...)`` requires an attempt-mode event.
+
+    An outcome event stages on the caller's session. Handed ``None`` it has
+    nowhere to go, so it is dropped and counted — the producer looks wired up
+    and nothing ever reaches the feed. This caught exactly that mistake in the
+    quarantine mirror and the export endpoint during development.
+    """
+    offenders: list[str] = []
+    for path, line, event, db_is_none in _activity_record_call_sites():
+        if not db_is_none:
+            continue
+        if event == _COMPUTED:
+            if (path.replace("\\", "/"), _COMPUTED) not in _DYNAMIC_SITES_COVERED:
+                offenders.append(
+                    f"{path}:{line} calls record(None, ...) with a computed "
+                    "event_type and no behavioural test is registered for it. "
+                    "Add one, then list the module in _DYNAMIC_SITES_COVERED."
+                )
+            continue
+        spec = E.ACTIVITY_EVENTS.get(event)
+        if spec is not None and spec.write_mode != "attempt":
+            offenders.append(
+                f"{path}:{line} emits {event} with db=None but it is "
+                "outcome-mode, so the row is silently dropped"
+            )
+    assert not offenders, "\n".join(offenders)
+
+
+def test_every_producer_call_site_names_a_registered_event() -> None:
+    unknown = [
+        f"{path}:{line} emits unregistered {event!r}"
+        for path, line, event, _ in _activity_record_call_sites()
+        if event != _COMPUTED and event not in E.ACTIVITY_EVENTS
+    ]
+    assert not unknown, "\n".join(unknown)

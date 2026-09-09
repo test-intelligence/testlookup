@@ -40,6 +40,7 @@ from app.core.deps import (
     require_role,
 )
 from app.db.postgres import get_db
+from app.services.activity.service import ActorRef, record as record_activity
 from app.models.postgres import (
     AttributionMatchField,
     ReleaseAttributionRule,
@@ -201,6 +202,26 @@ async def create_attribution_rule(
         created_by_id=current_user.id,
     )
     db.add(rule)
+    await db.flush()
+
+    # Epic ACT. An enabled catch-all rule was once left on a real project by an
+    # e2e run and nobody could see who created it, because this router wrote no
+    # record of any kind. Now it does.
+    await record_activity(
+        db,
+        project_id=project_id,
+        event_type="attribution_rule.created",
+        actor=ActorRef.from_user(current_user),
+        entity_id=rule.id,
+        entity_label=rule.name,
+        context={
+            "match_field": rule.match_field,
+            "match_pattern": rule.match_pattern,
+            "target_release_name": rule.target_release_name,
+            "is_enabled": rule.is_enabled,
+        },
+    )
+
     await db.commit()
     await db.refresh(rule)
     return _serialize(rule)
@@ -212,15 +233,39 @@ async def update_attribution_rule(
     rule_id: str,
     body: AttributionRuleUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     __: User = Depends(require_project_access()),
 ):
     rule = await _get_rule_or_404(db, project_id, rule_id)
     updates = body.model_dump(exclude_none=True)
     _validate_match_field(updates.get("match_field"))
 
+    before = {field: getattr(rule, field, None) for field in updates}
     for field, value in updates.items():
         setattr(rule, field, value)
+
+    if updates:
+        # Enabling/disabling is the change an operator most needs to see, so it
+        # gets its own event name rather than hiding inside a field diff.
+        if set(updates) == {"is_enabled"}:
+            event = (
+                "attribution_rule.enabled"
+                if updates["is_enabled"]
+                else "attribution_rule.disabled"
+            )
+        else:
+            event = "attribution_rule.updated"
+        await record_activity(
+            db,
+            project_id=project_id,
+            event_type=event,
+            actor=ActorRef.from_user(current_user),
+            entity_id=rule.id,
+            entity_label=rule.name,
+            before=before,
+            after=updates,
+            context={"changed": ", ".join(sorted(updates))},
+        )
 
     await db.commit()
     await db.refresh(rule)
@@ -232,7 +277,7 @@ async def delete_attribution_rule(
     project_id: uuid.UUID,
     rule_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     __: User = Depends(require_project_access()),
 ):
     """Delete a rule.
@@ -243,6 +288,21 @@ async def delete_attribution_rule(
     was based on, silently.
     """
     rule = await _get_rule_or_404(db, project_id, rule_id)
+    # Staged BEFORE the delete so the label and pattern are still readable —
+    # after db.delete the attributes are gone and the row would say only that
+    # "something" was removed.
+    await record_activity(
+        db,
+        project_id=project_id,
+        event_type="attribution_rule.deleted",
+        actor=ActorRef.from_user(current_user),
+        entity_id=rule.id,
+        entity_label=rule.name,
+        context={
+            "match_field": rule.match_field,
+            "match_pattern": rule.match_pattern,
+        },
+    )
     await db.delete(rule)
     await db.commit()
 
