@@ -10,7 +10,7 @@ The shipped production contract is:
 - operational reserve: 50 connections
 - PostgreSQL superuser reserve: 3 connections (verified from the server)
 - PostgreSQL `reserved_connections`: 0 by default (verified from the server)
-- migration allowance: 8 connections for a cold scale-out
+- migration allowance: 1 connection for the singleton release migration
 - API pool per process: 2 pooled + 1 overflow
 - worker pool per process: 1 pooled + 1 overflow
 

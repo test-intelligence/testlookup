@@ -102,7 +102,7 @@ done
 
 DB_HEAD_BEFORE="$(pg_alembic_head)"
 log "Applying migrations (alembic upgrade head) — DB head before: ${DB_HEAD_BEFORE:-<none>}..."
-compose run --rm -T backend alembic upgrade head || fail "migration failed — the app layer was NOT restarted; the database may need attention before anything else"
+compose up --force-recreate --abort-on-container-exit --exit-code-from db-migrate db-migrate || fail "migration failed — the app layer was NOT restarted; the database may need attention before anything else"
 DB_HEAD_AFTER="$(pg_alembic_head)"
 log "Migrations complete — DB head now: ${DB_HEAD_AFTER:-<none>}"
 

@@ -35,6 +35,9 @@ spec:
         - name: backend
           image: testlookup/backend:0.0.1
           imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - rm -f "$PROMETHEUS_MULTIPROC_DIR"/*.db && exec gunicorn -c gunicorn_conf.py app.main:app
           ports:
             - containerPort: 8000
               name: http

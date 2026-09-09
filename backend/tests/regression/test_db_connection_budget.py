@@ -57,14 +57,14 @@ def test_production_rollout_preserves_operational_headroom() -> None:
         "testlookup-worker-default": 32,
         "testlookup-worker-ingestion": 72,
     }
-    assert sum(by_name.values()) + limits["migration"] == 280
+    assert sum(by_name.values()) + limits["migration"] == 273
     assert limits == {
         "server_max": 400,
         "operational_reserve": 50,
         "superuser_reserved": 3,
         "reserved": 0,
-        "migration": 8,
-        "declared_required": 280,
+        "migration": 1,
+        "declared_required": 273,
     }
 
     gunicorn = (ROOT / "backend" / "gunicorn_conf.py").read_text(encoding="utf-8")
@@ -147,7 +147,11 @@ def test_bundled_postgres_and_process_pools_are_explicit(compose_name: str) -> N
     assert limits["server_max"] == 400
     gate = compose["services"]["db-budget-check"]
     assert gate["command"] == "python -m app.db.compose_budget_gate"
-    assert compose["services"]["backend"]["depends_on"]["db-budget-check"] == {
+    migration = compose["services"]["db-migrate"]
+    assert migration["depends_on"]["db-budget-check"] == {
+        "condition": "service_completed_successfully"
+    }
+    assert compose["services"]["backend"]["depends_on"]["db-migrate"] == {
         "condition": "service_completed_successfully"
     }
     for service_name in ("backend", "worker", "worker-children"):

@@ -11,7 +11,7 @@
 #   4. Restores PostgreSQL (drop/recreate + pg_restore), MongoDB
 #      (mongorestore --drop), and the MinIO volume; flushes Redis
 #      (broker/caches are rebuildable and stale queue entries are dangerous).
-#   5. Starts the stack (the backend runs `alembic upgrade head` on boot),
+#   5. Runs the one-shot migration service, starts the stack,
 #      waits for readiness, runs the smoke check, prints a verdict +
 #      post-restore checklist (ChromaDB reindex, etc).
 #
@@ -176,7 +176,9 @@ fi
 if [ "${TL_RESTORE_NO_START:-0}" = "1" ]; then
     warn "TL_RESTORE_NO_START=1 — datastores restored; application NOT started."
 else
-    log "Starting the stack (backend applies pending migrations on boot)..."
+    log "Applying pending migrations with the one-shot migration service..."
+    compose up --force-recreate --abort-on-container-exit --exit-code-from db-migrate db-migrate
+    log "Starting the stack..."
     compose up -d
     log "Waiting for backend readiness at $TL_API/health/ready (up to 300s)..."
     if wait_for_ready "$TL_API/health/ready" 300; then

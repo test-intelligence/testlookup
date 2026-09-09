@@ -225,3 +225,50 @@ def test_main_image_manifest_resolves_version_file_before_publishing_images():
     create_run = str(step_by_name["Create and validate verified image manifest"].get("run", ""))
     assert "steps.manifest-version.outputs.version" in create_run
     assert "GITHUB_REF_NAME" not in create_run
+
+
+@pytest.mark.parametrize("workflow_path", CLOUD_DEPLOYS)
+def test_cloud_deploys_invoke_the_non_executable_helper_through_bash(
+    workflow_path: Path,
+):
+    commands = _executable_steps(_yaml(workflow_path))
+    assert "bash scripts/deploy-k8s.sh" in commands
+
+
+def test_dev_migration_and_backend_rollout_use_the_same_immutable_digest():
+    text = CI.read_text(encoding="utf-8")
+    backend_ref = (
+        "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@"
+        "${{ needs.build-images.outputs.backend_digest }}"
+    )
+    assert text.count(backend_ref) == 2
+    assert f"testlookup/backend={backend_ref}" in text
+    assert "run-k8s-migrations.sh testlookup-dev" in text
+
+
+def test_deploy_helper_preserves_the_complete_kustomize_resource_tree():
+    script = (ROOT / "scripts" / "deploy-k8s.sh").read_text(encoding="utf-8")
+    assert 'cp -r k8s "$TMP_ROOT/k8s"' in script
+    assert 'TMP_OVERLAY="$TMP_ROOT/$OVERLAY"' in script
+    assert 'cp -r "$OVERLAY" "$TMP_OVERLAY"' not in script
+
+
+def test_airgap_override_routes_the_migration_service_to_the_private_registry():
+    compose = _yaml(ROOT / "docker-compose.airgap.yml")
+    services = compose["services"]
+    assert services["db-migrate"]["image"] == services["backend"]["image"]
+
+
+def test_eks_materializes_into_the_component_registry_namespace():
+    workflow = (WORKFLOWS / "deploy-eks.yml").read_text(encoding="utf-8")
+    assert '--destination-prefix "ghcr.io/${GITHUB_REPOSITORY_OWNER}"' in workflow
+    assert '--destination-prefix "ghcr.io/${GITHUB_REPOSITORY}"' not in workflow
+
+
+def test_cloud_deploys_checkout_the_verified_source_sha():
+    for workflow_path in CLOUD_DEPLOYS:
+        workflow = workflow_path.read_text(encoding="utf-8")
+        checkout = workflow.index("uses: actions/checkout@")
+        ref = workflow.index("ref: ${{ needs.verify.outputs.source_sha }}", checkout)
+        download = workflow.index("gh run download", ref)
+        assert checkout < ref < download

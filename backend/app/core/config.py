@@ -109,8 +109,8 @@ class Settings(BaseSettings):
     PG_FLEET_OPERATIONAL_RESERVE: int = Field(default=50, ge=1)
     PG_FLEET_SUPERUSER_RESERVED_CONNECTIONS: int = Field(default=3, ge=0)
     PG_FLEET_RESERVED_CONNECTIONS: int = Field(default=0, ge=0)
-    PG_FLEET_MIGRATION_CONNECTIONS: int = Field(default=8, ge=1)
-    PG_FLEET_REQUIRED_CONNECTIONS: int = Field(default=280, ge=1)
+    PG_FLEET_MIGRATION_CONNECTIONS: int = Field(default=1, ge=1)
+    PG_FLEET_REQUIRED_CONNECTIONS: int = Field(default=273, ge=1)
 
     # MongoDB pool
     MONGO_MAX_POOL_SIZE: int = 50

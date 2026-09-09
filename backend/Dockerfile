@@ -62,7 +62,7 @@ USER testlookup
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
 
 # ── Production build stage ───────────────────────────────────
 FROM base AS builder
@@ -136,7 +136,7 @@ COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/__client_sdks_staged ./client_sdks
 
 # Build provenance — the commit SHA + build timestamp this image was built
-# from. Wired from release.yml so a running container can self-report its
+# from. Wired from CI so a running container can self-report its
 # origin via GET /health/details. Empty by default (local builds) → reported
 # as "unknown".
 ARG BUILD_REVISION=""
@@ -161,4 +161,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health/live || exit 1
 
-CMD ["sh", "-c", "rm -f \"$PROMETHEUS_MULTIPROC_DIR\"/*.db && alembic upgrade head && exec gunicorn -c gunicorn_conf.py app.main:app"]
+CMD ["sh", "-c", "rm -f \"$PROMETHEUS_MULTIPROC_DIR\"/*.db && exec gunicorn -c gunicorn_conf.py app.main:app"]

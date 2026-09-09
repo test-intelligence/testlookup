@@ -794,10 +794,22 @@ EOF
   fi
 fi
 
+MIGRATION_IMAGE="registry.local:30500/testlookup/backend:${BUILD_TAG}"
+HAD_BACKEND=0
+if kubectl -n "$NAMESPACE" get deployment testlookup-backend >/dev/null 2>&1; then
+  HAD_BACKEND=1
+  log "Migrating with the candidate image before the application rollout..."
+  bash "$REPO_ROOT/scripts/run-k8s-migrations.sh" "$NAMESPACE" "$MIGRATION_IMAGE"
+fi
+
 log "Applying Kustomize overlay..."
 bash "$REPO_ROOT/scripts/prepare-live-fanout-cutover.sh" "$NAMESPACE"
 kubectl apply -k "$REPO_ROOT/k8s/overlays/homelab"
-log "All resources applied."
+if [ "$HAD_BACKEND" -eq 0 ]; then
+  log "Fresh install detected; running the migration after datastore creation..."
+  bash "$REPO_ROOT/scripts/run-k8s-migrations.sh" "$NAMESPACE" "$MIGRATION_IMAGE"
+fi
+log "All resources applied and database migrations completed."
 
 # Restore the placeholder immediately after a successful apply too — the
 # trap covers the failure paths; this one keeps `git status` clean on the
@@ -955,8 +967,8 @@ if kubectl -n "$NAMESPACE" get pod -l app=testlookup-postgres \
   fi
 fi
 
-# Wait a bit more for the backend (depends on DB migrations)
-log "Waiting for backend (runs DB migrations on startup — may take a minute)..."
+# Wait a bit more for the backend after the explicit migration Job completed.
+log "Waiting for backend (may take a minute)..."
 wait_for_pods "app=testlookup-backend" 180 || warn "Backend not ready yet. Check: kubectl -n testlookup logs deployment/testlookup-backend"
 
 # ── Step 7: Create MinIO Buckets ───────────────────────────

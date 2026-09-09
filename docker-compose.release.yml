@@ -222,8 +222,32 @@ services:
   # The production image preserves four Uvicorn workers. Its shared
   # PROMETHEUS_MULTIPROC_DIR makes /metrics aggregate all four processes.
   # ──────────────────────────────────────────────────────────
+  db-migrate:
+    <<: *app-backend-image
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    env_file:
+      - .env
+    environment:
+      - PG_PROCESS_ROLE=operation
+      - PG_PROCESSES_PER_POD=1
+      - PG_POOL_SIZE=1
+      - PG_MAX_OVERFLOW=0
+      - POSTGRES_HOST=postgres
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
+    depends_on:
+      db-budget-check:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    networks:
+      - testlookup_net
+
   backend:
     <<: *app-backend-image
+    # Deployment-owned command bypasses legacy image entrypoints that bundled
+    # Alembic, so an immediate N-1 rollback can start against N's schema.
+    command: sh -c 'rm -f "$$PROMETHEUS_MULTIPROC_DIR"/*.db && exec gunicorn -c gunicorn_conf.py app.main:app'
     container_name: testlookup_backend
     restart: unless-stopped
     ports:
@@ -258,7 +282,7 @@ services:
       - APP_ENV=${APP_ENV:-production}
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
     depends_on:
-      db-budget-check:
+      db-migrate:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy

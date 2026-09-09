@@ -1,7 +1,7 @@
 # ============================================================
 # TestLookup — Developer Makefile
 # ============================================================
-.PHONY: benchmark-pipeline help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean backup restore preflight upgrade verify-ops-scripts migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push offline-bundle offline-bundle-plan images-check images-check-test logs shell-backend shell-db simulate-upload seed-data seed-data-reset quickstart demo smoke benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+.PHONY: benchmark-pipeline help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean backup restore preflight upgrade verify-ops-scripts migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push offline-bundle offline-bundle-plan images-check images-check-test logs shell-backend shell-db simulate-upload seed-data seed-data-reset quickstart demo smoke benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-migrate k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
 
 # Force bash for recipe shells. On Windows, GNU make defaults to cmd.exe which
 # breaks bash builtins like `until`/`for f in glob`. Git Bash provides bash at
@@ -242,21 +242,34 @@ images-check-test: ## Run the regression tests for the image drift guard
 
 # ── Kubernetes ────────────────────────────────────────────────
 
-k8s-deploy-dev: ## Deploy to development Kubernetes cluster
-	bash scripts/prepare-live-fanout-cutover.sh testlookup-dev
-	kubectl apply -k k8s/overlays/dev
+k8s-deploy-dev: ## Deploy to dev Kubernetes cluster
+	@had_backend=0; image="$$(kubectl apply -k k8s/overlays/dev --dry-run=client --validate=false -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["spec"]["template"]["spec"]["containers"][0]["image"] for x in d["items"] if x["kind"]=="Deployment" and x["metadata"]["name"]=="testlookup-backend"))')"; \
+	if kubectl -n testlookup-dev get deployment testlookup-backend >/dev/null 2>&1; then had_backend=1; bash scripts/run-k8s-migrations.sh testlookup-dev "$$image"; fi; \
+	bash scripts/prepare-live-fanout-cutover.sh testlookup-dev; kubectl apply -k k8s/overlays/dev; \
+	if [ "$$had_backend" -eq 0 ]; then bash scripts/run-k8s-migrations.sh testlookup-dev "$$image"; fi
 
 k8s-deploy-staging: ## Deploy to staging Kubernetes cluster
-	bash scripts/prepare-live-fanout-cutover.sh testlookup-staging
-	kubectl apply -k k8s/overlays/staging
+	@had_backend=0; image="$$(kubectl apply -k k8s/overlays/staging --dry-run=client --validate=false -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["spec"]["template"]["spec"]["containers"][0]["image"] for x in d["items"] if x["kind"]=="Deployment" and x["metadata"]["name"]=="testlookup-backend"))')"; \
+	if kubectl -n testlookup-staging get deployment testlookup-backend >/dev/null 2>&1; then had_backend=1; bash scripts/run-k8s-migrations.sh testlookup-staging "$$image"; fi; \
+	bash scripts/prepare-live-fanout-cutover.sh testlookup-staging; kubectl apply -k k8s/overlays/staging; \
+	if [ "$$had_backend" -eq 0 ]; then bash scripts/run-k8s-migrations.sh testlookup-staging "$$image"; fi
 
-k8s-deploy-prod: ## Deploy to production Kubernetes cluster
-	bash scripts/prepare-live-fanout-cutover.sh testlookup
-	kubectl apply -k k8s/overlays/prod
+k8s-deploy-prod: ## Deploy to prod Kubernetes cluster
+	@had_backend=0; image="$$(kubectl apply -k k8s/overlays/prod --dry-run=client --validate=false -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["spec"]["template"]["spec"]["containers"][0]["image"] for x in d["items"] if x["kind"]=="Deployment" and x["metadata"]["name"]=="testlookup-backend"))')"; \
+	if kubectl -n testlookup get deployment testlookup-backend >/dev/null 2>&1; then had_backend=1; bash scripts/run-k8s-migrations.sh testlookup "$$image"; fi; \
+	bash scripts/prepare-live-fanout-cutover.sh testlookup; kubectl apply -k k8s/overlays/prod; \
+	if [ "$$had_backend" -eq 0 ]; then bash scripts/run-k8s-migrations.sh testlookup "$$image"; fi
 
-k8s-deploy-openshift: ## Deploy using OpenShift-compatible overlay
-	bash scripts/prepare-live-fanout-cutover.sh testlookup
-	kubectl apply -k k8s/overlays/openshift
+k8s-deploy-openshift: ## Deploy to openshift Kubernetes cluster
+	@had_backend=0; image="$$(kubectl apply -k k8s/overlays/openshift --dry-run=client --validate=false -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["spec"]["template"]["spec"]["containers"][0]["image"] for x in d["items"] if x["kind"]=="Deployment" and x["metadata"]["name"]=="testlookup-backend"))')"; \
+	if kubectl -n testlookup get deployment testlookup-backend >/dev/null 2>&1; then had_backend=1; bash scripts/run-k8s-migrations.sh testlookup "$$image"; fi; \
+	bash scripts/prepare-live-fanout-cutover.sh testlookup; kubectl apply -k k8s/overlays/openshift; \
+	if [ "$$had_backend" -eq 0 ]; then bash scripts/run-k8s-migrations.sh testlookup "$$image"; fi
+
+k8s-migrate: ## Run Alembic before rollout (set IMAGE or K8S_OVERLAY)
+	@image="$(IMAGE)"; 	if [ -z "$$image" ] && [ -n "$(K8S_OVERLAY)" ]; then 	  image="$$(kubectl apply -k "$(K8S_OVERLAY)" --dry-run=client --validate=false -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["spec"]["template"]["spec"]["containers"][0]["image"] for x in d["items"] if x["kind"]=="Deployment" and x["metadata"]["name"]=="testlookup-backend"))')"; 	fi; 	test -n "$$image" || { echo "ERROR: set IMAGE or K8S_OVERLAY" >&2; exit 1; }; 	bash scripts/run-k8s-migrations.sh "$(K8S_NAMESPACE)" "$$image"
+
+
 
 ifeq ($(OS),Windows_NT)
   BASH_CMD := "C:/Program Files/Git/bin/bash.exe"

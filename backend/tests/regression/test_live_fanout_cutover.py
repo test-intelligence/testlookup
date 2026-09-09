@@ -24,10 +24,16 @@ def test_every_supported_kubernetes_apply_path_invokes_cutover():
         "openshiftsetup/deploy-openshift-artifactory.sh": 1,
         "scripts/deploy-k8s.sh": 1,
         ".github/workflows/ci.yml": 1,
-        ".github/workflows/deploy-eks.yml": 1,
-        "scripts/release/import-bundle.sh": 2,
+        "scripts/release/import-bundle.sh": 1,
         "scripts/release/offline-bundle.sh": 1,
     }
     for relative_path, minimum_count in expected.items():
         text = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
         assert text.count("prepare-live-fanout-cutover.sh") >= minimum_count, relative_path
+
+
+def test_eks_delegates_cutover_and_migration_to_central_deploy_helper():
+    workflow = (REPO_ROOT / ".github/workflows/deploy-eks.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "scripts/deploy-k8s.sh --cloud=aws --release-manifest=" in workflow

@@ -64,6 +64,9 @@ services:
     image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/chromadb/chroma:1.5.9
 
   # ── Application (worker / beat / seed-init reuse the backend image) ───────
+  db-migrate:
+    <<: *airgap-backend-image
+
   backend:
     <<: *airgap-backend-image
 

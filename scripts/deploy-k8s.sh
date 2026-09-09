@@ -33,6 +33,8 @@ NAMESPACE="testlookup"
 DRY_RUN=0
 SKIP_SECRETS_CHECK=0
 LEGACY_MCP_USER=""
+BACKEND_IMAGE=""
+RELEASE_ID=""
 
 print_usage() {
   sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
@@ -131,12 +133,24 @@ if [[ $DRY_RUN -eq 0 ]]; then
 fi
 
 # ── Optional: override image registry on the fly ─────────────────────────────
+TMP_ROOT=""
 TMP_OVERLAY=""
+
+prepare_temp_overlay() {
+  TMP_ROOT="$(mktemp -d)"
+  # Preserve the complete kustomize resource tree. Every cloud overlay refers
+  # to ../prod, which in turn refers to ../../base; copying only the leaf
+  # overlay makes those resources disappear under the temporary directory.
+  cp -r k8s "$TMP_ROOT/k8s"
+  TMP_OVERLAY="$TMP_ROOT/$OVERLAY"
+}
+
 if [[ -n "$RELEASE_MANIFEST" ]]; then
   [[ -f "$RELEASE_MANIFEST" ]] || { echo "ERROR: release manifest not found: $RELEASE_MANIFEST" >&2; exit 1; }
   python3 scripts/release/release_manifest.py validate-materialized --manifest "$RELEASE_MANIFEST" >/dev/null
-  TMP_OVERLAY="$(mktemp -d)/overlay"
-  cp -r "$OVERLAY" "$TMP_OVERLAY"
+  BACKEND_IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destination_refs"]["backend"])' "$RELEASE_MANIFEST")"
+  RELEASE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$RELEASE_MANIFEST")"
+  prepare_temp_overlay
   pushd "$TMP_OVERLAY" >/dev/null
   for img in backend frontend mcp; do
     ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destination_refs"][sys.argv[2]])' "$OLDPWD/$RELEASE_MANIFEST" "$img")"
@@ -145,8 +159,7 @@ if [[ -n "$RELEASE_MANIFEST" ]]; then
   popd >/dev/null
   OVERLAY="$TMP_OVERLAY"
 elif [[ -n "$REGISTRY" || -n "$IMAGE_TAG" ]]; then
-  TMP_OVERLAY="$(mktemp -d)/overlay"
-  cp -r "$OVERLAY" "$TMP_OVERLAY"
+  prepare_temp_overlay
   pushd "$TMP_OVERLAY" >/dev/null
   for img in testlookup/backend testlookup/frontend testlookup/mcp; do
     new_args=()
@@ -175,6 +188,14 @@ if [[ $DRY_RUN -eq 1 ]]; then
   kubectl kustomize "$OVERLAY"
   exit 0
 fi
+
+if [[ -z "$BACKEND_IMAGE" ]]; then
+  BACKEND_IMAGE="$(kubectl apply -k "$OVERLAY" --dry-run=client --validate=false -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["spec"]["template"]["spec"]["containers"][0]["image"] for x in d["items"] if x["kind"]=="Deployment" and x["metadata"]["name"]=="testlookup-backend"))')"
+fi
+[[ -n "$BACKEND_IMAGE" ]] || { echo "ERROR: rendered backend image is empty" >&2; exit 1; }
+
+echo "==> Applying database migrations before application rollout..."
+bash "$(dirname "$0")/run-k8s-migrations.sh" "$NAMESPACE" "$BACKEND_IMAGE" "$RELEASE_ID"
 
 echo "==> Applying overlay..."
 bash "$(dirname "$0")/prepare-live-fanout-cutover.sh" "$NAMESPACE"
@@ -281,4 +302,4 @@ echo "    Ingress:   kubectl -n $NAMESPACE get ingress"
 echo "    Logs:      kubectl -n $NAMESPACE logs -l app=testlookup-backend --tail=50"
 
 # Cleanup tmp overlay
-[[ -n "$TMP_OVERLAY" ]] && rm -rf "$(dirname "$TMP_OVERLAY")"
+[[ -n "$TMP_ROOT" ]] && rm -rf "$TMP_ROOT"

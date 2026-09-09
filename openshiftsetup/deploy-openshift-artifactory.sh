@@ -379,9 +379,20 @@ fi
 
 # ── Step 9 — Apply ──────────────────────────────────────────────────────────
 header "Step 9 — Apply to cluster"
+MIGRATION_IMAGE="${ARTIFACTORY_PULL_REGISTRY}/testlookup/backend:${APP_TAG}"
+HAD_BACKEND=0
+if "$KCLI" -n "$NAMESPACE" get deployment testlookup-backend >/dev/null 2>&1; then
+  HAD_BACKEND=1
+  log "Migrating with the candidate image before the application rollout..."
+  KCLI="$KCLI" bash "$REPO_ROOT/scripts/run-k8s-migrations.sh" "$NAMESPACE" "$MIGRATION_IMAGE"
+fi
 KCLI="$KCLI" bash "$REPO_ROOT/scripts/prepare-live-fanout-cutover.sh" "$NAMESPACE"
 "$KCLI" apply -k "$OVERLAY_DIR"
-log "Manifests applied."
+if [ "$HAD_BACKEND" -eq 0 ]; then
+  log "Fresh install detected; migrating after datastore creation..."
+  KCLI="$KCLI" bash "$REPO_ROOT/scripts/run-k8s-migrations.sh" "$NAMESPACE" "$MIGRATION_IMAGE"
+fi
+log "Manifests applied and database migrations completed."
 restore_overlay; trap - EXIT INT TERM
 
 # ── Step 10 — Custom Route TLS cert (optional) ──────────────────────────────
@@ -420,7 +431,7 @@ for app in postgres mongo redis minio chromadb; do
     || warn "testlookup-$app not ready yet."
 done
 "$KCLI" -n "$NAMESPACE" rollout status deploy/testlookup-backend --timeout=300s \
-  || warn "Backend not ready (it runs DB migrations on start). Check logs."
+  || warn "Backend not ready after the migration Job completed. Check logs."
 "$KCLI" -n "$NAMESPACE" rollout status deploy/testlookup-mcp --timeout=300s \
   || error "MCP replacement not ready; legacy credentials were retained."
 

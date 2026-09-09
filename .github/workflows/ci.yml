@@ -898,6 +898,8 @@ jobs:
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
+    outputs:
+      backend_digest: ${{ steps.build-backend.outputs.digest }}
     # The docs jobs gate this too. They are cheap and they guard something a
     # test suite cannot see: `mermaid-check` that every diagram parses, and
     # `docs-diagram-render` that the diagrams actually DRAW and their labels
@@ -1016,6 +1018,10 @@ jobs:
             ./client/ "$STAGED_SDK/"
           ls -la "$STAGED_SDK" | head -20
 
+      - name: Record backend build provenance
+        id: build-provenance
+        run: echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
       - name: Build & push backend
         id: build-backend
         uses: docker/build-push-action@v7
@@ -1030,6 +1036,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_REVISION=${{ github.sha }}
+            BUILD_DATE=${{ steps.build-provenance.outputs.build_date }}
 
       - name: Build & push frontend
         id: build-frontend
@@ -1141,14 +1150,15 @@ jobs:
         run: |
           cd k8s/overlays/dev
           kustomize edit set image \
-            testlookup/backend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:${{ github.sha }} \
+            testlookup/backend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@${{ needs.build-images.outputs.backend_digest }} \
             testlookup/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ github.sha }} \
             testlookup/mcp=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp:${{ github.sha }}
 
-      - name: Apply manifests
+      - name: Migrate, then apply manifests
         if: steps.check-secret.outputs.skip != 'true'
         run: |
           bash scripts/prepare-live-fanout-cutover.sh testlookup-dev
+          bash scripts/run-k8s-migrations.sh testlookup-dev             "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@${{ needs.build-images.outputs.backend_digest }}"             "${{ github.sha }}"
           # --validate=false skips server-side schema validation (safe for apply operations)
           # Remove this flag once the cluster API server is reachable for openapi schema download
           kubectl apply -k k8s/overlays/dev --validate=false
@@ -1158,13 +1168,6 @@ jobs:
         run: |
           kubectl rollout status deployment/testlookup-backend -n testlookup-dev --timeout=120s
           kubectl rollout status deployment/testlookup-frontend -n testlookup-dev --timeout=60s
-
-      - name: Run DB migrations
-        if: steps.check-secret.outputs.skip != 'true'
-        run: |
-          kubectl exec -n testlookup-dev \
-            deployment/testlookup-backend \
-            -- alembic upgrade head
 
       - name: Deploy skipped — add KUBE_CONFIG_DEV to enable
         if: steps.check-secret.outputs.skip == 'true'

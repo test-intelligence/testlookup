@@ -235,18 +235,27 @@ ENV
 
 ── Kubernetes ─────────────────────────────────────────────────────────────
   kubectl create namespace testlookup
-  kubectl -n testlookup create secret docker-registry local-registry \\
+  kubectl -n testlookup create secret docker-registry local-registry \
       --docker-server=${REGISTRY%%/*} --docker-username=<user> --docker-password=<pass>
-  kubectl -n testlookup patch serviceaccount default \\
+  kubectl -n testlookup patch serviceaccount default \
       -p '{"imagePullSecrets":[{"name":"local-registry"}]}'
   # create the testlookup-secrets Secret (see user-guide/air-gapped-install.md)
   KCLI=kubectl bash ./prepare-live-fanout-cutover.sh testlookup
+  backend_image=${REGISTRY}/testlookup/backend:${VERSION}
+  had_backend=0
+  if kubectl -n testlookup get deployment testlookup-backend >/dev/null 2>&1; then
+    had_backend=1
+    bash ./run-k8s-migrations.sh testlookup "$backend_image"
+  fi
   kubectl apply -f ${OUT_FILE#"$BUNDLE_DIR"/}
+  if [ "$had_backend" -eq 0 ]; then
+    bash ./run-k8s-migrations.sh testlookup "$backend_image"
+  fi
 
 ── OpenShift ──────────────────────────────────────────────────────────────
-  Same as Kubernetes, plus:
+  Same ordered sequence as Kubernetes, plus:
   oc adm policy add-scc-to-user anyuid -z default -n testlookup
-  KCLI=oc bash ./prepare-live-fanout-cutover.sh testlookup
+  Use KCLI=oc and oc in place of kubectl when running the migration helper.
   The rendered manifests already include the Routes (edge TLS + redirect).
   Re-run this script with --apps-domain <your apps domain> if the route hosts
   above still show a placeholder.

@@ -15,6 +15,8 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -36,4 +38,4 @@ jobs:
           for component in backend frontend mcp; do crane copy "$(jq -r ".images.$component.source_ref" verified-images/release-manifest.json)" "${{ secrets.AZURE_ACR_NAME }}.azurecr.io/testlookup/$component@$(jq -r ".images.$component.source_ref" verified-images/release-manifest.json | cut -d@ -f2)"; done
           python3 scripts/release/release_manifest.py materialize --manifest verified-images/release-manifest.json --destination-prefix "${{ secrets.AZURE_ACR_NAME }}.azurecr.io" --output verified-images/deployment-manifest.json
       - name: Deploy digest-pinned release
-        run: scripts/deploy-k8s.sh --cloud=azure --release-manifest=verified-images/deployment-manifest.json
+        run: bash scripts/deploy-k8s.sh --cloud=azure --release-manifest=verified-images/deployment-manifest.json
