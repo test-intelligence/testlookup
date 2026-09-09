@@ -99,6 +99,9 @@ def test_make_and_offline_paths_include_the_same_runner() -> None:
 
     instructions = _text("scripts/release/import-bundle.sh")
     assert "had_backend=0" in instructions
+    assert instructions.count(r'"\$backend_image"') == 2
+    assert r'"\$had_backend"' in instructions
+    assert '"$backend_image"' not in instructions.replace(r'"\$backend_image"', "")
     assert instructions.index("bash ./run-k8s-migrations.sh testlookup") < instructions.index(
         "kubectl apply -f"
     )
