@@ -6,6 +6,7 @@ when new test runs are ingested or test case statuses change.
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid as _uuid
 from dataclasses import dataclass
@@ -39,6 +40,7 @@ class WsSession:
     user_id: _uuid.UUID
     user_name: Optional[str]
     token_exp: float  # epoch seconds; 0 means "no exp claim"
+    last_event_id: Optional[str] = None
 
 router = APIRouter(prefix="/ws", tags=["Live Reporting"])
 
@@ -141,6 +143,13 @@ class ConnectionManager:
 
         await asyncio.gather(*[_send(ws) for ws in list(channel)], return_exceptions=True)
         for ws in dead:
+            try:
+                await asyncio.wait_for(
+                    ws.close(code=1013, reason="Live stream delivery timeout"),
+                    timeout=timeout,
+                )
+            except Exception:
+                pass
             self.disconnect(project_id, ws)
 
     async def broadcast_all(self, message: dict) -> None:
@@ -243,7 +252,20 @@ async def _authenticate_ws(
         await websocket.close(code=code, reason=reason)
         return None
 
-    return WsSession(user_id=user.id, user_name=user.username, token_exp=exp_epoch)
+    last_event_id = msg.get("last_event_id")
+    if last_event_id is not None and (
+        not isinstance(last_event_id, str)
+        or re.fullmatch(r"\d+-\d+", last_event_id) is None
+    ):
+        await websocket.close(code=4400, reason="Invalid last_event_id")
+        return None
+
+    return WsSession(
+        user_id=user.id,
+        user_name=user.username,
+        token_exp=exp_epoch,
+        last_event_id=last_event_id,
+    )
 
 
 async def _audit_ws_event(
@@ -303,8 +325,6 @@ async def live_updates(websocket: WebSocket, project_id: str):
         # _authenticate_ws already closed the socket. Nothing registered yet.
         return
 
-    manager.register(project_id, websocket)
-
     # Audit the connect — non-blocking, best-effort
     try:
         project_uuid_for_audit = _uuid.UUID(project_id)
@@ -328,6 +348,42 @@ async def live_updates(websocket: WebSocket, project_id: str):
             "user_id": str(session.user_id),
             "message": "Subscribed to live test updates",
         })
+
+        from app.streams.live_fanout import (
+            latest_live_sequence,
+            project_delivery_lock,
+            replay_live_notifications,
+        )
+        from app.streams.live_run_state import RedisLiveRunState
+
+        # The local relay takes this same lock before broadcasting. Capture a
+        # high-water mark, bootstrap through it, and only then register the
+        # socket; later events wait and are delivered after bootstrap.
+        async with asyncio.timeout(settings.WS_BROADCAST_TIMEOUT):
+            async with project_delivery_lock(project_id):
+                high_water = await latest_live_sequence(project_id)
+                active = await RedisLiveRunState.get_all_active()
+                project_sessions = [s for s in active if s.get("project_id") == project_id]
+                if session.last_event_id:
+                    replay, reconcile = await replay_live_notifications(
+                        project_id, session.last_event_id, through_id=high_water,
+                    )
+                    if reconcile:
+                        await websocket.send_json({
+                            "type": "reconcile_required",
+                            "sessions": project_sessions,
+                            "sequence_id": high_water,
+                        })
+                    else:
+                        for event in replay:
+                            await websocket.send_json(event)
+                else:
+                    await websocket.send_json({
+                        "type": "initial_state",
+                        "sessions": project_sessions,
+                        "sequence_id": high_water,
+                    })
+                manager.register(project_id, websocket)
 
         # Keep connection alive with ping/pong + periodic token-expiry checks.
         while True:
@@ -373,6 +429,12 @@ async def live_updates(websocket: WebSocket, project_id: str):
 
     except WebSocketDisconnect:
         pass  # close_reason_for_audit stays "client_disconnect"
+    except asyncio.TimeoutError:
+        close_reason_for_audit = "bootstrap_timeout"
+        try:
+            await websocket.close(code=1013, reason="Live stream bootstrap timeout")
+        except Exception:
+            pass
     except Exception as e:
         close_reason_for_audit = f"server_error:{type(e).__name__}"
         logger.warning(f"WS error for project={project_id}: {e}")
@@ -390,7 +452,8 @@ async def live_updates(websocket: WebSocket, project_id: str):
 # ── Helper functions called from ingestion pipeline ───────────────────────
 
 async def notify_run_started(project_id: str, run_id: str, build_number: str) -> None:
-    await manager.broadcast(project_id, {
+    from app.streams.live_fanout import publish_live_notification
+    await publish_live_notification(project_id, {
         "type": "run_started",
         "run_id": run_id,
         "build_number": build_number,
@@ -398,7 +461,8 @@ async def notify_run_started(project_id: str, run_id: str, build_number: str) ->
 
 
 async def notify_run_completed(project_id: str, run_id: str, stats: dict) -> None:
-    await manager.broadcast(project_id, {
+    from app.streams.live_fanout import publish_live_notification
+    await publish_live_notification(project_id, {
         "type": "run_completed",
         "run_id": run_id,
         **stats,
@@ -406,7 +470,8 @@ async def notify_run_completed(project_id: str, run_id: str, stats: dict) -> Non
 
 
 async def notify_test_failed(project_id: str, run_id: str, test_id: str, test_name: str) -> None:
-    await manager.broadcast(project_id, {
+    from app.streams.live_fanout import publish_live_notification
+    await publish_live_notification(project_id, {
         "type": "test_failed",
         "run_id": run_id,
         "test_id": test_id,
@@ -415,7 +480,8 @@ async def notify_test_failed(project_id: str, run_id: str, test_id: str, test_na
 
 
 async def notify_ai_ready(project_id: str, test_id: str, confidence: int, category: str) -> None:
-    await manager.broadcast(project_id, {
+    from app.streams.live_fanout import publish_live_notification
+    await publish_live_notification(project_id, {
         "type": "ai_analysis_ready",
         "test_id": test_id,
         "confidence_score": confidence,

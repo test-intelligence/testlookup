@@ -293,6 +293,8 @@ find "$STAGING/k8s" -name '*.deploy-bak' -delete 2>/dev/null || true
 header "Step 6 — Import script + MANIFEST.json + README"
 cp "$REPO_ROOT/scripts/release/import-bundle.sh" "$STAGING/import-bundle.sh"
 chmod +x "$STAGING/import-bundle.sh" 2>/dev/null || true
+cp "$REPO_ROOT/scripts/prepare-live-fanout-cutover.sh" "$STAGING/prepare-live-fanout-cutover.sh"
+chmod +x "$STAGING/prepare-live-fanout-cutover.sh" 2>/dev/null || true
 cp "$REPO_ROOT/deploy/images.manifest.txt" "$STAGING/images.manifest.txt"
 
 SBOM_MODE="unavailable"; [ "$HAVE_SYFT" = true ] && SBOM_MODE="syft"

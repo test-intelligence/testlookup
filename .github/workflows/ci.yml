@@ -528,6 +528,7 @@ jobs:
           tests/integration/test_purge_executor_against_real_postgres.py
           tests/integration/test_run_deletion_postgres_mongo.py
           tests/integration/test_live_evidence_crash_replay_postgres_redis.py
+          tests/integration/test_live_fanout_redis.py
           tests/integration/test_live_recovery_protocol_postgres_redis.py
           tests/regression/test_notification_history_schema.py
 
@@ -1142,6 +1143,7 @@ jobs:
       - name: Apply manifests
         if: steps.check-secret.outputs.skip != 'true'
         run: |
+          bash scripts/prepare-live-fanout-cutover.sh testlookup-dev
           # --validate=false skips server-side schema validation (safe for apply operations)
           # Remove this flag once the cluster API server is reachable for openapi schema download
           kubectl apply -k k8s/overlays/dev --validate=false

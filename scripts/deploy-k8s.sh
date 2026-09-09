@@ -177,6 +177,7 @@ if [[ $DRY_RUN -eq 1 ]]; then
 fi
 
 echo "==> Applying overlay..."
+bash "$(dirname "$0")/prepare-live-fanout-cutover.sh" "$NAMESPACE"
 kubectl apply -k "$OVERLAY"
 
 echo "==> Waiting for backend rollout..."

@@ -14,13 +14,14 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0      # zero-downtime: always keep 2 healthy before removing old
+      maxUnavailable: 0
       maxSurge: 1
   template:
     metadata:
       labels:
         app: testlookup-backend
         app.kubernetes.io/component: api
+        testlookup.io/live-fanout-protocol: "v1"
     spec:
       serviceAccountName: testlookup-sa
       containers:

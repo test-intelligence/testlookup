@@ -35,6 +35,7 @@ export interface LiveEvent {
   suite_name?: string | null
   message?: string
   timestamp: number
+  sequence_id?: string
 }
 
 export type WsStatus = 'connecting' | 'open' | 'closed' | 'error'
@@ -128,6 +129,7 @@ export function useLiveExecution(projectId?: string, suiteName?: string | null, 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
+  const lastEventIdsRef = useRef<Record<string, string>>({})
   // Holds the latest `connect` so the reconnect timer can call it without a
   // forward self-reference (which would close over a stale `connect`).
   const connectRef = useRef<() => void>(() => {})
@@ -193,6 +195,29 @@ export function useLiveExecution(projectId?: string, suiteName?: string | null, 
       return
     }
 
+    const sequenceId = typeof msg.sequence_id === 'string' ? msg.sequence_id : null
+    if (sequenceId) {
+      const cursorKey = projectId ?? ''
+      const previous = lastEventIdsRef.current[cursorKey]
+      const parse = (id: string) => id.split('-').map(Number)
+      if (previous) {
+        const [prevMs, prevSeq] = parse(previous)
+        const [nextMs, nextSeq] = parse(sequenceId)
+        if (nextMs < prevMs || (nextMs === prevMs && nextSeq <= prevSeq)) return
+      }
+      lastEventIdsRef.current[cursorKey] = sequenceId
+    }
+
+    if (type === 'initial_state' && Array.isArray(msg.sessions)) {
+      setSessions(msg.sessions as LiveSessionState[])
+      return
+    }
+    if (type === 'reconcile_required') {
+      if (Array.isArray(msg.sessions)) setSessions(msg.sessions as LiveSessionState[])
+      void mutate()
+      return
+    }
+
     const event: LiveEvent = { ...(msg as unknown as LiveEvent), timestamp: Date.now() }
 
     // Append to recent events feed (keep last 200)
@@ -252,7 +277,7 @@ export function useLiveExecution(projectId?: string, suiteName?: string | null, 
       // Refresh polling data so completed run fades out
       mutate()
     }
-  }, [mutate])
+  }, [mutate, projectId])
 
   // ── WebSocket connection ────────────────────────────────────────────────
   // `connect` deliberately omits `token` from its deps — it reads the latest
@@ -279,7 +304,11 @@ export function useLiveExecution(projectId?: string, suiteName?: string | null, 
       if (!mountedRef.current) return
       setWsStatus('open')
       // Send JWT for auth after connection — always pull the freshest token
-      ws.send(JSON.stringify({ type: 'auth', token: tokenRef.current }))
+      ws.send(JSON.stringify({
+        type: 'auth',
+        token: tokenRef.current,
+        last_event_id: lastEventIdsRef.current[projectId] ?? null,
+      }))
     }
 
     ws.onmessage = (evt) => {

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from typing import AsyncGenerator, Optional
 
@@ -39,6 +40,7 @@ from app.services.ingestion_rate_limit import enforce_ingest_rate_limit
 router = APIRouter(prefix="/api/v1/stream", tags=["Live Stream"])
 
 _sse_subscribers: dict[str, set[asyncio.Queue]] = {}
+_sse_bootstrap_floors: dict[asyncio.Queue, str] = {}
 
 
 @router.post("/sessions", response_model=stream_service.LiveSessionResponse, status_code=201)
@@ -261,27 +263,63 @@ async def sse_stream(
             if member is None:
                 raise HTTPException(status_code=403, detail="You do not have access to this project")
 
+    last_event_id = request.headers.get("last-event-id")
+    if last_event_id and re.fullmatch(r"\d+-\d+", last_event_id) is None:
+        raise HTTPException(status_code=400, detail="Invalid Last-Event-ID")
+
     queue: asyncio.Queue = asyncio.Queue(maxsize=500)
-    _sse_subscribers.setdefault(project_id, set()).add(queue)
+    from app.streams.live_fanout import (
+        latest_live_sequence,
+        project_delivery_lock,
+        replay_live_notifications,
+    )
+    from app.streams.live_run_state import RedisLiveRunState
+
+    bootstrap: list[dict] = []
+    async with project_delivery_lock(project_id):
+        high_water = await latest_live_sequence(project_id)
+        active = await RedisLiveRunState.get_all_active()
+        project_sessions = [session for session in active if session.get("project_id") == project_id]
+        if last_event_id:
+            replay, reconcile = await replay_live_notifications(
+                project_id, last_event_id, through_id=high_water,
+            )
+            if reconcile:
+                bootstrap.append({
+                    "type": "reconcile_required",
+                    "sessions": project_sessions,
+                    "sequence_id": high_water,
+                })
+            else:
+                bootstrap.extend(replay)
+        else:
+            bootstrap.append({
+                "type": "initial_state",
+                "sessions": project_sessions,
+                "sequence_id": high_water,
+            })
+        _sse_subscribers.setdefault(project_id, set()).add(queue)
+        _sse_bootstrap_floors[queue] = high_water
 
     async def generate() -> AsyncGenerator[str, None]:
         try:
-            from app.streams.live_run_state import RedisLiveRunState
-
-            active = await RedisLiveRunState.get_all_active()
-            project_sessions = [session for session in active if session.get("project_id") == project_id]
-            yield "data: " + json.dumps({"type": "initial_state", "sessions": project_sessions}) + "\n\n"
+            for event in bootstrap:
+                sequence_id = event.get("sequence_id")
+                yield f"id: {sequence_id}\ndata: {json.dumps(event)}\n\n"
 
             while True:
                 if await request.is_disconnected():
                     break
                 try:
                     msg = await asyncio.wait_for(queue.get(), timeout=25.0)
-                    yield "data: " + json.dumps(msg) + "\n\n"
+                    sequence_id = msg.get("sequence_id")
+                    id_line = f"id: {sequence_id}\n" if sequence_id else ""
+                    yield id_line + "data: " + json.dumps(msg) + "\n\n"
                 except asyncio.TimeoutError:
                     yield ": heartbeat\n\n"
         finally:
             _sse_subscribers.get(project_id, set()).discard(queue)
+            _sse_bootstrap_floors.pop(queue, None)
             if project_id in _sse_subscribers and not _sse_subscribers[project_id]:
                 del _sse_subscribers[project_id]
 
@@ -302,9 +340,24 @@ async def push_to_sse(project_id: str, message: dict) -> None:
         return
     dead: set[asyncio.Queue] = set()
     for queue in list(subscribers):
+        sequence_id = message.get("sequence_id")
+        floor = _sse_bootstrap_floors.get(queue)
+        if sequence_id and floor:
+            from app.streams.live_fanout import sequence_at_or_before
+            if sequence_at_or_before(str(sequence_id), floor):
+                continue
         try:
             queue.put_nowait(message)
         except asyncio.QueueFull:
-            dead.add(queue)
+            # Keep the stream alive and make the gap explicit. Silently
+            # unregistering a full queue left its client connected forever but
+            # permanently starved.
+            try:
+                queue.get_nowait()
+                queue.put_nowait({
+                    "type": "reconcile_required",
+                })
+            except (asyncio.QueueEmpty, asyncio.QueueFull):
+                dead.add(queue)
     for queue in dead:
         subscribers.discard(queue)

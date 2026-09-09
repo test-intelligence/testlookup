@@ -182,6 +182,26 @@ websocket_connections_active = Gauge(
     "Number of active WebSocket connections (summed across all projects)",
 )
 
+live_fanout_published_total = Counter(
+    "testlookup_live_fanout_published_total",
+    "Live dashboard notifications appended to Redis",
+    ["result"],
+)
+live_fanout_delivered_total = Counter(
+    "testlookup_live_fanout_delivered_total",
+    "Live dashboard transport delivery attempts",
+    ["transport", "result"],
+)
+live_fanout_replay_total = Counter(
+    "testlookup_live_fanout_replay_total",
+    "Live dashboard reconnect replay outcomes",
+    ["result"],
+)
+live_fanout_subscriber_ready = Gauge(
+    "testlookup_live_fanout_subscriber_ready",
+    "Whether this API process has initialized its Redis fan-out subscriber",
+)
+
 # ── Run Intelligence (Epic 11) ────────────────────────────────────────────────
 
 run_intelligence_duration_seconds = Histogram(

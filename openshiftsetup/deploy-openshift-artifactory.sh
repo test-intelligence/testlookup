@@ -379,6 +379,7 @@ fi
 
 # ── Step 9 — Apply ──────────────────────────────────────────────────────────
 header "Step 9 — Apply to cluster"
+KCLI="$KCLI" bash "$REPO_ROOT/scripts/prepare-live-fanout-cutover.sh" "$NAMESPACE"
 "$KCLI" apply -k "$OVERLAY_DIR"
 log "Manifests applied."
 restore_overlay; trap - EXIT INT TERM

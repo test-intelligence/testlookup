@@ -61,6 +61,14 @@ class RedisLiveRunState:
         redis = get_redis()
         key = _STATE_KEY(run_id)
 
+        # A source Redis Stream entry may be reclaimed after its side effects
+        # succeeded but before XACK. Do not reset counters when that same
+        # run_start is delivered again.
+        if await redis.exists(key):
+            await redis.expire(key, _TTL)
+            await redis.sadd(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
+            return
+
         now = datetime.now(timezone.utc).isoformat()
         mapping: dict = {
             "run_id":       run_id,

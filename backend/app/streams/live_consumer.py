@@ -32,6 +32,8 @@ import logging
 import os
 import socket
 import time
+import uuid
+from contextvars import ContextVar
 from typing import Any, cast
 
 from app.db.redis_client import get_redis
@@ -42,6 +44,7 @@ from app.streams import (
     LIVE_EVENTS_STREAM,
     LIVE_GROUP,
     MAX_DELIVERY_ATTEMPTS,
+    LIVE_PROCESSOR_LEADER_KEY,
     STALE_CLAIM_INTERVAL_S,
     STALE_IDLE_MS,
 )
@@ -51,7 +54,20 @@ from app.services.ingestion_sanitization import sanitize_test_result_payload
 logger = logging.getLogger("streams.live_consumer")
 
 # Unique consumer name per process (handles multiple uvicorn workers)
-_CONSUMER_NAME = f"{socket.gethostname()}:{os.getpid()}"
+_CONSUMER_NAME = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
+_SOURCE_EVENT: ContextVar[tuple[str, int] | None] = ContextVar("live_source_event", default=None)
+_LEADER_TTL_SECONDS = 30
+_RENEW_LEADER_SCRIPT = """
+local owner = redis.call('GET', KEYS[1])
+if owner == ARGV[1] then
+  redis.call('EXPIRE', KEYS[1], ARGV[2])
+  return 1
+end
+if not owner and redis.call('SET', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2]) then
+  return 2
+end
+return 0
+"""
 
 
 def _group_name(group: Any) -> str:
@@ -74,6 +90,11 @@ class LiveEventStreamConsumer:
     def __init__(self):
         self._running = False
         self._last_reclaim = 0.0
+        self._just_acquired_leadership = False
+        # Every process incarnation must drain the PEL on its first leadership
+        # turn, even if a stale lease from a restarted host/PID appears owned.
+        self._must_drain_pending = True
+        self._leader_heartbeat: asyncio.Task | None = None
 
     async def run(self) -> None:
         """Main consumer loop. Runs until cancelled."""
@@ -84,15 +105,40 @@ class LiveEventStreamConsumer:
 
         while self._running:
             try:
+                if not await self._hold_leadership():
+                    await asyncio.sleep(1)
+                    continue
+                if self._just_acquired_leadership:
+                    # A predecessor may have stopped with an older entry in
+                    # the PEL. Recover it before accepting newer `>` entries.
+                    self._must_drain_pending = True
+                if self._must_drain_pending:
+                    drained = await self._reclaim_stale(
+                        min_idle_time=0, drain_all=True,
+                    )
+                    self._must_drain_pending = not drained
+                    if not drained:
+                        await asyncio.sleep(1)
+                        continue
                 # Periodically reclaim stale messages from crashed consumers
                 if time.time() - self._last_reclaim > STALE_CLAIM_INTERVAL_S:
-                    await self._reclaim_stale()
+                    if not await self._reclaim_stale():
+                        self._must_drain_pending = True
+                        continue
                     self._last_reclaim = time.time()
 
                 # Read a batch of new messages
+                if not await self._hold_leadership():
+                    self._must_drain_pending = True
+                    continue
                 messages = await self._read_new()
                 for msg_id, data in messages:
-                    await self._handle_message(msg_id, data)
+                    if not await self._hold_leadership():
+                        self._must_drain_pending = True
+                        break
+                    if not await self._handle_message(msg_id, data):
+                        self._must_drain_pending = True
+                        break
 
             except asyncio.CancelledError:
                 logger.info("Live stream consumer shutting down")
@@ -101,21 +147,73 @@ class LiveEventStreamConsumer:
             except Exception as exc:
                 logger.error("Live stream consumer error: %s — retrying in 5s", exc)
                 await asyncio.sleep(5)
+        await self._release_leadership()
 
     def stop(self) -> None:
         self._running = False
 
+    async def _hold_leadership(self) -> bool:
+        """Keep one sequential source projector active across the API fleet."""
+        result = int(await get_redis().eval(
+            _RENEW_LEADER_SCRIPT,
+            1,
+            LIVE_PROCESSOR_LEADER_KEY,
+            _CONSUMER_NAME,
+            _LEADER_TTL_SECONDS,
+        ))
+        self._just_acquired_leadership = result == 2
+        if result and (self._leader_heartbeat is None or self._leader_heartbeat.done()):
+            self._leader_heartbeat = asyncio.create_task(
+                self._renew_leadership(), name="live-processor-leader-heartbeat",
+            )
+        return result != 0
+
+    async def _renew_leadership(self) -> None:
+        """Renew independently so a slow batch cannot expire the owner lease."""
+        while self._running:
+            await asyncio.sleep(_LEADER_TTL_SECONDS / 3)
+            result = await get_redis().eval(
+                _RENEW_LEADER_SCRIPT,
+                1,
+                LIVE_PROCESSOR_LEADER_KEY,
+                _CONSUMER_NAME,
+                _LEADER_TTL_SECONDS,
+            )
+            if int(result) == 0:
+                return
+
+    async def _release_leadership(self) -> None:
+        """Release only this process's lease during graceful shutdown."""
+        try:
+            if self._leader_heartbeat is not None:
+                self._leader_heartbeat.cancel()
+                await asyncio.gather(self._leader_heartbeat, return_exceptions=True)
+            await get_redis().eval(
+                "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+                "return redis.call('DEL', KEYS[1]) else return 0 end",
+                1,
+                LIVE_PROCESSOR_LEADER_KEY,
+                _CONSUMER_NAME,
+            )
+        except Exception as exc:
+            logger.debug("Live processor leader release skipped: %s", exc)
+
     # ── Message dispatch ──────────────────────────────────────────────────────
 
-    async def _handle_message(self, msg_id: str, raw: dict) -> None:
-        """Process one message, ACK on success, or DLQ after max retries."""
+    async def _handle_message(self, msg_id: str, raw: dict) -> bool:
+        """Process one message; return whether it was ACKed or terminally DLQed."""
         try:
             payload = json.loads(raw.get("payload", "{}"))
             run_id = raw.get("run_id", payload.get("run_id", ""))
             event_type = raw.get("event_type", payload.get("type", "test_result"))
 
-            await self._process(run_id, event_type, payload)
+            token = _SOURCE_EVENT.set((msg_id, 0))
+            try:
+                await self._process(run_id, event_type, payload)
+            finally:
+                _SOURCE_EVENT.reset(token)
             await self._ack(msg_id)
+            return True
 
         except Exception as exc:
             # Attempt count comes from the stream's own delivery counter
@@ -133,7 +231,9 @@ class LiveEventStreamConsumer:
             if attempt >= MAX_DELIVERY_ATTEMPTS:
                 await self._move_to_dlq(msg_id, raw, str(exc), attempt)
                 await self._ack(msg_id)
+                return True
             # If under max attempts: leave in pending list for XAUTOCLAIM to re-deliver
+            return False
 
     async def _process(self, run_id: str, event_type: str, payload: dict) -> None:
         """Dispatch to the appropriate handler based on event type."""
@@ -206,6 +306,10 @@ class LiveEventStreamConsumer:
                     test_name=test_name,
                     run_id=run_id,
                     project_id=state["project_id"],
+                    logical_event_id=(
+                        f"live-analysis:{_SOURCE_EVENT.get()[0]}:{test_case_id}"
+                        if _SOURCE_EVENT.get() is not None else None
+                    ),
                 )
 
     async def _on_run_complete(self, run_id: str, payload: dict) -> None:
@@ -308,26 +412,56 @@ class LiveEventStreamConsumer:
             logger.error("xreadgroup error: %s", exc)
             return []
 
-    async def _reclaim_stale(self) -> None:
+    async def _reclaim_stale(
+        self,
+        *,
+        min_idle_time: int = STALE_IDLE_MS,
+        drain_all: bool = False,
+    ) -> bool:
         """Re-claim messages idle > STALE_IDLE_MS from any consumer (including crashed ones)."""
         redis = get_redis()
         try:
-            # xautoclaim returns (next_id, [(msg_id, {data}), ...], [deleted_ids])
-            result = await redis.xautoclaim(
-                LIVE_EVENTS_STREAM,
-                LIVE_GROUP,
-                _CONSUMER_NAME,
-                min_idle_time=STALE_IDLE_MS,
-                start_id="0-0",
-                count=CONSUMER_BATCH_SIZE,
-            )
-            claimed = result[1] if result and len(result) > 1 else []
-            if claimed:
-                logger.info("Reclaimed %d stale live event messages", len(claimed))
-                for msg_id, data in claimed:
-                    await self._handle_message(msg_id, data)
+            # On leadership transfer, walk every XAUTOCLAIM page before reading
+            # `>` so newer source entries cannot overtake an inherited PEL.
+            # Multiple full passes let poison entries reach the shared delivery
+            # threshold and move to the DLQ instead of blocking ordering forever.
+            start_id = "0-0"
+            while True:
+                # xautoclaim returns
+                # (next_id, [(msg_id, {data}), ...], [deleted_ids]).
+                result = await redis.xautoclaim(
+                    LIVE_EVENTS_STREAM,
+                    LIVE_GROUP,
+                    _CONSUMER_NAME,
+                    min_idle_time=min_idle_time,
+                    start_id=start_id,
+                    count=CONSUMER_BATCH_SIZE,
+                )
+                raw_next_id = result[0] if result else "0-0"
+                next_id = (
+                    raw_next_id.decode()
+                    if isinstance(raw_next_id, bytes)
+                    else str(raw_next_id)
+                )
+                claimed = result[1] if result and len(result) > 1 else []
+                if claimed:
+                    logger.info("Reclaimed %d stale live event messages", len(claimed))
+                    for msg_id, data in claimed:
+                        if not await self._hold_leadership():
+                            return False
+                        if not await self._handle_message(msg_id, data):
+                            return False
+                if not drain_all or next_id == "0-0" or next_id == start_id:
+                    return True
+                start_id = next_id
         except Exception as exc:
             logger.debug("xautoclaim error (non-critical): %s", exc)
+            if drain_all:
+                # Leadership acquisition must not fall through to `>` after a
+                # failed inherited-PEL scan. Let run() back off and retry the
+                # drain before it accepts any newer source entries.
+                raise
+            return False
 
     async def _ack(self, msg_id: str) -> None:
         redis = get_redis()
@@ -365,19 +499,19 @@ class LiveEventStreamConsumer:
 # ── Module-level helpers ──────────────────────────────────────────────────────
 
 async def _broadcast(project_id: str, payload: dict) -> None:
-    # Fan-out to WebSocket dashboard clients
-    try:
-        from app.routers.live import manager
-        await manager.broadcast(project_id, payload)
-    except Exception as exc:
-        logger.debug("WebSocket broadcast skipped: %s", exc)
+    # This write is part of processing: if it fails the source message remains
+    # pending and is retried instead of being ACKed with its notification lost.
+    from app.streams.live_fanout import publish_live_notification
 
-    # Fan-out to SSE dashboard clients (same payload, different transport)
-    try:
-        from app.routers.stream import push_to_sse
-        await push_to_sse(project_id, payload)
-    except Exception as exc:
-        logger.debug("SSE broadcast skipped: %s", exc)
+    source = _SOURCE_EVENT.get()
+    logical_event_id = None
+    if source is not None:
+        message_id, ordinal = source
+        logical_event_id = f"live-source:{message_id}:{ordinal}"
+        _SOURCE_EVENT.set((message_id, ordinal + 1))
+    await publish_live_notification(
+        project_id, payload, logical_event_id=logical_event_id,
+    )
 
 
 async def _queue_live_analysis(
@@ -385,6 +519,7 @@ async def _queue_live_analysis(
     test_name: str,
     run_id: str,
     project_id: str,
+    logical_event_id: str | None = None,
 ) -> None:
     """Queue immediate root-cause analysis for a failing test during live execution."""
     try:
@@ -394,6 +529,11 @@ async def _queue_live_analysis(
             return
 
         from app.worker.tasks import run_live_test_analysis
+        # Publication is deliberately at-least-once. Claiming a dedupe key
+        # before apply_async created a crash window that could lose analysis.
+        # The task is side-effect free (it returns classification through the
+        # Celery result backend), and the stable task id makes retries converge
+        # on the same logical result slot.
         run_live_test_analysis.apply_async(
             kwargs={
                 "test_case_id": test_case_id,
@@ -404,6 +544,7 @@ async def _queue_live_analysis(
             queue="critical",
             priority=9,
             countdown=2,   # brief delay so test data is persisted first
+            task_id=logical_event_id,
         )
     except Exception as exc:
         logger.debug("Failed to queue live analysis for %s: %s", test_name, exc)

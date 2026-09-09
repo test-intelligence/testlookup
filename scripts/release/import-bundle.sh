@@ -240,11 +240,13 @@ ENV
   kubectl -n testlookup patch serviceaccount default \\
       -p '{"imagePullSecrets":[{"name":"local-registry"}]}'
   # create the testlookup-secrets Secret (see user-guide/air-gapped-install.md)
+  KCLI=kubectl bash ./prepare-live-fanout-cutover.sh testlookup
   kubectl apply -f ${OUT_FILE#"$BUNDLE_DIR"/}
 
 ── OpenShift ──────────────────────────────────────────────────────────────
   Same as Kubernetes, plus:
   oc adm policy add-scc-to-user anyuid -z default -n testlookup
+  KCLI=oc bash ./prepare-live-fanout-cutover.sh testlookup
   The rendered manifests already include the Routes (edge TLS + redirect).
   Re-run this script with --apps-domain <your apps domain> if the route hosts
   above still show a placeholder.

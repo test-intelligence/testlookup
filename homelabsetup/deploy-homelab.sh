@@ -795,6 +795,7 @@ EOF
 fi
 
 log "Applying Kustomize overlay..."
+bash "$REPO_ROOT/scripts/prepare-live-fanout-cutover.sh" "$NAMESPACE"
 kubectl apply -k "$REPO_ROOT/k8s/overlays/homelab"
 log "All resources applied."
 

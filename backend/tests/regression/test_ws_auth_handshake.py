@@ -97,6 +97,26 @@ class TestTheHappyPath:
         assert session.token_exp == 1_900_000_000.0
         assert ws.closed == [], "a successful handshake must not close the socket"
 
+    @pytest.mark.asyncio
+    async def test_a_valid_reconnect_cursor_is_preserved(self, accepts_token):
+        ws = _FakeWebSocket(json.dumps({
+            "type": "auth", "token": "a.jwt.token", "last_event_id": "42-7",
+        }))
+
+        session = await _authenticate_ws(ws, PROJECT_ID)
+
+        assert session is not None
+        assert session.last_event_id == "42-7"
+
+    @pytest.mark.asyncio
+    async def test_a_malformed_reconnect_cursor_is_rejected(self, accepts_token):
+        ws = _FakeWebSocket(json.dumps({
+            "type": "auth", "token": "a.jwt.token", "last_event_id": "../secret",
+        }))
+
+        assert await _authenticate_ws(ws, PROJECT_ID) is None
+        assert ws.closed == [(4400, "Invalid last_event_id")]
+
 
 class TestEveryRejectionClosesTheSocket:
     """The docstring's contract: "closes the socket and returns None on any

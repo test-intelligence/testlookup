@@ -565,8 +565,8 @@ class BaseAgent(ABC):
     async def broadcast_progress(self, project_id: str, payload: dict) -> None:
         """Broadcast pipeline progress event via WebSocket."""
         try:
-            from app.routers.live import manager
-            await manager.broadcast(
+            from app.streams.live_fanout import publish_live_notification
+            await publish_live_notification(
                 project_id,
                 {"type": "pipeline_progress", "stage": self.stage_name, **payload},
             )

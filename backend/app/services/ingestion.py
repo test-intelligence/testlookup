@@ -68,12 +68,6 @@ async def _prefetch_test_cases(
     return existing_by_fp
 
 
-# Import WebSocket manager lazily to avoid circular imports at module load time
-def _get_ws_manager():
-    from app.routers.live import manager as ws_manager
-    return ws_manager
-
-
 def make_test_fingerprint(test_name: str, class_name: Optional[str]) -> str:
     """Create a stable hash identifying a unique test across runs."""
     key = f"{class_name or ''}::{test_name}"
@@ -352,10 +346,11 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             await db.commit()
             logger.info(f"Ingestion complete: {len(parsed_cases)} test cases processed")
 
-            # Broadcast live update via WebSocket
+            # Publish through Redis so every API process can reach its local
+            # WebSocket/SSE clients (this code may run in a worker process).
             try:
-                ws = _get_ws_manager()
-                await ws.broadcast(str(sentinel.project_id), {
+                from app.streams.live_fanout import publish_live_notification
+                await publish_live_notification(str(sentinel.project_id), {
                     "type": "run_completed",
                     "run_id": str(run.id),
                     "build_number": run.build_number,

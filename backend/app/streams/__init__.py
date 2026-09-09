@@ -6,6 +6,10 @@ Stream names and consumer group constants used across producers and consumers.
 
 # ── Stream names ──────────────────────────────────────────────────────────────
 LIVE_EVENTS_STREAM  = "testlookup:stream:live_events"   # live test execution events
+LIVE_FANOUT_STREAM  = "testlookup:stream:live_fanout"   # ordered dashboard notifications
+LIVE_FANOUT_PROJECT_STREAM_KEY = "testlookup:stream:live_fanout:{project_id}"
+LIVE_FANOUT_DEDUP_KEY = "testlookup:stream:live_fanout:dedupe:{event_id}"
+LIVE_PROCESSOR_LEADER_KEY = "testlookup:stream:live_processor:leader"
 INGESTION_STREAM    = "testlookup:stream:ingestion_jobs" # report upload notifications
 ANALYSIS_STREAM     = "testlookup:stream:analysis_tasks" # per-test analysis requests
 DLQ_STREAM          = "testlookup:stream:dlq"            # dead-letter queue
@@ -42,6 +46,8 @@ LIVE_BATCH_DEDUP_KEY = "testlookup:live:batch_state:{run_id}"
 
 # ── Limits ────────────────────────────────────────────────────────────────────
 LIVE_STREAM_MAXLEN      = 100_000   # max entries retained in live stream
+LIVE_FANOUT_MAXLEN      = 20_000    # reconnect replay / cross-process fan-out
+LIVE_FANOUT_PROJECT_MAXLEN = 2_000  # retained events per project for reconnect
 INGESTION_STREAM_MAXLEN = 10_000
 ANALYSIS_STREAM_MAXLEN  = 50_000
 DLQ_STREAM_MAXLEN       = 5_000

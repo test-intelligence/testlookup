@@ -94,20 +94,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to create MongoDB indexes", error=str(e))
 
-    # Start live event stream consumer (reads from Redis Streams, dispatches to WebSocket)
+    # Process source events once, then independently consume the ordered fan-out
+    # stream in every API process so local WebSocket/SSE clients all see them.
     from app.streams.live_consumer import LiveEventStreamConsumer
+    from app.streams.live_fanout import LiveFanoutSubscriber
     _consumer = LiveEventStreamConsumer()
+    _fanout = LiveFanoutSubscriber()
+    await _fanout.initialize()
     _consumer_task = asyncio.create_task(_consumer.run(), name="live-event-consumer")
+    _fanout_task = asyncio.create_task(_fanout.run(), name="live-fanout-subscriber")
     logger.info("Live event stream consumer started")
 
     yield  # Application runs here
 
     # Shutdown consumer
     _consumer_task.cancel()
-    try:
-        await _consumer_task
-    except asyncio.CancelledError:
-        pass
+    _fanout_task.cancel()
+    await asyncio.gather(_consumer_task, _fanout_task, return_exceptions=True)
     logger.info("Live event stream consumer stopped")
 
     # Shutdown DB connections and pooled outbound HTTP client

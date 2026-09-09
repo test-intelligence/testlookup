@@ -48,6 +48,9 @@ jobs:
           set -euo pipefail
           cd k8s/overlays/aws-eks
           kustomize edit set image testlookup/backend="$(jq -r '.destination_refs.backend' ../../../verified-images/deployment-manifest.json)" testlookup/frontend="$(jq -r '.destination_refs.frontend' ../../../verified-images/deployment-manifest.json)" testlookup/mcp="$(jq -r '.destination_refs.mcp' ../../../verified-images/deployment-manifest.json)"
+          cd ../../..
+          bash scripts/prepare-live-fanout-cutover.sh testlookup
+          cd k8s/overlays/aws-eks
           kubectl apply -k .
           kubectl -n testlookup rollout status deployment/testlookup-backend --timeout=300s
           kubectl -n testlookup rollout status deployment/testlookup-mcp --timeout=300s

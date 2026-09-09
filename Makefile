@@ -243,15 +243,19 @@ images-check-test: ## Run the regression tests for the image drift guard
 # ── Kubernetes ────────────────────────────────────────────────
 
 k8s-deploy-dev: ## Deploy to development Kubernetes cluster
+	bash scripts/prepare-live-fanout-cutover.sh testlookup-dev
 	kubectl apply -k k8s/overlays/dev
 
 k8s-deploy-staging: ## Deploy to staging Kubernetes cluster
+	bash scripts/prepare-live-fanout-cutover.sh testlookup-staging
 	kubectl apply -k k8s/overlays/staging
 
 k8s-deploy-prod: ## Deploy to production Kubernetes cluster
+	bash scripts/prepare-live-fanout-cutover.sh testlookup
 	kubectl apply -k k8s/overlays/prod
 
 k8s-deploy-openshift: ## Deploy using OpenShift-compatible overlay
+	bash scripts/prepare-live-fanout-cutover.sh testlookup
 	kubectl apply -k k8s/overlays/openshift
 
 ifeq ($(OS),Windows_NT)
