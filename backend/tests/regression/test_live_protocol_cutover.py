@@ -376,6 +376,11 @@ async def test_legacy_list_migration_is_atomic_on_real_redis():
     group = "live-persistence-v1"
     client = redis_asyncio.Redis.from_url(redis_url, decode_responses=True)
     try:
+        await client.ping()
+    except Exception as exc:  # pragma: no cover - environment gate
+        await client.aclose()
+        pytest.skip(f"Redis unavailable: {type(exc).__name__}")
+    try:
         await client.rpush(
             list_key,
             json.dumps({"test_name": "a", "error_message": "token=secret"}),
@@ -523,3 +528,34 @@ def test_cutover_runbook_orders_consumers_migration_drain_cleanup_producers():
         runbook.index("Deploy and resume the new producers"),
     ]
     assert positions == sorted(positions)
+
+
+class _PingFailsClient:
+    """Stand-in async Redis client whose reachability probe fails."""
+
+    async def ping(self):
+        raise ConnectionError("no redis here")
+
+    async def aclose(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_legacy_list_migration_real_redis_test_skips_when_redis_unreachable(
+    monkeypatch,
+):
+    """When REDIS_URL is set but Redis cannot be reached, the real-Redis
+    migration test must SKIP — not FAIL — mirroring the reachability guard
+    every sibling integration test uses (e.g. test_celery_visibility_redelivery).
+    Otherwise the documented health-check command (which sets REDIS_URL without
+    provisioning Redis) reports a false red.
+    """
+    redis_asyncio = pytest.importorskip("redis.asyncio")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr(
+        redis_asyncio.Redis,
+        "from_url",
+        lambda *args, **kwargs: _PingFailsClient(),
+    )
+    with pytest.raises(pytest.skip.Exception, match="Redis unavailable"):
+        await test_legacy_list_migration_is_atomic_on_real_redis()

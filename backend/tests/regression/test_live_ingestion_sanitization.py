@@ -720,6 +720,10 @@ async def test_live_batch_persists_only_sanitized_evidence_in_real_redis(monkeyp
     client = redis_asyncio.Redis.from_url(redis_url, decode_responses=True)
     try:
         await client.ping()
+    except Exception as exc:  # pragma: no cover - environment gate
+        await client.aclose()
+        pytest.skip(f"Redis unavailable: {type(exc).__name__}")
+    try:
         monkeypatch.setattr(producer, "get_redis", lambda: client)
         monkeypatch.setattr(stream_service, "get_redis", lambda: client)
         monkeypatch.setattr(streams, "LIVE_EVENTS_STREAM", dispatch_key)
@@ -1470,3 +1474,34 @@ async def test_legacy_redis_list_scrub_preserves_source_on_watched_change():
 
     assert redis.values[key] == raw_rows
     assert all(not temp.startswith(f"{key}:m11-scrub:") for temp in redis.values)
+
+
+class _PingFailsClient:
+    """Stand-in async Redis client whose reachability probe fails."""
+
+    async def ping(self):
+        raise ConnectionError("no redis here")
+
+    async def aclose(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_live_batch_real_redis_test_skips_when_redis_unreachable(monkeypatch):
+    """When REDIS_URL is set but Redis cannot be reached, the real-Redis
+    integration test must SKIP — not FAIL — mirroring the reachability guard
+    every sibling integration test uses (e.g. test_celery_visibility_redelivery).
+    Otherwise the documented health-check command (which sets REDIS_URL without
+    provisioning Redis) reports a false red.
+    """
+    redis_asyncio = pytest.importorskip("redis.asyncio")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr(
+        redis_asyncio.Redis,
+        "from_url",
+        lambda *args, **kwargs: _PingFailsClient(),
+    )
+    with pytest.raises(pytest.skip.Exception, match="Redis unavailable"):
+        await test_live_batch_persists_only_sanitized_evidence_in_real_redis(
+            monkeypatch,
+        )
