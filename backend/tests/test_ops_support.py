@@ -28,9 +28,9 @@ def _valid_manifest() -> dict:
         "git_sha": "abc123",
         "alembic_head": "0105",
         "components": [
-            {"name": "postgres", "file": "postgres.dump", "method": "pg_dump -Fc"},
-            {"name": "mongo", "file": "mongo.archive.gz", "method": "mongodump"},
-            {"name": "minio", "file": "minio_data.tar.gz", "method": "volume tar"},
+            {"name": "postgres", "file": "postgres.dump", "method": "pg_dump -Fc", "sha256": "0" * 64},
+            {"name": "mongo", "file": "mongo.archive.gz", "method": "mongodump", "sha256": "0" * 64},
+            {"name": "minio", "file": "minio_data.tar.gz", "method": "volume tar", "sha256": "0" * 64},
         ],
         "excluded": [{"name": "redis", "reason": "broker"}],
     }
@@ -98,7 +98,7 @@ class TestValidateManifest:
 
     def test_wrong_schema_version(self):
         manifest = _valid_manifest()
-        manifest["schema_version"] = 2
+        manifest["schema_version"] = 999
         problems = ops_support.validate_manifest(manifest)
         assert any("schema_version" in p for p in problems)
 

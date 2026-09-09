@@ -24,6 +24,7 @@
 #   TL_RESTORE_SKIP_HEAD_CHECK=1   skip the migration-ancestry check
 #   TL_RESTORE_NO_START=1          restore datastores but do not start the app
 #   SKIP_REDIS_FLUSH=1             keep Redis contents (not recommended)
+#   ALLOW_UNVERIFIED_BACKUP=1       permit legacy v1 archives without hashes
 # ============================================================
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -44,8 +45,24 @@ STAGING="$(mktemp -d "${TMPDIR:-/tmp}/tl-restore-XXXXXX")"
 cleanup() { rm -rf "$STAGING"; }
 trap cleanup EXIT
 
+ARCHIVE_COPY="$STAGING/archive.tar.gz"
+log "Staging a private copy of $(basename "$FILE")..."
+cp -- "$FILE" "$ARCHIVE_COPY"
+
+VERIFY_ARGS=(verify-archive /restore/archive.tar.gz)
+if [ "${ALLOW_UNVERIFIED_BACKUP:-0}" = "1" ]; then
+    warn "ALLOW_UNVERIFIED_BACKUP=1 — legacy v1 payload hashes may be absent; path/type checks remain enforced"
+    VERIFY_ARGS+=(--allow-unverified-v1)
+fi
+log "Verifying archive structure, manifest, and component SHA-256 digests..."
+if ! compose run --rm --no-deps -T \
+    -v "$(host_path "$ARCHIVE_COPY"):/restore/archive.tar.gz:ro" \
+    backend python /app/scripts/ops_support.py "${VERIFY_ARGS[@]}"; then
+    die "backup integrity verification failed; no data was changed"
+fi
+
 log "Extracting $(basename "$FILE") ..."
-tar xzf "$FILE" -C "$STAGING"
+tar xzf "$ARCHIVE_COPY" -C "$STAGING" --no-same-owner --no-same-permissions
 
 MANIFEST="$STAGING/manifest.json"
 [ -f "$MANIFEST" ] || die "archive has no manifest.json — not a TestLookup backup?"
@@ -189,11 +206,13 @@ else
             echo ""
             echo "RESTORE VERDICT: DEGRADED — data restored but the smoke check failed."
             echo "Inspect: docker compose logs backend worker"
+            exit 1
         fi
     else
         echo ""
         echo "RESTORE VERDICT: FAIL — backend did not become ready within 300s."
         echo "Inspect: docker compose logs backend"
+        exit 1
     fi
 fi
 

@@ -92,13 +92,15 @@ APP_VERSION="$(cat "$REPO_ROOT/VERSION" 2>/dev/null | tr -d '[:space:]' || true)
 # POSIX-style -C argument would confuse native git on Windows.
 GIT_SHA="$( (cd "$REPO_ROOT" && git rev-parse HEAD) 2>/dev/null || echo unknown)"
 
-sha() {  # best-effort content hash per component
-    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else echo "unavailable"; fi
+command -v sha256sum >/dev/null 2>&1 ||
+    die "sha256sum is required to create a verifiable backup"
+sha() {
+    sha256sum "$1" | cut -d' ' -f1
 }
 
 cat > "$STAGING/manifest.json" <<EOF
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "app_version": "${APP_VERSION:-unknown}",
   "git_sha": "$GIT_SHA",
