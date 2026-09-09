@@ -108,6 +108,11 @@ async def test_semantic_indexers_skip_deleted_projects(indexer_name):
 
     db = SimpleNamespace(execute=execute)
     collection = MagicMock()
+    claim = None
+    if indexer_name == "index_test_cases":
+        async def claim(_db, base_query, _project_id):
+            captured.append(base_query)
+            return None
     with (
         patch.object(
             semantic_search,
@@ -115,6 +120,11 @@ async def test_semantic_indexers_skip_deleted_projects(indexer_name):
             AsyncMock(return_value=collection),
         ),
         patch.object(semantic_search, "_get_redis", return_value=MagicMock()),
+        patch.object(
+            semantic_search,
+            "_claim_full_reindex_job",
+            claim or semantic_search._claim_full_reindex_job,
+        ),
     ):
         assert await getattr(semantic_search, indexer_name)(db) == 0
 

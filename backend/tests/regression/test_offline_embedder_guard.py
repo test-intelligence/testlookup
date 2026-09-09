@@ -28,7 +28,9 @@ So the guards here are about the shape of the ceiling, not this one URL:
 from __future__ import annotations
 
 import inspect
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -315,7 +317,7 @@ async def _run_index(monkeypatch, func_name, *, blow_up_at_upsert=True):
         status = "FAILED"
         test_run_id = "22222222-2222-2222-2222-222222222222"
         project_id = "33333333-3333-3333-3333-333333333333"
-        created_at = None
+        created_at = datetime.now(timezone.utc)
         step_text = None
 
     class _Result:
@@ -323,7 +325,13 @@ async def _run_index(monkeypatch, func_name, *, blow_up_at_upsert=True):
             return [_Row()]
 
     class _DB:
+        calls = 0
         async def execute(self, *_a, **_k):
+            self.calls += 1
+            if func_name == "index_test_cases" and self.calls > 1:
+                result = _Result()
+                result.all = lambda: []
+                return result
             return _Result()
 
     async def _fake_collection():
@@ -339,6 +347,37 @@ async def _run_index(monkeypatch, func_name, *, blow_up_at_upsert=True):
         "_update_cursor",
         lambda rows, project_id=None: cursor_calls.append((rows, project_id)),
     )
+    if func_name == "index_test_cases":
+        monkeypatch.setattr(
+            search,
+            "_claim_full_reindex_job",
+            AsyncMock(return_value={
+                "scope_key": "global",
+                "job_id": "44444444-4444-4444-4444-444444444444",
+                "status": "running",
+                "high_water_created_at": _Row.created_at,
+                "high_water_id": _Row.id,
+                "cursor_created_at": None,
+                "cursor_id": None,
+                "processed_count": 0,
+                "lease_owner": "55555555-5555-5555-5555-555555555555",
+                "fence_token": 1,
+            }),
+        )
+        monkeypatch.setattr(search, "_renew_full_reindex_lease", AsyncMock())
+        monkeypatch.setattr(search, "_checkpoint_full_reindex_page", AsyncMock())
+        monkeypatch.setattr(
+            search,
+            "_mark_full_reindex_finalizing",
+            AsyncMock(side_effect=lambda _db, state: state.update(status="finalizing")),
+        )
+        monkeypatch.setattr(search, "_complete_full_reindex_job", AsyncMock())
+        monkeypatch.setattr(search, "_release_full_reindex_after_error", AsyncMock())
+        monkeypatch.setattr(
+            search,
+            "_update_cursor_from_values",
+            lambda last_id, project_id=None: cursor_calls.append((last_id, project_id)) or True,
+        )
     if blow_up_at_upsert:
         monkeypatch.setattr(search, "_upsert_rows_to_collection", _boom)
     else:

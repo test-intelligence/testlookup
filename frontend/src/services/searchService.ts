@@ -47,8 +47,12 @@ export const searchService = {
       { params: projectId ? { project_id: projectId } : {} },
     ),
 
-  triggerReindex: (projectId?: string) =>
-    postData<{ task_id: string; status: string }>('/api/v1/search/reindex', { project_id: projectId }),
+  triggerReindex: (projectId?: string, full = false) =>
+    postData<{ task_id: string; status: string }>(
+      '/api/v1/search/reindex',
+      undefined,
+      { params: { ...(projectId ? { project_id: projectId } : {}), full } },
+    ),
 
   findSimilar: (testCaseId: string, limit = 5) =>
     getData<{ items: SearchResult[]; total: number; query: string }>(`/api/v1/search/similar/${testCaseId}`, { params: { limit } }),

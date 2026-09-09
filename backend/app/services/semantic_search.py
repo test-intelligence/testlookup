@@ -46,18 +46,36 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.postgres import Project, TestCase, TestRun, TestStep
+from app.models.postgres import (
+    Project,
+    SemanticReindexJob,
+    TestCase,
+    TestRun,
+    TestStep,
+)
 
 logger = logging.getLogger("services.semantic_search")
 
 _COLLECTION_NAME = "test_case_search"
+_FULL_REINDEX_STATE_VERSION = 1
+_FULL_REINDEX_LEASE_DURATION = timedelta(minutes=2)
+
+
+class _FullReindexBusy(RuntimeError):
+    pass
+
+
+class _FullReindexOwnershipLost(RuntimeError):
+    pass
 
 
 def _step_text_subq():
@@ -269,6 +287,7 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
 
     For incremental indexing after ingestion, use `index_incremental` instead.
     """
+    canonical_project_id = str(uuid.UUID(str(project_id))) if project_id else None
     try:
         collection = await _get_or_create_collection()
     except Exception as exc:
@@ -278,7 +297,7 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
         logger.warning("ChromaDB unavailable — semantic indexing skipped: %s", exc)
         return None
 
-    q = select(
+    base_query = select(
         TestCase.id,
         TestCase.test_name,
         TestCase.suite_name,
@@ -292,16 +311,49 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
         Project, Project.id == TestRun.project_id
     ).where(Project.is_active.is_(True))
 
-    if project_id:
-        q = q.where(TestRun.project_id == project_id)
-
-    q = q.order_by(TestCase.created_at.asc(), TestCase.id.asc())
-    rows = (await db.execute(q)).all()
-    if not rows:
-        return 0
+    if canonical_project_id:
+        base_query = base_query.where(TestRun.project_id == canonical_project_id)
 
     try:
-        count = await _upsert_rows_to_collection(collection, rows)
+        state = await _claim_full_reindex_job(
+            db, base_query, canonical_project_id
+        )
+    except _FullReindexBusy:
+        logger.info("A semantic rebuild already owns scope %s", project_id or "global")
+        return None
+    except Exception as exc:
+        logger.warning("Could not initialize resumable semantic reindex: %s", exc)
+        return None
+    if state is None:
+        return 0
+
+    count = int(state["processed_count"])
+    batch_size = max(1, settings.SEARCH_INDEX_BATCH_SIZE)
+    try:
+        if state["status"] == "running":
+            while True:
+                await _renew_full_reindex_lease(db, state)
+                q = base_query.where(
+                    _at_or_before_keyset(
+                        state["high_water_created_at"], state["high_water_id"]
+                    )
+                )
+                if state["cursor_id"] is not None:
+                    q = q.where(
+                        _after_keyset(state["cursor_created_at"], state["cursor_id"])
+                    )
+                q = q.order_by(TestCase.created_at.asc(), TestCase.id.asc()).limit(
+                    batch_size
+                )
+                rows = list((await db.execute(q)).all())
+                if not rows:
+                    await _mark_full_reindex_finalizing(db, state)
+                    break
+                page_count = await _upsert_rows_to_collection(collection, rows)
+                count += page_count
+                await _checkpoint_full_reindex_page(
+                    db, state, rows[-1], count
+                )
     except Exception as exc:
         # Embeddings are computed at UPSERT, not at collection creation, so an
         # unavailable embedder surfaces here — outside the guard above. Verified
@@ -317,15 +369,260 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
         # path. Zero is reserved for the genuine "no rows to index" case a few
         # lines above; this is "could not index them", and the reindex task
         # reports the number back to whoever triggered it.
+        await _release_full_reindex_after_error(db, state, exc)
         logger.warning("Semantic indexing skipped — embeddings unavailable: %s", exc)
         return None
 
-    # Update cursor to the latest ID so incremental picks up from here
-    _update_cursor(rows, project_id)
+    if not _update_cursor_from_values(
+        str(state["high_water_id"]), canonical_project_id
+    ):
+        await _release_full_reindex_after_error(
+            db, state, RuntimeError("incremental cursor update failed")
+        )
+        return None
+    try:
+        await _complete_full_reindex_job(db, state)
+    except Exception as exc:
+        await _release_full_reindex_after_error(db, state, exc)
+        logger.warning("Could not finalize semantic rebuild: %s", exc)
+        return None
 
     logger.info("Full-indexed %d test cases into ChromaDB collection '%s'", count, _COLLECTION_NAME)
     await _publish_index_size(collection)
     return count
+
+
+def _full_reindex_scope(project_id: Optional[str]) -> str:
+    return f"project:{project_id}" if project_id else "global"
+
+
+def _after_keyset(created_at: datetime, row_id: uuid.UUID):
+    return or_(
+        TestCase.created_at > created_at,
+        and_(TestCase.created_at == created_at, TestCase.id > row_id),
+    )
+
+
+def _at_or_before_keyset(created_at: datetime, row_id: uuid.UUID):
+    return or_(
+        TestCase.created_at < created_at,
+        and_(TestCase.created_at == created_at, TestCase.id <= row_id),
+    )
+
+
+def _job_state(job: SemanticReindexJob) -> dict:
+    return {
+        "scope_key": job.scope_key,
+        "job_id": job.job_id,
+        "status": job.status,
+        "high_water_created_at": job.high_water_created_at,
+        "high_water_id": job.high_water_id,
+        "cursor_created_at": job.cursor_created_at,
+        "cursor_id": job.cursor_id,
+        "processed_count": job.processed_count,
+        "lease_owner": job.lease_owner,
+        "fence_token": job.fence_token,
+    }
+
+
+def _lease_is_live(expires_at: Optional[datetime], now: datetime) -> bool:
+    if expires_at is None:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at > now
+
+
+async def _claim_full_reindex_job(db, base_query, project_id):
+    """Create or lease one durable checkpoint, fencing every previous owner."""
+    scope_key = _full_reindex_scope(project_id)
+    project_uuid = uuid.UUID(str(project_id)) if project_id else None
+    owner = uuid.uuid4()
+
+    # A concurrent first insert can win after our SELECT. Retry once after its
+    # unique-key conflict, at which point the row lock decides ownership.
+    for attempt in range(2):
+        now = datetime.now(timezone.utc)
+        try:
+            result = await db.execute(
+                select(SemanticReindexJob)
+                .where(SemanticReindexJob.scope_key == scope_key)
+                .with_for_update()
+            )
+            job = result.scalar_one_or_none()
+            if (
+                job is not None
+                and job.status in {"running", "finalizing"}
+                and _lease_is_live(job.lease_expires_at, now)
+            ):
+                await db.rollback()
+                raise _FullReindexBusy(scope_key)
+
+            if job is None or job.status == "succeeded":
+                high_query = base_query.order_by(
+                    TestCase.created_at.desc(), TestCase.id.desc()
+                ).limit(1)
+                high_water = (await db.execute(high_query)).first()
+                if high_water is None:
+                    await db.rollback()
+                    return None
+                if job is None:
+                    job = SemanticReindexJob(
+                        scope_key=scope_key,
+                        project_id=project_uuid,
+                        state_version=_FULL_REINDEX_STATE_VERSION,
+                        high_water_created_at=high_water.created_at,
+                        high_water_id=high_water.id,
+                        lease_owner=owner,
+                        lease_expires_at=now + _FULL_REINDEX_LEASE_DURATION,
+                    )
+                    db.add(job)
+                else:
+                    job.job_id = uuid.uuid4()
+                    job.state_version = _FULL_REINDEX_STATE_VERSION
+                    job.status = "running"
+                    job.high_water_created_at = high_water.created_at
+                    job.high_water_id = high_water.id
+                    job.cursor_created_at = None
+                    job.cursor_id = None
+                    job.processed_count = 0
+                    job.lease_owner = owner
+                    job.lease_expires_at = now + _FULL_REINDEX_LEASE_DURATION
+                    job.fence_token += 1
+                    job.last_error = None
+                    job.started_at = now
+                    job.completed_at = None
+            else:
+                if job.state_version != _FULL_REINDEX_STATE_VERSION:
+                    await db.rollback()
+                    raise RuntimeError(
+                        f"unsupported semantic reindex state version: {job.state_version}"
+                    )
+                job.lease_owner = owner
+                job.lease_expires_at = now + _FULL_REINDEX_LEASE_DURATION
+                job.fence_token += 1
+                job.last_error = None
+
+            await db.commit()
+            return _job_state(job)
+        except IntegrityError:
+            await db.rollback()
+            if attempt:
+                raise
+    raise RuntimeError("could not claim semantic reindex job")
+
+
+async def _guarded_job_update(db, state, *, expected_status: str, values: dict) -> None:
+    values = {
+        **values,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    result = await db.execute(
+        update(SemanticReindexJob)
+        .where(
+            SemanticReindexJob.scope_key == state["scope_key"],
+            SemanticReindexJob.job_id == state["job_id"],
+            SemanticReindexJob.status == expected_status,
+            SemanticReindexJob.lease_owner == state["lease_owner"],
+            SemanticReindexJob.fence_token == state["fence_token"],
+        )
+        .values(**values)
+    )
+    if result.rowcount != 1:
+        await db.rollback()
+        raise _FullReindexOwnershipLost(state["scope_key"])
+    await db.commit()
+    state.update(values)
+
+
+async def _renew_full_reindex_lease(db, state) -> None:
+    await _guarded_job_update(
+        db,
+        state,
+        expected_status=state["status"],
+        values={
+            "lease_expires_at": datetime.now(timezone.utc)
+            + _FULL_REINDEX_LEASE_DURATION
+        },
+    )
+
+
+async def _checkpoint_full_reindex_page(db, state, last_row, count: int) -> None:
+    await _guarded_job_update(
+        db,
+        state,
+        expected_status="running",
+        values={
+            "cursor_created_at": last_row.created_at,
+            "cursor_id": last_row.id,
+            "processed_count": count,
+            "lease_expires_at": datetime.now(timezone.utc)
+            + _FULL_REINDEX_LEASE_DURATION,
+        },
+    )
+
+
+async def _mark_full_reindex_finalizing(db, state) -> None:
+    await _guarded_job_update(
+        db,
+        state,
+        expected_status="running",
+        values={
+            "status": "finalizing",
+            "lease_expires_at": datetime.now(timezone.utc)
+            + _FULL_REINDEX_LEASE_DURATION,
+        },
+    )
+
+
+async def _complete_full_reindex_job(db, state) -> None:
+    await _guarded_job_update(
+        db,
+        state,
+        expected_status="finalizing",
+        values={
+            "status": "succeeded",
+            "completed_at": datetime.now(timezone.utc),
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "last_error": None,
+        },
+    )
+
+
+async def _release_full_reindex_after_error(db, state, exc: Exception) -> None:
+    """Make a failed invocation immediately reclaimable without losing progress."""
+    try:
+        # A failed SELECT/driver call may have left the transaction aborted.
+        # Page progress was already committed separately, so rolling back here
+        # cannot erase a successful checkpoint.
+        await db.rollback()
+        await _guarded_job_update(
+            db,
+            state,
+            expected_status=state["status"],
+            values={
+                "lease_expires_at": datetime.now(timezone.utc),
+                "last_error": str(exc)[:500],
+            },
+        )
+    except Exception:
+        await db.rollback()
+
+
+def _update_cursor_from_values(last_id: str, project_id: Optional[str]) -> bool:
+    """Advance incremental indexing after a completed fixed-snapshot rebuild."""
+    try:
+        redis_client = _get_redis()
+        cursor_key, timestamp_key = _cursor_keys(project_id)
+        pipe = redis_client.pipeline(transaction=True)
+        pipe.set(cursor_key, last_id)
+        pipe.set(timestamp_key, datetime.now(timezone.utc).isoformat())
+        pipe.execute()
+        return True
+    except Exception:
+        logger.warning("Full reindex completed but incremental cursor update failed")
+        return False
 
 
 async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) -> int | None:
@@ -377,7 +674,9 @@ async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) 
     if last_id:
         q = q.where(_after_incremental_cursor(last_id))
 
-    q = q.order_by(TestCase.created_at.asc(), TestCase.id.asc()).limit(5000)
+    q = q.order_by(TestCase.created_at.asc(), TestCase.id.asc()).limit(
+        max(1, settings.SEARCH_INDEX_INCREMENTAL_LIMIT)
+    )
 
     rows = (await db.execute(q)).all()
     if not rows:
@@ -436,7 +735,7 @@ async def _upsert_rows_to_collection(
             "created_at": row.created_at.isoformat() if row.created_at else "",
         })
 
-    batch_size = 200
+    batch_size = max(1, settings.SEARCH_INDEX_BATCH_SIZE)
     for i in range(0, len(ids), batch_size):
         await asyncio.to_thread(
             collection.upsert,

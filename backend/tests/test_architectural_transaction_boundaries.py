@@ -78,6 +78,13 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
 # without team sign-off. Entry shape:
 #   "module.py": (max_commits, "reason")
 COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
+    "semantic_search.py": (
+        2,
+        "Outermost background projection owner: a semantic rebuild commits "
+        "each fenced checkpoint after its remote Chroma upsert, so a worker "
+        "loss replays at most one idempotent page. The final status transition "
+        "is committed separately for the same durable-resume contract.",
+    ),
     # ── Worker-owned transactions (Celery tasks) ─────────────────────
     "deletion_job_service.py": (
         2,

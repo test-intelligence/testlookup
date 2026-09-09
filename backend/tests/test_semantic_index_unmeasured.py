@@ -109,3 +109,14 @@ def test_reindex_task_reports_whether_the_count_is_real():
     source = inspect.getsource(tasks.reindex_search)
     assert '"indexing_measured": count is not None' in source
     assert '"indexed_count": count,' in source
+
+
+def test_full_reindex_operational_failure_enters_celery_retry_path():
+    """A durable full checkpoint is useful only if Celery resumes it."""
+    import inspect
+
+    from app.worker import tasks
+
+    source = inspect.getsource(tasks.reindex_search)
+    assert "if full and count is None:" in source
+    assert 'raise RuntimeError("full semantic reindex did not complete")' in source
