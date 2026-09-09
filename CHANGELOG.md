@@ -27,6 +27,23 @@ Deliberately not `⌘/Ctrl-K`: the search results page already binds that combo 
 its own input, so a second global handler would fight it there. The `/` handler
 is guarded so it never swallows a slash the user is actually typing into a
 field, textarea, contenteditable node, or select. Presentation-only.
+## 2026-09-06 — let the docs be read straight through
+
+The in-app documentation reader (`/docs`) had a sidebar that groups topics by
+area and an on-page table of contents, but no way to move to the *next* topic:
+grouping tells a reader what an area contains, never what comes after the page
+they are on. A self-hoster reading the guide front-to-back — the common
+first-read — had to return to the sidebar and hunt for the following topic after
+every page.
+
+Added a sequential Previous / Next pager at the foot of each topic, driven by a
+new pure `adjacentDocPages(id)` helper over `DOC_PAGES` (whose array order *is*
+the intended reading order: Start here → Using TestLookup → How it decides →
+Reference). The first topic shows no Previous and the last shows no Next; an
+unknown id yields no neighbours, so a fallback-to-default render simply omits the
+pager rather than linking nowhere. Presentation-only and additive — theme-token
+styled, navigates client-side, and keyed off the same manifest the sidebar and
+routing already use.
 
 ## 2026-09-05 — a rate limit is not a data error
 
