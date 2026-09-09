@@ -21,11 +21,12 @@ private target). These tests pin:
 """
 from __future__ import annotations
 
+import gzip
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-pytest.importorskip("httpx")
+httpx = pytest.importorskip("httpx")
 
 from app.services.connectors.base import ConnectorFetchError  # noqa: E402
 from app.services.connectors.url_connector import URLConnector  # noqa: E402
@@ -184,6 +185,32 @@ async def test_unknown_length_response_stops_after_limit_plus_one_chunk():
 
     with pytest.raises(ConnectorFetchError, match="Response too large"):
         await _read_response_bounded(ChunkedResponse())
+
+
+@pytest.mark.asyncio
+async def test_compressed_response_is_bounded_after_httpx_decompression():
+    """A small gzip wire payload must not expand beyond the decoded-byte cap."""
+    from app.services.connectors.url_connector import _MAX_RESPONSE_BYTES, _read_response_bounded
+
+    encoded = gzip.compress(b"x" * (_MAX_RESPONSE_BYTES + 1))
+    assert len(encoded) < _MAX_RESPONSE_BYTES
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={
+                "content-encoding": "gzip",
+                "content-length": str(len(encoded)),
+                "content-type": "text/plain",
+            },
+            content=encoded,
+            request=request,
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with client.stream("GET", "https://public.example/compressed") as response:
+            with pytest.raises(ConnectorFetchError, match="Response too large"):
+                await _read_response_bounded(response)
 
 
 @pytest.mark.asyncio
