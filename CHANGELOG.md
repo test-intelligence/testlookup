@@ -17,13 +17,11 @@ test *failed* (and its cleanup `finally` re-failed against the dead connection)
 instead of *skipping*, a false red for every developer and CI-adjacent run
 without a live broker.
 
-Each now probes reachability with a guarded `ping()` in its own `try/except`
-before the main `try/finally`, `pytest.skip`ping (and closing the client) on any
-connection error — the exact pattern the 2026-09-08 fix and every sibling
-integration test already use (e.g. `test_celery_visibility_redelivery`). Where
-Redis *is* live (CI) the tests run unchanged. Added a regression test to each
-file that patches the client factory so the probe raises and asserts the test
-skips rather than errors. Test-only.
+Each test now requires the explicit `TESTLOOKUP_RUN_REDIS_INTEGRATION=1` opt-in.
+The authoritative CI job sets that flag and treats missing, unreachable, or
+misconfigured Redis as a failure; ordinary local runs skip before connecting.
+This prevents local false reds without hiding authentication, protocol, or
+service failures in CI. Test-only.
 
 ## 2026-09-08 — real-Redis upload-status test skips instead of failing when Redis is down
 

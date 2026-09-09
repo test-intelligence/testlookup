@@ -692,9 +692,11 @@ async def test_worker_dlq_sanitizes_kwargs_error_and_log(monkeypatch, caplog):
 @pytest.mark.integration
 async def test_live_batch_persists_only_sanitized_evidence_in_real_redis(monkeypatch):
     """Exercise the actual Redis Stream and LIST serialization boundaries."""
+    if os.environ.get("TESTLOOKUP_RUN_REDIS_INTEGRATION") != "1":
+        pytest.skip("real Redis integration tests are not enabled")
     redis_url = os.environ.get("REDIS_URL", "").strip()
     if not redis_url:
-        pytest.skip("REDIS_URL is not configured")
+        pytest.fail("REDIS_URL must be configured for real Redis integration tests")
 
     redis_asyncio = pytest.importorskip("redis.asyncio")
     from app import streams
@@ -720,9 +722,9 @@ async def test_live_batch_persists_only_sanitized_evidence_in_real_redis(monkeyp
     client = redis_asyncio.Redis.from_url(redis_url, decode_responses=True)
     try:
         await client.ping()
-    except Exception as exc:  # pragma: no cover - environment gate
+    except Exception:
         await client.aclose()
-        pytest.skip(f"Redis unavailable: {type(exc).__name__}")
+        raise
     try:
         monkeypatch.setattr(producer, "get_redis", lambda: client)
         monkeypatch.setattr(stream_service, "get_redis", lambda: client)
@@ -1476,32 +1478,40 @@ async def test_legacy_redis_list_scrub_preserves_source_on_watched_change():
     assert all(not temp.startswith(f"{key}:m11-scrub:") for temp in redis.values)
 
 
+@pytest.mark.asyncio
+async def test_live_batch_real_redis_test_skips_without_explicit_opt_in(monkeypatch):
+    monkeypatch.delenv("TESTLOOKUP_RUN_REDIS_INTEGRATION", raising=False)
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    with pytest.raises(pytest.skip.Exception, match="not enabled"):
+        await test_live_batch_persists_only_sanitized_evidence_in_real_redis(
+            monkeypatch,
+        )
+
+
 class _PingFailsClient:
-    """Stand-in async Redis client whose reachability probe fails."""
+    def __init__(self):
+        self.closed = False
 
     async def ping(self):
         raise ConnectionError("no redis here")
 
     async def aclose(self):
-        return None
+        self.closed = True
 
 
 @pytest.mark.asyncio
-async def test_live_batch_real_redis_test_skips_when_redis_unreachable(monkeypatch):
-    """When REDIS_URL is set but Redis cannot be reached, the real-Redis
-    integration test must SKIP — not FAIL — mirroring the reachability guard
-    every sibling integration test uses (e.g. test_celery_visibility_redelivery).
-    Otherwise the documented health-check command (which sets REDIS_URL without
-    provisioning Redis) reports a false red.
-    """
+async def test_live_batch_real_redis_test_fails_when_opted_in_and_unreachable(
+    monkeypatch,
+):
     redis_asyncio = pytest.importorskip("redis.asyncio")
+    client = _PingFailsClient()
+    monkeypatch.setenv("TESTLOOKUP_RUN_REDIS_INTEGRATION", "1")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
-    monkeypatch.setattr(
-        redis_asyncio.Redis,
-        "from_url",
-        lambda *args, **kwargs: _PingFailsClient(),
-    )
-    with pytest.raises(pytest.skip.Exception, match="Redis unavailable"):
+    monkeypatch.setattr(redis_asyncio.Redis, "from_url", lambda *args, **kwargs: client)
+
+    with pytest.raises(ConnectionError, match="no redis here"):
         await test_live_batch_persists_only_sanitized_evidence_in_real_redis(
             monkeypatch,
         )
+
+    assert client.closed
