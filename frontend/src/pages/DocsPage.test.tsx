@@ -216,6 +216,10 @@ describe('rendering', () => {
   it('falls back to the default topic for an unknown id', () => {
     renderDocs('/docs/not-a-real-topic')
     expect(screen.getAllByRole('heading').length).toBeGreaterThan(0)
+    expect(
+      screen.queryByRole('navigation', { name: /documentation pages/i }),
+      'an invalid deep link must not acquire the default topic\'s neighbours',
+    ).toBeNull()
   })
 
   it('filters the navigation', () => {
@@ -263,13 +267,30 @@ describe('adjacentDocPages', () => {
 })
 
 describe('pager navigation', () => {
-  it('offers the next topic and moves to it client-side', () => {
-    renderDocs(`/docs/${DOC_PAGES[0].id}`)
-    const pager = screen.getByRole('navigation', { name: /documentation pages/i })
-    const next = within(pager).getByRole('button', { name: new RegExp(DOC_PAGES[1].label, 'i') })
-    fireEvent.click(next)
-    // The panel now shows the second topic — the group·summary line names it.
-    expect(screen.getByText(new RegExp(DOC_PAGES[1].summary.slice(0, 20), 'i'))).toBeInTheDocument()
+  it('offers the next topic, then focuses and scrolls to its article start', () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+    try {
+      renderDocs(`/docs/${DOC_PAGES[0].id}`)
+      scrollIntoView.mockClear()
+      focus.mockClear()
+
+      const pager = screen.getByRole('navigation', { name: /documentation pages/i })
+      const next = within(pager).getByRole('button', { name: new RegExp(DOC_PAGES[1].label, 'i') })
+      fireEvent.click(next)
+
+      // The panel now shows the second topic — the group·summary line names it.
+      expect(screen.getByText(new RegExp(DOC_PAGES[1].summary.slice(0, 20), 'i'))).toBeInTheDocument()
+      const article = screen.getByRole('article', { name: DOC_PAGES[1].label })
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+      expect(document.activeElement).toBe(article)
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'start' })
+    } finally {
+      focus.mockRestore()
+      // @ts-expect-error — restore jsdom's "not implemented" absence.
+      delete Element.prototype.scrollIntoView
+    }
   })
 
   it('offers previous and next on an interior topic', () => {
@@ -315,7 +336,7 @@ describe('in-content links', () => {
     // the browser's own load-time scroll misses it and the effect is needed.
     const heading = document.getElementById('suite-name-resolution')
     expect(heading, 'ingestion renders a heading with this id').not.toBeNull()
-    expect(scrollIntoView).toHaveBeenCalled()
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
   })
 
   it('lands a cross-page anchor click on the target section', () => {

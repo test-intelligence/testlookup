@@ -69,12 +69,9 @@ export const dayTimeAgo = (dayOnly?: string | null): string => {
  * Human duration for a millisecond count. '—' means *no value* (missing, NaN,
  * or an invalid negative from clock skew); a genuine zero renders '0ms', not
  * '—'. A test step that ran in under a millisecond has a KNOWN, instantaneous
- * duration — collapsing it into the same dash used for "unknown" told the
- * reader the step wasn't timed when it was (the old `if (!ms)` guard treated
- * `0` as falsy).
- */
-/**
- * Human-readable elapsed time, tiered so each scale drops the unit below the
+ * duration. Collapsing it into the same dash used for "unknown" told the
+ * reader the step wasn't timed when it was. Output is tiered so each scale
+ * drops the unit below the
  * noise floor: sub-second in ms, sub-minute as one-decimal seconds, sub-hour as
  * whole minutes + seconds, and an hour or more as whole hours + minutes.
  *

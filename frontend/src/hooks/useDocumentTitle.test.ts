@@ -8,12 +8,16 @@
  * updates on title change, and does NOT restore the previous title on unmount —
  * a restore would flash the base title between every navigation).
  */
-import { renderHook } from '@testing-library/react'
+import { act, renderHook } from '@testing-library/react'
+import { MemoryRouter, useNavigate } from 'react-router-dom'
+import { createElement, type PropsWithChildren } from 'react'
 import { describe, expect, it } from 'vitest'
 import {
   BASE_DOCUMENT_TITLE,
   formatDocumentTitle,
+  routeDocumentTitle,
   useDocumentTitle,
+  useRouteDocumentTitle,
 } from './useDocumentTitle'
 
 describe('formatDocumentTitle', () => {
@@ -54,5 +58,29 @@ describe('useDocumentTitle', () => {
     // No restore-on-unmount: the outgoing page keeps its title until the next
     // page's heading overwrites it, avoiding a base-title flash mid-navigation.
     expect(document.title).toBe('Flaky Coach · TestLookup')
+  })
+})
+
+describe('route document titles', () => {
+  it('covers static and dynamic routes that do not render PageHeader', () => {
+    expect(routeDocumentTitle('/overview')).toBe('Dashboard')
+    expect(routeDocumentTitle('/live')).toBe('Live Execution')
+    expect(routeDocumentTitle('/runs/run-1/tests/test-2')).toBe('Test Case')
+    expect(routeDocumentTitle('/unknown')).toBe(BASE_DOCUMENT_TITLE)
+  })
+
+  it('replaces a previous page title when navigation reaches a custom-header route', () => {
+    let navigate: ReturnType<typeof useNavigate>
+    const wrapper = ({ children }: PropsWithChildren) =>
+      createElement(MemoryRouter, { initialEntries: ['/failures'] }, children)
+    const { result } = renderHook(() => {
+      navigate = useNavigate()
+      useRouteDocumentTitle()
+      return navigate
+    }, { wrapper })
+
+    expect(document.title).toBe('Failure Analysis · TestLookup')
+    act(() => result.current('/live'))
+    expect(document.title).toBe('Live Execution · TestLookup')
   })
 })

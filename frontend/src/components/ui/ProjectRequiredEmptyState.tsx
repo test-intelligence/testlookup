@@ -24,6 +24,7 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { FolderOpen } from 'lucide-react'
 import EmptyState from './EmptyState'
+import { usePermissions } from '@/hooks/usePermissions'
 import { useProjectStore } from '@/store/projectStore'
 
 interface Props {
@@ -43,6 +44,7 @@ export default function ProjectRequiredEmptyState({ description, icon }: Props) 
   // component re-renders when it does.
   const projects = useProjectStore(s => s.projects)
   const setActiveProject = useProjectStore(s => s.setActiveProject)
+  const { canAccessManagement } = usePermissions()
 
   return (
     <EmptyState
@@ -50,13 +52,14 @@ export default function ProjectRequiredEmptyState({ description, icon }: Props) 
       title="Select a project"
       description={description}
       action={
-        <label className="flex flex-col items-center gap-1.5">
-          <span className="text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">
-            Choose one to continue
-          </span>
-          <select
-            aria-label="Choose a project to continue"
-            className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-sm rounded-lg px-3 py-1.5 min-w-[220px] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+        <div className="flex flex-col items-center gap-1.5">
+          <label className="flex flex-col items-center gap-1.5">
+            <span className="text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">
+              Choose one to continue
+            </span>
+            <select
+              aria-label="Choose a project to continue"
+              className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-sm rounded-lg px-3 py-1.5 min-w-[220px] focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
             // Always the placeholder: reaching this prompt means no single
             // project is pinned, so there is no current value to show.
             value=""
@@ -67,7 +70,7 @@ export default function ProjectRequiredEmptyState({ description, icon }: Props) 
               // would re-render this very prompt and read as a dead control.
               if (picked) setActiveProject(picked)
             }}
-          >
+            >
             <option value="" disabled>
               Pick a project…
             </option>
@@ -84,7 +87,8 @@ export default function ProjectRequiredEmptyState({ description, icon }: Props) 
                 {p.name}
               </option>
             ))}
-          </select>
+            </select>
+          </label>
           {/*
             The one dead end the picker above cannot resolve: an empty list.
             A picker of zero projects is the same "go find the control
@@ -100,7 +104,7 @@ export default function ProjectRequiredEmptyState({ description, icon }: Props) 
             never a false claim that the deployment has none, keeping the
             "claims neither loading nor empty" invariant intact.
           */}
-          {projects.length === 0 && (
+          {projects.length === 0 && canAccessManagement && (
             <Link
               to="/projects"
               className="text-xs text-[var(--color-accent)] hover:underline"
@@ -108,7 +112,12 @@ export default function ProjectRequiredEmptyState({ description, icon }: Props) 
               Create a project
             </Link>
           )}
-        </label>
+          {projects.length === 0 && !canAccessManagement && (
+            <span className="text-xs text-[var(--color-text-muted)]">
+              Ask a QA lead or administrator to create a project.
+            </span>
+          )}
+        </div>
       }
     />
   )

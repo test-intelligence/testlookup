@@ -20,10 +20,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const renderInRouter = (ui: ReactElement) => render(<MemoryRouter>{ui}</MemoryRouter>)
 
 const mocked = vi.hoisted(() => ({
+  canAccessManagement: true,
   state: {
     projects: [] as { id: string; name: string }[],
     setActiveProject: vi.fn(),
   },
+}))
+
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: () => ({ canAccessManagement: mocked.canAccessManagement }),
 }))
 
 vi.mock('@/store/projectStore', async importOriginal => {
@@ -41,6 +46,7 @@ const CHECKOUT = { id: 'p-1', name: 'Checkout' }
 const SEARCH = { id: 'p-2', name: 'Search' }
 
 beforeEach(() => {
+  mocked.canAccessManagement = true
   mocked.state.projects = [CHECKOUT, SEARCH]
   mocked.state.setActiveProject = vi.fn()
 })
@@ -128,5 +134,16 @@ describe('ProjectRequiredEmptyState', () => {
     renderInRouter(<ProjectRequiredEmptyState description="x" />)
 
     expect(screen.queryByRole('link', { name: 'Create a project' })).toBeNull()
+  })
+
+  it('gives users without management access a truthful next step', () => {
+    mocked.state.projects = []
+    mocked.canAccessManagement = false
+    renderInRouter(<ProjectRequiredEmptyState description="x" />)
+
+    expect(screen.queryByRole('link', { name: 'Create a project' })).toBeNull()
+    expect(
+      screen.getByText('Ask a QA lead or administrator to create a project.'),
+    ).toBeTruthy()
   })
 })

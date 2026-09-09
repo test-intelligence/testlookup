@@ -20,7 +20,7 @@
  * Routing: `/docs` shows the default page, `/docs/:docId` deep-links one. Both
  * are served by the SPA — the ingress sends the API reference to `/api-docs`.
  */
-import { isValidElement, useEffect, useMemo, useState } from 'react'
+import { isValidElement, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -306,11 +306,17 @@ export default function DocsPage() {
   const navigate = useNavigate()
   const { hash } = useLocation()
   const [filter, setFilter] = useState('')
+  const articleRef = useRef<HTMLElement>(null)
 
-  const active: DocPage = findDocPage(docId) ?? findDocPage(DEFAULT_DOC_ID) ?? DOC_PAGES[0]
+  const requested = findDocPage(docId)
+  const active: DocPage = requested ?? findDocPage(DEFAULT_DOC_ID) ?? DOC_PAGES[0]
   const source = DOC_SOURCES[active.id] ?? ''
   const toc = useMemo(() => headingsOf(source), [source])
-  const { prev, next } = adjacentDocPages(active.id)
+  // `/docs` intentionally uses the default topic's neighbours. An invalid
+  // deep link still renders that topic as a safe fallback, but has no pager:
+  // advancing from a URL that does not identify a real page would disguise the
+  // broken link instead of preserving the manifest helper's `{}` contract.
+  const { prev, next } = adjacentDocPages(docId === undefined || requested ? active.id : undefined)
 
   // Scroll a `#fragment` deep link onto its heading once the Markdown is in the
   // DOM. This is what makes a cross-page anchor (e.g. a link to
@@ -318,13 +324,26 @@ export default function DocsPage() {
   // section rather than the top of the page: the heading only gains its id
   // after React renders the content, which is too late for the browser's own
   // load-time scroll. Re-runs when the topic or the fragment changes, and stays
-  // a no-op in environments without `scrollIntoView` (jsdom).
+  // a no-op in environments without `scrollIntoView` (jsdom). A normal topic
+  // change has no fragment, so move focus and the app's scrolling `<main>` back
+  // to the article start; otherwise clicking Next at the footer would leave the
+  // reader at the bottom of the newly rendered topic.
   useEffect(() => {
     const id = decodeURIComponent(hash.replace(/^#/, ''))
-    if (!id) return
-    const el = document.getElementById(id)
-    if (el && typeof el.scrollIntoView === 'function') {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (id) {
+      const el = document.getElementById(id)
+      if (el && typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+      return
+    }
+
+    const article = articleRef.current
+    if (article) {
+      article.focus({ preventScroll: true })
+      if (typeof article.scrollIntoView === 'function') {
+        article.scrollIntoView({ behavior: 'auto', block: 'start' })
+      }
     }
   }, [hash, active.id, source])
 
@@ -434,7 +453,7 @@ export default function DocsPage() {
               </details>
             )}
 
-            <article aria-label={active.label}>
+            <article ref={articleRef} tabIndex={-1} aria-label={active.label}>
               {source ? (
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
                   {source}

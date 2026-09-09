@@ -6,6 +6,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useWebVitals } from '@/hooks/useWebVitals'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useRouteDocumentTitle } from '@/hooks/useDocumentTitle'
 import LoginPage from '@/pages/LoginPage'
 import ResetPasswordPage from '@/pages/ResetPasswordPage'
 
@@ -296,6 +297,7 @@ function ManagementGuard({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   useWebVitals()
+  useRouteDocumentTitle()
 
   return (
     <Routes>
