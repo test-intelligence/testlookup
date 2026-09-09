@@ -1,5 +1,75 @@
 # Changelog
 
+## 2026-09-09 — an Activity tab: every project member can now see what happened in their project
+
+`/activity` is a new project-scoped feed of everything that happens inside a
+project — runs received and completed, release decisions, quarantine
+transitions, and configuration changes — readable by **any member of the
+project**, not just a QA lead.
+
+**The gap it closes.** TestLookup already recorded some of this, but across four
+unrelated audit tables read through one QA_LEAD-only Settings page. Measured on
+`main` at df246f7f and confirmed against the running deployment:
+
+- 21 of the 26 surveyed mutation routers carried no audit call in the router
+  file (three of those are audited in their service layer, so 21 is an upper
+  bound on the gap, not the gap).
+- **Test runs emitted no lifecycle event of any kind** beyond their own row in
+  `test_runs` — the most frequent thing that happens in a project left no trace,
+  so "did last night's run even arrive?" had no page that answered it.
+- `/settings/audit` cannot serve this need: every endpoint is
+  `require_role(QA_LEAD)`, `query_unified_audit` takes `page_size` rows *per
+  source* and merges them so `page` is accepted and ignored (page 2 does not
+  exist), and its live first page was roughly 60% `ws_connect`/`ws_disconnect`
+  pairs and duplicated scheduler purges.
+- Quarantine actions were audited into `settings_audit_log`, which has **no
+  project column**, so the unified query omits them entirely for any non-ADMIN
+  caller: the lead who quarantined a test could see it and the engineer who owns
+  the test could not.
+
+**What was built.** One append-only table (`project_activity_events`, migration
+0165) with keyset indexes on `(occurred_at DESC, id DESC)` and a GIN trigram
+index over `summary`; a 98-event frozen registry; one write path
+(`services/activity/service.record`) that holds four invariants in one place —
+registered event, write-time redaction, per-event durability, and never failing
+the mutation it describes; a cursor-paginated read API under
+`require_project_access` with `project_id` on the **path**; and the feed page
+with filters, a detail drawer, and CSV/NDJSON export (QA_LEAD+).
+
+**The compliance tables are untouched.** `access_audit_logs`,
+`settings_audit_log`, `test_case_audit_logs` and `identity_events` keep their
+role and their retention guarantees. The ledger is a derived read surface that
+links back to them via `source_table` / `source_id`.
+
+**Three things it deliberately does not do.** There is no `project.deleted`
+event — the table cascades on project delete, so the row would vanish with the
+thing it records; that event stays in `access_audit_logs`, whose FK is ON DELETE
+SET NULL. There is no backfill, so the UI states each project's ledger start
+date rather than letting an empty older window read as "nothing happened". And
+no `ws_*` or `heartbeat*` name may ever be registered — a test enforces it,
+because connection churn ranked alongside a role change is what made the
+existing dashboard unreadable.
+
+### Two bugs found in existing code while building this
+
+**`redaction_service` leaked `client_secret`.** `SENSITIVE_KEYS` is matched
+**exactly**, so `client_secret` was never covered by `secret` and passed through
+every caller of `redact_dict` — including the audit dashboard, which redacts
+with the same function. Found by a parameterised leak test over five secret key
+names. Added the OAuth/integration secret names.
+
+**Five activity events would have been silently dropped.** They were registered
+outcome-mode but recorded with no session, so `record()` would drop and count
+each one while the producers looked correctly wired. Two tests now guard that
+class of bug, and the second exists because the first was not enough: a static
+AST scan of every `record()` call site initially passed **vacuously** over the
+quarantine mirror — whose `event_type` comes from a mapping rather than a
+literal — while the live bug sat in that very file. The scan now records
+computed sites as a sentinel and requires them to be covered behaviourally
+instead; the behavioural tests assert a row actually lands for each of the four
+quarantine actions, and are mutation-verified.
+
+
 ## 2026-09-09 — two more real-Redis regression tests skip instead of failing when Redis is down
 
 The 2026-09-08 fix added a reachability guard to one real-Redis integration

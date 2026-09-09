@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
-  BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList, FileText,
+  Activity, BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList, FileText,
   FolderTree, Gauge, GitBranch, HeartPulse, Inbox, Layers, LayoutDashboard,
   BookOpen, MessageSquare, Network, Package, Radio, Rocket, Search, Settings, Shield,
   ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, Upload, UsersRound, UserCircle2,
@@ -65,6 +65,7 @@ const GROUPS: NavGroup[] = [
       { to: '/trends',          icon: TrendingUp,  label: 'Trends'     },
       { to: '/defects',         icon: Gauge,       label: 'Defects'    },
       { to: '/search',          icon: Search,      label: 'Search'     },
+      { to: '/activity',        icon: Activity,    label: 'Activity'   },
       { to: '/test-management', icon: ClipboardList, label: 'Test Cases' },
     ],
   },

@@ -39,11 +39,15 @@ describe('routeScope', () => {
     expect(routeScope('/a-page-that-does-not-exist')).toBe('any')
   })
 
-  it('names the six pages that gate on All Projects and no others', () => {
+  it('names the seven pages that gate on All Projects and no others', () => {
     // A literal list, so widening the registry is a decision someone makes
     // rather than a side effect. The ratchet test proves this list matches the
     // code; this one proves it matches intent.
     expect(singleProjectRoutes()).toEqual([
+      // /activity joined in the Activity ledger epic (ACT): a feed of "what
+      // happened" has no meaning across a tenant, so the page renders the
+      // project picker prompt in All Projects mode.
+      '/activity',
       '/flaky-coach',
       '/settings/api-keys',
       '/settings/github',
