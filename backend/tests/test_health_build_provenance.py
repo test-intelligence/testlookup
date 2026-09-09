@@ -3,13 +3,17 @@
 A self-host operator hitting ``GET /health/details`` should be able to see
 exactly which commit + build the running container is — the ``build`` block
 carries ``revision`` (git SHA) and ``built_at`` (build timestamp), injected
-at image-build time (backend/Dockerfile ARGs, wired from release.yml).
+at image-build time (backend/Dockerfile ARGs, wired from CI).
 
 These are network-free unit tests: the pure ``build_provenance`` helper is
 exercised directly, and ``health_details`` is awaited with its dependency
 probes monkeypatched so no live services are required.
 """
 from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
 
 from app.core.config import settings
 from app.routers import health
@@ -110,3 +114,27 @@ async def test_health_details_includes_build_block(monkeypatch):
         "revision": "deadbeef",
         "built_at": "2026-07-01T00:00:00Z",
     }
+
+
+def test_ci_backend_image_receives_exact_build_provenance():
+    root = Path(__file__).resolve().parents[2]
+    workflow = yaml.safe_load(
+        (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["build-images"]["steps"]
+    provenance = next(step for step in steps if step.get("id") == "build-provenance")
+    backend_build = next(step for step in steps if step.get("id") == "build-backend")
+
+    assert "date -u +'%Y-%m-%dT%H:%M:%SZ'" in provenance["run"]
+    assert "$GITHUB_OUTPUT" in provenance["run"]
+    build_args = backend_build["with"]["build-args"]
+    assert "BUILD_REVISION=${{ github.sha }}" in build_args
+    assert (
+        "BUILD_DATE=${{ steps.build-provenance.outputs.build_date }}" in build_args
+    )
+
+    dockerfile = (root / "backend/Dockerfile").read_text(encoding="utf-8")
+    assert 'ARG BUILD_REVISION=""' in dockerfile
+    assert 'ARG BUILD_DATE=""' in dockerfile
+    assert "BUILD_REVISION=$BUILD_REVISION" in dockerfile
+    assert "BUILD_DATE=$BUILD_DATE" in dockerfile

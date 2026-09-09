@@ -11,8 +11,7 @@ name: testlookup
 #
 # Usage:
 #   docker compose -f docker-compose.dev-lite.yml up -d --build
-#   docker compose -f docker-compose.dev-lite.yml exec backend \
-#       alembic upgrade head
+# The one-shot db-migrate service applies the schema before the API starts.
 # ============================================================
 
 services:
@@ -147,6 +146,30 @@ services:
     networks:
       - testlookup_lite_net
 
+  db-migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      - PG_PROCESS_ROLE=operation
+      - PG_PROCESSES_PER_POD=1
+      - PG_POOL_SIZE=1
+      - PG_MAX_OVERFLOW=0
+      - POSTGRES_HOST=postgres
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - testlookup_lite_net
+
   backend:
     build:
       context: ./backend
@@ -187,8 +210,8 @@ services:
       - CHROMA_HOST=localhost
       - CHROMA_PORT=8001
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
       mongo:
         condition: service_healthy
       redis:

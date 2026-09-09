@@ -8,6 +8,10 @@ name: testlookup
 # avoids bind mounts, and keeps resource-heavy services optional.
 
 services:
+  db-migrate:
+    build:
+      target: production
+
   backend:
     build:
       target: production

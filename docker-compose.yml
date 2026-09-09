@@ -248,6 +248,32 @@ services:
   # APPLICATION LAYER
   # ──────────────────────────────────────────────────────────
 
+  db-migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      - PG_PROCESS_ROLE=operation
+      - PG_PROCESSES_PER_POD=1
+      - PG_POOL_SIZE=1
+      - PG_MAX_OVERFLOW=0
+      - POSTGRES_HOST=postgres
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
+    depends_on:
+      db-budget-check:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    networks:
+      - testlookup_net
+
   backend:
     build:
       context: ./backend
@@ -255,17 +281,6 @@ services:
       target: development
     container_name: testlookup_backend
     restart: unless-stopped
-    # Retry migration until PostgreSQL is fully ready (handles timing on fresh machines)
-    command: >
-      sh -c "
-        echo 'Waiting for database…';
-        until alembic upgrade head; do
-          echo 'Migration failed — retrying in 5s…';
-          sleep 5;
-        done;
-        echo 'Migrations complete. Starting server…';
-        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-      "
     ports:
       - "8000:8000"
     volumes:
@@ -306,7 +321,7 @@ services:
       # The development stack has one ingestion worker on the legacy queue.
       - LIVE_INGEST_SHARD_COUNT=0
     depends_on:
-      db-budget-check:
+      db-migrate:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy

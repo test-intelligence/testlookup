@@ -242,7 +242,16 @@ kubectl -n testlookup create secret generic testlookup-secrets \
     --from-literal=MINIO_SECRET_KEY="$(openssl rand -base64 18 | tr -d '=/+')" \
     --from-literal=WEBHOOK_SECRET="$(openssl rand -hex 32)"
 
+backend_image="<registry>/testlookup/backend:<bundle-version>"
+had_backend=0
+if kubectl -n testlookup get deployment testlookup-backend >/dev/null 2>&1; then
+    had_backend=1
+    bash ./run-k8s-migrations.sh testlookup "$backend_image"
+fi
 kubectl apply -f k8s/testlookup-airgap.rendered.yaml
+if [ "$had_backend" -eq 0 ]; then
+    bash ./run-k8s-migrations.sh testlookup "$backend_image"
+fi
 kubectl -n testlookup rollout status deploy/testlookup-backend --timeout=300s
 ```
 
@@ -263,6 +272,7 @@ Everything from 6b, plus:
 
 ```bash
 oc adm policy add-scc-to-user anyuid -z default -n testlookup
+# Run the Kubernetes sequence above with KCLI=oc and oc in place of kubectl.
 ```
 
 The stock infra images (postgres, mongo, MinIO, nginx) run as fixed UIDs and

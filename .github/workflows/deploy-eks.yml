@@ -25,6 +25,8 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
@@ -39,19 +41,9 @@ jobs:
           set -euo pipefail
           gh run download "${{ needs.verify.outputs.ci_run_id }}" --name "${{ needs.verify.outputs.artifact_name }}" --dir verified-images
           python3 scripts/release/release_manifest.py validate --manifest verified-images/release-manifest.json --expected-source-sha "${{ needs.verify.outputs.source_sha }}"
-          python3 scripts/release/release_manifest.py materialize --manifest verified-images/release-manifest.json --destination-prefix "ghcr.io/${GITHUB_REPOSITORY}" --output verified-images/deployment-manifest.json
+          python3 scripts/release/release_manifest.py materialize --manifest verified-images/release-manifest.json --destination-prefix "ghcr.io/${GITHUB_REPOSITORY_OWNER}" --output verified-images/deployment-manifest.json
       - uses: imranismail/setup-kustomize@v3
         with:
           kustomize-version: "5.4.2"
-      - name: Apply only digest-pinned images
-        run: |
-          set -euo pipefail
-          cd k8s/overlays/aws-eks
-          kustomize edit set image testlookup/backend="$(jq -r '.destination_refs.backend' ../../../verified-images/deployment-manifest.json)" testlookup/frontend="$(jq -r '.destination_refs.frontend' ../../../verified-images/deployment-manifest.json)" testlookup/mcp="$(jq -r '.destination_refs.mcp' ../../../verified-images/deployment-manifest.json)"
-          cd ../../..
-          bash scripts/prepare-live-fanout-cutover.sh testlookup
-          cd k8s/overlays/aws-eks
-          kubectl apply -k .
-          kubectl -n testlookup rollout status deployment/testlookup-backend --timeout=300s
-          kubectl -n testlookup rollout status deployment/testlookup-mcp --timeout=300s
-          kubectl -n testlookup rollout status deployment/testlookup-frontend --timeout=180s
+      - name: Migrate, then deploy only digest-pinned images
+        run: bash scripts/deploy-k8s.sh --cloud=aws --release-manifest=verified-images/deployment-manifest.json

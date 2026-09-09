@@ -15,6 +15,8 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
@@ -38,4 +40,4 @@ jobs:
           for component in backend frontend mcp; do crane copy "$(jq -r ".images.$component.source_ref" verified-images/release-manifest.json)" "${{ secrets.GCP_AR_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_AR_REPOSITORY }}/testlookup/$component@$(jq -r ".images.$component.source_ref" verified-images/release-manifest.json | cut -d@ -f2)"; done
           python3 scripts/release/release_manifest.py materialize --manifest verified-images/release-manifest.json --destination-prefix "${{ secrets.GCP_AR_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_AR_REPOSITORY }}" --output verified-images/deployment-manifest.json
       - name: Deploy digest-pinned release
-        run: scripts/deploy-k8s.sh --cloud=gcp --release-manifest=verified-images/deployment-manifest.json
+        run: bash scripts/deploy-k8s.sh --cloud=gcp --release-manifest=verified-images/deployment-manifest.json
