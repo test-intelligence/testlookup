@@ -957,17 +957,10 @@ async def test_broker_outage_preserves_and_recovers_every_run_operation_once(
             return_value=SimpleNamespace(status_code=200, text="accepted")
         )
 
-        class _HttpClient:
-            async def __aenter__(self):
-                return SimpleNamespace(post=webhook_post)
-
-            async def __aexit__(self, *_args):
-                return False
-
         monkeypatch.setattr(
-            webhook_service.httpx,
-            "AsyncClient",
-            lambda **_kwargs: _HttpClient(),
+            webhook_service,
+            "get_public_http_client",
+            lambda: SimpleNamespace(post=webhook_post),
         )
         monkeypatch.setattr(tasks.deliver_webhook, "delay", Mock())
         running_loop = asyncio.get_running_loop()
