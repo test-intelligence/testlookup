@@ -93,7 +93,7 @@ async def test_server_side_app_limit_preserves_operations_and_migration() -> Non
                 assert (await connection.execute(text("SELECT 1"))).scalar_one() == 1
 
         await held.pop().close()
-        recovered = await excess.connect()
+        recovered = await engines[1].connect()
         await recovered.close()
     finally:
         for connection in held:
