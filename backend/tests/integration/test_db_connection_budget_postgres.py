@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 
+import asyncpg
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -73,7 +73,10 @@ async def test_server_side_app_limit_preserves_operations_and_migration() -> Non
 
         excess = create_async_engine(app_url, poolclass=NullPool)
         engines.append(excess)
-        with pytest.raises(DBAPIError, match="too many connections|connection limit"):
+        with pytest.raises(
+            asyncpg.TooManyConnectionsError,
+            match="too many connections|connection limit",
+        ):
             await excess.connect()
 
         for role, application_name in (
