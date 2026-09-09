@@ -22,7 +22,7 @@ from app.core.scim_errors import (
     scim_validation_exception_handler,
 )
 from app.db.mongo import close_mongo, ensure_indexes as ensure_mongo_indexes
-from app.db.postgres import close_db
+from app.db.postgres import close_db, verify_server_connection_budget
 from app.db.redis_client import close_redis
 
 # ── Structured logging ────────────────────────────────────────
@@ -83,6 +83,10 @@ async def lifespan(app: FastAPI):
             f"Refusing to start in {settings.APP_ENV} with {len(critical_warnings)} critical "
             f"security issue(s): {'; '.join(critical_warnings)}"
         )
+
+    if settings.APP_ENV == "production":
+        capacity = await verify_server_connection_budget()
+        logger.info("PostgreSQL fleet connection budget verified", **capacity)
 
     # Ensure MongoDB indexes exist — centralized spec lives in app/db/mongo.py
     # so new collections/lookups only need to be registered in one place.

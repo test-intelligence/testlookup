@@ -12,6 +12,17 @@ data:
   POSTGRES_PORT: "5432"
   POSTGRES_DB: "testlookup"
   POSTGRES_USER: "testlookup_user"
+  # Fleet-wide PostgreSQL contract. External/managed databases must report at
+  # least this SHOW max_connections value before a production rollout.
+  PG_FLEET_MAX_CONNECTIONS: "400"
+  PG_FLEET_OPERATIONAL_RESERVE: "50"
+  PG_FLEET_SUPERUSER_RESERVED_CONNECTIONS: "3"
+  PG_FLEET_RESERVED_CONNECTIONS: "0"
+  # A cold scale from zero can start all eight API pods concurrently; every
+  # pre-Gunicorn Alembic process holds one NullPool connection while waiting
+  # for the advisory migration lock.
+  PG_FLEET_MIGRATION_CONNECTIONS: "8"
+  PG_FLEET_REQUIRED_CONNECTIONS: "280"
   MONGO_HOST: "testlookup-mongo"
   MONGO_PORT: "27017"
   MONGO_DB: "testlookup_logs"

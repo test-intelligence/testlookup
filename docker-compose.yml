@@ -28,6 +28,7 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    command: ["postgres", "-c", "max_connections=${PG_FLEET_MAX_CONNECTIONS:-400}"]
     container_name: testlookup_postgres
     restart: unless-stopped
     environment:
@@ -53,6 +54,28 @@ services:
           memory: 512M
     networks:
       - testlookup_net
+
+  db-budget-check:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    command: python -m app.db.compose_budget_gate
+    restart: "no"
+    environment:
+      PG_API_PROCESSES_PER_POD: "1"
+      PG_API_POOL_SIZE: ${PG_API_POOL_SIZE:-2}
+      PG_API_MAX_OVERFLOW: ${PG_API_MAX_OVERFLOW:-1}
+      CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-4}
+      CELERY_CHILDREN_CONCURRENCY: "1"
+      PG_WORKER_POOL_SIZE: ${PG_WORKER_POOL_SIZE:-1}
+      PG_WORKER_MAX_OVERFLOW: ${PG_WORKER_MAX_OVERFLOW:-1}
+      PG_FLEET_MAX_CONNECTIONS: ${PG_FLEET_MAX_CONNECTIONS:-400}
+      PG_FLEET_OPERATIONAL_RESERVE: ${PG_FLEET_OPERATIONAL_RESERVE:-50}
+      PG_FLEET_SUPERUSER_RESERVED_CONNECTIONS: ${PG_FLEET_SUPERUSER_RESERVED_CONNECTIONS:-3}
+      PG_FLEET_RESERVED_CONNECTIONS: ${PG_FLEET_RESERVED_CONNECTIONS:-0}
+      PG_FLEET_MIGRATION_CONNECTIONS: "1"
+      PG_FLEET_REQUIRED_CONNECTIONS: ${PG_COMPOSE_REQUIRED_CONNECTIONS:-14}
 
   mongo:
     image: mongo:7
@@ -254,6 +277,16 @@ services:
     env_file:
       - .env
     environment:
+      - PG_PROCESS_ROLE=api
+      - PG_PROCESSES_PER_POD=1
+      - PG_POOL_SIZE=${PG_API_POOL_SIZE:-2}
+      - PG_MAX_OVERFLOW=${PG_API_MAX_OVERFLOW:-1}
+      - PG_FLEET_MAX_CONNECTIONS=${PG_FLEET_MAX_CONNECTIONS:-400}
+      - PG_FLEET_OPERATIONAL_RESERVE=${PG_FLEET_OPERATIONAL_RESERVE:-50}
+      - PG_FLEET_SUPERUSER_RESERVED_CONNECTIONS=${PG_FLEET_SUPERUSER_RESERVED_CONNECTIONS:-3}
+      - PG_FLEET_RESERVED_CONNECTIONS=${PG_FLEET_RESERVED_CONNECTIONS:-0}
+      - PG_FLEET_MIGRATION_CONNECTIONS=1
+      - PG_FLEET_REQUIRED_CONNECTIONS=${PG_COMPOSE_REQUIRED_CONNECTIONS:-14}
       - POSTGRES_HOST=postgres
       - MONGO_HOST=mongo
       - MINIO_ENDPOINT=minio:9000
@@ -271,6 +304,8 @@ services:
       - APP_ENV=${APP_ENV:-production}
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
     depends_on:
+      db-budget-check:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       mongo:
@@ -311,6 +346,10 @@ services:
     env_file:
       - .env
     environment:
+      - PG_PROCESS_ROLE=worker
+      - PG_PROCESSES_PER_POD=${CELERY_CONCURRENCY:-4}
+      - PG_POOL_SIZE=${PG_WORKER_POOL_SIZE:-1}
+      - PG_MAX_OVERFLOW=${PG_WORKER_MAX_OVERFLOW:-1}
       - POSTGRES_HOST=postgres
       - MONGO_HOST=mongo
       - MINIO_ENDPOINT=minio:9000
@@ -355,6 +394,10 @@ services:
     env_file:
       - .env
     environment:
+      - PG_PROCESS_ROLE=worker
+      - PG_PROCESSES_PER_POD=1
+      - PG_POOL_SIZE=${PG_WORKER_POOL_SIZE:-1}
+      - PG_MAX_OVERFLOW=${PG_WORKER_MAX_OVERFLOW:-1}
       - POSTGRES_HOST=postgres
       - MONGO_HOST=mongo
       - MINIO_ENDPOINT=minio:9000

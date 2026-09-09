@@ -6,7 +6,7 @@ import pytest
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("environment", "expected_size", "expected_overflow"),
-    [("development", 5, 10), ("staging", 15, 30), ("production", 40, 100)],
+        [("development", 5, 10), ("staging", 15, 30), ("production", 2, 1)],
 )
 async def test_search_config_publishes_engine_pool_defaults(
     monkeypatch,

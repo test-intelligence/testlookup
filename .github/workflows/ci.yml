@@ -523,6 +523,7 @@ jobs:
           tests/integration/test_search_statement_cache_postgres.py
           tests/integration/test_search_count_shortcut_postgres.py
           tests/integration/test_test_case_lifecycle_postgres.py
+          tests/integration/test_db_connection_budget_postgres.py
           tests/integration/test_decision_report_supersession_postgres_mongo.py
           tests/integration/test_protected_artifact_cascade_postgres.py
           tests/integration/test_purge_executor_against_real_postgres.py
@@ -681,7 +682,10 @@ jobs:
           for overlay in base overlays/dev overlays/staging overlays/prod overlays/homelab overlays/openshift overlays/openshift-artifactory overlays/aws-eks overlays/gcp-gke overlays/azure-aks overlays/self-hosted; do
             safe_name="${overlay//\//-}"
             kustomize build "../k8s/${overlay}" > "/tmp/${safe_name}.yaml"
+            python ../scripts/validate_db_connection_budget.py --manifest "/tmp/${safe_name}.yaml"
           done
+          python ../scripts/validate_db_connection_budget.py --compose ../docker-compose.yml
+          python ../scripts/validate_db_connection_budget.py --compose ../docker-compose.release.yml
           python - <<'PY'
           from pathlib import Path
           import yaml

@@ -11,6 +11,11 @@ metadata:
     queue: agent_children
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: testlookup-worker-children
@@ -63,6 +68,14 @@ spec:
             - secretRef:
                 name: testlookup-secrets
           env:
+            - name: PG_PROCESS_ROLE
+              value: worker
+            - name: PG_PROCESSES_PER_POD
+              value: "1"
+            - name: PG_POOL_SIZE
+              value: "1"
+            - name: PG_MAX_OVERFLOW
+              value: "1"
             - name: PROMETHEUS_MULTIPROC_DIR
               value: /tmp/prometheus-multiproc
             # Keep the embedding weights on the mounted cache below rather than

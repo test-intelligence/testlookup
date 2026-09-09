@@ -29,6 +29,7 @@ original signature.
 from functools import lru_cache
 from typing import Any, AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -43,22 +44,16 @@ class Base(DeclarativeBase):
 def _pool_size() -> int:
     if settings.PG_POOL_SIZE is not None:
         return settings.PG_POOL_SIZE
-    # Production default bumped from 20 → 40 in 2026-05-16 (Phase 2.3 of
-    # the scalable-ingestion redesign). At 500 concurrent live runs with
-    # 5 sessions per ``finalize_run``, a single worker needs ~40
-    # connections in its pool to avoid pool-checkout queueing. The 8
-    # Celery shards × 40 = 320 aggregate worker connections; PG
-    # ``max_connections`` should be ≥ 500 with headroom. See
-    # docs/SCALABLE_INGESTION_DESIGN.md § Phase 2.
-    return {"development": 5, "staging": 15, "production": 40}.get(settings.APP_ENV, 5)
+    # A pool is created per Gunicorn/Celery child, so a large process-local
+    # default multiplies into a connection storm during HPA scale-out. Keep
+    # the safe fallback small; deployment manifests set this explicitly.
+    return {"development": 5, "staging": 15, "production": 2}.get(settings.APP_ENV, 5)
 
 
 def _max_overflow() -> int:
     if settings.PG_MAX_OVERFLOW is not None:
         return settings.PG_MAX_OVERFLOW
-    # Bumped 50 → 100 alongside the pool-size change so a burst can
-    # temporarily exceed steady-state without ``QueuePool limit`` errors.
-    return {"development": 10, "staging": 30, "production": 100}.get(settings.APP_ENV, 10)
+    return {"development": 10, "staging": 30, "production": 1}.get(settings.APP_ENV, 10)
 
 
 def get_effective_pool_config() -> dict[str, int]:
@@ -70,37 +65,74 @@ def get_effective_pool_config() -> dict[str, int]:
     }
 
 
-# Phase 2.3 — minimum recommended pool sizing per process. A worker
-# whose effective pool is smaller than this should log a warning at
-# startup so the operator sees it before the system hits load. The
-# values are derived from "5 sessions per finalize_run × ~10 concurrent
-# finalizes per worker = 50 connections" — slightly below the
-# production default so dev/staging don't false-alarm.
-_RECOMMENDED_MIN_POOL_FOR_INGESTION_WORKERS = 30
-
-
-def warn_if_pool_undersized_for_ingestion() -> None:
-    """Emit a structured warning when the configured pool is too small
-    for the Phase-2 ingestion targets. Called once at process startup
-    by ``bootstrap.py`` so the warning lands in container logs at the
-    moment the size mismatch matters."""
-    import structlog as _sl
-    log = _sl.get_logger("db.pool")
-    effective = _pool_size() + _max_overflow()
-    if effective < _RECOMMENDED_MIN_POOL_FOR_INGESTION_WORKERS:
-        log.warning(
-            "pg_pool_undersized_for_ingestion",
-            effective_pool_capacity=effective,
-            pool_size=_pool_size(),
-            max_overflow=_max_overflow(),
-            recommended_min=_RECOMMENDED_MIN_POOL_FOR_INGESTION_WORKERS,
-            note=(
-                "Under Phase 2 ingestion load (500 concurrent live runs), "
-                "this pool will queue checkouts and slow finalize_run. "
-                "Set PG_POOL_SIZE / PG_MAX_OVERFLOW env vars or run "
-                "in production-mode for the auto-tuned defaults."
-            ),
+def evaluate_server_connection_budget(
+    *, server_max: int, superuser_reserved: int, reserved: int, role_limit: int
+) -> dict[str, int]:
+    """Compare measured PostgreSQL limits with the rendered fleet contract."""
+    server_usable = (
+        server_max
+        - superuser_reserved
+        - reserved
+        - settings.PG_FLEET_OPERATIONAL_RESERVE
+    )
+    usable = min(server_usable, role_limit) if role_limit >= 0 else server_usable
+    required = settings.PG_FLEET_REQUIRED_CONNECTIONS
+    errors = []
+    if server_max < settings.PG_FLEET_MAX_CONNECTIONS:
+        errors.append(
+            f"server max_connections={server_max} is below declared "
+            f"PG_FLEET_MAX_CONNECTIONS={settings.PG_FLEET_MAX_CONNECTIONS}"
         )
+    if required > usable:
+        errors.append(
+            f"fleet requires {required} connections but actual usable capacity is {usable} "
+            f"after {superuser_reserved} superuser, {reserved} reserved, and "
+            f"{settings.PG_FLEET_OPERATIONAL_RESERVE} operational reserved slots"
+        )
+    if errors:
+        raise RuntimeError("PostgreSQL connection budget rejected: " + "; ".join(errors))
+    return {
+        "server_max": server_max,
+        "superuser_reserved": superuser_reserved,
+        "reserved": reserved,
+        "role_limit": role_limit,
+        "usable": usable,
+        "required": required,
+    }
+
+
+async def verify_server_connection_budget() -> dict[str, int]:
+    """Fail production startup when the real PostgreSQL capacity is too small.
+
+    Static manifest validation proves the declared topology. This query closes
+    the other half of the contract for managed databases, where a ConfigMap
+    cannot prove the server's actual ``max_connections`` or role limit.
+    """
+    async with get_engine().connect() as connection:
+        server_max = int((await connection.execute(text("SHOW max_connections"))).scalar_one())
+        superuser_reserved = int(
+            (await connection.execute(text("SHOW superuser_reserved_connections"))).scalar_one()
+        )
+        reserved = int(
+            (
+                await connection.execute(
+                    text("SELECT COALESCE(current_setting('reserved_connections', true), '0')")
+                )
+            ).scalar_one()
+        )
+        role_limit = int(
+            (
+                await connection.execute(
+                    text("SELECT rolconnlimit FROM pg_roles WHERE rolname = current_user")
+                )
+            ).scalar_one()
+        )
+    return evaluate_server_connection_budget(
+        server_max=server_max,
+        superuser_reserved=superuser_reserved,
+        reserved=reserved,
+        role_limit=role_limit,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -120,6 +152,11 @@ def get_engine() -> AsyncEngine:
         max_overflow=pool["max_overflow"],
         pool_recycle=pool["pool_recycle"],
         pool_timeout=settings.PG_POOL_TIMEOUT,
+        connect_args={
+            "server_settings": {
+                "application_name": f"testlookup-{settings.PG_PROCESS_ROLE}",
+            }
+        },
     )
 
 
