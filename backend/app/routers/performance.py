@@ -39,5 +39,13 @@ async def get_search_config(
         "pg_pool_size": pool["pool_size"],
         "pg_max_overflow": pool["max_overflow"],
         "pg_pool_recycle": pool["pool_recycle"],
+        "pg_process_role": settings.PG_PROCESS_ROLE,
+        "pg_processes_per_pod": settings.PG_PROCESSES_PER_POD,
+        "pg_fleet_max_connections": settings.PG_FLEET_MAX_CONNECTIONS,
+        "pg_fleet_operational_reserve": settings.PG_FLEET_OPERATIONAL_RESERVE,
+        "pg_fleet_superuser_reserved_connections": settings.PG_FLEET_SUPERUSER_RESERVED_CONNECTIONS,
+        "pg_fleet_reserved_connections": settings.PG_FLEET_RESERVED_CONNECTIONS,
+        "pg_fleet_migration_connections": settings.PG_FLEET_MIGRATION_CONNECTIONS,
+        "pg_fleet_required_connections": settings.PG_FLEET_REQUIRED_CONNECTIONS,
         "celery_worker_concurrency": settings.CELERY_WORKER_CONCURRENCY,
     }

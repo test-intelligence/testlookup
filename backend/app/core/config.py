@@ -93,11 +93,24 @@ class Settings(BaseSettings):
     CELERY_WORKER_CONCURRENCY: int = 4          # Set to 16-32 in production for 100+ concurrent users
 
     # ── Performance / Scalability tunables ────────────────────
-    # PostgreSQL pool (None = auto-size by environment)
-    PG_POOL_SIZE: Optional[int] = None          # dev=5, staging=15, prod=20
-    PG_MAX_OVERFLOW: Optional[int] = None       # dev=10, staging=30, prod=50
-    PG_POOL_RECYCLE: int = 1800                 # seconds — recycle idle connections
-    PG_POOL_TIMEOUT: int = 30                   # seconds — wait for available connection
+    # PostgreSQL pool. These limits apply to *each OS process*. Production
+    # manifests set them explicitly because Gunicorn and every Celery prefork
+    # child own an independent SQLAlchemy pool.
+    PG_POOL_SIZE: Optional[int] = Field(default=None, ge=1)
+    PG_MAX_OVERFLOW: Optional[int] = Field(default=None, ge=0)
+    PG_POOL_RECYCLE: int = Field(default=1800, ge=1)
+    PG_POOL_TIMEOUT: int = Field(default=30, ge=1)
+    PG_PROCESS_ROLE: Literal["api", "worker", "operation"] = "operation"
+    PG_PROCESSES_PER_POD: int = Field(default=1, ge=1)
+    # Fleet contract used by deployment validation and operator diagnostics.
+    # PG_FLEET_MAX_CONNECTIONS must match SHOW max_connections on an external
+    # production database before rollout.
+    PG_FLEET_MAX_CONNECTIONS: int = Field(default=400, ge=1)
+    PG_FLEET_OPERATIONAL_RESERVE: int = Field(default=50, ge=1)
+    PG_FLEET_SUPERUSER_RESERVED_CONNECTIONS: int = Field(default=3, ge=0)
+    PG_FLEET_RESERVED_CONNECTIONS: int = Field(default=0, ge=0)
+    PG_FLEET_MIGRATION_CONNECTIONS: int = Field(default=8, ge=1)
+    PG_FLEET_REQUIRED_CONNECTIONS: int = Field(default=280, ge=1)
 
     # MongoDB pool
     MONGO_MAX_POOL_SIZE: int = 50

@@ -24,6 +24,11 @@ metadata:
     queue: critical
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: testlookup-worker-critical
@@ -86,6 +91,14 @@ spec:
             - secretRef:
                 name: testlookup-secrets
           env:
+            - name: PG_PROCESS_ROLE
+              value: worker
+            - name: PG_PROCESSES_PER_POD
+              value: "2"
+            - name: PG_POOL_SIZE
+              value: "1"
+            - name: PG_MAX_OVERFLOW
+              value: "1"
             # prometheus_client multiprocess mode. Prefork children each keep a
             # private registry, so the parent serving /metrics would otherwise
             # publish only its own view of the worker. Children write metric
@@ -191,6 +204,11 @@ metadata:
     queue: ingestion
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: testlookup-worker-ingestion
@@ -262,6 +280,14 @@ spec:
             - secretRef:
                 name: testlookup-secrets
           env:
+            - name: PG_PROCESS_ROLE
+              value: worker
+            - name: PG_PROCESSES_PER_POD
+              value: "4"
+            - name: PG_POOL_SIZE
+              value: "1"
+            - name: PG_MAX_OVERFLOW
+              value: "1"
             # prometheus_client multiprocess mode. Prefork children each keep a
             # private registry, so the parent serving /metrics would otherwise
             # publish only its own view of the worker. Children write metric
@@ -380,6 +406,11 @@ metadata:
     queue: ai_analysis
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: testlookup-worker-ai
@@ -434,6 +465,14 @@ spec:
             - secretRef:
                 name: testlookup-secrets
           env:
+            - name: PG_PROCESS_ROLE
+              value: worker
+            - name: PG_PROCESSES_PER_POD
+              value: "2"
+            - name: PG_POOL_SIZE
+              value: "1"
+            - name: PG_MAX_OVERFLOW
+              value: "1"
             # prometheus_client multiprocess mode. Prefork children each keep a
             # private registry, so the parent serving /metrics would otherwise
             # publish only its own view of the worker. Children write metric
@@ -537,6 +576,11 @@ metadata:
     queue: default
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: testlookup-worker-default
@@ -594,6 +638,14 @@ spec:
             - secretRef:
                 name: testlookup-secrets
           env:
+            - name: PG_PROCESS_ROLE
+              value: worker
+            - name: PG_PROCESSES_PER_POD
+              value: "4"
+            - name: PG_POOL_SIZE
+              value: "1"
+            - name: PG_MAX_OVERFLOW
+              value: "1"
             # prometheus_client multiprocess mode. Prefork children each keep a
             # private registry, so the parent serving /metrics would otherwise
             # publish only its own view of the worker. Children write metric

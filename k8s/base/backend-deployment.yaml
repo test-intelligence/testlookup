@@ -46,6 +46,14 @@ spec:
           env:
             - name: APP_ENV
               value: "production"
+            - name: PG_PROCESS_ROLE
+              value: api
+            - name: PG_PROCESSES_PER_POD
+              value: "4"
+            - name: PG_POOL_SIZE
+              value: "2"
+            - name: PG_MAX_OVERFLOW
+              value: "1"
             # The API creates ChromaDB collections too (chat, semantic
             # search), so it faces the same 79 MB weight download. Keep it
             # on the mounted cache rather than $HOME, which is discarded on
