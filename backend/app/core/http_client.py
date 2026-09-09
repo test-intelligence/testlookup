@@ -24,8 +24,9 @@ TLS precedence:
 """
 from __future__ import annotations
 
-import logging
 import asyncio
+import logging
+import ssl
 from typing import Optional, Union
 
 import httpx
@@ -37,6 +38,8 @@ logger = logging.getLogger(__name__)
 _warned_insecure = False
 _shared_client: Optional[httpx.AsyncClient] = None
 _shared_loop: Optional[asyncio.AbstractEventLoop] = None
+_public_client: Optional[httpx.AsyncClient] = None
+_public_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def http_verify() -> Union[bool, str]:
@@ -56,6 +59,18 @@ def http_verify() -> Union[bool, str]:
         return False
 
     return True
+
+
+def public_http_verify() -> Union[bool, ssl.SSLContext]:
+    """Build TLS trust explicitly so disabling proxy env does not drop custom CAs."""
+    verify = http_verify()
+    if verify is False:
+        return False
+    if isinstance(verify, str):
+        return ssl.create_default_context(cafile=verify)
+    # create_default_context honors the platform store and SSL_CERT_FILE while
+    # HTTPX's trust_env remains disabled for proxy routing.
+    return ssl.create_default_context()
 
 
 def get_http_client() -> httpx.AsyncClient:
@@ -102,18 +117,59 @@ def get_http_client() -> httpx.AsyncClient:
     return _shared_client
 
 
+def get_public_http_client() -> httpx.AsyncClient:
+    """Return a pooled client that can connect only to validated public peers."""
+    global _public_client, _public_loop
+    from app.services.url_safety import PublicOnlyAsyncHTTPTransport
+
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+    loop_changed = (
+        current_loop is not None
+        and _public_loop is not None
+        and current_loop is not _public_loop
+    )
+    if _public_client is None or _public_client.is_closed or loop_changed:
+        limits = httpx.Limits(
+            max_connections=100,
+            max_keepalive_connections=20,
+            keepalive_expiry=60.0,
+        )
+        _public_client = httpx.AsyncClient(
+            transport=PublicOnlyAsyncHTTPTransport(
+                verify=public_http_verify(),
+                limits=limits,
+            ),
+            trust_env=False,
+            follow_redirects=False,
+            timeout=httpx.Timeout(30.0, connect=10.0),
+        )
+        _public_loop = current_loop
+        logger.debug("http_client.public_client_created")
+    return _public_client
+
+
 async def close_http_client() -> None:
     """Close the shared client on application shutdown.
 
     Safe to call more than once. Called from the FastAPI lifespan handler
     so that in-flight requests drain cleanly before the process exits.
     """
-    global _shared_client
+    global _shared_client, _public_client
     if _shared_client is not None and not _shared_client.is_closed:
         try:
             await _shared_client.aclose()
         except Exception as exc:  # noqa: BLE001
             logger.debug("http_client.close_failed error=%s", exc)
     _shared_client = None
-    global _shared_loop
+    if _public_client is not None and not _public_client.is_closed:
+        try:
+            await _public_client.aclose()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("http_client.public_close_failed error=%s", exc)
+    _public_client = None
+    global _shared_loop, _public_loop
     _shared_loop = None
+    _public_loop = None

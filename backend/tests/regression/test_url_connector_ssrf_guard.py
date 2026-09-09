@@ -78,7 +78,7 @@ def _client_returning(responses):
         async def __aexit__(self, *exc):
             return False
 
-        def stream(self, method, url, headers=None):
+        def stream(self, method, url, headers=None, **kwargs):
             requested.append(url)
             return _StreamContext(queue.pop(0))
 
@@ -98,7 +98,7 @@ def _client_returning(responses):
 @pytest.mark.asyncio
 async def test_initial_url_to_private_target_is_blocked_without_fetching(url):
     spy = AsyncMock()
-    with patch("httpx.AsyncClient", spy):
+    with patch("app.services.connectors.url_connector.get_public_http_client", spy):
         with pytest.raises(ConnectorFetchError, match="unsafe URL"):
             await URLConnector().fetch_content(url)
     # The guard runs before any client is constructed → no network at all.
@@ -120,7 +120,7 @@ async def test_redirect_to_private_target_is_blocked_on_the_hop():
     def _guard(u):
         return (False, "private") if "169.254" in u else (True, "")
 
-    with patch("httpx.AsyncClient", lambda *a, **k: client), \
+    with patch("app.services.connectors.url_connector.get_public_http_client", return_value=client), \
          patch("app.services.connectors.url_connector.is_safe_public_url", _guard):
         with pytest.raises(ConnectorFetchError, match="unsafe URL"):
             await URLConnector().fetch_content("https://public.example/start")
@@ -132,7 +132,7 @@ async def test_redirect_to_private_target_is_blocked_on_the_hop():
 @pytest.mark.asyncio
 async def test_scheme_block_still_fires_first():
     spy = AsyncMock()
-    with patch("httpx.AsyncClient", spy):
+    with patch("app.services.connectors.url_connector.get_public_http_client", spy):
         with pytest.raises(ConnectorFetchError, match="not allowed"):
             await URLConnector().fetch_content("file:///etc/passwd")
     spy.assert_not_called()
@@ -149,7 +149,7 @@ async def test_public_single_hop_fetch_succeeds():
     client, requested = _client_returning([ok])
 
     # is_safe_public_url is patched to allow (avoid a real DNS lookup in CI).
-    with patch("httpx.AsyncClient", lambda *a, **k: client), \
+    with patch("app.services.connectors.url_connector.get_public_http_client", return_value=client), \
          patch(
              "app.services.connectors.url_connector.is_safe_public_url",
              lambda _u: (True, ""),
@@ -193,7 +193,7 @@ async def test_redirect_response_body_is_not_buffered():
     final = _FakeResp(status_code=200, headers={"content-type": "text/plain"}, text="ok")
     client, requested = _client_returning([redirect, final])
 
-    with patch("httpx.AsyncClient", lambda *a, **k: client), \
+    with patch("app.services.connectors.url_connector.get_public_http_client", return_value=client), \
          patch("app.services.connectors.url_connector.is_safe_public_url", lambda _u: (True, "")):
         result = await URLConnector().fetch_content("https://public.example/start")
 

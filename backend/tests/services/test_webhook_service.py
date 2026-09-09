@@ -479,7 +479,7 @@ async def test_deliver_respects_zero_retry_budget(
         "to_thread",
         AsyncMock(return_value=(True, "public target")),
     )
-    monkeypatch.setattr(svc.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(svc, "get_public_http_client", lambda: _Client())
 
     async def _apply_transition(
         _db,
@@ -570,7 +570,7 @@ async def test_stale_worker_cannot_record_success_or_increment_subscription(monk
         "to_thread",
         AsyncMock(return_value=(True, "public target")),
     )
-    monkeypatch.setattr(svc.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(svc, "get_public_http_client", lambda: _Client())
     monkeypatch.setattr(svc, "_transition_processing_delivery", transition)
 
     result = await svc.deliver(delivery.id)
@@ -743,7 +743,7 @@ async def test_deliver_does_not_send_unsigned_when_configured_secret_is_missing(
         AsyncMock(return_value=(True, "public target")),
     )
     monkeypatch.setattr(secret_service, "read_secret", AsyncMock(return_value=None))
-    monkeypatch.setattr(svc.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(svc, "get_public_http_client", lambda: _Client())
     terminalize = AsyncMock(return_value=True)
     monkeypatch.setattr(svc, "_mark_delivery_failed", terminalize)
 

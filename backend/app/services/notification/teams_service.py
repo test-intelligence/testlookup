@@ -1,4 +1,5 @@
 """Microsoft Teams notifications via incoming webhooks (Adaptive Cards)."""
+
 import logging
 
 
@@ -88,11 +89,13 @@ def _build_adaptive_card(
     actions = []
     dashboard_url = metadata.get("dashboard_url")
     if dashboard_url and dashboard_url != "#":
-        actions.append({
-            "type": "Action.OpenUrl",
-            "title": "View in Dashboard",
-            "url": dashboard_url,
-        })
+        actions.append(
+            {
+                "type": "Action.OpenUrl",
+                "title": "View in Dashboard",
+                "url": dashboard_url,
+            }
+        )
 
     card: dict = {
         "type": "AdaptiveCard",
@@ -130,12 +133,17 @@ async def send_notification(
     meta = metadata or {}
     payload = _build_adaptive_card(title, body, event_type, meta)
 
-    from app.core.http_client import get_http_client
-    client = get_http_client()
-    request_kwargs = {"json": payload, "timeout": 10.0}
-    if delivery_id:
-        request_kwargs["headers"] = {"X-TestLookup-Delivery": delivery_id}
-    response = await client.post(webhook_url, **request_kwargs)
+    from app.core.http_client import get_public_http_client
+
+    client = get_public_http_client()
+    headers = {"X-TestLookup-Delivery": delivery_id} if delivery_id else None
+    response = await client.post(
+        webhook_url,
+        json=payload,
+        headers=headers,
+        timeout=10.0,
+        follow_redirects=False,
+    )
     response.raise_for_status()
 
     logger.info("Teams notification sent — event=%s", event_type)

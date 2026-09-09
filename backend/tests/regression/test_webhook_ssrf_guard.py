@@ -7,8 +7,8 @@ Bug pinned (review/webhook-service, 2026-06-01):
 at ``http://169.254.169.254/`` (cloud metadata), ``http://127.0.0.1/`` (internal
 app endpoints), or any private host — SSRF + response exfiltration. Fix: an
 ``_is_safe_public_url`` guard rejects targets resolving to non-public addresses,
-enforced at create/update (422) and at delivery time (FAILED, no POST). Hosts
-that don't resolve are allowed (no SSRF reach; the POST fails naturally).
+enforced at create/update (422) and at delivery time (FAILED, no POST). DNS
+failure is denied because the destination cannot be proved public.
 """
 from __future__ import annotations
 
@@ -44,14 +44,15 @@ def test_unsafe_targets_are_blocked(url):
 @pytest.mark.parametrize(
     "url",
     [
-        "https://example.com/hooks",   # public, resolves
-        "https://old.example/hook",    # reserved TLD → NXDOMAIN → allowed
-        "https://example.test/hook",   # reserved TLD → NXDOMAIN → allowed
+        "https://old.example/hook",
+        "https://example.test/hook",
     ],
 )
-def test_public_or_unresolvable_targets_allowed(url):
-    safe, _ = svc._is_safe_public_url(url)
-    assert safe is True, f"{url} must be allowed (public or non-reachable)"
+def test_unresolvable_targets_are_blocked(url):
+    with patch("socket.getaddrinfo", side_effect=OSError("not found")):
+        safe, reason = svc._is_safe_public_url(url)
+    assert safe is False
+    assert "resolution failed" in reason
 
 
 @pytest.mark.asyncio
@@ -126,10 +127,11 @@ async def test_deliver_blocks_unsafe_target_without_posting():
 
     with patch.object(svc, "AsyncSessionLocal", lambda: _FakeDB()), \
          patch.object(svc, "_post_allowed", AsyncMock(return_value=True)), \
-         patch("httpx.AsyncClient.post", post_spy):
+         patch.object(svc, "get_public_http_client") as client_factory:
         result = await svc.deliver(delivery.id)
 
     post_spy.assert_not_called()           # never egressed
+    client_factory.assert_not_called()
     assert result.get("error") == "blocked_unsafe_target"
     assert delivery.status == "FAILED"
     assert "non-public address" in (delivery.error or "")

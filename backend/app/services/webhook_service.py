@@ -38,19 +38,22 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-import httpx
 import structlog
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.http_client import get_public_http_client
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import Project, User, WebhookDelivery, WebhookSubscription
 # SSRF guard lives in the shared ``url_safety`` module (reused by the URL
 # knowledge connector). Aliased to the historical private name so the
 # create/update/delivery call sites + their regression tests stay stable.
-from app.services.url_safety import is_safe_public_url as _is_safe_public_url
+from app.services.url_safety import (
+    is_safe_public_url as _is_safe_public_url,
+    is_unsafe_target_error,
+)
 
 logger = structlog.get_logger("services.webhook")
 
@@ -994,15 +997,20 @@ async def deliver(
             return {"skipped": "stale_dispatch_token"}
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    subscription.target_url,
-                    content=body,
-                    headers=headers,
-                )
+            resp = await get_public_http_client().post(
+                subscription.target_url,
+                content=body,
+                headers=headers,
+                timeout=10.0,
+                follow_redirects=False,
+            )
         except Exception as exc:
             error = f"{type(exc).__name__}: {str(exc)[:1800]}"
-            should_retry = _has_retry_budget(attempt_count, subscription.max_retries)
+            blocked_unsafe = is_unsafe_target_error(exc)
+            should_retry = (
+                not blocked_unsafe
+                and _has_retry_budget(attempt_count, subscription.max_retries)
+            )
             now_failed = datetime.now(timezone.utc)
             next_dispatch_at = (
                 now_failed
@@ -1015,7 +1023,9 @@ async def deliver(
                 delivery_id=delivery.id,
                 dispatch_token=active_dispatch_token,
                 delivery_values={
-                    "status": "PENDING" if should_retry else "DLQ",
+                    "status": (
+                        "FAILED" if blocked_unsafe else "PENDING" if should_retry else "DLQ"
+                    ),
                     "error": error,
                     "dispatch_token": None,
                     "dispatch_lease_expires_at": None,
@@ -1035,6 +1045,8 @@ async def deliver(
                 event_type=delivery.event_type,
                 result="retry" if should_retry else "failure",
             ).inc()
+            if blocked_unsafe:
+                return {"error": "blocked_unsafe_target", "reason": str(exc)}
             return {"retry": should_retry, "error": str(exc)}
 
         response_preview = (resp.text or "")[:2000]

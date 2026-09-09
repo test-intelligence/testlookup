@@ -1,4 +1,5 @@
 """URL knowledge connector — fetches content from internal/external URLs via HTTP."""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,13 +10,13 @@ from urllib.parse import urljoin
 import httpx
 import structlog
 
-from app.core.http_client import http_verify as _http_verify
+from app.core.http_client import get_public_http_client
 from app.services.connectors.base import (
     ConnectorFetchError,
     FetchedContent,
     KnowledgeConnectorBase,
 )
-from app.services.url_safety import is_safe_public_url
+from app.services.url_safety import is_safe_public_url, is_unsafe_target_error
 from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
@@ -40,6 +41,7 @@ async def _assert_fetchable(url: str) -> None:
     public host can't 30x us into cloud metadata / a private service.
     """
     from app.services.rag_redaction_service import validate_url_scheme
+
     try:
         validate_url_scheme(url)
     except ValueError as exc:
@@ -104,54 +106,65 @@ class URLConnector(KnowledgeConnectorBase):
             # hop must pass the SSRF guard *before* we request it — automatic
             # following would issue those requests for us, defeating the guard.
             async with asyncio.timeout(float(settings.KNOWLEDGE_SYNC_TIMEOUT_SECONDS)):
-                async with httpx.AsyncClient(
-                    # Per-hop budget for the hand-walked redirect chain.
-                    timeout=float(settings.KNOWLEDGE_SYNC_TIMEOUT_SECONDS),
-                    follow_redirects=False,
-                    verify=_http_verify(),
-                ) as client:
-                    current = url
-                    for _hop in range(_MAX_REDIRECTS + 1):
-                        async with client.stream(
-                            "GET",
-                            current,
-                            headers={
-                                "User-Agent": "TestLookup-KnowledgeSync/1.0",
-                                "Accept": "text/html, text/plain, application/json, */*",
-                            },
-                        ) as resp:
-                            location = resp.headers.get("location")
-                            if resp.is_redirect and location:
-                                nxt = urljoin(current, location)
-                                await _assert_fetchable(nxt)  # re-resolve every hop
-                                current = nxt
-                                continue
+                client = get_public_http_client()
+                current = url
+                for _hop in range(_MAX_REDIRECTS + 1):
+                    async with client.stream(
+                        "GET",
+                        current,
+                        timeout=float(settings.KNOWLEDGE_SYNC_TIMEOUT_SECONDS),
+                        headers={
+                            "User-Agent": "TestLookup-KnowledgeSync/1.0",
+                            "Accept": "text/html, text/plain, application/json, */*",
+                        },
+                    ) as resp:
+                        location = resp.headers.get("location")
+                        if resp.is_redirect and location:
+                            nxt = urljoin(current, location)
+                            await _assert_fetchable(nxt)  # re-resolve every hop
+                            current = nxt
+                            continue
 
-                            if resp.status_code == 401 or resp.status_code == 403:
-                                raise ConnectorFetchError(f"Access denied to URL ({resp.status_code}): {url}")
-                            if resp.status_code == 404:
-                                raise ConnectorFetchError(f"URL not found (404): {url}")
-                            resp.raise_for_status()
+                        if resp.status_code == 401 or resp.status_code == 403:
+                            raise ConnectorFetchError(
+                                f"Access denied to URL ({resp.status_code}): {url}"
+                            )
+                        if resp.status_code == 404:
+                            raise ConnectorFetchError(f"URL not found (404): {url}")
+                        resp.raise_for_status()
 
-                            content_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
-                            raw_body = await _read_response_bounded(resp)
-                            encoding = resp.encoding or "utf-8"
-                            body = raw_body.decode(encoding, errors="replace")
-                            content_length = len(raw_body)
-                        break
-                    else:
-                        raise ConnectorFetchError(
-                            f"Too many redirects (>{_MAX_REDIRECTS}) fetching URL: {url}"
+                        content_type = (
+                            resp.headers.get("content-type", "")
+                            .split(";")[0]
+                            .strip()
+                            .lower()
                         )
+                        raw_body = await _read_response_bounded(resp)
+                        encoding = resp.encoding or "utf-8"
+                        body = raw_body.decode(encoding, errors="replace")
+                        content_length = len(raw_body)
+                    break
+                else:
+                    raise ConnectorFetchError(
+                        f"Too many redirects (>{_MAX_REDIRECTS}) fetching URL: {url}"
+                    )
 
         except ConnectorFetchError:
             raise
         except (httpx.TimeoutException, TimeoutError):
             raise ConnectorFetchError(f"Timeout fetching URL: {url}", retryable=True)
         except httpx.HTTPStatusError as exc:
-            raise ConnectorFetchError(f"HTTP error {exc.response.status_code} for URL: {url}")
+            raise ConnectorFetchError(
+                f"HTTP error {exc.response.status_code} for URL: {url}"
+            )
         except Exception as exc:
-            raise ConnectorFetchError(f"Failed to fetch URL {url}: {exc}", retryable=True)
+            if is_unsafe_target_error(exc):
+                raise ConnectorFetchError(
+                    f"Refusing to fetch unsafe URL: {url}"
+                ) from exc
+            raise ConnectorFetchError(
+                f"Failed to fetch URL {url}: {exc}", retryable=True
+            )
 
         # Extract text based on content type
         if content_type == "text/html" or "<html" in body[:500].lower():
@@ -188,10 +201,13 @@ def _html_to_text(html: str, url: str) -> str:
     """Convert HTML page to clean text."""
     try:
         from bs4 import BeautifulSoup
+
         soup = BeautifulSoup(html, "html.parser")
 
         # Remove script, style, nav, footer, header elements
-        for tag in soup.find_all(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
+        for tag in soup.find_all(
+            ["script", "style", "nav", "footer", "header", "aside", "noscript"]
+        ):
             tag.decompose()
 
         # Try to find main content area
@@ -211,7 +227,9 @@ def _html_to_text(html: str, url: str) -> str:
 def _regex_strip_html(html: str) -> str:
     """Fallback HTML tag stripper when BeautifulSoup is not available."""
     # Remove script and style blocks
-    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(
+        r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL | re.IGNORECASE
+    )
     # Replace block tags with newlines
     text = re.sub(r"</(p|h[1-6]|li|tr|div|br)>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
