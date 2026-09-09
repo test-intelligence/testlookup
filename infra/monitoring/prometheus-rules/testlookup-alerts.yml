@@ -113,7 +113,7 @@ groups:
       # Celery queue depth — tasks backing up
       - alert: TestLookupCeleryQueueBacklog
         expr: |
-          sum by (queue_name) (celery_queue_length) > 100
+          max by (queue_name) (celery_queue_length) > 100
         for: 5m
         labels:
           severity: warning

@@ -18,6 +18,13 @@ spec:
       maxSurge: 1
   template:
     metadata:
+      annotations:
+        # The image aggregates all API processes through a pod-local
+        # prometheus_client multiprocess directory. Prometheus discovers each
+        # pod independently through these annotations.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
       labels:
         app: testlookup-backend
         app.kubernetes.io/component: api
@@ -46,6 +53,8 @@ spec:
             - name: CHROMA_ONNX_MODEL_DIR
               value: /var/cache/testlookup/chroma-onnx
           volumeMounts:
+            - name: prometheus-multiproc
+              mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
               mountPath: /var/cache/testlookup/chroma-onnx
           resources:
@@ -92,6 +101,10 @@ spec:
               type: RuntimeDefault
       # Spread replicas across nodes; fall back to best-effort if topology unavailable
       volumes:
+        # Pod-local writable state shared by all Uvicorn processes. emptyDir is
+        # also writable under OpenShift's arbitrary runtime UID.
+        - name: prometheus-multiproc
+          emptyDir: {}
         # ChromaDB's all-MiniLM ONNX weights (79 MB) — see the note in
         # worker-deployments.yaml.
         - name: embedder-model-cache

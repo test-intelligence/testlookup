@@ -3,7 +3,7 @@
 `infra/monitoring/prometheus-rules/testlookup-alerts.yml` defines::
 
     - alert: TestLookupCeleryQueueBacklog
-      expr: sum by (queue_name) (celery_queue_length) > 100
+      expr: max by (queue_name) (celery_queue_length) > 100
       description: "Queue {{ $labels.queue_name }} has more than 100 pending
                     tasks. Workers may need scaling."
 
@@ -49,15 +49,21 @@ class TestTheMetricExists:
         assert metrics.celery_queue_length._name == "celery_queue_length"
 
     def test_it_is_labelled_by_queue_name(self):
-        """The alert does `sum by (queue_name)`; without that label the
+        """The alert does `max by (queue_name)`; without that label the
         expression returns nothing."""
         assert "queue_name" in metrics.celery_queue_length._labelnames
+
+    def test_it_uses_one_current_snapshot_across_api_workers(self):
+        assert metrics.celery_queue_length._multiprocess_mode == "mostrecent"
 
     def test_the_alert_still_references_this_name(self):
         """If someone renames the metric, this points at the alert to update."""
         if not ALERTS.exists():
             pytest.skip("alert rules not present")
         assert "celery_queue_length" in ALERTS.read_text(encoding="utf-8")
+        assert "max by (queue_name) (celery_queue_length)" in ALERTS.read_text(
+            encoding="utf-8"
+        )
 
 
 class TestItIsCollectedAtScrapeTime:

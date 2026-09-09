@@ -117,6 +117,23 @@ spec:
       ports:
         - protocol: TCP
           port: 8000
+    # Metrics are discovered per pod. Restrict scrapes to the conventional
+    # in-cluster monitoring namespace rather than opening the API port broadly.
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [monitoring, openshift-monitoring, openshift-user-workload-monitoring]
+        # Managed collectors may use a provider-specific namespace. Operators
+        # opt that namespace in without editing this policy:
+        # kubectl label namespace <name> testlookup.io/metrics-scraper=true
+        - namespaceSelector:
+            matchLabels:
+              testlookup.io/metrics-scraper: "true"
+      ports:
+        - protocol: TCP
+          port: 8000
   egress:
     - {}   # allow all egress — data stores are external to this namespace
 
@@ -141,6 +158,19 @@ spec:
   policyTypes:
     - Ingress
     - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [monitoring, openshift-monitoring, openshift-user-workload-monitoring]
+        - namespaceSelector:
+            matchLabels:
+              testlookup.io/metrics-scraper: "true"
+      ports:
+        - protocol: TCP
+          port: 9100
   egress:
     - {}
 

@@ -126,6 +126,7 @@ COPY --from=base /usr/local/bin /usr/local/bin
 COPY --from=builder /app/app ./app
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/alembic.ini .
+COPY --from=builder /app/gunicorn_conf.py ./gunicorn_conf.py
 COPY --from=builder /app/scripts ./scripts
 
 # Client SDK files served at /api/v1/sdk/{lang}. Staged into the build
@@ -147,10 +148,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     APP_ENV=production \
     HOME=/tmp \
+    PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc \
     BUILD_REVISION=$BUILD_REVISION \
     BUILD_DATE=$BUILD_DATE
 
-RUN chown -R testlookup:testlookup /app
+RUN mkdir -p "$PROMETHEUS_MULTIPROC_DIR" && \
+    chown -R testlookup:testlookup /app "$PROMETHEUS_MULTIPROC_DIR"
 USER testlookup
 
 EXPOSE 8000
@@ -158,4 +161,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health/live || exit 1
 
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"]
+CMD ["sh", "-c", "rm -f \"$PROMETHEUS_MULTIPROC_DIR\"/*.db && alembic upgrade head && exec gunicorn -c gunicorn_conf.py app.main:app"]

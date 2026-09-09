@@ -103,4 +103,6 @@ volumes:
 
 networks:
   testlookup_net:
-    external: true
+    # The base Compose file owns this bridge. Declaring it external makes the
+    # documented two-file command fail unless an operator creates it by hand.
+    driver: bridge

@@ -199,9 +199,8 @@ services:
 
   # ──────────────────────────────────────────────────────────
   # APPLICATION LAYER — pinned pre-built images (no build:)
-  # The production backend image's default CMD runs the Alembic
-  # migrations then `uvicorn --workers 4`, so no command override
-  # is needed here.
+  # The production image preserves four Uvicorn workers. Its shared
+  # PROMETHEUS_MULTIPROC_DIR makes /metrics aggregate all four processes.
   # ──────────────────────────────────────────────────────────
   backend:
     <<: *app-backend-image
@@ -254,6 +253,8 @@ services:
     # default LIVE_INGEST_SHARD_COUNT=8. Missing one queue leaves work pending
     # forever in a fresh release stack.
     command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q default,critical,ingestion,ingestion.shard.0,ingestion.shard.1,ingestion.shard.2,ingestion.shard.3,ingestion.shard.4,ingestion.shard.5,ingestion.shard.6,ingestion.shard.7,ai_analysis --max-tasks-per-child=200
+    tmpfs:
+      - /tmp/prometheus-multiproc:mode=1777
     env_file:
       - .env
     environment:
@@ -271,6 +272,8 @@ services:
       - LIVE_INGEST_SHARD_COUNT=8
       - APP_ENV=${APP_ENV:-production}
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc
+      - WORKER_METRICS_PORT=9100
     depends_on:
       backend:
         condition: service_healthy
@@ -286,6 +289,8 @@ services:
     container_name: testlookup_worker_children
     restart: unless-stopped
     command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CHILDREN_CONCURRENCY:-1} --prefetch-multiplier=1 -Q agent_children --max-tasks-per-child=25
+    tmpfs:
+      - /tmp/prometheus-multiproc:mode=1777
     env_file:
       - .env
     environment:
@@ -302,6 +307,8 @@ services:
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
       - APP_ENV=${APP_ENV:-production}
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc
+      - WORKER_METRICS_PORT=9100
     depends_on:
       backend:
         condition: service_healthy

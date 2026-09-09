@@ -28,28 +28,31 @@ yaml = pytest.importorskip("yaml")
 pytestmark = pytest.mark.regression
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-WORKERS_YAML = REPO_ROOT / "k8s" / "base" / "worker-deployments.yaml"
+WORKERS_YAMLS = (
+    REPO_ROOT / "k8s" / "base" / "worker-deployments.yaml",
+    REPO_ROOT / "k8s" / "base" / "worker-children-deployment.yaml",
+)
 METRICS_PORT = 9100
 
 
 def _worker_deployments():
-    docs = list(yaml.safe_load_all(WORKERS_YAML.read_text(encoding="utf-8")))
     out = {}
-    for d in docs:
-        if not d or d.get("kind") != "Deployment":
-            continue
-        name = d["metadata"]["name"]
-        # beat schedules and executes no tasks, so it has nothing to report.
-        if "beat" in name:
-            continue
-        out[name] = d
+    for manifest in WORKERS_YAMLS:
+        for d in yaml.safe_load_all(manifest.read_text(encoding="utf-8")):
+            if not d or d.get("kind") != "Deployment":
+                continue
+            name = d["metadata"]["name"]
+            # beat schedules and executes no tasks, so it has nothing to report.
+            if "beat" in name:
+                continue
+            out[name] = d
     return out
 
 
 def test_the_fixture_found_the_workers():
     """Guards the rest: a silent parse failure would make every check vacuous."""
     workers = _worker_deployments()
-    assert len(workers) >= 4, f"expected >=4 worker deployments, parsed {list(workers)}"
+    assert len(workers) >= 5, f"expected >=5 worker deployments, parsed {list(workers)}"
 
 
 class TestTheHistogram:
@@ -144,3 +147,16 @@ def test_dead_children_are_reaped():
 
     src = inspect.getsource(celery_app)
     assert "worker_process_shutdown" in src and "mark_process_dead" in src
+
+
+def test_worker_metric_files_have_a_bounded_container_lifecycle():
+    """Dead counter/histogram files are retained until a graceful restart."""
+    import inspect
+
+    from app.worker import celery_app
+
+    src = inspect.getsource(celery_app)
+    assert "WORKER_METRICS_MAX_FILES" in src
+    assert 'WORKER_METRICS_FINAL_SCRAPE_GRACE_SECONDS", "65"' in src
+    assert "worker_metrics_file_limit_reached" in src
+    assert "signal.SIGTERM" in src
