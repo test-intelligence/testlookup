@@ -303,6 +303,8 @@ services:
       # gen-dev-env.sh set these to development/true in .env for local use.
       - APP_ENV=${APP_ENV:-production}
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
+      # The development stack has one ingestion worker on the legacy queue.
+      - LIVE_INGEST_SHARD_COUNT=0
     depends_on:
       db-budget-check:
         condition: service_completed_successfully
@@ -363,6 +365,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
       - APP_ENV=${APP_ENV:-production}
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
+      - LIVE_INGEST_SHARD_COUNT=0
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc
       - WORKER_METRICS_PORT=9100
     depends_on:

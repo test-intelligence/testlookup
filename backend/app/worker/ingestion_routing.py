@@ -8,24 +8,23 @@ Phase 2 design solves by partitioning into N shards keyed by
 
 Why hash-based routing (not round-robin or LRU)?
 
-* **Determinism.** Every batch from the same project lands on the same
-  shard, so per-project ordering inside the worker is preserved. A
-  round-robin scheme would race across workers.
+* **Deterministic locality.** Every batch from the same project lands on the
+  same queue. A prefork worker can still execute same-project tasks
+  concurrently, so routing alone is not an ordering or serialization lock.
 * **No coordination.** The producer derives the shard locally; no
   Redis round-trip, no zookeeper-style election, no broker query.
-* **Stable under scale-out.** Adding shard N+1 only re-homes 1/N of
-  the existing project traffic, which is the consistent-hashing-style
-  property we want for graceful capacity additions.
+* **Stable for a fixed shard count.** This is ordinary modulo routing, not
+  consistent hashing. Changing N remaps most projects (8 to 9 moves about
+  8/9), so operators must use the documented pause-and-drain procedure.
 
 The shard count is configurable via ``settings.LIVE_INGEST_SHARD_COUNT``.
 Setting it to 0 falls back to the legacy single-queue routing (used by
 tests and any deployment that doesn't want to provision N worker
 deployments yet).
 
-Operators add a shard by spinning up a worker pod that subscribes to
-``ingestion.shard.<i>`` and ``ingestion`` (legacy). The base
-``ingestion`` queue stays active for ``ingest_test_run`` and any other
-non-shardable tasks.
+See ``docs/operations/ingestion-shard-count-change.md`` before changing the
+count. The base ``ingestion`` queue stays active for ``ingest_test_run`` and
+other non-shardable tasks.
 """
 from __future__ import annotations
 
@@ -69,15 +68,34 @@ def shard_for_project(project_id: str) -> int:
     shard 0 deterministically (matches the legacy single-queue path
     when shards are disabled).
     """
-    if not project_id:
+    n = shard_count()
+    return shard_for_count(project_id, n)
+
+
+def shard_for_count(project_id: str, count: int) -> int:
+    """Return the existing MD5/modulo mapping for an explicit shard count.
+
+    This keeps operational planning independent of process settings while
+    preserving the byte-for-byte routing contract used by producers.
+    """
+    if not project_id or count <= 0:
         return 0
     digest = hashlib.md5(project_id.encode("utf-8")).digest()
     # Use the first 4 bytes as an unsigned int; mod by shard count.
     # Avoids ``int(hex, 16)`` allocations on the hot path.
-    n = shard_count()
-    if n <= 0:
-        return 0
-    return int.from_bytes(digest[:4], "big") % n
+    return int.from_bytes(digest[:4], "big") % count
+
+
+def queues_for_count(count: int) -> list[str]:
+    """Return every logical queue a deployment with ``count`` must consume."""
+    return [LEGACY_INGESTION_QUEUE, *[
+        f"{SHARD_QUEUE_PREFIX}{index}" for index in range(max(count, 0))
+    ]]
+
+
+def shard_change_queue_union(old_count: int, new_count: int) -> list[str]:
+    """Return the consumer subscription required during a count transition."""
+    return queues_for_count(max(old_count, new_count))
 
 
 def queue_for_project(project_id: str) -> str:

@@ -43,6 +43,9 @@ data:
   ANONYMIZED_TELEMETRY: "False"
   AI_CONFIDENCE_THRESHOLD: "80"
   CELERY_WORKER_CONCURRENCY: "4"
+  # Producers and the ingestion worker subscription must change together.
+  # Follow docs/operations/ingestion-shard-count-change.md for any edit.
+  LIVE_INGEST_SHARD_COUNT: "8"
   # IMPORTANT: override per environment via a kustomize overlay patch.
   # Must match the ingress hostname users open in their browser, otherwise
   # the dashboard will be blocked by CORS. Multiple origins comma-separated.
