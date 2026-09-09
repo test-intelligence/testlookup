@@ -1,5 +1,5 @@
-import { ReactNode } from 'react'
-import { useDocumentTitle } from '@/hooks/useDocumentTitle'
+import { ReactNode, useContext } from 'react'
+import { DocumentTitleRouteKeyContext, useDocumentTitle } from '@/hooks/useDocumentTitle'
 
 interface Props {
   title: string
@@ -9,10 +9,11 @@ interface Props {
 }
 
 export default function PageHeader({ title, subtitle, actions, className }: Props) {
+  const routeKey = useContext(DocumentTitleRouteKeyContext)
   // Drive the browser-tab title off the page heading. PageHeader is rendered by
   // essentially every routed page, so wiring the title here gives every route a
   // distinct tab title with no per-page duplication (see useDocumentTitle).
-  useDocumentTitle(title)
+  useDocumentTitle(title, routeKey)
   return (
     <div className={`flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-5 ${className ?? ''}`.trim()}>
       <div className="max-w-3xl">

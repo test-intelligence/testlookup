@@ -1,6 +1,21 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
+import {
+  DocumentTitleRouteKeyContext,
+  useRouteDocumentTitle,
+} from '@/hooks/useDocumentTitle'
 import PageHeader from './PageHeader'
+
+function RouteTitleHarness() {
+  const routeKey = useRouteDocumentTitle()
+  return (
+    <DocumentTitleRouteKeyContext.Provider value={routeKey}>
+      <PageHeader title="Agent Pipeline" />
+      <Link to="/agents/run/run-1">Open run</Link>
+    </DocumentTitleRouteKeyContext.Provider>
+  )
+}
 
 describe('PageHeader', () => {
   it('renders title and subtitle', () => {
@@ -20,5 +35,17 @@ describe('PageHeader', () => {
     render(<PageHeader title="Release Gate" />)
 
     expect(document.title).toBe('Release Gate · TestLookup')
+  })
+
+  it('keeps the page heading title when the same page instance handles a new route', () => {
+    render(
+      <MemoryRouter initialEntries={['/agents']}>
+        <Routes><Route path="*" element={<RouteTitleHarness />} /></Routes>
+      </MemoryRouter>,
+    )
+    expect(document.title).toBe('Agent Pipeline · TestLookup')
+
+    fireEvent.click(screen.getByRole('link', { name: 'Open run' }))
+    expect(document.title).toBe('Agent Pipeline · TestLookup')
   })
 })

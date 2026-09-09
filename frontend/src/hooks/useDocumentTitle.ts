@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect } from 'react'
+import { createContext, useEffect, useLayoutEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 
 /**
@@ -40,11 +40,13 @@ export function formatDocumentTitle(pageTitle?: string): string {
  * keeps the last title, which is a strictly better default than the old
  * always-identical one.
  */
-export function useDocumentTitle(pageTitle?: string): void {
+export const DocumentTitleRouteKeyContext = createContext('')
+
+export function useDocumentTitle(pageTitle?: string, routeKey = ''): void {
   useEffect(() => {
     if (typeof document === 'undefined') return
     document.title = formatDocumentTitle(pageTitle)
-  }, [pageTitle])
+  }, [pageTitle, routeKey])
 }
 
 const ROUTE_TITLES: Record<string, string> = {
@@ -88,10 +90,11 @@ export function routeDocumentTitle(pathname: string): string {
 }
 
 /** Establish a title for every route before paint; page headings may refine it. */
-export function useRouteDocumentTitle(): void {
+export function useRouteDocumentTitle(): string {
   const { pathname } = useLocation()
   useLayoutEffect(() => {
     if (typeof document === 'undefined') return
     document.title = formatDocumentTitle(routeDocumentTitle(pathname))
   }, [pathname])
+  return pathname
 }
