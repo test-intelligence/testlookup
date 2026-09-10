@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-09-10 — the proxy trust boundary could never have lived in gunicorn
+
+Deploying batch 1 to the homelab took the API down. Every worker died at
+startup with
+
+    Error: '10.42.0.0/16' does not appear to be an IPv4 or IPv6 address
+
+gunicorn's `ForwardedAllowIPS` validates with `ipaddress.ip_address()`, which
+raises on **any** network — and it validates the `$FORWARDED_ALLOW_IPS` default
+while building its `Config`, *before* the config file is read. So the setting
+cannot hold a CIDR, and no amount of care inside `gunicorn_conf.py` could have
+intercepted it. The boundary has to be a CIDR: the proxy is a pod whose address
+changes.
+
+The boundary now lives in the app. `configure_middlewares` installs uvicorn's
+`ProxyHeadersMiddleware` — the same implementation gunicorn's setting would
+have configured, minus that validator — as the outermost middleware, reading
+`TRUSTED_PROXY_IPS`. That name is deliberate: gunicorn does not read it, so the
+collision cannot recur. It also behaves identically under gunicorn and under a
+bare uvicorn, which the GCP VM compose runs.
+
+**Why the tests did not catch it.** They imported `gunicorn_conf.py` as a plain
+Python module and read the attribute back. The validator that rejects the value
+is gunicorn's, and it never ran — so the tests confirmed the string was present
+and correct while the process could not start with it. A test now restates that
+validator and asserts no manifest anywhere sets the name gunicorn reads;
+reintroducing the exact outage fails three tests.
+
+This is the third variant of one mistake in this batch: assert the content,
+assert the list of locations, assert the value without the thing that consumes
+it. Deployment verification caught what none of 9,354 tests could.
+
 ## 2026-09-10 — release-readiness batch 1: when a credential names the wrong thing
 
 Five findings from the 2026-09-09 production-readiness re-audit, plus one this

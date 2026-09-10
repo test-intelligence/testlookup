@@ -277,7 +277,7 @@ patches:
         # Measured from the live cluster (kubectl get nodes -o
         # jsonpath='{.items[*].spec.podCIDR}'): 10.42.0.0/24, 10.42.1.0/24,
         # 10.42.2.0/24 -- one /16 covers the three nodes and any node added.
-        FORWARDED_ALLOW_IPS: "10.42.0.0/16"
+        TRUSTED_PROXY_IPS: "10.42.0.0/16"
         CORS_ORIGINS: "http://testlookup.local"
         PUBLIC_BASE_URL: "http://testlookup.local"
         STORAGE_BACKEND: "minio"

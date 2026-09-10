@@ -47,7 +47,7 @@ patches:
   # arrive from public addresses) makes each caller a trusted hop. uvicorn's
   # reverse walk then runs PAST a caller's real address and returns the
   # leftmost X-Forwarded-For entry, which the caller supplied -- the same spoof
-  # as FORWARDED_ALLOW_IPS="*", reached by being generous.
+  # as TRUSTED_PROXY_IPS="*", reached by being generous.
   #
   # 10.128.0.0/14 is the OpenShift SDN/OVN-Kubernetes default cluster network.
   # A value that is too NARROW costs the real client IP (the original H2); one
@@ -58,7 +58,7 @@ patches:
       metadata:
         name: testlookup-config
       data:
-        FORWARDED_ALLOW_IPS: "10.128.0.0/14"
+        TRUSTED_PROXY_IPS: "10.128.0.0/14"
     target:
       kind: ConfigMap
       name: testlookup-config
