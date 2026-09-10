@@ -30,7 +30,7 @@ import pytest
 
 from app.routers.webhooks import minio_webhook
 from app.services import minio_sentinel
-from app.services.minio_sentinel import MAX_SENTINEL_BYTES, SentinelRefused, read_sentinel
+from app.services.minio_sentinel import SentinelRefused, read_sentinel
 
 VICTIM = "victim-project"
 ATTACKER = "attacker-project"
@@ -233,17 +233,42 @@ async def test_an_invalid_sentinel_is_refused(wired):
         await read_sentinel(key)
 
 
+# The cap's sizes are literal on purpose. This test first stored 10 MiB of
+# spaces and bounded the chunks it read by MAX_SENTINEL_BYTES itself: raise the
+# cap to 64 GiB and the object was read whole and still refused, as "not
+# JSON", so the test passed (QA of R2, mutation R2-3). A VALID sentinel can
+# only be refused for its size, and a size derived from the cap moves with it.
+_CAP = 64 * 1024
+
+
+def _sentinel_of_exactly(size: int) -> bytes:
+    """A valid sentinel, padded with JSON whitespace to exactly ``size`` bytes."""
+    body = json.dumps({"build_number": "9", "branch": "main"}).encode()
+    assert len(body) <= size
+    return body + b" " * (size - len(body))
+
+
 @pytest.mark.asyncio
-async def test_an_oversized_object_is_refused_without_reading_it_all(wired):
+@pytest.mark.parametrize("size", [_CAP + 1, 10 * 1024 * 1024], ids=["one-byte-over", "10MiB"])
+async def test_an_oversized_object_is_refused_without_reading_it_all(wired, size):
     """A sentinel is a few hundred bytes. Whoever can write to the bucket could
     otherwise make a worker hold an object of any size."""
     key = f"{VICTIM}/runs/9/upload_complete.json"
-    wired.stored[key] = b" " * (10 * 1024 * 1024)
-    with pytest.raises(SentinelRefused):
+    wired.stored[key] = _sentinel_of_exactly(size)
+    with pytest.raises(SentinelRefused, match="is larger than"):
         await read_sentinel(key)
-    assert len(wired.chunks_read) <= MAX_SENTINEL_BYTES // CHUNK + 1, (
-        f"read {len(wired.chunks_read)} chunks of a 10 MiB object before refusing it"
+    assert len(wired.chunks_read) <= _CAP // CHUNK + 1, (
+        f"read {len(wired.chunks_read)} chunks of a {size}-byte object before refusing it"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [_CAP - 1, _CAP], ids=["one-byte-under", "at-the-cap"])
+async def test_a_valid_sentinel_up_to_the_cap_is_read(wired, size):
+    key = f"{VICTIM}/runs/9/upload_complete.json"
+    wired.stored[key] = _sentinel_of_exactly(size)
+    sentinel = await read_sentinel(key)
+    assert (sentinel.project_id, sentinel.build_number, sentinel.branch) == (VICTIM, "9", "main")
 
 
 @pytest.mark.asyncio
