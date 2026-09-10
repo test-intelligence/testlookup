@@ -459,3 +459,71 @@ async def test_live_session_slug_entity_id_is_accepted(db, project, session_fact
 
     rows = await _rows(session_factory)
     assert rows[0].entity_id == "live-auth-service-4312"
+
+
+# ── Misuse vs infrastructure ─────────────────────────────────────────────────
+
+
+async def test_an_unreachable_database_never_raises_even_under_pytest(
+    db, project, monkeypatch
+):
+    """The contract, stated in this module's docstring, under the condition
+    that actually breaks it.
+
+    ``strict`` defaults to True under pytest so a typo'd event name fails CI.
+    An earlier version let that cover WRITE failures too, which turned an
+    unreachable database into a 500 from POST /ingest — and this repo's
+    integration tests are deliberately hermetic: they override ``get_db`` with
+    a fake but not ``AsyncSessionLocal``, so every attempt-mode write reaches a
+    real socket that is not there. Ten of them failed in CI while the whole
+    unit suite was green, because the unit suite skips tests/integration.
+
+    Infrastructure failures are swallowed at every value of ``strict``.
+    """
+    import app.db.postgres as pg
+
+    def _unreachable():
+        raise OSError("[Errno 11001] getaddrinfo failed")
+
+    monkeypatch.setattr(pg, "AsyncSessionLocal", _unreachable, raising=False)
+
+    # attempt mode — its own session, the path that broke.
+    await record(
+        db,
+        project_id=project.id,
+        event_type="run.received",
+        actor=ActorRef.system("ingestion"),
+        entity_id=str(uuid.uuid4()),
+        entity_label="Build 1",
+        strict=True,
+    )
+
+
+async def test_an_outcome_write_failure_never_raises_either(db, project, monkeypatch):
+    def _boom(*args, **kwargs):
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(activity_service, "_build_row", _boom)
+
+    await record(
+        db,
+        project_id=project.id,
+        event_type="policy.updated",
+        actor=ActorRef("user", actor_name="Marcus"),
+        entity_id=uuid.uuid4(),
+        strict=True,
+    )
+
+
+async def test_misuse_still_raises_under_strict(db, project):
+    """The other half. Infrastructure is forgiven; a typo is not — otherwise
+    an unregistered event name would sail through CI unnoticed."""
+    with pytest.raises(activity_service.UnknownActivityEvent):
+        await record(
+            db,
+            project_id=project.id,
+            event_type="not.registered",
+            actor=ActorRef("user", actor_name="x"),
+            entity_id="1",
+            strict=True,
+        )

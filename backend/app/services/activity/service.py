@@ -47,12 +47,31 @@ logger = structlog.get_logger("services.activity")
 _DEDUP_WINDOW = timedelta(seconds=60)
 
 def _strict_default() -> bool:
-    """Raise under pytest, drop-and-count in production.
+    """Raise under pytest, drop-and-count in production — for MISUSE only.
 
-    A typo in an event name is a bug that CI must catch, and a condition that
-    production must survive. Those want opposite behaviour, so the default is
-    read from the environment rather than pinned: ``PYTEST_CURRENT_TEST`` is set
-    by pytest for the duration of each test, and by nothing else.
+    The distinction ``strict`` draws is between two very different failures,
+    and conflating them broke ten hermetic integration tests:
+
+    * **Misuse** — an unregistered event name, an actor type the event forbids,
+      an unparseable project id, an outcome event handed no session. These are
+      programming errors. Production must survive them (a typo must not 500 a
+      user's ingest) but CI must not let them pass silently, so they raise
+      here and drop-and-count there. That is what this flag gates.
+
+    * **Infrastructure** — the database is unreachable, the write times out.
+      These are NEVER raised, under any value of ``strict``, because
+      swallowing them is the entire contract of this module: a ledger failure
+      must not fail the mutation it describes.
+
+    An earlier version let ``strict`` cover both. Under pytest that turned an
+    unreachable database into a 500 from ``POST /ingest`` — and the repo's
+    integration tests are deliberately hermetic (they override ``get_db`` with
+    a fake but not ``AsyncSessionLocal``), so every attempt-mode write hit a
+    real socket and took the endpoint down with it. The module's own docstring
+    already promised otherwise.
+
+    ``PYTEST_CURRENT_TEST`` is set by pytest for the duration of each test and
+    by nothing else.
     """
     import os
 
@@ -402,6 +421,8 @@ async def record(
         db.add(_make_row())
         _count_written(spec.category)
     except Exception as exc:
+        # Infrastructure, not misuse — never re-raised, whatever `strict` says.
+        # See _strict_default(): swallowing this is the contract.
         _count_dropped("outcome_write_failed")
         logger.warning(
             "activity_event_dropped",
@@ -410,8 +431,6 @@ async def record(
             error_type=type(exc).__name__,
             error=str(exc),
         )
-        if strict:
-            raise
 
 
 async def _write_attempt(
@@ -447,6 +466,10 @@ async def _write_attempt(
         )
         _count_written(spec.category)
     except Exception as exc:
+        # Infrastructure, not misuse — never re-raised. This is the path that
+        # took down ten hermetic integration tests when `strict` covered it:
+        # they override get_db but not AsyncSessionLocal, so an attempt-mode
+        # write reaches a real socket that is not there.
         _count_dropped("attempt_write_failed")
         logger.warning(
             "activity_event_dropped",
@@ -455,5 +478,3 @@ async def _write_attempt(
             error_type=type(exc).__name__,
             error=str(exc),
         )
-        if strict:
-            raise
