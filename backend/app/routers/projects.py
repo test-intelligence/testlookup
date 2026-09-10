@@ -216,14 +216,19 @@ async def update_project(
         )
 
     before = {field: getattr(project, field, None) for field in updates}
+    # What actually DIFFERS, not merely what was sent. `if updates:` was true
+    # for a PUT that re-sent the current value, so a no-op recorded a
+    # "settings changed" row whose own diff said changed_fields: [] while the
+    # summary named the field.
+    changed = {f: v for f, v in updates.items() if before.get(f) != v}
+
     for field, value in updates.items():
         setattr(project, field, value)
 
     # Epic ACT. Staged on THIS session, before the commit, so the ledger row
     # and the change it describes land together or not at all — a
     # "settings changed" row for an update that rolled back would be a lie.
-    # An empty diff means nothing effectively changed, and emits nothing.
-    if updates:
+    if changed:
         await record_activity(
             db,
             project_id=project.id,
@@ -231,9 +236,9 @@ async def update_project(
             actor=ActorRef.from_user(current_user),
             entity_id=project.id,
             entity_label=project.name,
-            before=before,
-            after=updates,
-            context={"changed": ", ".join(sorted(updates))},
+            before={f: before[f] for f in changed},
+            after=changed,
+            context={"changed": ", ".join(sorted(changed))},
         )
 
     await db.commit()

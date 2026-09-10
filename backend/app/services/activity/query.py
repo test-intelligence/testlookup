@@ -134,7 +134,18 @@ def _apply_filters(stmt: Select, model: Any, filters: ActivityFilters) -> Select
         stmt = stmt.where(model.occurred_at <= filters.until)
     if filters.q and len(filters.q.strip()) >= MIN_QUERY_CHARS:
         # Unanchored ILIKE, served by the GIN trigram index from 0165.
-        stmt = stmt.where(model.summary.ilike(f"%{filters.q.strip()}%"))
+        #
+        # The needle is ESCAPED first. `%` and `_` are LIKE metacharacters, so
+        # an unescaped search silently returns the wrong rows rather than
+        # failing: `q=%%%` matched every event in the project, and `q=B_ild`
+        # matched "Build". Not an injection risk — the value is still bound —
+        # but a search that quietly lies is worse than one that errors.
+        #
+        # Backslash is escaped first, otherwise it would double-escape the
+        # sequences added on the next two lines.
+        needle = filters.q.strip()
+        needle = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        stmt = stmt.where(model.summary.ilike(f"%{needle}%", escape="\\"))
     return stmt
 
 

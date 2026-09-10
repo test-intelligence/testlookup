@@ -49,6 +49,20 @@ export const api = axios.create({
   baseURL: BASE_URL,
   timeout: 120_000,
   headers: { 'Content-Type': 'application/json' },
+  // Serialize array params as `?a=1&a=2`, NOT axios's default `?a[]=1&a[]=2`.
+  //
+  // Every endpoint in this app is FastAPI, and FastAPI reads a
+  // `list[str] = Query(None)` from REPEATED bare keys. It does not recognise
+  // the bracketed form, so it silently drops the parameter — no error, no 422,
+  // the filter simply does nothing. Reported on /activity: choosing a category
+  // changed neither the URL's effect nor the rows.
+  //
+  // Fixed on the shared instance rather than at one call site because the
+  // default is wrong for every endpoint here, and the failure is invisible:
+  // the next person to pass an array would hit exactly the same silence.
+  // `searchService` already dodges it by joining to a comma string, which is
+  // why nothing else has surfaced it.
+  paramsSerializer: { indexes: null },
 })
 
 // Request interceptor: attach the access token only for requests bound for

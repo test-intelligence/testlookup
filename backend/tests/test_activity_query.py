@@ -377,3 +377,55 @@ def test_the_ledger_rides_the_audit_clock_not_the_runs_clock():
     assert "project_id == project_id" in clause, (
         "the purge must be scoped to one project, not global"
     )
+
+
+# ── Search escaping ──────────────────────────────────────────────────────────
+
+
+async def test_search_treats_like_metacharacters_as_literal_text(db, projects):
+    """`%` and `_` are LIKE metacharacters. Unescaped, the search silently
+    returns the WRONG rows rather than failing.
+
+    Found by exploratory testing against the deployment: `q=%%%` returned every
+    event in the project, and `q=B_ild` matched "Build". Not an injection risk
+    — the value is still bound — but a search that quietly lies is worse than
+    one that errors, because the reader believes the empty (or full) result.
+    """
+    a, _ = projects
+    await _add(db, a.id, minutes_ago=1, summary="Build 4312 completed")
+    await _add(db, a.id, minutes_ago=2, summary="Report received for Build 99")
+
+    # A bare wildcard must match nothing: no summary contains a literal '%%%'.
+    page = await q.list_events(db, a.id, q.ActivityFilters(q="%%%"))
+    assert page["items"] == [], "'%' was treated as a wildcard, not as text"
+
+    # '_' must not stand in for 'u'.
+    page = await q.list_events(db, a.id, q.ActivityFilters(q="B_ild"))
+    assert page["items"] == [], "'_' was treated as a single-char wildcard"
+
+    # The control: a plain term still matches both rows.
+    page = await q.list_events(db, a.id, q.ActivityFilters(q="Build"))
+    assert len(page["items"]) == 2
+
+
+async def test_search_finds_a_literal_percent_when_one_exists(db, projects):
+    """The other half: escaping must not make a real '%' unfindable."""
+    a, _ = projects
+    await _add(db, a.id, minutes_ago=1, summary="Pass rate fell to 90% on main")
+    await _add(db, a.id, minutes_ago=2, summary="Build 4312 completed")
+
+    page = await q.list_events(db, a.id, q.ActivityFilters(q="90%"))
+    assert len(page["items"]) == 1
+    assert "90%" in page["items"][0]["summary"]
+
+
+async def test_search_handles_a_literal_backslash(db, projects):
+    """Backslash is the escape character itself, so it must be escaped first
+    or it double-escapes the sequences added after it."""
+    a, _ = projects
+    await _add(db, a.id, minutes_ago=1, summary=r"Path C:\builds\main was used")
+    await _add(db, a.id, minutes_ago=2, summary="Build 4312 completed")
+
+    page = await q.list_events(db, a.id, q.ActivityFilters(q=r"C:\builds"))
+    assert len(page["items"]) == 1
+    assert "builds" in page["items"][0]["summary"]

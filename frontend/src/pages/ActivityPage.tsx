@@ -210,7 +210,14 @@ export default function ActivityPage() {
         {/* An outage must never render as an empty feed. "No activity yet" and
             "we could not reach the backend" mean opposite things to a reader
             deciding whether to worry. */}
-        {error ? (
+        {/* `error && events.length === 0`, NOT `error` alone.
+            A failure on page N used to discard pages 1..N-1: the reader had 34
+            rows, pressed "Load older", the cursor request failed, and the whole
+            feed collapsed to "Activity is unavailable". Losing what you already
+            had is a worse outcome than the failed page, and it makes a
+            transient blip look like an outage. Keep the rows; report the
+            failure inline below them (see the footer). */}
+        {error && events.length === 0 ? (
           <EmptyState
             icon={<ActivityIcon className="h-6 w-6" />}
             title="Activity is unavailable"
@@ -248,16 +255,28 @@ export default function ActivityPage() {
                 {ledgerStartedAt &&
                   ` · ledger starts ${formatCompactDateTime(ledgerStartedAt)}`}
               </p>
-              {hasMore && (
-                <button
-                  type="button"
-                  onClick={loadMore}
-                  disabled={isValidating}
-                  className="rounded border border-[var(--color-border)] px-3 py-1.5 text-[12px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
-                >
-                  {isValidating ? 'Loading…' : 'Load older'}
-                </button>
-              )}
+              <div className="flex items-center gap-3">
+                {/* A page that failed AFTER some rows loaded is reported here,
+                    beside the retry, instead of replacing the feed. */}
+                {error && (
+                  <span
+                    role="status"
+                    className="text-[11px] text-[var(--status-failed)]"
+                  >
+                    Couldn&apos;t load older events
+                  </span>
+                )}
+                {hasMore && (
+                  <button
+                    type="button"
+                    onClick={loadMore}
+                    disabled={isValidating}
+                    className="rounded border border-[var(--color-border)] px-3 py-1.5 text-[12px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
+                  >
+                    {isValidating ? 'Loading…' : error ? 'Try again' : 'Load older'}
+                  </button>
+                )}
+              </div>
             </div>
           </>
         )}

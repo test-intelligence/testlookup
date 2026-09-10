@@ -325,12 +325,21 @@ async def update_release(
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     __: User = Depends(require_release_access()),
 ):
+    # Snapshot BEFORE the service applies the update. update_release mutates
+    # the row and returns it, so comparing afterwards would find every field
+    # equal and record nothing at all — a worse bug than the no-op events this
+    # is fixing.
+    submitted = body.model_dump(exclude_none=True)
+    existing = await release_service.get_release_or_404(db, release_id)
+    before = {f: getattr(existing, f, None) for f in submitted}
+
     release = await release_service.update_release(db, release_id, body)
 
     # A release's name, dates and status are what a gate decision is read
     # against later, so "who changed this release, and to what" is exactly the
-    # question the feed exists to answer.
-    changed = sorted(body.model_dump(exclude_none=True))
+    # question the feed exists to answer. Only fields that actually DIFFER
+    # count: a PUT that re-sends the current name is not a rename.
+    changed = sorted(f for f, v in submitted.items() if before.get(f) != v)
     if changed:
         await record_activity(
             db,
