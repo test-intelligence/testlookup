@@ -21,6 +21,11 @@ on:
         required: false
         type: boolean
         default: false
+      run_compose_queue_matrix:
+        description: Run live Redis delivery through every supported Compose queue topology
+        required: false
+        type: boolean
+        default: false
 
 # A PR can receive several pushes while a full matrix is still running. Keep
 # only the newest commit for that PR; an older result is not mergeable once the
@@ -498,6 +503,49 @@ jobs:
           asyncio.run(seed())
           PY
 
+      - name: Detect changes requiring the Compose queue delivery proof
+        id: compose-queue-scope
+        working-directory: .
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+          REQUESTED: ${{ inputs.run_compose_queue_matrix || false }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            [[ "$REQUESTED" == "true" ]] && echo "run=true" >> "$GITHUB_OUTPUT" || echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            base_sha="$PR_BASE_SHA"
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
+            base_sha="$PUSH_BASE_SHA"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$base_sha" =~ ^0+$ ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$base_sha"
+          if git diff --quiet "$base_sha" HEAD -- \
+            '.github/workflows/ci.yml' \
+            '.github/workflows/deploy-staging.yml' \
+            'docker-compose*.yml' \
+            'backend/app/worker/celery_app.py' \
+            'backend/app/worker/ingestion_routing.py' \
+            'backend/compose_topology_contract.py' \
+            'backend/scripts/verify_compose_queues.py' \
+            'backend/tests/integration/test_compose_queue_delivery_redis.py' \
+            'backend/tests/regression/test_compose_worker_topology_contract.py' \
+            'backend/tests/test_verify_compose_queues.py' \
+            'backend/requirements.txt'; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run protected PostgreSQL integration suite
         env:
           DATABASE_URL: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
@@ -509,6 +557,8 @@ jobs:
           AI_OFFLINE_MODE: "true"
           LLM_PROVIDER: ollama
           LLM_MODEL: qwen2.5:7b
+          CELERY_RESULT_BACKEND: redis://localhost:6379/1
+          TESTLOOKUP_RUN_COMPOSE_QUEUE_PROOF: ${{ steps.compose-queue-scope.outputs.run }}
         run: >-
           pytest -m integration -v --tb=short
           tests/integration/test_agent_action_ledger_postgres.py
@@ -539,7 +589,56 @@ jobs:
           tests/integration/test_live_evidence_crash_replay_postgres_redis.py
           tests/integration/test_live_fanout_redis.py
           tests/integration/test_live_recovery_protocol_postgres_redis.py
+          tests/integration/test_compose_queue_delivery_redis.py
           tests/regression/test_notification_history_schema.py
+
+      - name: Validate Compose queue delivery evidence
+        if: steps.compose-queue-scope.outputs.run == 'true'
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path('.tmp/h07-compose-queue')
+          expected = {'source-dev', 'release', 'dev-lite', 'gcp-vm', 'airgap'}
+          records = []
+          for path in sorted(root.glob('*.json')):
+              record = json.loads(path.read_text(encoding='utf-8'))
+              if record.get('topology') in expected:
+                  records.append(record)
+          names = {record.get('topology') for record in records}
+          assert names == expected and len(records) == len(expected), (names, len(records))
+          for record in records:
+              assert record.get('source_sha') == os.environ['EXPECTED_SHA'], record
+              assert record.get('result') == 'passed', record
+              assert set(record.get('expected_queues', ())) == {
+                  row.get('queue') for row in record.get('queues', ())
+              }, record
+              assert all(row.get('status') == 'passed' for row in record['queues']), record
+          summary = {
+              'schema_version': 1,
+              'source_sha': os.environ['EXPECTED_SHA'],
+              'topologies': sorted(names),
+              'result': 'passed',
+          }
+          temporary = root / '.summary.json.tmp'
+          temporary.write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          temporary.replace(root / 'summary.json')
+          PY
+
+      - name: Retain Compose queue delivery evidence
+        if: always() && steps.compose-queue-scope.outputs.run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: h07-compose-queue-${{ github.sha }}
+          path: |
+            backend/.tmp/h07-compose-queue/*.json
+            backend/.tmp/h07-compose-queue/*.log
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Detect changes requiring the large-ingestion release proof
         id: ingestion-boundary-scope

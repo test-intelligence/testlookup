@@ -9,10 +9,12 @@ name: testlookup
 
 services:
   db-migrate:
+    image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
     build:
       target: production
 
   backend:
+    image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
     build:
       target: production
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
@@ -31,6 +33,7 @@ services:
       - CHROMA_PORT=8000
 
   frontend:
+    image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-frontend:${IMAGE_TAG:?IMAGE_TAG must be set}
     build:
       target: production
       args:
@@ -41,17 +44,35 @@ services:
     environment: []
 
   worker:
+    image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
     build:
       target: production
     profiles: ["async"]
     volumes: []
-    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_WORKER_CONCURRENCY:-1} -Q default,ingestion,ai_analysis
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_WORKER_CONCURRENCY:-1} -Q default,critical,ingestion,ai_analysis
+
+  worker-children:
+    image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
+    build:
+      target: production
+    profiles: ["async"]
+    volumes: []
 
   beat:
+    image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
     build:
       target: production
     profiles: ["async"]
     volumes: []
+
+  seed-init:
+    image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
+    build:
+      target: production
+    volumes: []
+
+  mcp:
+    image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-mcp:${IMAGE_TAG:?IMAGE_TAG must be set}
 
   flower:
     profiles: ["async"]

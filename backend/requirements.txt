@@ -26,6 +26,7 @@ aioboto3==15.5.0
 pydantic==2.13.4
 pydantic-settings==2.6.1
 email-validator==2.3.0
+PyYAML==6.0.3
 
 # ── Authentication & Security ────────────────────────────────
 python-jose[cryptography]==3.5.0

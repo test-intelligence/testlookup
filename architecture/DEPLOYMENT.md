@@ -11,7 +11,7 @@
 | Local dev / evaluation | Docker Compose (source build) | `make quickstart` / `make dev` |
 | Self-host without cloning | Compose (pinned release images) | `install.sh` one-liner → `docker-compose.release.yml` |
 | Minimal-footprint dev | `docker-compose.dev-lite.yml` | compose directly |
-| A single cloud VM | `docker-compose.gcp-vm.yml` | compose on the VM |
+| A single cloud VM | `docker-compose.yml` + `docker-compose.gcp-vm.yml` | compose on the VM |
 | Kubernetes anywhere | `k8s/base` + an overlay | `kubectl apply -k k8s/overlays/<name>` |
 | **No egress at all** (air-gapped site) | **offline install bundle** — one tarball with every image, manifests and an import script | `make offline-bundle` → [user-guide/air-gapped-install.md](../user-guide/air-gapped-install.md) |
 | Metrics stack alongside | `docker-compose.monitoring.yml` + `infra/monitoring` | compose profile |
@@ -37,7 +37,9 @@
   `make dev` and `install.sh` never load it and are unaffected.
 - **`docker-compose.dev-lite.yml`** — a slimmer dev stack for
   resource-constrained machines.
-- **`docker-compose.gcp-vm.yml`** — single-VM cloud deployment shape.
+- **`docker-compose.gcp-vm.yml`** — production-target override for the base
+  Compose file. Render and deploy it with `docker-compose.yml` and the `async`
+  profile so the main, critical, and isolated child queues all have consumers.
 - **`docker-compose.monitoring.yml`** — Prometheus/Grafana sidecar stack
   (dashboards and scrape configs under `infra/monitoring`).
 

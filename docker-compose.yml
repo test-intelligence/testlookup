@@ -355,7 +355,7 @@ services:
       target: development
     container_name: testlookup_worker
     restart: unless-stopped
-    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q default,ingestion,ai_analysis --max-tasks-per-child=200
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q default,critical,ingestion,ai_analysis --max-tasks-per-child=200
     volumes:
       - ./backend:/app
     tmpfs:

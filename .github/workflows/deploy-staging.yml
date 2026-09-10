@@ -57,6 +57,11 @@ jobs:
           docker build -t $GCR_HOSTNAME/$PROJECT_ID/testlookup-frontend:$IMAGE_TAG ./frontend
           docker push $GCR_HOSTNAME/$PROJECT_ID/testlookup-frontend:$IMAGE_TAG
 
+      - name: Build & Push MCP Server
+        run: |
+          docker build -t $GCR_HOSTNAME/$PROJECT_ID/testlookup-mcp:$IMAGE_TAG ./mcp
+          docker push $GCR_HOSTNAME/$PROJECT_ID/testlookup-mcp:$IMAGE_TAG
+
   deploy-staging:
     name: Deploy to GCP VM
     runs-on: ubuntu-latest
@@ -81,8 +86,8 @@ jobs:
             git pull origin develop
             export IMAGE_TAG=${{ needs.build-and-push.outputs.image_tag }}
             export GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
-            docker-compose -f docker-compose.gcp-vm.yml pull
-            docker-compose -f docker-compose.gcp-vm.yml up -d --remove-orphans
+            docker compose -f docker-compose.yml -f docker-compose.gcp-vm.yml --profile async pull
+            docker compose -f docker-compose.yml -f docker-compose.gcp-vm.yml --profile async up -d --remove-orphans
             docker system prune -f
 
       - name: Health Check

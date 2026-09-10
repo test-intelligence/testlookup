@@ -194,6 +194,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
+      - LIVE_INGEST_SHARD_COUNT=0
       # Lite-mode overrides: smaller pools, disable unused services
       - APP_ENV=development
       - AI_OFFLINE_MODE=true
@@ -241,8 +242,8 @@ services:
       target: development
     container_name: testlookup_lite_worker
     restart: unless-stopped
-    # Single worker process, 2 threads — minimal footprint
-    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2 -Q default,ingestion,ai_analysis --max-tasks-per-child=100
+    # Main worker for short/default, critical, ingestion, and analysis work.
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2 -Q default,critical,ingestion,ai_analysis --max-tasks-per-child=100
     volumes:
       - ./backend:/app
     env_file:
@@ -256,6 +257,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
+      - LIVE_INGEST_SHARD_COUNT=0
       - APP_ENV=development
       - AI_OFFLINE_MODE=true
       - OLLAMA_BASE_URL=http://localhost:11434
@@ -271,6 +273,49 @@ services:
           memory: 1G
         reservations:
           memory: 256M
+    networks:
+      - testlookup_lite_net
+
+  # Keep recursive investigation children from starving ingestion on the
+  # constrained topology. This reuses the backend image with one bounded
+  # process and mirrors the isolation contract of the full release stack.
+  worker-children:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: testlookup_lite_worker_children
+    restart: unless-stopped
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=1 --prefetch-multiplier=1 -Q agent_children --max-tasks-per-child=25
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - MONGO_HOST=mongo
+      - MINIO_ENDPOINT=minio:9000
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
+      - MONGO_URI=mongodb://mongo:27017
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
+      - LIVE_INGEST_SHARD_COUNT=0
+      - APP_ENV=development
+      - AI_OFFLINE_MODE=true
+      - OLLAMA_BASE_URL=http://localhost:11434
+      - CHROMA_HOST=localhost
+      - CHROMA_PORT=8001
+    depends_on:
+      - backend
+      - redis
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          memory: 128M
     networks:
       - testlookup_lite_net
 
