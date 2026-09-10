@@ -17,6 +17,15 @@ So the cap is enforced twice:
   would be the problem, never close enough to refuse a report the exact check
   would accept.
 * **After parsing**, exactly, on the results themselves, for every format.
+
+How far the count can be trusted depends on the format. For the XML formats
+and pytest, every result the parser keeps must carry the counted marker, so the
+count bounds what parsing can cost. A Cypress, Playwright, Cucumber or Allure
+result can leave its marker key out and still be parsed, so for those four the
+count stops accidents rather than a crafted report. The exact check after
+parsing refuses that report either way, and the 50 MB upload limit bounds what
+parsing it costs; a streaming count would close the gap (recorded as a
+follow-up to re-audit M5).
 """
 from __future__ import annotations
 
@@ -54,6 +63,23 @@ _RESULT_MARKERS: dict[str, re.Pattern[str]] = {
     "allure": re.compile(r'"uuid"\s*:'),
 }
 
+# JSON lets any character of a key be written as a unicode escape (a backslash,
+# "u" and four hex digits), which json.loads decodes and a regex does not: a
+# pytest report whose keys spelled "nodeid" with one escaped letter counted no
+# markers against 25 parsed results (code review and QA of M5). Escapes are
+# decoded before counting. XML needs no such step: a tag name cannot be written
+# with a character reference, and the XML parsers refuse entity declarations.
+_BACKSLASH_U = chr(92) + "u"
+_UNICODE_ESCAPE = re.compile(re.escape(_BACKSLASH_U) + "([0-9a-fA-F]{4})")
+_JSON_FORMATS = frozenset({"pytest", "cypress", "playwright", "cucumber", "allure"})
+
+
+def _countable(content: str, fmt: str) -> str:
+    """The text to count markers in: for JSON, with its unicode escapes decoded."""
+    if fmt in _JSON_FORMATS and _BACKSLASH_U in content:
+        return _UNICODE_ESCAPE.sub(lambda match: chr(int(match.group(1), 16)), content)
+    return content
+
 _ADVICE = (
     "Split it into smaller reports, or ask an admin to raise "
     "INGEST_MAX_RESULTS_PER_UPLOAD."
@@ -83,7 +109,7 @@ def estimated_results(content: str, fmt: str, *, stop_after: int | None = None) 
     """Count result markers in raw report text, stopping once past ``stop_after``."""
     pattern = _RESULT_MARKERS.get(fmt, _JUNIT)
     seen = 0
-    for seen, _match in enumerate(pattern.finditer(content), start=1):
+    for seen, _match in enumerate(pattern.finditer(_countable(content, fmt)), start=1):
         if stop_after is not None and seen > stop_after:
             break
     return seen

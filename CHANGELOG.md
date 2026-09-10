@@ -158,6 +158,15 @@ test checks every format's marker against a real report of that format: the
 first drafts of the TRX and Playwright markers matched nothing, which would have
 switched the guard off for those formats without a sound.
 
+JSON lets a key be spelled with Unicode escapes, which the parser decodes and a
+plain text search does not see: a pytest report that escaped one letter of every
+key counted no markers at all. The count decodes escapes first. For the XML
+formats and pytest every result must carry its marker, so the count bounds what
+parsing can cost. A Cypress, Playwright, Cucumber or Allure result can leave its
+marker key out and still be parsed, so for those four the count stops accidents
+rather than a crafted report. The exact check after parsing refuses such a report
+either way, and the 50 MB upload limit bounds what parsing it costs.
+
 A refused upload fails with the reason `too_many_results` and says how to split
 the report, the same way an unparseable report fails. No run is created.
 

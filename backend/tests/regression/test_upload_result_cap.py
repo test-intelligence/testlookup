@@ -286,3 +286,61 @@ def test_zero_turns_the_cap_off(monkeypatch):
     monkeypatch.setattr(settings, "INGEST_MAX_RESULTS_PER_UPLOAD", 0)
     upload_limits.enforce_result_limit(10**9)
     upload_limits.refuse_before_parsing(_junit(50), "junit")
+
+
+# ── Unicode-escaped keys (code review and QA of M5) ──────────────────────
+
+_MARKER_KEYS = {
+    "pytest": "nodeid",
+    "cypress": "fullTitle",
+    "playwright": "results",
+    "cucumber": "steps",
+    "allure": "uuid",
+}
+_ALLURE = json.dumps([
+    {"uuid": f"u{i}", "name": f"t{i}", "fullName": f"C.t{i}", "status": "passed"}
+    for i in range(3)
+])
+_JSON_SAMPLES = [sample for sample in SAMPLES if sample[0] in _MARKER_KEYS] + [
+    ("allure", _ALLURE, "results.json"),
+]
+
+
+def _escaped(text: str, key: str) -> str:
+    """``text`` with every letter of the quoted ``key`` written as a unicode escape."""
+    escaped = "".join(chr(92) + "u" + format(ord(ch), "04x") for ch in key)
+    return text.replace('"' + key + '"', '"' + escaped + '"')
+
+
+def test_every_json_format_is_covered_by_the_escape_check():
+    """A JSON format added later must be decoded too, or its keys can be escaped unseen."""
+    assert {fmt for fmt, _fixture, _name in _JSON_SAMPLES} == set(_MARKER_KEYS)
+    assert set(_MARKER_KEYS) == set(upload_limits._JSON_FORMATS)
+
+
+@pytest.mark.parametrize(
+    "fmt,fixture,filename", _JSON_SAMPLES, ids=[f"{fmt}-{name}" for fmt, _, name in _JSON_SAMPLES]
+)
+def test_escaped_keys_are_counted_like_plain_ones(fmt, fixture, filename):
+    from app.worker.tasks import _parse_file_to_results
+
+    escaped = _escaped(fixture, _MARKER_KEYS[fmt])
+    assert escaped != fixture, f"{fmt}: the sample has no {_MARKER_KEYS[fmt]!r} key to escape"
+    # The parser reads the escaped report exactly as the plain one, so this is
+    # a real way past the count, not a malformed file.
+    assert len(_parse_file_to_results(escaped, fmt, filename, "run-1")) == len(
+        _parse_file_to_results(fixture, fmt, filename, "run-1")
+    )
+    assert upload_limits.estimated_results(escaped, fmt) == upload_limits.estimated_results(
+        fixture, fmt
+    ), f"{fmt}: escaping the {_MARKER_KEYS[fmt]!r} key changed the count"
+
+
+def test_a_report_that_escapes_its_keys_is_still_refused_unparsed(cap):
+    """QA's probe, in miniature: one escaped letter in every "nodeid"."""
+    tests = [{"nodeid": f"t.py::test_{i}", "outcome": "passed"} for i in range(21)]
+    report = json.dumps({"tests": tests}).replace(
+        '"nodeid"', '"' + chr(92) + 'u006eodeid"'
+    )
+    with pytest.raises(TooManyResults):
+        upload_limits.refuse_before_parsing(report, "pytest")
