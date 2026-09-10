@@ -195,10 +195,23 @@ async def test_smtp_config(
     msg["From"] = cfg.get("from_address", "noreply@testlookup.io")
     msg["To"] = current_user.email
 
+    host = cfg.get("host") or "localhost"
+    # Re-audit H10 (code review): the test email reached the stored relay, with
+    # the stored credentials, while every real notification to it was refused.
+    from app.services.notification.egress import (
+        OfflineEgressBlocked,
+        assert_delivery_allowed_async,
+    )
+
+    try:
+        await assert_delivery_allowed_async("SMTP", host)
+    except OfflineEgressBlocked as exc:
+        return SmtpTestResult(success=False, message=str(exc))
+
     try:
         await aiosmtplib.send(
             msg,
-            hostname=cfg.get("host", "localhost"),
+            hostname=host,
             port=int(cfg.get("port", 587)),
             username=cfg.get("user") or None,
             password=cfg.get(_SMTP_SECRET_FIELD) or None,

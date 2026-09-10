@@ -397,6 +397,10 @@ class Settings(BaseSettings):
     AI_LLM_PROVIDER_ALLOWLIST: str = ""
     # Optional comma-separated HTTP(S) origins for provider endpoint overrides.
     AI_LLM_ALLOWED_BASE_URLS: str = ""
+    # Off-box hosts that may still receive Slack, Teams and SMTP notifications
+    # while AI_OFFLINE_MODE is on: comma-separated, and ".example.com" matches
+    # subdomains. Empty: every off-box notification destination is refused.
+    OFFLINE_NOTIFICATION_ALLOWED_HOSTS: str = ""
     AGENT_MEMORY_RETENTION_DAYS: int = 365
     AI_CONFIDENCE_THRESHOLD: int = 80
     AIQ_GAP_REFINEMENT_ENABLED: bool = False         # AIQ-P4: gap_detection + report_refinement deep stages (default off)

@@ -219,6 +219,12 @@ external fetch — regardless of how feature flags are set. New integrations are
 required to join the existing offline gate list (with tests), not add their
 own ad-hoc checks.
 
+Notification channels are the one class judged by **residency** rather than
+switched off: a Slack-compatible webhook or mail relay on the LAN still works
+offline, a public one is refused, and `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` is the
+operator's explicit, per-host exception (re-audit H10). The integration-health
+probes follow the gate of the integration they probe.
+
 **Ceiling semantics (2026-08-03).** The environment variable is a *hard
 ceiling*, not a default. AI settings are also stored in the database
 (`app_settings.ai_config`), and the runtime resolver merges the two — but the

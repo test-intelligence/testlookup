@@ -484,12 +484,31 @@ recorded as blocked, because only the second sends someone to look.
 The SMTP gate sits at each of the three `aiosmtplib.send` call sites rather
 than at the public functions, because only one of those functions is reached
 through the notification manager — gating entry points would have left the
-report and attachment paths open. A ratchet now walks the notification package
-and fails if any module can reach the network without consulting the gate.
+report and attachment paths open.
+
+The gate covers every SMTP connection the application makes, not only the
+notification package: report emails (the trends report used stdlib `smtplib`
+and bypassed it), the settings page's test email, and the 15-minute health
+probe, which logged in to the relay. The Slack probe, which called slack.com
+with the bot token, is gated the same way, and the Jira and GitHub probes are
+skipped in offline mode, as those integrations are. A ratchet walks all of
+`app/` for SMTP connections, each sender has its own test, and the residency
+lookup runs off the event loop.
 
 Four existing suites had to declare that they test the transport rather than
 the ceiling. They send to public destinations, which is now a refusal by
 default rather than a send.
+
+**Upgrade note: a breaking change for many deployments.** `AI_OFFLINE_MODE`
+defaults to `true` in the settings, `.env.example`, the base Kubernetes
+ConfigMap and the production and OpenShift overlays. A deployment on those
+defaults that posts to `hooks.slack.com`, a Teams webhook or a hosted mail relay
+records every such delivery as blocked after this upgrade. Either keep offline
+mode and name those hosts in the new `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` (for
+example `hooks.slack.com,.webhook.office.com,smtp.sendgrid.net`; a leading dot
+matches subdomains), or set `AI_OFFLINE_MODE=false`, which also allows cloud LLM
+calls. At startup the API logs a warning for each configured Slack, Teams or
+SMTP destination that offline mode will refuse.
 
 ## 2026-09-10 — the upload webhook was notified about a file it never read
 

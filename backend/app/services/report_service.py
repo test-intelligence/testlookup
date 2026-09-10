@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import smtplib
 import ssl
 from datetime import datetime, timedelta, timezone
@@ -187,6 +188,16 @@ def send_email(recipient: str, subject: str, html_body: str) -> None:
             detail="SMTP is not enabled. Set SMTP_ENABLED=true and configure SMTP_* settings.",
         )
 
+    # Re-audit H10 (code review): this path used stdlib smtplib, outside the
+    # notification package the gate was added to, so a trends report reached a
+    # public relay while every notification to the same relay was refused.
+    from app.services.notification.egress import OfflineEgressBlocked, assert_delivery_allowed
+
+    try:
+        assert_delivery_allowed("SMTP", settings.SMTP_HOST)
+    except OfflineEgressBlocked as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = settings.SMTP_FROM
@@ -217,7 +228,8 @@ async def email_trends_report(db: AsyncSession, body) -> dict:
     subject = f"QA Trends Report - {project_name} ({body.days}d)"
 
     try:
-        send_email(body.recipient_email, subject, html)
+        # smtplib and the residency lookup both block; keep them off the loop.
+        await asyncio.to_thread(send_email, body.recipient_email, subject, html)
     except HTTPException:
         raise
     except Exception as exc:

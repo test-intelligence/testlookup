@@ -37,12 +37,51 @@ class ProbeResult:
     payload_valid: bool | None = None
 
 
+async def _offline_refusal(provider: str, destination: str | None) -> ProbeResult | None:
+    """``skipped`` when offline mode forbids a notification probe's destination.
+
+    Re-audit H10 (QA): the 15-minute health task probed the SMTP relay --
+    logging in to it -- and Slack's API with the bot token, on deployments
+    whose offline ceiling refused every notification to the same places. The
+    notification channels are judged by residency, as their senders are.
+    """
+    from app.services.notification.egress import (
+        OfflineEgressBlocked,
+        assert_delivery_allowed_async,
+    )
+
+    try:
+        await assert_delivery_allowed_async(provider, destination)
+    except OfflineEgressBlocked as exc:
+        return ProbeResult(provider.lower(), "skipped", message=str(exc)[:300])
+    return None
+
+
+def _offline_hard_gate(provider: str) -> ProbeResult | None:
+    """``skipped`` in offline mode for an integration that offline mode switches off.
+
+    Jira and GitHub refuse every outbound call when ``AI_OFFLINE_MODE`` is on
+    (``defect_jira_service``, ``github_checks_service``). A probe carries the
+    same credentials, so it must not make the call either.
+    """
+    from app.core.config import settings
+
+    if settings.AI_OFFLINE_MODE:
+        return ProbeResult(
+            provider, "skipped", message=f"AI_OFFLINE_MODE=true -- outbound {provider} calls are disabled"
+        )
+    return None
+
+
 async def probe_jira() -> ProbeResult:
     """Probe Jira REST API: check auth and server info."""
     from app.core.config import settings
 
     if not settings.JIRA_ENABLED or not settings.JIRA_DOMAIN:
         return ProbeResult("jira", "skipped", message="JIRA_ENABLED=false or no domain configured")
+    refused = _offline_hard_gate("jira")
+    if refused:
+        return refused
 
     import httpx
 
@@ -101,6 +140,9 @@ async def probe_github() -> ProbeResult:
 
     if not settings.GITHUB_TOKEN:
         return ProbeResult("github", "skipped", message="No GITHUB_TOKEN configured")
+    refused = _offline_hard_gate("github")
+    if refused:
+        return refused
 
 
     start = time.monotonic()
@@ -164,6 +206,9 @@ async def probe_slack(config: dict | None = None) -> ProbeResult:
         if webhook_url:
             return ProbeResult("slack", "healthy", 0, "Webhook URL configured (no live test for webhooks)", None, None)
         if settings.SLACK_BOT_TOKEN:
+            refused = await _offline_refusal("Slack", "https://slack.com/api/auth.test")
+            if refused:
+                return refused
             client = get_http_client()
             resp = await client.post(
                 "https://slack.com/api/auth.test",
@@ -198,6 +243,9 @@ async def probe_smtp() -> ProbeResult:
 
     if not settings.SMTP_ENABLED:
         return ProbeResult("smtp", "skipped", message="SMTP_ENABLED=false")
+    refused = await _offline_refusal("SMTP", settings.SMTP_HOST)
+    if refused:
+        return refused
 
     start = time.monotonic()
     try:
