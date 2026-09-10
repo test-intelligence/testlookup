@@ -255,6 +255,81 @@ async def test_a_storage_hiccup_is_left_to_the_tasks_retry(wired):
         await read_sentinel(key)
 
 
+# ── A key names one prefix only (code review of the N10 follow-up) ───────
+#
+# The local storage backend resolves a path, so
+# ``victim/runs/../../attacker/runs/7/upload_complete.json`` read the
+# attacker's sentinel and bound it to project ``victim``. A sentinel key must
+# be a plain path: no empty, "." or ".." segment, no backslash, no leading /.
+
+_BS = chr(92)
+_UNPLAIN_KEYS = [
+    pytest.param(f"{VICTIM}/runs/../../{ATTACKER}/runs/7/upload_complete.json", id="dot-dot"),
+    pytest.param(f"{VICTIM}/runs/7/../upload_complete.json", id="dot-dot-in-own-prefix"),
+    pytest.param(f"{VICTIM}/./runs/7/upload_complete.json", id="dot"),
+    pytest.param(f"{VICTIM}/runs//7/upload_complete.json", id="empty-segment"),
+    pytest.param(f"/{VICTIM}/runs/7/upload_complete.json", id="leading-slash"),
+    pytest.param(
+        f"{VICTIM}/runs/7{_BS}..{_BS}..{_BS}../{ATTACKER}/runs/7/upload_complete.json",
+        id="backslash",
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", _UNPLAIN_KEYS)
+async def test_the_webhook_queues_no_key_that_is_not_a_plain_path(wired, key):
+    result = await _notify(key)
+    assert result == {"status": "ignored", "reason": "unexpected_key_format"}
+    assert wired.queued == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", _UNPLAIN_KEYS)
+async def test_the_reader_refuses_a_key_that_is_not_a_plain_path_unread(wired, key):
+    """The task gets keys from more than the webhook: queued before this fix,
+    or by hand. The reader checks the key itself, before touching storage."""
+    with pytest.raises(SentinelRefused):
+        await read_sentinel(key)
+    assert wired.reads == [], "the key was read before its shape was checked"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key",
+    [
+        f"{VICTIM}/runs/../../{ATTACKER}/runs/7/upload_complete.json",
+        f"{VICTIM}/runs/7{_BS}..{_BS}..{_BS}../{ATTACKER}/runs/7/upload_complete.json",
+    ],
+    ids=["dot-dot", "backslash"],
+)
+async def test_a_key_cannot_bind_another_prefixs_sentinel_on_local_storage(
+    tmp_path, monkeypatch, key
+):
+    """The review's case on the real local backend, which resolves the path.
+
+    A backslash escapes only where it is a separator (Windows). Elsewhere that
+    key names a file that does not exist, and is refused either way.
+    """
+    from app.core.config import settings
+    from app.db.storage import LocalStorageProvider
+
+    monkeypatch.setattr(settings, "LOCAL_STORAGE_PATH", str(tmp_path))
+    storage = LocalStorageProvider(default_bucket="testlookup")
+    attacker_key = f"{ATTACKER}/runs/7/upload_complete.json"
+    await storage.put_object(
+        attacker_key,
+        json.dumps({"build_number": "7", "ocp_namespace": "attacker-ns"}).encode(),
+    )
+    monkeypatch.setattr(minio_sentinel, "get_storage_provider", lambda: storage)
+
+    with pytest.raises(SentinelRefused):
+        await read_sentinel(key)
+    # The attacker's own key still reads -- as the attacker's.
+    sentinel = await read_sentinel(attacker_key)
+    assert (sentinel.project_id, sentinel.ocp_namespace) == (ATTACKER, "attacker-ns")
+
+
 # ── The task: refused is final, a hiccup is retried ──────────────────────
 
 

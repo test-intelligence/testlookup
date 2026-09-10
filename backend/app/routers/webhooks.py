@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
 from app.core.deps import verify_webhook_secret
 from app.models.schemas import MinIOWebhookEvent
+from app.services.minio_sentinel import SENTINEL_NAME, sentinel_key_problem
 from app.worker.tasks import ingest_test_run
 
 logger = logging.getLogger(__name__)
@@ -38,18 +39,25 @@ async def minio_webhook(
     key = event.Key or ""
 
     # Only process sentinel files
-    if not key.endswith("upload_complete.json"):
+    if not key.endswith(SENTINEL_NAME):
         logger.debug("Ignoring non-sentinel upload: %s", key)
         return {"status": "ignored", "reason": "not_sentinel"}
 
-    logger.info("Sentinel file received: %s", key)
-
-    # Extract S3 prefix from key path: {project_id}/runs/{build_number}/upload_complete.json
-    parts = key.split("/")
-    if len(parts) < 3:
-        logger.warning("Unexpected sentinel key format: %s", key)
+    # {project_id}/runs/{build_number}/upload_complete.json, made of plain
+    # names. A key with an empty, "." or ".." segment, a backslash or a
+    # leading "/" is refused here, before anything is queued, and again by the
+    # task's reader (code review of the N10 follow-up): on the local storage
+    # backend a ".." let the key name one project while the sentinel came
+    # from another project's prefix.
+    problem = sentinel_key_problem(key)
+    if problem is not None:
+        logger.warning("Refusing sentinel key %r: %s", key, problem)
         return {"status": "ignored", "reason": "unexpected_key_format"}
 
+    logger.info("Sentinel file received: %s", key)
+
+    # The S3 prefix the run's result files are read from.
+    parts = key.split("/")
     minio_prefix = "/".join(parts[:-1]) + "/"
 
     # The sentinel is read by the ingestion task, not here (code review of
