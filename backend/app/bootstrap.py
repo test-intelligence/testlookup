@@ -104,9 +104,15 @@ PUBLIC_ROUTERS: Sequence[APIRouter] = (
     scim.router,           # SCIM 2.0 — bearer-token auth (not JWT)
     shared_reports.router,  # Public shared report views (token-based, ENT-03)
     sdk.router,             # Client SDK downloads (no auth required)
-    # live.router has its own auth: WebSocket auths via post-connect message,
-    # POST /events uses verify_webhook_secret. Cannot be added to PROTECTED_ROUTERS
-    # because OAuth2PasswordBearer crashes on WebSocket scope (no Request object).
+    # live.router has its own auth: the WebSocket authenticates via a
+    # post-connect message, and POST /events/{run_id} resolves a project-scoped
+    # API key inline (see routers/live.py). It cannot join PROTECTED_ROUTERS
+    # because OAuth2PasswordBearer crashes on a WebSocket scope (no Request).
+    #
+    # It also mounts at /ws, OUTSIDE /api/v1 — which is where both
+    # authorization ratchets stop looking. That is why re-audit H1 lived here
+    # unnoticed. tests/test_architectural_authorization.py now scans this
+    # prefix too; a new router mounted outside /api/v1 must satisfy it.
     live.router,
 )
 

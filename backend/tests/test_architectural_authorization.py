@@ -500,3 +500,116 @@ def test_the_nonpath_backlog_only_shrinks() -> None:
         f"NONPATH_KNOWN_EXEMPT has {len(NONPATH_KNOWN_EXEMPT)} entries "
         f"(cap={cap}). Add the missing check rather than raising the cap."
     )
+
+
+# ── Third scan: the routes mounted OUTSIDE /api/v1 ──────────────────────────
+#
+# Both scans above begin by skipping anything that is not under ``/api/v1``.
+# That is not a small exemption for a couple of health probes: routers with
+# their own prefix land outside it too, and ``live.router`` mounts at ``/ws``.
+# ``POST /ws/events/{run_id}`` therefore carried a scoped ``run_id`` past both
+# ratchets for as long as it existed, and re-audit H1 — a cross-tenant write
+# reachable with one deployment-wide secret — is what was sitting there.
+#
+# Seven routes are outside ``/api/v1`` today. Six are genuinely unscoped
+# (liveness, readiness, version, an object-store webhook). Listing them
+# explicitly means a NEW public-prefix route has to be looked at rather than
+# inheriting an exemption nobody chose.
+
+#: Routes outside ``/api/v1`` that take no tenant-owned id at all.
+#: Each was read when it was added; the note says what it exposes.
+PUBLIC_PREFIX_KNOWN_EXEMPT: frozenset[tuple[str, str]] = frozenset({
+    # Kubernetes probes and the version banner. No caller-supplied id, and no
+    # tenant data in the response.
+    ("GET", "/health/live"),
+    ("GET", "/health/ready"),
+    ("GET", "/health/details"),
+    ("GET", "/health/ingestion"),
+    ("GET", "/health/version"),
+    # MinIO bucket notification. Authenticated by the shared webhook secret,
+    # which is what that credential is actually for: the caller is the object
+    # store, not a tenant, and the payload names an object key rather than a
+    # project.
+    ("POST", "/webhooks/minio"),
+})
+
+
+def _routes_outside_api_v1():
+    for route in _collect_api_routes():
+        if not route.path.startswith("/api/v1"):
+            yield route
+
+
+def test_the_outside_scan_sees_the_routes() -> None:
+    """A scan that matched nothing would pass forever — the original failure."""
+    found = list(_routes_outside_api_v1())
+    assert found, (
+        "no routes were found outside /api/v1, so this scan is inert — "
+        "check _collect_api_routes and the router prefixes"
+    )
+    paths = {r.path for r in found}
+    assert "/ws/events/{run_id}" in paths, (
+        "the live-event ingest route is no longer visible to this scan; if it "
+        "moved under /api/v1 the other two ratchets now cover it and this "
+        "assertion should be updated, not deleted"
+    )
+
+
+def test_a_scoped_route_outside_api_v1_is_still_checked() -> None:
+    """The gap that hid H1.
+
+    A route mounted outside ``/api/v1`` that accepts a tenant-owned id must
+    still show a check — a dependency guard, a project-bound API key, or a
+    scope resolution in the handler or something it calls. Being mounted at a
+    different prefix is not an authorization decision.
+    """
+    offenders: set[tuple[str, str]] = set()
+    for route in _routes_outside_api_v1():
+        if not _scoped_params_in_path(route.path):
+            continue
+        if _route_is_protected(route):
+            continue
+        evidence = _authorization_evidence(route)
+        if any(marker in evidence for marker in _SCOPE_EVIDENCE):
+            continue
+        for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
+            offenders.add((method, route.path))
+
+    assert not offenders, (
+        "these routes take a tenant-owned id but show no check, and they sit "
+        "outside /api/v1 where the other two ratchets do not look — which is "
+        "how a cross-tenant write survived both of them:\n  "
+        + "\n  ".join(f"{m} {p}" for m, p in sorted(offenders))
+    )
+
+
+def test_an_unscoped_route_outside_api_v1_was_reviewed() -> None:
+    """A new public-prefix route must be looked at, not silently inherited."""
+    unlisted: set[tuple[str, str]] = set()
+    for route in _routes_outside_api_v1():
+        if _scoped_params_in_path(route.path):
+            continue  # covered by the test above
+        for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
+            if (method, route.path) not in PUBLIC_PREFIX_KNOWN_EXEMPT:
+                unlisted.add((method, route.path))
+
+    assert not unlisted, (
+        "new routes are mounted outside /api/v1 and neither ratchet looks "
+        "there. Confirm each takes no tenant-owned id, then add it to "
+        "PUBLIC_PREFIX_KNOWN_EXEMPT with a note saying what it exposes:\n  "
+        + "\n  ".join(f"{m} {p}" for m, p in sorted(unlisted))
+    )
+
+
+def test_the_public_prefix_exemptions_are_not_stale() -> None:
+    """An exemption for a route that no longer exists hides the next one."""
+    live = {
+        (method, route.path)
+        for route in _routes_outside_api_v1()
+        for method in sorted(route.methods - {"HEAD", "OPTIONS"})
+    }
+    stale = sorted(PUBLIC_PREFIX_KNOWN_EXEMPT - live)
+    assert not stale, (
+        "these PUBLIC_PREFIX_KNOWN_EXEMPT entries match no mounted route — "
+        "delete them:\n  " + "\n  ".join(f"{m} {p}" for m, p in stale)
+    )
