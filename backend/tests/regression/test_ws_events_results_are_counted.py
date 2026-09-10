@@ -118,7 +118,11 @@ class _Redis:
         return self.values.get(key)
 
     async def delete(self, key):
-        return int(self.values.pop(key, None) is not None)
+        # A hash is a key too: a DEL that left hashes alone would let a reset
+        # pass here and do nothing against real Redis.
+        removed = self.values.pop(key, None) is not None
+        removed = (self.hashes.pop(key, None) is not None) or removed
+        return int(removed)
 
 
 @pytest.fixture
@@ -385,3 +389,58 @@ async def test_a_staged_close_is_committed_then_finalised(live, monkeypatch):
     )
     assert result["session_id"] == "session-1"
     assert order == ["commit", "after_commit"], order
+
+
+# ── A reused run id, a failed publish, no read-back (code review of H6) ──
+
+
+@pytest.mark.asyncio
+async def test_a_reused_run_id_starts_from_zero(live):
+    """A caller that reuses "nightly" within the day starts a NEW run."""
+    from app.streams.live_run_state import _STATE_KEY
+
+    await _start()
+    await _result("FAILED", "a")
+    await _result("FAILED", "b")
+    live.redis.hashes[_STATE_KEY(RUN)]["status"] = "completed"
+    # A field the new run does not write: only a real DEL clears it.
+    live.redis.hashes[_STATE_KEY(RUN)]["suite_name"] = "previous-suite"
+
+    await _start()
+
+    state = await RedisLiveRunState.get(RUN)
+    assert int(state["failed"]) == 0, "the new run inherited the last run's failures"
+    assert state["status"] == "running", "the new run is still marked completed"
+    assert state.get("suite_name") in (None, ""), "the new run kept a field from the last one"
+
+
+@pytest.mark.asyncio
+async def test_a_result_whose_publish_fails_is_not_counted(live, monkeypatch):
+    await _start()
+
+    async def _down(_run_id, _event):
+        raise ConnectionError("stream unavailable")
+
+    monkeypatch.setattr("app.streams.producer.publish_live_event", _down)
+    with pytest.raises(ConnectionError):
+        await _result("FAILED")
+
+    state = await RedisLiveRunState.get(RUN)
+    assert int(state["failed"]) == 0, (
+        "a result the stream never took was counted, and the client's retry counts it again"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_producer_does_not_read_the_state_back(live, monkeypatch):
+    await _start()
+    reads: list[str] = []
+    original = RedisLiveRunState.get.__func__
+
+    async def _counting_get(cls, run_id):
+        reads.append(run_id)
+        return await original(cls, run_id)
+
+    monkeypatch.setattr(RedisLiveRunState, "get", classmethod(_counting_get))
+    await _result("PASSED")
+    assert reads == [], "every result read the whole run state back, and threw it away"

@@ -45,6 +45,7 @@ class RedisLiveRunState:
         *,
         launch_name: Optional[str] = None,
         suite_name: Optional[str] = None,
+        reset: bool = False,
     ) -> None:
         """Register a new live run. Idempotent — safe to call if run already exists.
 
@@ -64,10 +65,19 @@ class RedisLiveRunState:
         # A source Redis Stream entry may be reclaimed after its side effects
         # succeeded but before XACK. Do not reset counters when that same
         # run_start is delivered again.
+        #
+        # ``reset`` is for the producer's own run_start (POST /ws/events), where
+        # the run id is the caller's: a caller that reuses one within the state's
+        # lifetime is starting a NEW run, which must not begin from the last
+        # run's totals, or stay "completed" (code review of re-audit H6). The
+        # consumer never resets: its call can arrive after the producer's --
+        # even after the run completed -- and must change nothing.
         if await redis.exists(key):
-            await redis.expire(key, _TTL)
-            await redis.sadd(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
-            return
+            if not reset:
+                await redis.expire(key, _TTL)
+                await redis.sadd(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
+                return
+            await redis.delete(key)
 
         now = datetime.now(timezone.utc).isoformat()
         mapping: dict = {
@@ -102,6 +112,8 @@ class RedisLiveRunState:
         status: str,
         test_name: str,
         total_tests: int = 0,
+        *,
+        return_state: bool = True,
     ) -> Optional[dict]:
         """
         Atomically increment the counter for the given status and update metadata.
@@ -154,6 +166,10 @@ class RedisLiveRunState:
         pipe.hset(key, mapping=updates)
         pipe.expire(key, _TTL)
         await pipe.execute()
+        if not return_state:
+            # The producer discards the state; reading the whole hash back cost
+            # a round trip per event (code review of re-audit H6).
+            return None
         return await cls.get(run_id)
 
     @classmethod

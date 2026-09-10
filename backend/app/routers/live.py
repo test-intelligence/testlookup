@@ -760,28 +760,37 @@ async def ingest_live_event(
     #
     # run_start creates the state here too. The consumer creates it as well,
     # but asynchronously -- a result arriving before the consumer had processed
-    # its run_start found no state and was dropped. RedisLiveRunState.start is
-    # idempotent and never resets counters, so the consumer's later call is a
-    # no-op rather than a wipe.
+    # its run_start found no state and was dropped. This call resets a run id
+    # being reused for a new run; the consumer's later call never resets, so it
+    # is a no-op rather than a wipe.
     from app.streams.live_run_state import RedisLiveRunState
 
     if event_type == "run_start":
+        # The producer's run_start begins a run: a caller reusing its run id
+        # within the state's lifetime starts a NEW run, which must not inherit
+        # the last one's counters or its "completed" status (code review of H6).
         await RedisLiveRunState.start(
             run_id,
             str(safe_event.get("project_id")),
             str(safe_event.get("build_number") or run_id),
             _as_count(safe_event.get("total_tests")),
+            reset=True,
         )
-    elif event_type == "test_result":
+
+    # Enqueue to Redis Stream — returns immediately regardless of processing load
+    await publish_live_event(run_id, safe_event)
+
+    if event_type == "test_result":
+        # Counted only once published: counting first meant a failed publish --
+        # a 500 the client retries -- counted the result twice (code review of
+        # H6). The producer discards the state it would have read back.
         await RedisLiveRunState.record_test_event(
             run_id,
             str(safe_event.get("status") or "UNKNOWN"),
             str(safe_event.get("test_name") or ""),
             total_tests=_as_count(safe_event.get("total_tests")),
+            return_state=False,
         )
-
-    # Enqueue to Redis Stream — returns immediately regardless of processing load
-    await publish_live_event(run_id, safe_event)
     return {"accepted": True, "run_id": run_id, "event_type": event_type}
 
 
