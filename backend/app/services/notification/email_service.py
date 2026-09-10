@@ -189,6 +189,23 @@ def _build_plain(title: str, body: str, metadata: dict) -> str:
 
 # ── Public API ────────────────────────────────────────────────
 
+def _assert_smtp_allowed(cfg: dict[str, Any]) -> None:
+    """Refuse to hand mail to a relay that is off-box while offline.
+
+    Re-audit H10. Guards every ``aiosmtplib.send`` in this module rather than
+    the public functions, because there are three senders and only one of them
+    is reached through the notification manager -- gating the entry points
+    would leave the report and attachment paths open.
+
+    Residency, not channel: an internal relay is a legitimate offline
+    destination and stays allowed; ``smtp.gmail.com`` is egress however
+    ordinary "email" sounds.
+    """
+    from app.services.notification.egress import assert_delivery_allowed
+
+    assert_delivery_allowed("SMTP", cfg.get("host") or settings.SMTP_HOST)
+
+
 async def send_notification(
     to: str,
     title: str,
@@ -231,6 +248,7 @@ async def send_notification(
     msg.attach(MIMEText(_build_html(title, body, event_type, meta), "html"))
 
     use_tls = bool(cfg.get("tls", True))
+    _assert_smtp_allowed(cfg)
     await aiosmtplib.send(
         msg,
         hostname=cfg.get("host", settings.SMTP_HOST),
@@ -275,6 +293,7 @@ async def send_html_email(
     msg.attach(MIMEText(html_body, "html"))
 
     use_tls = bool(cfg.get("tls", True))
+    _assert_smtp_allowed(cfg)
     await aiosmtplib.send(
         msg,
         hostname=cfg.get("host", settings.SMTP_HOST),
@@ -343,6 +362,7 @@ async def send_html_email_with_attachments(
         msg.attach(part)
 
     use_tls = bool(cfg.get("tls", True))
+    _assert_smtp_allowed(cfg)
     await aiosmtplib.send(
         msg,
         hostname=cfg.get("host", settings.SMTP_HOST),

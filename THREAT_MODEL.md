@@ -35,6 +35,8 @@ Test Runner --> Ingest API (REST) --> Backend
 | **Backend to External LLMs** | LLM inference prompts | API key auth, HTTPS, PII-redacted input, gated by `AI_OFFLINE_MODE` |
 | **Backend to GitHub** | Check run posts | PAT auth, HTTPS, gated by `AI_OFFLINE_MODE` + `github_checks` flag |
 | **Backend to Webhook receivers** | Event payloads | HMAC-SHA256 signed, HTTPS recommended, gated by `AI_OFFLINE_MODE` + `outbound_webhooks` flag |
+| **Backend to Slack / Teams** | Notification title, body and failure metadata | Webhook URL held per user or per deployment, gated by `AI_OFFLINE_MODE` (destination residency) |
+| **Backend to SMTP relay** | Notification and report emails | SMTP credentials, TLS/STARTTLS, gated by `AI_OFFLINE_MODE` (relay residency) |
 | **MCP Server to Backend** | REST API calls | Stdio uses its configured JWT; network MCP validates and forwards each caller's JWT without a shared service identity |
 | **CLI to Backend** | REST API calls | Same JWT/API key auth |
 
@@ -50,6 +52,8 @@ When `AI_OFFLINE_MODE=true`:
 | **RAG faithfulness (Ragas)** | Falls back to Ollama evaluator regardless of `rag_faithfulness_evaluator` config. |
 | **Weekly retro digest narrative** | Falls back to the deterministic template path without calling the LLM. |
 | **Feature flags** | Still functional (flags resolve via Redis/Postgres, both local). The offline gate is checked BEFORE the feature flag in every outbound service. |
+| **Slack / Teams notifications** | Delivered only to a destination that resolves to a loopback or private address — a self-hosted webhook on the LAN still works, a public one is refused. |
+| **Email (SMTP)** | Same rule: an internal relay is allowed, a public relay is refused. Applies to every send in `email_service`, not just the notification path. |
 | **Ingestion** | Fully functional. No network calls. |
 | **Analysis (rules/ML)** | Fully functional. No network calls. |
 | **Dashboard / API / CLI / MCP** | Fully functional. All traffic is local. |
@@ -61,6 +65,16 @@ When `AI_OFFLINE_MODE=true`:
 - Ollama model pulls (if the model isn't pre-cached in the volume)
 
 These are infrastructure-level, not application-level. An air-gapped deployment that pre-caches images and models will see zero application-level egress.
+
+Note on how the notification channels are gated: the check is **where the
+destination resolves**, not what the channel is called. That is deliberate in
+both directions — an air-gapped site's own Slack-compatible webhook or mail
+relay is on the LAN and keeps working, while `smtp.gmail.com` is egress however
+ordinary "email" sounds. A destination that cannot be resolved is refused, so
+"we could not prove this stays on-box" denies rather than allows.
+
+Until 2026-09-10 these three channels were gated by nothing at all and were
+absent from the table above, which is how it went unnoticed (re-audit H10).
 
 ## Authentication and authorization
 

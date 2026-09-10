@@ -160,6 +160,18 @@ def _resolve_residency_uncached(hostname: str) -> bool:
     return all(not _is_routable(address) for address in addresses)
 
 
+def host_is_local(hostname: str) -> bool:
+    """Public name for the residency check, for callers outside this module.
+
+    Notification delivery (``services/notification/egress.py``) needs the same
+    question the offline LLM ceiling asks -- "does this name resolve only to
+    addresses that cannot leave the box?" -- and it should get the same answer,
+    from the same cache, rather than growing a second implementation that can
+    drift from this one.
+    """
+    return _resolves_only_to_local_addresses(hostname)
+
+
 def _is_routable(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Whether an address can leave the host/private network."""
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:

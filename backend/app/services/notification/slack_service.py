@@ -124,6 +124,14 @@ async def send_notification(
     POST a Block Kit message to a Slack incoming webhook URL.
     Raises httpx.HTTPStatusError on non-2xx response.
     """
+    from app.services.notification.egress import assert_delivery_allowed
+
+    # Re-audit H10: offline mode is documented as an egress ceiling, and
+    # this path posted notification content to a caller-configured URL
+    # without checking it. Residency, not channel name: a self-hosted
+    # webhook on the LAN is still a legitimate offline destination.
+    assert_delivery_allowed("Slack", webhook_url)
+
     meta = metadata or {}
     colour = _EVENT_COLOUR.get(event_type, "#3b82f6")
     blocks = _build_blocks(title, body, event_type, meta)

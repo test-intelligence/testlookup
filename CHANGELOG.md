@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-09-10 — offline mode did not cover the three channels that talk most
+
+`THREAT_MODEL.md` promises that with `AI_OFFLINE_MODE=true` an air-gapped
+deployment "will see zero application-level egress", and lists the outbound
+paths that honour it: LLM inference, GitHub Checks, outbound webhooks. Slack,
+Teams and SMTP appeared in neither the list nor the code. Each posted
+notification content — failure text, test names, build metadata — to a
+caller-configured destination, on a deployment whose entire premise is that it
+does not talk to the internet. Removing the new gate in a test makes the point
+better than any argument: the call reaches `hooks.slack.com` and comes back
+with an HTTP status error.
+
+**The gate is residency, not channel name**, for the same reason as the offline
+`base_url` fix: a destination is remote because of where it resolves. That
+matters in both directions. An air-gapped site's own Slack-compatible webhook
+or mail relay sits on the LAN and keeps working, so gating by product name
+would have broken exactly the deployments this protects. And `smtp.gmail.com`
+is egress however ordinary "email" sounds. A destination that cannot be
+resolved is refused, because under a ceiling "we could not prove this stays
+on-box" has to deny.
+
+Refusing raises rather than returning quietly, so the reason lands in the
+delivery's stored status. That file already drew the same line for a channel
+that is not configured: an unconfigured channel is a failure, not a send. A
+notification silently dropped but recorded as delivered is worse than one
+recorded as blocked, because only the second sends someone to look.
+
+The SMTP gate sits at each of the three `aiosmtplib.send` call sites rather
+than at the public functions, because only one of those functions is reached
+through the notification manager — gating entry points would have left the
+report and attachment paths open. A ratchet now walks the notification package
+and fails if any module can reach the network without consulting the gate.
+
+Four existing suites had to declare that they test the transport rather than
+the ceiling. They send to public destinations, which is now a refusal by
+default rather than a send.
+
 ## 2026-09-10 — the upload webhook was notified about a file it never read
 
 `POST /webhooks/minio` is guarded by one deployment-wide `WEBHOOK_SECRET`. That
