@@ -88,7 +88,8 @@ async def put_retention_policy(
     project_id: uuid.UUID,
     payload: RetentionPolicyWrite,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: require_project_access() confines a project-bound key to {project_id}.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Upsert the project's retention policy. ADMIN-only — retention drives
@@ -121,7 +122,8 @@ async def put_retention_policy(
 async def get_project_storage(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: require_project_access() confines a project-bound key to {project_id}.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Storage footprint for this project, per store (S3).
@@ -161,7 +163,8 @@ async def list_deletion_jobs(
     project_id: uuid.UUID,
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: require_project_access() confines a project-bound key to {project_id}.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Deletions that have run for this project, newest first.
@@ -184,7 +187,8 @@ async def get_deletion_job(
     project_id: uuid.UUID,
     job_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: require_project_access() confines a project-bound key to {project_id}.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """One deletion job — the endpoint a 202 caller polls.
@@ -205,7 +209,8 @@ async def get_deletion_job(
 async def preview_retention_purge(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: require_project_access() confines a project-bound key to {project_id}.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Dry-run the purge NOW (synchronous, read-only): per-class cutoffs and
@@ -227,7 +232,8 @@ async def enqueue_retention_purge(
     project_id: uuid.UUID,
     payload: RetentionPurgeRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: require_project_access() confines a project-bound key to {project_id}.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Enqueue an execute-mode purge for THIS project (202).
@@ -268,7 +274,8 @@ async def preview_criteria_deletion(
     project_id: uuid.UUID,
     criteria: RetentionCriteria,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: require_project_access() confines a project-bound key to {project_id}.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Resolve a criteria set and FREEZE it for execution.
@@ -375,7 +382,8 @@ async def execute_criteria_deletion(
     project_id: uuid.UUID,
     body: DeletionExecuteRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: require_project_access() confines a project-bound key to {project_id}.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Execute a previewed set. Takes a JOB ID, never a criteria body.

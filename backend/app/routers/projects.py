@@ -279,13 +279,15 @@ async def delete_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_d
     "/{project_id}/reset",
     response_model=ProjectResetResponse,
     dependencies=[
-        Depends(require_role(UserRole.ADMIN)),
-        # Project-scope guard alongside the ADMIN role gate. ADMIN bypasses
-        # the membership check inside ``require_project_access``, so this
-        # doesn't change who can call the endpoint — it ties the route to
-        # its ``{project_id}`` scope so the architectural authorization
-        # ratchet (test_architectural_authorization.py) recognises it as
-        # guarded rather than flagging it as unprotected drift.
+        # N20: a project-bound key may reset its own project (CI);
+        # require_project_access() below refuses it every other project.
+        Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
+        # Project-scope guard alongside the ADMIN role gate. An unbound ADMIN
+        # bypasses its membership check, so for them it changes nothing; for a
+        # project-bound key it is the check that keeps the key inside its own
+        # project. It also ties the route to its ``{project_id}`` scope so the
+        # architectural authorization ratchet
+        # (test_architectural_authorization.py) recognises it as guarded.
         Depends(require_project_access()),
     ],
 )

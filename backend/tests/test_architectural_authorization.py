@@ -404,6 +404,15 @@ def _called_targets(func) -> list:
     return targets
 
 
+#: Callees whose source is never scope evidence, whatever it mentions. A role
+#: guard answers "what is the caller", never "which tenant". Since re-audit N20
+#: ``require_role``'s own body consults the API-key binding and its docstring
+#: names the scope guards, and a handler's signature CALLS it
+#: (``Depends(require_role(...))``), so reading its source as evidence made
+#: every route with a ``require_role`` default pass this scan vacuously.
+_NEVER_SCOPE_EVIDENCE: frozenset[str] = frozenset({"require_role", "require_instance_admin"})
+
+
 def _authorization_evidence(route: APIRoute) -> str:
     """Dependency names + handler source + the source of what the handler calls."""
     parts = list(_walk_deps(route.dependant))
@@ -416,6 +425,8 @@ def _authorization_evidence(route: APIRoute) -> str:
     module = inspect.getmodule(endpoint)
     if module is not None:
         for qualifier, name in _called_targets(endpoint):
+            if name in _NEVER_SCOPE_EVIDENCE:
+                continue
             owner = module if qualifier is None else getattr(module, qualifier, None)
             if owner is None:
                 continue
@@ -458,6 +469,28 @@ def test_the_nonpath_scan_actually_inspects_routes() -> None:
         "expected many routes taking a scoped id outside the path, found "
         f"{len(carriers)} — the extractor is probably broken"
     )
+
+
+def test_a_role_guard_is_never_scope_evidence() -> None:
+    """Guards the guard (re-audit N20).
+
+    ``require_role``'s source now names the API-key binding and the scope
+    guards, and every handler with a ``Depends(require_role(...))`` default
+    calls it. Read as evidence, that passed every such route vacuously: the two
+    ADMIN-only entries in ``NONPATH_KNOWN_EXEMPT`` turned "stale" the moment
+    N20 landed, which is how this was found.
+    """
+    from app.core import deps
+
+    assert any(m in inspect.getsource(deps.require_role) for m in _SCOPE_EVIDENCE), (
+        "precondition gone: require_role's source names no scope marker, so "
+        "this test no longer proves the exclusion does anything"
+    )
+    route = next(
+        r for r in _collect_api_routes() if r.path == "/api/v1/onboarding/events"
+    )
+    found = [m for m in _SCOPE_EVIDENCE if m in _authorization_evidence(route)]
+    assert not found, f"a role guard's source was read as scope evidence: {found}"
 
 
 def test_a_scoped_id_outside_the_path_is_still_checked() -> None:
