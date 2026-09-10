@@ -578,6 +578,13 @@ class Settings(BaseSettings):
 
     # ── Webhook Security ──────────────────────────────────────
     WEBHOOK_SECRET: str = "change-me-webhook-secret"
+    # When true, POST /ws/events/{run_id} accepts ONLY a project-scoped API key
+    # and refuses the shared webhook secret. The secret authenticates a caller
+    # but names no tenant, so it cannot express "may write to THIS project";
+    # a project-scoped key derives the project server-side. Defaults False so
+    # existing direct integrations keep working; set True to close the shared
+    # secret path outright (re-audit H1).
+    LIVE_EVENTS_REQUIRE_PROJECT_KEY: bool = False
 
     # ── Observability ─────────────────────────────────────────
     # OpenTelemetry
@@ -672,7 +679,15 @@ class Settings(BaseSettings):
             if self.APP_SECRET_KEY in ("change-me-in-production", ""):
                 warnings.append("CRITICAL: APP_SECRET_KEY is set to the default — secrets will not be safely encrypted")
             if self.WEBHOOK_SECRET in ("change-me-webhook-secret", ""):
-                warnings.append("WARNING: WEBHOOK_SECRET is set to the default — webhook endpoints are not secured")
+                # CRITICAL, not WARNING (re-audit H1). This secret is the only
+                # credential in front of POST /ws/events/{run_id}, which injects
+                # live test results into a caller-named project. Booting
+                # production with the literal, version-controlled default let
+                # anyone who read the source forge results for any tenant.
+                warnings.append(
+                    "CRITICAL: WEBHOOK_SECRET is set to the default — live-event and "
+                    "webhook endpoints accept anyone who read the source"
+                )
             if self.DEV_AUTO_LOGIN_ENABLED:
                 warnings.append("CRITICAL: DEV_AUTO_LOGIN_ENABLED is True in production — disable it")
             if self.SSO_ENABLED and self.SAML_BASE_URL == "http://localhost:8000":
