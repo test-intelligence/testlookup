@@ -209,3 +209,21 @@ def fake_redis():
 def ns():
     """Convenience namespace factory."""
     return SimpleNamespace
+
+
+@pytest.fixture(autouse=True)
+def _close_the_worker_loop_after_each_test():
+    """Close the Celery worker loop, and drain what it holds, after each test.
+
+    A worker child keeps one event loop, and every client cached on it, for its
+    whole life (``app/worker/loop_runner.py``, re-audit M1). A test process is
+    not a worker child: a test that runs a task through the real ``_run_async``
+    would otherwise hand its engine and Redis pool, bound to that loop, to the
+    next test. Closing it here is what worker shutdown does.
+    """
+    yield
+    import sys
+
+    runner = sys.modules.get("app.worker.loop_runner")
+    if runner is not None:
+        runner.shutdown_worker_loop()

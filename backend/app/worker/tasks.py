@@ -1,5 +1,4 @@
 """Celery background tasks for ingestion and AI analysis."""
-import asyncio
 import logging
 from datetime import datetime, timezone
 import random
@@ -49,87 +48,15 @@ _slog = structlog.get_logger("worker.tasks")
 
 
 def _run_async(coro):
-    """Run an async coroutine in a Celery task (sync context).
+    """Run a task's coroutine on this worker child's event loop.
 
-    Each Celery task runs in a separate thread / process.  The global async
-    clients (Redis, SQLAlchemy engine) hold references to the event loop that
-    was current when they were first created.  If that loop was already closed
-    (e.g. from a previous task invocation) we get "Event loop is closed" /
-    "Future attached to a different loop" errors.
-
-    Fix: reset the module-level singletons before creating the new loop so
-    that the first `get_redis()` call inside the coroutine creates a fresh
-    client bound to the *current* loop.
-
-    BUG-003: the SQLAlchemy async engine has the same problem but worse — its
-    asyncpg connections are *pooled* across tasks via the ``@lru_cache``'d
-    ``get_engine()``. The pool stays bound to the loop that first built it; when
-    that loop is closed here, the pooled connections become attached to a dead
-    loop and asyncpg raises ``RuntimeError: Event loop is closed`` when it later
-    tries to terminate/GC them ("Exception terminating connection …"). That
-    surfaced as the AI pipeline reporting ``errors=1`` / status ``partial``.
-    Fix: dispose the engine *inside this loop* in the ``finally`` block (which
-    closes its connections on the loop that owns them) and clear the lazy-build
-    cache so the next task rebuilds a fresh engine on its own loop.
+    One loop per worker child, reused from task to task (re-audit M1). The
+    history -- why it used to be a fresh loop per task, and the teardown that
+    implied (BUG-003) -- is in ``worker/loop_runner.py``.
     """
-    from app.db.loop_bound import reset_loop_bound_clients
-    reset_loop_bound_clients()
+    from app.worker.loop_runner import run_async
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        try:
-            # Dispose the async engine on THIS loop before it closes, so its
-            # pooled asyncpg connections are torn down on the loop that owns
-            # them (BUG-003). Must run before shutdown_asyncgens / loop.close().
-            from app.db.postgres import dispose_engine_for_loop
-            loop.run_until_complete(dispose_engine_for_loop())
-        except Exception as _exc:
-            # Previously a bare ``pass``. A failing teardown leaves the pool
-            # alive with connections bound to a loop that is about to close,
-            # and said nothing at all — which is exactly the kind of silence
-            # that hid F-027. Log it; still never raise from a finally block.
-            logger.warning("engine_dispose_failed_in_task_teardown error=%r", _exc)
-        try:
-            # The shared httpx.AsyncClient is rotated per loop by
-            # get_http_client(), but the OUTGOING one was only ever
-            # dropped -- close_http_client() is called from the FastAPI
-            # lifespan and from nowhere in the worker path, so each task
-            # abandoned a client whose pool still held sockets bound to
-            # the loop about to close. Same reasoning as the engine
-            # disposal above: drain it on the loop that owns it.
-            from app.core.http_client import close_http_client
-            loop.run_until_complete(close_http_client())
-        except Exception as _exc:
-            logger.warning(
-                "http_client_close_failed_in_task_teardown error=%r", _exc
-            )
-        try:
-            # Redis, for the same reason as the engine and the httpx client
-            # above -- and it was the one left out. ``reset_loop_bound_clients``
-            # only NULLS ``_pool``/``_client`` at the START of the next task,
-            # which abandons a redis.asyncio pool still holding sockets bound to
-            # the loop about to close here. ``close_redis()`` existed all along
-            # and was called from the FastAPI lifespan and nowhere in the worker
-            # path.
-            #
-            # The leak is per-task, so it only bites under volume: on the
-            # homelab, a burst of ~750 pipelines in one hour failed ~96% of
-            # summary stages with "Event loop is closed", against ~1.6% at
-            # normal rates. Draining on the owning loop is the same fix the
-            # engine and httpx client already received.
-            from app.db.redis_client import close_redis
-            loop.run_until_complete(close_redis())
-        except Exception as _exc:
-            logger.warning("redis_close_failed_in_task_teardown error=%r", _exc)
-        try:
-            # Close all async generators and pending tasks cleanly
-            loop.run_until_complete(loop.shutdown_asyncgens())
-        except Exception:
-            pass
-        loop.close()
+    return run_async(coro)
 
 
 class DownstreamTrackedTask(Task):
@@ -5274,8 +5201,8 @@ def calibrate_flaky_classifiers(self, project_id: str | None = None) -> dict:
     """
     async def _run():
         # Imported inside the task, matching this module's convention: a
-        # module-level ``AsyncSessionLocal`` binding would pin the engine that
-        # ``_run_async`` disposes between tasks (see F-027).
+        # module-level ``AsyncSessionLocal`` binding would pin an engine the
+        # worker disposes when it tears its loop down (see F-027).
         from sqlalchemy import select
 
         from app.db.postgres import AsyncSessionLocal

@@ -488,7 +488,7 @@ celery_app.conf.update(
 # observed on the ingestion worker during a 60-run bulk upload, where it made
 # most first attempts fail and retry.
 #
-# ``_run_async`` in worker/tasks.py already handles the *event loop* half of this
+# ``worker/loop_runner.py`` handles the *event loop* half of this
 # problem (BUG-003) — a pool bound to a loop that was since closed. It cannot
 # help here: that is per-process bookkeeping, and this is one pool shared ACROSS
 # processes by fork.
@@ -505,6 +505,12 @@ def _reset_db_pool_after_fork(**_kwargs: object) -> None:
 
     get_engine.cache_clear()
     get_session_factory.cache_clear()
+
+    # A loop the parent built shares its selector with the parent; the child
+    # must never use or close it (re-audit M1, worker/loop_runner.py).
+    from app.worker.loop_runner import forget_inherited_loop
+
+    forget_inherited_loop()
 
     # Each prefork child is a separate process, so the offline embedder guard
     # has to be installed in every one of them. Without this the child that
@@ -764,4 +770,19 @@ def _clear_dead_child_metrics(**_kwargs: object) -> None:
 
         multiprocess.mark_process_dead(os.getpid())
     except Exception:  # noqa: BLE001 — never block worker shutdown
+        pass
+
+
+@worker_process_shutdown.connect
+def _close_worker_loop(**_kwargs: object) -> None:
+    """Drain this child's loop -- engine, Redis, httpx -- on the loop that owns them.
+
+    Re-audit M1: tasks now share one event loop per child, so the drain that
+    used to run after every task runs once, here.
+    """
+    try:
+        from app.worker.loop_runner import shutdown_worker_loop
+
+        shutdown_worker_loop()
+    except Exception:  # noqa: BLE001 -- never block worker shutdown
         pass

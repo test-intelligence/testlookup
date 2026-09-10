@@ -1,38 +1,29 @@
 """A cached async client must not outlive the event loop it was built on.
 
-Found on the homelab, in two places at once:
+Found on the homelab, in two places at once::
 
-```
-worker-ai       RuntimeError: Event loop is closed
-                  at app/agents/summary_agent.py:892 in _store_summary
-worker-default  [AI Email] Failed for run 704cca9a…: Event loop is closed
-```
+    worker-ai       RuntimeError: Event loop is closed
+                      at app/agents/summary_agent.py:892 in _store_summary
+    worker-default  [AI Email] Failed for run 704cca9a...: Event loop is closed
 
-Celery prefork workers run every task on a **fresh** event loop and close it
-afterwards (``worker/tasks.py::_run_async``). ``AsyncIOMotorClient`` binds to
-the loop that is running when it is constructed, and ``app/db/mongo.py`` caches
-it in a module global. So task #1 built the client on its loop, that loop
-closed, and task #2 onward got a client wired to a dead loop.
+Celery tasks each ran on a fresh event loop that was closed afterwards.
+``AsyncIOMotorClient`` binds to the loop running when it is built, and
+``app/db/mongo.py`` caches it in a module global, so task #2 onward got a
+client wired to a dead loop. The wrapper reset Redis and disposed the engine
+for exactly this reason; Mongo was never added, and the second wrapper,
+``worker/training_tasks.py``, reset nothing.
 
-The wrapper already knew about this failure mode — it reset Redis for exactly
-this reason and disposed the Postgres engine on its owning loop, with a comment
-explaining both. Mongo was simply never added. And the second wrapper,
-``worker/training_tasks.py::_run_async``, reset *nothing*.
-
-Consequences were not cosmetic. When ``_store_summary`` raises, the summary
-agent's outer handler returns ``structured_summary=None`` — so the run's
-intelligence page renders empty, which is the same user-visible symptom as the
-LLM-unavailable bug fixed separately, arriving by a completely different route.
-
-The guard is the CLASS: **every loop-bound client cache is reset when a task
-builds a new loop, and every task wrapper does it.** Per-wrapper lists drift —
-that drift is the bug — so the reset lives in one place and both wrappers call
-it.
+Since re-audit M1 a worker child keeps one loop (``worker/loop_runner.py``),
+so a client lives as long as that loop -- which is the point: that is the pool
+doing its job. The guard is still the CLASS: **every loop-bound client cache
+is reset whenever a new loop is built, and every task wrapper goes through the
+one runner that does it.**
 """
 from __future__ import annotations
 
 import ast
 import asyncio
+import inspect
 import pathlib
 
 import pytest
@@ -40,9 +31,17 @@ import pytest
 import app.db.mongo as mongo_mod
 import app.db.redis_client as redis_mod
 from app.db.loop_bound import reset_loop_bound_clients
+from app.worker import loop_runner
 
 BACKEND = pathlib.Path(__file__).resolve().parents[2]
 DB_DIR = BACKEND / "app" / "db"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_worker_loop():
+    loop_runner.shutdown_worker_loop()
+    yield
+    loop_runner.shutdown_worker_loop()
 
 
 class _LoopBoundFake:
@@ -78,7 +77,7 @@ def test_a_second_task_does_not_inherit_the_first_tasks_dead_loop(monkeypatch):
         return await mongo_mod.get_mongo_client().ping()
 
     assert _run_async(touch_mongo()) is True
-    # Task #2 — this is the call that raised in production.
+    # Task #2 -- this is the call that raised in production.
     assert _run_async(touch_mongo()) is True
 
 
@@ -96,9 +95,8 @@ def test_the_training_wrapper_gets_the_same_treatment(monkeypatch):
     assert _run_async(touch_mongo()) is True
 
 
-def test_each_task_really_gets_a_distinct_client(monkeypatch):
-    """Guards against a "fix" that merely swallows the error: the point is a
-    client built on the *live* loop, not a retry of a dead one."""
+def test_tasks_on_one_worker_loop_share_the_client(monkeypatch):
+    """Re-audit M1: the loop outlives the task, so its client is reused."""
     monkeypatch.setattr(mongo_mod, "AsyncIOMotorClient", _LoopBoundFake)
     monkeypatch.setattr(mongo_mod, "_client", None)
 
@@ -113,7 +111,29 @@ def test_each_task_really_gets_a_distinct_client(monkeypatch):
 
     _run_async(capture())
     _run_async(capture())
-    assert seen[0] is not seen[1], "second task reused the first task's client"
+    assert seen[0] is seen[1], "a second task on the same loop rebuilt the client"
+    assert not seen[0].closed
+
+
+def test_a_new_loop_gets_a_new_client_and_the_old_one_is_closed(monkeypatch):
+    """Guards against a "fix" that merely swallows the error: when the loop IS
+    replaced, the client is rebuilt on the live loop and the old one closed."""
+    monkeypatch.setattr(mongo_mod, "AsyncIOMotorClient", _LoopBoundFake)
+    monkeypatch.setattr(mongo_mod, "_client", None)
+
+    from app.worker.tasks import _run_async
+
+    seen = []
+
+    async def capture():
+        client = mongo_mod.get_mongo_client()
+        seen.append(client)
+        await client.ping()
+
+    _run_async(capture())
+    loop_runner.shutdown_worker_loop()  # the child recycles, or a task was interrupted
+    _run_async(capture())
+    assert seen[0] is not seen[1], "the new loop reused the old loop's client"
     assert seen[0].closed, "the superseded client was never closed"
 
 
@@ -147,7 +167,7 @@ def test_reset_survives_a_client_that_raises_on_close(monkeypatch):
 
 
 def test_reset_works_with_no_running_loop():
-    """It is called before the task's loop exists."""
+    """It is called before the new loop runs anything."""
     with pytest.raises(RuntimeError):
         asyncio.get_running_loop()
     reset_loop_bound_clients()  # must not raise
@@ -175,15 +195,14 @@ def _module_level_cache_names(path: pathlib.Path) -> set[str]:
 # Modules whose cached handle is deliberately NOT dropped here, with the reason.
 EXEMPT = {
     # Its pool holds live asyncpg connections, so it is *disposed on the loop
-    # that owns them* during task teardown instead of being dropped.
-    "postgres.py": "disposed via dispose_engine_for_loop() in task teardown",
+    # that owns them* when the worker loop is torn down, instead of dropped.
+    "postgres.py": "disposed via dispose_engine_for_loop() when the worker loop is torn down",
 }
 
 
 def test_every_cached_db_client_is_reset_or_explicitly_exempt():
-    """When someone adds a new cached async client to app/db, this fails until
-    they either wire it into the reset or record why it is exempt. Per-wrapper
-    drift is what caused the bug; this is the thing that stops it recurring."""
+    """A new cached async client in app/db fails this until it is wired into the
+    reset or recorded as exempt. Per-wrapper drift caused the bug."""
     unhandled = []
     for path in sorted(DB_DIR.glob("*.py")):
         if path.name == "__init__.py" or path.name == "loop_bound.py":
@@ -193,8 +212,7 @@ def test_every_cached_db_client_is_reset_or_explicitly_exempt():
             continue
         if path.name in EXEMPT:
             continue
-        module_reset = _reset_touches_module(path.stem)
-        if not module_reset:
+        if not _reset_touches_module(path.stem):
             unhandled.append(f"{path.name} caches {sorted(names)}")
     assert not unhandled, (
         "cached client(s) not cleared by reset_loop_bound_clients() and not "
@@ -209,23 +227,37 @@ def _reset_touches_module(module_stem: str) -> bool:
 
 
 def test_the_ratchet_can_actually_fail():
-    """The ratchet greps loop_bound.py for the module name, so a module that is
-    genuinely absent must be reported. Without this, a typo in the helper would
-    make the ratchet vacuous and everything would look handled."""
+    """A module that is genuinely absent must be reported, or a typo in the
+    helper would make the ratchet vacuous."""
     assert not _reset_touches_module("a_module_that_does_not_exist")
     assert _reset_touches_module("mongo")
     assert _reset_touches_module("redis_client")
 
 
-# ── Both wrappers must call it ──────────────────────────────────────────────
+# ── Every wrapper goes through the one runner ───────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "relpath", ["app/worker/tasks.py", "app/worker/training_tasks.py"]
-)
-def test_every_task_wrapper_resets_loop_bound_clients(relpath):
-    """Two wrappers existed and only one reset anything. Pin both."""
-    src = (BACKEND / relpath).read_text(encoding="utf-8")
-    assert "reset_loop_bound_clients()" in src, (
-        f"{relpath} builds its own event loop but never resets loop-bound clients"
-    )
+@pytest.mark.parametrize("module", ["app.worker.tasks", "app.worker.training_tasks"])
+def test_every_task_wrapper_runs_on_the_one_loop_runner(module, monkeypatch):
+    """Two wrappers existed and only one reset anything. Both now delegate."""
+    import importlib
+
+    wrapper = importlib.import_module(module)._run_async
+    handed: list[object] = []
+
+    def _spy(coro):
+        handed.append(coro)
+        coro.close()
+        return "ran"
+
+    monkeypatch.setattr(loop_runner, "run_async", _spy)
+
+    async def _body():
+        return 1
+
+    assert wrapper(_body()) == "ran"
+    assert len(handed) == 1, f"{module}._run_async bypassed worker/loop_runner"
+
+
+def test_the_runner_resets_clients_whenever_it_builds_a_loop():
+    assert "reset_loop_bound_clients()" in inspect.getsource(loop_runner._worker_loop)

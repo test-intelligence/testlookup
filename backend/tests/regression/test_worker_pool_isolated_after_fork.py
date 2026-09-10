@@ -17,7 +17,7 @@ touches the database in the parent before the fork, every child inherits the sam
 SQLAlchemy pool and therefore the same open asyncpg **sockets (file
 descriptors)**. Two children using one socket produces exactly this error.
 
-``worker/tasks.py::_run_async`` already solves the *event loop* half of this
+``worker/loop_runner.py`` solves the *event loop* half of this
 (BUG-003: a pool bound to a loop that was later closed). It cannot help here —
 that is per-process bookkeeping, whereas this is one pool shared ACROSS processes
 by ``fork()``.

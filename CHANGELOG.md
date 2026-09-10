@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-09-10 — worker database connections now outlive a single task
+
+Every Celery task ran on an event loop of its own and, when it finished, closed
+every connection it had opened: the Postgres pool, Redis and the shared HTTP
+client. The connection pool therefore never pooled anything. Each task that
+touched Postgres paid for a new TCP connection, authentication and a server
+backend process, so a burst of small tasks became a burst of connection setups.
+
+A worker process now keeps one event loop for its whole life, and every task it
+runs reuses that loop's connections. They are closed when the process exits: at
+shutdown, or when Celery recycles it after its task limit. A task cut off while
+it waits, for example by its soft time limit, still has its loop torn down and
+replaced, as every task's used to be. Anything a task leaves running is
+cancelled when it returns, so it cannot run inside the next task. The training
+tasks now share this code instead of keeping a second copy of it.
+
+Because connections now wait in the pool between tasks, worker engines check a
+connection before handing it out, in production too. A Postgres restart then
+costs a reconnect instead of a failed task. The API still skips that check in
+production. The connection budget in `scripts/validate_db_connection_budget.py`
+already counts every process's full pool, so it does not change.
+
 ## 2026-09-10 — runs streamed through /ws/events were never saved
 
 `POST /ws/events/{run_id}` takes one test event per call. It put each event on
