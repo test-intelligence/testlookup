@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-09-10 — release dates were only right on servers that happen to run in UTC
+
+Marking a release released, starting a phase and completing a phase each
+auto-stamp a timestamp: `released_at`, `actual_start` and `actual_end`. All
+three columns are timezone-aware, and all three were stamped with a bare
+`datetime.now()` — the host's local wall-clock time, with no zone attached.
+
+Measured before fixing, because it decides how bad this is. The database driver
+does not reject a naive value for a timezone-aware column; it quietly treats it
+as UTC. The homelab's pods run in UTC, so its release dates were correct — by
+coincidence. On any host whose clock is not UTC, such as a developer laptop or a
+server set to local time, every one of those dates was local time labelled as
+UTC and shifted by the offset, with no error anywhere. The existing tests only
+checked that the value was set, which is true either way.
+
+All three now use `datetime.now(timezone.utc)`, and a caller-supplied value is
+still never overwritten. A new guard walks the whole application's syntax tree
+and fails on any naive `datetime.now()` or `utcnow()`. It passes with an empty
+allow-list — these three were the only ones. It reads the syntax tree rather
+than the text because two of the textual matches were docstrings discussing
+`datetime.now()`, and a guard that flags documentation gets switched off.
+
 ## 2026-09-10 — the live-event audit trail could lose a whole outage without a word
 
 `POST /ws/events` keeps a sanitized copy of every live event in Mongo, as the
