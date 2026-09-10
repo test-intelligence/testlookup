@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-09-09 — release lifecycle now lands in the activity feed
+
+`releases.py` was the largest single gap the new coverage guard found: 12
+project-scoped mutations recording nothing. Create, update and delete now
+emit ledger events, and six event types were added for the CRUD the registry
+did not yet cover (`release.updated`, `release.deleted`, the three phase
+operations, and `release.unlinked_run`).
+
+**Why release CRUD is worth recording at all.** A release's name, dates and
+status are what a gate decision is read against later, so "who changed this
+release, and to what" is exactly the question the feed exists to answer.
+`release.updated` therefore carries the changed field NAMES, not just the
+fact that something changed.
+
+`release.deleted` is attempt-mode and deliberately carries **no**
+`release_id`: that FK is `ON DELETE SET NULL`, so a value set there would be
+nulled moments later. The producer reads the release *before* deleting it,
+because afterwards the row could only say that "something" was removed.
+
+The coverage baseline drops **160 → 148**, and the ratchet now holds at the
+lower number.
+
 ## 2026-09-09 — the activity ledger now has a guard that keeps it honest
 
 `backend.activity-coverage` fails CI when a project-scoped mutation records

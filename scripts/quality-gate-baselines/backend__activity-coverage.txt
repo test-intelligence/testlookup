@@ -103,18 +103,6 @@ bf73dc2223e5074b  # backend/app/routers/release_gate_policies.py:158  in update_
 136c240a122edcdb  # backend/app/routers/release_gate_policies.py:233  in deactivate_policy  @router.post("/{policy_id}/deactivate", response_model=ReleaseGatePolicyRespons…
 4712fd14a801f354  # backend/app/routers/release_gate_policies.py:254  in simulate_policy  @router.post("/simulate", response_model=PolicySimulateResponse)
 135c69910b44cb9b  # backend/app/routers/release_readiness.py:62  in override_release_decision  @router.post("/{run_id}/override", response_model=ReleaseCouncilResponse)
-b19311b707e4829f  # backend/app/routers/releases.py:227  in create_release  @router.post("", status_code=201)
-e0546e7cdec3d72c  # backend/app/routers/releases.py:246  in sync_releases_from_external  @router.post("/sync")
-9649320ca1314eed  # backend/app/routers/releases.py:304  in update_release  @router.put("/{release_id}")
-e4640fe2c230d4a5  # backend/app/routers/releases.py:318  in delete_release  @router.delete("/{release_id}", status_code=204)
-f4832734540644f9  # backend/app/routers/releases.py:329  in evaluate_release_gate  @router.post("/{release_id}/gate/evaluate")
-508a656fe5a2eb47  # backend/app/routers/releases.py:367  in add_phase  @router.post("/{release_id}/phases", status_code=201)
-403eeb6797a11935  # backend/app/routers/releases.py:381  in update_phase  @router.put("/{release_id}/phases/{phase_id}")
-0dc6fc00f1c2eafd  # backend/app/routers/releases.py:403  in activate_release_endpoint  @router.post("/{release_id}/activate")
-2268f8e551edc0bb  # backend/app/routers/releases.py:514  in evaluate_release_phase_gate  @router.post("/{release_id}/phases/{phase_id}/gate/evaluate")
-4e0a69e7402662f5  # backend/app/routers/releases.py:537  in delete_phase  @router.delete("/{release_id}/phases/{phase_id}", status_code=204)
-3975c5003be5c116  # backend/app/routers/releases.py:549  in link_test_run  @router.post("/{release_id}/test-runs")
-c494baadfcf80676  # backend/app/routers/releases.py:568  in unlink_test_run  @router.delete("/{release_id}/test-runs/{run_id}", status_code=204)
 73184d93a55f91b1  # backend/app/routers/reports.py:42  in email_trends_report  @router.post("/email-trends")
 253d36928bcf0d27  # backend/app/routers/reports.py:173  in create_share_link_endpoint  @router.post("/runs/{run_id}/share", response_model=ShareLinkResponse, status_c…
 7934901b0f20ae3c  # backend/app/routers/reports.py:289  in revoke_share_link_endpoint  @router.delete("/share-links/{link_id}", status_code=204)

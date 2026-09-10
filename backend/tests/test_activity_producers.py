@@ -303,3 +303,124 @@ def test_a_user_scoped_api_key_writes_no_row():
             f"{fn.__name__} records activity without checking the key is "
             "project-scoped — a user-scoped key has no project to file under"
         )
+
+
+# ── Release lifecycle ────────────────────────────────────────────────────────
+
+
+async def test_release_created_shares_the_create_transaction(session_factory, project, actor):
+    """A "release created" row for a create that rolled back would be a lie
+    the feed could not walk back, so this one is outcome-mode."""
+    from app.services.activity.service import ActorRef, record
+
+    release_id = uuid.uuid4()
+    async with session_factory() as db:
+        await record(
+            db,
+            project_id=project.id,
+            event_type="release.created",
+            actor=ActorRef.from_user(actor),
+            entity_id=release_id,
+            entity_label="2.14.0",
+            context={"version": "2.14.0"},
+        )
+        await db.rollback()
+
+    assert await _events(session_factory) == []
+
+
+async def test_release_updated_names_the_fields_that_changed(session_factory, project, actor):
+    """A release's name, dates and status are what a gate decision is read
+    against later. "Changed" without WHICH fields cannot answer that."""
+    from app.services.activity.service import ActorRef, record
+
+    async with session_factory() as db:
+        await record(
+            db,
+            project_id=project.id,
+            event_type="release.updated",
+            actor=ActorRef.from_user(actor),
+            entity_id=uuid.uuid4(),
+            entity_label="2.14.0",
+            changed_fields=["cutoff_end_at", "status"],
+            context={"changed": "cutoff_end_at, status"},
+        )
+        await db.commit()
+
+    rows = await _events(session_factory)
+    assert rows[0].summary == "Release 2.14.0 changed: cutoff_end_at, status"
+    assert rows[0].diff == {"changed_fields": ["cutoff_end_at", "status"]}
+
+
+async def test_release_deleted_survives_the_delete_and_keeps_the_name(
+    session_factory, project, actor, monkeypatch
+):
+    """Attempt-mode, and deliberately carrying NO release_id.
+
+    The FK is ON DELETE SET NULL, so a release_id set here would be nulled
+    moments later. The entity_label snapshot is the only thing that survives,
+    which is why the producer reads the release BEFORE deleting it — after the
+    delete the row could only say that "something" was removed.
+    """
+    import app.db.postgres as pg
+    from app.services.activity.service import ActorRef, record
+
+    monkeypatch.setattr(pg, "AsyncSessionLocal", session_factory, raising=False)
+
+    async with session_factory() as caller_db:
+        await record(
+            None,
+            project_id=project.id,
+            event_type="release.deleted",
+            actor=ActorRef.from_user(actor),
+            entity_id=str(uuid.uuid4()),
+            entity_label="2.13.0",
+        )
+        await caller_db.rollback()
+
+    rows = await _events(session_factory)
+    assert len(rows) == 1
+    assert rows[0].entity_label == "2.13.0"
+    assert rows[0].release_id is None
+    assert "2.13.0" in rows[0].summary
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        "release.activated",
+        "release.closed",
+        "release.linked_run",
+        "release.unlinked_run",
+        "release.phase_added",
+        "release.phase_updated",
+        "release.phase_deleted",
+        "release.synced_external",
+    ],
+)
+async def test_every_release_event_renders_a_usable_sentence(
+    session_factory, project, actor, event_type
+):
+    """Guards the class of bug where a template references a context key no
+    producer supplies, so the feed shows a row of em dashes."""
+    from app.services.activity.service import ActorRef, record
+
+    async with session_factory() as db:
+        await record(
+            db,
+            project_id=project.id,
+            event_type=event_type,
+            actor=ActorRef.from_user(actor),
+            entity_id=uuid.uuid4(),
+            entity_label="2.14.0",
+            context={"phase": "soak", "provider": "GitHub", "changed": "name"},
+        )
+        await db.commit()
+
+    rows = await _events(session_factory)
+    assert len(rows) == 1
+    assert rows[0].category == "release"
+    # The label must actually appear — a summary that renders only dashes is
+    # indistinguishable from a broken producer.
+    assert "2.14.0" in rows[0].summary, rows[0].summary
+    assert rows[0].summary.count("—") == 0, f"unfilled placeholder: {rows[0].summary}"
