@@ -251,11 +251,22 @@ services:
     container_name: testlookup_backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Loopback-only by default. The supported entry point is the frontend on
+      # :3000, which proxies /api; publishing the API on every interface let a
+      # caller reach it WITHOUT passing through nginx, and a direct peer inside
+      # the trusted bridge range could then set its own X-Forwarded-For. Set
+      # BACKEND_PUBLISH_ADDR=0.0.0.0 to expose it deliberately, and put a proxy
+      # in front of it when you do.
+      - "${BACKEND_PUBLISH_ADDR:-127.0.0.1}:8000:8000"
     env_file:
       - .env
     environment:
       - PG_PROCESS_ROLE=api
+      # Re-audit H2: the frontend nginx proxies /api, so without this the API
+      # sees that container as every caller. Trust the Docker bridge range the
+      # nginx container connects from -- NOT "*", under which uvicorn returns
+      # the leftmost X-Forwarded-For entry, i.e. whatever the caller sent.
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-172.16.0.0/12}
       - PG_PROCESSES_PER_POD=4
       - PG_POOL_SIZE=${PG_API_POOL_SIZE:-2}
       - PG_MAX_OVERFLOW=${PG_API_MAX_OVERFLOW:-1}
@@ -450,6 +461,17 @@ services:
 networks:
   testlookup_net:
     driver: bridge
+    # Pinned, not left to Docker's default address pool. FORWARDED_ALLOW_IPS
+    # above names the range the nginx container connects from; without an
+    # explicit subnet Docker allocates from 172.17-172.31 and then from
+    # 192.168.x, so on a host that has already used the 172 pool this network
+    # lands outside its own declared trust boundary — the API stops honouring
+    # the proxy's forwarded header and reports nginx as every caller, with no
+    # signal. If 172.28.0.0/16 collides on your host, change both this and
+    # FORWARDED_ALLOW_IPS together.
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
 
 volumes:
   postgres_data:

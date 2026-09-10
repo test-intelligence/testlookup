@@ -4,6 +4,7 @@ Clients subscribe to a project channel and receive real-time updates
 when new test runs are ingested or test case statuses change.
 """
 import asyncio
+import hmac
 import json
 import logging
 import re
@@ -12,14 +13,27 @@ import uuid as _uuid
 from dataclasses import dataclass
 from typing import Optional, Set
 
-from fastapi import APIRouter, Body, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    Header,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from jose import JWTError
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_accessible_project_ids, verify_webhook_secret
+from app.core.deps import (
+    get_accessible_project_ids,
+    get_streaming_api_key_context,
+)
 from app.core.security import decode_token
-from app.db.postgres import AsyncSessionLocal
+from app.db.postgres import AsyncSessionLocal, get_db
 from app.models.postgres import User
 from app.services.access_audit_service import log_access_change
 
@@ -493,10 +507,13 @@ async def notify_ai_ready(project_id: str, test_id: str, confidence: int, catego
 # Called by test runners (e.g. pytest plugin, Allure listener) during execution
 
 
-@router.post("/events/{run_id}", dependencies=[Depends(verify_webhook_secret)], status_code=202)
+@router.post("/events/{run_id}", status_code=202)
 async def ingest_live_event(
     run_id: str,
     event: dict = Body(...),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    x_webhook_secret: Optional[str] = Header(None, alias="X-Webhook-Secret"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Receive a live test execution event from a test runner.
@@ -509,9 +526,21 @@ async def ingest_live_event(
       - test_result:  {type, test_name, status, duration_ms, error_message, test_case_id?}
       - run_complete: {type}
 
-    Protected by X-Webhook-Secret header.
+    Authentication (re-audit H1). Preferred: a project-scoped ``X-API-Key``
+    carrying the ``stream:write`` scope — the project is then derived from the
+    key server-side and a caller cannot name someone else's. Legacy: the shared
+    ``X-Webhook-Secret``, which authenticates a caller but names no tenant, so
+    it could previously inject fabricated results into ANY project. Set
+    ``LIVE_EVENTS_REQUIRE_PROJECT_KEY=true`` to refuse it outright.
     """
     from app.db.mongo import Collections, get_mongo_db
+    from app.services.live_event_authz import (
+        RunProjectBindingUnavailable,
+        cached_streaming_project,
+        remember_run_project,
+        remember_streaming_project,
+        resolve_run_project,
+    )
     from app.services.ingestion_sanitization import (
         LIVE_SANITIZATION_VERSION,
         LIVE_SANITIZATION_VERSION_FIELD,
@@ -525,11 +554,101 @@ async def ingest_live_event(
     except ValueError as exc:
         raise HTTPException(400, detail=str(exc)) from exc
 
+    # ── Authenticate, and derive the tenant rather than trusting the body ──
+    bound_project_id: Optional[str] = None
+    if x_api_key:
+        # Project-scoped, stream:write, hashed at rest. The project comes from
+        # the key, so a caller cannot address another tenant at all.
+        #
+        # This endpoint is one event per call, so the full check (two SELECTs
+        # plus a last_used_at UPDATE) cannot run per event against a pool of
+        # three connections per worker. Verify properly on a miss, then cache
+        # the ANSWER for a few seconds; a miss degrades to the full check, so
+        # Redis being unavailable slows this path down, it does not open it.
+        bound_project_id = await cached_streaming_project(x_api_key)
+        if not bound_project_id:
+            stream_ctx = await get_streaming_api_key_context(
+                db=db, x_api_key=x_api_key
+            )
+            bound_project_id = str(stream_ctx.project_id)
+            await remember_streaming_project(x_api_key, bound_project_id)
+    elif x_webhook_secret:
+        if settings.LIVE_EVENTS_REQUIRE_PROJECT_KEY:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This deployment requires a project-scoped API key for live "
+                    "events. The shared webhook secret names no project."
+                ),
+            )
+        if not hmac.compare_digest(
+            str(x_webhook_secret), str(settings.WEBHOOK_SECRET)
+        ):
+            logger.warning("Live event rejected — invalid webhook secret")
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, detail="Invalid webhook secret"
+            )
+    else:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Live events require a project-scoped X-API-Key "
+                "(or the legacy X-Webhook-Secret)."
+            ),
+        )
+
     event_type = event.get("type", "test_result")
 
-    # Validate required fields before enqueuing
-    if event_type == "run_start" and not event.get("project_id"):
-        raise HTTPException(400, detail="project_id required for run_start event")
+    # ── Bind the run to one project, and keep it there ─────────────────────
+    if event_type == "run_start":
+        if bound_project_id:
+            # Server-derived wins: a forged project_id in the body is ignored
+            # rather than rejected, so a mis-set client cannot write elsewhere.
+            #
+            # This MUST run before the required-field check below. A caller
+            # authenticating with a project-scoped key is told by this
+            # endpoint's own documentation not to send project_id -- the whole
+            # point is that the server decides it -- so validating the body
+            # first rejected the correct client with a 400, on what is now the
+            # only credential accepted by default.
+            event = {**event, "project_id": bound_project_id}
+
+        # Only the legacy shared-secret path still has to supply one, because
+        # nothing else names a tenant for it.
+        if not event.get("project_id"):
+            raise HTTPException(
+                400, detail="project_id required for run_start event"
+            )
+        opening_project = str(event.get("project_id"))
+        try:
+            owner = await remember_run_project(run_id, opening_project)
+        except RunProjectBindingUnavailable as exc:
+            # Fail closed: an unbound run has no cross-tenant check for its
+            # whole life. 503 is retryable and tells the producer why.
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Cannot establish run ownership right now — retry",
+            ) from exc
+        if owner is not None and owner != opening_project:
+            # run_id is caller-chosen, so two projects picking "build-42" is an
+            # ordinary collision. Say so at the only moment the producer can
+            # act on it: silently losing the bind used to leave every
+            # subsequent event of this run 403-ing for 25 hours while the run
+            # showed as started and permanently empty.
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail=(
+                    f"run_id '{run_id}' is already in use by another project. "
+                    "Use a run_id unique to this project."
+                ),
+            )
+    elif bound_project_id:
+        owner = await resolve_run_project(run_id)
+        if owner is not None and owner != bound_project_id:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="This run belongs to a different project",
+            )
 
     safe_event = sanitize_test_result_payload({**event, "run_id": run_id})
     safe_event.pop("_id", None)
@@ -538,8 +657,8 @@ async def ingest_live_event(
     # Raw evidence belongs in the project-scoped artifact store, not this
     # shared live-events collection.
     try:
-        db = get_mongo_db()
-        await db[Collections.LIVE_EXECUTION_EVENTS].insert_one(
+        mongo_db = get_mongo_db()
+        await mongo_db[Collections.LIVE_EXECUTION_EVENTS].insert_one(
             {
                 **safe_event,
                 LIVE_SANITIZATION_VERSION_FIELD: LIVE_SANITIZATION_VERSION,

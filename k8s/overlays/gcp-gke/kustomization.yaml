@@ -115,6 +115,28 @@ patches:
       kind: Service
       name: testlookup-backend
 
+  # ── Re-audit H2: who may set X-Forwarded-For on THIS topology ────────────
+  # Container-native load balancing (the standalone NEG annotations below)
+  # means the Google Front End connects DIRECTLY to the backend pod, so the
+  # pod's TCP peer is a GFE address, not another pod. The base ConfigMap trusts
+  # the private ranges cloud pod networks are drawn from, which does not
+  # include these — and uvicorn ignores X-Forwarded-For entirely unless the
+  # immediate peer is trusted, so without this the API records the load
+  # balancer as every caller and H2 is back.
+  #
+  # These are Google's documented health-check and GFE source ranges — the same
+  # two CIDRs this file already adds to the NetworkPolicy above.
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: testlookup-config
+      data:
+        FORWARDED_ALLOW_IPS: "35.191.0.0/16,130.211.0.0/22"
+    target:
+      kind: ConfigMap
+      name: testlookup-config
+
   - patch: |-
       apiVersion: v1
       kind: Service

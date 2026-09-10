@@ -859,7 +859,20 @@ async def test_legacy_live_route_sanitizes_mongo_and_redis(monkeypatch):
         "stack_trace": RAW_STACK,
         **NESTED_SECRETS,
     }
-    await live.ingest_live_event("path-run", event)
+    # The route now authenticates (re-audit H1). A direct call bypasses the
+    # router dependency entirely, so the credential is passed explicitly —
+    # otherwise the FastAPI Header default object arrives instead of None and
+    # is read as a supplied API key.
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LIVE_EVENTS_REQUIRE_PROJECT_KEY", False)
+    await live.ingest_live_event(
+        "path-run",
+        event,
+        x_api_key=None,
+        x_webhook_secret=settings.WEBHOOK_SECRET,
+        db=SimpleNamespace(),
+    )
 
     mongo_event = collection.insert_one.await_args.args[0]
     redis_event = published.await_args.args[1]

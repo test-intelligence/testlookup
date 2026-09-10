@@ -19,6 +19,51 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 
+#: Every convention this repo uses to write "you must replace this".
+#:
+#: Kept as a list because the repo does not have one convention. ``.env.example``
+#: writes ``change-me-…``; ``.env.gcp-vm.example`` and
+#: ``infra/cloudrun/backend.env.example`` write ``replace-with-…``; the k8s
+#: secret template writes ``<base64-encoded-…>``. The first version of this
+#: guard knew only the first of those, so it closed the hole for one of three
+#: shipped example files.
+#:
+#: None of these can match a generated secret. ``openssl rand -hex`` — what
+#: every script and document here tells the operator to run — emits
+#: hexadecimal, which contains none of these substrings.
+_SECRET_PLACEHOLDER_MARKERS: tuple[str, ...] = (
+    "change-me",
+    "change_me",
+    "replace-with",
+    "replace_with",
+    "your-",
+    "set-a-",
+    "<",
+)
+
+
+def _is_placeholder_secret(value: str) -> bool:
+    """True when a secret is unset or still one of the shipped placeholders.
+
+    This compared against the field DEFAULT exactly, which missed every
+    placeholder an operator is actually likely to be running. ``.env.example``
+    ships ``JWT_SECRET_KEY=change-me-generate-with-openssl-rand-hex-32``,
+    ``APP_SECRET_KEY=change-me-in-production-use-openssl-rand-hex-32`` and
+    ``WEBHOOK_SECRET=change-me-generate-with-openssl-rand-hex-32`` — none equal
+    to its default, so copying the example file and deploying it booted
+    production with three published secrets and no complaint. The GCP and Cloud
+    Run example files, which both ship ``APP_ENV=production``, use a different
+    wording again and were missed by the first fix for the same reason.
+
+    Substring, not prefix: a placeholder is sometimes embedded rather than
+    leading (a connection URI carrying the password, for instance).
+    """
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    return any(marker in text for marker in _SECRET_PLACEHOLDER_MARKERS)
+
+
 class Settings(BaseSettings):
     """Application settings — loaded from environment variables."""
 
@@ -578,6 +623,13 @@ class Settings(BaseSettings):
 
     # ── Webhook Security ──────────────────────────────────────
     WEBHOOK_SECRET: str = "change-me-webhook-secret"
+    # When true, POST /ws/events/{run_id} accepts ONLY a project-scoped API key
+    # and refuses the shared webhook secret. The secret authenticates a caller
+    # but names no tenant, so it cannot express "may write to THIS project";
+    # a project-scoped key derives the project server-side. Defaults False so
+    # existing direct integrations keep working; set True to close the shared
+    # secret path outright (re-audit H1).
+    LIVE_EVENTS_REQUIRE_PROJECT_KEY: bool = True
 
     # ── Observability ─────────────────────────────────────────
     # OpenTelemetry
@@ -667,12 +719,20 @@ class Settings(BaseSettings):
         """
         warnings: list[str] = []
         if self.APP_ENV in ("production", "staging"):
-            if self.JWT_SECRET_KEY in ("change-me-jwt-secret", ""):
+            if _is_placeholder_secret(self.JWT_SECRET_KEY):
                 warnings.append("CRITICAL: JWT_SECRET_KEY is set to the default — change it immediately")
-            if self.APP_SECRET_KEY in ("change-me-in-production", ""):
+            if _is_placeholder_secret(self.APP_SECRET_KEY):
                 warnings.append("CRITICAL: APP_SECRET_KEY is set to the default — secrets will not be safely encrypted")
-            if self.WEBHOOK_SECRET in ("change-me-webhook-secret", ""):
-                warnings.append("WARNING: WEBHOOK_SECRET is set to the default — webhook endpoints are not secured")
+            if _is_placeholder_secret(self.WEBHOOK_SECRET):
+                # CRITICAL, not WARNING (re-audit H1). This secret is the only
+                # credential in front of POST /ws/events/{run_id}, which injects
+                # live test results into a caller-named project. Booting
+                # production with the literal, version-controlled default let
+                # anyone who read the source forge results for any tenant.
+                warnings.append(
+                    "CRITICAL: WEBHOOK_SECRET is set to the default — live-event and "
+                    "webhook endpoints accept anyone who read the source"
+                )
             if self.DEV_AUTO_LOGIN_ENABLED:
                 warnings.append("CRITICAL: DEV_AUTO_LOGIN_ENABLED is True in production — disable it")
             if self.SSO_ENABLED and self.SAML_BASE_URL == "http://localhost:8000":

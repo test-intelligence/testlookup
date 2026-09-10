@@ -234,8 +234,31 @@ class TestCriticalSecurityFailures:
         assert s.critical_security_failures() == []
 
     def test_warning_only_item_is_not_critical(self):
-        # A default WEBHOOK_SECRET is WARNING-severity, not CRITICAL: it must not
-        # block startup on its own.
+        # The WARNING/CRITICAL split still exists: a warning must not block
+        # startup on its own. A localhost SAML_BASE_URL is the example now —
+        # it is a misconfiguration, not an open door.
+        #
+        # WEBHOOK_SECRET used to be the example here. It was promoted to
+        # CRITICAL (re-audit H1) because it is the only credential in front of
+        # POST /ws/events/{run_id}, which injects live results into a
+        # caller-named project: booting production with the default published
+        # in this source tree let anyone forge results for any tenant.
+        from app.core.config import Settings
+
+        s = Settings(
+            APP_ENV="production",
+            JWT_SECRET_KEY="a-real-strong-secret-key-here",
+            APP_SECRET_KEY="another-real-strong-key",
+            WEBHOOK_SECRET="a-real-webhook-secret",
+            SSO_ENABLED=True,
+            SAML_BASE_URL="http://localhost:8000",
+            DEV_AUTO_LOGIN_ENABLED=False,
+        )
+        assert any("SAML_BASE_URL" in w for w in s.validate_production_secrets())
+        assert s.critical_security_failures() == []
+
+    def test_default_webhook_secret_is_critical(self):
+        """It gates a cross-tenant write, so it must refuse to boot (H1)."""
         from app.core.config import Settings
 
         s = Settings(
@@ -245,7 +268,9 @@ class TestCriticalSecurityFailures:
             WEBHOOK_SECRET="change-me-webhook-secret",
             DEV_AUTO_LOGIN_ENABLED=False,
         )
-        assert s.critical_security_failures() == []
+        assert any(
+            "WEBHOOK_SECRET" in w for w in s.critical_security_failures()
+        )
 
     def test_dev_auto_login_is_critical(self):
         from app.core.config import Settings

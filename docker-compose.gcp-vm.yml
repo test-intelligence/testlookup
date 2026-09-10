@@ -22,6 +22,16 @@ services:
     environment:
       - APP_ENV=${APP_ENV:-production}
       - APP_DEBUG=${APP_DEBUG:-false}
+      # Re-audit H2. This override runs uvicorn DIRECTLY, not gunicorn, so
+      # backend/gunicorn_conf.py never loads here — the uvicorn CLI reads this
+      # variable itself (default 127.0.0.1). Without it the API sees the
+      # frontend nginx as every caller whenever traffic arrives through the
+      # proxy, collapsing the login rate limiter onto one bucket and recording
+      # that one address for every audit event. Trust the Docker bridge range
+      # the nginx container connects from, never "*": under a wildcard uvicorn
+      # returns the leftmost X-Forwarded-For entry, i.e. whatever the caller
+      # sent.
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-172.16.0.0/12}
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - MONGO_URI=mongodb://mongo:27017
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0

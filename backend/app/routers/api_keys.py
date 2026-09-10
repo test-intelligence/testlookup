@@ -16,6 +16,7 @@ from app.db.postgres import get_db
 from app.models.postgres import ApiKey, Project, User, UserRole
 from app.models.schemas import ApiKeyCreate, ApiKeyCreatedResponse, ApiKeyResponse
 from app.services.activity.service import ActorRef, record as record_activity
+from app.services.live_event_authz import forget_streaming_key_hash
 
 router = APIRouter(prefix="/api/v1/keys", tags=["API Keys"])
 
@@ -173,6 +174,12 @@ async def revoke_api_key(
     if not api_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
     api_key.is_active = False
+
+    # The live-event path caches this credential's project for a few seconds so
+    # the full check does not run per event. Revocation is exactly when that
+    # lag is least acceptable, and ApiKey.key_hash IS the cache digest, so drop
+    # it now rather than waiting for the TTL.
+    await forget_streaming_key_hash(api_key.key_hash)
 
     if api_key.project_id is not None:
         await record_activity(

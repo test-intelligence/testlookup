@@ -284,7 +284,13 @@ async def promote_cluster(
         is_duplicate=duplicate_detected,
     )
 
-    initial_status = str(policy_result["initial_status"])
+    # NOT str(): ActionStatus subclasses str, but Enum.__str__ renders
+    # "ActionStatus.APPROVED" — 21 characters, never equal to the member, and
+    # too long for the String(20) approval_status column. That silently made
+    # every comparison below False (so an approved promotion could never file
+    # its Jira ticket and the pending_review metric never fired) and overflowed
+    # the column on write. Normalising through the enum yields "approved".
+    initial_status = ActionStatus(policy_result["initial_status"]).value
 
     defect = Defect(
         test_case_id=tc_id,
