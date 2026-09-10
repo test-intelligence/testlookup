@@ -18,6 +18,7 @@ import asyncio
 import base64
 import io
 import json
+import re
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
@@ -344,3 +345,98 @@ def test_a_report_that_escapes_its_keys_is_still_refused_unparsed(cap):
     )
     with pytest.raises(TooManyResults):
         upload_limits.refuse_before_parsing(report, "pytest")
+
+
+# ── Namespace prefixes (QA of the M5 review) ─────────────────────────────
+#
+# The TRX parser matches elements by local name, so a report that writes
+# ``<t:UnitTestResult>`` was parsed in full -- 2,000 results in QA's probe --
+# and counted as 0. Whatever the names look like, the count may exceed what a
+# parser keeps but never fall short of it.
+
+TRX_NAMESPACE = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"
+_ELEMENT_NAME = re.compile(r"<(/?)([A-Za-z_][\w.-]*)")
+_XML_FORMATS = set(upload_limits._RESULT_MARKERS) - set(upload_limits._JSON_FORMATS)
+_XML_SAMPLES = [sample for sample in SAMPLES if sample[0] in _XML_FORMATS]
+# Prefixes the XML parser accepts: a plain one, one with a digit, a dot and a
+# dash, and a non-ASCII one. A marker that allows only some lets the rest by.
+_PREFIXES = ["t", "v1.x-y", chr(0x442) + chr(0x435)]
+
+
+def _prefixed(xml: str, uri: str, prefix: str) -> str:
+    """``xml`` with every element named ``prefix:name``, the prefix bound to ``uri`` on its root."""
+    root = _ELEMENT_NAME.search(xml).group(2)
+    renamed = _ELEMENT_NAME.sub(lambda tag: f"<{tag.group(1)}{prefix}:{tag.group(2)}", xml)
+    return renamed.replace(f"<{prefix}:{root}", f'<{prefix}:{root} xmlns:{prefix}="{uri}"', 1)
+
+
+def _default_namespaced(xml: str, uri: str) -> str:
+    """``xml`` with its root, and so every unprefixed element, in namespace ``uri``."""
+    if ' xmlns="' in xml:
+        return xml  # TRX already is: that is how MSTest writes it
+    root = _ELEMENT_NAME.search(xml).group(2)
+    return xml.replace(f"<{root}", f'<{root} xmlns="{uri}"', 1)
+
+
+def _namespaced_samples():
+    for fmt, fixture, filename in _XML_SAMPLES:
+        uri = TRX_NAMESPACE if fmt == "trx" else "urn:example:results"
+        for index, prefix in enumerate(_PREFIXES):
+            yield pytest.param(
+                fmt, _prefixed(fixture, uri, prefix), filename,
+                id=f"{fmt}-{filename}-prefix{index}",
+            )
+        yield pytest.param(
+            fmt, _default_namespaced(fixture, uri), filename, id=f"{fmt}-{filename}-default"
+        )
+
+
+def test_every_xml_format_has_a_sample_to_rewrite():
+    """A new XML format needs a sample here, or its prefixed spelling goes unchecked."""
+    assert {fmt for fmt, _fixture, _name in _XML_SAMPLES} == _XML_FORMATS
+
+
+@pytest.mark.parametrize("fmt,report,filename", list(_namespaced_samples()))
+def test_a_namespaced_report_counts_at_least_what_it_parses_to(fmt, report, filename):
+    """TRX's parser reads a prefixed report in full, and the others read it as
+    nothing: the count has to follow each one."""
+    from app.worker.tasks import _parse_file_to_results
+
+    parsed = len(_parse_file_to_results(report, fmt, filename, "run-1"))
+    counted = upload_limits.estimated_results(report, fmt)
+    assert counted >= parsed, f"{fmt}: {counted} markers for {parsed} parsed results"
+
+
+@pytest.mark.parametrize("prefix", _PREFIXES, ids=["plain", "dotted", "non-ascii"])
+def test_a_prefixed_trx_report_is_parsed_and_counted_like_a_plain_one(prefix):
+    """Keeps the check above from passing vacuously: the TRX parser does read
+    a prefixed report, result for result."""
+    from app.worker.tasks import _parse_file_to_results
+
+    trx_samples = [(fixture, name) for fmt, fixture, name in _XML_SAMPLES if fmt == "trx"]
+    assert trx_samples
+    for fixture, filename in trx_samples:
+        report = _prefixed(fixture, TRX_NAMESPACE, prefix)
+        plain = len(_parse_file_to_results(fixture, "trx", filename, "run-1"))
+        assert plain > 0
+        assert len(_parse_file_to_results(report, "trx", filename, "run-1")) == plain
+        assert upload_limits.estimated_results(report, "trx") == upload_limits.estimated_results(
+            fixture, "trx"
+        ), f"a {prefix!r} prefix changed the TRX count"
+
+
+def test_a_prefixed_trx_report_far_over_the_cap_is_refused_unparsed(cap):
+    """QA's probe in miniature: 21 prefixed results against a cap of 5."""
+    from app.worker.tasks import _parse_file_to_results
+
+    rows = "".join(f'<t:UnitTestResult testName="t{i}" outcome="Passed"/>' for i in range(21))
+    report = (
+        f'<?xml version="1.0"?><t:TestRun xmlns:t="{TRX_NAMESPACE}">'
+        f"<t:Results>{rows}</t:Results></t:TestRun>"
+    )
+    with patch(
+        "app.services.trx_parser.parse_trx_xml",
+        side_effect=AssertionError("the report was parsed"),
+    ):
+        with pytest.raises(TooManyResults):
+            _parse_file_to_results(report, "trx", "results.trx", "run-1")

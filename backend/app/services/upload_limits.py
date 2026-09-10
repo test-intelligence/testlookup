@@ -20,7 +20,11 @@ So the cap is enforced twice:
 
 How far the count can be trusted depends on the format. For the XML formats
 and pytest, every result the parser keeps must carry the counted marker, so the
-count bounds what parsing can cost. A Cypress, Playwright, Cucumber or Allure
+count bounds what parsing can cost. For XML that holds whatever the result
+element's name looks like: the TRX parser matches names without their
+namespace prefix, so ``<t:UnitTestResult>`` is parsed and counted; the other
+XML parsers match only the unprefixed name, so a prefixed element is neither
+parsed nor counted. A Cypress, Playwright, Cucumber or Allure
 result can leave its marker key out and still be parsed, so for those four the
 count stops accidents rather than a crafted report. The exact check after
 parsing refuses that report either way, and the 50 MB upload limit bounds what
@@ -48,12 +52,24 @@ PREPARSE_HEADROOM = 4
 # results-only TRX has no ``<UnitTest>`` element at all -- and Playwright counts
 # ``"results"``, which every test object carries, where ``"expectedStatus"`` is
 # missing from some reporters' output.
+#
+# Namespace prefixes (QA of the M5 review). Whether a prefixed result element
+# such as ``<t:UnitTestResult>`` is parsed depends on how its parser matches
+# names, and the count has to follow the parser. The TRX parser compares LOCAL
+# names, so a prefixed result is parsed like a plain one, and its marker takes
+# any prefix: with the plain marker, a TRX report written with prefixes counted
+# 0 against 2,000 parsed results. The other XML parsers look results up by the
+# unprefixed name (``findall("testcase")``) and parse a prefixed element to
+# nothing, so their markers count unprefixed tags only. The prefix is matched
+# loosely, as anything up to a colon except XML whitespace and delimiters: a
+# count that sees too much can only lean toward refusal.
+_ANY_PREFIX = r"(?:[^ \t\r\n<>/:]+:)?"
 _JUNIT = re.compile(r"<(?:testcase|test-method)[\s/>]")
 _RESULT_MARKERS: dict[str, re.Pattern[str]] = {
     "junit": _JUNIT,
     "testng": _JUNIT,
     "nunit": re.compile(r"<test-case[\s/>]"),
-    "trx": re.compile(r"<UnitTestResult[\s/>]"),
+    "trx": re.compile("<" + _ANY_PREFIX + r"UnitTestResult[\s/>]"),
     "xunit": re.compile(r"<test[\s/>]"),
     "robot": re.compile(r"<test[\s/>]"),
     "pytest": re.compile(r'"nodeid"\s*:'),
