@@ -5670,7 +5670,7 @@ def delete_run_everywhere(
             counts = await run_deletion_service.perform_run_deletion(
                 db,
                 run=run,
-                mongo=await get_mongo_db(),
+                mongo=get_mongo_db(),
                 storage=get_storage_provider(),
                 search_index_documents=index_documents,
                 reason=reason,
@@ -5769,7 +5769,7 @@ def execute_criteria_deletion_task(
             job_uuid, status=deletion_job_service.RUNNING
         )
 
-        mongo = await get_mongo_db()
+        mongo = get_mongo_db()
         storage = get_storage_provider()
         deleted: list[str] = []
         failures: list[str] = []

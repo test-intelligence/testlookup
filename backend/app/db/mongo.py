@@ -24,6 +24,20 @@ def get_mongo_client() -> AsyncIOMotorClient:
 
 
 def get_mongo_db() -> AsyncIOMotorDatabase:
+    """Return the Motor database handle. **Synchronous — do not await it.**
+
+    Motor's client and database objects are built eagerly; only the QUERIES
+    are awaitable. ``await get_mongo_db()`` therefore raises
+
+        TypeError: object AsyncIOMotorDatabase can't be used in 'await'
+        expression
+
+    at runtime, and nothing catches it: it surfaced as a bare 500 from
+    ``DELETE /api/v1/runs/{run_id}`` with no traceback in the structured logs.
+    Four call sites had it. The confusing part is that
+    ``await get_mongo_db()[coll].find_one(...)`` IS correct — there the await
+    binds to ``find_one``, not to this function.
+    """
     return get_mongo_client()[settings.MONGO_DB]
 
 

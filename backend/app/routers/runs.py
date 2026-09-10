@@ -808,7 +808,7 @@ async def delete_run(
             ),
         )
 
-    mongo = await get_mongo_db()
+    mongo = get_mongo_db()
     blockers = await run_deletion_service.citation_blockers(
         db, run_id=run_id, mongo=mongo
     )
