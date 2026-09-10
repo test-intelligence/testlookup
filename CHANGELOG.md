@@ -28,9 +28,23 @@ and correct while the process could not start with it. A test now restates that
 validator and asserts no manifest anywhere sets the name gunicorn reads;
 reintroducing the exact outage fails three tests.
 
-This is the third variant of one mistake in this batch: assert the content,
-assert the list of locations, assert the value without the thing that consumes
-it. Deployment verification caught what none of 9,354 tests could.
+**And it was still not fixed.** Probing the running pod showed the middleware
+installed but *not outermost*: `main.py` registers the login rate limiter with
+`@app.middleware("http")` after `configure_middlewares` returns, and Starlette
+inserts at index 0, so the limiter sat outside the correction and kept bucketing
+every external caller onto the ingress address — the single loudest consequence
+in the finding. The install moved to the end of `main.py`, behind a named
+function that says why it must be called last.
+
+The test that missed *that* built a bare `FastAPI`, called
+`configure_middlewares`, and checked index 0. It passed against a synthetic app
+that has nothing registered afterwards. It now reloads the real module and
+asserts the limiter runs inside the boundary.
+
+This is the third and fourth variant of one mistake in this batch: assert the
+content, assert the list of locations, assert the value without the thing that
+consumes it, assert the wiring on a stand-in for the thing being wired.
+Deployment verification caught what none of 9,354 tests could.
 
 ## 2026-09-10 — release-readiness batch 1: when a credential names the wrong thing
 

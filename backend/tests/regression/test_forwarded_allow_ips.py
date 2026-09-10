@@ -18,6 +18,7 @@ declared its proxy topology must not start believing a client-settable header.
 """
 from __future__ import annotations
 
+import importlib
 import ipaddress
 from pathlib import Path
 
@@ -114,12 +115,12 @@ def test_the_app_installs_the_boundary_when_one_is_declared(monkeypatch):
     """The setting must actually reach ProxyHeadersMiddleware."""
     from fastapi import FastAPI
 
-    from app.bootstrap import configure_middlewares
+    from app.bootstrap import install_proxy_boundary
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.42.0.0/16")
     app = FastAPI()
-    configure_middlewares(app)
+    install_proxy_boundary(app)
 
     installed = [m for m in app.user_middleware if "ProxyHeaders" in str(m.cls)]
     assert installed, (
@@ -128,20 +129,63 @@ def test_the_app_installs_the_boundary_when_one_is_declared(monkeypatch):
     )
 
 
-def test_the_boundary_is_the_outermost_middleware(monkeypatch):
-    """Everything downstream reads request.client.host — it must be corrected first."""
-    from fastapi import FastAPI
+def test_the_boundary_is_outermost_on_the_REAL_app(monkeypatch):
+    """Assert on app.main.app, not on a synthetic FastAPI.
 
-    from app.bootstrap import configure_middlewares
+    The first version of this test built a bare FastAPI, called
+    configure_middlewares, and checked index 0. It passed while the real app
+    was wrong: main.py registers ``rate_limit_auth`` with
+    @app.middleware("http") AFTER configure_middlewares returns, and Starlette
+    inserts at index 0 — so the login rate limiter, the loudest consequence in
+    H2, sat OUTSIDE the correction and kept bucketing every external caller
+    onto the ingress address. Nothing in a synthetic app can show that.
+    """
+    monkeypatch.setenv("TRUSTED_PROXY_IPS", "10.42.0.0/16")
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.42.0.0/16")
-    app = FastAPI()
-    configure_middlewares(app)
 
-    assert "ProxyHeaders" in str(app.user_middleware[0].cls), (
-        "ProxyHeadersMiddleware is not outermost, so middleware ahead of it "
-        "sees the proxy's address: " + str([str(m.cls) for m in app.user_middleware])
+    import app.main as main_module
+
+    importlib.reload(main_module)
+
+    stack = [str(m.cls) for m in main_module.app.user_middleware]
+    assert stack, "the app registers no middleware at all"
+    assert "ProxyHeaders" in stack[0], (
+        "ProxyHeadersMiddleware is not outermost, so everything registered "
+        "after it reads the proxy's address instead of the caller's. Order "
+        "was:" + _NL_INDENT + _NL_INDENT.join(stack)
+    )
+
+
+def test_the_rate_limiter_runs_inside_the_boundary(monkeypatch):
+    """Name the specific consumer, because it is the one H2 was about.
+
+    slowapi keys its login/MFA buckets on ``get_remote_address(request)``,
+    i.e. ``request.client.host``. If its middleware runs outside the
+    correction, one script exhausting the ceiling still 429s everybody else.
+    """
+    monkeypatch.setenv("TRUSTED_PROXY_IPS", "10.42.0.0/16")
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.42.0.0/16")
+
+    import app.main as main_module
+
+    importlib.reload(main_module)
+
+    stack = [str(m.cls) for m in main_module.app.user_middleware]
+    proxy_at = next(i for i, name in enumerate(stack) if "ProxyHeaders" in name)
+    limiter_at = next(
+        (i for i, name in enumerate(stack) if "BaseHTTPMiddleware" in name), None
+    )
+    assert limiter_at is not None, (
+        "the @app.middleware('http') rate limiter is gone; if it moved, point "
+        "this test at wherever the auth ceiling now lives"
+    )
+    assert proxy_at < limiter_at, (
+        "the auth rate limiter runs OUTSIDE the proxy boundary, so it buckets "
+        "on the ingress address: " + str(stack)
     )
 
 
@@ -149,12 +193,12 @@ def test_nothing_is_installed_when_no_boundary_is_declared(monkeypatch):
     """Undeclared topology trusts nothing — the fail-closed default."""
     from fastapi import FastAPI
 
-    from app.bootstrap import configure_middlewares
+    from app.bootstrap import install_proxy_boundary
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "")
     app = FastAPI()
-    configure_middlewares(app)
+    install_proxy_boundary(app)
 
     assert not [m for m in app.user_middleware if "ProxyHeaders" in str(m.cls)]
 

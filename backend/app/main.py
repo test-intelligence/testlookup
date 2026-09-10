@@ -13,7 +13,12 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.bootstrap import configure_metrics, configure_middlewares, register_routers
+from app.bootstrap import (
+    configure_metrics,
+    configure_middlewares,
+    install_proxy_boundary,
+    register_routers,
+)
 from app.core.config import settings
 from app.core.http_client import close_http_client
 from app.core.logging_config import configure_logging
@@ -270,6 +275,15 @@ async def rate_limit_auth(request: Request, call_next):
                 content={"detail": error_msg},
             )
     return await call_next(request)
+
+
+# ── The proxy trust boundary goes on LAST ───────────────────────────────────
+# Starlette's add_middleware inserts at index 0, so the last registration is
+# the outermost and runs first. rate_limit_auth above buckets on
+# request.client.host, so it has to run INSIDE this one or it keeps counting
+# every external caller as the ingress -- re-audit H2's headline consequence.
+# Anything added below this line will sit outside the correction.
+install_proxy_boundary(app)
 
 
 # Note: the legacy ``GET /health`` shim was retired in item #10 cleanup —

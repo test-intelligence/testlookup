@@ -215,25 +215,43 @@ def configure_middlewares(app: FastAPI) -> None:
     app.add_middleware(TelemetryMiddleware)
     app.add_middleware(SCIMRequestBodyLimitMiddleware)
 
-    # Re-audit H2. Added LAST so it is the OUTERMOST middleware: everything
-    # downstream -- the login rate limiter's bucket key, and every IP written
-    # for lockout and audit forensics -- reads request.client.host, and each
-    # must see the real caller rather than the ingress.
-    #
-    # This lives here rather than in gunicorn_conf.py because gunicorn's own
-    # forwarded_allow_ips rejects CIDRs outright, and rejects them at Config
-    # build time from the environment, before any config file runs. uvicorn's
-    # ProxyHeadersMiddleware is the same implementation gunicorn's setting
-    # would have reached, minus that validator.
-    #
-    # Empty means trust nothing, so an undeclared topology never starts
-    # believing a header any client can set.
-    if settings.TRUSTED_PROXY_IPS.strip():
-        from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+    # NOTE: the proxy trust boundary is NOT installed here. It must be the
+    # OUTERMOST middleware, and main.py registers more middleware after this
+    # function returns. See install_proxy_boundary below.
 
-        app.add_middleware(
-            ProxyHeadersMiddleware, trusted_hosts=settings.TRUSTED_PROXY_IPS
-        )
+
+def install_proxy_boundary(app: FastAPI) -> None:
+    """Correct ``request.client.host`` before anything else reads it.
+
+    Re-audit H2. Call this **last**, after every other middleware is
+    registered: Starlette's ``add_middleware`` inserts at index 0, so the last
+    one added is the outermost and the first to run. Everything downstream --
+    the login/MFA rate limiter's bucket key, and every IP written for lockout
+    and audit forensics -- reads ``request.client.host``, and each must see the
+    real caller rather than the ingress.
+
+    Getting the order wrong is silent: the header is still honoured for the
+    endpoints, so only the middleware registered outside this one keeps
+    reporting the proxy. That is exactly what happened -- ``rate_limit_auth``
+    is registered in main.py after ``configure_middlewares``, so the single
+    loudest consequence in H2 was still unfixed while the setting looked live.
+
+    It lives in the app rather than in ``gunicorn_conf.py`` because gunicorn's
+    ``forwarded_allow_ips`` rejects CIDRs, and rejects them while building its
+    Config from the environment, before any config file runs. This is the same
+    uvicorn middleware that setting would have configured, minus the validator.
+
+    Empty means trust nothing, so an undeclared topology never starts believing
+    a header any client can set.
+    """
+    if not settings.TRUSTED_PROXY_IPS.strip():
+        return
+
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    app.add_middleware(
+        ProxyHeadersMiddleware, trusted_hosts=settings.TRUSTED_PROXY_IPS
+    )
 
 
 def configure_metrics(app: FastAPI) -> None:
