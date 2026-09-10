@@ -539,13 +539,18 @@ PUBLIC_PREFIX_EXEMPT_CAP = 6
 #: join them quietly.
 #:
 #: ``POST /webhooks/minio`` -- authenticated by the deployment-wide
-#: ``WEBHOOK_SECRET`` and no more. ``routers/webhooks.py:61`` reads
-#: ``project_id`` out of the request body's
-#: ``Records[].s3.object.userMetadata``, and falls back to the first segment of
-#: the object key (``:68``); either way the value is chosen by the caller, and
-#: ``:80`` hands it to ``ingest_test_run`` with no membership check. A holder of
-#: that one secret can therefore file a fabricated run into ANY project. This is
-#: the same shape as re-audit H1 and it is pre-existing, not introduced here.
+#: ``WEBHOOK_SECRET``, which names no tenant. It used to read ``project_id``
+#: out of the request body's ``Records[].s3.object.userMetadata``, so a holder
+#: of that one secret could file a fabricated run into ANY project and have its
+#: results read from any prefix (re-audit N10, the same shape as H1).
+#:
+#: FIXED for the request-body path: the handler now fetches the sentinel object
+#: it was notified about and takes the project from the object KEY, so writing
+#: into a project requires write access to that project's prefix in the bucket.
+#: It stays listed because the control is a STORAGE permission rather than a
+#: membership check this scan can see -- and because that permission is only as
+#: narrow as the deployment's object-store credentials, which is its own
+#: finding rather than something the handler can enforce.
 #:
 #: This entry was first written as an EXEMPTION, with a note claiming the
 #: payload "names an object key rather than a project". That note was wrong and

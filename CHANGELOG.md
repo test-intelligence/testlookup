@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-09-10 — the upload webhook was notified about a file it never read
+
+`POST /webhooks/minio` is guarded by one deployment-wide `WEBHOOK_SECRET`. That
+credential authenticates a caller and names no tenant — and the handler took
+`project_id` straight out of the request body's
+`Records[].s3.object.userMetadata`, falling back to the object key. Either way
+the caller chose it.
+
+Downstream, `_upsert_test_run` resolves that string as a UUID **or a slug**
+against any project, so a holder of the secret could file a fabricated run into
+any tenant. And `process_sentinel` then lists and reads result objects from the
+prefix derived from the same caller-supplied key — so the one request is a
+cross-tenant read as well as a write. This is re-audit finding H1 again, at a
+different door.
+
+The handler was notified *about* an object and never fetched it. It now reads
+`upload_complete.json` from the object store and uses that as the sentinel, and
+takes the project from the object **key** — where the data physically lives —
+rather than from anything the notification or even the file claims. Ingesting
+into a project therefore requires write access to that project's prefix in the
+bucket: a storage credential, not a shared secret. A notification for an object
+that is not there is refused rather than guessed at, because falling back to
+the request body is the behaviour being removed.
+
+It survived partly because `/webhooks/` mounts outside `/api/v1`, where neither
+authorization ratchet looked until the previous entry added a third scan. It
+was also the one route in that prefix with no tests at all; there are now
+fourteen, and the source check that pins the payload field uses the syntax tree
+rather than a substring, because the handler's own comment names the field it
+must not read.
+
+The residual is a deployment question rather than a handler one: the fix is
+exactly as strong as the object store's own permissions, so a single shared
+bucket credential across projects still lets one uploader reach another's
+prefix. Recorded as a follow-up.
+
 ## 2026-09-10 — the proxy trust boundary could never have lived in gunicorn
 
 Deploying batch 1 to the homelab took the API down. Every worker died at

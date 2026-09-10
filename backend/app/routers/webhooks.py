@@ -1,9 +1,11 @@
 """MinIO webhook handler — receives ObjectCreated events and queues ingestion."""
+import json
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
 from app.core.deps import verify_webhook_secret
+from app.db.storage import get_storage_provider
 from app.models.schemas import MinIOWebhookEvent, SentinelFile
 from app.worker.tasks import ingest_test_run
 
@@ -52,24 +54,45 @@ async def minio_webhook(
 
     minio_prefix = "/".join(parts[:-1]) + "/"
 
-    # Read sentinel content from the webhook records if available
-    sentinel_data = {}
-    records = event.Records or []
-    for record in records:
-        s3_obj = record.get("s3", {})
-        obj_key = s3_obj.get("object", {}).get("key", "")
-        if obj_key.endswith("upload_complete.json"):
-            user_meta = record.get("s3", {}).get("object", {}).get("userMetadata", {})
-            sentinel_data.update(user_meta)
+    # ── Read the sentinel from STORAGE, not from the notification ─────────
+    #
+    # Re-audit N10. This used to take the sentinel's fields -- project_id
+    # included -- from the request body's ``Records[].s3.object.userMetadata``,
+    # falling back to the object key. Both are chosen by whoever sends the
+    # request, and the only credential in front of this endpoint is one
+    # deployment-wide WEBHOOK_SECRET that names no tenant. Downstream,
+    # ``_upsert_test_run`` resolves that project string as a UUID *or a slug*
+    # against any project, so a holder of that secret could file a fabricated
+    # run into any tenant -- and ``process_sentinel`` then reads result objects
+    # from the caller-named prefix, making it a cross-tenant read too. Same
+    # shape as H1 on /ws/events.
+    #
+    # Fetching the object the notification refers to closes it: to be ingested
+    # into a project you must be able to WRITE into that project's prefix in
+    # the bucket, which is a storage credential and not a shared secret.
+    storage = get_storage_provider()
+    try:
+        raw = await storage.get_object_content(key)
+        sentinel_data = json.loads(raw)
+    except Exception as e:
+        # Fail CLOSED. Falling back to the request body is exactly the
+        # behaviour being removed, and a sentinel that cannot be read is not a
+        # sentinel -- a notification for an object that is not there is either
+        # a race or a forgery, and both should be retried by MinIO rather than
+        # guessed at.
+        logger.warning("Sentinel object unreadable, refusing: %s (%s)", key, e)
+        return {"status": "ignored", "reason": "sentinel_unreadable"}
 
-    # If no sentinel data in event, derive from key path
-    if not sentinel_data.get("build_number"):
-        project_id = parts[0] if len(parts) > 0 else "unknown"
-        build_number = parts[2] if len(parts) > 2 else "unknown"
-        sentinel_data = {
-            "project_id": project_id,
-            "build_number": build_number,
-        }
+    if not isinstance(sentinel_data, dict):
+        logger.warning("Sentinel is not a JSON object: %s", key)
+        return {"status": "ignored", "reason": "invalid_sentinel_content"}
+
+    # The project comes from WHERE THE DATA IS, never from what it claims.
+    # process_sentinel reads the run's result files from ``minio_prefix``, which
+    # is derived from this same key, so binding the project to the key keeps
+    # the two from ever disagreeing.
+    sentinel_data = {**sentinel_data, "project_id": parts[0]}
+    sentinel_data.setdefault("build_number", parts[2] if len(parts) > 2 else "unknown")
 
     try:
         sentinel = SentinelFile(**sentinel_data)
