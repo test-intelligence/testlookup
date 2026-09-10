@@ -17,7 +17,11 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.logging_config import _STRUCTURAL_LOG_FIELDS, _privacy_redaction
+from app.core.logging_config import (
+    _FREE_TEXT_FIELDS,
+    _STRUCTURAL_LOG_FIELDS,
+    _privacy_redaction,
+)
 
 
 def _redact(**fields):
@@ -235,3 +239,125 @@ def test_a_structlog_exception_is_redacted_before_it_is_written(json_logs):
     assert "RuntimeError" in written, "the traceback was dropped rather than redacted"
     assert "hunter2xyz" not in written
     assert "qa.lead@example.com" not in written
+
+
+# ── error=, reason= and detail= are free text (code review of R6) ────────
+
+
+def _records(buffer) -> list[dict]:
+    """The JSON records the real pipeline wrote, one per line."""
+    import json
+
+    return [json.loads(line) for line in buffer.getvalue().splitlines() if line.strip()]
+
+
+_REDIS_ERROR = "Error 111 connecting to 10.42.0.7:6379. Connection refused."
+
+
+@pytest.mark.parametrize("field", ["error", "reason", "detail"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        _REDIS_ERROR,
+        "timed out after 1234567890 ms",
+        "lease expired at epoch 1757500000",
+    ],
+)
+def test_an_error_field_keeps_its_host_and_numbers(json_logs, field, text):
+    """Some 250 calls log ``error=str(exc)``. Under the shape-based patterns a
+    Redis error lost the host and port it is read for, and a timeout its
+    milliseconds: the class R6 fixed for the message, one field over."""
+    import structlog
+
+    structlog.get_logger("tests.r6").warning("redis_unavailable", **{field: text})
+
+    assert _records(json_logs)[-1][field] == text
+
+
+@pytest.mark.parametrize(
+    "text, secret",
+    [
+        ("login rejected: password=hunter2xyz", "hunter2xyz"),
+        (
+            "upstream said Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+            "abcdefghijklmnopqrstuvwxyz",
+        ),
+        ("cannot reach postgresql://svc:dsnpass99@10.42.0.7:5432/app", "dsnpass99"),
+        ("could not notify qa.lead@example.com", "qa.lead@example.com"),
+    ],
+)
+def test_a_credential_or_an_email_in_an_error_field_is_still_redacted(
+    json_logs, text, secret
+):
+    """Free text keeps every pattern that recognises a secret by a marker."""
+    import structlog
+
+    structlog.get_logger("tests.r6").warning("upstream_failed", error=text)
+
+    assert secret not in json_logs.getvalue()
+    assert "REDACTED" in _records(json_logs)[-1]["error"]
+
+
+def test_an_error_field_loses_the_dsn_password_but_keeps_the_host(json_logs):
+    import structlog
+
+    structlog.get_logger("tests.r6").warning(
+        "upstream_failed", error="cannot reach postgresql://svc:dsnpass99@10.42.0.7:5432/app"
+    )
+
+    assert _records(json_logs)[-1]["error"] == (
+        "cannot reach postgresql://svc:[REDACTED]@10.42.0.7:5432/app"
+    )
+
+
+def test_other_structured_fields_keep_the_pii_heuristics(json_logs):
+    """Only the free-text fields were narrowed."""
+    import structlog
+
+    structlog.get_logger("tests.r6").warning(
+        "upstream_failed", error=_REDIS_ERROR, note="call 555-123-4567", peer="10.42.0.7"
+    )
+
+    record = _records(json_logs)[-1]
+    assert record["error"] == _REDIS_ERROR
+    assert "555-123-4567" not in record["note"]
+    assert "10.42.0.7" not in record["peer"]
+
+
+def test_an_exception_passed_as_a_field_is_redacted_as_its_repr(json_logs):
+    """``error=exc`` (3 call sites) hands over the object, not its text.
+
+    The processor skipped it as a non-string, and the JSON renderer then wrote
+    its repr -- after redaction had run, secrets and all.
+    """
+    import structlog
+
+    exc = ConnectionError(f"{_REDIS_ERROR} auth password=hunter2xyz")
+    structlog.get_logger("tests.r6").warning("chromadb_unavailable", error=exc)
+
+    assert "hunter2xyz" not in json_logs.getvalue()
+    error = _records(json_logs)[-1]["error"]
+    assert error.startswith("ConnectionError("), "the line should read as the renderer wrote it"
+    assert "10.42.0.7:6379" in error, "an exception's text is free text too"
+
+
+def test_an_exception_whose_repr_raises_does_not_break_the_log_call(json_logs):
+    """A processor runs in the caller's frame; logging must not raise there."""
+    import structlog
+
+    class Unprintable(Exception):
+        def __repr__(self):
+            raise RuntimeError("no repr")
+
+    structlog.get_logger("tests.r6").warning("odd_failure", error=Unprintable())
+
+    assert "Unprintable object at" in _records(json_logs)[-1]["error"]
+
+
+def test_the_free_text_fields_are_pinned():
+    """A free-text field loses the phone, SSN, card and IPv4 patterns.
+
+    Widening this set is a decision about what may reach the log unredacted,
+    so it must be made here, deliberately.
+    """
+    assert _FREE_TEXT_FIELDS == {"event", "exception", "stack", "error", "reason", "detail"}

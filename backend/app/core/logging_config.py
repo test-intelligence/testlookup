@@ -48,10 +48,15 @@ _STRUCTURAL_LOG_FIELDS: frozenset[str] = frozenset({
     "span_id",
 })
 
-#: Free-text fields: the message, and the traceback and stack rendered into
-#: the record before redaction runs. They carry operational numbers and
-#: addresses, so they get the marker-based set -- see _privacy_redaction.
-_MESSAGE_FIELDS: frozenset[str] = frozenset({"event", "exception", "stack"})
+#: Free-text fields, which get the marker-based set -- see _privacy_redaction.
+#: The message; the traceback and stack, rendered into the record before
+#: redaction runs; and the fields that by convention carry an exception's
+#: text (``error=str(exc)`` at some 250 call sites, ``reason=``, ``detail=``).
+#: All of them carry operational numbers and addresses: the ``10.42.0.7:6379``
+#: of a Redis error, the milliseconds of a timeout.
+_FREE_TEXT_FIELDS: frozenset[str] = frozenset(
+    {"event", "exception", "stack", "error", "reason", "detail"}
+)
 
 
 def _privacy_redaction(
@@ -76,11 +81,18 @@ def _privacy_redaction(
     credentials and email addresses (``redact_log_message``). The phone, card
     and IPv4 heuristics match by shape, and applied to the message they ate
     byte counts, epoch seconds, build numbers and the host an operator needs
-    from a warning. A structured field keeps the full set, as it always had.
-    A traceback is treated like the message: ``format_exc_info`` renders it
-    into ``exception`` earlier in the chain, so it is text by the time this
-    runs, and the exception message inside it is where a rejected password
-    or a connection string usually sits.
+    from a warning. A traceback is treated like the message: ``format_exc_info``
+    renders it into ``exception`` earlier in the chain, so it is text by the
+    time this runs, and the exception message inside it is where a rejected
+    password or a connection string usually sits. So are ``error``, ``reason``
+    and ``detail``, free text by convention (``error=str(exc)``): a Redis
+    error is read for its host and port. Every other field keeps the full set,
+    as it always had -- see ``_FREE_TEXT_FIELDS``.
+
+    An exception passed as a value (``error=exc``) is not a string, so it was
+    skipped here, and the renderer then wrote its repr -- after redaction,
+    verbatim. It is redacted as that same repr instead, so the line reads as
+    it did, less the secrets.
     """
     from app.services.redaction_service import (  # noqa: PLC0415
         redact_log_message,
@@ -88,12 +100,29 @@ def _privacy_redaction(
     )
 
     for key, val in event_dict.items():
-        if not isinstance(val, str) or key in _STRUCTURAL_LOG_FIELDS:
+        if key in _STRUCTURAL_LOG_FIELDS:
+            continue
+        if isinstance(val, BaseException):
+            val = _safe_repr(val)
+        elif not isinstance(val, str):
             continue
         event_dict[key] = (
-            redact_log_message(val) if key in _MESSAGE_FIELDS else redact_text(val)
+            redact_log_message(val) if key in _FREE_TEXT_FIELDS else redact_text(val)
         )
     return event_dict
+
+
+def _safe_repr(value: object) -> str:
+    """``repr(value)``, or the default repr if the class's own one raises.
+
+    The renderer called ``repr`` inside the handler, where logging swallows an
+    error; a processor runs in the caller's frame, so a broken ``__repr__``
+    must not turn a log call into a crash.
+    """
+    try:
+        return repr(value)
+    except Exception:  # noqa: BLE001 -- a log call must not raise
+        return object.__repr__(value)
 
 
 def _add_service_info(
