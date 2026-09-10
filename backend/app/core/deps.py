@@ -532,6 +532,32 @@ def require_role(min_role: UserRole) -> Callable:
     return _check
 
 
+def require_instance_admin() -> Callable:
+    """ADMIN, and not through an API key bound to one project.
+
+    ``require_role(UserRole.ADMIN)`` checks the role of the key's OWNER, so an
+    API key an instance admin minted for one project's CI passes it. That key
+    is a credential for one project; it must not reach an endpoint whose data
+    or effect spans every tenant (re-audit M2, QA). It is the line
+    ``require_project_access`` already draws when it lets an admin bypass
+    project membership: only with no project binding.
+    """
+    admin = require_role(UserRole.ADMIN)
+
+    async def _check(current_user: User = Depends(admin)) -> User:
+        if _api_key_bound_project(current_user) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This API key is bound to one project; this endpoint spans "
+                    "every project and needs an instance administrator"
+                ),
+            )
+        return current_user
+
+    return _check
+
+
 def require_project_role(min_role: UserRole) -> Callable:
     """
     Dependency that checks project-level role from project_members table,

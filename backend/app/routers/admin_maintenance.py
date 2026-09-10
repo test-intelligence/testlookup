@@ -5,7 +5,8 @@ for the next scheduled tick. The endpoints are thin shims around the
 existing Celery tasks: same code path, same idempotency guarantees,
 just triggered on demand.
 
-All endpoints require ``UserRole.ADMIN`` (instance-level). Project-
+All endpoints require an instance admin (``require_instance_admin``):
+``UserRole.ADMIN``, and not through an API key bound to one project. Project-
 scoped admins are NOT sufficient — these tasks walk every project.
 """
 from __future__ import annotations
@@ -13,8 +14,8 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.core.deps import get_current_active_user, require_role
-from app.models.postgres import User, UserRole
+from app.core.deps import get_current_active_user, require_instance_admin
+from app.models.postgres import User
 
 logger = structlog.get_logger(__name__)
 
@@ -26,7 +27,7 @@ router = APIRouter(
 
 @router.post(
     "/backfill-placeholder-test-cases",
-    dependencies=[Depends(require_role(UserRole.ADMIN))],
+    dependencies=[Depends(require_instance_admin())],
 )
 async def trigger_placeholder_backfill(
     max_runs_per_project: int = 500,
@@ -78,7 +79,7 @@ async def trigger_placeholder_backfill(
 
 @router.post(
     "/backfill-unassigned-failures",
-    dependencies=[Depends(require_role(UserRole.ADMIN))],
+    dependencies=[Depends(require_instance_admin())],
 )
 async def trigger_unassigned_failures_backfill(
     max_runs_per_project: int = 200,
@@ -124,7 +125,7 @@ async def trigger_unassigned_failures_backfill(
 
 @router.post(
     "/drain-active-live-sessions",
-    dependencies=[Depends(require_role(UserRole.ADMIN))],
+    dependencies=[Depends(require_instance_admin())],
 )
 async def trigger_drain_active_sessions(
     current_user: User = Depends(get_current_active_user),
@@ -160,7 +161,7 @@ async def trigger_drain_active_sessions(
 
 @router.get(
     "/dlq",
-    dependencies=[Depends(require_role(UserRole.ADMIN))],
+    dependencies=[Depends(require_instance_admin())],
 )
 async def read_dead_letters(
     limit: int = Query(50, ge=1, le=500),

@@ -119,7 +119,9 @@ but not what.
 `GET /api/v1/admin/maintenance/dlq` now returns the newest entries of both
 stores, with each stream entry's JSON decoded and the time it failed. It is for
 instance admins only, because the entries span tenants: run and project ids,
-error text and sanitized event payloads. If Redis cannot be read the route
+error text and sanitized event payloads. An API key an admin bound to one
+project is refused, here and on every other maintenance endpoint, since those
+walk every project. If Redis cannot be read the route
 answers `503`. The list reader used to return an empty list on a Redis error,
 which reads as "nothing has failed". `/health/ingestion` now reports the
 stream's depth beside the list's, as `null` when it cannot be read.

@@ -240,3 +240,64 @@ async def test_health_reports_an_unreadable_stream_count_as_unknown(client, monk
     resp = await client.get("/health/ingestion")
 
     assert resp.json()["dlq"]["stream"] is None
+
+
+# ── A key bound to one project is not an instance admin (QA of M2) ──────
+
+
+async def test_an_admins_project_bound_key_cannot_read_dead_letters(client, auth_as, redis):
+    """QA's probe. The entries span tenants: a key an admin minted for one
+    team's CI must not read every tenant's run ids, error text and task
+    arguments."""
+    import uuid
+
+    await _fill()
+    auth_as(role=UserRole.ADMIN, bound_project_id=uuid.uuid4())
+    resp = await client.get(URL)
+    assert resp.status_code == 403, resp.text
+    assert "run-1" not in resp.text
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/admin/maintenance/backfill-placeholder-test-cases",
+        "/api/v1/admin/maintenance/backfill-unassigned-failures",
+        "/api/v1/admin/maintenance/drain-active-live-sessions",
+    ],
+)
+async def test_a_project_bound_key_cannot_start_work_that_walks_every_project(client, auth_as, path):
+    import uuid
+
+    auth_as(role=UserRole.ADMIN, bound_project_id=uuid.uuid4())
+    resp = await client.post(path)
+    assert resp.status_code == 403, resp.text
+
+
+async def test_every_maintenance_route_requires_an_instance_admin():
+    """A route added to this router later must not fall back to require_role."""
+    import ast
+    import pathlib
+
+    import app.routers.admin_maintenance as module
+
+    tree = ast.parse(pathlib.Path(module.__file__).read_text(encoding="utf-8"))
+    routes = [
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef)
+        and any(
+            isinstance(dec, ast.Call)
+            and getattr(dec.func, "attr", "") in {"get", "post", "put", "patch", "delete"}
+            for dec in node.decorator_list
+        )
+    ]
+    assert len(routes) >= 4, [route.name for route in routes]
+    for route in routes:
+        gates = " ".join(
+            ast.unparse(kw.value)
+            for dec in route.decorator_list if isinstance(dec, ast.Call)
+            for kw in dec.keywords if kw.arg == "dependencies"
+        )
+        assert "require_instance_admin()" in gates, (
+            f"{route.name} is not gated by require_instance_admin: {gates or 'no dependencies'}"
+        )
