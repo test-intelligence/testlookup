@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pytest
 
+import app.services.redaction_service as redaction
 from app.core.logging_config import (
     _FREE_TEXT_FIELDS,
     _STRUCTURAL_LOG_FIELDS,
@@ -361,3 +362,157 @@ def test_the_free_text_fields_are_pinned():
     so it must be made here, deliberately.
     """
     assert _FREE_TEXT_FIELDS == {"event", "exception", "stack", "error", "reason", "detail"}
+
+
+# ── An Authorization header, whatever the scheme (QA of the H3 fix) ──────
+
+_BASIC = "dXNlcjpwYXNzd29yZA=="  # base64 of "user:password"
+
+
+@pytest.mark.parametrize(
+    "header, credential, redacted",
+    [
+        (f"Authorization: Basic {_BASIC}", _BASIC, "Authorization: Basic [REDACTED]"),
+        (
+            'Authorization: Digest username="qa", realm="api", nonce="dcd98b7102dd2f0e", '
+            'response="6629fae49393a05397450978507c4ef1"',
+            "6629fae49393a05397450978507c4ef1",
+            "Authorization: Digest [REDACTED]",
+        ),
+        (
+            "Authorization: Negotiate YIIFzQYGKwYBBQUCoIIFwTCCBb2g",
+            "YIIFzQYGKwYBBQUCoIIFwTCCBb2g",
+            "Authorization: Negotiate [REDACTED]",
+        ),
+        (
+            "Authorization: Token 9944b09199c62bcf9418ad846dd0e4bb",
+            "9944b09199c62bcf9418ad846dd0e4bb",
+            "Authorization: Token [REDACTED]",
+        ),
+        (
+            "Authorization: NTLM TlRMTVNTUAABAAAAB4IIogAAAAAAAAAA",
+            "TlRMTVNTUAABAAAAB4IIogAAAAAAAAAA",
+            "Authorization: NTLM [REDACTED]",
+        ),
+        ("Authorization: Bearer abc123short", "abc123short", "Authorization: Bearer [REDACTED]"),
+        ("Authorization: k-4f9a2c", "k-4f9a2c", "Authorization: [REDACTED]"),
+        ("Authorization: SSWS 00QCjAl4MlV", "00QCjAl4MlV", "Authorization: [REDACTED]"),
+        (
+            "Proxy-Authorization: Basic cHJveHk6c2VjcmV0",
+            "cHJveHk6c2VjcmV0",
+            "Proxy-Authorization: Basic [REDACTED]",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "redact", [redaction.redact_log_message, redaction.redact_text], ids=["message", "field"]
+)
+def test_an_authorization_header_loses_its_credential_whatever_the_scheme(
+    redact, header, credential, redacted
+):
+    """The old pattern wanted 10+ characters in the first token after the
+    colon, which is the scheme's name: Basic, Digest, Negotiate, Token and
+    NTLM passed intact (Bearer had a pattern of its own, for long tokens)."""
+    out = redact(f"request rejected, sent {header}")
+
+    assert credential not in out
+    assert out == f"request rejected, sent {redacted}", "a known scheme stays readable"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            f"headers={{'Accept': '*/*', 'Authorization': 'Basic {_BASIC}', 'Host': 'api'}}",
+            "headers={'Accept': '*/*', 'Authorization': 'Basic [REDACTED]', 'Host': 'api'}",
+        ),
+        (
+            f'{{"Authorization": "Basic {_BASIC}", "Accept": "*/*"}}',
+            '{"Authorization": "Basic [REDACTED]", "Accept": "*/*"}',
+        ),
+        (
+            f"environ={{'HTTP_AUTHORIZATION': 'Basic {_BASIC}', 'REMOTE_ADDR': '10.42.0.7'}}",
+            "environ={'HTTP_AUTHORIZATION': 'Basic [REDACTED]', 'REMOTE_ADDR': '10.42.0.7'}",
+        ),
+        (
+            "{'Authorization': 'Digest username=\"qa\", response=\"6629fae4\"', 'Accept': '*/*'}",
+            "{'Authorization': 'Digest [REDACTED]', 'Accept': '*/*'}",
+        ),
+    ],
+)
+def test_a_quoted_header_value_is_redacted_up_to_its_closing_quote(text, expected):
+    """A requests header dict's repr, a JSON body, a WSGI environ: the value
+    ends at its quote, and what follows it is kept."""
+    assert redaction.redact_log_message(text) == expected
+
+
+def test_only_the_header_line_of_a_raw_request_is_redacted():
+    request = (
+        "GET /api HTTP/1.1\r\nHost: 10.42.0.7:8000\r\n"
+        f"Authorization: Basic {_BASIC}\r\nAccept: */*\r\n"
+    )
+
+    assert redaction.redact_log_message(request) == (
+        "GET /api HTTP/1.1\r\nHost: 10.42.0.7:8000\r\n"
+        "Authorization: Basic [REDACTED]\r\nAccept: */*\r\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "authorization failed for project 42",
+        "Authorization header missing on 10.42.0.7",
+        "authorization_url: https://github.com/login/oauth/authorize",
+        "X-Authorization-Status: ok",
+        '    headers["Authorization"] = token',
+    ],
+)
+def test_prose_about_authorization_is_left_alone(text):
+    assert redaction.redact_log_message(text) == text
+
+
+def test_redacting_twice_changes_nothing():
+    once = redaction.redact_text(f"Authorization: Basic {_BASIC}")
+    assert redaction.redact_text(once) == once
+
+
+def test_a_basic_credential_in_the_message_is_redacted(json_logs):
+    import logging
+
+    logging.getLogger("tests.m").warning(
+        "upstream rejected the call, sent %s", f"Authorization: Basic {_BASIC}"
+    )
+
+    assert _BASIC not in json_logs.getvalue()
+    assert _records(json_logs)[-1]["event"] == (
+        "upstream rejected the call, sent Authorization: Basic [REDACTED]"
+    )
+
+
+def test_a_basic_credential_in_a_traceback_is_redacted(json_logs):
+    import logging
+
+    try:
+        raise PermissionError(f"401 from api: sent Authorization: Basic {_BASIC}")
+    except PermissionError:
+        logging.getLogger("tests.m").error("call failed", exc_info=True)
+
+    assert _BASIC not in json_logs.getvalue()
+    exception = _records(json_logs)[-1]["exception"]
+    assert "PermissionError" in exception
+    assert "Authorization: Basic [REDACTED]" in exception
+
+
+def test_a_basic_credential_in_a_structured_field_is_redacted(json_logs):
+    import structlog
+
+    structlog.get_logger("tests.m").warning(
+        "upstream_rejected",
+        request_headers=f"{{'Authorization': 'Basic {_BASIC}', 'Accept': '*/*'}}",
+    )
+
+    assert _BASIC not in json_logs.getvalue()
+    assert _records(json_logs)[-1]["request_headers"] == (
+        "{'Authorization': 'Basic [REDACTED]', 'Accept': '*/*'}"
+    )

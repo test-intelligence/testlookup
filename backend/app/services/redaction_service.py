@@ -46,11 +46,39 @@ SENSITIVE_KEYS: frozenset[str] = frozenset({
 
 # ── Regex patterns for free-form text scrubbing ─────────────────────────────
 
+# Schemes whose name stays visible in front of a redacted Authorization
+# credential. Any other first word is taken as part of the credential: a raw
+# key sent with no scheme looks just like an unknown scheme's name.
+_AUTH_SCHEMES = (
+    "Basic|Bearer|Digest|Negotiate|NTLM|Kerberos|Token|ApiKey|"
+    "AWS4-HMAC-SHA256|DPoP|HOBA|Mutual|OAuth|SCRAM-SHA-1|SCRAM-SHA-256|vapid"
+)
+
+# An Authorization header's value, whatever the scheme (QA of the H3 fix).
+_AUTHORIZATION_HEADER = re.compile(
+    # The name, also inside Proxy-Authorization and a WSGI HTTP_AUTHORIZATION
+    # key; the closing quote of a dict or JSON key; ":" or "="; and the
+    # opening quote of a quoted value.
+    r"(?P<head>(?<![A-Za-z0-9])Authorization(?:\\?[\"'])?[ \t]*[:=][ \t]*"
+    r"(?P<open>\\?[\"'])?)"
+    r"(?P<scheme>(?:" + _AUTH_SCHEMES + r")[ \t]+)?"
+    # The credential runs to the value's closing quote or, unquoted, to the
+    # end of the line. (A backreference to a group that took no part never
+    # matches, so the lookahead cannot stop an unquoted value.)
+    r"(?:(?!(?P=open))[^\r\n])+",
+    re.IGNORECASE,
+)
+
 _CREDENTIAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Bearer tokens
     (re.compile(r"(Bearer\s+)[A-Za-z0-9\-_\.]{20,}", re.IGNORECASE), r"\1[REDACTED]"),
-    # Authorization headers
-    (re.compile(r"(Authorization:\s*)[^\s\n]{10,}", re.IGNORECASE), r"\1[REDACTED]"),
+    # Authorization headers, any scheme. The old pattern wanted 10+ characters
+    # in the first token after the colon -- the scheme's name -- so
+    # "Authorization: Basic dXNlcjpwYXNzd29yZA==" passed intact, as did
+    # Digest, Negotiate, NTLM and Token. The credential now runs to the end of
+    # the line or the closing quote, since a Digest or SigV4 credential is a
+    # list of quoted, comma-separated parameters.
+    (_AUTHORIZATION_HEADER, r"\g<head>\g<scheme>[REDACTED]"),
     # Cookies frequently contain session credentials and must be removed even
     # when their values do not resemble long random tokens.
     (re.compile(r"((?:Set-)?Cookie:\s*)[^\r\n]+", re.IGNORECASE), r"\1[REDACTED]"),
