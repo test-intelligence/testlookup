@@ -211,3 +211,41 @@ async def read_dead_letters(
             "stream": {"count": await get_stream_dlq_count(), "entries": stream},
         },
     }
+
+
+@router.get(
+    "/ai-cache",
+    dependencies=[Depends(require_instance_admin())],
+)
+async def read_ai_cache_stats(
+    current_user: User = Depends(get_current_active_user),
+):
+    """The AI similarity cache's health, and what the pre-M15 shared collection holds.
+
+    Re-audit M15, code review: ``legacy_unscoped_documents`` -- entries written
+    to the old collection every tenant shared, which may belong to any tenant --
+    was computed by ``get_semantic_cache_stats`` and returned by nothing, so
+    the signal to purge that collection could not be seen. Instance admins
+    only: the counts span tenants. A cache that cannot be read is a 503, never
+    a page of zeros.
+    """
+    from app.services.semantic_cache import get_semantic_cache_stats
+
+    stats = await get_semantic_cache_stats()
+    if stats.get("status") != "healthy":
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": (
+                    "The AI similarity cache could not be read. That is not the "
+                    "same as an empty cache."
+                ),
+                **stats,
+            },
+        )
+    logger.info(
+        "admin_read_ai_cache_stats",
+        actor_user_id=str(current_user.id),
+        legacy_unscoped_documents=stats.get("legacy_unscoped_documents"),
+    )
+    return stats
