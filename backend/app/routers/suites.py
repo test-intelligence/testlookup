@@ -299,7 +299,9 @@ async def list_suite_test_cases(
 ):
     suite = await svc.get_suite_or_404(db, suite_id)
     await _enforce_project_access(db, current_user, suite.project_id)
-    rows = await svc.list_canonical_test_cases(
+    # Unpaged on purpose: SuiteCasesPage selects and bulk-links across the
+    # whole suite. Re-audit M7 paged only the flat list below.
+    rows, _total = await svc.list_canonical_test_cases(
         db,
         project_ids=[suite.project_id],
         suite_id=suite.id,
@@ -336,6 +338,8 @@ async def list_canonical_cases(
     project_id: Optional[uuid.UUID] = Query(None),
     suite_id: Optional[uuid.UUID] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
+    page: int = Query(1, ge=1),
+    size: int = Query(25, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -347,15 +351,22 @@ async def list_canonical_cases(
     else:
         project_ids = None if accessible is None else list(accessible)
 
-    rows = await svc.list_canonical_test_cases(
+    # Re-audit M7: this returned every row the caller could see -- measured
+    # at 1,237 for an unscoped admin -- and grows by one per new test per
+    # project, forever. Same page/size contract as /orphaned below.
+    rows, total = await svc.list_canonical_test_cases(
         db,
         project_ids=project_ids,
         suite_id=suite_id,
         status_filter=status_filter,
+        page=page,
+        size=size,
     )
     return {
         "items": [_canonical_to_response(c) for c in rows],
-        "total": len(rows),
+        "total": total,
+        "page": page,
+        "size": size,
     }
 
 
@@ -380,7 +391,12 @@ async def list_orphaned_canonical_cases(
     rows, total = await svc.list_orphaned_canonical_cases(
         db, project_ids, page=page, size=size
     )
-    return {"items": [_canonical_to_response(c) for c in rows], "total": total}
+    return {
+        "items": [_canonical_to_response(c) for c in rows],
+        "total": total,
+        "page": page,
+        "size": size,
+    }
 
 
 @router.get(

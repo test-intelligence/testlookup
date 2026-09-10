@@ -761,7 +761,16 @@ async def list_canonical_test_cases(
     project_ids: Optional[list[uuid.UUID]],
     suite_id: Optional[uuid.UUID] = None,
     status_filter: Optional[str] = None,
-) -> list[CanonicalTestCase]:
+    page: Optional[int] = None,
+    size: Optional[int] = None,
+) -> tuple[list[CanonicalTestCase], int]:
+    """Canonical test cases the caller may see, as ``(rows, total)``.
+
+    With ``page`` and ``size`` (re-audit M7) the rows are one page and
+    ``total`` counts every match. Without them every match is returned and
+    ``total`` is its length: the suite view selects and bulk-links across
+    the whole suite, so it cannot be handed one page of it.
+    """
     stmt = select(CanonicalTestCase)
     # Soft-deleted projects are excluded unconditionally; the membership /
     # pinned-project restriction below is applied on top.
@@ -781,14 +790,25 @@ async def list_canonical_test_cases(
     )
     if project_ids is not None:
         if not project_ids:
-            return []
+            return [], 0
         stmt = stmt.where(CanonicalTestCase.project_id.in_(project_ids))
     if suite_id is not None:
         stmt = stmt.where(CanonicalTestCase.test_suite_id == suite_id)
     if status_filter is not None:
         stmt = stmt.where(CanonicalTestCase.status == status_filter)
-    stmt = stmt.order_by(CanonicalTestCase.test_name.asc())
-    return list((await db.execute(stmt)).scalars().all())
+    # ``test_name`` is not unique (uniqueness is project + fingerprint), so
+    # ``id`` breaks ties: without it OFFSET pages can repeat or skip rows.
+    ordered = stmt.order_by(CanonicalTestCase.test_name.asc(), CanonicalTestCase.id.asc())
+    if page is None or size is None:
+        rows = list((await db.execute(ordered)).scalars().all())
+        return rows, len(rows)
+    total = int(
+        (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
+    )
+    rows = list(
+        (await db.execute(ordered.offset((page - 1) * size).limit(size))).scalars().all()
+    )
+    return rows, total
 
 
 def legacy_suite_membership_clause(suite_key: str):

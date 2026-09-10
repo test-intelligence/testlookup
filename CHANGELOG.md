@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-10 — the canonical test-case list returned every row
+
+`GET /api/v1/canonical-test-cases` returned every canonical test case the
+caller could see, and its `total` was the length of what it had just returned.
+Canonical rows are one per test per project and are kept forever, so the list
+only grows: an unscoped admin call measured 1,237 rows.
+
+The route now takes `page` and `size`, 25 by default and at most 200, the same
+contract as `/canonical-test-cases/orphaned`, and reports every match in
+`total`. Pages are cut in SQL and ordered by name, then id, so a page never
+repeats or skips a case whose name ties with another's. **An external client
+that relied on getting everything in one response now gets the first 25 and
+must page.** The suite view, `/suites/{id}/test-cases`, is deliberately not
+paged: its page selects and bulk-links across the whole suite.
+
 ## 2026-09-10 — failed work could be counted but never read
 
 Two Redis stores hold work that failed for good. `persist_live_session` writes

@@ -66,6 +66,9 @@ export interface CanonicalTestCase {
 export interface CanonicalTestCaseListResponse {
   items: CanonicalTestCase[]
   total: number
+  /** Set on paged lists; absent where the whole list is returned. */
+  page?: number
+  size?: number
 }
 
 export interface CanonicalPromotionResponse {

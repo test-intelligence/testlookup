@@ -2563,6 +2563,9 @@ class CanonicalTestCaseResponse(TimestampMixin):
 class CanonicalTestCaseListResponse(BaseModel):
     items: List[CanonicalTestCaseResponse]
     total: int
+    # Set on paged lists (re-audit M7); absent where the whole list is returned.
+    page: Optional[int] = None
+    size: Optional[int] = None
 
 
 class CanonicalPromotionResponse(BaseModel):
