@@ -11,7 +11,7 @@ scoped admins are NOT sufficient — these tasks walk every project.
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.deps import get_current_active_user, require_role
 from app.models.postgres import User, UserRole
@@ -156,3 +156,57 @@ async def trigger_drain_active_sessions(
             error=str(exc),
         )
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {exc}")
+
+
+@router.get(
+    "/dlq",
+    dependencies=[Depends(require_role(UserRole.ADMIN))],
+)
+async def read_dead_letters(
+    limit: int = Query(50, ge=1, le=500),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Newest entries of both dead-letter stores (re-audit M2).
+
+    Both stores were write-only: ``/health/ingestion`` counted one and nothing
+    counted the other, so an operator could learn that work had permanently
+    failed, but never what. Instance admins only -- the entries are
+    cross-tenant (run and project ids, error text, sanitized event payloads).
+    A store that cannot be read is a 503, never an empty list.
+    """
+    from app.services.ingestion_dlq import (
+        DLQUnavailable,
+        get_dlq_count,
+        get_stream_dlq_count,
+        list_recent_failures,
+        list_recent_stream_failures,
+    )
+
+    try:
+        persist = await list_recent_failures("persist_live_session", limit=limit)
+        stream = await list_recent_stream_failures(limit=limit)
+    except DLQUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The dead-letter stores could not be read (Redis unavailable). "
+                "That is not the same as having no failures."
+            ),
+        ) from exc
+
+    logger.info(
+        "admin_read_dead_letters",
+        actor_user_id=str(current_user.id),
+        persist_live_session=len(persist),
+        stream=len(stream),
+    )
+    return {
+        "limit": limit,
+        "sources": {
+            "persist_live_session": {
+                "count": await get_dlq_count("persist_live_session"),
+                "entries": persist,
+            },
+            "stream": {"count": await get_stream_dlq_count(), "entries": stream},
+        },
+    }

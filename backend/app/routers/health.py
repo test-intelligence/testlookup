@@ -456,8 +456,11 @@ async def health_ingestion() -> dict:
     # Phase 4.3 — DLQ depth for permanently-failed persist_live_session
     # tasks. Surfaces "N tasks failed after exhausting retries in the
     # last 7 days" without an operator having to LRANGE the Redis list.
-    from app.services.ingestion_dlq import get_dlq_count
+    from app.services.ingestion_dlq import get_dlq_count, get_stream_dlq_count
     dlq_persist_count = await get_dlq_count("persist_live_session")
+    # Re-audit M2: the stream DLQ (live events the consumer gave up on, Celery
+    # tasks out of retries) was counted nowhere. None when it cannot be read.
+    dlq_stream_count = await get_stream_dlq_count()
 
     # Status flag for the dashboard. ``overload`` when backpressure is
     # actively rejecting; ``degraded`` when the reject rate is non-zero
@@ -510,6 +513,7 @@ async def health_ingestion() -> dict:
         },
         "dlq": {
             "persist_live_session": dlq_persist_count,
+            "stream": dlq_stream_count,
         },
         "recent": {
             "ingest_count_this_minute": ingest_count,

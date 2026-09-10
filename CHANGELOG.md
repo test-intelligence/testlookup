@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-10 — failed work could be counted but never read
+
+Two Redis stores hold work that failed for good. `persist_live_session` writes
+to a capped list when its retries run out. The live-event consumer moves an
+event to a capped stream after three failed deliveries and then acknowledges
+it, so the stream entry is the only surviving copy; Celery tasks such as the
+agent pipeline add themselves to the same stream when their retries run out.
+`/health/ingestion` counted the list and nothing counted the stream. No API
+returned an entry from either, so an operator could learn that work had failed
+but not what.
+
+`GET /api/v1/admin/maintenance/dlq` now returns the newest entries of both
+stores, with each stream entry's JSON decoded and the time it failed. It is for
+instance admins only, because the entries span tenants: run and project ids,
+error text and sanitized event payloads. If Redis cannot be read the route
+answers `503`. The list reader used to return an empty list on a Redis error,
+which reads as "nothing has failed". `/health/ingestion` now reports the
+stream's depth beside the list's, as `null` when it cannot be read.
+
 ## 2026-09-10 — a Postgres index test that CI never ran
 
 Batch 2 added `test_search_tags_index_postgres.py` to prove that migration
