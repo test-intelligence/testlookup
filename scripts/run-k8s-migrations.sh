@@ -78,6 +78,22 @@ spec:
       restartPolicy: Never
       securityContext:
         runAsNonRoot: true
+        # runAsUser/runAsGroup are REQUIRED alongside runAsNonRoot here, not
+        # decoration. The backend image ends with `USER testlookup` — a NAME —
+        # and the kubelet cannot prove a non-numeric user is non-root, so it
+        # refuses the container outright:
+        #
+        #   Error: container has runAsNonRoot and image has non-numeric user
+        #   (testlookup), cannot verify user is non-root
+        #
+        # The pod then sits in Init:CreateContainerConfigError until the
+        # migration times out, which is what it did on the homelab deploy.
+        # backend-deployment.yaml already sets both, and the Dockerfile creates
+        # the user at UID 1000 with the comment "to match the k8s
+        # securityContext (runAsUser: 1000)" — this Job was the one place that
+        # had the intent written down and never applied it.
+        runAsUser: 1000
+        runAsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
       initContainers:
