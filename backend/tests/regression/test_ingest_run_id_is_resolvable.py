@@ -51,6 +51,21 @@ class _DB:
         return _Result(self.existing)
 
 
+class _ManualAwareDB:
+    def __init__(self, manual_id):
+        self.manual_id = manual_id
+        self.statements = []
+
+    async def execute(self, statement, *_args, **_kwargs):
+        sql = str(statement)
+        self.statements.append(sql)
+        if "test_runs.ingestion_source !=" in sql:
+            return _Result(None)
+        if len(self.statements) == 1:
+            return _Result(None)
+        return _Result(self.manual_id)
+
+
 @pytest.mark.asyncio
 async def test_an_existing_build_number_returns_the_run_it_will_land_on():
     """The regression. A CI retry must get back the id that exists."""
@@ -65,6 +80,20 @@ async def test_a_new_build_number_gets_a_fresh_id():
     db = _DB(existing=None)
     resolved = await _resolve_run_id(db, uuid.uuid4(), "build-new")
     assert uuid.UUID(resolved)  # parses — a real uuid, not an echo of the input
+
+
+@pytest.mark.asyncio
+async def test_context_free_batch_does_not_resolve_to_manual_upload():
+    project_id = uuid.uuid4()
+    manual_id = uuid.uuid4()
+    db = _ManualAwareDB(manual_id)
+
+    resolved = await _resolve_run_id(db, project_id, "build-42")
+
+    assert resolved != str(manual_id)
+    assert uuid.UUID(resolved)
+    assert len(db.statements) == 2
+    assert "test_runs.ingestion_source !=" in db.statements[1]
 
 
 @pytest.mark.asyncio

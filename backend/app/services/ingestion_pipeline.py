@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import AsyncSessionLocal
-from app.models.postgres import LaunchStatus, Project, TestCase, TestRun
+from app.models.postgres import IngestionSource, LaunchStatus, Project, TestCase, TestRun
 from app.models.schemas import BUILD_NUMBER_MAX_LENGTH
 from app.services.execution_time import resolve_execution_time
 from app.services.run_environment import normalize_environment
@@ -253,6 +253,7 @@ async def create_run_from_payload(
                     TestRun.project_id == pid,
                     TestRun.ingestion_identity.is_(None),
                     TestRun.build_number == build_number,
+                    TestRun.ingestion_source != IngestionSource.UPLOAD.value,
                 )
             )
             existing = _one_or_none(legacy)

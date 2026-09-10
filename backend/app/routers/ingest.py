@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_api_key_context, get_db, resolve_project_scope
-from app.models.postgres import User
+from app.models.postgres import IngestionSource, User
 from app.services.activity.service import ActorRef, record as record_activity
 from app.models.schemas import BUILD_NUMBER_MAX_LENGTH, IngestPayload, IngestResponse, UploadStatusResponse
 
@@ -250,6 +250,7 @@ async def _resolve_run_id(
                     TestRun.project_id == project_id,
                     TestRun.ingestion_identity.is_(None),
                     TestRun.build_number == build_number,
+                    TestRun.ingestion_source != IngestionSource.UPLOAD.value,
                 )
             )
         )
