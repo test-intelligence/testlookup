@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-10 — a run's first ingest paid three round trips per new test
+
+When a finalized run reported a test its project had never seen, canonical
+sync inserted the catalog row on its own: a SAVEPOINT, an INSERT and a RELEASE
+for every new test. A project's first run, or any run whose test names changed,
+paid that once per test. The savepoint existed so that a concurrent run's sync
+inserting the same test first would unwind only that one row, not the whole
+run's catalog.
+
+New tests are now collected and inserted in chunks with `INSERT ... ON CONFLICT
+DO NOTHING`, then read back so every run case is linked, including cases whose
+row a concurrent run inserted first. Losing that race still costs nothing: no
+error, and nothing else in the batch is lost. The winning row's suite is never
+overwritten, so a case a person moved to another suite stays there. The lookup
+of existing rows is chunked as well, so a very large run cannot pass the
+driver's bind-parameter limit. The race and the suite rule are proven against
+a real Postgres, not mocks.
+
 ## 2026-09-10 — the canonical test-case list returned every row
 
 `GET /api/v1/canonical-test-cases` returned every canonical test case the

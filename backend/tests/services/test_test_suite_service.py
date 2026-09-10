@@ -222,30 +222,31 @@ async def test_sync_canonical_adds_new_fingerprints(monkeypatch):
     canonical_result = FakeExecuteResult()
     canonical_result.scalars = lambda: SimpleNamespace(all=lambda: [])
 
+    # Re-audit M8: new fingerprints go in one batched
+    # INSERT ... ON CONFLICT DO NOTHING RETURNING and are then re-selected,
+    # so two more execute() calls follow the three above.
+    inserted_result = FakeExecuteResult()
+    inserted_result.scalars = lambda: SimpleNamespace(all=lambda: ["fp1", "fp2"])
+    stored = [
+        SimpleNamespace(id=uuid.uuid4(), test_fingerprint="fp1"),
+        SimpleNamespace(id=uuid.uuid4(), test_fingerprint="fp2"),
+    ]
+    reselect_result = FakeExecuteResult()
+    reselect_result.scalars = lambda: SimpleNamespace(all=lambda: stored)
+
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[cases_result, suites_result, canonical_result])
-    _attach_savepoint(db)
-
-    # Real SQLAlchemy populates ``id`` from ``default=uuid.uuid4`` at flush
-    # time. The AsyncMock flush is a no-op, so we simulate that here by
-    # stamping an id on whatever was just added(). Without this, the link
-    # counter under test stays at zero because ``canonical.id`` is None.
-    def _stamp_ids(*_args, **_kwargs):
-        for call in db.add.call_args_list:
-            obj = call.args[0]
-            if getattr(obj, "id", None) is None:
-                obj.id = uuid.uuid4()
-
-    db.flush = AsyncMock(side_effect=_stamp_ids)
+    db.execute = AsyncMock(side_effect=[
+        cases_result, suites_result, canonical_result, inserted_result, reselect_result,
+    ])
 
     result = await svc.sync_canonical_test_cases(db, project_id, run_id)
 
-    assert result["added"] == 2
-    assert result["updated"] == 0
-    assert result["linked"] == 2
-    assert db.add.call_count == 2
-    for tc in cases:
-        assert tc.canonical_test_case_id is not None
+    assert result == {"added": 2, "updated": 0, "linked": 2, "skipped": 0}
+    # No per-row ORM insert, and so no per-row SAVEPOINT. The race semantics
+    # this used to rely on are pinned against real Postgres in
+    # tests/integration/test_canonical_sync_postgres.py.
+    db.add.assert_not_called()
+    assert {tc.canonical_test_case_id for tc in cases} == {row.id for row in stored}
 
 
 @pytest.mark.asyncio
