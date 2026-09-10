@@ -43,11 +43,15 @@ _SECRET_PLACEHOLDER_MARKERS: tuple[str, ...] = (
 
 #: The templates also write a placeholder as ONE angle-bracketed token --
 #: ``<base64-encoded-strong-random-secret>``, ``<set-a-strong-password>``,
-#: ``<pw>``. A bare ``"<"`` used to stand for that, which refused a real secret
-#: that merely contains the symbol (QA of re-audit N12). The token has to open
-#: and close, with only lowercase letters, digits, hyphens and underscores
-#: between.
-_ANGLE_PLACEHOLDER = _re.compile("<[a-z0-9][a-z0-9_-]*>")
+#: ``<pw>``, and in deploymentsteps.md ``<your generated key from Step 9.3>``.
+#: A bare ``"<"`` used to stand for that, which refused a real secret that
+#: merely contains the symbol (QA of re-audit N12). A token found ANYWHERE in
+#: the value then still refused about one random 32-character password in 157
+#: (``Tr0ub<A>dor&3``), and missed the guide's, which has spaces (code review
+#: and QA of that fix). So the token must be the WHOLE value: it opens with a
+#: letter or digit, and holds only letters, digits, spaces, dots, hyphens and
+#: underscores.
+_ANGLE_PLACEHOLDER = _re.compile("<[a-z0-9][a-z0-9 ._-]*>")
 
 
 def _is_placeholder_secret(value: str) -> bool:
@@ -64,13 +68,15 @@ def _is_placeholder_secret(value: str) -> bool:
     wording again and were missed by the first fix for the same reason.
 
     Substring, not prefix: a placeholder is sometimes embedded rather than
-    leading (a connection URI carrying the password, for instance).
+    leading (a connection URI carrying the password, for instance). The
+    angle-bracketed token is the exception: it must be the whole value (a
+    URI's password is judged on its own, by ``_uri_password``).
     """
     text = str(value or "").strip().lower()
     if not text:
         return True
     return any(marker in text for marker in _SECRET_PLACEHOLDER_MARKERS) or bool(
-        _ANGLE_PLACEHOLDER.search(text)
+        _ANGLE_PLACEHOLDER.fullmatch(text)
     )
 
 

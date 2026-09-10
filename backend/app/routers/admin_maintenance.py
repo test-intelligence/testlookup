@@ -240,6 +240,13 @@ async def read_ai_cache_stats(
                     "The AI similarity cache could not be read. That is not the "
                     "same as an empty cache."
                 ),
+                # A deployment without ChromaDB gets this answer too. Say so,
+                # rather than leave an operator hunting for an outage (code
+                # review and QA of the M15 follow-up).
+                "hint": (
+                    "ChromaDB is optional. If this deployment does not run it, "
+                    "there is no AI similarity cache and nothing to purge."
+                ),
                 **stats,
             },
         )

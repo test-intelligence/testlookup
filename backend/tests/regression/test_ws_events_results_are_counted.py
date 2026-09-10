@@ -61,6 +61,14 @@ class _Pipeline:
         self.ops.append(("expire", key, seconds))
         return self
 
+    def delete(self, key):
+        self.ops.append(("delete", key))
+        return self
+
+    def sadd(self, key, *values):
+        self.ops.append(("sadd", key, values))
+        return self
+
     async def execute(self):
         for op in self.ops:
             if op[0] == "hincrby":
@@ -71,6 +79,11 @@ class _Pipeline:
                 _, key, mapping = op
                 row = self.redis.hashes.setdefault(key, {})
                 row.update({k: str(v) for k, v in mapping.items()})
+            elif op[0] == "delete":
+                self.redis.hashes.pop(op[1], None)
+                self.redis.values.pop(op[1], None)
+            elif op[0] == "sadd":
+                self.redis.sets.setdefault(op[1], set()).update(op[2])
         self.ops.clear()
         return []
 
@@ -272,7 +285,7 @@ async def test_a_project_key_event_is_handed_over_and_not_counted_here(live, mon
     """Counting it here as well would count every result twice (re-audit N14)."""
     admitted: list[str] = []
 
-    async def _admit(_db, *, project_id, api_key_name, run_id, event):
+    async def _admit(_db, *, project_id, api_key_name, run_id, event, api_key=None):
         admitted.append(event["type"])
         from app.services.ws_event_ingest import WsIngestOutcome
 
@@ -444,3 +457,39 @@ async def test_the_producer_does_not_read_the_state_back(live, monkeypatch):
     monkeypatch.setattr(RedisLiveRunState, "get", classmethod(_counting_get))
     await _result("PASSED")
     assert reads == [], "every result read the whole run state back, and threw it away"
+
+
+@pytest.mark.asyncio
+async def test_a_retried_run_start_does_not_wipe_a_run_in_progress(live):
+    """A retried run_start, or a second shard opening the same run id, is the
+    same run. Resetting on every run_start wiped its counts (QA and code review
+    of the H6 fix)."""
+    await _start()
+    await _result("FAILED", "a")
+    await _result("PASSED", "b")
+
+    await _start()
+
+    state = await RedisLiveRunState.get(RUN)
+    assert (int(state["failed"]), int(state["passed"])) == (1, 1), (
+        "a run_start for a run in progress wiped its counts"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_finished_run_is_replaced_in_one_transaction(live, monkeypatch):
+    """Deleted and rewritten apart, a result landing between the two was lost."""
+    from app.streams.live_run_state import _STATE_KEY
+
+    await _start()
+    await _result("FAILED", "a")
+    live.redis.hashes[_STATE_KEY(RUN)]["status"] = "completed"
+
+    async def _no_bare_delete(_key):
+        raise AssertionError("the reset deleted the state outside its transaction")
+
+    monkeypatch.setattr(live.redis, "delete", _no_bare_delete)
+    await _start()
+
+    state = await RedisLiveRunState.get(RUN)
+    assert int(state["failed"]) == 0 and state["status"] == "running"

@@ -30,6 +30,7 @@ from app.worker import loop_runner
 def _quiet_drains(monkeypatch):
     """Teardown drains are exercised in test_worker_drains_redis_on_owning_loop."""
     import app.core.http_client as http
+    import app.db.mongo as mongo
     import app.db.postgres as pg
     import app.db.redis_client as redis_client
 
@@ -39,6 +40,7 @@ def _quiet_drains(monkeypatch):
     monkeypatch.setattr(pg, "dispose_engine_for_loop", _noop)
     monkeypatch.setattr(http, "close_http_client", _noop)
     monkeypatch.setattr(redis_client, "close_redis", _noop)
+    monkeypatch.setattr(mongo, "close_mongo", _noop)
     loop_runner.shutdown_worker_loop()
     yield
     loop_runner.shutdown_worker_loop()
@@ -129,6 +131,31 @@ def test_an_interrupted_task_is_discarded_and_never_resumes():
     assert trace == ["cancelled"], trace
     assert first.is_closed(), "the interrupted loop was kept"
     assert loop_runner.run_async(_current_loop()) is not first
+
+
+def test_a_soft_time_limit_inside_the_task_keeps_the_loop_and_runs_cleanups():
+    """The soft time limit can also land while the task's own code runs. The
+    task then fails like any other: its cleanups run as it unwinds, and the
+    loop is kept. Only the landing above, while the loop waits, discards it
+    (code review of M1: this landing was not pinned)."""
+    from billiard.exceptions import SoftTimeLimitExceeded
+
+    trace: list[str] = []
+
+    async def _hits_the_limit():
+        try:
+            await asyncio.sleep(0)
+            raise SoftTimeLimitExceeded()
+        finally:
+            trace.append("cleanup")
+
+    first = loop_runner.run_async(_current_loop())
+    with pytest.raises(SoftTimeLimitExceeded):
+        loop_runner.run_async(_hits_the_limit())
+
+    assert trace == ["cleanup"]
+    assert not first.is_closed(), "a task that failed inside its own code cost the loop"
+    assert loop_runner.run_async(_current_loop()) is first
 
 
 def test_a_call_from_inside_a_running_loop_is_refused_and_harms_nothing():

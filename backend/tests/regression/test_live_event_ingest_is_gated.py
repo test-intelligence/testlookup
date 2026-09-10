@@ -138,7 +138,7 @@ def live(monkeypatch):
     # path (services/ws_event_ingest.py) instead of published directly. That
     # adapter is the transport for this branch now, so it is stubbed the same
     # way, into the same list.
-    async def _admit(_db, *, project_id, api_key_name, run_id, event):
+    async def _admit(_db, *, project_id, api_key_name, run_id, event, api_key=None):
         calls.append(("publish", run_id))
         from app.services.ws_event_ingest import WsIngestOutcome
 

@@ -101,7 +101,12 @@ def test_outside_production_nothing_is_flagged(monkeypatch):
 # ── Angle brackets (QA of N12) ───────────────────────────────────────────
 
 
-@pytest.mark.parametrize("value", ["Tr0ub4dor&3<9xQ!r", "9f8e<7d!6>c5b4a4938", "<<>>"])
+@pytest.mark.parametrize(
+    "value",
+    # The fourth refused startup until the token had to be the whole value
+    # (code review of Q7); so did the fifth, a real secret with a token inside.
+    ["Tr0ub4dor&3<9xQ!r", "9f8e<7d!6>c5b4a4938", "<<>>", "Tr0ub<A>dor&3", "s3cr3t<pw>tail"],
+)
 def test_a_secret_that_merely_contains_angle_brackets_is_not_a_placeholder(value):
     """A bare "<" refused a real, symbol-rich secret, and startup with it."""
     from app.core.config import _is_placeholder_secret
@@ -109,19 +114,69 @@ def test_a_secret_that_merely_contains_angle_brackets_is_not_a_placeholder(value
     assert not _is_placeholder_secret(value), f"{value!r} was taken for a placeholder"
 
 
+def _angle_placeholders(text: str) -> set[str]:
+    """Every ``<...>`` a file assigns to a key, read looser than the check."""
+    import re
+
+    found: set[str] = set()
+    for line in text.splitlines():
+        found |= set(re.findall("[=:] *(<[^<>]+>)", line))
+    return found
+
+
 def test_every_angle_bracket_placeholder_the_repo_ships_is_caught():
     """Read the conventions from the files that ship them, with a looser
     pattern than the check's own, so a new shape cannot slip past unseen."""
-    import pathlib
-    import re
-
     from app.core.config import _is_placeholder_secret
 
-    root = pathlib.Path(__file__).resolve().parents[3]
     shipped: set[str] = set()
     for rel in (".env.example", "k8s/base/secrets.yaml"):
-        text = (root / rel).read_text(encoding="utf-8")
-        shipped |= set(re.findall("[=:] *(<[^<> ]+>)", text))
+        shipped |= _angle_placeholders((ROOT / rel).read_text(encoding="utf-8"))
     assert len(shipped) >= 5, f"the scan found too few placeholders to mean anything: {shipped}"
     missed = sorted(token for token in shipped if not _is_placeholder_secret(token))
     assert not missed, f"shipped placeholders the startup check would accept: {missed}"
+
+
+def test_every_documented_value_for_a_checked_secret_is_caught():
+    """The docs tell operators what to paste. deploymentsteps.md shows
+    ``APP_SECRET_KEY=<your generated key from Step 9.3>``, which has spaces; the
+    token rule before this accepted it as a real secret (QA of Q7)."""
+    import re
+    import subprocess
+
+    from app.core.config import _is_placeholder_secret
+
+    pattern = re.compile(
+        "(APP_SECRET_KEY|JWT_SECRET_KEY|WEBHOOK_SECRET)[^=:<>]{0,3}[=:] *(<[^<>]+>)"
+    )
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    documented: dict[str, str] = {}
+    for rel in tracked:
+        if not rel.endswith((".md", ".example", ".yaml", ".yml", ".env", ".txt", ".sh")):
+            continue
+        try:
+            text = (ROOT / rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in text.splitlines():
+            for _key, token in pattern.findall(line):
+                documented[token] = rel
+    assert "deploymentsteps.md" in documented.values(), (
+        f"the scan no longer sees the deployment guide's placeholder: {documented}"
+    )
+    missed = sorted(
+        f"{token} ({rel})" for token, rel in documented.items() if not _is_placeholder_secret(token)
+    )
+    assert not missed, f"documented placeholders the startup check would accept: {missed}"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["<your generated key from Step 9.3>", "<YOUR_SECRET>", " <pw> ", "<base64-encoded-strong-random-secret>"],
+)
+def test_a_whole_value_placeholder_is_refused(value):
+    from app.core.config import _is_placeholder_secret
+
+    assert _is_placeholder_secret(value), f"{value!r} was taken for a real secret"

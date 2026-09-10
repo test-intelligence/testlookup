@@ -526,6 +526,17 @@ async def ingest_live_event(
       - test_result:  {type, test_name, status, duration_ms, error_message, test_case_id?}
       - run_complete: {type}
 
+    Any event may carry an ``event_id`` (1-200 printable characters, unique
+    within its run): a POST retried with the same one is counted once. Without
+    one, ``run_start`` and ``run_complete`` are recognised by their content, and
+    every ``test_result`` is a new result.
+
+    With a project key the run is saved like an SDK run (re-audit N14). Its run
+    id can be used again once the run completes: a ``run_start`` begins a new
+    run under it, and any other event for the finished run is refused with 409.
+    ``test_case_id``, and a ``test_result``'s ``total_tests``, are honoured only
+    on the legacy path: the SDK stream's events carry neither.
+
     Authentication (re-audit H1). Preferred: a project-scoped ``X-API-Key``
     carrying the ``stream:write`` scope — the project is then derived from the
     key server-side and a caller cannot name someone else's. Legacy: the shared
@@ -565,9 +576,10 @@ async def ingest_live_event(
 
     # ── Authenticate, and derive the tenant rather than trusting the body ──
     bound_project_id: Optional[str] = None
-    # Names the auto-created live session (re-audit N14). The key's own name
-    # when the full check ran; a credential-cache hit does not carry it.
-    api_key_name = "ws-events"
+    # Names the auto-created live session (re-audit N14): the key's own name
+    # when the full check ran. A credential-cache hit does not carry it, so it
+    # stays None and the adapter looks it up if the event creates a session.
+    api_key_name: Optional[str] = None
     if x_api_key:
         # Project-scoped, stream:write, hashed at rest. The project comes from
         # the key, so a caller cannot address another tenant at all.
@@ -725,6 +737,7 @@ async def ingest_live_event(
             api_key_name=api_key_name,
             run_id=run_id,
             event=safe_event,
+            api_key=x_api_key,
         )
         if outcome.staged:
             # The stream router's order: commit what was staged, then finalise

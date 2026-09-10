@@ -56,6 +56,10 @@ async def test_an_unreadable_cache_is_a_503_not_zeros(client, auth_as, stats):
     auth_as(role=UserRole.ADMIN)
     resp = await client.get(URL)
     assert resp.status_code == 503, resp.text
+    body = resp.json()
+    assert "ChromaDB is optional" in str(body.get("detail", body)), (
+        "a deployment without ChromaDB reads as an outage"
+    )
 
 
 @pytest.mark.parametrize("role", [UserRole.VIEWER, UserRole.QA_LEAD])

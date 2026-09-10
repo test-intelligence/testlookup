@@ -187,6 +187,7 @@ def _drains() -> tuple[tuple[str, Any], ...]:
     # Resolved at call time, so a test (or a later refactor) that replaces one
     # of these on its module is the one that runs.
     import app.core.http_client as http_client
+    import app.db.mongo as mongo
     import app.db.postgres as postgres
     import app.db.redis_client as redis_client
 
@@ -195,4 +196,8 @@ def _drains() -> tuple[tuple[str, Any], ...]:
         ("engine_dispose", postgres.dispose_engine_for_loop),
         ("http_client_close", http_client.close_http_client),
         ("redis_close", redis_client.close_redis),
+        # Motor's client runs pymongo's monitor threads; dropped without
+        # close() they outlive the loop until garbage collection (code review
+        # of re-audit M1).
+        ("mongo_close", mongo.close_mongo),
     )

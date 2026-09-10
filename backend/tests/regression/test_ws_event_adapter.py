@@ -221,3 +221,122 @@ async def test_after_commit_does_nothing_for_a_cached_event(monkeypatch):
 
     finalize.assert_not_awaited()
     remember.assert_not_awaited()
+
+
+# ── Batch ids, the session's name and the build (code review of N14) ─────
+
+
+def _live(event):
+    return adapter.to_live_event(event)
+
+
+def test_a_client_event_id_names_the_batch():
+    event = {"type": "test_result", "test_name": "t", "event_id": "result-7"}
+    assert adapter.batch_id_for(event, _live(event)) == "ws-result-7"
+    numbered = {"type": "test_result", "event_id": 7}
+    assert adapter.batch_id_for(numbered, _live(numbered)) == "ws-7"
+
+
+@pytest.mark.parametrize(
+    "bad", [["a"], {"a": 1}, True, 1.5, "x" * 201, "tab" + chr(9) + "here", "del" + chr(127)]
+)
+def test_an_unusable_event_id_is_a_422(bad):
+    event = {"type": "test_result", "event_id": bad}
+    with pytest.raises(HTTPException) as exc:
+        adapter.batch_id_for(event, _live(event))
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.parametrize("kind", ["run_start", "run_complete"])
+def test_once_per_run_events_are_recognised_by_their_content(kind):
+    """None selects the admission's content identity, so a retry converges."""
+    event = {"type": kind}
+    assert adapter.batch_id_for(event, _live(event)) is None
+
+
+def test_every_result_without_an_id_is_a_new_batch():
+    event = {"type": "test_result", "test_name": "t", "status": "PASSED"}
+    first, second = (adapter.batch_id_for(event, _live(event)) for _ in range(2))
+    assert first != second
+    assert first.startswith("ws-")
+
+
+@pytest.mark.asyncio
+async def test_run_start_never_takes_the_cached_session(monkeypatch):
+    """Only PostgreSQL can say whether a run_start begins a new run."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.services import stream_service
+
+    async def _cached(_key):
+        raise AssertionError("run_start consulted the session cache")
+
+    monkeypatch.setattr(adapter, "_cached_session", _cached)
+    monkeypatch.setattr(
+        stream_service, "ingest_via_api_key",
+        AsyncMock(return_value=SimpleNamespace(session_id="s-2")),
+    )
+
+    outcome = await adapter.ingest_one(
+        object(), project_id=uuid.uuid4(), api_key_name="ci", run_id="nightly",
+        event={"type": "run_start", "build_number": "2"},
+    )
+    assert outcome.session_id == "s-2"
+    assert outcome.staged
+
+
+@pytest.mark.asyncio
+async def test_a_session_is_named_after_its_key_even_when_the_credential_was_cached(monkeypatch):
+    """A cached credential carries no name, so it is looked up for the session."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.services import stream_service
+
+    named: list[str] = []
+
+    async def _ingest(*, db, project_id, api_key_name, request):
+        named.append(api_key_name)
+        return SimpleNamespace(session_id="s-1")
+
+    async def _name(_db, api_key):
+        return {"qai_nightly": "ci-nightly"}.get(api_key)
+
+    monkeypatch.setattr(stream_service, "ingest_via_api_key", _ingest)
+    monkeypatch.setattr(adapter, "_api_key_name", _name)
+    monkeypatch.setattr(adapter, "_cached_session", AsyncMock(return_value=None))
+
+    for name, key in ((None, "qai_nightly"), ("from-the-check", "qai_nightly"), (None, "qai_unknown")):
+        await adapter.ingest_one(
+            object(), project_id=uuid.uuid4(), api_key_name=name, run_id="r",
+            event={"type": "test_result", "test_name": "t"}, api_key=key,
+        )
+    assert named == ["ci-nightly", "from-the-check", "ws-events"]
+
+
+@pytest.mark.asyncio
+async def test_the_consumer_announces_the_runs_build_not_the_session_id(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.streams import live_consumer
+
+    messages: list[dict] = []
+
+    async def _broadcast(_project_id, message):
+        messages.append(message)
+
+    started = AsyncMock(return_value=None)
+    monkeypatch.setattr(live_consumer, "_broadcast", _broadcast)
+    monkeypatch.setattr(
+        live_consumer.RedisLiveRunState, "get",
+        AsyncMock(return_value={"project_id": "p-1", "build_number": "build-42"}),
+    )
+    monkeypatch.setattr(live_consumer.RedisLiveRunState, "start", started)
+
+    await live_consumer.LiveEventStreamConsumer()._on_run_start(
+        "session-uuid", {"event_type": "run_start", "run_id": "session-uuid"}
+    )
+
+    assert messages[0]["build_number"] == "build-42"
+    assert started.await_args.args[2] == "build-42"

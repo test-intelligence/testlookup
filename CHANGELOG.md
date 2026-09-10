@@ -33,7 +33,9 @@ shutdown, or when Celery recycles it after its task limit. A task cut off while
 it waits, for example by its soft time limit, still has its loop torn down and
 replaced, as every task's used to be. Anything a task leaves running is
 cancelled when it returns, so it cannot run inside the next task. The training
-tasks now share this code instead of keeping a second copy of it.
+tasks now share this code instead of keeping a second copy of it. The Mongo
+client is closed with the others; the per-task teardown never closed it, which
+left its monitor threads running until garbage collection.
 
 Because connections now wait in the pool between tasks, worker engines check a
 connection before handing it out, in production too. A Postgres restart then
@@ -58,11 +60,34 @@ own batch, so two identical results are recorded as two executions. After a
 run's first event a result costs no database round trip: the session is looked
 up once and cached.
 
-Two things change for project-key callers. A `run_id` longer than 100
-characters is refused with 422, because a run with that id cannot be stored.
-An event sent after its run completed is refused with 409, rather than
-accepted and silently dropped. The legacy shared-secret path, off by default
-because it names no project, is unchanged: shown live, never saved.
+What changes for project-key callers:
+
+- A `run_id` longer than 100 characters is refused with 422, because a run
+  with that id cannot be stored.
+- A run id can be used again once its run completes: a `run_start` begins a
+  new run under it, in a new session. Any other event for the finished run is
+  refused with 409, rather than accepted and silently dropped. The database
+  decides this. A Redis marker that expires 15 days after the run is stored
+  cannot: once it had gone, a nightly job reusing its run id would have had
+  every run accepted and lost.
+- An optional `event_id` on any event makes a retried POST count once.
+  Without one, `run_start` and `run_complete` are recognised by their content,
+  so a retried close converges, even when the first attempt's commit failed.
+  A `test_result` without one is always a new result.
+- `test_case_id`, and a `test_result`'s `total_tests`, are not recorded: the
+  SDK path's events carry neither. A failing result therefore no longer queues
+  the immediate per-test analysis; the run's analysis once it completes is
+  unaffected.
+- The live session is named after the API key whether or not the key's check
+  was cached, and the live page announces the run's build number, not the
+  session's internal id.
+
+`POST /api/v1/stream/ingest` shares this path, so it gets the same database
+check. The bundled SDKs never send `run_start`: for them a completed run id
+stays closed, and a new run needs a new run id, as the API always said.
+
+The legacy shared-secret path, off by default because it names no project, is
+unchanged: shown live, never saved.
 
 Separately, live runs streamed with an API key never reached the high-volume
 detector: it looked the project up through a run that does not exist until the
@@ -258,10 +283,14 @@ anything. The Flower dashboard password in the same example file is configured
 only by the development compose file and never read by the backend, so there is
 no production startup path for this check to guard.
 
-An angle-bracketed placeholder, the form the Kubernetes secret template and
-`.env.example` use (`<base64-encoded-strong-random-secret>`,
-`<set-a-strong-password>`), counts only as a whole token. A bare `<` used to
-count, which refused a real secret that merely contains the symbol.
+An angle-bracketed placeholder, the form the Kubernetes secret template,
+`.env.example` and the deployment guide use
+(`<base64-encoded-strong-random-secret>`, `<set-a-strong-password>`,
+`<your generated key from Step 9.3>`), counts only when it is the whole value.
+A bare `<` used to count, which refused a real secret that merely contains the
+symbol. A token anywhere in the value then still refused about one random
+32-character password in 157, and missed the guide's placeholder, which has
+spaces.
 
 ## 2026-09-10 — agent tools wrote straight into the next prompt
 
@@ -326,7 +355,9 @@ fix, so `GET /api/v1/admin/maintenance/ai-cache`, for instance admins, reports
 `legacy_unscoped_documents`: a non-zero value means the collection should be
 purged. (The first version of this fix computed that count in a function nothing
 called.) The same numbers used to report an outage as zero documents, which
-reads as an empty cache; the route answers 503 instead.
+reads as an empty cache; the route answers 503 instead, and says that ChromaDB
+is optional: a deployment that does not run it has no similarity cache, and
+nothing to purge.
 
 ## 2026-09-10 — release dates were only right on servers that happen to run in UTC
 
@@ -435,8 +466,12 @@ anyone moves it there. The route also creates the run's live state on
 `run_start` itself: the consumer does that too, but asynchronously, and a result
 that arrived first found no state and was silently dropped. The consumer's later
 call never resets counters, so it changes nothing. The route's own `run_start`
-does: a caller that reuses a run id within a day is starting a new run, which
-no longer inherits the previous run's counts or its completed status. A result
+resets a run that has completed: a caller reusing the id of a finished run,
+while its state is still kept (an hour), is starting a new run, which no longer
+inherits the previous run's counts or its completed status. A run still in
+progress is left alone, so a retried `run_start`, or a second shard opening the
+same id, keeps its counts, and the reset replaces the old state in one
+transaction. A result
 is counted only once it has been published, so a failed publish, and the
 client's retry of it, no longer count it twice.
 
@@ -444,11 +479,10 @@ The counter stores the current test's name in Redis, which makes it a third
 place event data lands. The sanitization test now covers it alongside the other
 two, and asserts the name it receives is the sanitized one.
 
-**Not fixed here, and worth being plain about:** these runs are never persisted
-as test runs at all. Rows are only created on the batch path, and the consumer's
-database finalize looks a caller-chosen slug up in a UUID column, so it can
-never match. This fix restores the live view; a stored grade needs its own
-change, and is recorded as a follow-up.
+**Scope.** Since the /ws/events entry above, this counting runs only on the
+legacy shared-secret path, which is off by default: a run streamed with a
+project key is saved like an SDK run, and counted by the SDK path's admission.
+The legacy path's runs are still shown live and never saved.
 
 ## 2026-09-10 — nine post-ingestion steps could fail forever without anyone knowing
 
