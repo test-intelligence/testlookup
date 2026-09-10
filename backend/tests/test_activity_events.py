@@ -322,3 +322,53 @@ def test_every_producer_call_site_names_a_registered_event() -> None:
         if event != _COMPUTED and event not in E.ACTIVITY_EVENTS
     ]
     assert not unknown, "\n".join(unknown)
+
+
+# ── Links must resolve ───────────────────────────────────────────────────────
+
+
+def test_every_entity_link_resolves_to_a_real_frontend_route():
+    """A link that goes nowhere is worse than no link.
+
+    ``entity_href`` is built server-side so the CLI and MCP tools get working
+    links too — which also means one wrong entry here produces a dead link on
+    three surfaces at once. React Router sends an unmatched path to the
+    catch-all redirect, so the reader silently lands on /overview instead of
+    the thing they clicked.
+
+    This caught ``/settings/attribution-rules``, which the map claimed and the
+    route table has never contained: the API exists, the page does not.
+    """
+    import re
+
+    app_tsx = REPO_BACKEND.parent / "frontend" / "src" / "App.tsx"
+    if not app_tsx.exists():  # pragma: no cover - backend-only checkouts
+        pytest.skip("frontend not present in this checkout")
+
+    declared = {
+        m.group(1)
+        for m in re.finditer(r"path: '([^']*)'", app_tsx.read_text(encoding="utf-8"))
+    }
+    assert declared, "could not parse any routes out of App.tsx"
+
+    dead: list[str] = []
+    for entity_type in E.ENTITY_TYPES:
+        href = E.entity_href(entity_type, "PLACEHOLDER")
+        if href is None:
+            continue  # deliberately unlinked
+        # Strip the query string and the leading slash to match App.tsx, whose
+        # route table stores paths relative to the layout route.
+        path = href.split("?")[0].lstrip("/")
+        first = path.split("/")[0]
+        # A parameterised destination (/runs/PLACEHOLDER) matches its dynamic
+        # route (runs/:runId), so compare on the leading static segment.
+        if path in declared:
+            continue
+        if any(d == first or d.startswith(f"{first}/") for d in declared):
+            continue
+        dead.append(f"{entity_type} -> {href}")
+
+    assert not dead, (
+        "these entity types link to routes that do not exist, so the feed "
+        "would bounce the reader to /overview:\n  " + "\n  ".join(dead)
+    )

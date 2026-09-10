@@ -93,7 +93,11 @@ _ENTITY_ROUTES: Final[Mapping[str, str]] = {
     "suite": "/suites/{id}",
     "release": "/releases?release={id}",
     "policy": "/policies/{id}",
-    "attribution_rule": "/settings/attribution-rules",
+    # No page renders attribution rules today — the API exists, the UI does
+    # not. An empty route yields href=None, so the feed prints the rule's name
+    # as plain text. Sending the reader to a route that does not exist would
+    # bounce them to /overview, which is worse than not offering a link.
+    "attribution_rule": "",
     "ownership_rule": "/ownership",
     "quarantine": "/quarantine",
     "defect": "/defects?defect={id}",

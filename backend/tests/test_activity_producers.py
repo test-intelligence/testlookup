@@ -253,3 +253,53 @@ async def test_export_event_is_attempt_mode(session_factory, project, actor, mon
     rows = await _events(session_factory)
     assert len(rows) == 1
     assert "42 rows" in rows[0].summary
+
+
+# ── API keys ─────────────────────────────────────────────────────────────────
+
+
+async def test_api_key_event_stores_no_secret_material(session_factory, project, actor):
+    """The raw key is shown to the caller exactly once. It must not be
+    reconstructable from the feed, so the event carries field NAMES and the
+    non-secret hint, never the key or its hash."""
+    from app.services.activity.service import ActorRef, record
+
+    async with session_factory() as db:
+        await record(
+            db,
+            project_id=project.id,
+            event_type="api_key.created",
+            actor=ActorRef.from_user(actor),
+            entity_id=uuid.uuid4(),
+            entity_label="ci-token",
+            changed_fields=["name", "scopes", "expires_at", "project_id"],
+            context={"key_hint": "tl_...9f2c", "scopes": ["ingest"]},
+        )
+        await db.commit()
+
+    rows = await _events(session_factory)
+    blob = f"{rows[0].summary}|{rows[0].context}|{rows[0].diff}"
+    assert "key_hash" not in blob
+    assert rows[0].diff == {
+        "changed_fields": ["name", "scopes", "expires_at", "project_id"]
+    }
+    assert "before" not in (rows[0].diff or {})
+
+
+def test_a_user_scoped_api_key_writes_no_row():
+    """A key bound to no project has nowhere honest to be filed. Recording it
+    against an arbitrary project would be worse than the gap.
+
+    Asserted on the source because the guard is a branch around the call, and
+    a behavioural test would need a full request to reach it.
+    """
+    import inspect
+
+    from app.routers import api_keys
+
+    for fn in (api_keys.create_api_key, api_keys.revoke_api_key):
+        src = inspect.getsource(fn)
+        assert "if api_key.project_id is not None:" in src, (
+            f"{fn.__name__} records activity without checking the key is "
+            "project-scoped — a user-scoped key has no project to file under"
+        )
