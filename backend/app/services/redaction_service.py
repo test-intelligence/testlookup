@@ -46,7 +46,7 @@ SENSITIVE_KEYS: frozenset[str] = frozenset({
 
 # ── Regex patterns for free-form text scrubbing ─────────────────────────────
 
-_SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+_CREDENTIAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Bearer tokens
     (re.compile(r"(Bearer\s+)[A-Za-z0-9\-_\.]{20,}", re.IGNORECASE), r"\1[REDACTED]"),
     # Authorization headers
@@ -68,7 +68,11 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}"), "[REDACTED_JWT]"),
     # Connection strings with passwords
     (re.compile(r"(://[^:]+:)[^@]{4,}(@)"), r"\1[REDACTED]\2"),
-    # ── PII patterns (PR-2) ────────────────────────────────────────────────
+]
+
+# PII heuristics (PR-2). An email address is identified by its ``@`` and
+# domain; the others match digit runs and dotted quads by shape alone.
+_PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Email addresses
     (re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"), "[REDACTED_EMAIL]"),
     # Phone numbers (US/international formats)
@@ -79,6 +83,17 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b"), "[REDACTED_CC]"),
     # IPv4 addresses
     (re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"), "[REDACTED_IP]"),
+]
+
+# Every pattern, for free text whose shape nothing constrains (agent evidence,
+# error excerpts, stored run data).
+_SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = _CREDENTIAL_PATTERNS + _PII_PATTERNS
+
+# What a log message gets: patterns that recognise what they redact by a marker
+# (``Bearer``, ``password=``, ``://user:pass@``, a JWT's three segments, an
+# email's ``@``), never by shape alone. See redact_log_message.
+_LOG_MESSAGE_PATTERNS: list[tuple[re.Pattern[str], str]] = _CREDENTIAL_PATTERNS + [
+    pattern for pattern in _PII_PATTERNS if pattern[1] == "[REDACTED_EMAIL]"
 ]
 
 # Compiled pattern for quick key-name content check (used for string values
@@ -105,6 +120,25 @@ def redact_text(text: str) -> str:
         return text
     result = text
     for pattern, replacement in _SECRET_PATTERNS:
+        result = pattern.sub(replacement, result)
+    return result
+
+
+def redact_log_message(text: str) -> str:
+    """Redact credentials and email addresses from a log message.
+
+    A log message is operational text: byte counts, epoch seconds, build
+    numbers, run ids shaped like ``NNN-NNN-NNNN``, version strings and host
+    addresses. The phone, SSN, card and IPv4 heuristics in :func:`redact_text`
+    match those by shape and destroy them -- ``processed 1234567890 bytes``
+    became ``processed [REDACTED_PHONE] bytes``, and the host in an
+    ``offline_egress_blocked`` warning became ``[REDACTED_IP]``. Everything
+    redacted here is recognised by a marker, so an ordinary number survives.
+    """
+    if not text:
+        return text
+    result = text
+    for pattern, replacement in _LOG_MESSAGE_PATTERNS:
         result = pattern.sub(replacement, result)
     return result
 

@@ -125,3 +125,113 @@ def test_a_non_string_value_is_left_alone():
     assert out["count"] == 412
     assert out["ok"] is True
     assert out["ratio"] == 0.97
+
+
+# ── The message is operational text (code review of the H3 fix) ─────────
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Task 7f3a processed 1234567890 bytes",
+        "lease renewed at epoch 1757500000",
+        "run_id=build-555-123-4567 finished",
+        "run 123-45-6789 retried",
+        "uvicorn version 0.49.0.1 started",
+        "offline_egress_blocked channel=SMTP host=10.42.0.15",
+        "Batch of 4111111111111111 rows",
+    ],
+)
+def test_numbers_and_host_addresses_in_the_message_survive(message):
+    """The PII heuristics match digit runs and dotted quads by shape.
+
+    Applied to the message they rewrote byte counts, epoch seconds, build
+    numbers, and the very host an operator needs from a warning.
+    """
+    assert _redact(event=message)["event"] == message
+
+
+def test_a_structured_field_keeps_the_pii_heuristics():
+    """Only the message was narrowed."""
+    out = _redact(event="ok", caller="call 555-123-4567", peer="10.42.0.15")
+    assert "555-123-4567" not in out["caller"]
+    assert "10.42.0.15" not in out["peer"]
+
+
+def test_redact_text_still_applies_every_pattern():
+    """Its other callers -- agent evidence, error excerpts -- keep the full set."""
+    from app.services.redaction_service import redact_text
+
+    assert "555-123-4567" not in redact_text("call 555-123-4567")
+    assert "10.42.0.15" not in redact_text("peer 10.42.0.15")
+    assert "qa.lead@example.com" not in redact_text("mail qa.lead@example.com")
+
+
+# ── A traceback is redacted too (QA of the H3 fix) ───────────────────────
+
+
+@pytest.fixture
+def json_logs(monkeypatch):
+    """The real pipeline from configure_logging(), writing JSON to a buffer.
+
+    Every other test here calls the redaction processor directly, which is why
+    a traceback that reached the renderer unredacted went unseen.
+    """
+    import io
+    import logging
+
+    import structlog
+
+    from app.core import logging_config
+    from app.core.config import settings
+
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    saved_structlog = structlog.get_config()
+    monkeypatch.setattr(settings, "LOG_FORMAT", "json")
+    logging_config.configure_logging()
+    buffer = io.StringIO()
+    root.handlers[-1].setStream(buffer)
+    try:
+        yield buffer
+    finally:
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+        structlog.configure(**saved_structlog)
+
+
+_SECRET_ERROR = "login rejected for qa.lead@example.com password=hunter2xyz via 10.42.0.15"
+
+
+def test_a_stdlib_traceback_is_redacted_before_it_is_written(json_logs):
+    """43 call sites pass exc_info=True. The traceback reached the JSON renderer
+    as an exc_info tuple, after redaction had run, and was written out
+    verbatim -- exception message and all."""
+    import logging
+
+    try:
+        raise RuntimeError(_SECRET_ERROR)
+    except RuntimeError:
+        logging.getLogger("tests.h3").error("login failed", exc_info=True)
+
+    written = json_logs.getvalue()
+    assert "login failed" in written
+    assert "RuntimeError" in written, "the traceback was dropped rather than redacted"
+    assert "hunter2xyz" not in written
+    assert "qa.lead@example.com" not in written
+    assert "10.42.0.15" in written, "a traceback is operational text; its host must survive"
+
+
+def test_a_structlog_exception_is_redacted_before_it_is_written(json_logs):
+    import structlog
+
+    try:
+        raise RuntimeError(_SECRET_ERROR)
+    except RuntimeError:
+        structlog.get_logger("tests.h3").exception("login failed")
+
+    written = json_logs.getvalue()
+    assert "login failed" in written
+    assert "RuntimeError" in written, "the traceback was dropped rather than redacted"
+    assert "hunter2xyz" not in written
+    assert "qa.lead@example.com" not in written

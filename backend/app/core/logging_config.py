@@ -48,6 +48,11 @@ _STRUCTURAL_LOG_FIELDS: frozenset[str] = frozenset({
     "span_id",
 })
 
+#: Free-text fields: the message, and the traceback and stack rendered into
+#: the record before redaction runs. They carry operational numbers and
+#: addresses, so they get the marker-based set -- see _privacy_redaction.
+_MESSAGE_FIELDS: frozenset[str] = frozenset({"event", "exception", "stack"})
+
 
 def _privacy_redaction(
     logger: WrappedLogger, method: str, event_dict: EventDict
@@ -66,12 +71,28 @@ def _privacy_redaction(
     can hold caller data: they are set by this module or by structlog itself,
     and redacting them would corrupt the record (an ``@`` in a logger name
     reading as an email address, say).
+
+    The message is operational text, so it gets only what a marker identifies:
+    credentials and email addresses (``redact_log_message``). The phone, card
+    and IPv4 heuristics match by shape, and applied to the message they ate
+    byte counts, epoch seconds, build numbers and the host an operator needs
+    from a warning. A structured field keeps the full set, as it always had.
+    A traceback is treated like the message: ``format_exc_info`` renders it
+    into ``exception`` earlier in the chain, so it is text by the time this
+    runs, and the exception message inside it is where a rejected password
+    or a connection string usually sits.
     """
-    from app.services.redaction_service import redact_text  # noqa: PLC0415
+    from app.services.redaction_service import (  # noqa: PLC0415
+        redact_log_message,
+        redact_text,
+    )
 
     for key, val in event_dict.items():
-        if isinstance(val, str) and key not in _STRUCTURAL_LOG_FIELDS:
-            event_dict[key] = redact_text(val)
+        if not isinstance(val, str) or key in _STRUCTURAL_LOG_FIELDS:
+            continue
+        event_dict[key] = (
+            redact_log_message(val) if key in _MESSAGE_FIELDS else redact_text(val)
+        )
     return event_dict
 
 
@@ -107,6 +128,13 @@ def configure_logging() -> None:
         _add_otel_trace_context,
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.StackInfoRenderer(),
+        # Render exc_info to text BEFORE redaction (re-audit H3, QA). Left to
+        # the renderer, a traceback -- exception message and all -- reached the
+        # output as an exc_info tuple, after redaction had already run.
+        # A structlog .exception() call carries no exc_info of its own -- the
+        # generic BoundLogger does not add it -- so its traceback was dropped.
+        structlog.dev.set_exc_info,
+        structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
         _privacy_redaction,
     ]
@@ -114,7 +142,11 @@ def configure_logging() -> None:
     renderer: Any = (
         structlog.processors.JSONRenderer()
         if use_json
-        else structlog.dev.ConsoleRenderer(colors=True)
+        # Tracebacks arrive already rendered, and redacted, by format_exc_info;
+        # the plain formatter prints them as they are instead of warning.
+        else structlog.dev.ConsoleRenderer(
+            colors=True, exception_formatter=structlog.dev.plain_traceback
+        )
     )
 
     structlog.configure(

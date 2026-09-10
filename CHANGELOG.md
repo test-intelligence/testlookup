@@ -434,7 +434,19 @@ there, and so does every f-string message. So the field guaranteed to carry
 free-form, unreviewed text was the field guaranteed not to be cleaned, while the
 structured key/value pairs a developer had chosen deliberately were.
 
-`event` is now redacted like everything else. What stays exempt is only the
+The message is now redacted too, and so is a logged exception's traceback, which
+used to reach the output after redaction had already run. Both are operational
+text, so they get only what a marker identifies: credentials (`Bearer`,
+`password=`, `://user:pass@`, JWTs, AWS keys) and email addresses. The phone,
+card, SSN and IP heuristics match by shape alone, and on a message they would
+rewrite byte counts, epoch seconds, build numbers and the host an operator needs
+from a warning. Structured fields keep the full set, as before.
+
+Two side effects. A structlog `.exception()` call now logs its traceback: the
+logger in use never attached one, so it was silently dropped. And in the text
+log format a traceback prints plain rather than pretty-printed.
+
+What stays exempt is only the
 record's own structure — timestamp, level, logger, service, version, env, trace
 and span ids — which the logging stack sets and a caller cannot put text into.
 Redacting those would corrupt the record rather than protect it: an `@` in a
