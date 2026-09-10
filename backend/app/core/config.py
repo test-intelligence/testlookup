@@ -4,6 +4,7 @@ All settings loaded from environment variables with sensible defaults.
 """
 import json as _json
 import os as _os
+import re as _re
 from functools import lru_cache
 from typing import List, Literal, Optional
 
@@ -38,8 +39,15 @@ _SECRET_PLACEHOLDER_MARKERS: tuple[str, ...] = (
     "replace_with",
     "your-",
     "set-a-",
-    "<",
 )
+
+#: The templates also write a placeholder as ONE angle-bracketed token --
+#: ``<base64-encoded-strong-random-secret>``, ``<set-a-strong-password>``,
+#: ``<pw>``. A bare ``"<"`` used to stand for that, which refused a real secret
+#: that merely contains the symbol (QA of re-audit N12). The token has to open
+#: and close, with only lowercase letters, digits, hyphens and underscores
+#: between.
+_ANGLE_PLACEHOLDER = _re.compile("<[a-z0-9][a-z0-9_-]*>")
 
 
 def _is_placeholder_secret(value: str) -> bool:
@@ -61,7 +69,9 @@ def _is_placeholder_secret(value: str) -> bool:
     text = str(value or "").strip().lower()
     if not text:
         return True
-    return any(marker in text for marker in _SECRET_PLACEHOLDER_MARKERS)
+    return any(marker in text for marker in _SECRET_PLACEHOLDER_MARKERS) or bool(
+        _ANGLE_PLACEHOLDER.search(text)
+    )
 
 
 def _uri_password(uri: str) -> Optional[str]:

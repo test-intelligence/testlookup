@@ -63,6 +63,8 @@ def test_the_example_files_mongo_uri_blocks_production(production):
     [
         "mongodb://svc:replace-with-strong-mongo-password@mongo:27017/logs",
         "mongodb+srv://svc:change-me@cluster0.example.net/logs",
+        "mongodb://svc:<base64-encoded-mongo-password>@mongo:27017/logs",
+        "mongodb://svc:<pw>@mongo:27017/logs",
     ],
 )
 def test_every_placeholder_convention_is_caught(production, uri):
@@ -77,6 +79,7 @@ def test_every_placeholder_convention_is_caught(production, uri):
         "mongodb://mongo:27017/logs",                                # no credential at all
         "mongodb://svc:9f8e7d6c5b4a49388271aa@mongo:27017/logs",     # a real password
         "mongodb+srv://svc:c0ffeec0ffeec0ffee@cluster0.example.net/logs",
+        "mongodb://svc:9f8e<7d6c5b4a4938@mongo:27017/logs",             # a real password with a "<"
         # The Cloud Run example verbatim: a placeholder HOST but no password.
         # Judging the whole URI would flag this; only the credential is a
         # secret, and this one would fail to connect rather than leak anything.
@@ -93,3 +96,32 @@ def test_outside_production_nothing_is_flagged(monkeypatch):
     monkeypatch.setattr(settings, "APP_ENV", "development")
     monkeypatch.setattr(settings, "MONGO_URI", _example_mongo_uri())
     assert _mongo_failures() == []
+
+
+# ── Angle brackets (QA of N12) ───────────────────────────────────────────
+
+
+@pytest.mark.parametrize("value", ["Tr0ub4dor&3<9xQ!r", "9f8e<7d!6>c5b4a4938", "<<>>"])
+def test_a_secret_that_merely_contains_angle_brackets_is_not_a_placeholder(value):
+    """A bare "<" refused a real, symbol-rich secret, and startup with it."""
+    from app.core.config import _is_placeholder_secret
+
+    assert not _is_placeholder_secret(value), f"{value!r} was taken for a placeholder"
+
+
+def test_every_angle_bracket_placeholder_the_repo_ships_is_caught():
+    """Read the conventions from the files that ship them, with a looser
+    pattern than the check's own, so a new shape cannot slip past unseen."""
+    import pathlib
+    import re
+
+    from app.core.config import _is_placeholder_secret
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    shipped: set[str] = set()
+    for rel in (".env.example", "k8s/base/secrets.yaml"):
+        text = (root / rel).read_text(encoding="utf-8")
+        shipped |= set(re.findall("[=:] *(<[^<> ]+>)", text))
+    assert len(shipped) >= 5, f"the scan found too few placeholders to mean anything: {shipped}"
+    missed = sorted(token for token in shipped if not _is_placeholder_secret(token))
+    assert not missed, f"shipped placeholders the startup check would accept: {missed}"
