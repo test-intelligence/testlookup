@@ -57,6 +57,28 @@ def mock_upload_storage():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _admission_gates_open(monkeypatch):
+    """Keep these tests about ingest semantics, not admission.
+
+    Since re-audit M4 both routes pass a Redis-memory backpressure check and a
+    per-project rate limit before doing any work. Unstubbed, every call reaches
+    for Redis, and with none running locally each test waits out the client's
+    connect timeout before the gates fail open (about 8s a test, measured).
+    The gates are exercised through this same app, over HTTP, in
+    test_ingest_admission_http.py.
+    """
+    async def _open(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.ingestion_backpressure.enforce_redis_memory_backpressure", _open
+    )
+    monkeypatch.setattr(
+        "app.services.ingestion_rate_limit.enforce_ingest_rate_limit", _open
+    )
+
+
 # ── JSON batch ──────────────────────────────────────────────────────────────
 
 

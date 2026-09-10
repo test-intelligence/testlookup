@@ -143,6 +143,19 @@ def live(monkeypatch):
             )
         ),
     )
+    # The M4/M3 admission gates are exercised in their own suite; here they
+    # would only depend on how the fake Redis happens to fail open.
+    async def _gate_open(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.ingestion_backpressure.enforce_redis_memory_backpressure",
+        _gate_open,
+    )
+    monkeypatch.setattr(
+        "app.services.ingestion_rate_limit.enforce_live_event_rate_limit",
+        _gate_open,
+    )
     monkeypatch.setattr(settings, "LIVE_EVENTS_REQUIRE_PROJECT_KEY", True)
     return SimpleNamespace(redis=redis, published=published)
 

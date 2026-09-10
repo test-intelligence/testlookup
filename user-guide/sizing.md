@@ -35,7 +35,12 @@ The dev/self-host Compose stack ships these limits **(configured — `deploy.res
 | worker | 2.0 | 3 GB ↑ | 512 MB | Ingestion + analysis. First knob to turn: `CELERY_CONCURRENCY` (default 4) or more replicas. Every ingestion worker must subscribe to **all** shard queues ([INGESTION_SCALE.md §3](../architecture/INGESTION_SCALE.md#3-shard-queues-workeringestion_routingpy)). |
 | beat / flower / frontend / mcp | — | — | — | Negligible (tens of MB each). |
 
-**Throughput guardrails (configured)** — these protect the stack rather than limit your sizing, but they matter for burst planning: each project's SDK ingest is budgeted at **200 event batches/minute** (`INGEST_RATE_LIMIT_PER_MINUTE`), live run buffers cap at **50,000 events/run** (`LIVE_BUFFER_MAX_EVENTS_PER_RUN`, older events are drained to Postgres every ~30 s), and the live event stream is capped at 100k entries.
+**Throughput guardrails (configured)** — these protect the stack rather than limit your sizing, but they matter for burst planning:
+
+- Each project's batch ingest is budgeted at **200 batches/minute** (`INGEST_RATE_LIMIT_PER_MINUTE`). SDK event batches, JSON result uploads (`POST /api/v1/ingest`) and result-file uploads (`POST /api/v1/ingest/file`) all draw on this one budget.
+- Single live events (`POST /ws/events/{run_id}`) have a separate budget of **20,000 events/minute** per project (`INGEST_EVENT_RATE_LIMIT_PER_MINUTE`).
+- A spent budget answers `429` with a `Retry-After` header. While Redis memory is over its backpressure threshold, every result-ingest route answers `503`. Setting a budget to `0` disables it.
+- Live run buffers cap at **50,000 events/run** (`LIVE_BUFFER_MAX_EVENTS_PER_RUN`), and older events are drained to Postgres every ~30 s. The live event stream is capped at 100k entries.
 
 ## The local-LLM add-on (`make dev-llm`)
 

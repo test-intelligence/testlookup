@@ -100,6 +100,23 @@ def wired(monkeypatch):
         "app.streams.live_run_state.RedisLiveRunState.record_test_event",
         _state_noop,
     )
+
+    # Since re-audit M4/M3 the route also passes two admission gates (Redis
+    # backpressure and a per-project event budget). These tests are about WHO
+    # may write, and unstubbed the gates reach for a real Redis and wait out a
+    # connection timeout per test. The gates have their own suite:
+    # test_live_event_ingest_is_gated.py.
+    async def _gate_open(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.ingestion_backpressure.enforce_redis_memory_backpressure",
+        _gate_open,
+    )
+    monkeypatch.setattr(
+        "app.services.ingestion_rate_limit.enforce_live_event_rate_limit",
+        _gate_open,
+    )
     # The SHIPPED default is True (see
     # test_the_shared_secret_is_refused_by_default). These cases opt back
     # into the legacy path on purpose, to pin what it does when a

@@ -859,6 +859,15 @@ async def test_legacy_live_route_sanitizes_mongo_and_redis(monkeypatch):
     monkeypatch.setattr(
         "app.streams.live_run_state.RedisLiveRunState.record_test_event", counted
     )
+    # The M4/M3 admission gates would otherwise reach for a real Redis.
+    monkeypatch.setattr(
+        "app.services.ingestion_backpressure.enforce_redis_memory_backpressure",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "app.services.ingestion_rate_limit.enforce_live_event_rate_limit",
+        AsyncMock(return_value=None),
+    )
 
     event = {
         "type": "test_result",

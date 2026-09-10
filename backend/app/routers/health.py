@@ -518,6 +518,8 @@ async def health_ingestion() -> dict:
         },
         "thresholds": {
             "rate_limit_per_minute": settings.INGEST_RATE_LIMIT_PER_MINUTE,
+            # Re-audit M3/N9: single events on /ws/events have their own budget.
+            "event_rate_limit_per_minute": settings.INGEST_EVENT_RATE_LIMIT_PER_MINUTE,
             "redis_memory_threshold_pct": settings.INGEST_REDIS_MEMORY_THRESHOLD_PCT,
             "redis_memory_absolute_bytes": settings.INGEST_REDIS_MEMORY_ABSOLUTE_BYTES,
         },

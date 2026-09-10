@@ -554,6 +554,15 @@ async def ingest_live_event(
     except ValueError as exc:
         raise HTTPException(400, detail=str(exc)) from exc
 
+    # Re-audit M3: shed load before touching Redis at all. Every other step on
+    # this route writes to Redis (the run binding, the credential cache, the
+    # run's counters, the stream itself), and this was the one ingest path
+    # with no backpressure gate, so it kept admitting events while Redis
+    # approached OOM.
+    from app.services.ingestion_backpressure import enforce_redis_memory_backpressure
+
+    await enforce_redis_memory_backpressure()
+
     # ── Authenticate, and derive the tenant rather than trusting the body ──
     bound_project_id: Optional[str] = None
     if x_api_key:
@@ -596,6 +605,16 @@ async def ingest_live_event(
                 "(or the legacy X-Webhook-Secret)."
             ),
         )
+
+    # Re-audit M4: a per-project budget, charged once the project is known and
+    # the caller authenticated -- never before, or anyone could spend another
+    # tenant's quota. Single events have their own bucket; see
+    # enforce_live_event_rate_limit. The legacy shared-secret path names no
+    # project here and is off by default, so it is not charged.
+    if bound_project_id:
+        from app.services.ingestion_rate_limit import enforce_live_event_rate_limit
+
+        await enforce_live_event_rate_limit(bound_project_id)
 
     event_type = event.get("type", "test_result")
 

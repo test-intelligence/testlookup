@@ -1,4 +1,8 @@
-"""Adaptive backpressure for the live-stream ingestion endpoints.
+"""Adaptive backpressure for every result-ingest endpoint.
+
+Gated: ``/api/v1/stream/ingest``, ``/api/v1/stream/events/batch`` and, since
+re-audit M4/M3, ``/api/v1/ingest``, ``/api/v1/ingest/file`` and
+``/ws/events/{run_id}``.
 
 The per-project rate limit in ``ingestion_rate_limit.py`` isolates
 one noisy project from the rest, but if *every* project is operating

@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-09-10 — CI uploads and single live events skipped both ingest gates
+
+`/api/v1/stream/*` has had two admission gates since the scalable-ingestion
+work: a per-project rate limit and a Redis-memory backpressure check. The two
+routes CI uploads through, `POST /api/v1/ingest` and `POST /api/v1/ingest/file`,
+had neither. Neither did `POST /ws/events/{run_id}`, which takes one event per
+call. One runaway pipeline or producer could fill Redis and the worker queue
+for every project.
+
+All three routes now pass both gates. The gates run after the project is
+authorised, so a caller with no access to a project cannot spend its quota.
+On file uploads they run before the upload is read, so shedding load never
+costs the 50 MB read.
+
+Uploads share the existing per-project budget of 200 batches a minute with SDK
+batches. Single live events cannot use that budget: one token per event would
+throttle an ordinary run to 200 results a minute. They get their own budget,
+`INGEST_EVENT_RATE_LIMIT_PER_MINUTE`, defaulting to 20,000 events a minute per
+project. A spent budget answers `429` with a `Retry-After` header; memory
+pressure answers `503` with `Retry-After: 5`. Setting a budget to 0 disables
+it. `/health/ingestion` now reports the event budget beside the batch budget.
+Both gates fail open when Redis is unreachable, as the stream routes always
+have.
+
 ## 2026-09-10 — offline mode accepted the cloud metadata service as a local model
 
 Batch 1 made the offline egress ceiling judge an LLM `base_url` by where it

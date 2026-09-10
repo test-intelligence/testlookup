@@ -195,6 +195,11 @@ class Settings(BaseSettings):
     # See docs/SCALABLE_INGESTION_DESIGN.md. Both limits operate per
     # project, per minute. Set to 0 to disable.
     INGEST_RATE_LIMIT_PER_MINUTE: int = 200       # batches per project per minute
+    # Re-audit M4/M3. POST /ws/events takes ONE event per call, so it cannot
+    # share the batch budget above: charging a batch token per event would
+    # throttle an ordinary run to 200 results a minute. This is the
+    # event-equivalent of that budget (200 batches x ~100 events). 0 disables.
+    INGEST_EVENT_RATE_LIMIT_PER_MINUTE: int = 20000   # single events per project per minute
 
     # ── Manual upload: archive (zip) safety limits (MRU-12) ───
     # Bound the DECOMPRESSED footprint of an uploaded report zip (the
