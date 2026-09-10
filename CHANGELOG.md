@@ -161,6 +161,12 @@ switched the guard off for those formats without a sound.
 A refused upload fails with the reason `too_many_results` and says how to split
 the report, the same way an unparseable report fails. No run is created.
 
+**Upgrade note.** A single report over 50,000 results that ingested before is
+now refused. Raise `INGEST_MAX_RESULTS_PER_UPLOAD`, or split the report. The
+refusal comes after the upload is accepted, so `testlookup upload` used to print
+success and exit 0 either way; pass the new `--wait` to wait for the server's
+outcome and exit non-zero when a report is refused.
+
 ## 2026-09-10 — CI uploads and single live events skipped both ingest gates
 
 `/api/v1/stream/*` has had two admission gates since the scalable-ingestion
@@ -172,8 +178,9 @@ for every project.
 
 All three routes now pass both gates. The gates run after the project is
 authorised, so a caller with no access to a project cannot spend its quota.
-On file uploads they run before the upload is read, so shedding load never
-costs the 50 MB read.
+On file uploads they run before the upload is stored or queued. The multipart
+body has already arrived by then, so a refusal saves the storage write and the
+worker's parse, not the transfer.
 
 Uploads share the existing per-project budget of 200 batches a minute with SDK
 batches. Single live events cannot use that budget: one token per event would
@@ -184,6 +191,9 @@ pressure answers `503` with `Retry-After: 5`. Setting a budget to 0 disables
 it. `/health/ingestion` now reports the event budget beside the batch budget.
 Both gates fail open when Redis is unreachable, as the stream routes always
 have.
+
+`testlookup upload` retries a `429` or `503`, honouring `Retry-After`, for up to
+five minutes in all, as the SDKs do. Before, the first refusal failed the CI step.
 
 ## 2026-09-10 — offline mode accepted the cloud metadata service as a local model
 
