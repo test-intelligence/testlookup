@@ -26,6 +26,13 @@ echo "==> One-time live fan-out v1 cutover: stopping legacy API consumers"
 # legacy pod. The immediately following manifest apply recreates the HPA.
 "$KCLI" -n "$namespace" delete hpa "$hpa" --ignore-not-found=true
 "$KCLI" -n "$namespace" scale deployment "$deployment" --replicas=0
-if "$KCLI" -n "$namespace" get pods -l app=testlookup-backend -o name | grep -q .; then
-  "$KCLI" -n "$namespace" wait --for=delete pod -l app=testlookup-backend --timeout=180s
+# Scoped to SERVING pods only. The migration Job's pod template also carries
+# `app: testlookup-backend` (scripts/run-k8s-migrations.sh), and a Job retains
+# its pod after completion — so a bare `app=testlookup-backend` selector waits
+# 180s for a Completed pod that is never going to be deleted, then fails the
+# whole deploy under `set -e`. The deploy runs the migration Job immediately
+# before this, so that pod is always present on the normal path.
+SERVING_PODS='app=testlookup-backend,app.kubernetes.io/component!=migration'
+if "$KCLI" -n "$namespace" get pods -l "$SERVING_PODS" -o name | grep -q .; then
+  "$KCLI" -n "$namespace" wait --for=delete pod -l "$SERVING_PODS" --timeout=180s
 fi
