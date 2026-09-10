@@ -565,6 +565,9 @@ async def ingest_live_event(
 
     # ── Authenticate, and derive the tenant rather than trusting the body ──
     bound_project_id: Optional[str] = None
+    # Names the auto-created live session (re-audit N14). The key's own name
+    # when the full check ran; a credential-cache hit does not carry it.
+    api_key_name = "ws-events"
     if x_api_key:
         # Project-scoped, stream:write, hashed at rest. The project comes from
         # the key, so a caller cannot address another tenant at all.
@@ -580,6 +583,7 @@ async def ingest_live_event(
                 db=db, x_api_key=x_api_key
             )
             bound_project_id = str(stream_ctx.project_id)
+            api_key_name = getattr(stream_ctx, "api_key_name", None) or api_key_name
             await remember_streaming_project(x_api_key, bound_project_id)
     elif x_webhook_secret:
         if settings.LIVE_EVENTS_REQUIRE_PROJECT_KEY:
@@ -699,7 +703,40 @@ async def ingest_live_event(
             exc,
         )
 
+    # ── A project-key run is persisted like an SDK run (re-audit N14) ──────
+    #
+    # Everything below this block only ever put the event on the shared live
+    # stream: no LiveSession, no TestRun, no persistence. A run streamed here
+    # showed live and then vanished -- never in /runs, never analysed, never
+    # finalised. An event sent with a project-scoped key now goes through the
+    # SDK stream's own ingest path, which creates the session and its TestRun,
+    # counts the result in its admission script, fans it out to the dashboard,
+    # and on run_complete stages the persistence and finalisation every SDK
+    # run gets. See services/ws_event_ingest.py.
+    #
+    # The legacy shared secret names no project and is refused by default, so
+    # it keeps the old behaviour below: counted and shown live, never persisted.
+    if bound_project_id:
+        from app.services.ws_event_ingest import ingest_one
+
+        session_id = await ingest_one(
+            db,
+            project_id=_uuid.UUID(bound_project_id),
+            api_key_name=api_key_name,
+            run_id=run_id,
+            event=safe_event,
+        )
+        return {
+            "accepted": True,
+            "run_id": run_id,
+            "event_type": event_type,
+            "session_id": session_id,
+        }
+
     # ── Count the result where it arrives (re-audit H6) ─────────────────────
+    #
+    # Since re-audit N14 only the legacy shared-secret path reaches this: a
+    # project-key event returned above, and the SDK admission counted it.
     #
     # The consumer's result handler only READS the live-state counters and
     # broadcasts them; its own comment says the increment happens at ingest,

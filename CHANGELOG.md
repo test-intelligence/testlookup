@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-09-10 — runs streamed through /ws/events were never saved
+
+`POST /ws/events/{run_id}` takes one test event per call. It put each event on
+the live dashboard's stream and did nothing else: no live session, no test run,
+no stored results. A run streamed this way showed on the live page while it
+ran, then vanished. It never appeared under Runs, was never analysed, and never
+counted toward a release.
+
+An event sent with a project-scoped API key now goes through the same ingest
+path the SDKs use. The first event of a run opens a live session, keeping the
+caller's run id as its display name. Each result is stored and counted once.
+`run_complete` closes the session, which creates the run and queues the same
+persistence, analysis and notifications every SDK run gets. Each call is its
+own batch, so two identical results are recorded as two executions. After a
+run's first event a result costs no database round trip: the session is looked
+up once and cached.
+
+Two things change for project-key callers. A `run_id` longer than 100
+characters is refused with 422, because a run with that id cannot be stored.
+An event sent after its run completed is refused with 409, rather than
+accepted and silently dropped. The legacy shared-secret path, off by default
+because it names no project, is unchanged: shown live, never saved.
+
+Separately, live runs streamed with an API key never reached the high-volume
+detector: it looked the project up through a run that does not exist until the
+session closes. Callers that know the project now pass it.
+
 ## 2026-09-10 — "All time" on the runs page sorted every run, on every page
 
 `GET /api/v1/runs` orders runs by build number in natural order, so `ui-2`

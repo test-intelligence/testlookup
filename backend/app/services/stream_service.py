@@ -992,6 +992,7 @@ async def _persist_event_batch(
     events,
     *,
     batch_id: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> int:
     """Atomically admit a complete live batch into run-isolated evidence.
 
@@ -1200,9 +1201,14 @@ async def _persist_event_batch(
     if outcome == "accepted" and test_event_count > 0:
         try:
             from app.services.high_volume_detector import record_test_events
-            project_id = await _resolve_project_id_for_run(run_id)
-            if project_id:
-                await record_test_events(project_id, test_event_count)
+            # A caller that knows the project passes it (re-audit N14). The
+            # lookup is a database read per batch -- and /ws/events sends one
+            # event per batch -- and it finds nothing for an API-key session,
+            # whose TestRun only exists once the session closes, so those runs
+            # never reached the detector at all.
+            detector_project = project_id or await _resolve_project_id_for_run(run_id)
+            if detector_project:
+                await record_test_events(detector_project, test_event_count)
         except Exception as exc:
             logger.warning(
                 "high_volume_record_failed run_id=%s error=%s", run_id, exc,
@@ -1437,6 +1443,7 @@ async def ingest_via_api_key(
         run_id=str(session.id),
         events=request.events,
         batch_id=getattr(request, "batch_id", None),
+        project_id=str(project_id),
     )
 
     # Detect a run_complete event and finalize the session in the same handler.

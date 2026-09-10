@@ -583,6 +583,7 @@ jobs:
           tests/integration/test_search_tags_index_postgres.py
           tests/integration/test_canonical_sync_postgres.py
           tests/integration/test_run_list_natural_order_postgres.py
+          tests/integration/test_ws_events_persist_postgres_redis.py
           tests/integration/test_test_case_lifecycle_postgres.py
           tests/integration/test_db_connection_budget_postgres.py
           tests/integration/test_decision_report_supersession_postgres_mongo.py

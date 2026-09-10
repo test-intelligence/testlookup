@@ -134,6 +134,15 @@ def live(monkeypatch):
         _event_limit,
     )
     monkeypatch.setattr("app.streams.producer.publish_live_event", _publish)
+    # Since re-audit N14 a project-key event is handed to the SDK stream's
+    # path (services/ws_event_ingest.py) instead of published directly. That
+    # adapter is the transport for this branch now, so it is stubbed the same
+    # way, into the same list.
+    async def _admit(_db, *, project_id, api_key_name, run_id, event):
+        calls.append(("publish", run_id))
+        return "session-1"
+
+    monkeypatch.setattr("app.services.ws_event_ingest.ingest_one", _admit)
     monkeypatch.setattr("app.streams.live_run_state.RedisLiveRunState.start", _noop)
     monkeypatch.setattr(
         "app.streams.live_run_state.RedisLiveRunState.record_test_event", _noop

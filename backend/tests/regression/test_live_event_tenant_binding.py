@@ -45,6 +45,15 @@ def wired(monkeypatch):
         return "1-0"
 
     monkeypatch.setattr("app.streams.producer.publish_live_event", _publish)
+    # Since re-audit N14 a project-key event is handed to the SDK stream's
+    # path (services/ws_event_ingest.py) instead of published directly. That
+    # adapter is the transport for this branch now, so it is stubbed the same
+    # way, into the same list.
+    async def _admit(_db, *, project_id, api_key_name, run_id, event):
+        published.append((run_id, event))
+        return "session-1"
+
+    monkeypatch.setattr("app.services.ws_event_ingest.ingest_one", _admit)
 
     class _Coll:
         async def insert_one(self, _doc):

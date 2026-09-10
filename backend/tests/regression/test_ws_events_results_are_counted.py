@@ -1,20 +1,29 @@
-"""Results streamed through ``POST /ws/events`` must be counted.
+"""Results streamed through ``POST /ws/events`` must be counted -- exactly once.
 
-Re-audit finding H6. The live-event consumer's result handler only READS the
-run's live-state counters and broadcasts them; its comment says the increment
+Re-audit H6. The live-event consumer's result handler only READS the run's
+live-state counters and broadcasts them; its comment says the increment
 happens at ingest, "in stream_service.ingest_event_batch()". That is true for
 the SDK batch path, whose admission Lua recounts its ledger sets into the same
 Redis hash. It was never true for ``/ws/events``: nothing on that route touched
-the counters, and ``RedisLiveRunState.record_test_event`` -- the method the
-consumer's own docstring names for exactly this -- had no caller anywhere.
+the counters, and ``RedisLiveRunState.record_test_event`` had no caller
+anywhere. So a run streamed through that endpoint showed zero results on the
+live dashboard, never tripped the failure-rate early warning however many
+tests failed, and broadcast a final ``live_run_complete`` whose totals were all
+zero.
 
-So a run streamed through that endpoint showed zero results on the live
-dashboard, never tripped the failure-rate early warning however many tests
-failed, and broadcast a final ``live_run_complete`` whose totals were all zero.
+Since re-audit N14 the route has two branches, and each is counted in exactly
+one place:
 
-The counting is done at the producer, not the consumer, deliberately: batch
-events are published into the same stream, so counting in the consumer would
-double-count every SDK run. Two AST checks below pin that placement.
+* A **project-scoped key** hands the event to the SDK stream's own ingest path
+  (``services/ws_event_ingest.py``), whose admission script counts it. The
+  route must not count it as well. That path is proven against real Redis and
+  Postgres in ``tests/integration/test_ws_events_persist_postgres_redis.py``.
+* The **legacy shared secret** (off by default) still publishes straight to
+  the stream, so the route counts it at the producer -- the H6 fix, pinned by
+  the counting tests below.
+
+Counting in the consumer would double-count every SDK run: batch events are
+published into the same stream. Two AST checks pin that placement.
 """
 from __future__ import annotations
 
@@ -32,6 +41,7 @@ from app.streams.live_run_state import _WARN_THRESHOLD, RedisLiveRunState
 
 PROJECT = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 RUN = "nightly-regression-42"
+SECRET = "the-real-secret"
 
 
 class _Pipeline:
@@ -113,6 +123,7 @@ class _Redis:
 
 @pytest.fixture
 def live(monkeypatch):
+    """The route with Redis faked and the transport stubbed; the checks are real."""
     redis = _Redis()
     for target in ("app.db.redis_client.get_redis", "app.streams.live_run_state.get_redis"):
         monkeypatch.setattr(target, lambda: redis, raising=False)
@@ -132,17 +143,6 @@ def live(monkeypatch):
     monkeypatch.setattr(
         "app.db.mongo.get_mongo_db", lambda: {"live_execution_events": _Coll()}
     )
-    monkeypatch.setattr(
-        "app.routers.live.get_streaming_api_key_context",
-        AsyncMock(
-            return_value=SimpleNamespace(
-                user=SimpleNamespace(id="u"),
-                project_id=PROJECT,
-                api_key_id="k",
-                api_key_name="ci",
-            )
-        ),
-    )
     # The M4/M3 admission gates are exercised in their own suite; here they
     # would only depend on how the fake Redis happens to fail open.
     async def _gate_open(*_args, **_kwargs):
@@ -156,7 +156,10 @@ def live(monkeypatch):
         "app.services.ingestion_rate_limit.enforce_live_event_rate_limit",
         _gate_open,
     )
-    monkeypatch.setattr(settings, "LIVE_EVENTS_REQUIRE_PROJECT_KEY", True)
+    # The counting tests drive the legacy shared-secret path: since N14 it is
+    # the only one the route still counts itself.
+    monkeypatch.setattr(settings, "LIVE_EVENTS_REQUIRE_PROJECT_KEY", False)
+    monkeypatch.setattr(settings, "WEBHOOK_SECRET", SECRET)
     return SimpleNamespace(redis=redis, published=published)
 
 
@@ -164,21 +167,23 @@ async def _send(event: dict):
     return await ingest_live_event(
         run_id=RUN,
         event=event,
-        x_api_key="qai_key",
-        x_webhook_secret=None,
+        x_api_key=None,
+        x_webhook_secret=SECRET,
         db=SimpleNamespace(),
     )
 
 
 async def _start():
-    await _send({"type": "run_start", "build_number": "42", "total_tests": 5})
+    await _send({
+        "type": "run_start", "project_id": PROJECT, "build_number": "42", "total_tests": 5,
+    })
 
 
 async def _result(status: str, name: str = "t"):
     await _send({"type": "test_result", "test_name": name, "status": status})
 
 
-# ── The counts ───────────────────────────────────────────────────────────
+# ── The legacy path: counted at the producer ─────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -242,9 +247,9 @@ async def test_the_early_warning_can_fire_again(live):
 @pytest.mark.asyncio
 async def test_a_nonsense_total_does_not_break_ingest(live):
     """A client-supplied count is data, not something to 500 on."""
-    result = await _send(
-        {"type": "run_start", "build_number": "42", "total_tests": "lots"}
-    )
+    result = await _send({
+        "type": "run_start", "project_id": PROJECT, "build_number": "42", "total_tests": "lots",
+    })
     assert result["accepted"] is True
 
 
@@ -253,6 +258,45 @@ async def test_every_event_is_still_published(live):
     await _start()
     await _result("PASSED")
     assert [e["type"] for _run, e in live.published] == ["run_start", "test_result"]
+
+
+# ── The project-key path: counted by the SDK admission, never here ───────
+
+
+@pytest.mark.asyncio
+async def test_a_project_key_event_is_handed_over_and_not_counted_here(live, monkeypatch):
+    """Counting it here as well would count every result twice (re-audit N14)."""
+    admitted: list[str] = []
+
+    async def _admit(_db, *, project_id, api_key_name, run_id, event):
+        admitted.append(event["type"])
+        return "session-1"
+
+    monkeypatch.setattr("app.services.ws_event_ingest.ingest_one", _admit)
+    monkeypatch.setattr(
+        "app.services.live_event_authz.cached_streaming_project",
+        AsyncMock(return_value=PROJECT),
+    )
+    monkeypatch.setattr(settings, "LIVE_EVENTS_REQUIRE_PROJECT_KEY", True)
+
+    for event in (
+        {"type": "run_start", "build_number": "42"},
+        {"type": "test_result", "test_name": "t", "status": "FAILED"},
+    ):
+        result = await ingest_live_event(
+            run_id=RUN, event=event, x_api_key="qai_key", x_webhook_secret=None,
+            db=SimpleNamespace(),
+        )
+        assert result["session_id"] == "session-1"
+
+    assert admitted == ["run_start", "test_result"]
+    assert await RedisLiveRunState.get(RUN) is None, (
+        "the route counted a project-key event itself; the SDK admission counts "
+        "it too, so every result would count twice"
+    )
+    assert live.published == [], (
+        "a project-key event was also published straight to the stream"
+    )
 
 
 # ── Counted in exactly one place ─────────────────────────────────────────
@@ -280,6 +324,6 @@ def test_the_consumer_does_not_count_results():
     assert _calls_in(LiveEventStreamConsumer._on_test_result, "record_test_event") == 0
 
 
-def test_the_ws_events_producer_does_count_results():
+def test_the_legacy_producer_does_count_results():
     assert _calls_in(ingest_live_event, "record_test_event") == 1
     assert _calls_in(ingest_live_event, "start") >= 1
