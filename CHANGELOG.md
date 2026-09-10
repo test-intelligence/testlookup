@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-09-10 — release-readiness batch 1: four ways a credential named the wrong thing
+## 2026-09-10 — release-readiness batch 1: when a credential names the wrong thing
 
 Five findings from the 2026-09-09 production-readiness re-audit, plus one this
 work uncovered. They look unrelated and share a shape: something authoritative
@@ -25,8 +25,12 @@ was the ingress address for everyone. The login and MFA rate limiter buckets on
 that address: the entire external user base shared one bucket per worker, so a
 single script hitting the ceiling 429'd everybody else out of logging in. Every
 IP written for lockout and audit forensics recorded the proxy too. The default
-stays loopback — an undeclared topology trusts nothing — and each
-deployment names the range its proxy connects from.
+stays loopback — an undeclared topology trusts nothing — and every deployment
+whose callers are not on the public internet names the range its proxy connects
+from: the homelab, self-hosted and both OpenShift overlays pin a pod CIDR, and
+GKE pins Google's Front End ranges because container-native load balancing
+reaches the pod directly. Only the overlays whose users genuinely arrive from
+public addresses inherit the base value, and a test says which those are.
 
 **The first attempt at that made it worse, and review caught it.** It set the
 range to `*`. Under a wildcard uvicorn returns the *leftmost* entry of
@@ -47,8 +51,15 @@ The fix also missed a deployment. `docker-compose.gcp-vm.yml` runs the
 production nginx in front of a backend started with `uvicorn` directly rather
 than under gunicorn, so `gunicorn_conf.py` never loads there and no edit to it
 could have helped; the uvicorn CLI reads the same variable, which that file now
-sets. A test walks every compose file that stands up a production topology, so
-the next one cannot be missed the same way.
+sets.
+
+Reviewers made the sharper point that the first correction still asserted a
+hardcoded list of three compose files out of six, and one overlay out of ten —
+which is the same defect one level up, and exactly how this deployment was
+missed. Both scans now enumerate from disk: every compose file must be
+classified as production or not, every overlay must either narrow the boundary
+or be listed as public-facing, and a claim of "no proxy here" is checked against
+the file rather than taken from a comment.
 
 **One shared secret could write into any tenant.** `POST /ws/events/{run_id}`
 was gated by `verify_webhook_secret` alone. That secret authenticates a caller

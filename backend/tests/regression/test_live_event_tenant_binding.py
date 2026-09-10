@@ -471,10 +471,13 @@ async def test_an_unknown_credential_still_gets_the_full_check(wired, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_a_cache_that_cannot_answer_does_not_open_the_endpoint(
-    wired, monkeypatch
-):
-    """Redis down means slower, not unauthenticated."""
+async def test_a_cache_miss_still_runs_the_full_check(wired, monkeypatch):
+    """A miss must reach the real credential check, not bypass it.
+
+    The outage path itself (Redis raising) is covered against a fake Redis
+    in test_live_event_authz_redis.py — this stub returns None, which is an
+    ordinary miss, and the earlier name claimed more than it exercised.
+    """
 
     async def _broken(_api_key):
         return None
@@ -508,3 +511,153 @@ def test_the_cached_credential_expires_quickly():
         "a cache hit skips the active flag, the expiry, the scope and the "
         "owner's account state, so this is how long a revoked key keeps working"
     )
+
+
+# ── Every example file this repo ships, walked from disk ─────────────────
+#
+# The guard first knew only .env.example's wording, so it closed the hole for
+# one of three shipped example files. Enumerating them from disk means a new
+# example file is covered the day it lands, rather than the day someone
+# remembers to extend a hand-written list.
+
+EXAMPLE_ENV_FILES = (
+    ".env.example",
+    ".env.gcp-vm.example",
+    "infra/cloudrun/backend.env.example",
+)
+
+#: Settings fields whose default value would boot production on a published
+#: credential. Each is checked by critical_security_failures().
+GUARDED_SECRET_FIELDS = ("JWT_SECRET_KEY", "APP_SECRET_KEY", "WEBHOOK_SECRET")
+
+
+def _example_env_values(relative_path):
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    path = root / relative_path
+    if not path.exists():
+        return {}
+    values = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        values[name.strip()] = value.strip()
+    return values
+
+
+def test_the_example_files_are_where_this_test_thinks_they_are():
+    """Guards the guard: a missing file would make the scan below vacuous."""
+    for relative_path in EXAMPLE_ENV_FILES:
+        values = _example_env_values(relative_path)
+        assert values, (
+            relative_path + " could not be read or parsed, so the placeholder "
+            "scan over it proves nothing"
+        )
+
+
+@pytest.mark.parametrize("relative_path", EXAMPLE_ENV_FILES)
+def test_no_shipped_example_secret_can_boot_production(monkeypatch, relative_path):
+    """Copy an example file, forget a line, and production must refuse.
+
+    Both of the newer files ship APP_ENV=production themselves, so the check
+    really does run for an operator following their deployment guide.
+    """
+    from app.core.config import _is_placeholder_secret
+
+    values = _example_env_values(relative_path)
+    checked = 0
+    for field in GUARDED_SECRET_FIELDS:
+        if field not in values:
+            continue
+        checked += 1
+        assert _is_placeholder_secret(values[field]), (
+            relative_path + " ships " + field + "=" + values[field] + ", which "
+            "the guard does not recognise as a placeholder — copying this file "
+            "and deploying it boots production on a published secret"
+        )
+    assert checked, (
+        relative_path + " declares none of " + str(GUARDED_SECRET_FIELDS)
+        + "; if the names changed this test is no longer checking anything"
+    )
+
+
+@pytest.mark.parametrize(
+    "generated",
+    [
+        "c0ffee" * 10,
+        "9f8e7d6c5b4a49388271",
+        "a3f5b1c9d7e2408f96b4c1d8e5a2f7b3",
+    ],
+)
+def test_a_generated_secret_is_never_a_placeholder(generated):
+    """openssl rand -hex is what every script here tells the operator to run."""
+    from app.core.config import _is_placeholder_secret
+
+    assert not _is_placeholder_secret(generated)
+
+
+# ── The producer this endpoint's own docs describe ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_an_api_key_producer_need_not_send_a_project_id(wired, monkeypatch):
+    """The server derives the project — that is the entire point of the key.
+
+    The required-field check ran BEFORE the server-derived override, so a
+    correct client following the documented contract got a 400. Making the
+    project-scoped key the default credential made that the only path.
+    """
+    monkeypatch.setattr(
+        "app.routers.live.get_streaming_api_key_context",
+        AsyncMock(return_value=_key_ctx(PROJECT_A)),
+    )
+
+    result = await _call(
+        x_api_key="ka",
+        event={"type": "run_start", "build_number": "1", "total_tests": 3},
+    )
+
+    assert result["accepted"] is True
+    _run_id, published = wired.published[0]
+    assert published["project_id"] == PROJECT_A
+    assert wired.remembered[RUN] == PROJECT_A
+
+
+@pytest.mark.asyncio
+async def test_the_legacy_path_must_still_name_its_project(wired):
+    """Nothing else names a tenant for the shared secret, so it is required."""
+    with pytest.raises(HTTPException) as exc:
+        await _call(
+            x_webhook_secret="the-real-secret",
+            event={"type": "run_start", "build_number": "1"},
+        )
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_an_empty_cached_project_is_not_treated_as_resolved(wired, monkeypatch):
+    """A falsy cache entry must reach the real check, not stand in for it."""
+
+    async def _empty(_api_key):
+        return ""
+
+    monkeypatch.setattr(
+        "app.services.live_event_authz.cached_streaming_project", _empty
+    )
+    checks = AsyncMock(return_value=_key_ctx(PROJECT_A))
+    monkeypatch.setattr("app.routers.live.get_streaming_api_key_context", checks)
+
+    await _call(
+        x_api_key="ka",
+        event={"type": "run_start", "build_number": "1"},
+    )
+
+    assert checks.await_count == 1, (
+        "an empty cache entry satisfied the resolution test, so the credential "
+        "was never actually verified"
+    )
+    _run_id, published = wired.published[0]
+    assert published["project_id"] == PROJECT_A

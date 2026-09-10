@@ -566,7 +566,7 @@ async def ingest_live_event(
         # the ANSWER for a few seconds; a miss degrades to the full check, so
         # Redis being unavailable slows this path down, it does not open it.
         bound_project_id = await cached_streaming_project(x_api_key)
-        if bound_project_id is None:
+        if not bound_project_id:
             stream_ctx = await get_streaming_api_key_context(
                 db=db, x_api_key=x_api_key
             )
@@ -599,16 +599,26 @@ async def ingest_live_event(
 
     event_type = event.get("type", "test_result")
 
-    # Validate required fields before enqueuing
-    if event_type == "run_start" and not event.get("project_id"):
-        raise HTTPException(400, detail="project_id required for run_start event")
-
     # ── Bind the run to one project, and keep it there ─────────────────────
     if event_type == "run_start":
-        if bound_project_id is not None:
+        if bound_project_id:
             # Server-derived wins: a forged project_id in the body is ignored
             # rather than rejected, so a mis-set client cannot write elsewhere.
+            #
+            # This MUST run before the required-field check below. A caller
+            # authenticating with a project-scoped key is told by this
+            # endpoint's own documentation not to send project_id -- the whole
+            # point is that the server decides it -- so validating the body
+            # first rejected the correct client with a 400, on what is now the
+            # only credential accepted by default.
             event = {**event, "project_id": bound_project_id}
+
+        # Only the legacy shared-secret path still has to supply one, because
+        # nothing else names a tenant for it.
+        if not event.get("project_id"):
+            raise HTTPException(
+                400, detail="project_id required for run_start event"
+            )
         opening_project = str(event.get("project_id"))
         try:
             owner = await remember_run_project(run_id, opening_project)
@@ -632,7 +642,7 @@ async def ingest_live_event(
                     "Use a run_id unique to this project."
                 ),
             )
-    elif bound_project_id is not None:
+    elif bound_project_id:
         owner = await resolve_run_project(run_id)
         if owner is not None and owner != bound_project_id:
             raise HTTPException(

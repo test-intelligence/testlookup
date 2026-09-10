@@ -38,6 +38,31 @@ resources:
 namespace: testlookup
 
 patches:
+  # ── Re-audit H2: who may set X-Forwarded-For ─────────────────────────────
+  # REPLACE WITH YOUR CLUSTER'S POD CIDR:
+  #     oc get network.config/cluster -o jsonpath='{.spec.clusterNetwork[*].cidr}'
+  #
+  # This is an ON-PREMISE cluster: its users share RFC1918 with its pods, so
+  # inheriting the base value (which is shaped for clusters whose callers
+  # arrive from public addresses) makes each caller a trusted hop. uvicorn's
+  # reverse walk then runs PAST a caller's real address and returns the
+  # leftmost X-Forwarded-For entry, which the caller supplied -- the same spoof
+  # as FORWARDED_ALLOW_IPS="*", reached by being generous.
+  #
+  # 10.128.0.0/14 is the OpenShift SDN/OVN-Kubernetes default cluster network.
+  # A value that is too NARROW costs the real client IP (the original H2); one
+  # that is too WIDE lets a caller forge it. Prefer the narrow mistake.
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: testlookup-config
+      data:
+        FORWARDED_ALLOW_IPS: "10.128.0.0/14"
+    target:
+      kind: ConfigMap
+      name: testlookup-config
+
   # ── Remove the base nginx Ingress — OpenShift uses Routes ─────────────────
   - path: remove-ingress.yaml
 

@@ -461,6 +461,17 @@ services:
 networks:
   testlookup_net:
     driver: bridge
+    # Pinned, not left to Docker's default address pool. FORWARDED_ALLOW_IPS
+    # above names the range the nginx container connects from; without an
+    # explicit subnet Docker allocates from 172.17-172.31 and then from
+    # 192.168.x, so on a host that has already used the 172 pool this network
+    # lands outside its own declared trust boundary — the API stops honouring
+    # the proxy's forwarded header and reports nginx as every caller, with no
+    # signal. If 172.28.0.0/16 collides on your host, change both this and
+    # FORWARDED_ALLOW_IPS together.
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
 
 volumes:
   postgres_data:

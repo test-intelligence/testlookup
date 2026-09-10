@@ -42,10 +42,19 @@ RUN_PROJECT_TTL_SECONDS = 25 * 60 * 60
 STREAMING_KEY_TTL_SECONDS = 30
 
 
+#: Prefix for cached credential->project entries. Shared with
+#: ``forget_streaming_key_hash`` so revocation and lookup cannot drift apart.
+STREAMING_KEY_PREFIX = "testlookup:live:key-project:"
+
+
 def streaming_key_cache_key(api_key: str) -> str:
-    """Namespace a credential by digest — never store the key itself."""
+    """Namespace a credential by digest — never store the key itself.
+
+    The digest is deliberately the same one ``ApiKey.key_hash`` stores, so a
+    revocation holding only the hash can invalidate this entry.
+    """
     digest = hashlib.sha256(api_key.encode()).hexdigest()
-    return f"testlookup:live:key-project:{digest}"
+    return f"{STREAMING_KEY_PREFIX}{digest}"
 
 
 async def cached_streaming_project(api_key: str) -> Optional[str]:
@@ -63,10 +72,14 @@ async def cached_streaming_project(api_key: str) -> Optional[str]:
     except Exception as exc:  # noqa: BLE001 — a cache miss is never fatal
         logger.warning("live_key_cache_lookup_failed error=%r", exc)
         return None
-    if value is None:
-        return None
     if isinstance(value, (bytes, bytearray)):
         value = value.decode("utf-8", "replace")
+    # An EMPTY entry is not an answer. Returning "" would be a project id the
+    # caller never proved, and the handler's "did we resolve one?" test would
+    # see a non-None value and skip the real credential check -- the same
+    # falsy-versus-None confusion as the defects this batch is correcting.
+    if not value:
+        return None
     return str(value)
 
 
@@ -86,8 +99,31 @@ async def remember_streaming_project(api_key: str, project_id: str) -> None:
         logger.warning("live_key_cache_store_failed error=%r", exc)
 
 
+async def forget_streaming_key_hash(key_hash: str) -> None:
+    """Drop a cached credential immediately, by its stored digest.
+
+    ``ApiKey.key_hash`` is ``sha256(raw_key)`` — the same digest
+    ``streaming_key_cache_key`` builds from — so revocation can invalidate the
+    entry without ever seeing the key again. Without this the documented 30
+    second lag is not a worst case but a floor: a revoked key keeps working for
+    the full TTL no matter how urgent the revocation was.
+    """
+    if not key_hash:
+        return
+    try:
+        from app.db.redis_client import get_redis
+
+        await get_redis().delete(f"{STREAMING_KEY_PREFIX}{key_hash}")
+    except Exception as exc:  # noqa: BLE001 — revocation already succeeded
+        logger.warning("live_key_cache_invalidate_failed error=%r", exc)
+
+
 def run_project_key(run_id: str) -> str:
     return f"testlookup:live:run-project:{run_id}"
+
+
+#: SET NX / GET is two round-trips; a key can vanish between them.
+_BIND_ATTEMPTS = 3
 
 
 class RunProjectBindingUnavailable(RuntimeError):
@@ -121,15 +157,24 @@ async def remember_run_project(run_id: str, project_id: str) -> Optional[str]:
         from app.db.redis_client import get_redis
 
         redis = get_redis()
-        won = await redis.set(
-            run_project_key(run_id),
-            str(project_id),
-            ex=RUN_PROJECT_TTL_SECONDS,
-            nx=True,
-        )
-        if won:
-            return str(project_id)
-        incumbent = await redis.get(run_project_key(run_id))
+        incumbent = None
+        # Two round-trips are not atomic: the key can expire or be evicted
+        # between the SET and the GET. Retrying is the only answer that is
+        # neither a lie nor an outage -- claiming ownership we never recorded
+        # would leave the run UNBOUND with a success response, which is exactly
+        # the state the 503 below exists to prevent.
+        for _attempt in range(_BIND_ATTEMPTS):
+            won = await redis.set(
+                run_project_key(run_id),
+                str(project_id),
+                ex=RUN_PROJECT_TTL_SECONDS,
+                nx=True,
+            )
+            if won:
+                return str(project_id)
+            incumbent = await redis.get(run_project_key(run_id))
+            if incumbent is not None:
+                break
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "live_run_project_bind_failed run_id=%s error=%r", run_id, exc
@@ -137,8 +182,17 @@ async def remember_run_project(run_id: str, project_id: str) -> Optional[str]:
         raise RunProjectBindingUnavailable(str(exc)) from exc
 
     if incumbent is None:
-        # The key expired between the SET and the GET. Nothing owns the run.
-        return str(project_id)
+        # Lost the SET every time and still found nothing. We cannot say who
+        # owns this run, and we did not record ourselves -- fail closed.
+        logger.warning(
+            "live_run_project_bind_unstable run_id=%s attempts=%d",
+            run_id,
+            _BIND_ATTEMPTS,
+        )
+        raise RunProjectBindingUnavailable(
+            "could not establish run ownership after "
+            f"{_BIND_ATTEMPTS} attempts"
+        )
     if isinstance(incumbent, (bytes, bytearray)):
         incumbent = incumbent.decode("utf-8", "replace")
     return str(incumbent)

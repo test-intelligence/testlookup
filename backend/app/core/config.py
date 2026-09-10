@@ -19,6 +19,29 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 
+#: Every convention this repo uses to write "you must replace this".
+#:
+#: Kept as a list because the repo does not have one convention. ``.env.example``
+#: writes ``change-me-…``; ``.env.gcp-vm.example`` and
+#: ``infra/cloudrun/backend.env.example`` write ``replace-with-…``; the k8s
+#: secret template writes ``<base64-encoded-…>``. The first version of this
+#: guard knew only the first of those, so it closed the hole for one of three
+#: shipped example files.
+#:
+#: None of these can match a generated secret. ``openssl rand -hex`` — what
+#: every script and document here tells the operator to run — emits
+#: hexadecimal, which contains none of these substrings.
+_SECRET_PLACEHOLDER_MARKERS: tuple[str, ...] = (
+    "change-me",
+    "change_me",
+    "replace-with",
+    "replace_with",
+    "your-",
+    "set-a-",
+    "<",
+)
+
+
 def _is_placeholder_secret(value: str) -> bool:
     """True when a secret is unset or still one of the shipped placeholders.
 
@@ -28,15 +51,17 @@ def _is_placeholder_secret(value: str) -> bool:
     ``APP_SECRET_KEY=change-me-in-production-use-openssl-rand-hex-32`` and
     ``WEBHOOK_SECRET=change-me-generate-with-openssl-rand-hex-32`` — none equal
     to its default, so copying the example file and deploying it booted
-    production with three published secrets and no complaint.
+    production with three published secrets and no complaint. The GCP and Cloud
+    Run example files, which both ship ``APP_ENV=production``, use a different
+    wording again and were missed by the first fix for the same reason.
 
-    Matching the ``change-me`` prefix covers the defaults, the example file and
-    any future placeholder that follows the same convention. It cannot produce
-    a false positive on a generated secret: ``openssl rand -hex 32`` is
-    hexadecimal, so it can never begin with those letters.
+    Substring, not prefix: a placeholder is sometimes embedded rather than
+    leading (a connection URI carrying the password, for instance).
     """
-    text = str(value or "").strip()
-    return not text or text.lower().startswith("change-me")
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    return any(marker in text for marker in _SECRET_PLACEHOLDER_MARKERS)
 
 
 class Settings(BaseSettings):

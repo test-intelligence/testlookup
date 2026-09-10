@@ -111,8 +111,23 @@ def test_release_compose_declares_the_trust_boundary():
 # under it.
 
 
+#: Newline + indent used in the multi-line assertion messages below.
+_NL_INDENT = chr(10) + "  "
+
+#: Addresses no deployment's PROXY will ever be. If the configured boundary
+#: trusts one of these, it trusts arbitrary internet peers, and an arbitrary
+#: internet peer can then choose its own recorded address.
+#:
+#: Probing is what makes this a real check. A syntactic one accepted
+#: ``0.0.0.0/0`` — and ``0.0.0.0/1,128.0.0.0/1``, which covers the same space in
+#: two legal-looking halves. Both select exactly what ``"*"`` selects. Probing
+#: still admits a NARROW public range, which the GKE overlay legitimately needs
+#: (Google Front Ends reach the pod directly from 35.191.0.0/16).
+_ARBITRARY_INTERNET_PEERS = ("1.2.3.4", "8.8.8.8", "203.0.113.9", "2001:db8::1")
+
+
 def _is_a_real_trust_boundary(value: str) -> bool:
-    """True when every entry is a concrete address or network, not a wildcard."""
+    """True when the value names actual proxies rather than the whole internet."""
     entries = [item.strip() for item in str(value).split(",") if item.strip()]
     if not entries:
         return False
@@ -123,7 +138,10 @@ def _is_a_real_trust_boundary(value: str) -> bool:
             ipaddress.ip_network(entry, strict=False)
         except ValueError:
             return False
-    return True
+
+    # Ask uvicorn's own membership test, not our reading of the string.
+    trusted = _TrustedHosts(",".join(entries))
+    return not any(peer in trusted for peer in _ARBITRARY_INTERNET_PEERS)
 
 
 def test_the_helper_rejects_a_wildcard():
@@ -133,6 +151,49 @@ def test_the_helper_rejects_a_wildcard():
     assert not _is_a_real_trust_boundary("")
     assert _is_a_real_trust_boundary("10.42.0.0/16")
     assert _is_a_real_trust_boundary("127.0.0.1,::1")
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "0.0.0.0/0",
+        "0.0.0.0/0,::/0",
+        "0.0.0.0/1,128.0.0.0/1",
+        "10.42.0.0/16,0.0.0.0/0",
+        "::/0",
+    ],
+)
+def test_the_helper_rejects_every_other_spelling_of_a_wildcard(spelling):
+    """A syntactic check passed all of these; each trusts the open internet.
+
+    This helper exists because "*" slipped through eight tests. It would be a
+    poor joke for it to have a second spelling of the same hole.
+    """
+    assert not _is_a_real_trust_boundary(spelling)
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["0.0.0.0/0", "0.0.0.0/0,::/0", "0.0.0.0/1,128.0.0.0/1", "10.42.0.0/16,0.0.0.0/0"],
+)
+def test_an_all_of_ipv4_spelling_selects_exactly_what_a_wildcard_selects(spelling):
+    """Prove the consequence rather than asserting it.
+
+    Only the spellings that cover all of IPv4 are checked here: "::/0" trusts
+    every IPv6 peer but no IPv4 one, so against an IPv4 chain it still stops at
+    the first untrusted hop. It is rejected above for the IPv6 half.
+    """
+    assert _TrustedHosts(spelling).get_trusted_client_address(CHAIN)[0] == SPOOFED
+    assert _TrustedHosts("*").get_trusted_client_address(CHAIN)[0] == SPOOFED
+
+
+def test_the_helper_still_allows_a_narrow_public_range():
+    """GKE's Google Front Ends are public, and are genuinely the proxy.
+
+    A rule of "must be RFC1918" would have been wrong; the rule is "must not
+    trust arbitrary internet peers".
+    """
+    assert _is_a_real_trust_boundary("35.191.0.0/16,130.211.0.0/22")
 
 
 def _homelab_value() -> str:
@@ -294,6 +355,73 @@ PRODUCTION_COMPOSE_OVERRIDES = {
     "docker-compose.gcp-vm.yml": "docker-compose.yml",
 }
 
+#: Compose files with no production frontend, so no proxy to trust.
+NON_PRODUCTION_COMPOSE = (
+    "docker-compose.yml",            # dev: vite serves and proxies
+    "docker-compose.dev-lite.yml",   # dev: same, minus the heavy services
+    "docker-compose.monitoring.yml", # prometheus/grafana only, no app services
+)
+
+
+def _compose_files_on_disk():
+    return sorted(p.name for p in ROOT.glob("docker-compose*.yml"))
+
+
+def test_every_compose_file_is_classified():
+    """Enumerate from disk; a hardcoded list is how gcp-vm was missed.
+
+    The first version of this file listed three compose files by hand and
+    asserted over those. There are six, and the one running uvicorn behind the
+    production nginx was not among them — so the fix shipped with that topology
+    still carrying the defect. Classifying every file on disk means a new
+    compose file is a decision someone has to make, not a silent omission.
+    """
+    classified = (
+        set(SELF_CONTAINED_PRODUCTION_COMPOSE)
+        | set(PRODUCTION_COMPOSE_OVERRIDES)
+        | set(NON_PRODUCTION_COMPOSE)
+    )
+    on_disk = set(_compose_files_on_disk())
+    assert on_disk, "no compose files found — this scan would pass vacuously"
+
+    unclassified = sorted(on_disk - classified)
+    assert not unclassified, (
+        "new compose files are not classified here. If one runs the production "
+        "frontend (the nginx image that proxies /api) its backend must declare "
+        "FORWARDED_ALLOW_IPS, or the API reports the proxy as every caller:"
+        + _NL_INDENT
+        + _NL_INDENT.join(unclassified)
+    )
+
+    stale = sorted(classified - on_disk)
+    assert not stale, (
+        "these classified compose files no longer exist — delete the entries:"
+        + _NL_INDENT
+        + _NL_INDENT.join(stale)
+    )
+
+
+def test_a_compose_file_claiming_to_be_non_production_has_no_production_frontend():
+    """Make the "no proxy here" claim checkable rather than a comment."""
+    mislabelled = []
+    for name in NON_PRODUCTION_COMPOSE:
+        path = ROOT / name
+        if not path.exists():
+            continue
+        services = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get(
+            "services"
+        ) or {}
+        frontend = services.get("frontend") or {}
+        target = str((frontend.get("build") or {}).get("target", ""))
+        if target == "production":
+            mislabelled.append(name)
+    assert not mislabelled, (
+        "these are listed as non-production but build the production frontend, "
+        "which proxies /api — their backend needs a trust boundary:"
+        + _NL_INDENT
+        + _NL_INDENT.join(mislabelled)
+    )
+
 
 def _compose_backend(name: str) -> dict:
     return yaml.safe_load((ROOT / name).read_text(encoding="utf-8"))["services"][
@@ -348,4 +476,158 @@ def test_an_override_does_not_drop_the_boundary_its_base_declares():
         "docker-compose.airgap.yml now sets backend environment keys without "
         "FORWARDED_ALLOW_IPS; confirm the merge still leaves the release "
         "value in place, then declare it here too"
+    )
+
+
+#: Overlays that may inherit the base value: their callers arrive from public
+#: addresses, so trusting the private ranges pod networks come from is right.
+#: Everything else must name its own, because on a cluster whose users share
+#: RFC1918 with its pods the base value trusts the callers too.
+OVERLAYS_MAY_INHERIT_BASE = frozenset({"aws-eks", "azure-aks", "dev", "prod", "staging"})
+
+
+def _overlay_boundary(path):
+    import re
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("#"):
+            continue
+        match = re.match(r'\s*FORWARDED_ALLOW_IPS:\s*"?([^"#]+)"?', line)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def _overlays_on_disk():
+    return sorted((ROOT / "k8s" / "overlays").glob("*/kustomization.yaml"))
+
+
+def test_every_overlay_that_sets_the_boundary_sets_a_real_one():
+    """Whichever overlays narrow it, none may re-open it."""
+    overlays = _overlays_on_disk()
+    assert overlays, "no overlays found — this scan would pass vacuously"
+
+    seen = 0
+    for path in overlays:
+        value = _overlay_boundary(path)
+        if value is None:
+            continue
+        seen += 1
+        assert _is_a_real_trust_boundary(value), _WILDCARD_EXPLANATION.format(
+            source=path.relative_to(ROOT).as_posix(), value=value
+        )
+    assert seen >= 2, (
+        "expected several overlays to narrow the trust boundary, found "
+        f"{seen} — this scan is probably no longer finding them"
+    )
+
+
+def test_every_on_premise_overlay_narrows_the_boundary():
+    """The base file states the rule; this checks the overlays obey it.
+
+    Enumerated from disk, because asserting a hardcoded path is how three
+    on-premise overlays kept inheriting a value shaped for the cloud. An
+    overlay is exempt only by being listed as public-facing above, which is a
+    decision someone has to write down.
+    """
+    inheriting = []
+    for path in _overlays_on_disk():
+        name = path.parent.name
+        if name in OVERLAYS_MAY_INHERIT_BASE:
+            continue
+        if _overlay_boundary(path) is None:
+            inheriting.append(name)
+
+    assert not inheriting, (
+        "these overlays inherit the base trust boundary, which trusts the "
+        "private ranges their own users sit in — an on-LAN caller is then a "
+        "trusted hop and uvicorn returns the X-Forwarded-For value that caller "
+        "supplied. Narrow each to its cluster's pod CIDR:"
+        + _NL_INDENT
+        + _NL_INDENT.join(sorted(inheriting))
+    )
+
+
+def test_the_inheritance_exemptions_are_real_overlays():
+    """A stale exemption silently covers the next overlay of the same name."""
+    names = {p.parent.name for p in _overlays_on_disk()}
+    stale = sorted(OVERLAYS_MAY_INHERIT_BASE - names)
+    assert not stale, (
+        "these overlays no longer exist — delete them from "
+        "OVERLAYS_MAY_INHERIT_BASE:" + _NL_INDENT + _NL_INDENT.join(stale)
+    )
+
+
+def test_the_gke_overlay_trusts_the_front_ends_that_actually_reach_the_pod():
+    """Container-native load balancing changes who the peer is.
+
+    The standalone NEG annotations in that overlay mean a Google Front End
+    connects DIRECTLY to the backend pod, so the peer is a GFE address and not
+    a pod address. The base value covers pod networks, so without this patch
+    uvicorn never reads X-Forwarded-For at all and H2 is back.
+    """
+    text = (ROOT / "k8s" / "overlays" / "gcp-gke" / "kustomization.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "cloud.google.com/neg" in text, (
+        "the GKE overlay no longer uses standalone NEGs; if traffic now arrives "
+        "via an in-cluster proxy, this patch should be revisited"
+    )
+    lines = [ln for ln in text.splitlines() if "FORWARDED_ALLOW_IPS" in ln]
+    assert lines, (
+        "gcp-gke does not narrow FORWARDED_ALLOW_IPS, so the backend pod's peer "
+        "(a Google Front End) is untrusted, X-Forwarded-For is ignored, and "
+        "request.client.host is the load balancer for every caller"
+    )
+    trusted = _TrustedHosts(lines[0].split(":", 1)[1].strip().strip('"'))
+    assert "35.191.4.20" in trusted
+    assert "130.211.1.5" in trusted
+    assert "1.2.3.4" not in trusted
+
+
+def test_the_self_hosted_overlay_narrows_like_the_base_file_demands():
+    """The base file states the rule; this is the overlay it is addressed to."""
+    text = (ROOT / "k8s" / "overlays" / "self-hosted" / "kustomization.yaml").read_text(
+        encoding="utf-8"
+    )
+    lines = [
+        ln
+        for ln in text.splitlines()
+        if "FORWARDED_ALLOW_IPS:" in ln and not ln.strip().startswith("#")
+    ]
+    assert lines, (
+        "k8s/base/configmap.yaml tells an on-premise cluster it MUST narrow "
+        "this in its overlay, and self-hosted is that overlay (kubeadm, K3s, "
+        "RKE, Rancher, on-prem VMware). Inheriting the base value makes an "
+        "on-LAN caller a trusted hop, which re-opens the spoof."
+    )
+    trusted = _TrustedHosts(lines[0].split(":", 1)[1].strip().strip('"'))
+    # A user on the corporate LAN must NOT be trusted...
+    assert "192.168.0.50" not in trusted
+    assert "10.8.0.55" not in trusted
+    # ...while the pod networks those distributions default to must be.
+    assert "10.42.1.7" in trusted
+    assert "10.244.1.7" in trusted
+
+
+def test_the_release_network_subnet_matches_its_own_trust_boundary():
+    """Docker's default pool can put the bridge outside the declared range.
+
+    Without an explicit subnet, a host that has already used 172.17-172.31
+    allocates this network from 192.168.x; the nginx peer is then untrusted and
+    H2 returns for that host with no signal.
+    """
+    compose = yaml.safe_load(RELEASE_COMPOSE.read_text(encoding="utf-8"))
+    config = compose["networks"]["testlookup_net"].get("ipam", {}).get("config")
+    assert config, (
+        "testlookup_net has no explicit subnet, so the bridge address is "
+        "whatever Docker's address pool hands out and may fall outside "
+        "FORWARDED_ALLOW_IPS"
+    )
+    subnet = ipaddress.ip_network(config[0]["subnet"])
+    boundary = _TrustedHosts(_release_compose_default())
+    assert str(subnet.network_address + 1) in boundary, (
+        f"the compose network {subnet} is not inside the declared trust "
+        "boundary, so the backend will not honour the frontend's forwarded "
+        "header"
     )
