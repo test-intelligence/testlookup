@@ -345,3 +345,35 @@ async def test_ndjson_export_is_one_json_object_per_line(db, projects):
     lines = [ln for ln in q.rows_to_ndjson(rows).splitlines() if ln.strip()]
     assert len(lines) == 1
     assert json.loads(lines[0])["summary"] == "one thing happened"
+
+
+# ── Retention ────────────────────────────────────────────────────────────────
+
+
+def test_the_ledger_rides_the_audit_clock_not_the_runs_clock():
+    """`audit_days` is validated to be >= `runs_days` precisely so a record of
+    what happened to a run outlives the run itself. Putting the ledger on the
+    runs clock would delete the history at the same moment as the thing it
+    describes — the one moment it is most needed.
+
+    Asserted against the source because the filter is built as a tuple of
+    SQLAlchemy expressions that are only executed inside a live purge.
+    """
+    import pathlib
+    import re
+
+    src = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "app" / "services" / "retention_service.py"
+    ).read_text(encoding="utf-8")
+
+    match = re.search(r"activity_where = \((.*?)\)\n", src, re.S)
+    assert match, "the ledger is not wired into the retention purge at all"
+    clause = match.group(1)
+    assert 'cutoffs["audit"]' in clause, (
+        "the activity ledger must be purged on the AUDIT clock"
+    )
+    assert 'cutoffs["runs"]' not in clause
+    assert "project_id == project_id" in clause, (
+        "the purge must be scoped to one project, not global"
+    )

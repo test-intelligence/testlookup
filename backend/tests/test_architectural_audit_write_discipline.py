@@ -349,11 +349,14 @@ def test_allowlist_entry_points_at_a_real_file(qg):
         assert (REPO_ROOT / rel).exists(), f"stale allowlist entry: {rel}"
 
 
-def test_retention_purge_deletes_only_the_two_project_scoped_audit_tables(qg):
-    """The audit-clock deletes are ``access_audit_logs`` + ``test_case_audit_logs``.
+def test_retention_purge_deletes_only_the_project_scoped_audit_tables(qg):
+    """The audit-clock deletes are the PROJECT-SCOPED audit tables only:
+    ``access_audit_logs``, ``test_case_audit_logs`` and (since epic ACT)
+    ``project_activity_events``.
 
     ``settings_audit_log`` must stay out of it — it holds the purge-audit rows
-    themselves, which is what the model docstring promises.
+    themselves, which is what the model docstring promises. ``identity_events``
+    stays out because it has no project scope to purge by.
     """
     tree = ast.parse(RETENTION_SERVICE.read_text(encoding="utf-8"))
     deleted: set[str] = set()
@@ -364,7 +367,11 @@ def test_retention_purge_deletes_only_the_two_project_scoped_audit_tables(qg):
             and node.args
         ):
             deleted |= qg._audit_referenced_names(node.args[0]) & qg._AUDIT_MODELS
-    assert deleted == {"AccessAuditLog", "TestCaseAuditLog"}, deleted
+    assert deleted == {
+        "AccessAuditLog",
+        "TestCaseAuditLog",
+        "ProjectActivityEvent",
+    }, deleted
 
 
 # ── The docstrings match the enforcement ─────────────────────────────────────
@@ -372,7 +379,13 @@ def test_retention_purge_deletes_only_the_two_project_scoped_audit_tables(qg):
 
 @pytest.mark.parametrize(
     "model_name",
-    ["SettingsAuditLog", "AccessAuditLog", "TestCaseAuditLog", "IdentityEvent"],
+    [
+        "SettingsAuditLog",
+        "AccessAuditLog",
+        "TestCaseAuditLog",
+        "IdentityEvent",
+        "ProjectActivityEvent",
+    ],
 )
 def test_audit_model_docstrings_claim_append_only_not_immutable(model_name):
     """The docstrings must describe the guarantee the code actually provides."""

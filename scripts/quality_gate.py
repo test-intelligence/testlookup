@@ -687,16 +687,18 @@ def _backend_structlog_positional_args() -> list[Violation]:
 # them. It may never UPDATE one, and may never DELETE one outside the single
 # allowlisted deleter below.
 _AUDIT_MODELS = frozenset({
-    "AccessAuditLog",      # access_audit_logs
-    "IdentityEvent",       # identity_events
-    "SettingsAuditLog",    # settings_audit_log
-    "TestCaseAuditLog",    # test_case_audit_logs
+    "AccessAuditLog",         # access_audit_logs
+    "IdentityEvent",          # identity_events
+    "SettingsAuditLog",       # settings_audit_log
+    "TestCaseAuditLog",       # test_case_audit_logs
+    "ProjectActivityEvent",   # project_activity_events (epic ACT)
 })
 _AUDIT_TABLES = (
     "access_audit_logs",
     "identity_events",
     "settings_audit_log",
     "test_case_audit_logs",
+    "project_activity_events",
 )
 
 # ``services/retention_service.py`` is the ONE legitimate deleter. US-11.4
@@ -3312,7 +3314,8 @@ GUARDS: list[Guard] = [
         name="backend.audit-write-discipline",
         description=(
             "Audit tables (settings_audit_log / access_audit_logs / "
-            "test_case_audit_logs / identity_events) are append-only: no "
+            "test_case_audit_logs / identity_events / "
+            "project_activity_events) are append-only: no "
             "UPDATE anywhere, no DELETE outside the retention purge."
         ),
         check=_backend_audit_write_discipline,

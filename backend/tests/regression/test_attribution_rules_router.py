@@ -137,8 +137,21 @@ async def test_creating_a_rule_persists_every_field_the_evaluator_reads():
         project_id=PROJECT, body=_body(), db=db, current_user=actor, __=None
     )
 
-    assert len(db.added) == 1
-    rule = db.added[0]
+    # Two rows now, in ONE transaction: the rule, and the activity-ledger row
+    # recording who created it. An enabled catch-all rule was once left on a
+    # real project by an e2e run and nobody could see who had created it —
+    # asserting on BOTH rows is what keeps that record from quietly going away.
+    from app.models.postgres import ProjectActivityEvent, ReleaseAttributionRule
+
+    rules = [r for r in db.added if isinstance(r, ReleaseAttributionRule)]
+    events = [r for r in db.added if isinstance(r, ProjectActivityEvent)]
+    assert len(rules) == 1
+    assert len(events) == 1
+    assert events[0].event_type == "attribution_rule.created"
+    assert events[0].project_id == PROJECT
+    assert events[0].actor_id == actor.id
+
+    rule = rules[0]
     assert rule.project_id == PROJECT
     assert rule.match_field == "branch"
     assert rule.match_pattern == "hotfix/*"
@@ -159,7 +172,7 @@ async def test_a_bad_match_field_is_refused_before_anything_is_written():
             project_id=PROJECT, body=_body(match_field="Branch"),
             db=db, current_user=_actor(), __=None,
         )
-    assert db.added == []
+    assert db.added == [], "a refused rule must not leave an activity row either"
     assert db.commits == 0
 
 

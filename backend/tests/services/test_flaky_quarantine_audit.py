@@ -117,8 +117,22 @@ async def test_audit_uses_fresh_session_not_callers(caller_db, actor, monkeypatc
         after={"status": "PROPOSED"},
     )
 
-    assert calls["commit"] == 1
-    assert len(calls["added"]) == 1
+    # TWO independent writes on fresh sessions, not one: the SettingsAuditLog
+    # compliance row, and the project activity-ledger mirror added for epic ACT.
+    # The mirror exists because settings_audit_log has no project column, so
+    # query_unified_audit hides these rows from every non-ADMIN — the QA lead
+    # who quarantined a test could see it and the engineer who owns the test
+    # could not.
+    #
+    # What this test actually pins is unchanged and is the part that matters:
+    # neither write touches the CALLER's session.
+    from app.models.postgres import ProjectActivityEvent, SettingsAuditLog
+
+    assert calls["commit"] == 2
+    added = calls["added"]
+    assert len(added) == 2
+    assert sum(isinstance(a, SettingsAuditLog) for a in added) == 1
+    assert sum(isinstance(a, ProjectActivityEvent) for a in added) == 1
     # caller_db's spies all raise AssertionError on touch — the test
     # would already have failed if any of them fired.
 
@@ -144,10 +158,18 @@ async def test_audit_retries_on_transient_db_error(caller_db, actor, monkeypatch
         after={"status": "APPROVED"},
     )
 
-    # First commit failed, second succeeded.
-    assert calls["commit"] == 2
+    # First commit failed, second succeeded — then the activity-ledger mirror
+    # (epic ACT) commits its own row on its own fresh session, so three commits
+    # in total. The retry contract this test exists to pin is the first two.
+    assert calls["commit"] == 3
     assert calls["rollback"] == 1
-    assert len(calls["added"]) == 2  # add re-invoked on each attempt
+    # add re-invoked on each attempt (2), plus the ledger row (1).
+    assert len(calls["added"]) == 3
+
+    from app.models.postgres import ProjectActivityEvent, SettingsAuditLog
+
+    assert sum(isinstance(a, SettingsAuditLog) for a in calls["added"]) == 2
+    assert sum(isinstance(a, ProjectActivityEvent) for a in calls["added"]) == 1
 
 
 @pytest.mark.asyncio

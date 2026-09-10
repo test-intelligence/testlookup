@@ -89,7 +89,9 @@ async def create_project(
     existing = await db.execute(select(Project).where(Project.slug == payload.slug))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Project with slug '{payload.slug}' already exists")
-    project = Project(**payload.model_dump())
+    # Identity assigned at construction so the row is addressable before a
+    # flush — the activity event is staged in this same transaction.
+    project = Project(id=uuid.uuid4(), **payload.model_dump())
     db.add(project)
     await db.flush()
 

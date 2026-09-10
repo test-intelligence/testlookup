@@ -100,6 +100,7 @@ from app.models.postgres import (
     ReportShareLink,
     SettingsAuditLog,
     TestCase,
+    ProjectActivityEvent,
     TestCaseAuditLog,
     TestRun,
 )
@@ -520,6 +521,7 @@ class _ExecutionPlan:
     event_archive_where: tuple
     access_audit_where: tuple
     tc_audit_where: tuple
+    activity_where: tuple
     deletion_job_where: tuple
     revoked_share_link_where: tuple
     provenance_where: tuple
@@ -755,6 +757,13 @@ async def run_purge(
         TestCaseAuditLog.project_id == project_id,
         TestCaseAuditLog.created_at < cutoffs["audit"],
     )
+    # Epic ACT. The activity ledger rides the AUDIT clock, not the runs clock:
+    # audit_days is validated to be >= runs_days precisely so a record of what
+    # happened to a run outlives the run itself.
+    activity_where = (
+        ProjectActivityEvent.project_id == project_id,
+        ProjectActivityEvent.occurred_at < cutoffs["audit"],
+    )
     provenance_where = (
         AIProvenanceRecord.project_id == project_id,
         AIProvenanceRecord.created_at < cutoffs["audit"],
@@ -796,6 +805,7 @@ async def run_purge(
         event_archive_where=event_archive_where,
         access_audit_where=access_audit_where,
         tc_audit_where=tc_audit_where,
+        activity_where=activity_where,
         deletion_job_where=deletion_job_where,
         revoked_share_link_where=revoked_share_link_where,
         provenance_where=provenance_where,
@@ -874,6 +884,7 @@ async def run_purge(
             "audit_rows": (
                 await _count(AccessAuditLog.id, access_audit_where)
                 + await _count(TestCaseAuditLog.id, tc_audit_where)
+                + await _count(ProjectActivityEvent.id, activity_where)
                 + await _count(DeletionJob.id, deletion_job_where)
             ),
             "revoked_share_links": await _count(
@@ -1016,6 +1027,7 @@ async def resolve_run_candidates(
         event_archive_where=(TestRun.id == run_id,),
         access_audit_where=never,
         tc_audit_where=never,
+        activity_where=never,
         deletion_job_where=never,
         # Share links are ondelete=CASCADE on run_id, so the run delete
         # already takes them. A filter here would be a second deletion of
@@ -1154,6 +1166,9 @@ async def execute_candidates(
     # (6) Audit-class deletes (audit clock — separate from the run clock).
     access_result = await db.execute(delete(AccessAuditLog).where(*plan.access_audit_where))
     tc_audit_result = await db.execute(delete(TestCaseAuditLog).where(*plan.tc_audit_where))
+    activity_result = await db.execute(
+        delete(ProjectActivityEvent).where(*plan.activity_where)
+    )
     deletion_job_result = await db.execute(
         delete(DeletionJob).where(*plan.deletion_job_where)
     )
@@ -1192,6 +1207,7 @@ async def execute_candidates(
             "event_archive_stripped": event_archive_stripped,
             "access_audit_rows": int(getattr(access_result, "rowcount", 0) or 0),
             "test_case_audit_rows": int(getattr(tc_audit_result, "rowcount", 0) or 0),
+            "activity_rows": int(getattr(activity_result, "rowcount", 0) or 0),
             "deletion_job_rows": int(getattr(deletion_job_result, "rowcount", 0) or 0),
             "revoked_share_links": int(getattr(revoked_link_result, "rowcount", 0) or 0),
             "provenance_rows": int(getattr(provenance_result, "rowcount", 0) or 0),

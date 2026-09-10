@@ -192,6 +192,11 @@ async def create_attribution_rule(
     _validate_match_field(body.match_field)
 
     rule = ReleaseAttributionRule(
+        # Identity assigned here rather than obtained from a flush: the ledger
+        # row is staged in the SAME transaction and needs a stable entity_id,
+        # and an extra flush would be a transaction-shape change made purely to
+        # read back a value we can just as well decide.
+        id=uuid.uuid4(),
         project_id=project_id,
         name=body.name,
         match_field=body.match_field,
@@ -202,7 +207,6 @@ async def create_attribution_rule(
         created_by_id=current_user.id,
     )
     db.add(rule)
-    await db.flush()
 
     # Epic ACT. An enabled catch-all rule was once left on a real project by an
     # e2e run and nobody could see who created it, because this router wrote no
