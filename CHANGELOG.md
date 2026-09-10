@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-10 — a finished run's AI analysis was queued and never sent
+
+After a run is finalized, its follow-up work (notifications, the completion
+webhook, suite comparisons and, when AI analysis is requested, the multi-agent
+pipeline) is written to a durable outbox and published to Celery from there. The
+pipeline's entry named the run `run_id`; the task's parameter is `test_run_id`.
+Celery checks a task's arguments before it publishes, so every attempt failed
+with a TypeError, was retried on a backoff and failed again. No run that
+requested AI analysis ever got it, and the only sign was a pending outbox row
+whose error read `broker_TypeError`.
+
+It surfaced on the homelab, on the first run to reach that code there: a run
+streamed through `/ws/events`, whose every other follow-up completed within a
+second. The entry now uses the task's own parameter, and an entry written before
+the fix is translated when it is published, so a stuck run's analysis starts
+after the upgrade. A test now checks every operation the outbox publishes
+against its task's real signature; the existing tests replaced `apply_async`,
+which is exactly where Celery's check lives.
+
 ## 2026-09-10 — worker database connections now outlive a single task
 
 Every Celery task ran on an event loop of its own and, when it finished, closed

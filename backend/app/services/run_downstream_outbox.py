@@ -268,7 +268,18 @@ async def stage_finalize_operations(
         specs.append(
             (
                 "agent_pipeline",
-                {**common, "workflow_type": "offline"},
+                # run_agent_pipeline's parameter is test_run_id. Staged as
+                # ``{**common}`` it carried run_id instead, and Celery refuses a
+                # call with arguments its task does not take before publishing:
+                # every attempt failed with TypeError and was retried forever,
+                # so no finished run's analysis ever started (found by the
+                # re-audit's homelab check of N14).
+                {
+                    "test_run_id": str(run.id),
+                    "project_id": str(run.project_id),
+                    "build_number": str(run.build_number),
+                    "workflow_type": "offline",
+                },
                 "ai_analysis",
                 6,
             )
@@ -836,11 +847,11 @@ async def defer_downstream_execution(
         return True
 
 
-def _publish_downstream(row: RunDownstreamOutbox) -> None:
-    """Publish a whitelisted task with a stable Celery delivery identity."""
+def downstream_tasks() -> dict[str, Any]:
+    """The Celery task each whitelisted operation is published to."""
     from app.worker import tasks
 
-    task_by_operation = {
+    return {
         "persist_live_session": tasks.persist_live_session,
         "run_notifications": tasks.dispatch_run_notifications,
         "transition_notifications": tasks.dispatch_transition_notifications,
@@ -849,11 +860,21 @@ def _publish_downstream(row: RunDownstreamOutbox) -> None:
         "suite_comparison": tasks.precompute_suite_comparisons_for_run,
         "run_completed_webhook": tasks.dispatch_run_completed_webhook,
     }
-    task = task_by_operation.get(row.operation)
+
+
+def _publish_downstream(row: RunDownstreamOutbox) -> None:
+    """Publish a whitelisted task with a stable Celery delivery identity."""
+    task = downstream_tasks().get(row.operation)
     if task is None:
         raise ValueError(f"unsupported_downstream_operation:{row.operation}")
+    kwargs = dict(row.payload)
+    if row.operation == "agent_pipeline" and "run_id" in kwargs and "test_run_id" not in kwargs:
+        # An intent staged before the payload used the task's own parameter
+        # name. Translate it, so a run stuck on broker_TypeError gets its
+        # analysis once this ships instead of retrying forever.
+        kwargs["test_run_id"] = kwargs.pop("run_id")
     task.apply_async(
-        kwargs=dict(row.payload),
+        kwargs=kwargs,
         queue=row.queue,
         priority=int(row.priority),
         task_id=f"run-downstream-{row.id}",
