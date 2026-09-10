@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-10 — one uploaded report could carry a million results
+
+`POST /api/v1/ingest` caps a JSON batch at 50,000 results in its schema.
+`POST /api/v1/ingest/file` had no equivalent. Its 50 MB limit bounds bytes, not
+rows: 50 MB of minimal JUnit elements is about 1.3 million results. Parsing that
+one file took 24 seconds and peaked at 1.3 GB, more than an ingestion worker's
+share of memory, and every stage after parsing then ran once per row. A 50 MB
+pytest-json report behaved the same way, peaking at 0.9 GB.
+
+An uploaded report now carries at most `INGEST_MAX_RESULTS_PER_UPLOAD` results,
+50,000 by default. The JSON schema reads the same constant, so the two routes
+cannot drift apart. The worker checks the exact count after parsing, for every
+format, and a zip is capped as a whole rather than per entry.
+
+A report far over the cap is refused before it is parsed. A cheap count of one
+marker per result stops a worst-case 50 MB file in about a tenth of a second,
+with no measurable memory. The count is an estimate, so it only refuses a report
+more than four times over the cap, never one the exact check would accept. A
+test checks every format's marker against a real report of that format: the
+first drafts of the TRX and Playwright markers matched nothing, which would have
+switched the guard off for those formats without a sound.
+
+A refused upload fails with the reason `too_many_results` and says how to split
+the report, the same way an unparseable report fails. No run is created.
+
 ## 2026-09-10 — CI uploads and single live events skipped both ingest gates
 
 `/api/v1/stream/*` has had two admission gates since the scalable-ingestion

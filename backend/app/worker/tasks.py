@@ -1239,14 +1239,27 @@ def ingest_uploaded_file(
         # Parse — any parser exception or an empty result is a user-fixable
         # problem, surfaced as a failed status rather than a silent empty run.
         from app.services.safe_archive import UnsafeZipError
+        from app.services.upload_limits import TooManyResults, enforce_result_limit
         try:
             results = _parse_file_to_results(
                 file_content, file_format, file_name, run_id, disabled_formats=disabled_formats,
             )
+            # Re-audit M5: the exact cap, on what was actually parsed.
+            enforce_result_limit(len(results))
         except UnsafeZipError as exc:
             # Archive safety violation — surface the specific code (zip_bomb,
             # unsafe_path, …) so the UI explains exactly what was rejected.
             logger.warning("upload_unsafe_archive task=%s file=%s code=%s", task_id, file_name, exc.code)
+            await upload_status.set_status(
+                task_id, run_id=run_id, project_id=project_id,
+                state=upload_status.STATE_FAILED,
+                error={"code": exc.code, "message": exc.message},
+            )
+            _emit_failed(exc.code)
+            return False
+        except TooManyResults as exc:
+            # Refused whole, before the run row is created -- like a parse error.
+            logger.warning("upload_too_many_results task=%s file=%s", task_id, file_name)
             await upload_status.set_status(
                 task_id, run_id=run_id, project_id=project_id,
                 state=upload_status.STATE_FAILED,
@@ -1419,6 +1432,7 @@ def _parse_archive_to_results(
     from app.core.config import settings
     from app.services.allure_parser import parse_allure_zip
     from app.services.safe_archive import safe_extract_zip
+    from app.services.upload_limits import TooManyResults, enforce_result_limit
 
     def _basename(n: str) -> str:
         return posixpath.basename(n)
@@ -1460,6 +1474,11 @@ def _parse_archive_to_results(
                     continue
                 text = data.decode("utf-8", errors="replace")
                 results.extend(_parse_file_to_results(text, entry_fmt, base, run_id))
+                # Re-audit M5: the cap covers the whole upload, not each entry.
+                enforce_result_limit(len(results))
+            except TooManyResults:
+                # Not 'one bad entry': the upload as a whole is refused.
+                raise
             except Exception as exc:  # noqa: BLE001 — one bad entry must not fail all
                 logger.warning("archive_entry_parse_failed entry=%s error=%s", base, exc)
                 continue
@@ -1554,6 +1573,12 @@ def _parse_file_to_results(
 
     if fmt == "archive":
         return _parse_archive_to_results(content, filename, run_id, disabled_formats=disabled_formats)
+
+    # Re-audit M5: a report so far over the result cap that parsing it would
+    # itself exhaust the worker is refused on a cheap count, unparsed.
+    from app.services.upload_limits import refuse_before_parsing
+
+    refuse_before_parsing(content, fmt)
 
     if fmt == "allure":
         from app.services.allure_parser import parse_allure_result

@@ -52,7 +52,7 @@ uploads_total = Counter(
 upload_failures_total = Counter(
     "testlookup_upload_failures_total",
     "Manual report upload failures by error code",
-    ["code"],  # parse_error|empty_report|ingest_error|zip_bomb|unsafe_path|nested_zip|...
+    ["code"],  # parse_error|empty_report|ingest_error|too_many_results|zip_bomb|unsafe_path|nested_zip|...
 )
 
 upload_processing_seconds = Histogram(

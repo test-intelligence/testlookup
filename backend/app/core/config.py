@@ -80,6 +80,13 @@ def _uri_password(uri: str) -> Optional[str]:
     return unquote(password) if password else None
 
 
+# The most test results one ingest may carry. The JSON batch schema enforces it
+# at the API (``IngestPayload.results``); the upload worker enforces it after
+# parsing a file, through ``INGEST_MAX_RESULTS_PER_UPLOAD``, which defaults to
+# it. One number, so the two paths cannot drift apart (re-audit M5).
+MAX_RESULTS_PER_INGEST = 50_000
+
+
 class Settings(BaseSettings):
     """Application settings — loaded from environment variables."""
 
@@ -209,6 +216,13 @@ class Settings(BaseSettings):
     MAX_ARCHIVE_ENTRIES: int = 5_000
     MAX_ARCHIVE_ENTRY_BYTES: int = 50 * 1024 * 1024          # 50 MB per entry
     MAX_ARCHIVE_RATIO: int = 100                             # uncompressed/compressed
+    # Re-audit M5. The most test results one uploaded report may carry: the
+    # same cap as a JSON batch, so a file is not a way around it. The 50MB
+    # size limit bounds bytes, not rows -- 50MB of minimal JUnit elements is
+    # ~1.3M results, and parsing that alone peaked at 1.3GB (measured). Checked
+    # by a cheap count before parsing and exactly after; see
+    # services/upload_limits.py. 0 disables.
+    INGEST_MAX_RESULTS_PER_UPLOAD: int = MAX_RESULTS_PER_INGEST
     # Adaptive Redis-memory backpressure. When ``maxmemory`` is set on
     # Redis, the percentage gate fires; when it isn't, the absolute
     # byte gate kicks in instead. Both 0 disables the check entirely.

@@ -14,6 +14,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.core.config import MAX_RESULTS_PER_INGEST
 from app.models.postgres import (
     FailureCategory,
     IdentityEventType,
@@ -2946,7 +2947,7 @@ class IngestPayload(BaseModel):
     """JSON batch ingest request body for POST /api/v1/ingest."""
     project_id: str = Field(..., description="Project UUID")
     build_number: str = Field(..., min_length=1, max_length=BUILD_NUMBER_MAX_LENGTH)
-    results: List[IngestTestResult] = Field(..., min_length=1, max_length=50_000)
+    results: List[IngestTestResult] = Field(..., min_length=1, max_length=MAX_RESULTS_PER_INGEST)
     branch: Optional[str] = Field(None, max_length=255)
     commit_hash: Optional[str] = Field(None, max_length=64)
     framework: Optional[str] = Field(None, max_length=50)

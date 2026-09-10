@@ -40,6 +40,7 @@ The dev/self-host Compose stack ships these limits **(configured — `deploy.res
 - Each project's batch ingest is budgeted at **200 batches/minute** (`INGEST_RATE_LIMIT_PER_MINUTE`). SDK event batches, JSON result uploads (`POST /api/v1/ingest`) and result-file uploads (`POST /api/v1/ingest/file`) all draw on this one budget.
 - Single live events (`POST /ws/events/{run_id}`) have a separate budget of **20,000 events/minute** per project (`INGEST_EVENT_RATE_LIMIT_PER_MINUTE`).
 - A spent budget answers `429` with a `Retry-After` header. While Redis memory is over its backpressure threshold, every result-ingest route answers `503`. Setting a budget to `0` disables it.
+- One uploaded report may carry at most **50,000 test results** (`INGEST_MAX_RESULTS_PER_UPLOAD`), the same cap as one JSON batch. A larger report is refused with the reason `too_many_results`; split it into smaller reports.
 - Live run buffers cap at **50,000 events/run** (`LIVE_BUFFER_MAX_EVENTS_PER_RUN`), and older events are drained to Postgres every ~30 s. The live event stream is capped at 100k entries.
 
 ## The local-LLM add-on (`make dev-llm`)
