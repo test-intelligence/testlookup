@@ -27,6 +27,15 @@
 # documented test command broke the documented build.
 .pytest_tmp*/
 **/.pytest_tmp*/
+# ...and the HYPHENATED spelling of the same thing. The patterns above cover
+# `.pytest_tmp_*` and `.pytest_cache`, but a session that used
+# `--basetemp=backend/.pytest-tmp-m10` (hyphens) slipped straight past them
+# and aborted the whole backend image build on
+# `getting extended attributes for "/.pytest-cache-m10": permission denied`.
+# Match on either separator so the next variant does not have to be
+# discovered the same way.
+.pytest-*/
+**/.pytest-*/
 # Custom pytest --basetemp roots used by local/CI validation (for example,
 # `.tmp/pytest-homelab-full-*`) have the same Windows permission behavior.
 .tmp/

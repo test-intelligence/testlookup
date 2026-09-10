@@ -9,8 +9,6 @@
 **/*.pyc
 **/*.pyo
 **/*.pyd
-.pytest_cache/
-**/.pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
@@ -38,3 +36,18 @@ Thumbs.db
 *.log
 README.md
 *.md
+
+# ── pytest caches / basetemp roots ───────────────────────────────────
+# These are permission-locked on Windows, and podman aborts the ENTIRE
+# image build reading their extended attributes:
+#   copier: get: getting extended attributes for "/.pytest-cache-m10":
+#   permission denied
+# That failure cost a homelab deploy from backend/, whose ignore covered
+# the underscore spelling but not the hyphenated one. Both separators are
+# matched here so this context cannot repeat it.
+.pytest_cache/
+**/.pytest_cache/
+.pytest_tmp*/
+**/.pytest_tmp*/
+.pytest-*/
+**/.pytest-*/
