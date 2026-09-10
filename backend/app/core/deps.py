@@ -121,10 +121,19 @@ def credential_kind(user: User) -> str | None:
 
 def _enforce_api_key_project_binding(
     user: User,
-    project_id: uuid.UUID,
+    project_id: uuid.UUID | None,
     *,
     detail: str = "This API key is restricted to a different project",
 ) -> None:
+    """403 when a project-bound API key reaches outside its own project.
+
+    An unbound caller (a JWT, or a user-scoped key) is never refused here: role
+    and membership are other checks' business. ``project_id=None`` names
+    something that belongs to no single project (the system-default release
+    policy, a chat session filed under no project, an unbound API key); a
+    bound key is refused that too, since it is outside the one project the key
+    names.
+    """
     bound_project_id = _api_key_bound_project(user)
     if bound_project_id is not None and bound_project_id != project_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail=detail)
@@ -499,7 +508,16 @@ async def get_api_key_context(
     )
 
 
-def require_role(min_role: UserRole) -> Callable:
+#: What a project-bound API key is told by an ADMIN route that has not opted in
+#: -- ``require_role(UserRole.ADMIN)`` and ``require_instance_admin()``, which
+#: are now the same check.
+PROJECT_KEY_NOT_INSTANCE_ADMIN_DETAIL = (
+    "This API key is bound to one project; this endpoint spans every project "
+    "and needs an instance administrator"
+)
+
+
+def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Callable:
     """
     Return a FastAPI dependency that enforces a minimum role level.
 
@@ -507,8 +525,37 @@ def require_role(min_role: UserRole) -> Callable:
         @router.post("", dependencies=[Depends(require_role(UserRole.QA_LEAD))])
         # or
         current_user: User = Depends(require_role(UserRole.QA_ENGINEER))
+
+    **ADMIN is closed to a project-bound API key unless the route opts in
+    (re-audit N20).** The role compared here is the key OWNER's, and only an
+    ADMIN can bind a key to a project, so nearly every project-bound key is an
+    ADMIN credential: a CI pipeline's. With the role alone deciding, a key
+    leaked from one team's pipeline could create an instance administrator
+    (``POST /api/v1/users``) and, logged in as it, read and write every
+    tenant. So ``require_role(UserRole.ADMIN)`` refuses, with 403, a request
+    whose user carries an API-key project binding: the attribute
+    ``_bind_api_key_project`` sets, which ``require_instance_admin`` already
+    checked. A JWT and a user-scoped key carry no binding and pass as before.
+
+    ``allow_project_key=True`` lets such a key back in. Pass it only where the
+    route itself confines the key to its own project (a
+    ``require_project_access()`` / ``require_run_access()`` /
+    ``require_release_access()`` guard on the path id, ``resolve_project_scope``
+    on the resource's project, or an explicit
+    ``_enforce_api_key_project_binding``), and list the route in the reviewed
+    allow-list of ``tests/regression/test_admin_routes_refuse_project_keys.py``,
+    which fails until you do.
+
+    Below ADMIN nothing changes. Those roles never refused a bound key, so the
+    flag would mean nothing there, and passing it is a ``ValueError``.
     """
+    if allow_project_key and min_role != UserRole.ADMIN:
+        raise ValueError(
+            "allow_project_key applies only to require_role(UserRole.ADMIN); "
+            f"{min_role.value} never refuses a project-bound API key"
+        )
     min_idx = _ROLE_ORDER.index(min_role)
+    refuse_project_key = min_role == UserRole.ADMIN and not allow_project_key
 
     async def _check(
         current_user: User = Depends(get_current_active_user),
@@ -527,6 +574,14 @@ def require_role(min_role: UserRole) -> Callable:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Requires at least {min_role.value} role",
             )
+        if refuse_project_key and _api_key_bound_project(current_user) is not None:
+            # Counted like any other role shortfall: a leaked CI key probing
+            # the admin surface is exactly the burst an operator wants to see.
+            _count_auth_failure("insufficient_role")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=PROJECT_KEY_NOT_INSTANCE_ADMIN_DETAIL,
+            )
         return current_user
 
     return _check
@@ -535,27 +590,13 @@ def require_role(min_role: UserRole) -> Callable:
 def require_instance_admin() -> Callable:
     """ADMIN, and not through an API key bound to one project.
 
-    ``require_role(UserRole.ADMIN)`` checks the role of the key's OWNER, so an
-    API key an instance admin minted for one project's CI passes it. That key
-    is a credential for one project; it must not reach an endpoint whose data
-    or effect spans every tenant (re-audit M2, QA). It is the line
-    ``require_project_access`` already draws when it lets an admin bypass
-    project membership: only with no project binding.
+    Added for the admin-maintenance router (re-audit M2, QA), whose data and
+    effects span every tenant. Since re-audit N20 that is what
+    ``require_role(UserRole.ADMIN)`` means by default, so this is a named alias
+    for it: the spelling for a route that must never opt in with
+    ``allow_project_key=True``. The maintenance router's AST test pins it.
     """
-    admin = require_role(UserRole.ADMIN)
-
-    async def _check(current_user: User = Depends(admin)) -> User:
-        if _api_key_bound_project(current_user) is not None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "This API key is bound to one project; this endpoint spans "
-                    "every project and needs an instance administrator"
-                ),
-            )
-        return current_user
-
-    return _check
+    return require_role(UserRole.ADMIN)
 
 
 def require_project_role(min_role: UserRole) -> Callable:
