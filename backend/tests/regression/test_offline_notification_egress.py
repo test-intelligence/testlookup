@@ -376,6 +376,58 @@ async def test_the_smtp_test_button_refuses_a_public_relay_offline(
     assert smtp_sends == [], "the test email reached the public relay"
 
 
+_NO_STORED_HOST = {"enabled": True, "host": "", "port": 587, "from_address": "noreply@example.com"}
+
+
+@pytest.mark.asyncio
+async def test_the_smtp_test_button_judges_the_relay_the_senders_dial(
+    offline, resolves, smtp_sends, monkeypatch
+):
+    """With no stored host every sender dials SMTP_HOST. The button fell back
+    to localhost, so offline it approved a relay no real send uses and
+    reported success while every real send was refused (review + QA of H10)."""
+    from types import SimpleNamespace
+
+    from app.routers import app_settings
+
+    resolves({"localhost": True})
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.gmail.com")
+
+    async def _stored(_db):
+        return dict(_NO_STORED_HOST)
+
+    monkeypatch.setattr(app_settings, "_load_smtp_row", _stored)
+    result = await app_settings.test_smtp_config(
+        current_user=SimpleNamespace(id=1, email="qa@example.com"), db=None
+    )
+    assert result.success is False, result.message
+    assert "smtp.gmail.com" in result.message
+    assert smtp_sends == [], "the test email went to a relay no real send uses"
+
+
+@pytest.mark.asyncio
+async def test_the_smtp_test_button_dials_the_relay_the_senders_dial(online, smtp_sends, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.routers import app_settings
+    from app.services.notification import email_service
+
+    async def _stored(_db):
+        return dict(_NO_STORED_HOST)
+
+    monkeypatch.setattr(app_settings, "_load_smtp_row", _stored)
+    monkeypatch.setattr(settings, "SMTP_HOST", "relay.example.org")
+
+    result = await app_settings.test_smtp_config(
+        current_user=SimpleNamespace(id=1, email="qa@example.com"), db=None
+    )
+    await email_service.send_html_email(
+        "qa@example.com", "Digest", "<p>b</p>", smtp_cfg=dict(_NO_STORED_HOST)
+    )
+    assert result.success is True, result.message
+    assert [call["hostname"] for call in smtp_sends] == ["relay.example.org", "relay.example.org"]
+
+
 @pytest.mark.asyncio
 async def test_the_smtp_probe_does_not_log_in_to_a_public_relay_offline(offline, resolves, monkeypatch):
     from app.services import integration_probe_service as probes

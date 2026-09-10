@@ -195,7 +195,12 @@ async def test_smtp_config(
     msg["From"] = cfg.get("from_address", "noreply@testlookup.io")
     msg["To"] = current_user.email
 
-    host = cfg.get("host") or "localhost"
+    from app.services.notification.email_service import smtp_host
+
+    # The relay every real send dials (code review + QA of H10). The button
+    # fell back to localhost instead, so with no stored host it tested -- and,
+    # offline, approved -- a relay no real send uses.
+    host = smtp_host(cfg)
     # Re-audit H10 (code review): the test email reached the stored relay, with
     # the stored credentials, while every real notification to it was refused.
     from app.services.notification.egress import (
