@@ -1214,7 +1214,10 @@ async def verify_webhook_secret(
     x_webhook_secret: str = Header(..., alias="X-Webhook-Secret"),
 ) -> None:
     """Validate the shared webhook secret header sent by MinIO."""
-    if x_webhook_secret != settings.WEBHOOK_SECRET:
+    # compare_digest, not ==: a plain comparison short-circuits on the first
+    # differing byte, which leaks the secret's prefix to a caller who can time
+    # the response (re-audit H1).
+    if not hmac.compare_digest(str(x_webhook_secret), str(settings.WEBHOOK_SECRET)):
         logger.warning("Webhook request with invalid secret rejected")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -53,6 +53,25 @@ data:
   PUBLIC_BASE_URL: "https://testlookup.example.com"
   # MCP server internal service URL (used by the backend's health endpoint reference only)
   MCP_SERVICE_URL: "http://testlookup-mcp:8002"
+  # Peer addresses allowed to supply X-Forwarded-For (re-audit H2). Without
+  # this the API sees the ingress address as every caller's IP, collapsing the
+  # login rate limiter onto one shared bucket and making every audit IP
+  # meaningless.
+  #
+  # This must name the POD NETWORK the ingress controller and the frontend
+  # proxy connect from, and nothing wider. Never "*": under a wildcard uvicorn
+  # takes the leftmost X-Forwarded-For entry, which is whatever the caller
+  # sent, so client.host becomes caller-controlled. Widening this to cover the
+  # clients too has the same effect -- on a LAN cluster, trusting
+  # 192.168.0.0/16 makes an on-LAN caller trusted and the reverse walk runs
+  # past its real address back to the spoofed one.
+  #
+  # The value below covers the private ranges that cloud pod networks are
+  # drawn from (GKE, EKS and AKS all allocate inside them) and is correct
+  # wherever CLIENTS arrive from public addresses. An on-premise cluster whose
+  # users share the RFC1918 space with the pods MUST narrow this to the pod
+  # CIDR in its overlay -- see overlays/homelab, which pins 10.42.0.0/16.
+  TRUSTED_PROXY_IPS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
   # ── Observability ────────────────────────────────────────────────────────────
   OTEL_ENABLED: "true"
   OTEL_SERVICE_NAME: "testlookup"

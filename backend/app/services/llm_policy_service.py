@@ -8,8 +8,11 @@ both local and hosted providers without changing agent code.
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
+import socket
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any
 from urllib.parse import urlparse
 
@@ -75,6 +78,100 @@ def provider_profile(provider: str) -> ProviderProfile:
         raise LLMPolicyViolation(f"Unknown LLM provider: '{normalized}'") from exc
 
 
+#: Residency answers, with the clock that expires them.
+#: ``{hostname: (answer, expires_at_monotonic)}``
+_RESIDENCY_CACHE: dict[str, tuple[bool, float]] = {}
+
+#: A confirmed-local host is stable — the check is on the invocation path and
+#: re-resolving per call would put a blocking getaddrinfo in front of every
+#: prompt.
+_RESIDENCY_TTL_LOCAL_SECONDS = 300.0
+
+#: A negative is NOT stable. It is returned both for "resolved to a public
+#: address" and for "could not resolve at all", and the second is transient: a
+#: cache that never expired meant one resolver blip disabled every LLM call on
+#: that worker until it was restarted. Re-ask soon.
+_RESIDENCY_TTL_DENIED_SECONDS = 30.0
+
+
+def _residency_cache_clear() -> None:
+    """Drop every memoised residency answer (tests, and config reloads)."""
+    _RESIDENCY_CACHE.clear()
+
+
+def _resolves_only_to_local_addresses(hostname: str) -> bool:
+    """True when every address ``hostname`` resolves to is non-routable.
+
+    ``AI_OFFLINE_MODE`` is documented as an egress ceiling, but residency was
+    decided by the provider NAME alone: the four local provider ids are
+    OpenAI-wire clients whose ``base_url`` an operator supplies, so
+    ``{"llm_provider": "vllm", "base_url": "https://attacker.example/v1"}``
+    shipped every prompt off-box while the policy reported a "local" provider
+    (re-audit finding C3).
+
+    Fails CLOSED. A name that does not resolve, resolves to nothing, or
+    resolves to even one routable address is not local — under an offline
+    ceiling "we could not prove this stays on-box" must deny, not allow.
+    """
+    key = hostname.strip().strip("[]")
+    cached = _RESIDENCY_CACHE.get(key)
+    now = monotonic()
+    if cached is not None and cached[1] > now:
+        return cached[0]
+
+    answer = _resolve_residency_uncached(key)
+
+    if len(_RESIDENCY_CACHE) > 256:
+        _RESIDENCY_CACHE.clear()
+    ttl = _RESIDENCY_TTL_LOCAL_SECONDS if answer else _RESIDENCY_TTL_DENIED_SECONDS
+    _RESIDENCY_CACHE[key] = (answer, now + ttl)
+    return answer
+
+
+def _resolve_residency_uncached(hostname: str) -> bool:
+    """The resolution itself. Fails closed; see the caller for why."""
+    candidate = hostname.strip().strip("[]")
+    if not candidate:
+        return False
+
+    # A literal address needs no resolver.
+    try:
+        return not _is_routable(ipaddress.ip_address(candidate))
+    except ValueError:
+        pass
+
+    try:
+        infos = socket.getaddrinfo(candidate, None, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError, OSError):
+        return False
+
+    addresses = []
+    for info in infos:
+        sockaddr = info[4]
+        if not sockaddr:
+            continue
+        try:
+            addresses.append(ipaddress.ip_address(str(sockaddr[0]).split("%", 1)[0]))
+        except ValueError:
+            return False
+
+    if not addresses:
+        return False
+    return all(not _is_routable(address) for address in addresses)
+
+
+def _is_routable(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Whether an address can leave the host/private network."""
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return not (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_unspecified
+    )
+
+
 def enforce_provider_policy(
     provider: str,
     *,
@@ -104,6 +201,8 @@ def enforce_provider_policy(
         parsed = urlparse(str(base_url).strip())
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise LLMPolicyViolation("LLM base_url must be an absolute HTTP(S) origin")
+        # An operator's explicit allowlist is the cheapest and most specific
+        # deny, so it reports first; it needs no name resolution.
         allowed_origins = _setting_text("AI_LLM_ALLOWED_BASE_URLS")
         if allowed_origins:
             candidate = f"{parsed.scheme}://{parsed.netloc}".lower()
@@ -114,6 +213,15 @@ def enforce_provider_policy(
             }
             if candidate not in allowed:
                 raise LLMPolicyViolation("LLM base_url is not present in AI_LLM_ALLOWED_BASE_URLS")
+        # Residency is a property of the ENDPOINT, not of the provider's name.
+        # A nominally-local provider pointed at a public host is egress, so the
+        # offline ceiling refuses it even when an allowlist permitted the origin
+        # (re-audit C3) — AI_OFFLINE_MODE is documented as non-bypassable.
+        if offline and not _resolves_only_to_local_addresses(parsed.hostname):
+            raise LLMPolicyViolation(
+                f"AI_OFFLINE_MODE=true but LLM base_url host '{parsed.hostname}' is "
+                "not a loopback/private address — refusing to send prompts off-box"
+            )
     return profile
 
 

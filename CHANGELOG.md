@@ -19,6 +19,188 @@ body-scoped authorization for the new routes, and the finding that the
 existing CI prompt-attestation gate scores recorded outputs and never runs the
 candidate model. No code changes in this entry.
 
+## 2026-09-10 — the proxy trust boundary could never have lived in gunicorn
+
+Deploying batch 1 to the homelab took the API down. Every worker died at
+startup with
+
+    Error: '10.42.0.0/16' does not appear to be an IPv4 or IPv6 address
+
+gunicorn's `ForwardedAllowIPS` validates with `ipaddress.ip_address()`, which
+raises on **any** network — and it validates the `$FORWARDED_ALLOW_IPS` default
+while building its `Config`, *before* the config file is read. So the setting
+cannot hold a CIDR, and no amount of care inside `gunicorn_conf.py` could have
+intercepted it. The boundary has to be a CIDR: the proxy is a pod whose address
+changes.
+
+The boundary now lives in the app. `configure_middlewares` installs uvicorn's
+`ProxyHeadersMiddleware` — the same implementation gunicorn's setting would
+have configured, minus that validator — as the outermost middleware, reading
+`TRUSTED_PROXY_IPS`. That name is deliberate: gunicorn does not read it, so the
+collision cannot recur. It also behaves identically under gunicorn and under a
+bare uvicorn, which the GCP VM compose runs.
+
+**Why the tests did not catch it.** They imported `gunicorn_conf.py` as a plain
+Python module and read the attribute back. The validator that rejects the value
+is gunicorn's, and it never ran — so the tests confirmed the string was present
+and correct while the process could not start with it. A test now restates that
+validator and asserts no manifest anywhere sets the name gunicorn reads;
+reintroducing the exact outage fails three tests.
+
+This is the third variant of one mistake in this batch: assert the content,
+assert the list of locations, assert the value without the thing that consumes
+it. Deployment verification caught what none of 9,354 tests could.
+
+## 2026-09-10 — release-readiness batch 1: when a credential names the wrong thing
+
+Five findings from the 2026-09-09 production-readiness re-audit, plus one this
+work uncovered. They look unrelated and share a shape: something authoritative
+was decided from a *label* rather than from the thing itself.
+
+**A deploy script verified nine Deployments, five of which do not exist.**
+`scripts/deploy-k8s.sh` waited on `testlookup-celery-worker`, `-beat`, `-low`,
+`-high` and `-child`. The manifests define `testlookup-worker-critical`,
+`-ingestion`, `-ai`, `-default`, `testlookup-worker-children` and
+`testlookup-beat`. Under `set -euo pipefail` the first `rollout status` against
+a missing Deployment aborted the run — **after** `kubectl apply -k` had already
+rolled the release out. So every verified cloud deploy (GKE, AKS and EKS all
+call this one script) reported failure on a successful apply, and the
+per-Deployment image-digest check that loop exists to perform never ran against
+a single worker. The names are now correct and a regression test cross-checks
+the shell array against `k8s/base` in both directions, so neither a rename nor a
+new worker can drift again.
+
+**The API believed the proxy was every caller.** `gunicorn_conf.py` declared no
+`forwarded_allow_ips`, so uvicorn trusted only 127.0.0.1 and `request.client.host`
+was the ingress address for everyone. The login and MFA rate limiter buckets on
+that address: the entire external user base shared one bucket per worker, so a
+single script hitting the ceiling 429'd everybody else out of logging in. Every
+IP written for lockout and audit forensics recorded the proxy too. The default
+stays loopback — an undeclared topology trusts nothing — and every deployment
+whose callers are not on the public internet names the range its proxy connects
+from: the homelab, self-hosted and both OpenShift overlays pin a pod CIDR, and
+GKE pins Google's Front End ranges because container-native load balancing
+reaches the pod directly. Only the overlays whose users genuinely arrive from
+public addresses inherit the base value, and a test says which those are.
+
+**The first attempt at that made it worse, and review caught it.** It set the
+range to `*`. Under a wildcard uvicorn returns the *leftmost* entry of
+`X-Forwarded-For`, and every proxy here appends, so the leftmost entry is
+whatever the caller sent: the rate limiter above becomes defeatable by rotating
+a header, and the forensic IPs go from useless to forgeable. Naming the pod
+network instead makes uvicorn walk the header backwards and stop at the first
+hop it does not trust, which is the real client — and it ignores the header
+entirely unless the immediate peer is a trusted proxy. Widening the range to
+cover the *clients* has the same effect as the wildcard, which is why the
+homelab overlay pins its measured pod CIDR rather than inheriting a value that
+would trust the LAN its users sit on. Measured on uvicorn 0.49.0 with
+`1.2.3.4, 203.0.113.9, 10.42.1.7`: `*` yields the spoof, `10.42.0.0/16` yields
+the real client. Every assertion in the first test file was over file content,
+which is why all eight passed on a wildcard.
+
+The fix also missed a deployment. `docker-compose.gcp-vm.yml` runs the
+production nginx in front of a backend started with `uvicorn` directly rather
+than under gunicorn, so `gunicorn_conf.py` never loads there and no edit to it
+could have helped; the uvicorn CLI reads the same variable, which that file now
+sets.
+
+Reviewers made the sharper point that the first correction still asserted a
+hardcoded list of three compose files out of six, and one overlay out of ten —
+which is the same defect one level up, and exactly how this deployment was
+missed. Both scans now enumerate from disk: every compose file must be
+classified as production or not, every overlay must either narrow the boundary
+or be listed as public-facing, and a claim of "no proxy here" is checked against
+the file rather than taken from a comment.
+
+**One shared secret could write into any tenant.** `POST /ws/events/{run_id}`
+was gated by `verify_webhook_secret` alone. That secret authenticates a caller
+but names no project, and the handler read `project_id` out of the request body,
+so anyone holding it could open a run against any project and stream fabricated
+results into that tenant's live dashboard and release-risk signals. It was also
+compared with `!=`, and a default value was rated WARNING — so production booted
+happily with the literal secret published in this repository.
+
+The endpoint now requires a **project-scoped API key** and derives the project
+from the credential, ignoring the body; a run is bound to its project on
+`run_start` so later events cannot cross over; and the legacy secret, if a
+deployment re-enables it, is compared with `hmac.compare_digest`. No shipped SDK
+uses this endpoint — all four report through `/stream/events/batch` — so the
+tightening costs nothing real.
+
+`LIVE_EVENTS_REQUIRE_PROJECT_KEY` first shipped defaulting to *off*, which left
+the reported hole open in the configuration everyone actually runs: the shared
+secret was still accepted, the body was still trusted, and the binding check is
+reached only on the API-key branch. Both reviews caught it independently. It
+defaults to on.
+
+Two consequences of that default, also from review. The run binding is keyed on
+a **caller-chosen** `run_id`, so two projects picking `build-42` is an ordinary
+collision — the loser used to fail silently and then have every subsequent event
+of its run refused for 25 hours while the run showed as started and permanently
+empty. It now gets a 409 at `run_start`, when it can still do something about
+it. And the credential check costs two `SELECT`s plus a `last_used_at` `UPDATE`,
+which is fine for the batch endpoint but not for one that takes a single event
+per call, against three connections per worker. A verified credential's project
+is cached for 30 seconds; a miss falls through to the full check, so Redis being
+unavailable slows this path rather than opening it.
+
+**A default secret was CRITICAL, but the check could not see the ones we ship.**
+It compared against each field's default. `.env.example` carries
+`change-me-generate-with-openssl-rand-hex-32` for `JWT_SECRET_KEY` and
+`WEBHOOK_SECRET`, and `change-me-in-production-use-openssl-rand-hex-32` for
+`APP_SECRET_KEY` — none equal to its default, so copying the example file and
+deploying it booted production with three published secrets and no complaint.
+The check now matches the `change-me` prefix, which cannot false-positive on a
+generated secret because `openssl rand -hex` is hexadecimal.
+
+**The offline ceiling checked the provider's name, not where it points.**
+`ollama`, `lmstudio`, `localai` and `vllm` were hard-coded "local" and skipped
+the `AI_OFFLINE_MODE` check entirely. All four are OpenAI-wire clients whose
+`base_url` an operator supplies, and `AI_LLM_ALLOWED_BASE_URLS` is empty by
+default, so on an air-gapped deployment
+`{"llm_provider": "vllm", "base_url": "https://elsewhere/v1"}` shipped every
+prompt off-box — no API key required, the vllm branch passes a literal.
+Residency is now a property of the **resolved endpoint**: offline refuses any
+host that is not loopback, private or link-local, and fails closed when a name
+cannot be resolved at all, when it resolves to nothing, and when it resolves to
+both a private and a public address. An allowlisted public origin is still
+refused offline — the allowlist narrows an online deployment, it is not a permit
+to leave the box.
+
+The resolution was first memoised with `@lru_cache`, which never expires. A
+negative is returned both for "resolved to a public address" and for "could not
+resolve at all", and the second is transient — so one resolver blip pinned "not
+local" for the life of the worker and refused every later LLM call until a
+restart, which under an offline ceiling looks exactly like the feature working.
+Answers now expire, and a denial expires far sooner than a permit.
+
+**An agent filed Jira tickets nobody approved.** `DefectCommander` generated a
+ticket body with an LLM over raw ingested failure text, then called
+`_create_jira_ticket` in the same call stack. The codebase already had the
+answer — `check_jira_ticket_creation_policy` requires human approval for every
+Jira creation, and the service promotion path honours it — and this was the one
+mutating agent that skipped it. It now proposes: the policy runs first, the
+defect row is written PENDING_REVIEW with its policy evaluation attached, and
+`AI_OFFLINE_MODE` blocks the write regardless.
+
+**And the approval status was never the string anyone thought.** Found while
+wiring the gate above. `ActionStatus` is a `(str, Enum)` mixin, so a member *is*
+`"approved"` for binding and concatenation — but `str(member)` goes through
+`Enum.__str__` and yields `"ActionStatus.APPROVED"`. The promotion service did
+exactly that and then compared the result to the member. Three consequences, all
+silent: an approved promotion could **never** file its Jira ticket, the
+`pending_review` metric never incremented, and a 21-character value was written
+to a `String(20)` column. The repo has a `backend.status-enum-vocab` gate for
+precisely this class — it only inspects columns literally named `status`, which
+is re-audit finding L3 and why this survived. Both paths now normalise through
+the enum.
+
+Every fix ships with a regression test that was mutation-tested: the fix was
+reverted and the test confirmed to fail before being kept. That was true of the
+first cut too, and it did not stop two of these fixes from being wrong — a test
+can only pin the behaviour you thought you were writing. What caught them was a
+separate QA pass and a separate review pass, each reading the diff without
+having written it, and both landed on the same two.
 ## 2026-09-09 — DELETE /runs returned a bare 500 because a sync helper was awaited
 
 `DELETE /api/v1/runs/{run_id}` 500'd with **no traceback in the structured

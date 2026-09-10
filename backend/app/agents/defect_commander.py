@@ -20,7 +20,12 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from app.agents.base import BaseAgent
+from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
+from app.services.action_policy import (
+    ActionStatus,
+    check_jira_ticket_creation_policy,
+)
 from app.models.postgres import (
     AIAnalysis, Defect, FailureCluster, TestCase,
 )
@@ -250,6 +255,29 @@ class DefectCommander(BaseAgent):
         # including this optional deep specialist.
         jira_content = await self._jira_content_for_state(state, cluster, analyses)
 
+        # A Jira ticket is an external, human-visible mutation whose title,
+        # description and owner_team come from LLM output generated over raw
+        # ingested failure text. This agent used to file it immediately, in the
+        # same call stack, with no approval step and no offline check — the one
+        # mutating agent that skipped the pattern the rest of the codebase uses
+        # (re-audit finding C4).
+        #
+        # It now runs the SAME gate as the service promotion path:
+        # check_jira_ticket_creation_policy always requires human approval for
+        # ActionType.JIRA_TICKET_CREATION, and AI_OFFLINE_MODE is a hard kill
+        # switch above any integration flag. The agent proposes; the defect row
+        # carries PENDING_REVIEW and a reviewer approves it through the existing
+        # defect endpoints.
+        policy_result = await check_jira_ticket_creation_policy(
+            project_id=project_id,
+            confidence_score=int(composite),
+            failure_category=(analyses[0].failure_category if analyses else None),
+            source="defect_commander",
+        )
+        # .value, not str() — see defect_promotion_service for why.
+        initial_status = ActionStatus(policy_result["initial_status"]).value
+        offline = settings.AI_OFFLINE_MODE
+
         # Persist as Defect record
         defect_id = await self._persist_defect(
             test_run_id=test_run_id,
@@ -262,11 +290,21 @@ class DefectCommander(BaseAgent):
             jira_content=jira_content,
             duplicate_id=duplicate_id,
             duplicate_detected=duplicate_detected,
+            approval_status=initial_status,
+            policy_evaluation=policy_result,
         )
 
-        # Optionally create Jira ticket
         jira_ticket: Optional[dict] = None
-        if project_key and not duplicate_detected:
+        if duplicate_detected:
+            jira_blocked_reason: Optional[str] = "duplicate_detected"
+        elif not project_key:
+            jira_blocked_reason = "no_jira_project_key"
+        elif offline:
+            jira_blocked_reason = "offline_mode"
+        elif initial_status != ActionStatus.APPROVED:
+            jira_blocked_reason = "pending_review"
+        else:
+            jira_blocked_reason = None
             jira_ticket_result, _ = await _create_jira_ticket(
                 project_key=project_key,
                 title=jira_content.get("title", cluster.label),
@@ -288,6 +326,10 @@ class DefectCommander(BaseAgent):
             "duplicate_detected": duplicate_detected,
             "duplicate_defect_id": duplicate_id,
             "jira_ticket": jira_ticket,
+            "approval_status": initial_status,
+            "requires_approval": policy_result["requires_approval"],
+            "policy_reasons": policy_result["policy_reasons"],
+            "jira_blocked_reason": jira_blocked_reason,
         }
 
     # ── Persistence ───────────────────────────────────────────────────────────
@@ -304,6 +346,8 @@ class DefectCommander(BaseAgent):
         jira_content: dict,
         duplicate_id: Optional[str] = None,
         duplicate_detected: bool = False,
+        approval_status: Optional[str] = None,
+        policy_evaluation: Optional[dict] = None,
     ):
         import uuid as _uuid
 
@@ -342,6 +386,8 @@ class DefectCommander(BaseAgent):
                 resolution_status="OPEN",
                 is_duplicate=duplicate_detected,
                 duplicate_of=_uuid.UUID(duplicate_id) if duplicate_id else None,
+                approval_status=approval_status or ActionStatus.PENDING_REVIEW.value,
+                policy_evaluation=policy_evaluation,
             )
             db.add(defect)
             await db.commit()

@@ -3125,7 +3125,12 @@ class AIConfigRead(BaseModel):
 
 class AIConfigUpdate(BaseModel):
     """Payload for updating AI configuration. None = keep existing."""
-    llm_provider: Optional[str] = None
+    # Constrained to the providers the policy layer actually knows (re-audit
+    # C3). An unknown id reached provider_profile() as free-form text, and the
+    # allowlist check it drives cannot filter a value it has no profile for.
+    llm_provider: Optional[str] = Field(
+        None, pattern=r"^(ollama|lmstudio|localai|vllm|openai|gemini|anthropic|openrouter)$"
+    )
     llm_model: Optional[str] = None
     llm_temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
     llm_max_tokens: Optional[int] = Field(None, ge=256, le=32768)

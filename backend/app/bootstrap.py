@@ -104,9 +104,15 @@ PUBLIC_ROUTERS: Sequence[APIRouter] = (
     scim.router,           # SCIM 2.0 — bearer-token auth (not JWT)
     shared_reports.router,  # Public shared report views (token-based, ENT-03)
     sdk.router,             # Client SDK downloads (no auth required)
-    # live.router has its own auth: WebSocket auths via post-connect message,
-    # POST /events uses verify_webhook_secret. Cannot be added to PROTECTED_ROUTERS
-    # because OAuth2PasswordBearer crashes on WebSocket scope (no Request object).
+    # live.router has its own auth: the WebSocket authenticates via a
+    # post-connect message, and POST /events/{run_id} resolves a project-scoped
+    # API key inline (see routers/live.py). It cannot join PROTECTED_ROUTERS
+    # because OAuth2PasswordBearer crashes on a WebSocket scope (no Request).
+    #
+    # It also mounts at /ws, OUTSIDE /api/v1 — which is where both
+    # authorization ratchets stop looking. That is why re-audit H1 lived here
+    # unnoticed. tests/test_architectural_authorization.py now scans this
+    # prefix too; a new router mounted outside /api/v1 must satisfy it.
     live.router,
 )
 
@@ -208,6 +214,26 @@ def configure_middlewares(app: FastAPI) -> None:
 
     app.add_middleware(TelemetryMiddleware)
     app.add_middleware(SCIMRequestBodyLimitMiddleware)
+
+    # Re-audit H2. Added LAST so it is the OUTERMOST middleware: everything
+    # downstream -- the login rate limiter's bucket key, and every IP written
+    # for lockout and audit forensics -- reads request.client.host, and each
+    # must see the real caller rather than the ingress.
+    #
+    # This lives here rather than in gunicorn_conf.py because gunicorn's own
+    # forwarded_allow_ips rejects CIDRs outright, and rejects them at Config
+    # build time from the environment, before any config file runs. uvicorn's
+    # ProxyHeadersMiddleware is the same implementation gunicorn's setting
+    # would have reached, minus that validator.
+    #
+    # Empty means trust nothing, so an undeclared topology never starts
+    # believing a header any client can set.
+    if settings.TRUSTED_PROXY_IPS.strip():
+        from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+        app.add_middleware(
+            ProxyHeadersMiddleware, trusted_hosts=settings.TRUSTED_PROXY_IPS
+        )
 
 
 def configure_metrics(app: FastAPI) -> None:

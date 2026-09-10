@@ -227,8 +227,29 @@ if [[ -n "$LEGACY_MCP_USER" ]]; then
   fi
 fi
 
+# Every Deployment that runs a released image, by its REAL manifest name.
+#
+# This list was previously five invented "testlookup-celery-*" names that exist
+# in no manifest. Under "set -e" the first rollout status against a missing
+# Deployment aborted the script — AFTER kubectl apply -k had already rolled the
+# release out — so every verified deploy reported failure on a successful apply,
+# and the digest check below never ran against the workers at all.
+# tests/regression/test_release_deployment_names.py cross-checks this list
+# against k8s/base, so a rename cannot silently reintroduce the drift.
+RELEASE_DEPLOYMENTS=(
+  testlookup-backend
+  testlookup-frontend
+  testlookup-mcp
+  testlookup-worker-critical
+  testlookup-worker-ingestion
+  testlookup-worker-ai
+  testlookup-worker-default
+  testlookup-worker-children
+  testlookup-beat
+)
+
 if [[ -n "$RELEASE_MANIFEST" && $DRY_RUN -eq 0 ]]; then
-  for deployment in testlookup-backend testlookup-frontend testlookup-mcp testlookup-celery-worker testlookup-celery-beat testlookup-celery-worker-low testlookup-celery-worker-high testlookup-celery-worker-child; do
+  for deployment in "${RELEASE_DEPLOYMENTS[@]}"; do
     kubectl -n "$NAMESPACE" rollout status "deployment/$deployment" --timeout=300s
     image="$(kubectl -n "$NAMESPACE" get deployment "$deployment" -o jsonpath='{.spec.template.spec.containers[0].image}')"
     case "$deployment" in
