@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-09-10 — the live-event audit trail could lose a whole outage without a word
+
+`POST /ws/events` keeps a sanitized copy of every live event in Mongo, as the
+operational audit trail. The write is deliberately non-fatal: the event still
+goes to the stream, so the run, the dashboard and the analysis carry on. But the
+failure branch was `except Exception: pass`. A Mongo outage erased the audit
+trail for every live event in the window, and nothing — no log line, no counter
+— recorded that it had happened.
+
+It stays non-fatal, and now leaves a trace: every failed copy increments
+`testlookup_live_event_archive_failures_total` and writes a warning naming the
+run and event type, and `TestLookupLiveEventArchiveFailing` fires when more than
+ten fail in fifteen minutes. Tests drive the real handler with Mongo raising and
+check all three properties separately — counted, logged, and still published —
+because a fix that counted the failure but let it block ingest would trade a
+silent gap for an outage.
+
 ## 2026-09-10 — keyword search ignored its own indexes, and the finding named the wrong cause
 
 The re-audit reported that global search "casts `tags` JSON->text, defeating the

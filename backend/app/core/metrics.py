@@ -88,6 +88,16 @@ pipeline_execution_context_persist_failures_total = Counter(
     "Pipeline runs whose frozen execution-context snapshot could not be persisted before graph execution",
 )
 
+# Re-audit M10. POST /ws/events keeps a sanitized copy of every live event in
+# Mongo for the operational audit trail. That write is deliberately non-fatal
+# -- the event still reaches the stream -- but it was ``except Exception:
+# pass``: no log, no count. A Mongo outage left a hole in the audit trail
+# covering every live event in the window, and nothing recorded that it had.
+live_event_archive_failures_total = Counter(
+    "testlookup_live_event_archive_failures_total",
+    "Live events whose audit copy could not be written to Mongo (the event itself was still published)",
+)
+
 # ── Pipeline Stages ───────────────────────────────────────────────────────────
 
 pipeline_stage_duration_seconds = Histogram(

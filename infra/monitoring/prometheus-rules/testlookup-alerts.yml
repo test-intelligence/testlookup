@@ -97,6 +97,19 @@ groups:
           summary: "Post-ingestion step {{ $labels.step }} is failing repeatedly"
           description: "The {{ $labels.step }} finalize step failed more than 3 times in 30 minutes. Runs still ingest, but whatever that step maintains has stopped updating."
 
+      # The live-event audit copy keeps failing (re-audit M10). Ingest is
+      # unaffected by design, which is exactly why nothing else would notice:
+      # the operational audit trail has a hole covering the whole window.
+      - alert: TestLookupLiveEventArchiveFailing
+        expr: |
+          sum(increase(testlookup_live_event_archive_failures_total[15m])) > 10
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Live events are not being written to the audit trail"
+          description: "More than 10 live events in 15 minutes could not be archived to Mongo. Runs still ingest, but the operational audit trail has a gap for that window."
+
   # ── P5-7: Infrastructure alerts ────────────────────────────────────────────
   - name: testlookup.infrastructure
     interval: 30s

@@ -664,8 +664,21 @@ async def ingest_live_event(
                 LIVE_SANITIZATION_VERSION_FIELD: LIVE_SANITIZATION_VERSION,
             }
         )
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 -- the audit copy must not block ingest
+        # Non-fatal on purpose: the event is still published below, so the
+        # run, the dashboard and the analysis are unaffected. What must not
+        # happen is the gap going unrecorded (re-audit M10) -- this used to be
+        # ``except Exception: pass``, so a Mongo outage erased the audit trail
+        # for every live event in the window and left no trace that it had.
+        from app.core.metrics import live_event_archive_failures_total
+
+        live_event_archive_failures_total.inc()
+        logger.warning(
+            "live_event_archive_failed run_id=%s event_type=%s error=%r",
+            run_id,
+            event_type,
+            exc,
+        )
 
     # ── Count the result where it arrives (re-audit H6) ─────────────────────
     #
