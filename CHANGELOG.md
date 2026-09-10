@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-10 — a Postgres index test that CI never ran
+
+Batch 2 added `test_search_tags_index_postgres.py` to prove that migration
+0166's trigram index can serve keyword search on tags. CI's Postgres job names
+its test files one by one, and this one was never named, so it never ran. The
+repo's existing guard for exactly this went red on the branch. The test is now
+listed. The guard also now fails if a listed file outside `tests/integration`
+would be deselected by the job's `-m integration` filter, since only that
+directory is marked automatically.
+
 ## 2026-09-10 — one uploaded report could carry a million results
 
 `POST /api/v1/ingest` caps a JSON batch at 50,000 results in its schema.
