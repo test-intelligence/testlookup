@@ -306,7 +306,7 @@ async def preview_criteria_deletion(
     truncated = len(run_ids) > deletion_criteria.MAX_CANDIDATES
     run_ids = run_ids[: deletion_criteria.MAX_CANDIDATES]
 
-    mongo = await get_mongo_db()
+    mongo = get_mongo_db()
     blocked: list[dict] = []
     deletable: list[uuid.UUID] = []
     refused_prefixes: list[str] = []

@@ -150,6 +150,36 @@ first cut too, and it did not stop two of these fixes from being wrong — a tes
 can only pin the behaviour you thought you were writing. What caught them was a
 separate QA pass and a separate review pass, each reading the diff without
 having written it, and both landed on the same two.
+## 2026-09-09 — DELETE /runs returned a bare 500 because a sync helper was awaited
+
+`DELETE /api/v1/runs/{run_id}` 500'd with **no traceback in the structured
+logs**, which is why it survived: the endpoint looked broken for no
+discoverable reason. Walking the handler's steps in-process against the live
+database found it:
+
+```
+TypeError: object AsyncIOMotorDatabase can't be used in 'await' expression
+```
+
+`db.mongo.get_mongo_db()` is **synchronous**. Motor builds its client and
+database handles eagerly; only the QUERIES are awaitable. `await
+get_mongo_db()` therefore awaits a plain object and raises.
+
+**Four call sites had it**, not one — `routers/runs.py`, `routers/retention.py`
+and two in `worker/tasks.py`. Three were on paths a normal test run never
+reaches (the retention purge and the worker deletion task), so nothing caught
+them. 36 other call sites had it right.
+
+The confusing part, and why a regex would be the wrong guard: `await
+get_mongo_db()[coll].find_one(...)` **is** correct — there the `await` binds to
+`find_one`, not to the helper. The new regression test uses the AST so it can
+tell the two apart, and asserts both directions: a bare `await get_mongo_db()`
+is flagged, an awaited query is not. Mutation-verified.
+
+**What the 500 was hiding.** With the TypeError gone, the endpoint reaches its
+citation check and answers properly — for the run that prompted this, `409:
+linked to 1 release(s) — unlink the run first`. The refusal was correct all
+along; the crash was masking an actionable message with an opaque one.
 
 
 ## 2026-09-09 — exploratory QA on the Activity tab: six real defects, five of them silent
