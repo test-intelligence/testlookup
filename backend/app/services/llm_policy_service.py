@@ -12,7 +12,7 @@ import ipaddress
 import logging
 import socket
 from dataclasses import dataclass
-from functools import lru_cache
+from time import monotonic
 from typing import Any
 from urllib.parse import urlparse
 
@@ -78,7 +78,27 @@ def provider_profile(provider: str) -> ProviderProfile:
         raise LLMPolicyViolation(f"Unknown LLM provider: '{normalized}'") from exc
 
 
-@lru_cache(maxsize=256)
+#: Residency answers, with the clock that expires them.
+#: ``{hostname: (answer, expires_at_monotonic)}``
+_RESIDENCY_CACHE: dict[str, tuple[bool, float]] = {}
+
+#: A confirmed-local host is stable — the check is on the invocation path and
+#: re-resolving per call would put a blocking getaddrinfo in front of every
+#: prompt.
+_RESIDENCY_TTL_LOCAL_SECONDS = 300.0
+
+#: A negative is NOT stable. It is returned both for "resolved to a public
+#: address" and for "could not resolve at all", and the second is transient: a
+#: cache that never expired meant one resolver blip disabled every LLM call on
+#: that worker until it was restarted. Re-ask soon.
+_RESIDENCY_TTL_DENIED_SECONDS = 30.0
+
+
+def _residency_cache_clear() -> None:
+    """Drop every memoised residency answer (tests, and config reloads)."""
+    _RESIDENCY_CACHE.clear()
+
+
 def _resolves_only_to_local_addresses(hostname: str) -> bool:
     """True when every address ``hostname`` resolves to is non-routable.
 
@@ -93,6 +113,23 @@ def _resolves_only_to_local_addresses(hostname: str) -> bool:
     resolves to even one routable address is not local — under an offline
     ceiling "we could not prove this stays on-box" must deny, not allow.
     """
+    key = hostname.strip().strip("[]")
+    cached = _RESIDENCY_CACHE.get(key)
+    now = monotonic()
+    if cached is not None and cached[1] > now:
+        return cached[0]
+
+    answer = _resolve_residency_uncached(key)
+
+    if len(_RESIDENCY_CACHE) > 256:
+        _RESIDENCY_CACHE.clear()
+    ttl = _RESIDENCY_TTL_LOCAL_SECONDS if answer else _RESIDENCY_TTL_DENIED_SECONDS
+    _RESIDENCY_CACHE[key] = (answer, now + ttl)
+    return answer
+
+
+def _resolve_residency_uncached(hostname: str) -> bool:
+    """The resolution itself. Fails closed; see the caller for why."""
     candidate = hostname.strip().strip("[]")
     if not candidate:
         return False

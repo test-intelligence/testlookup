@@ -19,10 +19,14 @@ offline, and fails CLOSED when the host cannot be resolved at all.
 """
 from __future__ import annotations
 
+import socket
+
 import pytest
 
+from app.services import llm_policy_service
 from app.services.llm_policy_service import (
     LLMPolicyViolation,
+    _residency_cache_clear,
     _resolves_only_to_local_addresses,
     enforce_provider_policy,
 )
@@ -31,9 +35,9 @@ from app.services.llm_policy_service import (
 @pytest.fixture(autouse=True)
 def _clear_resolver_cache():
     """The resolver memoizes; a stale entry would leak between cases."""
-    _resolves_only_to_local_addresses.cache_clear()
+    _residency_cache_clear()
     yield
-    _resolves_only_to_local_addresses.cache_clear()
+    _residency_cache_clear()
 
 
 # ── The exact bypass the audit reported ──────────────────────────────────────
@@ -116,7 +120,7 @@ def test_unresolvable_host_is_refused_not_allowed(monkeypatch):
     monkeypatch.setattr(
         "app.services.llm_policy_service.socket.getaddrinfo", _boom
     )
-    _resolves_only_to_local_addresses.cache_clear()
+    _residency_cache_clear()
 
     with pytest.raises(LLMPolicyViolation):
         enforce_provider_policy(
@@ -137,7 +141,7 @@ def test_split_horizon_host_with_one_public_address_is_refused(monkeypatch):
     monkeypatch.setattr(
         "app.services.llm_policy_service.socket.getaddrinfo", _mixed
     )
-    _resolves_only_to_local_addresses.cache_clear()
+    _residency_cache_clear()
 
     with pytest.raises(LLMPolicyViolation):
         enforce_provider_policy(
@@ -157,7 +161,7 @@ def test_ipv4_mapped_ipv6_public_address_is_refused(monkeypatch):
     monkeypatch.setattr(
         "app.services.llm_policy_service.socket.getaddrinfo", _mapped
     )
-    _resolves_only_to_local_addresses.cache_clear()
+    _residency_cache_clear()
 
     with pytest.raises(LLMPolicyViolation):
         enforce_provider_policy(
@@ -171,7 +175,7 @@ def test_empty_resolution_is_refused(monkeypatch):
         "app.services.llm_policy_service.socket.getaddrinfo",
         lambda *a, **k: [],
     )
-    _resolves_only_to_local_addresses.cache_clear()
+    _residency_cache_clear()
 
     with pytest.raises(LLMPolicyViolation):
         enforce_provider_policy(
@@ -220,7 +224,7 @@ def test_an_allowlisted_public_origin_is_still_refused_offline(monkeypatch):
     monkeypatch.setattr(
         settings, "AI_LLM_ALLOWED_BASE_URLS", "https://attacker.example"
     )
-    _resolves_only_to_local_addresses.cache_clear()
+    _residency_cache_clear()
 
     with pytest.raises(LLMPolicyViolation) as exc:
         enforce_provider_policy(
@@ -236,8 +240,125 @@ def test_allowlist_denial_reports_before_resolution(monkeypatch):
     monkeypatch.setattr(
         settings, "AI_LLM_ALLOWED_BASE_URLS", "http://localhost:11434"
     )
-    _resolves_only_to_local_addresses.cache_clear()
+    _residency_cache_clear()
 
     with pytest.raises(LLMPolicyViolation) as exc:
         enforce_provider_policy("ollama", offline=True, base_url="http://other:11434")
     assert "not present in AI_LLM_ALLOWED_BASE_URLS" in str(exc.value)
+
+
+# ── The cache must forget a failure ──────────────────────────────────────
+#
+# The first cut memoised this with @lru_cache, which never expires. A negative
+# is returned both for "resolved to a public address" and for "could not
+# resolve at all" — and the second is transient. One resolver blip therefore
+# pinned "not local" for the life of the worker process, and every later LLM
+# call was refused until someone restarted it. Under AI_OFFLINE_MODE that reads
+# as the offline ceiling working, which is why it would not have been reported
+# as a bug.
+
+
+def test_a_failed_resolution_is_retried_once_its_ttl_expires(monkeypatch):
+    calls = []
+
+    def _flaky(host, *args, **kwargs):
+        calls.append(host)
+        if len(calls) == 1:
+            raise socket.gaierror("temporary failure in name resolution")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+
+    monkeypatch.setattr(llm_policy_service.socket, "getaddrinfo", _flaky)
+    _residency_cache_clear()
+
+    assert _resolves_only_to_local_addresses("blip.internal") is False
+    # Still cached — the TTL exists to keep getaddrinfo off the hot path.
+    assert _resolves_only_to_local_addresses("blip.internal") is False
+    assert len(calls) == 1
+
+    # Advance by a fixed, realistic interval rather than by the constant
+    # itself: reading the TTL here would let ANY value pass, including the
+    # never-expiring one this test exists to rule out.
+    assert llm_policy_service._RESIDENCY_TTL_DENIED_SECONDS <= 120, (
+        "a DNS failure stays cached for more than two minutes, which is long "
+        "enough for a blip to look like a working offline ceiling"
+    )
+    base = llm_policy_service.monotonic()
+    monkeypatch.setattr(llm_policy_service, "monotonic", lambda: base + 120.0)
+
+    assert _resolves_only_to_local_addresses("blip.internal") is True, (
+        "a transient DNS failure is still pinned after its TTL — one blip "
+        "disables every LLM call on this worker until it restarts"
+    )
+
+
+def test_a_negative_expires_sooner_than_a_positive():
+    """The asymmetry is the point, so state it as a fact and not a comment."""
+    assert (
+        llm_policy_service._RESIDENCY_TTL_DENIED_SECONDS
+        < llm_policy_service._RESIDENCY_TTL_LOCAL_SECONDS
+    )
+
+
+def test_a_confirmed_local_host_is_not_re_resolved(monkeypatch):
+    """The cache still has to do its job — this runs before every invocation."""
+    calls = []
+
+    def _counting(host, *args, **kwargs):
+        calls.append(host)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))]
+
+    monkeypatch.setattr(llm_policy_service.socket, "getaddrinfo", _counting)
+    _residency_cache_clear()
+
+    for _ in range(5):
+        assert _resolves_only_to_local_addresses("ollama.svc.cluster.local") is True
+    assert len(calls) == 1
+
+
+def test_the_cache_cannot_grow_without_bound(monkeypatch):
+    """A caller-supplied hostname must not be an unbounded memory sink."""
+    monkeypatch.setattr(
+        llm_policy_service.socket,
+        "getaddrinfo",
+        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))],
+    )
+    _residency_cache_clear()
+
+    for i in range(400):
+        _resolves_only_to_local_addresses("host-%d.internal" % i)
+
+    assert len(llm_policy_service._RESIDENCY_CACHE) <= 257
+
+
+# ── The two provider lists must not drift ────────────────────────────────
+#
+# AIConfigUpdate.llm_provider constrains the value with a literal regex, while
+# the policy that decides what a provider MEANS keeps its own set. Nothing
+# links them, so adding a provider in one place and not the other either
+# rejects a supported provider at the API boundary or admits one the policy has
+# never heard of. Derive the comparison from both sources rather than typing a
+# third list here.
+
+
+def test_the_api_regex_admits_exactly_the_providers_the_policy_knows():
+    import re
+
+    from app.models.schemas import AIConfigUpdate
+    from app.services.llm_policy_service import KNOWN_PROVIDERS
+
+    pattern = AIConfigUpdate.model_fields["llm_provider"].metadata[0].pattern
+    compiled = re.compile(pattern)
+
+    accepted = {p for p in KNOWN_PROVIDERS if compiled.fullmatch(p)}
+    assert accepted == set(KNOWN_PROVIDERS), (
+        "the API rejects providers the policy supports: "
+        + str(sorted(set(KNOWN_PROVIDERS) - accepted))
+    )
+
+    # And nothing outside the policy's vocabulary gets through.
+    inner = pattern.strip("^$()")
+    assert set(inner.split("|")) == set(KNOWN_PROVIDERS), (
+        "the API accepts a provider the policy has no profile for, so its "
+        "residency and allowlist rules would never run on it: "
+        + str(sorted(set(inner.split("|")) - set(KNOWN_PROVIDERS)))
+    )

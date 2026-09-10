@@ -263,7 +263,7 @@ def test_persist_defaults_to_pending_review_when_no_status_supplied():
     from app.agents.defect_commander import DefectCommander
 
     source = inspect.getsource(DefectCommander._persist_defect)
-    assert "approval_status or ActionStatus.PENDING_REVIEW" in source, (
+    assert "approval_status or ActionStatus.PENDING_REVIEW.value" in source, (
         "the Defect model defaults approval_status to 'approved', so the agent "
         "must supply PENDING_REVIEW explicitly rather than inherit that default"
     )

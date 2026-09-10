@@ -386,7 +386,7 @@ class DefectCommander(BaseAgent):
                 resolution_status="OPEN",
                 is_duplicate=duplicate_detected,
                 duplicate_of=_uuid.UUID(duplicate_id) if duplicate_id else None,
-                approval_status=approval_status or ActionStatus.PENDING_REVIEW,
+                approval_status=approval_status or ActionStatus.PENDING_REVIEW.value,
                 policy_evaluation=policy_evaluation,
             )
             db.add(defect)

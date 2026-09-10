@@ -19,6 +19,26 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 
+def _is_placeholder_secret(value: str) -> bool:
+    """True when a secret is unset or still one of the shipped placeholders.
+
+    This compared against the field DEFAULT exactly, which missed every
+    placeholder an operator is actually likely to be running. ``.env.example``
+    ships ``JWT_SECRET_KEY=change-me-generate-with-openssl-rand-hex-32``,
+    ``APP_SECRET_KEY=change-me-in-production-use-openssl-rand-hex-32`` and
+    ``WEBHOOK_SECRET=change-me-generate-with-openssl-rand-hex-32`` — none equal
+    to its default, so copying the example file and deploying it booted
+    production with three published secrets and no complaint.
+
+    Matching the ``change-me`` prefix covers the defaults, the example file and
+    any future placeholder that follows the same convention. It cannot produce
+    a false positive on a generated secret: ``openssl rand -hex 32`` is
+    hexadecimal, so it can never begin with those letters.
+    """
+    text = str(value or "").strip()
+    return not text or text.lower().startswith("change-me")
+
+
 class Settings(BaseSettings):
     """Application settings — loaded from environment variables."""
 
@@ -584,7 +604,7 @@ class Settings(BaseSettings):
     # a project-scoped key derives the project server-side. Defaults False so
     # existing direct integrations keep working; set True to close the shared
     # secret path outright (re-audit H1).
-    LIVE_EVENTS_REQUIRE_PROJECT_KEY: bool = False
+    LIVE_EVENTS_REQUIRE_PROJECT_KEY: bool = True
 
     # ── Observability ─────────────────────────────────────────
     # OpenTelemetry
@@ -674,11 +694,11 @@ class Settings(BaseSettings):
         """
         warnings: list[str] = []
         if self.APP_ENV in ("production", "staging"):
-            if self.JWT_SECRET_KEY in ("change-me-jwt-secret", ""):
+            if _is_placeholder_secret(self.JWT_SECRET_KEY):
                 warnings.append("CRITICAL: JWT_SECRET_KEY is set to the default — change it immediately")
-            if self.APP_SECRET_KEY in ("change-me-in-production", ""):
+            if _is_placeholder_secret(self.APP_SECRET_KEY):
                 warnings.append("CRITICAL: APP_SECRET_KEY is set to the default — secrets will not be safely encrypted")
-            if self.WEBHOOK_SECRET in ("change-me-webhook-secret", ""):
+            if _is_placeholder_secret(self.WEBHOOK_SECRET):
                 # CRITICAL, not WARNING (re-audit H1). This secret is the only
                 # credential in front of POST /ws/events/{run_id}, which injects
                 # live test results into a caller-named project. Booting

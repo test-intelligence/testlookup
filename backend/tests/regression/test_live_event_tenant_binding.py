@@ -57,7 +57,9 @@ def wired(monkeypatch):
     remembered: dict[str, str] = {}
 
     async def _remember(run_id, project_id):
-        remembered.setdefault(run_id, project_id)
+        # Same contract as the real SET NX: the FIRST writer wins, and the
+        # effective owner is returned so a loser can be told immediately.
+        return remembered.setdefault(run_id, project_id)
 
     async def _resolve(run_id):
         return remembered.get(run_id)
@@ -68,10 +70,31 @@ def wired(monkeypatch):
     monkeypatch.setattr(
         "app.services.live_event_authz.resolve_run_project", _resolve
     )
+
+    key_cache: dict[str, str] = {}
+
+    async def _cached_project(api_key):
+        return key_cache.get(api_key)
+
+    async def _remember_key(api_key, project_id):
+        key_cache[api_key] = project_id
+
+    monkeypatch.setattr(
+        "app.services.live_event_authz.cached_streaming_project", _cached_project
+    )
+    monkeypatch.setattr(
+        "app.services.live_event_authz.remember_streaming_project", _remember_key
+    )
+    # The SHIPPED default is True (see
+    # test_the_shared_secret_is_refused_by_default). These cases opt back
+    # into the legacy path on purpose, to pin what it does when a
+    # deployment re-enables it.
     monkeypatch.setattr(settings, "LIVE_EVENTS_REQUIRE_PROJECT_KEY", False)
     monkeypatch.setattr(settings, "WEBHOOK_SECRET", "the-real-secret")
 
-    return SimpleNamespace(published=published, remembered=remembered)
+    return SimpleNamespace(
+        published=published, remembered=remembered, key_cache=key_cache
+    )
 
 
 def _key_ctx(project_id):
@@ -115,7 +138,7 @@ async def test_a_wrong_shared_secret_is_rejected(wired):
 
 
 @pytest.mark.asyncio
-async def test_the_legacy_shared_secret_still_works_by_default(wired):
+async def test_the_legacy_shared_secret_works_when_re_enabled(wired):
     result = await _call(x_webhook_secret="the-real-secret")
     assert result["accepted"] is True
     assert len(wired.published) == 1
@@ -237,4 +260,251 @@ def test_a_default_webhook_secret_refuses_to_boot_production(monkeypatch):
     assert any("WEBHOOK_SECRET" in item for item in critical), (
         "a default WEBHOOK_SECRET no longer blocks production startup, so a "
         "deployment can ship with the secret published in the source tree"
+    )
+
+
+# ── The default has to be the safe one ───────────────────────────────────
+#
+# The first cut of this fix shipped LIVE_EVENTS_REQUIRE_PROJECT_KEY=False, so
+# out of the box the endpoint still accepted a deployment-wide secret that
+# names no tenant, still read project_id from the body, and — because the
+# binding check is reached only on the API-key branch — still let that caller
+# write test_result and run_complete onto another project's run. The fix was
+# real but nothing was fixed by default.
+
+
+def test_the_shared_secret_is_refused_by_default():
+    """Read the field default, not the live value: the env can override it."""
+    from app.core.config import Settings
+
+    field = Settings.model_fields["LIVE_EVENTS_REQUIRE_PROJECT_KEY"]
+    assert field.default is True, (
+        "the shared webhook secret is accepted out of the box again — it "
+        "authenticates a caller but names no project, so any holder can "
+        "stream fabricated results into any tenant"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_shared_secret_call_is_refused_under_the_shipped_default(
+    wired, monkeypatch
+):
+    """The same thing, through the handler, with the default restored."""
+    from app.core.config import Settings
+
+    monkeypatch.setattr(
+        settings,
+        "LIVE_EVENTS_REQUIRE_PROJECT_KEY",
+        Settings.model_fields["LIVE_EVENTS_REQUIRE_PROJECT_KEY"].default,
+    )
+    with pytest.raises(HTTPException) as exc:
+        await _call(
+            x_webhook_secret="the-real-secret",
+            event={"type": "run_start", "project_id": PROJECT_B, "build_number": "1"},
+        )
+    assert exc.value.status_code == 403
+    assert wired.published == []
+
+
+# ── A caller-chosen run_id will collide ──────────────────────────────────
+#
+# validate_live_identifier accepts any printable string, so run_id is whatever
+# the producer picked. Two projects choosing "build-42" is an ordinary
+# collision, not an attack, and the binding cannot be allowed to turn it into a
+# silent 25-hour outage for whichever one arrived second.
+
+
+@pytest.mark.asyncio
+async def test_a_second_project_opening_the_same_run_id_is_told_immediately(
+    wired, monkeypatch
+):
+    monkeypatch.setattr(
+        "app.routers.live.get_streaming_api_key_context",
+        AsyncMock(return_value=_key_ctx(PROJECT_A)),
+    )
+    await _call(
+        x_api_key="ka",
+        event={"type": "run_start", "project_id": PROJECT_A, "build_number": "1"},
+    )
+
+    monkeypatch.setattr(
+        "app.routers.live.get_streaming_api_key_context",
+        AsyncMock(return_value=_key_ctx(PROJECT_B)),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await _call(
+            x_api_key="kb",
+            event={"type": "run_start", "project_id": PROJECT_B, "build_number": "1"},
+        )
+
+    assert exc.value.status_code == 409, (
+        "the losing run_start was accepted silently — every later event of "
+        "that run then 403s for 25 hours while the run shows as started and "
+        "permanently empty, with nothing to point at"
+    )
+    assert "already in use" in exc.value.detail
+    assert len(wired.published) == 1
+
+
+@pytest.mark.asyncio
+async def test_reopening_your_own_run_is_not_a_conflict(wired, monkeypatch):
+    """A retried run_start must stay idempotent."""
+    monkeypatch.setattr(
+        "app.routers.live.get_streaming_api_key_context",
+        AsyncMock(return_value=_key_ctx(PROJECT_A)),
+    )
+    start = {"type": "run_start", "project_id": PROJECT_A, "build_number": "1"}
+    await _call(x_api_key="ka", event=dict(start))
+    result = await _call(x_api_key="ka", event=dict(start))
+
+    assert result["accepted"] is True
+    assert len(wired.published) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_binding_that_cannot_be_written_refuses_the_run(wired, monkeypatch):
+    """Fail closed where it matters.
+
+    A swallowed write leaves the run unbound, which disables the cross-tenant
+    check for its entire life with nothing in the response to say so. A read
+    that fails still fails open — that is only "cannot verify".
+    """
+    from app.services.live_event_authz import RunProjectBindingUnavailable
+
+    async def _boom(_run_id, _project_id):
+        raise RunProjectBindingUnavailable("redis down")
+
+    monkeypatch.setattr("app.services.live_event_authz.remember_run_project", _boom)
+    monkeypatch.setattr(
+        "app.routers.live.get_streaming_api_key_context",
+        AsyncMock(return_value=_key_ctx(PROJECT_A)),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await _call(
+            x_api_key="ka",
+            event={"type": "run_start", "project_id": PROJECT_A, "build_number": "1"},
+        )
+    assert exc.value.status_code == 503
+    assert wired.published == []
+
+
+# ── The placeholder secrets this repo actually ships ─────────────────────
+
+
+@pytest.mark.parametrize(
+    "field, placeholder",
+    [
+        ("JWT_SECRET_KEY", "change-me-generate-with-openssl-rand-hex-32"),
+        ("APP_SECRET_KEY", "change-me-in-production-use-openssl-rand-hex-32"),
+        ("WEBHOOK_SECRET", "change-me-generate-with-openssl-rand-hex-32"),
+    ],
+)
+def test_env_example_placeholders_block_production(monkeypatch, field, placeholder):
+    """The check compared against the field DEFAULT, which none of these equal.
+
+    Every value here is copied verbatim from .env.example, so the most likely
+    way to reach production with a published secret was also the one way the
+    guard could not see.
+    """
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    monkeypatch.setattr(settings, "JWT_SECRET_KEY", "a-real-jwt-secret")
+    monkeypatch.setattr(settings, "APP_SECRET_KEY", "a-real-app-secret")
+    monkeypatch.setattr(settings, "WEBHOOK_SECRET", "a-real-webhook-secret")
+    monkeypatch.setattr(settings, "DEV_AUTO_LOGIN_ENABLED", False)
+    assert settings.critical_security_failures() == []
+
+    monkeypatch.setattr(settings, field, placeholder)
+    assert any(field in item for item in settings.critical_security_failures()), (
+        field + "=" + placeholder + " is straight out of .env.example and "
+        "still boots production"
+    )
+
+
+def test_a_generated_secret_is_never_mistaken_for_a_placeholder(monkeypatch):
+    """openssl rand -hex is hexadecimal, so it cannot start with 'change-me'."""
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    monkeypatch.setattr(settings, "DEV_AUTO_LOGIN_ENABLED", False)
+    for name in ("JWT_SECRET_KEY", "APP_SECRET_KEY", "WEBHOOK_SECRET"):
+        monkeypatch.setattr(settings, name, "c0ffee" * 10)
+    assert settings.critical_security_failures() == []
+
+
+# ── The credential check cannot run per event against Postgres ───────────
+#
+# get_streaming_api_key_context costs two SELECTs and a last_used_at UPDATE.
+# /stream/events/batch amortises that over a whole batch; this endpoint is one
+# event per call, and once a project-scoped key became the default credential
+# every live event would have paid it against three connections per worker.
+
+
+@pytest.mark.asyncio
+async def test_the_credential_is_verified_once_not_once_per_event(wired, monkeypatch):
+    checks = AsyncMock(return_value=_key_ctx(PROJECT_A))
+    monkeypatch.setattr("app.routers.live.get_streaming_api_key_context", checks)
+
+    await _call(
+        x_api_key="ka",
+        event={"type": "run_start", "project_id": PROJECT_A, "build_number": "1"},
+    )
+    for _ in range(5):
+        await _call(x_api_key="ka")
+
+    assert len(wired.published) == 6
+    assert checks.await_count == 1, (
+        "the full credential check ran " + str(checks.await_count) + " times for "
+        "6 events — two SELECTs and an UPDATE each, against PG_POOL_SIZE=2 "
+        "plus PG_MAX_OVERFLOW=1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_credential_still_gets_the_full_check(wired, monkeypatch):
+    """A miss must degrade to the real check, never to a bypass."""
+    checks = AsyncMock(return_value=_key_ctx(PROJECT_A))
+    monkeypatch.setattr("app.routers.live.get_streaming_api_key_context", checks)
+
+    await _call(x_api_key="key-one")
+    await _call(x_api_key="key-two")
+
+    assert checks.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_cache_that_cannot_answer_does_not_open_the_endpoint(
+    wired, monkeypatch
+):
+    """Redis down means slower, not unauthenticated."""
+
+    async def _broken(_api_key):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.live_event_authz.cached_streaming_project", _broken
+    )
+    rejects = AsyncMock(side_effect=HTTPException(401, detail="Invalid API key"))
+    monkeypatch.setattr("app.routers.live.get_streaming_api_key_context", rejects)
+
+    with pytest.raises(HTTPException) as exc:
+        await _call(x_api_key="revoked")
+    assert exc.value.status_code == 401
+    assert wired.published == []
+
+
+def test_the_cache_never_stores_the_credential_itself():
+    from app.services.live_event_authz import streaming_key_cache_key
+
+    secret = "qai_super_secret_value"
+    key = streaming_key_cache_key(secret)
+    assert secret not in key, "the raw API key is used as a Redis key name"
+    assert key.startswith("testlookup:live:key-project:")
+
+
+def test_the_cached_credential_expires_quickly():
+    """It is also the revocation lag, so it has to stay short."""
+    from app.services.live_event_authz import STREAMING_KEY_TTL_SECONDS
+
+    assert 0 < STREAMING_KEY_TTL_SECONDS <= 60, (
+        "a cache hit skips the active flag, the expiry, the scope and the "
+        "owner's account state, so this is how long a revoked key keeps working"
     )

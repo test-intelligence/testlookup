@@ -535,7 +535,10 @@ async def ingest_live_event(
     """
     from app.db.mongo import Collections, get_mongo_db
     from app.services.live_event_authz import (
+        RunProjectBindingUnavailable,
+        cached_streaming_project,
         remember_run_project,
+        remember_streaming_project,
         resolve_run_project,
     )
     from app.services.ingestion_sanitization import (
@@ -556,8 +559,19 @@ async def ingest_live_event(
     if x_api_key:
         # Project-scoped, stream:write, hashed at rest. The project comes from
         # the key, so a caller cannot address another tenant at all.
-        stream_ctx = await get_streaming_api_key_context(db=db, x_api_key=x_api_key)
-        bound_project_id = str(stream_ctx.project_id)
+        #
+        # This endpoint is one event per call, so the full check (two SELECTs
+        # plus a last_used_at UPDATE) cannot run per event against a pool of
+        # three connections per worker. Verify properly on a miss, then cache
+        # the ANSWER for a few seconds; a miss degrades to the full check, so
+        # Redis being unavailable slows this path down, it does not open it.
+        bound_project_id = await cached_streaming_project(x_api_key)
+        if bound_project_id is None:
+            stream_ctx = await get_streaming_api_key_context(
+                db=db, x_api_key=x_api_key
+            )
+            bound_project_id = str(stream_ctx.project_id)
+            await remember_streaming_project(x_api_key, bound_project_id)
     elif x_webhook_secret:
         if settings.LIVE_EVENTS_REQUIRE_PROJECT_KEY:
             raise HTTPException(
@@ -595,7 +609,29 @@ async def ingest_live_event(
             # Server-derived wins: a forged project_id in the body is ignored
             # rather than rejected, so a mis-set client cannot write elsewhere.
             event = {**event, "project_id": bound_project_id}
-        await remember_run_project(run_id, str(event.get("project_id")))
+        opening_project = str(event.get("project_id"))
+        try:
+            owner = await remember_run_project(run_id, opening_project)
+        except RunProjectBindingUnavailable as exc:
+            # Fail closed: an unbound run has no cross-tenant check for its
+            # whole life. 503 is retryable and tells the producer why.
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Cannot establish run ownership right now — retry",
+            ) from exc
+        if owner is not None and owner != opening_project:
+            # run_id is caller-chosen, so two projects picking "build-42" is an
+            # ordinary collision. Say so at the only moment the producer can
+            # act on it: silently losing the bind used to leave every
+            # subsequent event of this run 403-ing for 25 hours while the run
+            # showed as started and permanently empty.
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail=(
+                    f"run_id '{run_id}' is already in use by another project. "
+                    "Use a run_id unique to this project."
+                ),
+            )
     elif bound_project_id is not None:
         owner = await resolve_run_project(run_id)
         if owner is not None and owner != bound_project_id:
@@ -611,8 +647,8 @@ async def ingest_live_event(
     # Raw evidence belongs in the project-scoped artifact store, not this
     # shared live-events collection.
     try:
-        db = get_mongo_db()
-        await db[Collections.LIVE_EXECUTION_EVENTS].insert_one(
+        mongo_db = get_mongo_db()
+        await mongo_db[Collections.LIVE_EXECUTION_EVENTS].insert_one(
             {
                 **safe_event,
                 LIVE_SANITIZATION_VERSION_FIELD: LIVE_SANITIZATION_VERSION,
