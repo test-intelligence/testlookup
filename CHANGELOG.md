@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-10 — Agentic architecture and requirements analysis (handover document)
+
+Added `architecture/AGENTIC_OPENAPI_ARCHITECTURE.md`: a requirements-traced
+target design for the agentic layer against `main` @ `bb4d848b`, covering
+per-agent OpenAPI exposure, user-defined workflows, per-agent configuration,
+SLM/LLM tiering, a generic reviewer agent, a run state machine with leases and
+fencing tokens, the human-review gate, evals as the control loop, and a
+nine-epic / 50-story backlog. Every "exists" claim cites a file and line.
+
+Revision 2 follows a four-reviewer cross-agent review (fact-check, reliability,
+API/security, evaluation methodology); the ~150 raw findings are kept in
+`architecture/AGENTIC_OPENAPI_ARCHITECTURE.review-log.md`. Consequential
+corrections from that review: intra-stage heartbeats and fencing on every
+stage write (double execution was still reachable), dedup-lock TTL extension
+instead of release-and-reacquire, `passed` defined for no-review workflows,
+body-scoped authorization for the new routes, and the finding that the
+existing CI prompt-attestation gate scores recorded outputs and never runs the
+candidate model. No code changes in this entry.
+
 ## 2026-09-09 — DELETE /runs returned a bare 500 because a sync helper was awaited
 
 `DELETE /api/v1/runs/{run_id}` 500'd with **no traceback in the structured
