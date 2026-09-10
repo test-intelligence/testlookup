@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-09-10 — log redaction skipped the one field that holds the message
+
+The structured-logging redaction processor scrubbed every string value in a
+record **except** `event` — the field that holds the message. Every
+`logger.warning("could not authenticate with %s", token)` renders its arguments
+there, and so does every f-string message. So the field guaranteed to carry
+free-form, unreviewed text was the field guaranteed not to be cleaned, while the
+structured key/value pairs a developer had chosen deliberately were.
+
+`event` is now redacted like everything else. What stays exempt is only the
+record's own structure — timestamp, level, logger, service, version, env, trace
+and span ids — which the logging stack sets and a caller cannot put text into.
+Redacting those would corrupt the record rather than protect it: an `@` in a
+logger name reads as an email address. The exemptions are a named set now, and a
+test pins both that `event` is not in it and that nothing a caller controls ever
+joins it.
+
 ## 2026-09-10 — offline mode did not cover the three channels that talk most
 
 `THREAT_MODEL.md` promises that with `AI_OFFLINE_MODE=true` an air-gapped

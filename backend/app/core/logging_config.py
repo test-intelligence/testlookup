@@ -35,14 +35,42 @@ def _add_otel_trace_context(
     return event_dict
 
 
+#: Fields owned by the log record's own structure rather than by its caller.
+#: Everything else is redacted, ``event`` included -- see _privacy_redaction.
+_STRUCTURAL_LOG_FIELDS: frozenset[str] = frozenset({
+    "timestamp",
+    "level",
+    "logger",
+    "service",
+    "version",
+    "env",
+    "trace_id",
+    "span_id",
+})
+
+
 def _privacy_redaction(
     logger: WrappedLogger, method: str, event_dict: EventDict
 ) -> EventDict:
-    """Redact PII and secrets from all string values in log records (PR-5)."""
+    """Redact PII and secrets from string values in log records (PR-5).
+
+    ``event`` used to be exempt, which put the exemption on the one field that
+    carries free-form text (re-audit H3). Every ``logger.warning("... %s",
+    value)`` renders its arguments into ``event``, as does every f-string
+    message, so the field most likely to contain a token, a connection string
+    or an address was the field guaranteed not to be scrubbed. Structured
+    key/value pairs -- which were being redacted -- are the ones a developer
+    chose deliberately.
+
+    What stays exempt is only the record's own structure. None of those fields
+    can hold caller data: they are set by this module or by structlog itself,
+    and redacting them would corrupt the record (an ``@`` in a logger name
+    reading as an email address, say).
+    """
     from app.services.redaction_service import redact_text  # noqa: PLC0415
 
     for key, val in event_dict.items():
-        if isinstance(val, str) and key not in ("event", "timestamp", "level", "logger", "service", "version", "env", "trace_id", "span_id"):
+        if isinstance(val, str) and key not in _STRUCTURAL_LOG_FIELDS:
             event_dict[key] = redact_text(val)
     return event_dict
 
