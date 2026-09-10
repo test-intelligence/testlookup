@@ -993,6 +993,138 @@ def _audit_row_names(nodes: list[ast.AST]) -> set[str]:
     return names
 
 
+
+# ── backend.activity-coverage (epic ACT) ─────────────────────────────────────
+
+#: Routers that are not project-scoped, so the project activity ledger has
+#: nowhere to file their events. Instance-wide settings, auth, SSO/SCIM and the
+#: health surface are audited by ``settings_audit_log`` / ``identity_events``
+#: instead, which is where they belong: those tables have no project column
+#: because the events genuinely have no project.
+_ACTIVITY_UNSCOPED_ROUTERS = frozenset({
+    "auth.py", "sso.py", "scim.py", "mfa.py", "users.py", "health.py",
+    "app_settings.py", "feature_flags.py", "seed.py", "debug.py",
+    "identity_events.py", "audit_dashboard.py", "observability.py",
+    "performance.py", "metrics.py", "sdk.py",
+    "admin_storage.py", "admin_maintenance.py", "onboarding.py",
+    "shared_reports.py", "webhooks.py", "stream.py", "live.py",
+    "activity.py",
+})
+
+#: An explicit, reviewed opt-out, written on or just above the decorator:
+#:     # activity: none - <reason>
+#: For endpoints that mutate nothing a reader would call an "activity":
+#: previews, dry-runs, re-tries of an existing record.
+_ACTIVITY_OPT_OUT = re.compile(r"#\s*activity:\s*none", re.IGNORECASE)
+
+_ACTIVITY_MUTATION = re.compile(r"@router\.(post|put|patch|delete)\(")
+
+#: What counts as recording. Both spellings are in use: routers import it as
+#: ``record_activity`` to avoid colliding with local ``record`` names.
+_ACTIVITY_RECORDS = re.compile(
+    r"\brecord_activity\s*\(|\bactivity\.record\s*\(|"
+    r"\b_record_\w*activity\s*\(|from app\.services\.activity"
+)
+
+
+def _activity_module_records(path: Path, cache: dict) -> bool:
+    """Does this module - or a service it imports - record activity?
+
+    Follows ONE level of service import, which is the shape the real call sites
+    take: a router delegates to ``services/foo_service.py`` and the service
+    does the recording. Deeper chains are a deliberate blind spot, stated here
+    rather than discovered later: resolving them properly needs a call graph,
+    and the behavioural tests in ``tests/test_activity_producers.py`` are what
+    actually prove a row lands.
+    """
+    key = str(path)
+    if key in cache:
+        return cache[key]
+    cache[key] = False  # break import cycles
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    if _ACTIVITY_RECORDS.search(text):
+        cache[key] = True
+        return True
+
+    services_dir = REPO_ROOT / "backend" / "app" / "services"
+    modules: set = set()
+
+    # ``from app.services.foo_service import bar`` / ``import app.services.foo``
+    dotted = r"from app\.services\.([\w.]+) import|import app\.services\.([\w.]+)"
+    for match in re.finditer(dotted, text):
+        modules.add((match.group(1) or match.group(2)).replace(".", "/"))
+
+    # ``from app.services import foo_service as svc, bar_service``
+    # Missing this second form reported flaky_quarantine.py as uncovered while
+    # its service records on its behalf. A false entry in the baseline is worse
+    # than no guard at all: it teaches the reader to ignore the list.
+    grouped = r"from app\.services import ([^\n(]+|\([^)]*\))"
+    for match in re.finditer(grouped, text):
+        raw = match.group(1).replace("(", "").replace(")", "")
+        for part in raw.split(","):
+            name = part.strip().split(" as ")[0].strip()
+            if name and name.isidentifier():
+                modules.add(name)
+
+    for mod in modules:
+        for candidate in (services_dir / (mod + ".py"), services_dir / mod / "__init__.py"):
+            if not candidate.exists():
+                continue
+            body = candidate.read_text(encoding="utf-8", errors="ignore")
+            if _ACTIVITY_RECORDS.search(body):
+                cache[key] = True
+                return True
+    return False
+
+
+def _backend_activity_coverage() -> list[Violation]:
+    """Every project-scoped mutation should land a row in the activity ledger.
+
+    The ledger is only as good as its producers, and the failure mode is
+    SILENT: a router that records nothing looks completely normal, and the gap
+    surfaces only as a feed that mysteriously omits the thing a user just did.
+    That is exactly how the old audit dashboard decayed - 21 of 26 surveyed
+    routers wrote no audit call at all, and nothing ever failed to say so.
+
+    A RATCHET, not a wall. The existing gap is baselined, so only NEW
+    uncovered mutations break CI; clearing the baseline is the remaining
+    producer work (epic ACT, stories ACT-5/6/11/12/13).
+    """
+    routers = REPO_ROOT / "backend" / "app" / "routers"
+    violations: list[Violation] = []
+    cache: dict = {}
+
+    for path in sorted(iter_files(routers, (".py",))):
+        if path.name.startswith("__") or path.name in _ACTIVITY_UNSCOPED_ROUTERS:
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        # A router that records anywhere is treated as covered. Per-endpoint
+        # precision is the behavioural tests' job, not a regex's.
+        if _activity_module_records(path, cache):
+            continue
+
+        for idx, line in enumerate(lines):
+            if not _ACTIVITY_MUTATION.search(line):
+                continue
+            window = lines[max(0, idx - 3):idx + 1]
+            if any(_ACTIVITY_OPT_OUT.search(w) for w in window):
+                continue
+            violations.append(Violation(
+                path, idx + 1,
+                "project-scoped mutation records no activity ledger event - "
+                "the feed will silently omit whatever this endpoint changes",
+            ))
+    return violations
+
+
 def _backend_audit_write_discipline(root: Optional[Path] = None) -> list[Violation]:
     """Audit tables are append-only — enforce it, don't just document it.
 
@@ -3308,6 +3440,22 @@ GUARDS: list[Guard] = [
             "suppressing the retry is deliberate (the side effect is "
             "irreversible, e.g. mail already sent), mark the call "
             "``at-most-once:`` in a comment and say why."
+        ),
+    ),
+    Guard(
+        name="backend.activity-coverage",
+        description=(
+            "Every project-scoped mutation lands a row in the project "
+            "activity ledger (epic ACT) - a router that records nothing "
+            "looks normal while the feed silently omits what it changed."
+        ),
+        check=_backend_activity_coverage,
+        fix_hint=(
+            "Call services.activity.service.record(...) from the handler "
+            "(or from the service it delegates to) with a registered "
+            "event_type. If the endpoint genuinely is not an activity - a "
+            "preview, a dry-run - mark it with an `activity: none` comment "
+            "on the line above the decorator, with a reason."
         ),
     ),
     Guard(

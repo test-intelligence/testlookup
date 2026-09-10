@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-09-09 — the activity ledger now has a guard that keeps it honest
+
+`backend.activity-coverage` fails CI when a project-scoped mutation records
+no activity-ledger event. This was ACT-17's headline guard and it did not
+land with the epic; only `backend.audit-write-discipline` was extended.
+
+**Why it matters more than it sounds.** The ledger is only as good as its
+producers, and a missing producer is *silent*: the router looks completely
+normal and the `/activity` feed simply never mentions what it changed.
+Nothing fails, nothing warns. That is precisely how `/settings/audit`
+decayed to 21 of 26 surveyed routers writing no audit call at all.
+
+**The true denominator, measured rather than guessed:** 160 uncovered
+mutations across 44 routers; 5 routers (`api_keys`, `flaky_quarantine`,
+`ingest`, `projects`, `release_attribution_rules`) are covered. The epic's
+success metric said this guard would produce that number, and it has.
+
+A **ratchet**, not a wall — the 160 are baselined, so only NEW mutations
+fail. Clearing the baseline is the remaining producer work (ACT-5/6/11/12/13).
+
+**Two design points worth knowing.** The guard follows one level of service
+import, because that is the shape the real call sites take: a router
+delegates and the service records. Deeper chains are a deliberate blind
+spot, stated in the docstring rather than discovered later — the behavioural
+tests in `tests/test_activity_producers.py` are what actually prove a row
+lands. And a genuine non-activity (a preview, a dry-run) opts out with an
+`activity: none` comment plus a reason, so the exemption is reviewable.
+
+Caught while building it: the first version handled only
+`from app.services.foo import bar` and missed
+`from app.services import foo as svc`, which reported `flaky_quarantine.py`
+as uncovered while its service records on its behalf. A false entry in a
+baseline is worse than no guard — it teaches the reader to ignore the list.
+Both import forms now have a self-test.
+
+8 new self-tests (CI runs the whole `scripts/test_quality_gate.py`; a guard
+without one fails there). Mutation-verified against the real baseline:
+adding an uncovered `@router.post` to `suites.py` fails the gate with the
+file, line and fix hint, and passes again on exact restore.
+
+
 ## 2026-09-09 — an Activity tab: every project member can now see what happened in their project
 
 `/activity` is a new project-scoped feed of everything that happens inside a
