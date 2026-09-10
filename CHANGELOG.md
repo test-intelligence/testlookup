@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-10 — keyword search ignored its own indexes, and the finding named the wrong cause
+
+The re-audit reported that global search "casts `tags` JSON->text, defeating the
+trigram indexes", and suggested indexing tags. Measured against the homelab
+deployment (50,510 test cases), that fix alone would have changed nothing.
+
+Keyword search over test cases was one OR across five predicates. With the tags
+branch **removed entirely**, the plan was identical — still no trigram index
+used, still every run's test cases checked one by one. The real culprit was a
+different branch: the run-level suite name, a column on another table sitting
+inside the same OR. Postgres can combine several indexes with a bitmap OR, but
+only indexes on one table, so a single branch elsewhere forces the whole OR to
+be evaluated row by row.
+
+The tags cast was a second, independent problem — once the cross-table branch
+is gone, an unindexed `CAST(tags AS VARCHAR)` collapses the bitmap OR on its
+own. So both had to change:
+
+- The run-level branch is now its own half of a UNION. Each half applies the
+  tenant, active-project and period filters itself and takes its own top N by
+  recency, which bounds the work for a broad term and means results can only
+  ever come from a filtered half.
+- Migration 0166 adds a trigram index on `CAST(tags AS TEXT)`, and the query
+  now casts to TEXT to match. `VARCHAR` is a different expression, and an
+  expression index is only used for a predicate written identically.
+
+On the SQL the application actually emits: without the index the first half
+still scans row by row; with it, that half is a four-way bitmap OR over the
+test-name, suite, error and tags indexes. Both plans were taken inside a
+transaction that was rolled back, so the deployment was left untouched.
+
+Results are identical before and after — only the plan changes — so no
+functional test could have caught either problem. The new tests assert on the
+SQL Postgres receives, and a Postgres-backed test pins that the index serves
+the predicate and that a VARCHAR cast would not.
+
+Write cost is unmeasured: `test_cases` is insert-heavy and this adds one GIN
+index to it. It is one index over a short list, and GIN amortises inserts, but
+that is reasoning rather than a number.
+
 ## 2026-09-10 — live runs streamed one event at a time counted nothing
 
 The live-event consumer's result handler only *reads* a run's counters and
