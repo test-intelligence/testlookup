@@ -106,6 +106,47 @@ async def test_context_free_retry_does_not_choose_ambiguous_legacy_run():
 
 
 @pytest.mark.asyncio
+async def test_context_free_sdk_ingest_never_promotes_manual_upload():
+    """Legacy label fallback must exclude operator-created upload runs."""
+    project_id = uuid.uuid4()
+    project = SimpleNamespace(id=project_id)
+    manual = SimpleNamespace(
+        id=uuid.uuid4(), ingestion_identity=None, ingestion_source="upload",
+        build_number="17",
+    )
+    db = MagicMock()
+    statements = []
+
+    async def _execute(statement, *_args, **_kwargs):
+        statements.append(str(statement))
+        if len(statements) == 1:
+            return _Result(project)
+        if len(statements) == 2:
+            return _Result(None)
+        if "test_runs.ingestion_source !=" in statements[-1]:
+            return _Result(None)
+        return _Result(manual)
+
+    db.execute = AsyncMock(side_effect=_execute)
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+
+    created = await create_run_from_payload(
+        db,
+        project_id=str(project_id),
+        build_number="17",
+        ingestion_source="sdk",
+        reuse_existing=True,
+    )
+
+    assert created is not manual
+    assert created.ingestion_source == "sdk"
+    assert created.ingestion_identity is not None
+    assert manual.ingestion_identity is None
+    assert any("test_runs.ingestion_source !=" in sql for sql in statements)
+
+
+@pytest.mark.asyncio
 async def test_new_ci_identity_gets_same_deterministic_id_for_retries():
     project_id = uuid.uuid4()
     first = await _resolve_run_id(
