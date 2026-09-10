@@ -25,10 +25,17 @@ Two things differ from the SDK, because this endpoint is one event per call:
   per-event database load the credential cache exists to avoid (see
   ``live_event_authz``). Only a run's first event, a cache miss and
   ``run_complete`` touch the database.
+
+The adapter only stages. The route commits and then calls :func:`after_commit`,
+which finalises a closed run in Redis and keeps the session cache -- the stream
+router's order, because the Redis side of a close may only be finalised once
+the close is durable. The request owns the transaction, as it does for every
+other service (``tests/test_architectural_transaction_boundaries.py``).
 """
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import structlog
@@ -43,6 +50,18 @@ logger = structlog.get_logger(__name__)
 # As long as the run's project binding (live_event_authz.RUN_PROJECT_TTL_SECONDS).
 SESSION_CACHE_TTL_SECONDS = 25 * 60 * 60
 _SESSION_KEY = "testlookup:ws-events:session:{project_id}:{run_id}"
+
+
+@dataclass(frozen=True)
+class WsIngestOutcome:
+    """What the route needs once :func:`ingest_one` has staged an event."""
+
+    session_id: str
+    cache_key: str = ""
+    completes: bool = False
+    # False on the cached path: nothing was staged, so there is nothing to
+    # commit and nothing to finalise.
+    staged: bool = False
 
 
 def session_cache_key(project_id: uuid.UUID, run_id: str) -> str:
@@ -105,8 +124,11 @@ async def ingest_one(
     api_key_name: str,
     run_id: str,
     event: dict,
-) -> str:
-    """Admit one event through the SDK stream's path. Returns the session id."""
+) -> WsIngestOutcome:
+    """Stage one event through the SDK stream's path. Never commits.
+
+    The caller commits, then passes the outcome to :func:`after_commit`.
+    """
     from app.services import stream_service
 
     try:
@@ -140,20 +162,32 @@ async def ingest_one(
             batch_id=request.batch_id,
             project_id=str(project_id),
         )
-        return session_id
+        return WsIngestOutcome(session_id)
 
     response = await stream_service.ingest_via_api_key(
         db=db, project_id=project_id, api_key_name=api_key_name, request=request,
     )
-    # The stream router's order, for the same reason: the Redis side of a
-    # close may only be finalised once the close itself is durable.
-    await db.commit()
-    if completes:
-        await stream_service.finalize_closed_session_redis(response.session_id)
-        await _forget_session(cache_key)
+    return WsIngestOutcome(
+        response.session_id, cache_key=cache_key, completes=completes, staged=True
+    )
+
+
+async def after_commit(outcome: WsIngestOutcome) -> None:
+    """Finish what :func:`ingest_one` staged, once the route has committed it.
+
+    The stream router's order, for the same reason: the Redis side of a close
+    may only be finalised once the close itself is durable. A cached event
+    staged nothing, so there is nothing to do.
+    """
+    if not outcome.staged:
+        return
+    from app.services import stream_service
+
+    if outcome.completes:
+        await stream_service.finalize_closed_session_redis(outcome.session_id)
+        await _forget_session(outcome.cache_key)
     else:
-        await _remember_session(cache_key, response.session_id)
-    return response.session_id
+        await _remember_session(outcome.cache_key, outcome.session_id)
 
 
 async def _cached_session(cache_key: str) -> Optional[str]:

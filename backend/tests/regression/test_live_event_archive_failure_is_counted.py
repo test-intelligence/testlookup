@@ -54,7 +54,9 @@ def wired(monkeypatch):
     # way, into the same list.
     async def _admit(_db, *, project_id, api_key_name, run_id, event):
         published.append((run_id, event))
-        return "session-1"
+        from app.services.ws_event_ingest import WsIngestOutcome
+
+        return WsIngestOutcome("session-1")
 
     monkeypatch.setattr("app.services.ws_event_ingest.ingest_one", _admit)
     monkeypatch.setattr(

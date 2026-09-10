@@ -141,12 +141,9 @@ async def test_a_run_start_with_no_project_anywhere_still_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_close_that_fails_to_commit_is_not_finalised_in_redis(monkeypatch):
-    """The stream router's order: commit the close, then finalise Redis.
-
-    Finalising first would mark the close durable in Redis while Postgres
-    rolled it back -- a run Redis calls closed and the database never saw close.
-    """
+async def test_the_adapter_stages_and_never_commits(monkeypatch):
+    """The request owns the transaction; the route commits, then calls
+    after_commit -- the stream router's order (see the route's own tests)."""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -156,14 +153,71 @@ async def test_a_close_that_fails_to_commit_is_not_finalised_in_redis(monkeypatc
     monkeypatch.setattr(
         stream_service,
         "ingest_via_api_key",
-        AsyncMock(return_value=SimpleNamespace(session_id=str(uuid.uuid4()))),
+        AsyncMock(return_value=SimpleNamespace(session_id="session-1")),
     )
     monkeypatch.setattr(stream_service, "finalize_closed_session_redis", finalize)
-    db = SimpleNamespace(commit=AsyncMock(side_effect=RuntimeError("commit failed")))
 
-    with pytest.raises(RuntimeError):
-        await adapter.ingest_one(
-            db, project_id=uuid.uuid4(), api_key_name="ci", run_id="run-1",
-            event={"type": "run_complete"},
-        )
+    async def _no_commit():
+        raise AssertionError("the adapter committed; the route owns the transaction")
+
+    outcome = await adapter.ingest_one(
+        SimpleNamespace(commit=_no_commit), project_id=uuid.uuid4(), api_key_name="ci",
+        run_id="run-1", event={"type": "run_complete"},
+    )
+    assert (outcome.session_id, outcome.completes, outcome.staged) == ("session-1", True, True)
     finalize.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_after_commit_finalises_a_close_and_forgets_its_session(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.services import stream_service
+
+    finalize, forget, remember = AsyncMock(), AsyncMock(), AsyncMock()
+    monkeypatch.setattr(stream_service, "finalize_closed_session_redis", finalize)
+    monkeypatch.setattr(adapter, "_forget_session", forget)
+    monkeypatch.setattr(adapter, "_remember_session", remember)
+
+    await adapter.after_commit(
+        adapter.WsIngestOutcome("session-1", "key-1", completes=True, staged=True)
+    )
+
+    finalize.assert_awaited_once_with("session-1")
+    forget.assert_awaited_once_with("key-1")
+    remember.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_after_commit_remembers_an_open_session(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.services import stream_service
+
+    finalize, remember = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(stream_service, "finalize_closed_session_redis", finalize)
+    monkeypatch.setattr(adapter, "_remember_session", remember)
+
+    await adapter.after_commit(
+        adapter.WsIngestOutcome("session-1", "key-1", completes=False, staged=True)
+    )
+
+    remember.assert_awaited_once_with("key-1", "session-1")
+    finalize.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_after_commit_does_nothing_for_a_cached_event(monkeypatch):
+    """A cached event staged nothing: nothing to finalise, nothing to remember."""
+    from unittest.mock import AsyncMock
+
+    from app.services import stream_service
+
+    finalize, remember = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(stream_service, "finalize_closed_session_redis", finalize)
+    monkeypatch.setattr(adapter, "_remember_session", remember)
+
+    await adapter.after_commit(adapter.WsIngestOutcome("session-1"))
+
+    finalize.assert_not_awaited()
+    remember.assert_not_awaited()

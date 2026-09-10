@@ -270,7 +270,9 @@ async def test_a_project_key_event_is_handed_over_and_not_counted_here(live, mon
 
     async def _admit(_db, *, project_id, api_key_name, run_id, event):
         admitted.append(event["type"])
-        return "session-1"
+        from app.services.ws_event_ingest import WsIngestOutcome
+
+        return WsIngestOutcome("session-1")
 
     monkeypatch.setattr("app.services.ws_event_ingest.ingest_one", _admit)
     monkeypatch.setattr(
@@ -327,3 +329,59 @@ def test_the_consumer_does_not_count_results():
 def test_the_legacy_producer_does_count_results():
     assert _calls_in(ingest_live_event, "record_test_event") == 1
     assert _calls_in(ingest_live_event, "start") >= 1
+
+
+# ── The route commits, then finalises (N14 follow-up) ────────────────────
+
+
+def _staged_close(monkeypatch, order: list[str]) -> None:
+    from app.services.ws_event_ingest import WsIngestOutcome
+
+    async def _admit(_db, **_kw):
+        return WsIngestOutcome("session-1", "key-1", completes=True, staged=True)
+
+    async def _after(_outcome):
+        order.append("after_commit")
+
+    monkeypatch.setattr("app.services.ws_event_ingest.ingest_one", _admit)
+    monkeypatch.setattr("app.services.ws_event_ingest.after_commit", _after)
+    monkeypatch.setattr(
+        "app.services.live_event_authz.cached_streaming_project",
+        AsyncMock(return_value=PROJECT),
+    )
+    monkeypatch.setattr(settings, "LIVE_EVENTS_REQUIRE_PROJECT_KEY", True)
+
+
+@pytest.mark.asyncio
+async def test_a_close_that_fails_to_commit_is_not_finalised_in_redis(live, monkeypatch):
+    """Finalising first would mark the close durable in Redis while Postgres
+    rolled it back -- a run Redis calls closed and the database never saw close."""
+    order: list[str] = []
+    _staged_close(monkeypatch, order)
+
+    async def _commit():
+        order.append("commit")
+        raise RuntimeError("commit failed")
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await ingest_live_event(
+            run_id=RUN, event={"type": "run_complete"}, x_api_key="qai_key",
+            x_webhook_secret=None, db=SimpleNamespace(commit=_commit),
+        )
+    assert order == ["commit"], order
+
+
+@pytest.mark.asyncio
+async def test_a_staged_close_is_committed_then_finalised(live, monkeypatch):
+    order: list[str] = []
+    _staged_close(monkeypatch, order)
+
+    async def _commit():
+        order.append("commit")
+
+    result = await ingest_live_event(
+        run_id=RUN, event={"type": "run_complete"}, x_api_key="qai_key",
+        x_webhook_secret=None, db=SimpleNamespace(commit=_commit),
+    )
+    assert result["session_id"] == "session-1"
+    assert order == ["commit", "after_commit"], order

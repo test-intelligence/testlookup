@@ -717,20 +717,25 @@ async def ingest_live_event(
     # The legacy shared secret names no project and is refused by default, so
     # it keeps the old behaviour below: counted and shown live, never persisted.
     if bound_project_id:
-        from app.services.ws_event_ingest import ingest_one
+        from app.services.ws_event_ingest import after_commit, ingest_one
 
-        session_id = await ingest_one(
+        outcome = await ingest_one(
             db,
             project_id=_uuid.UUID(bound_project_id),
             api_key_name=api_key_name,
             run_id=run_id,
             event=safe_event,
         )
+        if outcome.staged:
+            # The stream router's order: commit what was staged, then finalise
+            # Redis. A close that fails to commit must not be finalised there.
+            await db.commit()
+            await after_commit(outcome)
         return {
             "accepted": True,
             "run_id": run_id,
             "event_type": event_type,
-            "session_id": session_id,
+            "session_id": outcome.session_id,
         }
 
     # ── Count the result where it arrives (re-audit H6) ─────────────────────
