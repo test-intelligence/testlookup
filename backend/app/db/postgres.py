@@ -157,6 +157,13 @@ def get_engine() -> AsyncEngine:
         max_overflow=pool["max_overflow"],
         pool_recycle=pool["pool_recycle"],
         pool_timeout=settings.PG_POOL_TIMEOUT,
+        # Re-audit H3 review: a DBAPIError renders the statement's bound
+        # parameters into its own text -- "[parameters: (...)]" -- and
+        # tracebacks are logged as text. Redaction recognises a secret by a
+        # marker, and a bare positional value has none, so a password hash
+        # or a token hash in an INSERT or UPDATE reached the log. Production
+        # hides them; elsewhere they are how a failing statement is debugged.
+        hide_parameters=settings.APP_ENV == "production",
         connect_args={
             "server_settings": {
                 "application_name": f"testlookup-{settings.PG_PROCESS_ROLE}",
