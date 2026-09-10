@@ -55,7 +55,7 @@ const GROUPS: NavGroup[] = [
     label: 'Testing',
     icon: GitBranch,
     to: '/runs',
-    activePrefixes: ['/runs', '/run/', '/live', '/coverage', '/failures', '/trends', '/defects', '/search', '/test-management', '/suite/', '/suites'],
+    activePrefixes: ['/runs', '/run/', '/live', '/coverage', '/failures', '/trends', '/defects', '/search', '/test-management', '/suite/', '/suites', '/activity'],
     children: [
       { to: '/live',            icon: Radio,       label: 'Live'          },
       { to: '/runs?upload=1',   icon: Upload,      label: 'Upload Report' },

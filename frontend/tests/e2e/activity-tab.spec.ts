@@ -22,23 +22,49 @@ import { performRealLogin } from './realLoginHelper';
 
 const PROJECT_PICKER_PROMPT = 'Select a project';
 
+/**
+ * The app stores its JWT in the Zustand persist blob under `auth-storage`
+ * (`{state:{token,refreshToken}}`), NOT under `access_token`. Reading the wrong
+ * key returns null, every fetch below 401s, and the test fails pointing at the
+ * API instead of at itself — which is exactly what happened on the first run
+ * against the deployment.
+ */
+const READ_TOKEN = `
+  function readToken() {
+    try {
+      const raw = localStorage.getItem('auth-storage');
+      return raw ? (JSON.parse(raw)?.state?.token ?? '') : '';
+    } catch { return ''; }
+  }
+`;
+
+
 test.describe('Activity tab', () => {
   test.beforeEach(async ({ page }) => {
     await performRealLogin(page);
   });
 
   test('is reachable from the sidebar and renders its own page', async ({ page }) => {
-    await page.goto('/overview');
+    // Navigate FIRST. The sidebar collapses every group whose activePrefixes
+    // do not match the current path, so the Activity entry is only in the DOM
+    // once the Testing group claims /activity. That is precisely the bug this
+    // asserts against: the entry was added to the group's children but not to
+    // its activePrefixes, so landing on /activity left its own group closed
+    // and the entry off screen entirely.
+    await page.goto('/activity');
+    await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible({
+      timeout: 15_000,
+    });
 
     const link = page.getByRole('link', { name: 'Activity', exact: true });
     await expect(
       link,
-      'the Activity entry is missing from the sidebar — the feature is unreachable',
-    ).toBeVisible();
+      'the Testing group does not claim /activity, so its own nav entry is ' +
+        'not on screen for the page the reader is looking at',
+    ).toBeVisible({ timeout: 10_000 });
 
     await link.click();
     await expect(page).toHaveURL(/\/activity/);
-    await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible();
   });
 
   test('offers a project picker in All Projects mode instead of a dead end', async ({
@@ -53,18 +79,33 @@ test.describe('Activity tab', () => {
     const prompt = page.getByText(PROJECT_PICKER_PROMPT, { exact: false });
     const feed = page.getByRole('feed');
 
-    // One of the two must be true: either a project is already pinned and the
-    // feed renders, or none is and the picker prompt does.
-    const promptVisible = await prompt.isVisible().catch(() => false);
-    const feedVisible = await feed.isVisible().catch(() => false);
-    expect(
-      promptVisible || feedVisible,
-      'neither the feed nor the project prompt rendered — the page is a dead end',
-    ).toBe(true);
+    // POLL, do not sample. Either a project is pinned and the feed renders, or
+    // none is and the picker prompt does — but reading isVisible() the instant
+    // navigation resolves returns false for both, and the page gets reported
+    // as a dead end when it simply had not painted yet.
+    await expect
+      .poll(
+        async () =>
+          (await prompt.isVisible().catch(() => false)) ||
+          (await feed.isVisible().catch(() => false)),
+        {
+          message:
+            'neither the feed nor the project prompt rendered — the page is a dead end',
+          timeout: 20_000,
+        },
+      )
+      .toBe(true);
 
-    if (promptVisible) {
+    if (await prompt.isVisible().catch(() => false)) {
       await expect(
         page.getByText(/Activity is recorded per project/i),
+      ).toBeVisible();
+      // The whole point of ProjectRequiredEmptyState: something to PRESS.
+      // A prompt telling the reader to go and find the top bar is the dead
+      // end this test exists to catch.
+      await expect(
+        page.getByText(/choose one to continue/i),
+        'the prompt gives the reader nothing to act on',
       ).toBeVisible();
     }
   });
@@ -116,13 +157,14 @@ test.describe('Activity tab', () => {
   }) => {
     await page.goto('/activity');
 
-    const response = await page.evaluate(async () => {
-      const token = localStorage.getItem('access_token') ?? '';
+    const response = await page.evaluate(async (READ) => {
+      eval(READ);
+      const token = readToken();
       const res = await fetch('/api/v1/activity/event-types', {
         headers: { Authorization: `Bearer ${token}` },
       });
       return { status: res.status, body: res.ok ? await res.json() : null };
-    });
+    }, READ_TOKEN);
 
     expect(
       response.status,
@@ -141,8 +183,9 @@ test.describe('Activity tab', () => {
     // no scoped path param, and nine IDORs once hid in that blind spot.
     await page.goto('/overview');
 
-    const result = await page.evaluate(async () => {
-      const token = localStorage.getItem('access_token') ?? '';
+    const result = await page.evaluate(async (READ) => {
+      eval(READ);
+      const token = readToken();
       const headers = { Authorization: `Bearer ${token}` };
 
       const projectsRes = await fetch('/api/v1/projects', { headers });
@@ -159,7 +202,7 @@ test.describe('Activity tab', () => {
         status: feedRes.status,
         body: feedRes.ok ? await feedRes.json() : null,
       };
-    });
+    }, READ_TOKEN);
 
     expect(result.error, `could not reach the feed API: ${result.error}`).toBeUndefined();
     expect(result.status).toBe(200);
@@ -175,8 +218,9 @@ test.describe('Activity tab', () => {
     // while the write path was silently dropping events.
     await page.goto('/overview');
 
-    const result = await page.evaluate(async () => {
-      const token = localStorage.getItem('access_token') ?? '';
+    const result = await page.evaluate(async (READ) => {
+      eval(READ);
+      const token = readToken();
       const headers = { Authorization: `Bearer ${token}` };
 
       const projectsRes = await fetch('/api/v1/projects', { headers });
@@ -198,7 +242,7 @@ test.describe('Activity tab', () => {
         }
       }
       return { found: false };
-    });
+    }, READ_TOKEN);
 
     expect(result.error).toBeUndefined();
 

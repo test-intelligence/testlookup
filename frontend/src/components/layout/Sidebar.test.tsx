@@ -36,6 +36,14 @@ vi.mock('@/hooks/useAIConfig', () => ({
   useAIConfig: () => ({ data: mockAI.config }),
 }))
 
+// Sidebar source as text, via Vite. `node:fs` would type-check under vitest and
+// then fail `npm run build` (which is `tsc && vite build`), because tsconfig
+// sets types: ["vite/client"] and does not pull in @types/node — the same trap
+// documented in routeScope.ratchet.test.ts.
+const SIDEBAR_SOURCE: string = Object.values(
+  import.meta.glob('./Sidebar.tsx', { query: '?raw', import: 'default', eager: true }),
+)[0] as string
+
 describe('Sidebar', () => {
   beforeEach(() => {
     mockPermissions.role = 'ADMIN'
@@ -155,5 +163,51 @@ describe('Sidebar', () => {
     )
 
     expect(screen.getByRole('navigation', { name: 'Main navigation' })).toBeInTheDocument()
+  })
+})
+
+describe('Sidebar — a group must claim the routes of its own children', () => {
+  /**
+   * A group expands and highlights when `location.pathname` starts with one of
+   * its `activePrefixes` (see `isWithinGroup`). Adding a child to `children`
+   * without adding its route to `activePrefixes` produces a nav that is silent
+   * about where you are: land on the page and its own group stays collapsed,
+   * so the entry you just used is not even on screen.
+   *
+   * This is exactly what happened when `/activity` was added to the Testing
+   * group. Read from the component SOURCE rather than an exported constant,
+   * because the nav config is module-private and exporting it purely for a
+   * test would let the two drift apart in a different way.
+   */
+  const source = SIDEBAR_SOURCE
+
+  const groups = [...source.matchAll(/activePrefixes:\s*\[([^\]]*)\][\s\S]*?children:\s*\[([\s\S]*?)\n\s{2,4}\]/g)]
+
+  it('parses at least three groups out of the sidebar source', () => {
+    // Without this the loop below could iterate zero times and pass vacuously.
+    expect(groups.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('covers every child route with one of its own activePrefixes', () => {
+    const uncovered: string[] = []
+
+    for (const [, prefixBlob, childBlob] of groups) {
+      const prefixes = [...prefixBlob.matchAll(/'([^']+)'/g)].map(m => m[1])
+      const childRoutes = [...childBlob.matchAll(/to:\s*'([^']+)'/g)].map(m => m[1])
+
+      for (const route of childRoutes) {
+        // Compare on the path only — `/runs?upload=1` is the `/runs` page.
+        const path = route.split('?')[0]
+        if (!prefixes.some(p => path.startsWith(p))) {
+          uncovered.push(`${route} (prefixes: ${prefixes.join(', ')})`)
+        }
+      }
+    }
+
+    expect(
+      uncovered,
+      'these nav children are not claimed by their group\'s activePrefixes, so ' +
+        'the group stays collapsed on the very page the entry links to',
+    ).toEqual([])
   })
 })
