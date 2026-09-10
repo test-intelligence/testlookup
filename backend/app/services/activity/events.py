@@ -198,7 +198,17 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("release.phase_skipped", "release", "release", "Phase {phase} skipped on release {entity_label}", "attempt"),
     _spec("release.phase_gate_overridden", "release", "release", "Phase gate {phase} overridden on release {entity_label}", "attempt"),
     _spec("release.linked_run", "release", "release", "A run was linked to release {entity_label}"),
+    _spec("release.unlinked_run", "release", "release", "A run was unlinked from release {entity_label}"),
     _spec("release.synced_external", "release", "release", "Release {entity_label} synced from {provider}"),
+    # CRUD, distinct from the lifecycle events above. A release's name, dates
+    # and status are what a gate decision is read against later, so "who
+    # changed this release, and to what" is exactly the question the feed
+    # exists to answer.
+    _spec("release.updated", "release", "release", "Release {entity_label} changed: {changed}"),
+    _spec("release.deleted", "release", "release", "Release {entity_label} was deleted", "attempt"),
+    _spec("release.phase_added", "release", "release", "Phase {phase} was added to release {entity_label}"),
+    _spec("release.phase_updated", "release", "release", "Phase {phase} on release {entity_label} changed: {changed}"),
+    _spec("release.phase_deleted", "release", "release", "Phase {phase} was removed from release {entity_label}"),
     # ── quality ─────────────────────────────────────────────────────────────
     _spec("quarantine.requested", "quality", "quarantine", "Quarantine requested for {entity_label}", "attempt"),
     _spec("quarantine.approved", "quality", "quarantine", "Quarantine approved for {entity_label}", "attempt"),

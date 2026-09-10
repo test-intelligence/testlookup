@@ -24,6 +24,7 @@ from app.core.deps import (
 )
 from app.db.postgres import get_db
 from app.models.postgres import AccessAuditLog, User, UserRole
+from app.services.activity.service import ActorRef, record as record_activity
 from app.models.serializers import serialize_model
 from app.services import (
     github_release_sync,
@@ -239,6 +240,21 @@ async def create_release(
     # ``require_release_access()``: create was the odd one out.
     await resolve_project_scope(db, current_user, str(body.project_id))
     release = await release_service.create_release(db, body)
+
+    # Epic ACT. Staged on this session so the event and the release land
+    # together: a "release created" row for a create that rolled back would be
+    # a lie the feed could not walk back.
+    await record_activity(
+        db,
+        project_id=body.project_id,
+        event_type="release.created",
+        actor=ActorRef.from_user(current_user),
+        entity_id=release.id,
+        entity_label=release.name,
+        release_id=release.id,
+        context={"version": getattr(release, "version", None)},
+    )
+
     await db.commit()
     return await release_service.serialize_created_release(db, release)
 
@@ -306,10 +322,28 @@ async def update_release(
     release_id: str,
     body: ReleaseUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     __: User = Depends(require_release_access()),
 ):
     release = await release_service.update_release(db, release_id, body)
+
+    # A release's name, dates and status are what a gate decision is read
+    # against later, so "who changed this release, and to what" is exactly the
+    # question the feed exists to answer.
+    changed = sorted(body.model_dump(exclude_none=True))
+    if changed:
+        await record_activity(
+            db,
+            project_id=release.project_id,
+            event_type="release.updated",
+            actor=ActorRef.from_user(current_user),
+            entity_id=release.id,
+            entity_label=release.name,
+            release_id=release.id,
+            changed_fields=changed,
+            context={"changed": ", ".join(changed)},
+        )
+
     await db.commit()
     await db.refresh(release)
     return serialize_model(release)
@@ -319,10 +353,29 @@ async def update_release(
 async def delete_release(
     release_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
     __: User = Depends(require_release_access()),
 ):
+    # Read BEFORE the delete: afterwards the name is gone and the row could
+    # only say that "something" was removed. release_id is deliberately NOT
+    # set on the event - the FK is ON DELETE SET NULL, so it would be nulled
+    # moments later; the label snapshot is what survives.
+    doomed = await release_service.get_release_or_404(db, release_id)
+    project_id = getattr(doomed, "project_id", None)
+    label = getattr(doomed, "name", None)
+
     await release_service.delete_release(db, release_id)
+
+    if project_id is not None:
+        await record_activity(
+            None,
+            project_id=project_id,
+            event_type="release.deleted",
+            actor=ActorRef.from_user(current_user),
+            entity_id=release_id,
+            entity_label=label,
+        )
+
     await db.commit()
 
 

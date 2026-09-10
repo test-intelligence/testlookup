@@ -1515,3 +1515,144 @@ def test_the_guard_passes_the_case_flag_to_git():
         f"tree gets different verdicts per platform. argv was: {joined}"
     )
     assert "--no-index" in joined, "the --no-index question is the one that matters"
+
+
+# ── backend.activity-coverage (epic ACT) ─────────────────────────────────────
+
+
+def _router(tmp_path: Path, name: str, body: str) -> None:
+    _write(tmp_path / "backend" / "app" / "routers" / name, body)
+
+
+def test_activity_coverage_flags_an_unrecorded_mutation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _router(tmp_path, "widgets.py", """
+        @router.post("/{project_id}/widgets")
+        async def create_widget(project_id, db):
+            db.add(Widget())
+            await db.commit()
+    """)
+    violations = qg._backend_activity_coverage()
+    assert any("widgets.py" in v.file.as_posix() for v in violations)
+
+
+def test_activity_coverage_accepts_a_handler_that_records_directly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _router(tmp_path, "widgets.py", """
+        from app.services.activity.service import record as record_activity
+
+        @router.post("/{project_id}/widgets")
+        async def create_widget(project_id, db, current_user):
+            db.add(Widget())
+            await record_activity(db, project_id=project_id, event_type="policy.updated")
+            await db.commit()
+    """)
+    assert qg._backend_activity_coverage() == []
+
+
+def test_activity_coverage_follows_a_dotted_service_import(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`from app.services.foo_service import bar` — the router delegates and
+    the SERVICE records. Flagging the router here would be a false positive."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "services" / "widget_service.py", """
+        from app.services.activity.service import record
+        async def do_it(db):
+            await record(db, event_type="policy.updated")
+    """)
+    _router(tmp_path, "widgets.py", """
+        from app.services.widget_service import do_it
+
+        @router.post("/{project_id}/widgets")
+        async def create_widget(project_id, db):
+            await do_it(db)
+    """)
+    assert qg._backend_activity_coverage() == []
+
+
+def test_activity_coverage_follows_a_grouped_service_import(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`from app.services import foo_service as svc` — the OTHER import form.
+
+    Missing it reported flaky_quarantine.py as uncovered while its service
+    records on its behalf. A false entry in the baseline is worse than no
+    guard: it teaches the reader to ignore the list.
+    """
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "services" / "widget_service.py", """
+        from app.services.activity.service import record
+        async def do_it(db):
+            await record(db, event_type="policy.updated")
+    """)
+    _router(tmp_path, "widgets.py", """
+        from app.services import widget_service as svc
+
+        @router.post("/{project_id}/widgets")
+        async def create_widget(project_id, db):
+            await svc.do_it(db)
+    """)
+    assert qg._backend_activity_coverage() == []
+
+
+def test_activity_coverage_honours_an_explicit_opt_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _router(tmp_path, "widgets.py", """
+        # activity: none - preview only, mutates nothing
+        @router.post("/{project_id}/widgets/preview")
+        async def preview_widget(project_id, db):
+            return {"preview": True}
+    """)
+    assert qg._backend_activity_coverage() == []
+
+
+def test_activity_coverage_skips_routers_with_no_project_scope(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """auth/sso/settings mutate instance-wide state. They are audited by
+    settings_audit_log and identity_events, which have no project column
+    precisely because those events have no project."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _router(tmp_path, "auth.py", """
+        @router.post("/login")
+        async def login(db):
+            return {"token": "x"}
+    """)
+    assert qg._backend_activity_coverage() == []
+
+
+def test_activity_coverage_ignores_read_endpoints(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _router(tmp_path, "widgets.py", """
+        @router.get("/{project_id}/widgets")
+        async def list_widgets(project_id, db):
+            return []
+    """)
+    assert qg._backend_activity_coverage() == []
+
+
+def test_activity_coverage_reports_every_uncovered_mutation_not_just_the_first(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A guard that stops at the first hit understates the gap, and the
+    baseline it generates would then let the rest through silently."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _router(tmp_path, "widgets.py", """
+        @router.post("/{project_id}/widgets")
+        async def create_widget(project_id, db):
+            pass
+
+        @router.delete("/{project_id}/widgets/{widget_id}")
+        async def delete_widget(project_id, widget_id, db):
+            pass
+    """)
+    assert len(qg._backend_activity_coverage()) == 2
