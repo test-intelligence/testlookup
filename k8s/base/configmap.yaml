@@ -53,6 +53,14 @@ data:
   PUBLIC_BASE_URL: "https://testlookup.example.com"
   # MCP server internal service URL (used by the backend's health endpoint reference only)
   MCP_SERVICE_URL: "http://testlookup-mcp:8002"
+  # Peer addresses allowed to supply X-Forwarded-For (re-audit H2). Without
+  # this the API sees the ingress address as every caller's IP, collapsing the
+  # login rate limiter onto one shared bucket and making every audit IP
+  # meaningless. "*" is safe ONLY because networkpolicy.yaml is default-deny
+  # and admits :8000 from ingress-nginx, the frontend, the workers and the MCP
+  # server alone. Widening that policy means narrowing this to the ingress
+  # controller pod CIDR in the same change.
+  FORWARDED_ALLOW_IPS: "*"
   # ── Observability ────────────────────────────────────────────────────────────
   OTEL_ENABLED: "true"
   OTEL_SERVICE_NAME: "testlookup"

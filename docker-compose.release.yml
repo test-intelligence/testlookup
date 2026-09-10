@@ -256,6 +256,9 @@ services:
       - .env
     environment:
       - PG_PROCESS_ROLE=api
+      # Re-audit H2: the frontend nginx proxies /api, so without this the
+      # API sees that container as every caller. Private bridge network.
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-*}
       - PG_PROCESSES_PER_POD=4
       - PG_POOL_SIZE=${PG_API_POOL_SIZE:-2}
       - PG_MAX_OVERFLOW=${PG_API_MAX_OVERFLOW:-1}
