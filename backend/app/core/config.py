@@ -64,6 +64,22 @@ def _is_placeholder_secret(value: str) -> bool:
     return any(marker in text for marker in _SECRET_PLACEHOLDER_MARKERS)
 
 
+def _uri_password(uri: str) -> Optional[str]:
+    """The password embedded in a connection URI, or None when there is none.
+
+    Only the credential is judged: a password-less URI (the default, or a
+    deployment using another auth mechanism) is never a placeholder, and the
+    host and database parts are not secrets.
+    """
+    from urllib.parse import unquote, urlsplit
+
+    try:
+        password = urlsplit(str(uri or "")).password
+    except ValueError:
+        return None
+    return unquote(password) if password else None
+
+
 class Settings(BaseSettings):
     """Application settings — loaded from environment variables."""
 
@@ -747,6 +763,17 @@ class Settings(BaseSettings):
                 warnings.append(
                     "CRITICAL: WEBHOOK_SECRET is set to the default — live-event and "
                     "webhook endpoints accept anyone who read the source"
+                )
+            # Re-audit N12. .env.example ships
+            # MONGO_URI=mongodb://testlookup:change-me-to-a-strong-password@...
+            # and nothing checked it, so copying the example file and deploying
+            # booted production on a published database password -- the same
+            # path the JWT/APP/WEBHOOK checks above were fixed for.
+            mongo_password = _uri_password(self.MONGO_URI)
+            if mongo_password is not None and _is_placeholder_secret(mongo_password):
+                warnings.append(
+                    "CRITICAL: MONGO_URI carries a placeholder password — the "
+                    "database password is the one published in .env.example"
                 )
             if self.DEV_AUTO_LOGIN_ENABLED:
                 warnings.append("CRITICAL: DEV_AUTO_LOGIN_ENABLED is True in production — disable it")

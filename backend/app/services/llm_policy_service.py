@@ -172,14 +172,38 @@ def host_is_local(hostname: str) -> bool:
     return _resolves_only_to_local_addresses(hostname)
 
 
+#: Cloud instance-metadata services. They answer on addresses Python classifies
+#: as private, so a residency test that stops at "is it private?" admits them.
+#: The IPv6 AWS endpoint is not even link-local -- it sits in the ULA range --
+#: so it has to be named.
+_METADATA_ENDPOINTS = frozenset({
+    ipaddress.ip_address("169.254.169.254"),  # AWS, GCP, Azure, OpenStack (IPv4)
+    ipaddress.ip_address("fd00:ec2::254"),    # AWS IMDS over IPv6
+})
+
+
 def _is_routable(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Whether an address can leave the host/private network."""
+    """Whether an address is NOT an acceptable on-box LLM host.
+
+    Loopback and private-network addresses are local. Link-local addresses and
+    cloud metadata endpoints are not, and are checked FIRST (re-audit N7):
+
+    On Python 3.11, ``169.254.169.254`` reports ``is_private=True`` as well as
+    ``is_link_local=True``. The old test listed link-local as a way of being
+    local, but simply deleting that clause would not have helped -- the address
+    was already accepted through ``is_private``. So under AI_OFFLINE_MODE an
+    operator-supplied ``base_url`` of ``http://169.254.169.254/`` counted as
+    "on-box" and prompts could be sent to the instance metadata service, which
+    is also where cloud credentials live. No legitimate local model server
+    listens on a link-local address.
+    """
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
         address = address.ipv4_mapped
+    if address.is_link_local or address in _METADATA_ENDPOINTS:
+        return True
     return not (
         address.is_private
         or address.is_loopback
-        or address.is_link_local
         or address.is_unspecified
     )
 

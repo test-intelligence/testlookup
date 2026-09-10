@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-09-10 — offline mode accepted the cloud metadata service as a local model
+
+Batch 1 made the offline egress ceiling judge an LLM `base_url` by where it
+resolves rather than by provider name: loopback and private addresses are
+on-box, anything else is refused. Review pointed out that link-local addresses
+were counted as on-box too — so `http://169.254.169.254/` passed. That address
+is the instance metadata service on every major cloud, the place a VM fetches
+its own credentials from.
+
+Deleting the link-local exemption would not have fixed it. Measured on the
+Python this ships with, `169.254.169.254` reports as *private* as well as
+link-local, so it was already being accepted through the private-address rule.
+Link-local addresses and known metadata endpoints are now checked first and
+refused. The AWS IPv6 metadata address, `fd00:ec2::254`, is not link-local at
+all — it sits in the private IPv6 range — so it is named explicitly. No
+legitimate local model server listens on a link-local address; loopback and
+ordinary private-network hosts are unaffected.
+
+## 2026-09-10 — the Mongo password in the example file booted production too
+
+Batch 1 widened the startup check that refuses to run production on a published
+secret, so it recognised every placeholder the example env files ship for the
+JWT, application and webhook secrets. Review found one it still missed:
+`.env.example` also ships `MONGO_URI` with `change-me-to-a-strong-password`
+embedded as the database password, and nothing looked at it.
+
+It is now a critical startup failure. Only the password inside the URI is
+judged: a URI with no credential — the default, or a deployment that
+authenticates some other way — is never flagged, and host and database names are
+not secrets. The Cloud Run example's `MONGO_URI` has a placeholder host but no
+password, so it is not flagged; it would fail to connect rather than leak
+anything. The Flower dashboard password in the same example file is configured
+only by the development compose file and never read by the backend, so there is
+no production startup path for this check to guard.
+
 ## 2026-09-10 — agent tools wrote straight into the next prompt
 
 `sanitize_tool_output` exists "to sanitise tool output before it propagates
