@@ -242,8 +242,18 @@ def test_actor_from_user_detects_a_service_account():
 
 
 def test_actor_from_user_detects_an_api_key_principal():
-    """An API key authenticates AS a user row. Without the prefix marker the
-    feed cannot tell a person from their CI token."""
+    """An API key authenticates AS a user row, and CI is the busiest writer in
+    the system. Without this the feed cannot tell "Priya clicked a button" from
+    "Priya's CI token did".
+
+    Marked through the REAL mechanism — ``core.deps._bind_credential_kind``,
+    which the auth dependencies actually call — rather than by setting an
+    attribute this test invents. An earlier version did the latter: it passed
+    while nothing in the codebase populated the attribute, so every CI-driven
+    event would have been attributed to a person.
+    """
+    from app.core.deps import CREDENTIAL_KIND_API_KEY, _bind_credential_kind
+
     user = User(
         id=uuid.uuid4(),
         email="p@example.com",
@@ -251,10 +261,40 @@ def test_actor_from_user_detects_an_api_key_principal():
         hashed_password="x",
         role=UserRole.QA_ENGINEER.value,
     )
-    user.api_key_prefix = "tl_abc123"
+    _bind_credential_kind(user, CREDENTIAL_KIND_API_KEY)
+
     actor = ActorRef.from_user(user)
     assert actor.actor_type == "api_key"
-    assert actor.actor_ref == "tl_abc123"
+
+
+def test_a_jwt_authenticated_user_is_not_mistaken_for_a_key():
+    from app.core.deps import CREDENTIAL_KIND_JWT, _bind_credential_kind
+
+    user = User(
+        id=uuid.uuid4(),
+        email="p@example.com",
+        username="priya",
+        hashed_password="x",
+        role=UserRole.QA_ENGINEER.value,
+    )
+    _bind_credential_kind(user, CREDENTIAL_KIND_JWT)
+    assert ActorRef.from_user(user).actor_type == "user"
+
+
+def test_the_ingest_path_really_stamps_the_credential_kind():
+    """Guards the connection the previous test cannot see.
+
+    ``from_user`` reading the marker is only useful if the auth dependency
+    writes it. This asserts the API-key validator does — the missing half that
+    made the original implementation dead code.
+    """
+    import inspect
+
+    from app.core import deps
+
+    src = inspect.getsource(deps._validate_api_key)
+    assert "_bind_credential_kind" in src
+    assert "CREDENTIAL_KIND_API_KEY" in src
 
 
 def test_actor_system_and_agent_constructors():

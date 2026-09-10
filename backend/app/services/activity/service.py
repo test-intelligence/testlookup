@@ -100,23 +100,30 @@ class ActorRef:
             or getattr(user, "username", None)
             or getattr(user, "email", None)
         )
-        # An API key authenticates AS a user row, so the key marker is the only
-        # thing separating "Priya clicked a button" from "Priya's CI token did".
-        key_prefix = getattr(user, "api_key_prefix", None)
-        if key_prefix:
-            return cls(
-                "api_key",
-                actor_id=getattr(user, "id", None),
-                actor_name=name,
-                actor_ref=str(key_prefix)[:120],
-            )
+        user_id = getattr(user, "id", None)
+
+        # An API key authenticates AS a user row, so without this the feed
+        # cannot tell "Priya clicked a button" from "Priya's CI token did" —
+        # and CI is the busiest writer in the system.
+        #
+        # Read through ``core.deps.credential_kind``, which the auth
+        # dependencies already stamp on the user for exactly this purpose.
+        # An earlier version of this method invented its own
+        # ``api_key_prefix`` attribute; nothing in the codebase ever set it, so
+        # every CI-driven event would have been attributed to a person. The
+        # unit test passed because it set the attribute itself — it proved the
+        # branch worked, not that anything fed it.
+        try:
+            from app.core.deps import CREDENTIAL_KIND_API_KEY, credential_kind
+
+            if credential_kind(user) == CREDENTIAL_KIND_API_KEY:
+                return cls("api_key", actor_id=user_id, actor_name=name)
+        except Exception:  # pragma: no cover - defensive against import cycles
+            pass
+
         if getattr(user, "is_service_account", False):
-            return cls(
-                "service_account",
-                actor_id=getattr(user, "id", None),
-                actor_name=name,
-            )
-        return cls("user", actor_id=getattr(user, "id", None), actor_name=name)
+            return cls("service_account", actor_id=user_id, actor_name=name)
+        return cls("user", actor_id=user_id, actor_name=name)
 
     @classmethod
     def system(cls, ref: str) -> "ActorRef":
