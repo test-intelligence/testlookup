@@ -122,7 +122,7 @@ pytest-asyncio==1.4.0
 # ORM models (auth/MFA flows) without a live Postgres. Test-only.
 aiosqlite==0.20.0
 pytest-cov==7.1.0
-pytest-mock==3.14.0
+pytest-mock==3.15.1
 anyio==4.14.1
 factory-boy==3.3.3
 freezegun==1.5.1
