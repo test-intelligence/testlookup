@@ -58,11 +58,16 @@ async def _offline_refusal(provider: str, destination: str | None) -> ProbeResul
 
 
 def _offline_hard_gate(provider: str) -> ProbeResult | None:
-    """``skipped`` in offline mode for an integration that offline mode switches off.
+    """``skipped`` in offline mode for an integration whose calls offline mode forbids.
 
     Jira and GitHub refuse every outbound call when ``AI_OFFLINE_MODE`` is on
     (``defect_jira_service``, ``github_checks_service``). A probe carries the
     same credentials, so it must not make the call either.
+
+    Splunk and OpenShift are skipped too (code review of H10): each probe sent
+    its bearer token to the configured API every 15 minutes. Their
+    integrations are not all gated yet (re-audit N19), but a probe must not
+    add egress of its own while that is open.
     """
     from app.core.config import settings
 
@@ -113,6 +118,9 @@ async def probe_splunk() -> ProbeResult:
 
     if not settings.SPLUNK_ENABLED or not settings.SPLUNK_BASE_URL:
         return ProbeResult("splunk", "skipped", message="SPLUNK_ENABLED=false or no URL configured")
+    refused = _offline_hard_gate("splunk")
+    if refused:
+        return refused
 
     import httpx
 
@@ -167,6 +175,9 @@ async def probe_ocp() -> ProbeResult:
 
     if not settings.OCP_ENABLED or not settings.OCP_API_URL:
         return ProbeResult("ocp", "skipped", message="OCP_ENABLED=false or no URL configured")
+    refused = _offline_hard_gate("ocp")
+    if refused:
+        return refused
 
 
     start = time.monotonic()

@@ -54,8 +54,9 @@ When `AI_OFFLINE_MODE=true`:
 | **Feature flags** | Still functional (flags resolve via Redis/Postgres, both local). The offline gate is checked BEFORE the feature flag in every outbound service. |
 | **Slack / Teams notifications** | Delivered only to a destination that resolves to a loopback or private address — a self-hosted webhook on the LAN still works, a public one is refused. |
 | **Email (SMTP)** | Same rule: an internal relay is allowed, a public relay is refused. Applies to every SMTP connection the application makes: notifications, digests, report emails, the settings page's test email and the health probe. |
-| **Integration-health probes** | A probe never dials where its integration may not: Slack's API and the SMTP relay only when on-box, Jira and GitHub not at all. It reports `skipped`, with the reason. |
-| **Ingestion** | Fully functional. No network calls. |
+| **Integration-health probes** | A probe never dials where its integration may not: Slack's API and the SMTP relay only when on-box; Jira, GitHub, Splunk and OpenShift not at all. It reports `skipped`, with the reason. |
+| **Splunk log search, OpenShift pod lookups** | **Not gated yet (re-audit N19, open).** With `SPLUNK_ENABLED` or `OCP_ENABLED` set, the triage agent's Splunk search (`tools/query_splunk.py`) and the OpenShift pod lookups (`services/ocp_client.py`, called during ingestion and by the triage agent) still call those APIs. Both settings default to false. Their health probes are skipped (row above). |
+| **Ingestion** | Fully functional. No network calls, except the OpenShift pod lookup when `OCP_ENABLED` is set (row above). |
 | **Analysis (rules/ML)** | Fully functional. No network calls. |
 | **Dashboard / API / CLI / MCP** | Fully functional. All traffic is local. |
 
@@ -65,7 +66,7 @@ When `AI_OFFLINE_MODE=true`:
 - NTP time sync
 - Ollama model pulls (if the model isn't pre-cached in the volume)
 
-These are infrastructure-level, not application-level. An air-gapped deployment that pre-caches images and models will see zero application-level egress.
+These are infrastructure-level, not application-level. An air-gapped deployment that pre-caches images and models, and does not enable the Splunk or OpenShift integrations while N19 is open, will see zero application-level egress.
 
 Note on how the notification channels are gated: the check is **where the
 destination resolves**, not what the channel is called. That is deliberate in

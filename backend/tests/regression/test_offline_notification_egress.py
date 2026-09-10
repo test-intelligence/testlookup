@@ -481,13 +481,34 @@ async def test_the_slack_probe_does_not_call_slack_offline(offline, resolves, mo
     [
         ("probe_jira", {"JIRA_ENABLED": True, "JIRA_DOMAIN": "acme.atlassian.net"}),
         ("probe_github", {"GITHUB_TOKEN": "ghp_test"}),
+        (
+            "probe_splunk",
+            {
+                "SPLUNK_ENABLED": True,
+                "SPLUNK_BASE_URL": "https://splunk.example.com:8089",
+                "SPLUNK_API_TOKEN": "splunk-test-token",
+            },
+        ),
+        (
+            "probe_ocp",
+            {
+                "OCP_ENABLED": True,
+                "OCP_API_URL": "https://api.ocp.example.com:6443",
+                "OCP_SA_TOKEN": "sa-test-token",
+            },
+        ),
     ],
 )
 async def test_integrations_offline_mode_switches_off_are_not_probed(
     offline, monkeypatch, probe_name, enable
 ):
     """Jira and GitHub refuse every outbound call offline; a probe carries the
-    same credentials, so it must not make one either."""
+    same credentials, so it must not make one either.
+
+    Splunk and OpenShift (code review of H10): their probes sent a bearer token
+    out every 15 minutes while SECURITY.md said every outbound integration
+    short-circuits offline. They now report exactly what Jira and GitHub report.
+    """
     from app.services import integration_probe_service as probes
 
     client = _RecordingClient()
@@ -495,8 +516,11 @@ async def test_integrations_offline_mode_switches_off_are_not_probed(
     for key, value in enable.items():
         monkeypatch.setattr(settings, key, value)
 
+    provider = probe_name.removeprefix("probe_")
     result = await getattr(probes, probe_name)()
-    assert result.status == "skipped"
+    assert result == probes.ProbeResult(
+        provider, "skipped", message=f"AI_OFFLINE_MODE=true -- outbound {provider} calls are disabled"
+    )
     assert client.calls == []
 
 
