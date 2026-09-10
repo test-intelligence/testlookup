@@ -272,3 +272,80 @@ def test_the_release_api_port_is_not_published_to_every_interface():
             "interface, bypassing the nginx proxy the trust boundary assumes"
         )
         assert "127.0.0.1" in mapping
+
+
+# ── Every production topology, not just the one that was reported ────────
+#
+# The finding named the Kubernetes and release-compose deployments, and the
+# first fix covered exactly those. Two other compose files also run the
+# PRODUCTION frontend — the nginx image that proxies /api — and one of them
+# runs uvicorn directly rather than under gunicorn, so no amount of editing
+# gunicorn_conf.py would ever have reached it.
+
+#: Compose files that stand up a production topology on their own.
+SELF_CONTAINED_PRODUCTION_COMPOSE = ("docker-compose.release.yml",)
+
+#: Overlays layered on one of the above with `-f base -f override`. They must
+#: NOT redefine the backend environment, or they silently drop the boundary the
+#: base declares (compose merges list-form `environment:` by key, so a partial
+#: list is fine — a replaced one is not).
+PRODUCTION_COMPOSE_OVERRIDES = {
+    "docker-compose.airgap.yml": "docker-compose.release.yml",
+    "docker-compose.gcp-vm.yml": "docker-compose.yml",
+}
+
+
+def _compose_backend(name: str) -> dict:
+    return yaml.safe_load((ROOT / name).read_text(encoding="utf-8"))["services"][
+        "backend"
+    ]
+
+
+def _declared_env_keys(service: dict) -> set:
+    env = service.get("environment") or []
+    if isinstance(env, dict):
+        return set(env)
+    return {str(item).partition("=")[0] for item in env}
+
+
+@pytest.mark.parametrize("name", SELF_CONTAINED_PRODUCTION_COMPOSE)
+def test_every_self_contained_production_compose_declares_the_boundary(name):
+    assert "FORWARDED_ALLOW_IPS" in _declared_env_keys(_compose_backend(name))
+
+
+def test_the_gcp_vm_override_declares_it_because_it_bypasses_gunicorn():
+    """It sets its own `command:`, so gunicorn_conf.py is never loaded.
+
+    Its base is the DEV compose, which has no reason to declare a proxy trust
+    boundary, and it swaps in the production frontend — so this override is the
+    only place the setting can live.
+    """
+    service = _compose_backend("docker-compose.gcp-vm.yml")
+    command = str(service.get("command", ""))
+    assert "uvicorn" in command and "gunicorn" not in command, (
+        "docker-compose.gcp-vm.yml now runs gunicorn, so gunicorn_conf.py "
+        "supplies the default and this test should be revisited"
+    )
+    value = [
+        str(item)
+        for item in service["environment"]
+        if str(item).startswith("FORWARDED_ALLOW_IPS=")
+    ]
+    assert value, (
+        "the GCP VM backend runs uvicorn directly behind the production nginx "
+        "and declares no FORWARDED_ALLOW_IPS, so it reports the proxy as every "
+        "caller — the exact defect H2 reported, in a topology the fix missed"
+    )
+    default = value[0].partition(":-")[2].rstrip("}")
+    assert _is_a_real_trust_boundary(default)
+
+
+def test_an_override_does_not_drop_the_boundary_its_base_declares():
+    """airgap layers on release; redefining the backend env would drop it."""
+    service = _compose_backend("docker-compose.airgap.yml")
+    keys = _declared_env_keys(service)
+    assert not keys or "FORWARDED_ALLOW_IPS" in keys, (
+        "docker-compose.airgap.yml now sets backend environment keys without "
+        "FORWARDED_ALLOW_IPS; confirm the merge still leaves the release "
+        "value in place, then declare it here too"
+    )

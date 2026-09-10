@@ -43,6 +43,13 @@ would trust the LAN its users sit on. Measured on uvicorn 0.49.0 with
 the real client. Every assertion in the first test file was over file content,
 which is why all eight passed on a wildcard.
 
+The fix also missed a deployment. `docker-compose.gcp-vm.yml` runs the
+production nginx in front of a backend started with `uvicorn` directly rather
+than under gunicorn, so `gunicorn_conf.py` never loads there and no edit to it
+could have helped; the uvicorn CLI reads the same variable, which that file now
+sets. A test walks every compose file that stands up a production topology, so
+the next one cannot be missed the same way.
+
 **One shared secret could write into any tenant.** `POST /ws/events/{run_id}`
 was gated by `verify_webhook_secret` alone. That secret authenticates a caller
 but names no project, and the handler read `project_id` out of the request body,
