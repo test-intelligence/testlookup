@@ -239,6 +239,11 @@ anything. The Flower dashboard password in the same example file is configured
 only by the development compose file and never read by the backend, so there is
 no production startup path for this check to guard.
 
+An angle-bracketed placeholder, the form the Kubernetes secret template and
+`.env.example` use (`<base64-encoded-strong-random-secret>`,
+`<set-a-strong-password>`), counts only as a whole token. A bare `<` used to
+count, which refused a real secret that merely contains the symbol.
+
 ## 2026-09-10 — agent tools wrote straight into the next prompt
 
 `sanitize_tool_output` exists "to sanitise tool output before it propagates
@@ -298,10 +303,11 @@ which is the only reason this was a latent leak rather than a live one.
 
 That old shared collection may still hold entries on existing deployments, and
 they may belong to any tenant. Deleting data is not something to do quietly in a
-fix, so the cache's health endpoint now reports `legacy_unscoped_documents`: a
-non-zero value means the collection should be purged. The same endpoint used to
-report an outage as zero documents, which reads as an empty cache; it now
-reports none.
+fix, so `GET /api/v1/admin/maintenance/ai-cache`, for instance admins, reports
+`legacy_unscoped_documents`: a non-zero value means the collection should be
+purged. (The first version of this fix computed that count in a function nothing
+called.) The same numbers used to report an outage as zero documents, which
+reads as an empty cache; the route answers 503 instead.
 
 ## 2026-09-10 — release dates were only right on servers that happen to run in UTC
 
@@ -408,9 +414,12 @@ events are published into the same stream the consumer reads, so counting in
 the consumer would have double-counted every SDK run — a test now fails if
 anyone moves it there. The route also creates the run's live state on
 `run_start` itself: the consumer does that too, but asynchronously, and a result
-that arrived first found no state and was silently dropped. Creating the state
-is idempotent and never resets counters, so the consumer's later call changes
-nothing.
+that arrived first found no state and was silently dropped. The consumer's later
+call never resets counters, so it changes nothing. The route's own `run_start`
+does: a caller that reuses a run id within a day is starting a new run, which
+no longer inherits the previous run's counts or its completed status. A result
+is counted only once it has been published, so a failed publish, and the
+client's retry of it, no longer count it twice.
 
 The counter stores the current test's name in Redis, which makes it a third
 place event data lands. The sanitization test now covers it alongside the other
