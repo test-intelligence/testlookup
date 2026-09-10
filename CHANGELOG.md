@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-10 — "All time" on the runs page sorted every run, on every page
+
+`GET /api/v1/runs` orders runs by build number in natural order, so `ui-2`
+comes before `ui-10`. That order is computed from the build number with a
+regular expression, and no index could supply it. With "All time" selected
+nothing bounds the rows the sort sees, so every page of the runs list sorted
+the project's whole history, and so did `/runs/failed-ids`.
+
+Migration 0167 indexes that exact expression, per project and in the list's
+own order, so a page is now an index scan and a limit. It is built
+concurrently, so ingestion keeps writing while it builds. The expression
+changed in two ways the index depends on. Its constants are now written into
+the SQL rather than sent as parameters: an index only matches an identical
+expression, and a parameter never matches under a generic plan. It now
+compares numbers as `numeric` rather than `bigint`: a build number with a
+digit run longer than nineteen digits used to make the listing fail, and with
+the expression indexed it would have made ingesting that run fail. A test
+against real Postgres forces a generic plan on the statement the list
+executes, and checks that the plan uses the index and sorts nothing.
+
+Not changed: the "Run #N" labels are still computed over the whole history
+of the suites on the page.
+
 ## 2026-09-10 — a run's first ingest paid three round trips per new test
 
 When a finalized run reported a test its project had never seen, canonical

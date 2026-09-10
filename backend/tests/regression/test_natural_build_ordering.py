@@ -28,7 +28,7 @@ def _postgres_sql(expression) -> str:
 def _assert_canonical_order(sql: str, direction: str, nulls: str) -> None:
     assert "regexp_replace(test_runs.build_number" in sql
     assert "string_to_array" in sql
-    assert "cast(" in sql and "as bigint[]" in sql
+    assert "cast(" in sql and "as numeric[]" in sql
     assert f"{direction} nulls {nulls}" in sql
     assert f"test_runs.build_number {direction}" in sql
     assert f"test_runs.created_at {direction}" in sql
@@ -59,7 +59,25 @@ def test_natural_key_compiles_to_verified_postgres_array_key():
     assert "test_runs.build_number ~ '[0-9]'" in sql
     assert "regexp_replace(test_runs.build_number" in sql
     assert "string_to_array" in sql
-    assert "as bigint[]" in sql
+    # numeric, not bigint: a digit run past nineteen digits overflowed bigint
+    # (re-audit M6), and behind the 0167 index would have failed the INSERT.
+    assert "as numeric[]" in sql
+
+
+def test_the_key_sends_no_bind_parameters():
+    """Re-audit M6: migration 0167 indexes this exact expression.
+
+    Postgres uses an expression index only for a query expression written
+    identically. Under a generic plan a bind parameter is ``$n``, which never
+    matches the literal the index was built with, so the index would silently
+    stop being used. ``literal_binds`` above would hide exactly that.
+    """
+    from sqlalchemy.dialects.postgresql import asyncpg as pg_asyncpg
+
+    compiled = runs_service.natural_build_number_key().compile(dialect=pg_asyncpg.dialect())
+    assert compiled.params == {}, f"the key sends bind parameters: {compiled.params}"
+    sql = " ".join(str(compiled).lower().split())
+    assert "'[^0-9]+'" in sql and "'[0-9]'" in sql, sql
 
 
 def test_main_run_listing_uses_reverse_canonical_order():
