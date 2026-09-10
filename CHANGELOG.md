@@ -361,6 +361,13 @@ Write cost is unmeasured: `test_cases` is insert-heavy and this adds one GIN
 index to it. It is one index over a short list, and GIN amortises inserts, but
 that is reasoning rather than a number.
 
+The index is built `CONCURRENTLY`, so the migration never blocks ingestion. A
+plain `CREATE INDEX` holds a lock that stops every write to `test_cases` for the
+whole build, which takes minutes on a large table. A concurrent build that fails
+halfway leaves an invalid index behind, so the migration drops such a leftover
+before building. A new test fails any later migration that builds an index on
+an existing table without `CONCURRENTLY`.
+
 ## 2026-09-10 — live runs streamed one event at a time counted nothing
 
 The live-event consumer's result handler only *reads* a run's counters and

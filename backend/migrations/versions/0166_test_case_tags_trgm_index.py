@@ -38,6 +38,14 @@ Write cost is not measured here. ``test_cases`` is insert-heavy, and 0138
 measured +20% on its own step-snapshot path for two GIN trigram indexes. This is
 one index over a short JSON list, and GIN's pending-list (``fastupdate``)
 amortises inserts, but that is reasoning, not a measurement.
+
+Built CONCURRENTLY. A plain ``CREATE INDEX`` holds a SHARE lock on
+``test_cases`` for the whole build, and every ingest inserts into it: on a
+table in the millions a GIN trigram build takes minutes, and every worker's
+insert would queue behind it until tasks hit their soft time limits. 0167
+builds the same way for the same reason. A failed concurrent build leaves an
+INVALID index that ``IF NOT EXISTS`` would keep forever, so such a leftover is
+dropped first.
 """
 from alembic import op
 
@@ -46,16 +54,31 @@ down_revision = "0165"
 branch_labels = None
 depends_on = None
 
+INDEX = "ix_test_cases_tags_trgm"
+
 
 def upgrade() -> None:
     # Installed by 0058; idempotent for a fresh database that reaches 0166.
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_test_cases_tags_trgm "
-        "ON test_cases USING gin ((CAST(tags AS TEXT)) gin_trgm_ops)"
-    )
+    with op.get_context().autocommit_block():
+        # A CONCURRENTLY build that fails leaves an INVALID index behind, and
+        # IF NOT EXISTS below would then keep it, unusable, forever. Drop such
+        # a leftover first.
+        op.execute(
+            "DO $$ BEGIN "
+            "IF EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+            f"WHERE c.relname = '{INDEX}' AND NOT i.indisvalid) THEN "
+            f"EXECUTE 'DROP INDEX {INDEX}'; "
+            "END IF; END $$"
+        )
+    with op.get_context().autocommit_block():
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {INDEX} "
+            "ON test_cases USING gin ((CAST(tags AS TEXT)) gin_trgm_ops)"
+        )
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS ix_test_cases_tags_trgm")
+    with op.get_context().autocommit_block():
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {INDEX}")
     # Leave pg_trgm installed: 0058, 0138 and 0165 all depend on it.
