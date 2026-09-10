@@ -19,10 +19,12 @@ declared its proxy topology must not start believing a client-settable header.
 from __future__ import annotations
 
 import importlib.util
+import ipaddress
 from pathlib import Path
 
 import pytest
 import yaml
+from uvicorn.middleware.proxy_headers import _TrustedHosts
 
 ROOT = Path(__file__).resolve().parents[3]
 CONF = ROOT / "backend" / "gunicorn_conf.py"
@@ -54,9 +56,14 @@ def test_gunicorn_declares_forwarded_allow_ips(monkeypatch):
 
 
 def test_default_is_fail_closed(monkeypatch):
-    """Unset means trust nothing — never a wildcard by accident."""
+    """Unset means trust loopback only — never a wildcard by accident.
+
+    Both loopback forms: gunicorn's own default is ``"127.0.0.1,::1"``, and
+    an override that dropped ``::1`` would silently stop honouring the proxy
+    on a v6 loopback socket.
+    """
     conf = _load_conf(monkeypatch, None)
-    assert conf.forwarded_allow_ips == "127.0.0.1"
+    assert conf.forwarded_allow_ips == "127.0.0.1,::1"
 
 
 @pytest.mark.parametrize("value", ["*", "10.42.0.0/16", "192.168.1.7"])
@@ -83,7 +90,7 @@ def test_kubernetes_configmap_declares_the_trust_boundary():
         "k8s/base/configmap.yaml does not set FORWARDED_ALLOW_IPS, so the "
         "in-cluster API keeps seeing ingress-nginx as every caller"
     )
-    assert config["FORWARDED_ALLOW_IPS"].strip()
+    assert _is_a_real_trust_boundary(config["FORWARDED_ALLOW_IPS"])
 
 
 def test_release_compose_declares_the_trust_boundary():
@@ -94,3 +101,174 @@ def test_release_compose_declares_the_trust_boundary():
     assert "FORWARDED_ALLOW_IPS" in declared, (
         "docker-compose.release.yml backend does not set FORWARDED_ALLOW_IPS"
     )
+
+
+# ── What the value must actually BE ───────────────────────────────────
+#
+# The first version of this fix shipped "*" and every test above still passed,
+# because they all assert on file CONTENT. A wildcard is worse than the bug it
+# fixes, so the value itself needs asserting — and so does uvicorn's behaviour
+# under it.
+
+
+def _is_a_real_trust_boundary(value: str) -> bool:
+    """True when every entry is a concrete address or network, not a wildcard."""
+    entries = [item.strip() for item in str(value).split(",") if item.strip()]
+    if not entries:
+        return False
+    for entry in entries:
+        if entry == "*":
+            return False
+        try:
+            ipaddress.ip_network(entry, strict=False)
+        except ValueError:
+            return False
+    return True
+
+
+def test_the_helper_rejects_a_wildcard():
+    """Guards the guard — a helper that never says no would pass forever."""
+    assert not _is_a_real_trust_boundary("*")
+    assert not _is_a_real_trust_boundary("10.0.0.0/8,*")
+    assert not _is_a_real_trust_boundary("")
+    assert _is_a_real_trust_boundary("10.42.0.0/16")
+    assert _is_a_real_trust_boundary("127.0.0.1,::1")
+
+
+def _homelab_value() -> str:
+    text = (ROOT / "k8s" / "overlays" / "homelab" / "kustomization.yaml").read_text(
+        encoding="utf-8"
+    )
+    lines = [ln for ln in text.splitlines() if "FORWARDED_ALLOW_IPS" in ln]
+    assert lines, "the homelab overlay no longer narrows the trust boundary"
+    return lines[0].split(":", 1)[1].strip().strip('"')
+
+
+def _release_compose_default() -> str:
+    services = yaml.safe_load(RELEASE_COMPOSE.read_text(encoding="utf-8"))["services"]
+    entries = [
+        str(item)
+        for item in services["backend"]["environment"]
+        if str(item).startswith("FORWARDED_ALLOW_IPS=")
+    ]
+    assert entries, "the release compose no longer sets FORWARDED_ALLOW_IPS"
+    # ${FORWARDED_ALLOW_IPS:-<default>} — assert the DEFAULT, which is what an
+    # operator who sets nothing actually runs.
+    value = entries[0].partition("=")[2]
+    assert ":-" in value, "compose no longer supplies a default"
+    return value.partition(":-")[2].rstrip("}")
+
+
+def test_base_configmap_does_not_trust_every_peer():
+    value = yaml.safe_load(CONFIGMAP.read_text(encoding="utf-8"))["data"][
+        "FORWARDED_ALLOW_IPS"
+    ]
+    assert _is_a_real_trust_boundary(value), _WILDCARD_EXPLANATION.format(
+        source="k8s/base/configmap.yaml", value=value
+    )
+
+
+def test_homelab_overlay_does_not_trust_every_peer():
+    value = _homelab_value()
+    assert _is_a_real_trust_boundary(value), _WILDCARD_EXPLANATION.format(
+        source="k8s/overlays/homelab/kustomization.yaml", value=value
+    )
+
+
+def test_release_compose_does_not_trust_every_peer():
+    value = _release_compose_default()
+    assert _is_a_real_trust_boundary(value), _WILDCARD_EXPLANATION.format(
+        source="docker-compose.release.yml", value=value
+    )
+
+
+_WILDCARD_EXPLANATION = (
+    "{source} sets FORWARDED_ALLOW_IPS={value!r}. Under a wildcard uvicorn "
+    "returns the LEFTMOST X-Forwarded-For entry, and every proxy in this repo "
+    "appends, so that entry is whatever the caller sent — the login rate "
+    "limiter becomes defeatable by rotating a header and every audit IP "
+    "becomes forgeable."
+)
+
+
+# ── Uvicorn's real selection logic, not our belief about it ──────────────
+
+SPOOFED = "1.2.3.4"
+REAL_CLIENT = "203.0.113.9"
+INGRESS_POD = "10.42.1.7"
+#: What the backend receives: the caller's own header first, then each proxy
+#: appending the peer it saw ($proxy_add_x_forwarded_for).
+CHAIN = SPOOFED + ", " + REAL_CLIENT + ", " + INGRESS_POD
+
+
+def test_a_wildcard_returns_the_callers_own_value():
+    """The defect, pinned. If uvicorn ever stops doing this, revisit the ban."""
+    trusted = _TrustedHosts("*")
+    assert trusted.get_trusted_client_address(CHAIN)[0] == SPOOFED
+
+
+def test_the_pod_cidr_returns_the_real_client():
+    """The shipped homelab value, against the same chain."""
+    trusted = _TrustedHosts(_homelab_value())
+    assert trusted.get_trusted_client_address(CHAIN)[0] == REAL_CLIENT, (
+        "the trust boundary no longer resolves the true client — the login "
+        "rate limiter and every audit IP depend on this"
+    )
+
+
+def test_trusting_the_clients_too_reopens_the_spoof():
+    """Why the homelab overlay narrows instead of inheriting the base value.
+
+    That cluster's users are on 192.168.0.0/24. Trusting the range they sit in
+    makes the caller itself a trusted hop, so the reverse walk continues past
+    its real address and lands back on the value the caller supplied.
+    """
+    lan_chain = SPOOFED + ", 192.168.0.50, " + INGRESS_POD
+    broad = _TrustedHosts("10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")
+    assert broad.get_trusted_client_address(lan_chain)[0] == SPOOFED
+
+    narrow = _TrustedHosts(_homelab_value())
+    assert narrow.get_trusted_client_address(lan_chain)[0] == "192.168.0.50"
+
+
+def test_the_header_is_ignored_when_the_peer_is_not_trusted():
+    """Why a narrow value is fail-closed rather than merely narrow.
+
+    ProxyHeadersMiddleware consults X-Forwarded-For only when the immediate TCP
+    peer is itself trusted, so a caller that reaches the API directly cannot
+    inject an address at all.
+    """
+    trusted = _TrustedHosts(_homelab_value())
+    assert REAL_CLIENT not in trusted
+    assert INGRESS_POD in trusted
+
+
+def test_the_homelab_value_covers_every_node_pod_cidr():
+    """A narrowed value is only correct if it still covers every hop.
+
+    Measured on the live cluster: 10.42.0.0/24, 10.42.1.0/24, 10.42.2.0/24.
+    """
+    network = ipaddress.ip_network(_homelab_value())
+    for node_cidr in ("10.42.0.0/24", "10.42.1.0/24", "10.42.2.0/24"):
+        assert ipaddress.ip_network(node_cidr).subnet_of(network), (
+            "pod CIDR " + node_cidr + " is outside FORWARDED_ALLOW_IPS, so "
+            "requests proxied by a pod on that node lose their real client IP"
+        )
+
+
+def test_the_release_api_port_is_not_published_to_every_interface():
+    """nginx is the entry point; a direct peer could otherwise set its own XFF.
+
+    The backend trusts the bridge range so the frontend's forwarded header is
+    honoured. Publishing :8000 on 0.0.0.0 let a caller reach the API without
+    passing through nginx, from inside that same trusted range.
+    """
+    services = yaml.safe_load(RELEASE_COMPOSE.read_text(encoding="utf-8"))["services"]
+    published = [str(p) for p in services["backend"]["ports"]]
+    assert published, "the backend no longer publishes a port"
+    for mapping in published:
+        assert not mapping.startswith("8000:"), (
+            "docker-compose.release.yml publishes " + mapping + " on every "
+            "interface, bypassing the nginx proxy the trust boundary assumes"
+        )
+        assert "127.0.0.1" in mapping

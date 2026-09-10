@@ -268,6 +268,16 @@ patches:
         # reverting is a single LLM_PROVIDER change, not another allowlist edit.
         AI_LLM_PROVIDER_ALLOWLIST: "ollama,openrouter"
         AI_LLM_ALLOWED_BASE_URLS: "http://testlookup-ollama:11434,https://openrouter.ai"
+        # Re-audit H2. This cluster's users are ON the LAN (192.168.0.0/24),
+        # so the base value's private ranges would trust the clients as well
+        # as the proxy -- and uvicorn's reverse walk would then run past a
+        # caller's real address and return the spoofed leftmost
+        # X-Forwarded-For entry. Pin the k3s pod CIDR: Traefik and the
+        # frontend nginx are the only hops, and both live inside it.
+        # Measured from the live cluster (kubectl get nodes -o
+        # jsonpath='{.items[*].spec.podCIDR}'): 10.42.0.0/24, 10.42.1.0/24,
+        # 10.42.2.0/24 -- one /16 covers the three nodes and any node added.
+        FORWARDED_ALLOW_IPS: "10.42.0.0/16"
         CORS_ORIGINS: "http://testlookup.local"
         PUBLIC_BASE_URL: "http://testlookup.local"
         STORAGE_BACKEND: "minio"
