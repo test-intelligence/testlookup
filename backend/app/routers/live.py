@@ -667,6 +667,53 @@ async def ingest_live_event(
     except Exception:
         pass
 
+    # ── Count the result where it arrives (re-audit H6) ─────────────────────
+    #
+    # The consumer's result handler only READS the live-state counters and
+    # broadcasts them; its own comment says the increment happens at ingest,
+    # "in stream_service.ingest_event_batch()". That is true for the SDK batch
+    # path, whose admission Lua recounts its ledger sets into this same hash.
+    # It was never true here: nothing on this route touched the counters, and
+    # RedisLiveRunState.record_test_event -- the method the consumer's own
+    # docstring names for exactly this -- had no caller at all. A run streamed
+    # through this endpoint showed zero results on the live dashboard, never
+    # tripped the failure-rate early warning, and was finalised from counters
+    # that were all zero.
+    #
+    # Counted here rather than in the consumer on purpose: batch events are
+    # published into the same stream, so counting in the consumer would
+    # double-count every SDK run. This route is the only one that needs it.
+    #
+    # run_start creates the state here too. The consumer creates it as well,
+    # but asynchronously -- a result arriving before the consumer had processed
+    # its run_start found no state and was dropped. RedisLiveRunState.start is
+    # idempotent and never resets counters, so the consumer's later call is a
+    # no-op rather than a wipe.
+    from app.streams.live_run_state import RedisLiveRunState
+
+    if event_type == "run_start":
+        await RedisLiveRunState.start(
+            run_id,
+            str(safe_event.get("project_id")),
+            str(safe_event.get("build_number") or run_id),
+            _as_count(safe_event.get("total_tests")),
+        )
+    elif event_type == "test_result":
+        await RedisLiveRunState.record_test_event(
+            run_id,
+            str(safe_event.get("status") or "UNKNOWN"),
+            str(safe_event.get("test_name") or ""),
+            total_tests=_as_count(safe_event.get("total_tests")),
+        )
+
     # Enqueue to Redis Stream — returns immediately regardless of processing load
     await publish_live_event(run_id, safe_event)
     return {"accepted": True, "run_id": run_id, "event_type": event_type}
+
+
+def _as_count(value) -> int:
+    """A client-supplied count, or 0. Never lets a bad value 500 the ingest."""
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError):
+        return 0

@@ -85,6 +85,21 @@ def wired(monkeypatch):
     monkeypatch.setattr(
         "app.services.live_event_authz.remember_streaming_project", _remember_key
     )
+
+    # Since re-audit H6 the handler counts results into the live-run state
+    # itself (it used to count nothing). These tests are about WHO may write,
+    # not about counting, so stub the state rather than let it reach Redis.
+    # The counting has its own suite: test_ws_events_results_are_counted.py.
+    async def _state_noop(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.streams.live_run_state.RedisLiveRunState.start", _state_noop
+    )
+    monkeypatch.setattr(
+        "app.streams.live_run_state.RedisLiveRunState.record_test_event",
+        _state_noop,
+    )
     # The SHIPPED default is True (see
     # test_the_shared_secret_is_refused_by_default). These cases opt back
     # into the legacy path on purpose, to pin what it does when a

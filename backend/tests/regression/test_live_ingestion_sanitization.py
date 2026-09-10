@@ -851,6 +851,14 @@ async def test_legacy_live_route_sanitizes_mongo_and_redis(monkeypatch):
     published = AsyncMock(return_value="1-0")
     monkeypatch.setattr("app.db.mongo.get_mongo_db", lambda: mongo)
     monkeypatch.setattr("app.streams.producer.publish_live_event", published)
+    # Since re-audit H6 the route also counts the result into the live-run
+    # state hash, which stores the current test's name. That is a third
+    # place event data lands in Redis, so it is held to the same rule as the
+    # other two below: record what it is given, and prove it was sanitized.
+    counted = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.streams.live_run_state.RedisLiveRunState.record_test_event", counted
+    )
 
     event = {
         "type": "test_result",
@@ -880,6 +888,16 @@ async def test_legacy_live_route_sanitizes_mongo_and_redis(monkeypatch):
     _assert_failure_fields_are_safe(redis_event)
     _assert_no_raw_canaries(mongo_event)
     _assert_no_raw_canaries(redis_event)
+
+    # The counting write sees the SANITIZED event, never the raw one.
+    counted.assert_awaited_once()
+    count_args = counted.await_args
+    counted_name = count_args.args[2] if len(count_args.args) > 2 else count_args.kwargs.get("test_name")
+    assert counted_name == str(redis_event.get("test_name") or ""), (
+        "the live-state counter was given a test name that differs from the "
+        "sanitized published event — it is reading the raw payload"
+    )
+    _assert_no_raw_canaries({"test_name": counted_name})
     assert mongo_event["run_id"] == "path-run"
     assert (
         mongo_event[LIVE_SANITIZATION_VERSION_FIELD]

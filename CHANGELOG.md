@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-09-10 — live runs streamed one event at a time counted nothing
+
+The live-event consumer's result handler only *reads* a run's counters and
+broadcasts them. Its comment says the counting happens at ingest, "in
+stream_service.ingest_event_batch()". That is true for the SDK batch path,
+whose admission step recounts its ledger into the same Redis hash. It was never
+true for `POST /ws/events`: nothing on that route touched the counters, and the
+method written for exactly this — `RedisLiveRunState.record_test_event`, named
+in the consumer's own docstring — had no caller anywhere.
+
+So a run streamed through that endpoint showed zero results on the live
+dashboard, never raised the failure-rate early warning however many of its tests
+failed, and broadcast a final completion whose totals were all zero.
+
+Results are now counted where they arrive. That placement is the point. Batch
+events are published into the same stream the consumer reads, so counting in
+the consumer would have double-counted every SDK run — a test now fails if
+anyone moves it there. The route also creates the run's live state on
+`run_start` itself: the consumer does that too, but asynchronously, and a result
+that arrived first found no state and was silently dropped. Creating the state
+is idempotent and never resets counters, so the consumer's later call changes
+nothing.
+
+The counter stores the current test's name in Redis, which makes it a third
+place event data lands. The sanitization test now covers it alongside the other
+two, and asserts the name it receives is the sanitized one.
+
+**Not fixed here, and worth being plain about:** these runs are never persisted
+as test runs at all. Rows are only created on the batch path, and the consumer's
+database finalize looks a caller-chosen slug up in a UUID column, so it can
+never match. This fix restores the live view; a stored grade needs its own
+change, and is recorded as a follow-up.
+
 ## 2026-09-10 — nine post-ingestion steps could fail forever without anyone knowing
 
 After a run ingests, `finalize_run` performs nine further steps: suite
