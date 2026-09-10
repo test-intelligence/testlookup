@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-09-10 — nine post-ingestion steps could fail forever without anyone knowing
+
+After a run ingests, `finalize_run` performs nine further steps: suite
+membership, canonical case sync, deletion reconcile, failed-test assignment,
+auto-tagging, quarantine tagging, release linking, commit range, and the
+activity ledger. Each runs in its own database session, so one failing cannot
+poison the next or skip it. That isolation is correct — and it is exactly what
+made failures invisible. The error branch rolled back and wrote a warning, and
+did nothing else. A step could fail on every run for weeks, and the only trace
+was a log line nobody was paged for. A project whose canonical cases, failed-test
+owners or release links had quietly stopped updating looked identical to a
+healthy one.
+
+Each failure now increments `testlookup_finalize_step_failures_total`, labelled
+by step, and `TestLookupFinalizeStepFailing` fires when any one step fails more
+than three times in thirty minutes. The label is what lets the alert say *which*
+step is broken rather than that something somewhere is.
+
+The runner used to be a closure inside `finalize_run`. It is module-level now,
+so its failure accounting can be tested without driving the whole pipeline; a
+local alias keeps all nine call sites unchanged. A test fails if a nested runner
+ever reappears, because a local copy would shadow the counted one and every step
+would go dark again without a single test noticing.
+
 ## 2026-09-10 — log redaction skipped the one field that holds the message
 
 The structured-logging redaction processor scrubbed every string value in a

@@ -82,6 +82,21 @@ groups:
           summary: "Abnormally high number of active pipeline runs"
           description: "More than 20 pipeline runs are simultaneously active — possible stuck pipelines."
 
+      # A finalize post-step keeps failing (re-audit H5). Each step runs in its
+      # own session so one failure cannot poison the next, which is right --
+      # and until this counter existed that isolation also made the failure
+      # invisible: canonical cases, failed-test assignment or release links
+      # could stop updating on every run with nothing to show for it.
+      - alert: TestLookupFinalizeStepFailing
+        expr: |
+          sum by (step) (increase(testlookup_finalize_step_failures_total[30m])) > 3
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Post-ingestion step {{ $labels.step }} is failing repeatedly"
+          description: "The {{ $labels.step }} finalize step failed more than 3 times in 30 minutes. Runs still ingest, but whatever that step maintains has stopped updating."
+
   # ── P5-7: Infrastructure alerts ────────────────────────────────────────────
   - name: testlookup.infrastructure
     interval: 30s

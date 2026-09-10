@@ -23,6 +23,18 @@ ingestion_test_cases_total = Counter(
     ["framework", "status"],  # framework: allure|testng|junit; status: passed|failed|skipped
 )
 
+# Re-audit H5. finalize_run's post-steps each run in their own session so one
+# failure cannot poison the next -- and each failure was a log line and nothing
+# else. Nine steps (suite membership, canonical sync, deletion reconcile,
+# failed-test assignment, auto-tagging, quarantine tagging, release linking,
+# commit range, the activity ledger) could fail on every run indefinitely with
+# no metric to graph and no alert to fire.
+finalize_step_failures_total = Counter(
+    "testlookup_finalize_step_failures_total",
+    "Post-ingestion finalize steps that raised and were rolled back",
+    ["step"],  # suite_sync|canonical_sync|canonical_deletion_reconcile|assign_failed_tests|auto_tagging|quarantine_tagging|release_linking|commit_range|activity_ledger
+)
+
 ingestion_duration_seconds = Histogram(
     "testlookup_ingestion_duration_seconds",
     "Wall-clock time for a complete test-run ingestion",
