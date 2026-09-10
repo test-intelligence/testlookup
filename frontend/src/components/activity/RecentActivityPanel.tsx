@@ -1,7 +1,7 @@
-import { Link } from 'react-router-dom'
 import { Activity as ActivityIcon } from 'lucide-react'
 
 import ActivityRow from '@/components/activity/ActivityRow'
+import ScopedLink from '@/components/ui/ScopedLink'
 import { useActivityFeed } from '@/hooks/useActivityFeed'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 
@@ -51,12 +51,18 @@ export default function RecentActivityPanel({ days = 30 }: { days?: number }) {
             Runs, releases and changes in this project
           </p>
         </div>
-        <Link
+        {/* ScopedLink, not a bare Link: /activity is project-gated, and the
+            routeScope ratchet rejects a raw link to a gated page — correctly.
+            This panel does return early in All Projects mode, so the link only
+            renders when a project is pinned, but relying on that would make
+            the guarantee depend on reading this component rather than on the
+            registry every other link already asks. */}
+        <ScopedLink
           to="/activity"
           className="text-[11px] text-[var(--color-accent)] hover:underline"
         >
           View all
-        </Link>
+        </ScopedLink>
       </div>
 
       <div className="mt-3">
