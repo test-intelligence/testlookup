@@ -948,29 +948,60 @@ def persist_live_session(
     max_retries=3,
     queue="ingestion",
 )
-def ingest_test_run(self, sentinel_dict: dict, minio_prefix: str):
+def ingest_test_run(
+    self,
+    sentinel_dict: dict | None = None,
+    minio_prefix: str = "",
+    sentinel_key: str | None = None,
+):
     """
     Background task: parse Allure JSON + TestNG XML from MinIO and
     upsert structured data into PostgreSQL + MongoDB.
     Deduplicates by minio_prefix so concurrent webhooks don't double-ingest.
+
+    The MinIO webhook queues the sentinel's object KEY, and this task reads the
+    sentinel (services/minio_sentinel.py): off the API process, and inside this
+    task's retries for a storage hiccup (code review of re-audit N10). A
+    sentinel that is definitively unusable -- missing, oversized, not a JSON
+    object, invalid -- is refused without a retry. ``sentinel_dict`` is the
+    shape an API from before that change queued; it is still accepted.
     """
     from app.models.schemas import SentinelFile
     from app.services.ingestion import process_sentinel
+    from app.services.minio_sentinel import SentinelRefused, read_sentinel
 
     dedup_key = f"testlookup:dedup:ingest:{minio_prefix}"
     dedup_owner = str(self.request.id)
 
-    async def _run():
+    async def _run() -> str:
         if await _is_duplicate(dedup_key, owner=dedup_owner):
             logger.info("[Task %s] Skipping duplicate ingestion for %s", self.request.id, minio_prefix)
-            return
-        sentinel = SentinelFile(**sentinel_dict)
+            return "duplicate"
+        if sentinel_key:
+            try:
+                sentinel = await read_sentinel(sentinel_key)
+            except SentinelRefused as exc:
+                logger.warning(
+                    "[Task %s] Sentinel refused, not retrying: %s (%s)",
+                    self.request.id, sentinel_key, exc,
+                )
+                return "refused"
+        else:
+            sentinel = SentinelFile(**(sentinel_dict or {}))
         await process_sentinel(sentinel, minio_prefix)
+        return "ingested"
 
     logger.info("[Task %s] Starting ingestion: %s", self.request.id, minio_prefix)
     _ingest_started = time.perf_counter()
     try:
-        _run_async(_run())
+        outcome = _run_async(_run())
+        if outcome == "refused":
+            # Nothing was ingested, and nothing a retry could change. Free the
+            # prefix, so a real upload notified later is not refused as a
+            # duplicate of this one for the lock's hour.
+            _count_ingestion_run("failure", time.perf_counter() - _ingest_started)
+            _release_dedup_for_retry(dedup_key, dedup_owner, self.request.id)
+            return
         logger.info("[Task %s] Ingestion complete", self.request.id)
         _count_ingestion_run("success", time.perf_counter() - _ingest_started)
 

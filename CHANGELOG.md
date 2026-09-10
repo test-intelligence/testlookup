@@ -527,19 +527,24 @@ prefix derived from the same caller-supplied key — so the one request is a
 cross-tenant read as well as a write. This is re-audit finding H1 again, at a
 different door.
 
-The handler was notified *about* an object and never fetched it. It now reads
-`upload_complete.json` from the object store and uses that as the sentinel, and
-takes the project from the object **key** — where the data physically lives —
-rather than from anything the notification or even the file claims. Ingesting
-into a project therefore requires write access to that project's prefix in the
-bucket: a storage credential, not a shared secret. A notification for an object
-that is not there is refused rather than guessed at, because falling back to
-the request body is the behaviour being removed.
+The handler was notified *about* an object and never fetched it. Now the
+ingestion task reads `upload_complete.json` from the object store and uses that
+as the sentinel, and takes the project from the object **key** -- where the data
+physically lives -- rather than from anything the notification or even the file
+claims. Ingesting into a project therefore requires write access to that
+project's prefix in the bucket: a storage credential, not a shared secret.
+
+The webhook itself only queues the key. A sentinel that is missing, is not a JSON
+object or is larger than 64 KiB is refused and not retried, because falling
+back to the request body is the behaviour being removed. A storage error such as
+a timeout is retried with the task's backoff. Reading the sentinel in the
+webhook, as a first version of this fix did, turned that error into a 200
+"ignored" -- and MinIO treats any 200 as delivered, so the upload was lost.
 
 It survived partly because `/webhooks/` mounts outside `/api/v1`, where neither
 authorization ratchet looked until the previous entry added a third scan. It
-was also the one route in that prefix with no tests at all; there are now
-fourteen, and the source check that pins the payload field uses the syntax tree
+was also the one route in that prefix with no tests at all; the webhook, the
+sentinel reader and the task now have them, and the source check that pins the payload field uses the syntax tree
 rather than a substring, because the handler's own comment names the field it
 must not read.
 
