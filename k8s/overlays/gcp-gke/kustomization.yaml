@@ -132,7 +132,7 @@ patches:
       metadata:
         name: testlookup-config
       data:
-        FORWARDED_ALLOW_IPS: "35.191.0.0/16,130.211.0.0/22"
+        TRUSTED_PROXY_IPS: "35.191.0.0/16,130.211.0.0/22"
     target:
       kind: ConfigMap
       name: testlookup-config

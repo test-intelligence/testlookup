@@ -31,7 +31,7 @@ services:
       # the nginx container connects from, never "*": under a wildcard uvicorn
       # returns the leftmost X-Forwarded-For entry, i.e. whatever the caller
       # sent.
-      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-172.16.0.0/12}
+      - TRUSTED_PROXY_IPS=${TRUSTED_PROXY_IPS:-172.16.0.0/12}
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - MONGO_URI=mongodb://mongo:27017
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0

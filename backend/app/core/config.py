@@ -629,6 +629,21 @@ class Settings(BaseSettings):
     # a project-scoped key derives the project server-side. Defaults False so
     # existing direct integrations keep working; set True to close the shared
     # secret path outright (re-audit H1).
+    #: Peer addresses allowed to supply X-Forwarded-For / X-Forwarded-Proto.
+    #:
+    #: Comma-separated addresses OR CIDR networks. Empty means trust nothing:
+    #: request.client.host stays the immediate peer, which is correct for a
+    #: deployment that has not declared a proxy.
+    #:
+    #: NOT named FORWARDED_ALLOW_IPS on purpose. gunicorn reads that name
+    #: itself, validates it with ipaddress.ip_address() -- which rejects every
+    #: network -- and does so while building its Config, before the config file
+    #: is read. A CIDR under that name therefore kills the process at startup
+    #: with "does not appear to be an IPv4 or IPv6 address" and no way for
+    #: gunicorn_conf.py to intervene. Applying the boundary in the app instead
+    #: works identically under gunicorn and under a bare uvicorn.
+    TRUSTED_PROXY_IPS: str = ""
+
     LIVE_EVENTS_REQUIRE_PROJECT_KEY: bool = True
 
     # ── Observability ─────────────────────────────────────────

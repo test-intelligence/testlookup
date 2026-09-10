@@ -71,7 +71,7 @@ data:
   # wherever CLIENTS arrive from public addresses. An on-premise cluster whose
   # users share the RFC1918 space with the pods MUST narrow this to the pod
   # CIDR in its overlay -- see overlays/homelab, which pins 10.42.0.0/16.
-  FORWARDED_ALLOW_IPS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  TRUSTED_PROXY_IPS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
   # ── Observability ────────────────────────────────────────────────────────────
   OTEL_ENABLED: "true"
   OTEL_SERVICE_NAME: "testlookup"

@@ -34,7 +34,7 @@ patches:
   # a range your callers sit in makes each caller a trusted hop, so uvicorn's
   # reverse walk runs PAST its real address and returns the leftmost
   # X-Forwarded-For entry — which the caller supplied. That is the same spoof
-  # as FORWARDED_ALLOW_IPS="*", reached by being generous instead.
+  # as TRUSTED_PROXY_IPS="*", reached by being generous instead.
   #
   # The value below covers the pod CIDRs the distributions named at the top of
   # this file use by default (K3s/RKE2 10.42/16, kubeadm+Flannel 10.244/16,
@@ -47,7 +47,7 @@ patches:
       metadata:
         name: testlookup-config
       data:
-        FORWARDED_ALLOW_IPS: "10.42.0.0/16,10.244.0.0/16,10.233.0.0/16"
+        TRUSTED_PROXY_IPS: "10.42.0.0/16,10.244.0.0/16,10.233.0.0/16"
     target:
       kind: ConfigMap
       name: testlookup-config

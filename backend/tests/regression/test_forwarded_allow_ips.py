@@ -18,7 +18,6 @@ declared its proxy topology must not start believing a client-settable header.
 """
 from __future__ import annotations
 
-import importlib.util
 import ipaddress
 from pathlib import Path
 
@@ -32,65 +31,148 @@ CONFIGMAP = ROOT / "k8s" / "base" / "configmap.yaml"
 RELEASE_COMPOSE = ROOT / "docker-compose.release.yml"
 
 
-def _load_conf(monkeypatch, value: str | None):
-    """Import gunicorn_conf.py fresh with the env var set (or unset)."""
-    if value is None:
-        monkeypatch.delenv("FORWARDED_ALLOW_IPS", raising=False)
-    else:
-        monkeypatch.setenv("FORWARDED_ALLOW_IPS", value)
+#: gunicorn's ForwardedAllowIPS validator, restated. It runs
+#: ``ipaddress.ip_address(addr)`` on every entry, which raises on ANY network,
+#: and it runs while gunicorn builds its Config -- from $FORWARDED_ALLOW_IPS,
+#: before the config file is read. gunicorn cannot be imported on Windows
+#: (`import grp`), so the rule is restated here rather than called.
+def _gunicorn_would_accept(value: str) -> bool:
+    for entry in [e.strip() for e in str(value).split(",") if e.strip()]:
+        if entry == "*":
+            continue
+        try:
+            ipaddress.ip_address(entry)
+        except ValueError:
+            return False
+    return True
 
-    spec = importlib.util.spec_from_file_location("_gunicorn_conf_under_test", CONF)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+
+def test_the_restated_gunicorn_rule_matches_what_broke():
+    """Guards the restatement above against the error we actually saw.
+
+        Error: '10.42.0.0/16' does not appear to be an IPv4 or IPv6 address
+    """
+    assert not _gunicorn_would_accept("10.42.0.0/16")
+    assert not _gunicorn_would_accept("127.0.0.1,10.42.0.0/16")
+    assert _gunicorn_would_accept("127.0.0.1,::1")
+    assert _gunicorn_would_accept("*")
 
 
-def test_gunicorn_declares_forwarded_allow_ips(monkeypatch):
-    """The setting must exist at all — its absence was the defect."""
-    conf = _load_conf(monkeypatch, None)
-    assert hasattr(conf, "forwarded_allow_ips"), (
-        "gunicorn_conf.py declares no forwarded_allow_ips, so UvicornWorker "
-        "falls back to trusting 127.0.0.1 only and every proxied request "
-        "reports the proxy as its client address"
+def test_gunicorn_is_not_handed_the_trust_boundary():
+    """The boundary is a CIDR, and gunicorn cannot hold one.
+
+    gunicorn_conf.py must not assign forwarded_allow_ips at all: assigning it
+    would either re-introduce the crash or silently narrow the boundary to
+    single addresses, and the proxy is a pod whose address changes.
+    """
+    source = CONF.read_text(encoding="utf-8")
+    assignments = [
+        line
+        for line in source.splitlines()
+        if line.strip().startswith("forwarded_allow_ips")
+    ]
+    assert not assignments, (
+        "gunicorn_conf.py assigns forwarded_allow_ips: " + str(assignments) + ". "
+        "gunicorn validates that name with ipaddress.ip_address(), which "
+        "rejects every CIDR — see app/bootstrap.py for where the boundary lives"
     )
 
 
-def test_default_is_fail_closed(monkeypatch):
-    """Unset means trust loopback only — never a wildcard by accident.
+def test_no_deployment_sets_the_name_gunicorn_reads():
+    """This is the test that would have caught the outage.
 
-    Both loopback forms: gunicorn's own default is ``"127.0.0.1,::1"``, and
-    an override that dropped ``::1`` would silently stop honouring the proxy
-    on a v6 loopback socket.
+    A ConfigMap carrying FORWARDED_ALLOW_IPS="10.42.0.0/16" killed every worker
+    at startup. The old tests could not see it: they imported gunicorn_conf.py
+    as a plain module and read an attribute, so gunicorn's validator — the only
+    thing that actually rejects the value — never ran.
     """
-    conf = _load_conf(monkeypatch, None)
-    assert conf.forwarded_allow_ips == "127.0.0.1,::1"
+    offenders = []
+    for path in sorted(ROOT.glob("docker-compose*.yml")) + sorted(
+        (ROOT / "k8s").rglob("*.yaml")
+    ):
+        text = path.read_text(encoding="utf-8")
+        for number, line in enumerate(text.splitlines(), start=1):
+            if "FORWARDED_ALLOW_IPS" not in line or line.strip().startswith("#"):
+                continue
+            offenders.append(f"{path.relative_to(ROOT).as_posix()}:{number}")
+
+    assert not offenders, (
+        "these set FORWARDED_ALLOW_IPS, which gunicorn reads and validates "
+        "before any config file runs — a CIDR there kills the process at "
+        "startup. Use TRUSTED_PROXY_IPS, which the app applies itself:"
+        + _NL_INDENT
+        + _NL_INDENT.join(offenders)
+    )
 
 
-@pytest.mark.parametrize("value", ["*", "10.42.0.0/16", "192.168.1.7"])
-def test_environment_overrides_the_default(monkeypatch, value):
-    """Deployments configure the trust boundary through the environment."""
-    conf = _load_conf(monkeypatch, value)
-    assert conf.forwarded_allow_ips == value
+def test_uvicorn_worker_is_still_the_worker_class():
+    """The app-level middleware needs an ASGI server; pin the worker class."""
+    assert "UvicornWorker" in CONF.read_text(encoding="utf-8")
 
 
-def test_uvicorn_worker_is_still_the_worker_class(monkeypatch):
-    """forwarded_allow_ips only reaches ProxyHeadersMiddleware via UvicornWorker.
+def test_the_app_installs_the_boundary_when_one_is_declared(monkeypatch):
+    """The setting must actually reach ProxyHeadersMiddleware."""
+    from fastapi import FastAPI
 
-    If the worker class ever changes, this setting stops having the effect the
-    module comment claims, so the two must be asserted together.
-    """
-    conf = _load_conf(monkeypatch, None)
-    assert "UvicornWorker" in conf.worker_class
+    from app.bootstrap import configure_middlewares
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.42.0.0/16")
+    app = FastAPI()
+    configure_middlewares(app)
+
+    installed = [m for m in app.user_middleware if "ProxyHeaders" in str(m.cls)]
+    assert installed, (
+        "no ProxyHeadersMiddleware is installed, so TRUSTED_PROXY_IPS has no "
+        "effect and request.client.host stays the ingress address"
+    )
+
+
+def test_the_boundary_is_the_outermost_middleware(monkeypatch):
+    """Everything downstream reads request.client.host — it must be corrected first."""
+    from fastapi import FastAPI
+
+    from app.bootstrap import configure_middlewares
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.42.0.0/16")
+    app = FastAPI()
+    configure_middlewares(app)
+
+    assert "ProxyHeaders" in str(app.user_middleware[0].cls), (
+        "ProxyHeadersMiddleware is not outermost, so middleware ahead of it "
+        "sees the proxy's address: " + str([str(m.cls) for m in app.user_middleware])
+    )
+
+
+def test_nothing_is_installed_when_no_boundary_is_declared(monkeypatch):
+    """Undeclared topology trusts nothing — the fail-closed default."""
+    from fastapi import FastAPI
+
+    from app.bootstrap import configure_middlewares
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "")
+    app = FastAPI()
+    configure_middlewares(app)
+
+    assert not [m for m in app.user_middleware if "ProxyHeaders" in str(m.cls)]
+
+
+def test_the_default_is_to_trust_nothing():
+    from app.core.config import Settings
+
+    assert Settings.model_fields["TRUSTED_PROXY_IPS"].default == ""
 
 
 def test_kubernetes_configmap_declares_the_trust_boundary():
     """k8s runs behind ingress-nginx, so it must opt in explicitly."""
     config = yaml.safe_load(CONFIGMAP.read_text(encoding="utf-8"))["data"]
-    assert "FORWARDED_ALLOW_IPS" in config, (
+    assert "TRUSTED_PROXY_IPS" in config, (
         "k8s/base/configmap.yaml does not set FORWARDED_ALLOW_IPS, so the "
         "in-cluster API keeps seeing ingress-nginx as every caller"
     )
-    assert _is_a_real_trust_boundary(config["FORWARDED_ALLOW_IPS"])
+    assert _is_a_real_trust_boundary(config["TRUSTED_PROXY_IPS"])
 
 
 def test_release_compose_declares_the_trust_boundary():
@@ -98,7 +180,7 @@ def test_release_compose_declares_the_trust_boundary():
     services = yaml.safe_load(RELEASE_COMPOSE.read_text(encoding="utf-8"))["services"]
     env = services["backend"]["environment"]
     declared = {str(item).partition("=")[0] for item in env}
-    assert "FORWARDED_ALLOW_IPS" in declared, (
+    assert "TRUSTED_PROXY_IPS" in declared, (
         "docker-compose.release.yml backend does not set FORWARDED_ALLOW_IPS"
     )
 
@@ -200,7 +282,7 @@ def _homelab_value() -> str:
     text = (ROOT / "k8s" / "overlays" / "homelab" / "kustomization.yaml").read_text(
         encoding="utf-8"
     )
-    lines = [ln for ln in text.splitlines() if "FORWARDED_ALLOW_IPS" in ln]
+    lines = [ln for ln in text.splitlines() if "TRUSTED_PROXY_IPS" in ln]
     assert lines, "the homelab overlay no longer narrows the trust boundary"
     return lines[0].split(":", 1)[1].strip().strip('"')
 
@@ -210,10 +292,10 @@ def _release_compose_default() -> str:
     entries = [
         str(item)
         for item in services["backend"]["environment"]
-        if str(item).startswith("FORWARDED_ALLOW_IPS=")
+        if str(item).startswith("TRUSTED_PROXY_IPS=")
     ]
-    assert entries, "the release compose no longer sets FORWARDED_ALLOW_IPS"
-    # ${FORWARDED_ALLOW_IPS:-<default>} — assert the DEFAULT, which is what an
+    assert entries, "the release compose no longer sets TRUSTED_PROXY_IPS"
+    # ${TRUSTED_PROXY_IPS:-<default>} — assert the DEFAULT, which is what an
     # operator who sets nothing actually runs.
     value = entries[0].partition("=")[2]
     assert ":-" in value, "compose no longer supplies a default"
@@ -222,7 +304,7 @@ def _release_compose_default() -> str:
 
 def test_base_configmap_does_not_trust_every_peer():
     value = yaml.safe_load(CONFIGMAP.read_text(encoding="utf-8"))["data"][
-        "FORWARDED_ALLOW_IPS"
+        "TRUSTED_PROXY_IPS"
     ]
     assert _is_a_real_trust_boundary(value), _WILDCARD_EXPLANATION.format(
         source="k8s/base/configmap.yaml", value=value
@@ -244,7 +326,7 @@ def test_release_compose_does_not_trust_every_peer():
 
 
 _WILDCARD_EXPLANATION = (
-    "{source} sets FORWARDED_ALLOW_IPS={value!r}. Under a wildcard uvicorn "
+    "{source} sets TRUSTED_PROXY_IPS={value!r}. Under a wildcard uvicorn "
     "returns the LEFTMOST X-Forwarded-For entry, and every proxy in this repo "
     "appends, so that entry is whatever the caller sent — the login rate "
     "limiter becomes defeatable by rotating a header and every audit IP "
@@ -312,7 +394,7 @@ def test_the_homelab_value_covers_every_node_pod_cidr():
     network = ipaddress.ip_network(_homelab_value())
     for node_cidr in ("10.42.0.0/24", "10.42.1.0/24", "10.42.2.0/24"):
         assert ipaddress.ip_network(node_cidr).subnet_of(network), (
-            "pod CIDR " + node_cidr + " is outside FORWARDED_ALLOW_IPS, so "
+            "pod CIDR " + node_cidr + " is outside TRUSTED_PROXY_IPS, so "
             "requests proxied by a pod on that node lose their real client IP"
         )
 
@@ -438,7 +520,7 @@ def _declared_env_keys(service: dict) -> set:
 
 @pytest.mark.parametrize("name", SELF_CONTAINED_PRODUCTION_COMPOSE)
 def test_every_self_contained_production_compose_declares_the_boundary(name):
-    assert "FORWARDED_ALLOW_IPS" in _declared_env_keys(_compose_backend(name))
+    assert "TRUSTED_PROXY_IPS" in _declared_env_keys(_compose_backend(name))
 
 
 def test_the_gcp_vm_override_declares_it_because_it_bypasses_gunicorn():
@@ -457,11 +539,11 @@ def test_the_gcp_vm_override_declares_it_because_it_bypasses_gunicorn():
     value = [
         str(item)
         for item in service["environment"]
-        if str(item).startswith("FORWARDED_ALLOW_IPS=")
+        if str(item).startswith("TRUSTED_PROXY_IPS=")
     ]
     assert value, (
         "the GCP VM backend runs uvicorn directly behind the production nginx "
-        "and declares no FORWARDED_ALLOW_IPS, so it reports the proxy as every "
+        "and declares no TRUSTED_PROXY_IPS, so it reports the proxy as every "
         "caller — the exact defect H2 reported, in a topology the fix missed"
     )
     default = value[0].partition(":-")[2].rstrip("}")
@@ -472,7 +554,7 @@ def test_an_override_does_not_drop_the_boundary_its_base_declares():
     """airgap layers on release; redefining the backend env would drop it."""
     service = _compose_backend("docker-compose.airgap.yml")
     keys = _declared_env_keys(service)
-    assert not keys or "FORWARDED_ALLOW_IPS" in keys, (
+    assert not keys or "TRUSTED_PROXY_IPS" in keys, (
         "docker-compose.airgap.yml now sets backend environment keys without "
         "FORWARDED_ALLOW_IPS; confirm the merge still leaves the release "
         "value in place, then declare it here too"
@@ -492,7 +574,7 @@ def _overlay_boundary(path):
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip().startswith("#"):
             continue
-        match = re.match(r'\s*FORWARDED_ALLOW_IPS:\s*"?([^"#]+)"?', line)
+        match = re.match(r'\s*TRUSTED_PROXY_IPS:\s*"?([^"#]+)"?', line)
         if match:
             return match.group(1).strip()
     return None
@@ -573,9 +655,9 @@ def test_the_gke_overlay_trusts_the_front_ends_that_actually_reach_the_pod():
         "the GKE overlay no longer uses standalone NEGs; if traffic now arrives "
         "via an in-cluster proxy, this patch should be revisited"
     )
-    lines = [ln for ln in text.splitlines() if "FORWARDED_ALLOW_IPS" in ln]
+    lines = [ln for ln in text.splitlines() if "TRUSTED_PROXY_IPS" in ln]
     assert lines, (
-        "gcp-gke does not narrow FORWARDED_ALLOW_IPS, so the backend pod's peer "
+        "gcp-gke does not narrow TRUSTED_PROXY_IPS, so the backend pod's peer "
         "(a Google Front End) is untrusted, X-Forwarded-For is ignored, and "
         "request.client.host is the load balancer for every caller"
     )
@@ -593,7 +675,7 @@ def test_the_self_hosted_overlay_narrows_like_the_base_file_demands():
     lines = [
         ln
         for ln in text.splitlines()
-        if "FORWARDED_ALLOW_IPS:" in ln and not ln.strip().startswith("#")
+        if "TRUSTED_PROXY_IPS:" in ln and not ln.strip().startswith("#")
     ]
     assert lines, (
         "k8s/base/configmap.yaml tells an on-premise cluster it MUST narrow "
@@ -622,7 +704,7 @@ def test_the_release_network_subnet_matches_its_own_trust_boundary():
     assert config, (
         "testlookup_net has no explicit subnet, so the bridge address is "
         "whatever Docker's address pool hands out and may fall outside "
-        "FORWARDED_ALLOW_IPS"
+        "TRUSTED_PROXY_IPS"
     )
     subnet = ipaddress.ip_network(config[0]["subnet"])
     boundary = _TrustedHosts(_release_compose_default())
@@ -630,4 +712,49 @@ def test_the_release_network_subnet_matches_its_own_trust_boundary():
         f"the compose network {subnet} is not inside the declared trust "
         "boundary, so the backend will not honour the frontend's forwarded "
         "header"
+    )
+
+
+def test_the_middleware_corrects_the_client_for_a_trusted_peer():
+    """Drive the real middleware, not a belief about it."""
+    import asyncio
+
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    seen = {}
+
+    async def _app(scope, receive, send):
+        seen["client"] = scope.get("client")
+
+    wrapped = ProxyHeadersMiddleware(_app, trusted_hosts="10.42.0.0/16")
+    scope = {
+        "type": "http",
+        "client": (INGRESS_POD, 5000),
+        "headers": [(b"x-forwarded-for", CHAIN.rsplit(",", 1)[0].encode())],
+    }
+    asyncio.run(wrapped(scope, None, None))
+    assert seen["client"][0] == REAL_CLIENT, (
+        "a trusted proxy's forwarded header did not resolve the real caller"
+    )
+
+
+def test_the_middleware_ignores_a_header_from_an_untrusted_peer():
+    import asyncio
+
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    seen = {}
+
+    async def _app(scope, receive, send):
+        seen["client"] = scope.get("client")
+
+    wrapped = ProxyHeadersMiddleware(_app, trusted_hosts="10.42.0.0/16")
+    scope = {
+        "type": "http",
+        "client": ("203.0.113.50", 5000),
+        "headers": [(b"x-forwarded-for", b"1.2.3.4")],
+    }
+    asyncio.run(wrapped(scope, None, None))
+    assert seen["client"][0] == "203.0.113.50", (
+        "a direct caller injected its own address"
     )
