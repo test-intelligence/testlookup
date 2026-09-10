@@ -41,6 +41,44 @@ _tracer = get_tracer("services.agent")
 SYSTEM_PROMPT = get_prompt_text("react_triage")
 
 
+def _observation_text(value) -> str:
+    """What the ReAct executor would have made of a tool's return value."""
+    return value if isinstance(value, str) else str(value)
+
+
+def _sanitizing_copy(tool):
+    """A copy of ``tool`` whose output passes through ``sanitize_tool_output``.
+
+    Re-audit M17. The executor feeds each tool's return value straight back
+    into the next prompt. These tools read Allure results, REST payloads,
+    Splunk and OpenShift events -- text written by whatever is under test,
+    which is exactly where an injected "ignore previous instructions" arrives.
+    ``sanitize_tool_output`` exists for precisely that step and had no caller.
+    The observation sinks downstream (citations, spans, the audit trail) were
+    already scrubbed; the prompt, which is the one that matters, was not.
+
+    A COPY, never the module-level tool: ``_get_tools`` runs on every analysis,
+    so wrapping the singleton in place would stack another layer per call.
+    """
+    from app.services.input_sanitizer import sanitize_tool_output
+
+    update: dict = {}
+    original_coroutine = getattr(tool, "coroutine", None)
+    if original_coroutine is not None:
+        async def _coroutine(*args, **kwargs):
+            raw = await original_coroutine(*args, **kwargs)
+            return sanitize_tool_output(_observation_text(raw))
+
+        update["coroutine"] = _coroutine
+    original_func = getattr(tool, "func", None)
+    if original_func is not None:
+        def _func(*args, **kwargs):
+            return sanitize_tool_output(_observation_text(original_func(*args, **kwargs)))
+
+        update["func"] = _func
+    return tool.model_copy(update=update) if update else tool
+
+
 def _get_tools():
     from app.tools.analyze_ocp import analyze_openshift_pod_events
     from app.tools.check_flakiness import check_test_flakiness
@@ -50,12 +88,15 @@ def _get_tools():
     from app.tools.recall_memory import recall_similar_failures
 
     return [
-        fetch_allure_stacktrace,
-        fetch_rest_api_payload,
-        query_splunk_logs,
-        check_test_flakiness,
-        analyze_openshift_pod_events,
-        recall_similar_failures,
+        _sanitizing_copy(tool)
+        for tool in (
+            fetch_allure_stacktrace,
+            fetch_rest_api_payload,
+            query_splunk_logs,
+            check_test_flakiness,
+            analyze_openshift_pod_events,
+            recall_similar_failures,
+        )
     ]
 
 
@@ -717,15 +758,25 @@ async def _store_audit_trail(test_case_id: str, prompt: str, analysis: dict, ste
 
 def _scoped_cache_key(
     test_name: str, error_message: str, stack_trace: str, project_id: Optional[str],
-) -> str:
-    """Project-scoped analysis cache key.
+) -> Optional[str]:
+    """Project-scoped analysis cache key, or None when there is no project.
 
     The cached slow-path analysis embeds project-specific evidence
     (Splunk/OCP excerpts), so the key MUST be tenant-scoped — otherwise an
     identical failure in another project gets served this project's evidence.
+
+    It used to fall back to the UNSCOPED key when ``project_id`` was missing
+    (re-audit M15). Both callers pass ``None`` whenever the analysis context
+    carries no project, so every such call read and wrote one namespace shared
+    across all tenants -- precisely the leak this docstring warned about,
+    reached through the fallback instead of the key. With no project there is
+    no safe key, so there is no cache: the caller takes a miss, which costs an
+    analysis rather than another tenant's evidence.
     """
+    if not project_id:
+        return None
     base = compute_analysis_cache_key(test_name, error_message, stack_trace)
-    return f"{base}:proj:{project_id}" if project_id else base
+    return f"{base}:proj:{project_id}"
 
 
 async def _check_analysis_cache(
@@ -739,6 +790,10 @@ async def _check_analysis_cache(
         from app.db.redis_client import get_redis
         redis = get_redis()
         cache_key = _scoped_cache_key(test_name, error_message, stack_trace, project_id)
+        if cache_key is None:
+            # No project, no safe key: skip the cache rather than share one
+            # namespace across tenants (re-audit M15).
+            return None
         raw = await redis.get(cache_key)
         if raw:
             return cast(dict[Any, Any], json.loads(raw))
@@ -756,6 +811,10 @@ async def _store_analysis_cache(
         from app.db.redis_client import get_redis
         redis = get_redis()
         cache_key = _scoped_cache_key(test_name, error_message, stack_trace, project_id)
+        if cache_key is None:
+            # No project, no safe key: skip the cache rather than share one
+            # namespace across tenants (re-audit M15).
+            return None
         # Store a clean copy without transient fields
         from app.services.evidence_sanitizer import sanitize_persistence_payload
 

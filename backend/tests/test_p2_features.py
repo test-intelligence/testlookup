@@ -52,7 +52,7 @@ class TestSemanticCache:
         from app.services.semantic_cache import semantic_cache_lookup
 
         with patch("app.services.semantic_cache._get_or_create_collection", side_effect=Exception("unavailable")):
-            result = await semantic_cache_lookup("TestLogin", "error", "trace")
+            result = await semantic_cache_lookup("TestLogin", "error", "trace", project_id="proj-1")
             assert result is None
 
     @pytest.mark.asyncio
@@ -68,7 +68,7 @@ class TestSemanticCache:
         }
         with patch("app.services.semantic_cache._get_or_create_collection", new_callable=AsyncMock, return_value=mock_collection):
             with patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)):
-                result = await semantic_cache_lookup("TestLogin", "error", "trace")
+                result = await semantic_cache_lookup("TestLogin", "error", "trace", project_id="proj-1")
                 assert result is None
 
     @pytest.mark.asyncio
@@ -85,7 +85,7 @@ class TestSemanticCache:
         }
         with patch("app.services.semantic_cache._get_or_create_collection", new_callable=AsyncMock, return_value=mock_collection):
             with patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)):
-                result = await semantic_cache_lookup("TestLogin", "error", "trace")
+                result = await semantic_cache_lookup("TestLogin", "error", "trace", project_id="proj-1")
                 assert result is not None
                 assert result["failure_category"] == "INFRASTRUCTURE"
                 assert result["semantic_cache_hit"] is True
@@ -100,7 +100,7 @@ class TestSemanticCache:
             with patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)):
                 await semantic_cache_store(
                     "TestLogin", "error msg", "trace",
-                    {"failure_category": "BUG", "confidence_score": 80},
+                    {"failure_category": "BUG", "confidence_score": 80}, project_id="proj-1",
                 )
                 mock_collection.upsert.assert_called_once()
                 call_args = mock_collection.upsert.call_args
@@ -109,15 +109,49 @@ class TestSemanticCache:
 
     @pytest.mark.asyncio
     async def test_semantic_cache_stats_returns_status(self):
+        """Counts the per-project collections, and surfaces the legacy one.
+
+        Since re-audit M15 the cache is per project and there is no shared
+        collection to open, so stats asks the client rather than the (now
+        refusing) collection helper. The legacy shared collection is reported
+        separately: its entries may belong to any tenant and should be purged.
+        """
         from app.services.semantic_cache import get_semantic_cache_stats
 
-        mock_collection = MagicMock()
-        mock_collection.count.return_value = 42
-        with patch("app.services.semantic_cache._get_or_create_collection", new_callable=AsyncMock, return_value=mock_collection):
+        def _collection(name, count):
+            c = MagicMock()
+            c.name = name
+            c.count.return_value = count
+            return c
+
+        client = MagicMock()
+        client.heartbeat.return_value = 1
+        client.list_collections.return_value = [
+            _collection("ai_analysis_cache_proj-a", 40),
+            _collection("ai_analysis_cache_proj-b", 2),
+            _collection("ai_analysis_cache", 7),        # legacy, pre-M15
+            _collection("agent_memory", 99),            # another module's
+        ]
+        with patch("app.services.semantic_cache._get_chroma_client", new_callable=AsyncMock, return_value=client):
             with patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)):
                 stats = await get_semantic_cache_stats()
                 assert stats["status"] == "healthy"
+                assert stats["project_collections"] == 2
                 assert stats["document_count"] == 42
+                assert stats["legacy_unscoped_documents"] == 7
+
+    @pytest.mark.asyncio
+    async def test_semantic_cache_stats_reports_none_on_outage(self):
+        """An outage must not read as an empty cache."""
+        from app.services.semantic_cache import get_semantic_cache_stats
+
+        client = MagicMock()
+        client.heartbeat.side_effect = ConnectionError("chroma is down")
+        with patch("app.services.semantic_cache._get_chroma_client", new_callable=AsyncMock, return_value=client):
+            with patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)):
+                stats = await get_semantic_cache_stats()
+                assert stats["status"] == "unavailable"
+                assert stats["document_count"] is None
 
 
 # ── Agent OTEL Tracing Tests ────────────────────────────────────────────────

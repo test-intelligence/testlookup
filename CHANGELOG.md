@@ -1,5 +1,69 @@
 # Changelog
 
+## 2026-09-10 — agent tools wrote straight into the next prompt
+
+`sanitize_tool_output` exists "to sanitise tool output before it propagates
+into action agents", and its only callers were its own tests. Both ReAct loops
+hand each tool's return value straight back to the model as the next piece of
+the prompt: the triage agent, whose tools read Allure results, REST payloads,
+Splunk and OpenShift events; and the chat copilot, whose tools return failure
+text, suite names and error messages. All of that is written by whatever is
+under test.
+
+The finding said observations were "unfiltered", and grep found sanitizers right
+next to them, which is how this survived. The sanitizers were on the *sinks* —
+citations, trace spans, the audit trail. The prompt, which is the one that
+matters, had nothing.
+
+Both choke points now sanitize. Every chat tool already returned through one
+shared function, so that function sanitizes the output and, separately, the
+error text, which can quote the failing input verbatim. It does this before the
+token budget, so the budget is spent on what the model actually sees. The triage
+agent's tools are wrapped as *copies*: that list is built on every analysis, and
+wrapping the module-level tools in place would have stacked another layer each
+time.
+
+One known cost, recorded rather than hidden: a few of the sanitizer's injection
+patterns are broad. OpenShift events routinely contain RBAC subjects like
+`system:serviceaccount:...`, and a `system:` token becomes a visible
+`[SANITIZED_INPUT]` marker. Only the matched token is replaced and the line
+stays readable. Narrowing the shared patterns would change every other caller,
+so it is a follow-up rather than part of this change.
+
+The tests prove the wiring through the function's secret redaction and length
+cap. A version that used a literal prompt-injection sentence as its fixture was
+blocked from being written by the workstation's AI-agent protection. The
+injection behaviour itself is already covered by the sanitizer's own tests.
+
+## 2026-09-10 — two caches fell back to a namespace every tenant shared
+
+The triage agent caches analyses twice: an exact-match cache in Redis and a
+similarity cache in ChromaDB. Both are scoped by project, and both explain why in
+their own comments — a cached analysis embeds project-specific Splunk and
+OpenShift evidence, so an identical failure in another project must never be
+served it.
+
+Both also fell back to a single *unscoped* key or collection when no project was
+supplied. The callers pass none whenever the analysis context lacks one, so every
+such analysis went into one namespace shared by all tenants — the leak both
+comments warned about, reached through the fallback instead of the key. An
+existing test even pinned the exact-match fallback as "back-compat", which is
+what kept it alive.
+
+With no project there is now no safe key, so there is no cache: the call takes a
+miss, which costs an analysis instead of another tenant's evidence. The guard
+lives in the cache services, not in one caller — the similarity cache's lookup
+was already guarded by the agent, its *store* was not, so it had been writing
+unscoped analyses into a collection that nothing reads. Nothing reads it yet,
+which is the only reason this was a latent leak rather than a live one.
+
+That old shared collection may still hold entries on existing deployments, and
+they may belong to any tenant. Deleting data is not something to do quietly in a
+fix, so the cache's health endpoint now reports `legacy_unscoped_documents`: a
+non-zero value means the collection should be purged. The same endpoint used to
+report an outage as zero documents, which reads as an empty cache; it now
+reports none.
+
 ## 2026-09-10 — release dates were only right on servers that happen to run in UTC
 
 Marking a release released, starting a phase and completing a phase each

@@ -40,7 +40,16 @@ async def _get_or_create_collection(project_id: Optional[str] = None):
     # Splunk/OCP evidence on the slow path) can't be matched/served across
     # tenants. A single global collection would leak one project's evidence to
     # another on a semantically-similar failure.
-    name = f"{_COLLECTION_NAME}_{project_id}" if project_id else _COLLECTION_NAME
+    #
+    # It used to fall back to the shared, unscoped collection when there was no
+    # project (re-audit M15, same class as the analysis cache). The triage
+    # agent guards its lookup but not its store, so unscoped analyses were
+    # written into one collection shared by every tenant -- nothing reads it
+    # today, which makes it a leak waiting for its first unguarded reader.
+    # With no project there is no safe collection, so there is none at all.
+    if not project_id:
+        raise ValueError("semantic cache requires a project scope")
+    name = f"{_COLLECTION_NAME}_{project_id}"
     client = await _get_chroma_client()
     return await asyncio.to_thread(
         client.get_or_create_collection,
@@ -93,6 +102,9 @@ async def semantic_cache_lookup(
     collection so matches never cross tenants.
     """
     if not error_message and not stack_trace:
+        return None
+    if not project_id:
+        # No tenant scope, no cache (re-audit M15).
         return None
 
     try:
@@ -182,6 +194,10 @@ async def semantic_cache_store(
     ``project_id`` scopes the collection to the tenant.
     """
     if not error_message and not stack_trace:
+        return
+    if not project_id:
+        # No tenant scope, no cache (re-audit M15). The triage agent called
+        # this unguarded, so this is where unscoped analyses were being stored.
         return
 
     try:
@@ -302,6 +318,9 @@ async def semantic_cache_invalidate(
     deletes it from the tenant's collection. Best-effort — never raises."""
     if not error_message and not stack_trace:
         return
+    if not project_id:
+        # Nothing scoped was ever stored without a project (re-audit M15).
+        return
     try:
         collection = await _get_or_create_collection(project_id)
         signature = _build_signature(test_name or "", error_message or "", stack_trace or "")
@@ -314,20 +333,62 @@ async def semantic_cache_invalidate(
 
 
 async def get_semantic_cache_stats() -> dict:
-    """Return semantic cache health metrics."""
+    """Return semantic cache health metrics across the per-project collections.
+
+    This used to open the single shared collection and count it. Since re-audit
+    M15 there is no shared collection to open -- the cache is per project, and
+    the helper refuses a missing project -- so the old version reported
+    "unavailable" for a perfectly healthy store. It asks the client instead:
+    reachability, how many project collections exist, and their documents.
+
+    It also reports what is left in the LEGACY shared collection. Unscoped
+    analyses were written there before M15 and nothing reads it any more, but
+    those entries may belong to any tenant, so a non-zero count is a prompt to
+    purge it rather than a number to ignore.
+    """
     try:
-        collection = await _get_or_create_collection()
-        count = await asyncio.to_thread(collection.count)
+        client = await _get_chroma_client()
+        await asyncio.to_thread(client.heartbeat)
+        collections = await asyncio.to_thread(client.list_collections)
+
+        prefix = f"{_COLLECTION_NAME}_"
+        project_count = 0
+        document_count = 0
+        legacy_documents = 0
+        for collection in collections:
+            name = collection if isinstance(collection, str) else collection.name
+            if name == _COLLECTION_NAME:
+                handle = (
+                    collection
+                    if not isinstance(collection, str)
+                    else await asyncio.to_thread(client.get_collection, name)
+                )
+                legacy_documents = await asyncio.to_thread(handle.count)
+            elif name.startswith(prefix):
+                handle = (
+                    collection
+                    if not isinstance(collection, str)
+                    else await asyncio.to_thread(client.get_collection, name)
+                )
+                project_count += 1
+                document_count += await asyncio.to_thread(handle.count)
+
         return {
             "status": "healthy",
             "collection": _COLLECTION_NAME,
-            "document_count": count,
+            "project_collections": project_count,
+            "document_count": document_count,
+            "legacy_unscoped_documents": legacy_documents,
             "similarity_threshold": settings.SEMANTIC_SIMILARITY_THRESHOLD,
         }
     except Exception as exc:
+        # None, not 0: an outage and an empty cache are opposite findings, and
+        # a zero here reads as "nothing cached" rather than "could not look".
         return {
             "status": "unavailable",
             "error": str(exc),
             "collection": _COLLECTION_NAME,
-            "document_count": 0,
+            "project_collections": None,
+            "document_count": None,
+            "legacy_unscoped_documents": None,
         }
