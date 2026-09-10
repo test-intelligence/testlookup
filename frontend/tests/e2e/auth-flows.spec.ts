@@ -41,8 +41,12 @@ test.describe('Auth — error & session flows', () => {
     await page.locator('#reg-confirm').fill('password999'); // mismatch
     await page.getByRole('button', { name: /create account/i }).click();
 
-    // Client-side guard fires before any network call.
-    await expect(page.getByText('Passwords do not match')).toBeVisible({ timeout: 8000 });
+    // Client-side guard fires before any network call. The inline alert is
+    // that guard; a toast repeats the message, so the bare text matched both
+    // elements and failed on strict mode (#980). The feature itself was fine.
+    await expect(page.locator('#reg-confirm-error')).toHaveText(/Passwords do not match/, {
+      timeout: 8000,
+    });
   });
 
   test('reset-password screen renders and validates the new password', async ({ page }) => {
