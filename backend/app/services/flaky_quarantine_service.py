@@ -196,6 +196,67 @@ async def _feature_enabled(db: Optional[AsyncSession] = None) -> bool:
 # ── Audit ───────────────────────────────────────────────────────────────────
 
 
+#: SettingsAuditLog action -> activity event. Actions with no entry (expire,
+#: refresh_proposal) are internal bookkeeping, not things a person did, and
+#: deliberately produce no feed row.
+_QUARANTINE_ACTIVITY_EVENTS = {
+    "create": "quarantine.requested",
+    "approve": "quarantine.approved",
+    "reject": "quarantine.rejected",
+    "release": "quarantine.released",
+}
+
+
+async def _record_quarantine_activity(
+    actor: Optional[User],
+    *,
+    action: str,
+    request_id: uuid.UUID,
+    project_id: uuid.UUID,
+    after: Optional[dict[str, Any]] = None,
+) -> None:
+    """Mirror a quarantine action into the project activity ledger.
+
+    The SettingsAuditLog row above stays — it is the compliance record. But
+    ``settings_audit_log`` has NO project column, so ``query_unified_audit``
+    omits it entirely for any non-ADMIN caller: the QA lead who quarantined a
+    test could see it and the engineer who owns the test could not. This makes
+    the same action visible to every member of the project it happened in.
+
+    Never raises: the ledger is a read surface, and it must not be able to fail
+    a quarantine decision.
+    """
+    event_type = _QUARANTINE_ACTIVITY_EVENTS.get(action)
+    if event_type is None:
+        return
+    try:
+        from app.services.activity.service import ActorRef, record
+
+        payload = after or {}
+        await record(
+            None,
+            project_id=project_id,
+            event_type=event_type,
+            actor=ActorRef.from_user(actor) if actor else ActorRef.system("quarantine"),
+            entity_id=request_id,
+            entity_label=payload.get("test_name") or "a test",
+            context={
+                k: v
+                for k, v in payload.items()
+                if k in ("test_name", "suite_name", "detection_method", "flip_rate", "notes")
+            },
+            source_table="settings_audit_log",
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning(
+            "flaky_quarantine_activity_dropped",
+            action=action,
+            request_id=str(request_id),
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+
+
 async def _audit(
     db: AsyncSession,
     actor: Optional[User],
@@ -283,6 +344,13 @@ async def _audit(
             project_id=str(project_id),
             action=action,
             actor_id=str(actor.id) if actor else None,
+        )
+        await _record_quarantine_activity(
+            actor,
+            action=action,
+            request_id=request_id,
+            project_id=project_id,
+            after=after,
         )
     except Exception as exc:
         # Structured WARNING so operators can grep "audit_dropped action=..."

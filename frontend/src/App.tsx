@@ -62,6 +62,7 @@ function lazyWithRetry<T extends ComponentType<unknown>>(
 const lazy = lazyWithRetry as typeof reactLazy
 
 const OverviewPage = lazy(() => import('@/pages/OverviewPage'))
+const ActivityPage = lazy(() => import('@/pages/ActivityPage'))
 const RunsPage = lazy(() => import('@/pages/RunsPage'))
 const RunDetailPage = lazy(() => import('@/pages/RunDetailPage'))
 const TestCasePage = lazy(() => import('@/pages/TestCasePage'))
@@ -177,6 +178,7 @@ const appRoutes: AppRoute[] = [
 const managementRoutes: AppRoute[] = [
   { path: 'projects', component: ProjectsPage },
   { path: 'releases', component: ReleasesPage },
+  { path: 'activity', component: ActivityPage },
   { path: 'users', component: UserManagementPage },
   { path: 'settings', component: SettingsPage },
   { path: 'settings/notifications', component: NotificationsPage },

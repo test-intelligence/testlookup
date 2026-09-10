@@ -48,6 +48,7 @@ export type RouteScope =
  * here: they still render, so a link to them is not a broken promise.
  */
 const SINGLE_PROJECT_ROUTES: ReadonlySet<string> = new Set([
+  '/activity',
   '/flaky-coach',
   '/settings/api-keys',
   '/settings/github',

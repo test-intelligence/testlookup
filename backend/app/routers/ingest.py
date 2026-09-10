@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_api_key_context, get_db, resolve_project_scope
 from app.models.postgres import User
+from app.services.activity.service import ActorRef, record as record_activity
 from app.models.schemas import BUILD_NUMBER_MAX_LENGTH, IngestPayload, IngestResponse, UploadStatusResponse
 
 router = APIRouter(prefix="/api/v1/ingest", tags=["Ingest"])
@@ -155,6 +156,21 @@ async def ingest_batch(
         project_id=payload.project_id,
         result_count=len(payload.results),
         user=current_user.username,
+    )
+
+    # Epic ACT: "did my run land?" is the most common question the feed has to
+    # answer, and it must be answerable BEFORE the worker finishes. Recorded as
+    # an attempt (own session, survives a caller rollback) precisely because a
+    # report that arrived and then failed to ingest is the case worth seeing.
+    await record_activity(
+        None,
+        project_id=target_project_id,
+        event_type="run.received",
+        actor=ActorRef.from_user(current_user),
+        entity_id=run_id,
+        entity_label=f"Build {payload.build_number}",
+        context={"result_count": len(payload.results), "source": "json_batch"},
+        group_key=f"run:{run_id}:received",
     )
 
     return IngestResponse(
@@ -488,6 +504,18 @@ async def ingest_file(
         format=detected_format,
         size_bytes=len(content),
         user=current_user.username,
+    )
+
+    # Epic ACT — see the note on the JSON path above.
+    await record_activity(
+        None,
+        project_id=target_project_id,
+        event_type="run.received",
+        actor=ActorRef.from_user(current_user),
+        entity_id=run_id,
+        entity_label=f"Build {build_number}",
+        context={"source_format": detected_format, "file_name": file.filename},
+        group_key=f"run:{run_id}:received",
     )
 
     return IngestResponse(

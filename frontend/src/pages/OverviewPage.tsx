@@ -18,6 +18,7 @@ import SuiteBadge from '@/components/ui/SuiteBadge'
 import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import FirstRunGuide from '@/components/onboarding/FirstRunGuide'
+import RecentActivityPanel from '@/components/activity/RecentActivityPanel'
 import { isFirstRunGuideDismissed, dismissFirstRunGuide } from '@/components/onboarding/firstRunSteps'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { describeEmptyWindow, formatAgeDays } from '@/utils/emptyWindow'
@@ -1458,6 +1459,13 @@ export default function OverviewPage() {
       {/* Coverage micro-strip */}
       <SectionErrorBoundary message="Failed to load coverage strip">
         <MicroStrip summary={summary} days={days} />
+      </SectionErrorBoundary>
+
+      {/* Recent activity (epic ACT). Inside its own error boundary and on its
+          own SWR key: the panel must never be able to take /overview down or
+          hold up its first paint. */}
+      <SectionErrorBoundary message="Failed to load recent activity">
+        <RecentActivityPanel days={days} />
       </SectionErrorBoundary>
 
       {/* Pending banner — kept for users on legacy widget layouts that disabled

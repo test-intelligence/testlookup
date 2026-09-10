@@ -95,6 +95,21 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "Celery-task-owned: pipeline memory persist runs in an isolated "
         "AsyncSessionLocal from the worker, no HTTP request to hand off to.",
     ),
+    "activity/service.py": (
+        1,
+        "Independent-session BY DESIGN, for the 'attempt' half of the activity "
+        "ledger only. The registry marks each event 'outcome' or 'attempt': an "
+        "outcome event is staged on the CALLER's session and correctly dies "
+        "with a rollback (no policy.updated row for an update that rolled "
+        "back). An attempt event records that something was ISSUED — a full "
+        "project reset, a run deletion, an export — and must survive the "
+        "caller's rollback, because the half an operator needs is precisely "
+        "the attempt that then failed. That path opens its own "
+        "AsyncSessionLocal and commits it (1 commit), retrying "
+        "DB_RETRYABLE_EXCEPTIONS and swallowing terminal failures so a "
+        "bookkeeping fault can never fail the mutation it describes. Same "
+        "contract, and same reason, as audit_log_service.record_attempt.",
+    ),
     "ingestion.py": (
         1,
         "Outermost orchestration: the ingestion pipeline is the owning "

@@ -15,6 +15,7 @@ from app.core.deps import require_api_key_owner, require_role
 from app.db.postgres import get_db
 from app.models.postgres import ApiKey, Project, User, UserRole
 from app.models.schemas import ApiKeyCreate, ApiKeyCreatedResponse, ApiKeyResponse
+from app.services.activity.service import ActorRef, record as record_activity
 
 router = APIRouter(prefix="/api/v1/keys", tags=["API Keys"])
 
@@ -93,6 +94,9 @@ async def create_api_key(
         expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expires_days)
 
     api_key = ApiKey(
+        # Identity at construction: the ledger row is staged in this same
+        # transaction and needs a stable entity_id without an extra flush.
+        id=uuid.uuid4(),
         user_id=owner_id,
         name=payload.name,
         key_hash=key_hash,
@@ -102,6 +106,27 @@ async def create_api_key(
         expires_at=expires_at,
     )
     db.add(api_key)
+
+    # Epic ACT. Only a PROJECT-scoped key produces a ledger row: the ledger is
+    # project-scoped, and a user-scoped key belongs to no project, so there is
+    # nowhere honest to file it. Filing it under an arbitrary project would be
+    # worse than the gap — it is the same reason settings_audit_log rows are
+    # invisible to non-admins.
+    #
+    # ``changed_fields`` only, never values: the raw key is returned to the
+    # caller exactly once and must not be reconstructable from the feed.
+    if api_key.project_id is not None:
+        await record_activity(
+            db,
+            project_id=api_key.project_id,
+            event_type="api_key.created",
+            actor=ActorRef.from_user(current_user),
+            entity_id=api_key.id,
+            entity_label=api_key.name,
+            changed_fields=["name", "scopes", "expires_at", "project_id"],
+            context={"key_hint": api_key.key_hint, "scopes": api_key.scopes},
+        )
+
     await db.commit()
     await db.refresh(api_key)
 
@@ -148,5 +173,17 @@ async def revoke_api_key(
     if not api_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
     api_key.is_active = False
+
+    if api_key.project_id is not None:
+        await record_activity(
+            db,
+            project_id=api_key.project_id,
+            event_type="api_key.revoked",
+            actor=ActorRef.from_user(current_user),
+            entity_id=api_key.id,
+            entity_label=api_key.name,
+            context={"key_hint": api_key.key_hint},
+        )
+
     await db.commit()
     return None

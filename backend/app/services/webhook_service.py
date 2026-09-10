@@ -62,7 +62,7 @@ _MAX_WEBHOOK_DISPATCH_ATTEMPTS = 8
 
 # ── Event catalog ──────────────────────────────────────────────────────────
 
-_SUPPORTED_EVENTS: dict[str, str] = {
+SUPPORTED_EVENTS: dict[str, str] = {
     "run.completed": "Fired after a test run has finished ingestion and post-processing.",
     "defect.promoted": "Fired when a failure cluster is promoted into a defect with a ticket link.",
     "defect.create_requested": (
@@ -86,20 +86,20 @@ SECRET_SCOPE = "webhook_subscription"
 
 def list_supported_events() -> list[dict[str, str]]:
     return [
-        {"event_type": k, "description": v} for k, v in sorted(_SUPPORTED_EVENTS.items())
+        {"event_type": k, "description": v} for k, v in sorted(SUPPORTED_EVENTS.items())
     ]
 
 
 def validate_events(events: list[str]) -> list[str]:
     """Return the subset of events that are supported. Raises if any are unknown."""
-    unknown = [e for e in events if e not in _SUPPORTED_EVENTS]
+    unknown = [e for e in events if e not in SUPPORTED_EVENTS]
     if unknown:
         from fastapi import HTTPException, status as _s
         raise HTTPException(
             status_code=_s.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
                 f"Unknown event types: {', '.join(unknown)}. "
-                f"Supported: {', '.join(sorted(_SUPPORTED_EVENTS))}"
+                f"Supported: {', '.join(sorted(SUPPORTED_EVENTS))}"
             ),
         )
     return events
@@ -559,7 +559,7 @@ async def emit_event(
     the DB. Legacy callers remain best-effort. Durable outbox consumers pass
     ``raise_on_persistence_error=True`` so PostgreSQL can retry a failed fan-out.
     """
-    if event_type not in _SUPPORTED_EVENTS:
+    if event_type not in SUPPORTED_EVENTS:
         logger.debug("emit_event called with unknown event", event_type=event_type)
         return 0
     if not await _post_allowed(

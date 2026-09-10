@@ -815,6 +815,48 @@ async def finalize_run(
         lambda d: resolve_commit_range(d, rid),
     )
 
+    # Epic ACT — the run lifecycle event. Before this the most frequent thing
+    # that happens in a project left no record at all beyond its own row in
+    # test_runs, so "did last night's run even arrive?" had no page that
+    # answered it.
+    #
+    # Emitted HERE rather than from the ingest router so the extra INSERT stays
+    # off the request path, and through _run_isolated so it owns a real
+    # transaction like every other post-step. group_key makes it idempotent
+    # under Celery redelivery: a retried finalize_run finds its own row inside
+    # the dedup window and drops the repeat instead of writing a second
+    # "completed" for one run.
+    async def _ledger(step_db) -> None:
+        from app.services.activity.service import ActorRef, record
+
+        run_row = (
+            await step_db.execute(select(TestRun).where(TestRun.id == rid))
+        ).scalar_one_or_none()
+        if run_row is None:
+            return
+        await record(
+            step_db,
+            project_id=pid,
+            event_type="run.completed",
+            actor=ActorRef.system("ingestion"),
+            entity_id=rid,
+            entity_label=f"Build {run_row.build_number}"
+            if run_row.build_number
+            else "Test run",
+            release_id=getattr(run_row, "primary_release_id", None),
+            context={
+                "total": run_row.total_tests or 0,
+                "passed": run_row.passed_tests or 0,
+                "failed": run_row.failed_tests or 0,
+                "skipped": run_row.skipped_tests or 0,
+                "duration_ms": run_row.duration_ms,
+                "jenkins_job": run_row.jenkins_job,
+            },
+            group_key=f"run:{rid}:completed",
+        )
+
+    await _run_isolated("activity_ledger", _ledger)
+
     # This is the readiness gate: a relay cannot observe the child intents as
     # pending until finalization has reached its end. If this commit fails, the
     # owning Celery task retries finalization and activates the same unique rows.
