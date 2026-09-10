@@ -23,18 +23,32 @@ interface Props {
  */
 export default function ActivityDrawer({ projectId, eventId, onClose }: Props) {
   const { event, error, isLoading } = useActivityEvent(projectId, eventId)
+  const errorStatus = (error as { response?: { status?: number } } | undefined)
+    ?.response?.status
   const headingId = useId()
   const closeRef = useRef<HTMLButtonElement>(null)
   const [showRaw, setShowRaw] = useState(false)
 
   useEffect(() => {
     if (!eventId) return
+    // Remember what had focus so it can be restored on close. Without this,
+    // Esc dropped focus onto <body> and a keyboard reader lost their place in
+    // the feed entirely - they had to Tab from the top of the page to get back
+    // to the row they were reading.
+    const opener = document.activeElement as HTMLElement | null
+
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
     document.addEventListener('keydown', onKey)
     closeRef.current?.focus()
-    return () => document.removeEventListener('keydown', onKey)
+
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      // Only if the opener is still in the document - the row may have been
+      // replaced by a refresh while the drawer was open.
+      if (opener && document.contains(opener)) opener.focus()
+    }
   }, [eventId, onClose])
 
   if (!eventId) return null
@@ -93,8 +107,18 @@ export default function ActivityDrawer({ projectId, eventId, onClose }: Props) {
 
           {error && (
             <p className="text-[var(--status-failed)]">
-              This event could not be loaded. It may belong to a project you do
-              not have access to.
+              {/* Say which failure it was. A single "may belong to a project
+                  you do not have access to" was shown for a malformed id
+                  (422), a deleted/absent event (404) AND a real permission
+                  error - so the one case where it was true was indistinguishable
+                  from the two where it was a guess. */}
+              {errorStatus === 404
+                ? 'This event no longer exists. It may have been removed by the retention purge.'
+                : errorStatus === 422
+                  ? 'That is not a valid event link.'
+                  : errorStatus === 403
+                    ? 'You do not have access to this project&apos;s activity.'
+                    : 'This event could not be loaded. Try again shortly.'}
             </p>
           )}
 

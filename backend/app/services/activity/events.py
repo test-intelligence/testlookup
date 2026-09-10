@@ -286,7 +286,12 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("agent.action_executed", "agent", "agent_action", "{actor_name} executed an action on {entity_label}", "outcome", frozenset({"agent"})),
     _spec("agent.action_denied", "agent", "agent_action", "Agent action on {entity_label} was denied", "outcome", _ANY_WRITER),
     # ── system ──────────────────────────────────────────────────────────────
-    _spec("activity.exported", "system", "export", "Activity history exported ({row_count} rows, {format})", "attempt"),
+    # NOTE: there is deliberately no ``activity.exported`` event. Recording
+    # an export in the ledger made a GET mutate what it reads: an export of
+    # an empty project left it holding one event - the record of exporting
+    # nothing - so ledger_started_at went non-null and the project claimed a
+    # history it never had. Exports go to access_audit_logs with a
+    # ``report_`` prefix, where this codebase already keeps them.
     _spec("compliance_pack.generated", "system", "export", "Compliance pack {entity_label} was generated"),
     _spec("report.exported", "system", "export", "Report {entity_label} was exported"),
     _spec("report.shared", "system", "export", "Report {entity_label} was shared"),

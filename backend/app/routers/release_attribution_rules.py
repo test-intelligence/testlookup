@@ -245,16 +245,21 @@ async def update_attribution_rule(
     _validate_match_field(updates.get("match_field"))
 
     before = {field: getattr(rule, field, None) for field in updates}
+    # Only what differs — see the note in routers/projects.py: a re-sent value
+    # is not a change, and recording it as one makes the feed report edits
+    # nobody made.
+    changed = {f: v for f, v in updates.items() if before.get(f) != v}
+
     for field, value in updates.items():
         setattr(rule, field, value)
 
-    if updates:
+    if changed:
         # Enabling/disabling is the change an operator most needs to see, so it
         # gets its own event name rather than hiding inside a field diff.
-        if set(updates) == {"is_enabled"}:
+        if set(changed) == {"is_enabled"}:
             event = (
                 "attribution_rule.enabled"
-                if updates["is_enabled"]
+                if changed["is_enabled"]
                 else "attribution_rule.disabled"
             )
         else:
@@ -266,9 +271,9 @@ async def update_attribution_rule(
             actor=ActorRef.from_user(current_user),
             entity_id=rule.id,
             entity_label=rule.name,
-            before=before,
-            after=updates,
-            context={"changed": ", ".join(sorted(updates))},
+            before={f: before[f] for f in changed},
+            after=changed,
+            context={"changed": ", ".join(sorted(changed))},
         )
 
     await db.commit()

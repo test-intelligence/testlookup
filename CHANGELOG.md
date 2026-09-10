@@ -1,5 +1,76 @@
 # Changelog
 
+## 2026-09-09 — exploratory QA on the Activity tab: six real defects, five of them silent
+
+Five specialist QA passes against the running deployment (filters, authorization,
+UI, producers, pagination/export). The tenant boundary held under every IDOR
+probe, keyset pagination proved exact, and every producer that exists writes a
+correct row. What broke was subtler, and mostly invisible.
+
+**The category filter did nothing.** Reported by a user, confirmed live: the
+bundle sent `category[]=runs`, FastAPI does not recognise the bracketed form for
+a `list[str] = Query(None)`, so it dropped the parameter — no error, no 422, the
+filter simply had no effect. Fixed on the SHARED axios instance
+(`paramsSerializer: { indexes: null }`) rather than at one call site, because
+axios's default is wrong for every FastAPI endpoint here and the next person to
+pass an array would hit the same silence. `searchService` only escaped it by
+joining to a comma string.
+
+**Export wrote a row into the ledger it was reading.** A GET that mutates.
+Exporting a project with no activity left it holding exactly one event — the
+record of exporting nothing — so `ledger_started_at` went non-null and the empty
+state claimed a history the project never had; two identical back-to-back
+exports returned different row counts, the second having counted the first. The
+export record now goes to `access_audit_logs` with the `report_` prefix this
+codebase already uses for exports and shares, which the Audit Dashboard already
+surfaces. `activity.exported` is gone from the registry so the loop cannot be
+reintroduced by accident.
+
+**Export was gated on the GLOBAL role, not the project one.** The module
+docstring promised "QA_LEAD on this project" and the code never implemented it:
+`require_role(QA_LEAD)` knows nothing about the project, and
+`require_project_access()` reads only `ProjectMember` EXISTENCE, never the
+`role` column. Wrong in both directions — a global lead who was a project VIEWER
+exported the whole ledger, and a project QA_LEAD who was globally a QA_ENGINEER
+was refused. Now an explicit `_assert_can_export` returning 403.
+
+**A failed page discarded the pages already loaded.** 34 rows on screen, "Load
+older", the cursor request fails, and the entire feed was replaced by "Activity
+is unavailable" — `error` was tested before `events.length`. The rows now
+survive and the failure is reported beside a "Try again" control.
+
+**A no-op update recorded a change nobody made.** The guard tested which fields
+were SENT, not which DIFFERED, so a PUT re-sending the current value wrote a
+`*.updated` row whose own diff said `changed_fields: []` while the summary named
+the field — and the comment above the guard claimed the opposite behaviour.
+Fixed in all three routers sharing the idiom. `update_release` needed care: the
+service mutates the row before returning it, so the snapshot has to be taken
+first or the guard would record NOTHING.
+
+**Search treated `%` and `_` as wildcards.** `q=%%%` returned every event in the
+project and `q=B_ild` matched "Build". Not injectable — the value was always
+bound — but a search that quietly lies is worse than one that errors.
+
+Also: `entity_type` was the one enum-shaped filter with no validation (a typo
+returned 200 and zero rows, indistinguishable from "nothing happened"); empty
+filter values produced three different behaviours on one endpoint; a `q` under
+three characters was silently discarded; and the detail drawer never returned
+focus after Esc, then showed the same "may belong to a project you do not have
+access to" sentence for a malformed id, a missing event and a real permission
+error alike.
+
+### Two notes on the process
+
+A reported mojibake defect was a **false positive** — the stored bytes are
+correct UTF-8 (`â`, UTF8 at both ends); the agent's own console was
+mangling the output. Verified before changing anything.
+
+The first regression test for the pagination fix **passed with the bug
+reverted**. Instrumenting the DOM showed the real discriminator: the feed
+element survives with the fix and is destroyed without it. The rewritten test
+fails correctly on revert.
+
+
 ## 2026-09-09 — release lifecycle now lands in the activity feed
 
 `releases.py` was the largest single gap the new coverage guard found: 12

@@ -192,3 +192,71 @@ describe('ActivityPage', () => {
     expect((params as Record<string, unknown> | undefined)?.days).toBeUndefined()
   })
 })
+
+describe('ActivityPage — a failed page must not discard the loaded ones', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(listActivityEventTypes).mockResolvedValue({
+      categories: ['runs'],
+      actor_types: ['system'],
+      entity_types: ['run'],
+      events: {},
+    })
+    useProjectStore.setState({ activeProjectId: PROJECT_ID })
+  })
+
+  it('keeps already-loaded rows when a later page fails', async () => {
+    // The reader had 34 rows, pressed "Load older", the cursor request failed,
+    // and the whole feed collapsed to "Activity is unavailable". Losing what
+    // you already had is worse than the failed page, and it makes a transient
+    // blip look like an outage.
+    vi.mocked(listActivity)
+      .mockResolvedValueOnce(page([event()], { next_cursor: 'abc' }))
+      .mockRejectedValue(new Error('page 2 exploded'))
+
+    render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter>
+          <ActivityPage />
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+
+    await screen.findByRole('feed')
+    fireEvent.click(screen.getByRole('button', { name: /load older/i }))
+
+    // Wait for page 2 to have been attempted, so the assertion below is about
+    // the post-failure state and not a race against the click.
+    await waitFor(() =>
+      expect(vi.mocked(listActivity).mock.calls.length).toBeGreaterThan(1),
+    )
+
+    // THE discriminator: with the old `error ?` guard the feed element is
+    // GONE here. Asserting on the absence of the outage text is not enough -
+    // it is absent in both variants, which is what made the first version of
+    // this test vacuous.
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('feed'),
+        'a failed page discarded the rows that had already loaded',
+      ).toBeInTheDocument()
+    })
+    expect(screen.getByText('Build 4312 completed — 3 failed of 812')).toBeInTheDocument()
+  })
+
+  it('still shows the outage state when NOTHING loaded', async () => {
+    // The other half: with no rows at all, the full-page outage state is
+    // correct and must not be regressed away by the fix above.
+    vi.mocked(listActivity).mockRejectedValue(new Error('boom'))
+
+    render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter>
+          <ActivityPage />
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+
+    expect(await screen.findByText(/Activity is unavailable/i)).toBeInTheDocument()
+  })
+})

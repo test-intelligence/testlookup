@@ -232,27 +232,34 @@ async def test_run_completed_carries_the_counts_the_feed_renders(
 # ── Export ───────────────────────────────────────────────────────────────────
 
 
-async def test_export_event_is_attempt_mode(session_factory, project, actor, monkeypatch):
-    """The export endpoint has no mutation transaction to join. Registered as
-    outcome it would have been dropped on every export."""
-    import app.db.postgres as pg
-    from app.services.activity.service import ActorRef, record
+async def test_export_writes_no_row_into_the_activity_ledger(session_factory, project):
+    """Export is recorded in ``access_audit_logs``, never in the ledger.
 
-    monkeypatch.setattr(pg, "AsyncSessionLocal", session_factory, raising=False)
+    Writing it here made a GET mutate what it reads. Exporting a project with
+    no activity left it holding exactly one event - the record of exporting
+    nothing - so ``ledger_started_at`` went non-null and the empty state
+    claimed a history the project never had. Two identical back-to-back
+    exports also returned different row counts, the second having counted the
+    first.
 
-    await record(
-        None,
-        project_id=project.id,
-        event_type="activity.exported",
-        actor=ActorRef.from_user(actor),
-        entity_id=str(project.id),
-        entity_label="Activity history",
-        context={"row_count": 42, "format": "csv", "truncated": False},
-    )
+    The event type is gone from the registry, so an attempt to emit it now
+    raises rather than quietly reintroducing the loop.
+    """
+    from app.services.activity.events import ACTIVITY_EVENTS
+    from app.services.activity.service import ActorRef, UnknownActivityEvent, record
 
-    rows = await _events(session_factory)
-    assert len(rows) == 1
-    assert "42 rows" in rows[0].summary
+    assert "activity.exported" not in ACTIVITY_EVENTS
+
+    async with session_factory() as db:
+        with pytest.raises(UnknownActivityEvent):
+            await record(
+                db,
+                project_id=project.id,
+                event_type="activity.exported",
+                actor=ActorRef.system("export"),
+                entity_id=str(project.id),
+                strict=True,
+            )
 
 
 # ── API keys ─────────────────────────────────────────────────────────────────
@@ -424,3 +431,63 @@ async def test_every_release_event_renders_a_usable_sentence(
     # indistinguishable from a broken producer.
     assert "2.14.0" in rows[0].summary, rows[0].summary
     assert rows[0].summary.count("—") == 0, f"unfilled placeholder: {rows[0].summary}"
+
+
+# ── A no-op update is not a change ───────────────────────────────────────────
+
+
+def test_update_guards_record_on_what_DIFFERS_not_on_what_was_sent():
+    """`if updates:` is true whenever a field was PRESENT in the request body.
+
+    A PUT that re-sent the current value therefore recorded a `*.updated`
+    event whose own diff said `changed_fields: []` while the summary named the
+    field — the feed reporting an edit nobody made. Worse, the comment above
+    the guard claimed the opposite of what the code did.
+
+    Asserted on source across all three routers that share the idiom, because
+    exercising it needs a live row per router and the property is textual: the
+    guard must be computed from a before/after comparison.
+    """
+    import inspect
+
+    from app.routers import projects, release_attribution_rules, releases
+
+    for mod, fn_name in (
+        (projects, "update_project"),
+        (release_attribution_rules, "update_attribution_rule"),
+        (releases, "update_release"),
+    ):
+        raw = inspect.getsource(getattr(mod, fn_name))
+        # Strip comments: the explanation above each guard NAMES the old
+        # pattern, and a substring check over raw source matches its own
+        # documentation. That is a test failing on prose.
+        src = " ".join(
+            line for line in raw.splitlines() if not line.strip().startswith("#")
+        )
+        assert "if changed:" in src, (
+            f"{mod.__name__}.{fn_name} guards on the submitted fields, not on "
+            "the ones that actually differ"
+        )
+        assert "if updates:" not in src, (
+            f"{mod.__name__}.{fn_name} still guards on `updates` (fields sent)"
+        )
+
+
+def test_release_update_snapshots_before_the_service_mutates():
+    """The trap in the fix itself.
+
+    ``release_service.update_release`` applies the change and returns the
+    mutated row. Comparing after that call finds every field equal, so the
+    guard would record NOTHING — a worse bug than the no-op events it replaced.
+    The snapshot must be taken first.
+    """
+    import inspect
+
+    from app.routers import releases
+
+    src = inspect.getsource(releases.update_release)
+    snapshot_at = src.index("get_release_or_404")
+    mutate_at = src.index("release_service.update_release(")
+    assert snapshot_at < mutate_at, (
+        "the before-snapshot must be read BEFORE update_release mutates the row"
+    )

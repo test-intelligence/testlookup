@@ -77,10 +77,40 @@ def test_export_requires_a_higher_role_than_reading():
     assert "require_role" not in read_src, (
         "the feed must be readable by any project member, not just QA_LEAD"
     )
-    assert "require_role(UserRole.QA_LEAD)" in export_src
+    # Export checks the PROJECT role, not the global one. Composing
+    # require_role(QA_LEAD) with require_project_access() was wrong in BOTH
+    # directions and shipped that way until exploratory testing caught it: a
+    # global lead who was a project VIEWER could export, and a project QA_LEAD
+    # who was globally a QA_ENGINEER could not. require_project_access reads
+    # only ProjectMember EXISTENCE - never the role column - so it cannot
+    # supply the missing half.
+    assert "_assert_can_export" in export_src, (
+        "export must check the caller's role ON THIS PROJECT"
+    )
+    assert "require_role(UserRole.QA_LEAD)" not in export_src, (
+        "the global role is the wrong gate for a project-scoped export"
+    )
     assert "require_project_access" in read_src
     assert "require_project_access" in export_src
     assert read_deps and export_deps
+
+
+def test_the_export_check_reads_the_project_member_role() -> None:
+    """The half require_project_access cannot provide.
+
+    Asserted on the source because the check needs a live session and a
+    populated ProjectMember row to exercise; what must not regress is that it
+    consults the ROLE column at all.
+    """
+    import inspect
+
+    src = inspect.getsource(activity_router._assert_can_export)
+    assert "ProjectMember.role" in src
+    assert "HTTP_403_FORBIDDEN" in src, (
+        "an authorization refusal is a 403, not the 400 the suite-review "
+        "helper raises for a malformed request"
+    )
+    assert "UserRole.ADMIN" in src, "instance ADMIN must retain the backstop"
 
 
 # ── Filter validation ────────────────────────────────────────────────────────
