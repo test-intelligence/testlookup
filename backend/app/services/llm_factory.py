@@ -14,6 +14,42 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _internal_retries(runnable: Any, seen: set[int], depth: int = 0) -> int:
+    """Retries made INSIDE one call by ``runnable`` or anything it wraps.
+
+    QA-B45-R3-1: ``with_structured_output`` returns a RunnableSequence
+    (RunnableBinding(bound=ChatOpenAI) | parser) with no ``max_retries`` of
+    its own; reading only the top object (and its ``bound``) counted zero, so
+    a structured call the SDK had retried was refunded. This walks ``bound``,
+    ``first``/``middle``/``last``/``steps``, ``runnable``/``fallbacks``, and
+    counts ``RunnableRetry.max_attempt_number`` (``.with_retry``) too; the
+    largest count wins. ``max_retries=None`` on a model that has the field is
+    the SDK's own default (2).
+    """
+    if runnable is None or depth > 12 or id(runnable) in seen:
+        return 0
+    seen.add(id(runnable))
+    fields = getattr(runnable, "__dict__", None) or {}
+    found = 0
+    if "max_retries" in fields:
+        value = fields["max_retries"]
+        if value is None:
+            found = 2
+        elif isinstance(value, int) and not isinstance(value, bool):
+            found = max(0, value)
+    attempts = fields.get("max_attempt_number")
+    if isinstance(attempts, int) and not isinstance(attempts, bool):
+        found = max(found, attempts - 1)
+    children: list[Any] = [fields.get(name) for name in ("bound", "first", "last", "runnable")]
+    for name in ("middle", "steps", "fallbacks"):
+        value = fields.get(name)
+        if isinstance(value, (list, tuple)):
+            children.extend(value)
+    for child in children:
+        found = max(found, _internal_retries(child, seen, depth + 1))
+    return found
+
+
 class PipelineBudgetExceeded(RuntimeError):
     """Raised before provider invocation when a graph budget envelope is denied."""
 
@@ -68,15 +104,28 @@ class BudgetedLLM:
         the field (ChatOllama) does not retry; BudgetedLLM does, connect-phase
         only.
         """
-        for candidate in (self._inner, getattr(self._inner, "bound", None)):
-            if candidate is None or not hasattr(candidate, "max_retries"):
-                continue
-            value = getattr(candidate, "max_retries")
-            if value is None:
-                return 2
-            if isinstance(value, int) and not isinstance(value, bool):
-                return max(0, value)
-        return 0
+        return _internal_retries(self._inner, set())
+
+    @staticmethod
+    def _note_metered_at_settle(charged_usd: float, tokens: Optional[tuple[int, int]]) -> None:
+        """Tell the active stage that settle already wrote this call to the
+        Postgres meter (R-B45-R3-2/3). A failed call, or one with no reported
+        usage, is metered at settle; the investigator agents then priced an
+        estimate of the same call and ``mark_stage_done`` metered it again --
+        two meter rows, and two ``llm_calls``, for one call."""
+        from app.services.pipeline_budget_service import get_pipeline_budget_context
+
+        context = get_pipeline_budget_context()
+        if context is None:
+            return
+        context["settle_metered_usd"] = float(context.get("settle_metered_usd") or 0.0) + float(charged_usd)
+        context["settle_metered_calls"] = int(context.get("settle_metered_calls") or 0) + 1
+        context["settle_metered_input_tokens"] = (
+            int(context.get("settle_metered_input_tokens") or 0) + (tokens[0] if tokens else 0)
+        )
+        context["settle_metered_output_tokens"] = (
+            int(context.get("settle_metered_output_tokens") or 0) + (tokens[1] if tokens else 0)
+        )
 
     @staticmethod
     def _retry_delay(attempt: int) -> float:
@@ -263,6 +312,8 @@ class BudgetedLLM:
                 input_tokens=tokens[0] if tokens else 0,
                 output_tokens=tokens[1] if tokens else 0,
             )
+            if reservation is not None and record_meter and actual_usd > 0:
+                self._note_metered_at_settle(actual_usd, tokens)
 
     def invoke(self, *args, **kwargs):
         self._check()
