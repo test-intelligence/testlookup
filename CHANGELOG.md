@@ -257,6 +257,12 @@
   - The backup covers PostgreSQL (`pg_dump`), MongoDB (`mongodump`) and every
     MinIO object, with a sha256 manifest and 14 archives kept on a PVC.
   - The restore runs only with explicit confirmation.
+  - **Each dump and restore step waits for its store,** up to
+    `BACKUP_WAIT_SECONDS` (default 120), before connecting. A new backup pod
+    is refused for its first moments under a default-deny NetworkPolicy, until
+    the policy controller programs its allow rules. This was found live on the
+    homelab: `pg_dump` got "connection refused" in its first second under
+    k3s/kube-router.
   - Two alerts: `TestLookupBackupJobFailed` (a backup Job failed: its
     `Failed` condition, not a pod that failed before a retry succeeded) and
     `TestLookupBackupStale` (no successful backup in 26 hours, including one
