@@ -11,9 +11,11 @@
   its own project's preferences, and at send time the recipient must still be
   an active admin or member of the project -- "all projects" preferences
   included, which used to match every tenant's notifications.
-- **API-key scopes are enforced beyond streaming.** A key with a non-empty
-  scope list needs the new `project:admin` scope for the project-administration
-  routes a bound key may use. A `stream:write` CI key could delete runs, reset
+- **API-key scopes now limit the project-administration routes.** A key with a
+  non-empty scope list needs the new `project:admin` scope for the
+  project-administration routes a bound key may use. Elsewhere a scoped key
+  still acts with its owner's role; a per-route scope model is recorded as the
+  next step (N32). A `stream:write` CI key could delete runs, reset
   its project, and mint itself a full-access, never-expiring replacement. A key
   that creates a key grants only scopes it holds and an expiry no later than
   its own.
@@ -290,9 +292,11 @@ What changes for project-key callers:
 - An optional `event_id` on any event makes a retried POST count once.
   Without one, `run_start` and `run_complete` are recognised by their content,
   so a retried close converges, even when the first attempt's commit failed.
-  A `test_result` without one is always a new result, and a `run_start`
-  retried with its `event_id` after its run completed rejoins that run instead
-  of opening an empty one.
+  A `test_result` without one is always a new result. A `run_start` that
+  arrives after its run completed always begins a new run, even a late retry
+  of the old run's start: producers reuse event ids from night to night, so the
+  two cannot be told apart, and a late retry costs only an empty run that the
+  idle reaper closes.
 - `test_case_id`, and a `test_result`'s `total_tests`, are not recorded: the
   SDK path's events carry neither. A failing result therefore no longer queues
   the immediate per-test analysis; the run's analysis once it completes is

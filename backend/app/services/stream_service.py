@@ -1403,31 +1403,12 @@ async def ingest_via_api_key(
                 session_id=str(existing.id),
                 created_session=False,
             )
-        if getattr(request, "batch_id", None):
-            # A run_start the client NAMED (an SDK batch_id, a /ws/events
-            # event_id) and this session already accepted is a late retry of
-            # that run's start, not a new run: it converges on its receipt
-            # instead of opening an empty run only the idle reaper would end
-            # (QA of N14). An unnamed run_start cannot be told from the next
-            # night's identical one, so it still begins a new run.
-            try:
-                accepted = await _persist_event_batch(
-                    session_id=str(existing.id),
-                    run_id=str(existing.id),
-                    events=request.events,
-                    batch_id=request.batch_id,
-                    project_id=str(project_id),
-                    session_closed=True,
-                )
-            except LiveSessionClosedError:
-                pass
-            else:
-                return LiveStreamIngestResponse(
-                    accepted=accepted,
-                    run_id=request.run_id,
-                    session_id=str(existing.id),
-                    created_session=False,
-                )
+        # A run_start after its run completed always begins a new run -- even
+        # a late retry of the old run's own start. The two cannot be told
+        # apart: producers reuse event ids from night to night, and joining the
+        # finished run on a matching id lost the whole next night, every later
+        # event refused as closed (code review round 4). A late retry costs an
+        # empty run that the idle reaper closes.
         existing = None
 
     meta = request.meta

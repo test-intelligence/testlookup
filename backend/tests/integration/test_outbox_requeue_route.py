@@ -42,6 +42,12 @@ def requeue(monkeypatch):
     monkeypatch.setattr(
         "app.services.run_downstream_outbox.requeue_failed_downstream_operations", _fake
     )
+
+    async def _any_run(_db, _user, run_id):
+        calls.append({"scope_checked": run_id})
+
+    # The run's scope check reads the database; these tests use a fake one.
+    monkeypatch.setattr("app.routers.admin_maintenance._check_run_scope", _any_run)
     return calls
 
 
@@ -66,6 +72,7 @@ async def test_an_instance_admin_can_requeue(client, auth_as, requeue):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["requeued"] == 1
+    assert {"scope_checked": run_id} in requeue, "the named run's scope was not checked"
     assert requeue[-1] == {
         "operation": "agent_pipeline",
         "last_error": "broker_TypeError",

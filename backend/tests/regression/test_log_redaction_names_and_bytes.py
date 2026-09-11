@@ -64,3 +64,34 @@ def test_an_incoming_webhook_url_loses_its_credential(url):
 def test_a_set_of_strings_is_still_walked():
     out = redact_log_field("tags", {f"password={SECRET}", "ok"})
     assert all(SECRET not in item for item in out)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["access_tokens", "refresh_tokens", "webhook_url", "smtp_pass", "signing_key", "hmac_key",
+     "app_secret_key_previous", "APP_SECRET_KEY_PREVIOUS"],
+)
+def test_names_the_suffixes_cannot_reach_are_listed(name):
+    """Code review round 4."""
+    assert redact_log_field(name, "s3cr3t-value-0123456789") == "[REDACTED]"
+
+
+@pytest.mark.parametrize("name", ["next_page_token", "page_token", "pagination_token"])
+def test_a_pagination_cursor_is_not_a_secret(name):
+    assert redact_log_field(name, "eyJvZmZzZXQiOjIwfQ") == "eyJvZmZzZXQiOjIwfQ"
+
+
+@pytest.mark.parametrize(
+    "url, secret",
+    [
+        ("https://hooks.slack.com/workflows/T0/A0/123/XyZsecret99", "XyZsecret99"),
+        ("https://hooks.slack.com/triggers/T0/123/XyZsecret99", "XyZsecret99"),
+        ("https://outlook.office.com/webhook/abc@def/IncomingWebhook/XyZsecret99/ghi", "XyZsecret99"),
+        ("https://discord.com/api/webhooks/123/XyZsecret99", "XyZsecret99"),
+        ("https://prod-11.westus.logic.azure.com:443/workflows/abc/triggers/manual/paths/invoke"
+         "?api-version=2016-06-01&sp=%2Ftriggers&sv=1.0&sig=XyZsecret99", "XyZsecret99"),
+    ],
+    ids=["slack workflows", "slack triggers", "outlook legacy", "discord", "teams workflows"],
+)
+def test_other_webhook_url_shapes_lose_their_credential(url, secret):
+    assert secret not in redact_log_field("url", url)

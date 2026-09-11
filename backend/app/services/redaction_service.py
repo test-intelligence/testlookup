@@ -60,6 +60,14 @@ SENSITIVE_KEYS: frozenset[str] = _SECRET_KEY_NAMES | _PII_KEY_NAMES
 LOG_SECRET_KEYS: frozenset[str] = _SECRET_KEY_NAMES | frozenset({
     "x_api_key", "set_cookie", "proxy_authorization",
     "x_api_token", "x_auth_token", "x_webhook_secret",
+    # Names the suffixes below cannot reach (code review round 4).
+    "access_tokens", "refresh_tokens", "webhook_url", "smtp_pass",
+    "signing_key", "hmac_key", "app_secret_key_previous", "jwt_secret_key_previous",
+})
+
+#: Names that end in a secret suffix but hold no secret: a pagination cursor.
+LOG_SECRET_NAME_EXCEPTIONS: frozenset[str] = frozenset({
+    "next_page_token", "page_token", "pagination_token", "next_token",
 })
 
 #: A log field whose name ENDS in one of these is a secret too: the deployment's
@@ -80,6 +88,8 @@ def is_log_secret_name(key: object) -> bool:
     if not isinstance(key, str):
         return False
     name = key.lower().replace("-", "_")
+    if name in LOG_SECRET_NAME_EXCEPTIONS:
+        return False
     return name in LOG_SECRET_KEYS or name.endswith(LOG_SECRET_SUFFIXES)
 
 # ── Regex patterns for free-form text scrubbing ─────────────────────────────
@@ -119,8 +129,12 @@ _CREDENTIAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (_AUTHORIZATION_HEADER, r"\g<head>\g<scheme>[REDACTED]"),
     # A Slack or Teams incoming-webhook URL is itself the credential: anyone
     # holding it can post to the channel (QA of the H3 fix).
-    (re.compile(r"(hooks\.slack\.com/services/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"(hooks\.slack\.com/(?:services|workflows|triggers)/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
     (re.compile(r"(\.webhook\.office\.com/webhookb2/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"(outlook\.office(?:365)?\.com/webhook/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"(discord(?:app)?\.com/api/webhooks/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
+    # Teams Workflows (Power Automate) URLs carry the credential as sig=.
+    (re.compile(r"(\.logic\.azure\.com[^\s'\"<>]*?[?&]sig=)[^\s&'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
     # Cookies frequently contain session credentials and must be removed even
     # when their values do not resemble long random tokens.
     (re.compile(r"((?:Set-)?Cookie:\s*)[^\r\n]+", re.IGNORECASE), r"\1[REDACTED]"),

@@ -169,6 +169,12 @@ async def create_policy(
     for another project or the system default (re-audit N20).
     """
     _enforce_policy_binding(current_user, payload.project_id)
+    if payload.project_id is not None:
+        # A real scope call the authorization scan can see (code review round
+        # 4): an admin passes by role, a bound key only for its own project.
+        from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+        await resolve_project_scope(db, current_user, str(payload.project_id))
     # Validate the policy document
     _validate_policy_document(payload.rules)
 
@@ -306,17 +312,20 @@ async def simulate_policy(
     db: AsyncSession = Depends(get_db),
 ):
     """Simulate a draft policy against a past run's decision data."""
-    # A project-bound API key may simulate only against its own project's runs:
-    # the response carries the run's recommendation, composite score and rule
-    # trail (re-audit N20). Looked up only for a bound caller, so every other
-    # request issues exactly the queries it always did.
-    if _api_key_bound_project(current_user) is not None:
-        run_project_id = (
-            await db.execute(select(TestRun.project_id).where(TestRun.id == payload.run_id))
-        ).scalar_one_or_none()
-        if run_project_id is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found")
-        _enforce_api_key_project_binding(current_user, run_project_id)
+    # The run's project is checked like any other scoped id: the response
+    # carries the run's recommendation, composite score and rule trail. A
+    # project-bound API key may simulate only against its own project's runs
+    # (re-audit N20); the scope call is what the authorization scan reads
+    # (code review round 4).
+    run_project_id = (
+        await db.execute(select(TestRun.project_id).where(TestRun.id == payload.run_id))
+    ).scalar_one_or_none()
+    if run_project_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found")
+    _enforce_api_key_project_binding(current_user, run_project_id)
+    from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+    await resolve_project_scope(db, current_user, str(run_project_id))
 
     # Load the existing release decision
     result = await db.execute(

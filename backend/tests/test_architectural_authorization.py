@@ -487,6 +487,17 @@ def _names_in(tree: ast.AST) -> set[str]:
     never called. A callable handed to ``Depends(...)`` is in the route's
     dependency tree, which ``_authorization_names`` reads separately.
     """
+    # A current_user.id read is an ownership filter only where it filters: an
+    # operand of a comparison (``.where(Row.user_id == current_user.id)``) or a
+    # ``filter_by(user_id=...)`` keyword. Passed as an attribution argument
+    # (``track_event(user_id=current_user.id)``) it scopes nothing, and it let
+    # a handler pass with its real check deleted (code review round 4).
+    filtering: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            filtering.update(id(operand) for operand in (node.left, *node.comparators))
+        elif isinstance(node, ast.Call) and _plain_name(node.func) == "filter_by":
+            filtering.update(id(keyword.value) for keyword in node.keywords)
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -498,6 +509,7 @@ def _names_in(tree: ast.AST) -> set[str]:
             and isinstance(node.value, ast.Name)
             and node.value.id == "current_user"
             and node.attr in _OWNERSHIP_ATTRIBUTES
+            and id(node) in filtering
         ):
             names.add(f"current_user.{node.attr}")
     return names
@@ -732,15 +744,28 @@ async def a_real_call_one_level_down(project_id, db, current_user):
 
 async def a_key_derived_project(ctx=Depends(get_streaming_api_key_context)):
     return ctx.project_id
+
+
+async def only_attributes_the_caller(project_id, db, current_user):
+    await track_event(db, project_id=project_id, user_id=current_user.id)
+
+
+async def an_ownership_filter(db, current_user):
+    return await db.execute(select(Row).where(Row.user_id == current_user.id))
+
+
+async def an_ownership_filter_by(db, current_user):
+    return await db.execute(select(Row).filter_by(user_id=current_user.id))
 '''
 
 _NOT_EVIDENCE = (
     "only_a_comment", "only_a_docstring", "only_a_string", "only_a_bare_reference",
     "only_confines_a_bound_key", "a_callee_only_mentions_it", "only_a_role_guard",
+    "only_attributes_the_caller",
 )
 _EVIDENCE = (
     "a_real_call", "a_real_call_through_the_module", "a_real_call_one_level_down",
-    "a_key_derived_project",
+    "a_key_derived_project", "an_ownership_filter", "an_ownership_filter_by",
 )
 
 

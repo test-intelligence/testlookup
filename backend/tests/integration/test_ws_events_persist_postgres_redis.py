@@ -347,18 +347,24 @@ async def test_a_result_retried_with_its_event_id_is_counted_once(infra):
     assert int(state["passed"]) == 2
 
 
-async def test_a_named_run_start_retried_after_its_run_closed_is_that_run(infra):
-    """A client that timed out on run_start and retried late used to open an
-    empty run that only the idle reaper ended (QA of N14). With an event_id the
-    retry converges on the run it started; a new run_start id begins a new run."""
+async def test_a_run_start_reusing_last_nights_event_id_is_a_new_run_not_lost(infra):
+    """Producers reuse event ids from night to night. A rule that joined the
+    finished run on a matching id lost the whole next night: every later event
+    was refused as closed (code review round 4)."""
+    from app.models.postgres import TestRun
+
     slug = _slug()
-    start = {"type": "run_start", "build_number": "1", "event_id": "start-1"}
+    start = {"type": "run_start", "build_number": "1", "event_id": "start"}
     first = (await _post(infra, slug, start))["session_id"]
     await _post(infra, slug, {"type": "run_complete"})
 
-    late = await _post(infra, slug, start)
-    assert late["session_id"] == first
-    assert len(await _sessions_for(infra, slug)) == 1, "the late retry opened a phantom run"
-
-    second = (await _post(infra, slug, {**start, "event_id": "start-2"}))["session_id"]
-    assert second != first
+    for same_content in (True, False):
+        night = start if same_content else {**start, "build_number": "2"}
+        new = (await _post(infra, slug, night))["session_id"]
+        assert new != first, "the next night was put into the finished run"
+        await _post(infra, slug, {"type": "test_result", "test_name": "t", "status": "PASSED",
+                                  "event_id": "r1"})
+        await _post(infra, slug, {"type": "run_complete"})
+        async with infra.sessions() as db:
+            run = await db.get(TestRun, __import__("uuid").UUID(new))
+        assert run is not None and run.passed_tests == 1, "the next night's run was lost"

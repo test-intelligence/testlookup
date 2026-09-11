@@ -265,6 +265,26 @@ async def read_ai_cache_stats(
     return stats
 
 
+async def _check_run_scope(db: AsyncSession, current_user: User, run_id: uuid.UUID) -> None:
+    """A run named in the body is checked like any scoped id (code review round 4).
+
+    The route is for instance admins, who pass by role; the call is what the
+    authorization scan reads, and a run that does not exist is a 404 rather
+    than an empty requeue.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.core.deps import resolve_project_scope  # noqa: PLC0415
+    from app.models.postgres import TestRun  # noqa: PLC0415
+
+    project_id = (
+        await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
+    ).scalar_one_or_none()
+    if project_id is None:
+        raise HTTPException(status_code=404, detail="Test run not found")
+    await resolve_project_scope(db, current_user, str(project_id))
+
+
 class OutboxRequeueRequest(BaseModel):
     """Which failed run-outbox intents to put back."""
 
@@ -317,6 +337,8 @@ async def requeue_failed_outbox_operations(
         requeue_failed_downstream_operations as _requeue,
     )
 
+    if body.run_id is not None:
+        await _check_run_scope(db, current_user, body.run_id)
     try:
         rows = await _requeue(
             db,
