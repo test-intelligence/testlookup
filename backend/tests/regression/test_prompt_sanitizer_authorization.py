@@ -31,3 +31,26 @@ def test_the_rest_of_the_output_survives():
     out = sanitize_tool_output(f"GET /api/v1/runs 401\nAuthorization: Basic {CREDENTIAL}\nretrying")
     assert "GET /api/v1/runs 401" in out
     assert "retrying" in out
+
+
+@pytest.mark.parametrize(
+    "header, secret",
+    [
+        (
+            'Authorization: Digest username="ci", realm="tl", nonce="n1", '
+            'uri="/api", response="6629fae49393a05397450978507c4ef1"',
+            "6629fae49393a05397450978507c4ef1",
+        ),
+        (
+            "Authorization: AWS4-HMAC-SHA256 Credential=AKID/20260911/us-east-1/s3/aws4_request, "
+            "SignedHeaders=host;x-amz-date, Signature=fe5f80f77d5fa3beca038a248ff027d0445342fe",
+            "fe5f80f77d5fa3beca038a248ff027d0445342fe",
+        ),
+    ],
+    ids=["digest", "sigv4"],
+)
+def test_a_multi_part_credential_is_redacted_whole(header, secret):
+    """The first fix stopped at the first space (code review round 3)."""
+    out = sanitize_tool_output(f"request failed\n{header}\nretrying")
+    assert secret not in out, out
+    assert "retrying" in out

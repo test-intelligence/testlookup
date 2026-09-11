@@ -271,10 +271,16 @@ class OutboxRequeueRequest(BaseModel):
     operation: str = Field(
         ..., description="The post-ingestion operation, for example agent_pipeline."
     )
-    last_error: str | None = Field(
-        None,
+    last_error: str = Field(
+        ...,
+        min_length=1,
         max_length=200,
-        description="Only intents that failed with exactly this error, for example broker_TypeError.",
+        description=(
+            "Only intents that failed with exactly this error, for example "
+            "broker_TypeError. Required: a requeue without it re-ran every failed "
+            "intent of the operation, including notifications and webhooks that "
+            "had executed and failed for their own reasons (code review round 3)."
+        ),
     )
     run_id: uuid.UUID | None = Field(None, description="Only this run's intents.")
     limit: int = Field(100, ge=1, le=500, description="At most this many, oldest first.")
@@ -302,6 +308,10 @@ async def requeue_failed_outbox_operations(
     runs. List them with this call (it is a dry run unless ``dry_run`` is
     false), then requeue them in slices of at most 500, oldest first. Each
     requeued ``agent_pipeline`` intent starts one AI pipeline.
+
+    Requeue a stranded N27 intent only after its pipeline is marked failed: a
+    pipeline left ``running`` refuses the retry until the stale-pipeline reaper
+    (every 10 minutes, after 30) has failed it.
     """
     from app.services.run_downstream_outbox import (
         requeue_failed_downstream_operations as _requeue,

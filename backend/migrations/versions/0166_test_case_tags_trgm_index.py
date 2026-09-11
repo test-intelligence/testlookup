@@ -116,7 +116,15 @@ def _stale_index(bind) -> str | None:
             f"{found.name} exists and is not an index, so CREATE INDEX IF NOT EXISTS "
             f"would skip building {INDEX}; rename or drop it, then rerun the migration"
         )
-    if found.valid and found.on_table and _rendered(found.definition) == _rendered(_as_built(bind)):
+    if not found.on_table:
+        # Index names are unique per schema, so another table's index blocks
+        # the build just as a table does -- and it is not this migration's to
+        # drop (code review round 3). Its owner has to free the name.
+        raise RuntimeError(
+            f"{found.name} is an index on another table, so CREATE INDEX IF NOT "
+            f"EXISTS would skip building {INDEX}; rename it, then rerun the migration"
+        )
+    if found.valid and _rendered(found.definition) == _rendered(_as_built(bind)):
         return None
     return found.name
 

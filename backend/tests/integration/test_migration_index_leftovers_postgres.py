@@ -100,16 +100,25 @@ async def test_an_invalid_leftover_is_dropped():
 @pytest.mark.parametrize("migration, replacement", [
     (M0166, [f"CREATE INDEX {M0166.INDEX} ON test_cases (test_name)"]),
     (M0166, [f"CREATE INDEX {M0166.INDEX} ON test_cases USING gin ((CAST(tags AS VARCHAR)) gin_trgm_ops)"]),
+    (M0167, [f"CREATE INDEX {M0167.INDEX} ON test_runs (project_id, build_number DESC)"]),
+], ids=["0166 btree", "0166 varchar cast", "0167 raw build_number"])
+async def test_a_valid_index_that_is_not_this_one_is_dropped(migration, replacement):
+    stale = await _stale_after(migration, f"DROP INDEX {migration.INDEX}", *replacement)
+    assert stale == f"public.{migration.INDEX}"
+
+
+@pytest.mark.parametrize("migration, plant", [
     (M0166, [f"CREATE INDEX {M0166.INDEX} ON test_runs (build_number)"]),
     # Renders exactly like the real one after USING: only the table differs.
     (M0166, ["CREATE TABLE r3_other_tags (tags jsonb)",
              f"CREATE INDEX {M0166.INDEX} ON r3_other_tags {M0166.DEFINITION}"]),
-    (M0167, [f"CREATE INDEX {M0167.INDEX} ON test_runs (project_id, build_number DESC)"]),
-], ids=["0166 btree", "0166 varchar cast", "0166 another table",
-        "0166 same definition, another table", "0167 raw build_number"])
-async def test_a_valid_index_that_is_not_this_one_is_dropped(migration, replacement):
-    stale = await _stale_after(migration, f"DROP INDEX {migration.INDEX}", *replacement)
-    assert stale == f"public.{migration.INDEX}"
+    (M0167, [f"CREATE INDEX {M0167.INDEX} ON test_cases (test_name)"]),
+], ids=["0166 another table", "0166 same definition, another table", "0167 another table"])
+async def test_an_index_of_this_name_on_another_table_stops_the_migration(migration, plant):
+    """It is not this migration's index, so not this migration's to drop: the
+    first version dropped it CONCURRENTLY (code review round 3)."""
+    with pytest.raises(RuntimeError, match="on another table"):
+        await _stale_after(migration, f"DROP INDEX {migration.INDEX}", *plant)
 
 
 async def test_a_table_holding_the_name_stops_the_migration():

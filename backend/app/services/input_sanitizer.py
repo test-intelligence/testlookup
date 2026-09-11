@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import logging
 import re
+
+from app.services.redaction_service import _AUTHORIZATION_HEADER
 logger = logging.getLogger("services.input_sanitizer")
 
 # ── Length budgets (characters) ──────────────────────────────────────────────
@@ -50,16 +52,11 @@ _INJECTION_PATTERNS: list[re.Pattern[str]] = [
 _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Bearer / API tokens
     (re.compile(r"(Bearer\s+)[A-Za-z0-9\-._~+/]+=*", re.I), r"\1[REDACTED]"),
-    # The credential, whatever the scheme. The scheme name alone used to be
-    # "redacted", leaving the credential after it in the prompt (the logging
-    # agent's review of H3's Authorization fix).
-    (
-        re.compile(
-            r"(Authorization:\s*(?:(?:Basic|Bearer|Digest|Negotiate|NTLM|Token)\s+)?)[^\s]+",
-            re.I,
-        ),
-        r"\1[REDACTED]",
-    ),
+    # The credential, whatever the scheme -- the log redactor's own pattern.
+    # The scheme name alone used to be "redacted", leaving the credential in the
+    # prompt; then a pattern that stopped at the first space left Digest's
+    # response= and SigV4's Signature= behind (code review round 3).
+    (_AUTHORIZATION_HEADER, r"\g<head>\g<scheme>[REDACTED]"),
     # API keys (common formats)
     (re.compile(r"(api[_-]?key\s*[=:]\s*)[^\s,;\"']+", re.I), r"\1[REDACTED]"),
     (re.compile(r"(token\s*[=:]\s*)[^\s,;\"']+", re.I), r"\1[REDACTED]"),

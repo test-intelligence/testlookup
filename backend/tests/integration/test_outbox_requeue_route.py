@@ -59,13 +59,16 @@ async def test_an_instance_admin_can_requeue(client, auth_as, requeue):
     auth_as(role=UserRole.ADMIN)
     run_id = uuid.uuid4()
     resp = await client.post(
-        URL, json={"operation": "agent_pipeline", "run_id": str(run_id), "limit": 50, "dry_run": False}
+        URL, json={
+            "operation": "agent_pipeline", "last_error": "broker_TypeError",
+            "run_id": str(run_id), "limit": 50, "dry_run": False,
+        }
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["requeued"] == 1
     assert requeue[-1] == {
         "operation": "agent_pipeline",
-        "last_error": None,
+        "last_error": "broker_TypeError",
         "run_id": run_id,
         "limit": 50,
         "dry_run": False,
@@ -89,7 +92,18 @@ async def test_an_admins_project_bound_key_cannot_requeue(client, auth_as, reque
 
 async def test_an_unknown_operation_is_a_422(client, auth_as, requeue):
     auth_as(role=UserRole.ADMIN)
-    assert (await client.post(URL, json={"operation": "drop_tables"})).status_code == 422
+    resp = await client.post(URL, json={"operation": "drop_tables", "last_error": "broker_TypeError"})
+    assert resp.status_code == 422
+    assert "unknown downstream operation" in resp.text
+
+
+async def test_a_requeue_must_name_the_failure_it_recovers_from(client, auth_as, requeue):
+    """Without it one call re-ran up to 500 intents that had failed for any
+    reason, notifications and webhooks included (code review round 3)."""
+    auth_as(role=UserRole.ADMIN)
+    for body in ({"operation": "agent_pipeline"}, {"operation": "agent_pipeline", "last_error": ""}):
+        assert (await client.post(URL, json={**body, "dry_run": False})).status_code == 422
+    assert requeue == []
 
 
 async def test_a_limit_above_the_cap_is_refused_before_anything_runs(client, auth_as, requeue):
