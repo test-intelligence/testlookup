@@ -516,3 +516,198 @@ def test_a_basic_credential_in_a_structured_field_is_redacted(json_logs):
     assert _records(json_logs)[-1]["request_headers"] == (
         "{'Authorization': 'Basic [REDACTED]', 'Accept': '*/*'}"
     )
+
+
+# ── A field NAMED like a secret is redacted by its name (QA of the H3 fix) ──
+
+_SECRET_NAMES = [
+    "password", "passwd", "secret", "client_secret", "api_key", "apikey",
+    "x_api_key", "token", "access_token", "refresh_token", "id_token",
+    "session_token", "authorization", "cookie", "set_cookie", "private_key",
+    "webhook_secret", "smtp_password",
+]
+
+
+@pytest.mark.parametrize("name", _SECRET_NAMES)
+def test_a_field_named_like_a_secret_is_redacted_by_its_name(json_logs, name):
+    """``log.info("x", password="pw-plain")`` wrote ``"password": "pw-plain"``:
+    the value carries no marker, and the processor read values only."""
+    import structlog
+
+    structlog.get_logger("tests.n").info("configured", **{name: "pw-plain"})
+
+    assert "pw-plain" not in json_logs.getvalue()
+    assert _records(json_logs)[-1][name] == "[REDACTED]"
+
+
+@pytest.mark.parametrize(
+    "name", ["Password", "X-API-Key", "Set-Cookie", "CLIENT_SECRET", "Refresh-Token"]
+)
+def test_the_name_is_matched_ignoring_case_and_hyphens(json_logs, name):
+    import structlog
+
+    structlog.get_logger("tests.n").info("configured", **{name: "pw-plain"})
+
+    assert "pw-plain" not in json_logs.getvalue()
+    assert _records(json_logs)[-1][name] == "[REDACTED]"
+
+
+def test_a_secret_named_key_inside_a_nested_field_is_redacted(json_logs):
+    import structlog
+
+    structlog.get_logger("tests.n").info(
+        "upstream_call",
+        request={
+            "headers": {
+                "Authorization": "Basic bmVzdGVkLWNyZWQ=",
+                "X-API-Key": "k-nested-123",
+                "Accept": "*/*",
+            },
+            "attempts": [{"token": "t-nested-one"}, {"token": "t-nested-two", "status": 401}],
+        },
+    )
+
+    written = json_logs.getvalue()
+    for secret in ("bmVzdGVkLWNyZWQ=", "k-nested-123", "t-nested-one", "t-nested-two"):
+        assert secret not in written
+    request = _records(json_logs)[-1]["request"]
+    assert request["headers"] == {
+        "Authorization": "[REDACTED]",
+        "X-API-Key": "[REDACTED]",
+        "Accept": "*/*",
+    }
+    assert request["attempts"] == [
+        {"token": "[REDACTED]"},
+        {"token": "[REDACTED]", "status": 401},
+    ]
+
+
+def test_metrics_and_flags_that_merely_contain_a_secret_word_are_kept(json_logs):
+    """The names match EXACTLY. A token count, a rotation policy or the id of
+    an API key is what an operator reads the line for."""
+    import structlog
+
+    fields = {
+        "tokens": 5,
+        "token_count": 120,
+        "prompt_tokens": 12,
+        "completion_tokens": 30,
+        "max_tokens": 4096,
+        "password_changed": True,
+        "secret_rotation_days": 90,
+        "api_key_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "api_key_name": "ci-runner",
+        # Look-alike names logged in app/ today.
+        "token_action": "rotate",
+        "custom_password": False,
+        "input_tokens": 10,
+        "output_tokens": 20,
+        "api_keys": 3,
+    }
+    structlog.get_logger("tests.n").info("usage", usage=dict(fields), **fields)
+
+    record = _records(json_logs)[-1]
+    for name, value in fields.items():
+        assert record[name] == value, f"{name} was redacted"
+    assert record["usage"] == fields, "the same names were redacted when nested"
+
+
+def test_none_and_a_bool_under_a_secret_name_are_kept(json_logs):
+    """Neither can carry a secret, and "no token" or "password set" is worth
+    keeping. Any other value is replaced, a number included: an OTP is one."""
+    import structlog
+
+    structlog.get_logger("tests.n").info(
+        "auth_state", token=None, password=True, secret=False, session_token=123456
+    )
+
+    record = _records(json_logs)[-1]
+    assert record["token"] is None
+    assert record["password"] is True
+    assert record["secret"] is False
+    assert record["session_token"] == "[REDACTED]"
+
+
+def test_a_pii_name_is_not_a_secret_name(json_logs):
+    """A log's ``address=`` is as often a host as a street; PII values keep
+    their own patterns instead of losing the field by name."""
+    import structlog
+
+    structlog.get_logger("tests.n").info(
+        "connected", address="10.42.0.7:6379", email="qa.lead@example.com"
+    )
+
+    record = _records(json_logs)[-1]
+    assert record["address"] == "[REDACTED_IP]:6379"
+    assert record["email"] == "[REDACTED_EMAIL]"
+
+
+def test_the_callers_objects_are_not_edited(json_logs):
+    """A dict passed to a log call is the caller's own: it may be persisted,
+    returned or sent after the call."""
+    import copy
+
+    import structlog
+
+    payload = {"password": "pw-plain", "note": "call 555-123-4567", "tags": ["a@b.io"]}
+    before = copy.deepcopy(payload)
+    structlog.get_logger("tests.n").info("saved", payload=payload)
+
+    assert payload == before
+    logged = _records(json_logs)[-1]["payload"]
+    assert logged["password"] == "[REDACTED]"
+    assert "555-123-4567" not in logged["note"]
+    assert logged["tags"] == ["[REDACTED_EMAIL]"]
+
+
+def test_strings_inside_a_nested_field_get_that_fields_patterns(json_logs):
+    import structlog
+
+    dsn = "postgresql://svc:dsnpass99@db:5432/app"
+    structlog.get_logger("tests.n").warning(
+        "upstream_failed",
+        config={"dsn": dsn, "peer": "10.42.0.7"},
+        error={"message": _REDIS_ERROR, "dsn": dsn},
+    )
+
+    record = _records(json_logs)[-1]
+    assert "dsnpass99" not in json_logs.getvalue()
+    assert record["config"]["peer"] == "[REDACTED_IP]", "a structured field keeps the full set"
+    assert record["error"]["message"] == _REDIS_ERROR, "free text stays free text when nested"
+
+
+def test_a_subtree_past_the_depth_cap_is_replaced_not_passed_through(json_logs):
+    import structlog
+
+    deep: dict = {"note": "call 555-123-4567"}
+    for _ in range(12):
+        deep = {"nested": deep}
+    structlog.get_logger("tests.n").info("deep", payload=deep)
+
+    written = json_logs.getvalue()
+    assert "555-123-4567" not in written
+    assert "[REDACTED]" in written
+
+
+def test_a_self_referencing_field_does_not_break_the_log_call(json_logs):
+    import structlog
+
+    loop: list = ["call 555-123-4567"]
+    loop.append(loop)
+    structlog.get_logger("tests.n").info("cyclic", payload=loop)
+
+    assert _records(json_logs)[-1]["event"] == "cyclic"
+    assert "555-123-4567" not in json_logs.getvalue()
+
+
+def test_a_secret_bound_into_the_context_is_redacted(json_logs):
+    import structlog
+
+    structlog.contextvars.bind_contextvars(session_token="ctx-secret-value")
+    try:
+        structlog.get_logger("tests.n").info("request_done")
+    finally:
+        structlog.contextvars.unbind_contextvars("session_token")
+
+    assert "ctx-secret-value" not in json_logs.getvalue()
+    assert _records(json_logs)[-1]["session_token"] == "[REDACTED]"

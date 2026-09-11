@@ -93,22 +93,23 @@ def _privacy_redaction(
     skipped here, and the renderer then wrote its repr -- after redaction,
     verbatim. It is redacted as that same repr instead, so the line reads as
     it did, less the secrets.
+
+    A field NAMED like a secret -- ``password=``, ``token=``,
+    ``authorization=`` -- is replaced whatever its value looks like (QA of the
+    H3 fix: ``password="pw-plain"`` carries no marker, and only values were
+    read). The names match exactly, so ``prompt_tokens`` and
+    ``password_changed`` are kept. A dict or list field is walked: a
+    secret-named key is redacted however deep it sits, and every string gets
+    its field's patterns. See ``redact_log_field``.
     """
-    from app.services.redaction_service import (  # noqa: PLC0415
-        redact_log_message,
-        redact_text,
-    )
+    from app.services.redaction_service import redact_log_field  # noqa: PLC0415
 
     for key, val in event_dict.items():
         if key in _STRUCTURAL_LOG_FIELDS:
             continue
         if isinstance(val, BaseException):
             val = _safe_repr(val)
-        elif not isinstance(val, str):
-            continue
-        event_dict[key] = (
-            redact_log_message(val) if key in _FREE_TEXT_FIELDS else redact_text(val)
-        )
+        event_dict[key] = redact_log_field(key, val, free_text=key in _FREE_TEXT_FIELDS)
     return event_dict
 
 

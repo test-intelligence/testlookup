@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import logging
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger("services.redaction")
@@ -21,7 +22,7 @@ logger = logging.getLogger("services.redaction")
 # ── Sensitive key names (union of audit + prompt sets) ───────────────────────
 # Matched after lowercasing and normalising hyphens → underscores.
 
-SENSITIVE_KEYS: frozenset[str] = frozenset({
+_SECRET_KEY_NAMES: frozenset[str] = frozenset({
     # Secrets
     "password", "passwd", "secret", "token", "api_key", "apikey",
     "api_token", "authorization", "auth_token", "access_token",
@@ -36,12 +37,29 @@ SENSITIVE_KEYS: frozenset[str] = frozenset({
     "client_secret", "signing_secret", "personal_access_token",
     "private_token", "session_token", "id_token", "encryption_key",
     "ssh_key", "deploy_key", "webhook_token",
+})
+
+_PII_KEY_NAMES: frozenset[str] = frozenset({
     # PII (PR-2)
     "email", "email_address", "phone", "phone_number", "mobile",
     "ssn", "social_security", "social_security_number",
     "credit_card", "card_number", "cc_number",
     "dob", "date_of_birth", "address", "street_address",
     "national_id", "passport_number", "drivers_license",
+})
+
+SENSITIVE_KEYS: frozenset[str] = _SECRET_KEY_NAMES | _PII_KEY_NAMES
+
+# What a structured LOG field loses by its name alone, whatever its value looks
+# like (QA of the H3 fix): the secret names above, and the header spellings a
+# request dump carries. Matched EXACTLY after lowercasing and "-" -> "_", so a
+# metric or a flag that merely contains the word -- ``prompt_tokens``,
+# ``token_count``, ``password_changed``, ``api_key_id`` -- is left alone. The
+# PII names are not here: a log's ``address=`` is as often a host as a street,
+# and PII values keep their own patterns.
+LOG_SECRET_KEYS: frozenset[str] = _SECRET_KEY_NAMES | frozenset({
+    "x_api_key", "set_cookie", "proxy_authorization",
+    "x_api_token", "x_auth_token", "x_webhook_secret",
 })
 
 # ── Regex patterns for free-form text scrubbing ─────────────────────────────
@@ -169,6 +187,64 @@ def redact_log_message(text: str) -> str:
     for pattern, replacement in _LOG_MESSAGE_PATTERNS:
         result = pattern.sub(replacement, result)
     return result
+
+
+def redact_log_field(key: str, value: Any, *, free_text: bool = False) -> Any:
+    """Redact one structured log field: by its name first, then by its content.
+
+    A field named in :data:`LOG_SECRET_KEYS` is replaced whatever it holds,
+    except ``None`` and a bool, which cannot carry a secret and say something
+    worth keeping ("no token", "password set"); a number is replaced, since an
+    OTP is one. A string gets the field's patterns: :func:`redact_log_message`
+    for free text, :func:`redact_text` otherwise. A dict, list, tuple or set is
+    walked and its entries get the same treatment -- a secret-named key is
+    redacted however deep it sits -- and past ``_MAX_RECURSION_DEPTH`` the
+    subtree is replaced, never passed through.
+
+    A container is copied, never edited in place: it is the caller's own
+    object and may outlive the log call. If nothing in it changed, it is
+    returned as it was.
+    """
+    scrub = redact_log_message if free_text else redact_text
+    return _redact_log_entry(key, value, scrub, 0)
+
+
+def _redact_log_entry(
+    key: object, value: Any, scrub: Callable[[str], str], depth: int
+) -> Any:
+    if (
+        isinstance(key, str)
+        and key.lower().replace("-", "_") in LOG_SECRET_KEYS
+        and value is not None
+        and not isinstance(value, bool)
+    ):
+        return REDACTED
+    if isinstance(value, str):
+        scrubbed = scrub(value)
+        return value if scrubbed == value else scrubbed
+    if isinstance(value, (dict, list, tuple, set, frozenset)):
+        if depth >= _MAX_RECURSION_DEPTH:
+            return REDACTED
+        return _redact_log_container(value, scrub, depth + 1)
+    return value
+
+
+def _redact_log_container(value: Any, scrub: Callable[[str], str], depth: int) -> Any:
+    if isinstance(value, dict):
+        entries = {k: _redact_log_entry(k, v, scrub, depth) for k, v in value.items()}
+        if all(entries[k] is v for k, v in value.items()):
+            return value
+        return entries
+    items = [_redact_log_entry(None, item, scrub, depth) for item in value]
+    if all(new is old for new, old in zip(items, value)):
+        return value
+    if isinstance(value, list):
+        return items
+    if isinstance(value, frozenset):
+        return frozenset(items)
+    if isinstance(value, set):
+        return set(items)
+    return tuple(items)
 
 
 def redact_value(key: str, value: Any) -> Any:
