@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useId, useState } from 'react'
+import { useModalFocus } from '@/hooks/useModalFocus'
 
 interface TransitionReasonDialogProps {
   title: string
@@ -28,49 +29,9 @@ export default function TransitionReasonDialog({
   const descriptionId = `${id}-description`
   const fieldId = `${id}-reason`
   const countId = `${id}-count`
-  const returnFocusRef = useRef<HTMLElement | null>(
-    typeof document === 'undefined' ? null : document.activeElement as HTMLElement | null,
-  )
-  const panelRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    const returnFocus = returnFocusRef.current
-    return () => returnFocus?.focus()
-  }, [])
-
-  useEffect(() => {
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape' && !busy) {
-        onCancel()
-        return
-      }
-      if (event.key !== 'Tab') return
-
-      const panel = panelRef.current
-      if (!panel) return
-      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ))
-      if (focusable.length === 0) {
-        event.preventDefault()
-        panel.focus()
-        return
-      }
-
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      const active = document.activeElement
-      if (event.shiftKey && (active === first || !panel.contains(active))) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && (active === last || !panel.contains(active))) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener('keydown', handleEscape)
-    return () => document.removeEventListener('keydown', handleEscape)
-  }, [busy, onCancel])
+  // The shared modal keyboard contract (this dialog was its original
+  // hand-rolled implementation): Escape unless busy, Tab trap, return focus.
+  const panelRef = useModalFocus({ onClose: onCancel, canClose: !busy })
 
   return (
     <div

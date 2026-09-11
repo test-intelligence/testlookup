@@ -11,6 +11,7 @@ import {
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useDefectCandidate, usePromoteCluster } from '@/hooks/useDefectPromotion'
+import { useModalFocus } from '@/hooks/useModalFocus'
 import type { DefectPromotionRequest } from '@/types/defect-promotion'
 import { isSafeExternalUrl } from '@/utils/safeUrl'
 
@@ -97,9 +98,10 @@ export default function DefectPromotionModal({
     reset()
     onClose()
   }
+  const dialogRef = useModalFocus({ onClose: handleClose, canClose: !isPromoting })
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="defect-promotion-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="defect-promotion-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm">
       <div className="relative w-full max-w-2xl mx-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)] shrink-0">
