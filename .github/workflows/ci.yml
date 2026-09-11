@@ -304,6 +304,19 @@ jobs:
       - name: Type check with mypy (ratchet)
         run: python ../scripts/mypy_ratchet.py
 
+      # M16 (AI agent): a gated prompt's hash must match the hash its scored
+      # outputs were recorded under. The module lands with the AI agent's
+      # branch; until it is merged this step says so and passes. Drop the
+      # file test once app/services/prompt_eval_recordings.py is on main.
+      - name: Prompt changes need scored outputs (M16)
+        working-directory: backend
+        run: |
+          if [ -f app/services/prompt_eval_recordings.py ]; then
+            python -m app.services.prompt_eval_recordings --check
+          else
+            echo "::notice::app/services/prompt_eval_recordings.py not present yet; M16 check skipped"
+          fi
+
       - name: Run tests
         env:
           DATABASE_URL: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
