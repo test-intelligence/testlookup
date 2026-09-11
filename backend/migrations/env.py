@@ -6,8 +6,9 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy.ext.asyncio import async_engine_from_config
-from sqlalchemy import pool, text
+from sqlalchemy import pool
 
+from app.db.migration_lock import migration_singleton_lock
 from app.db.migration_retry import connect_with_retry
 from app.db.postgres import Base
 from app.models.postgres import *  # noqa: F403 - import all models for autogenerate
@@ -21,11 +22,11 @@ target_metadata = Base.metadata
 logger = logging.getLogger("alembic.env")
 
 # All API replicas use the same container entrypoint, so a rolling deployment
-# may start several ``alembic upgrade head`` processes concurrently. A
-# transaction-scoped PostgreSQL advisory lock serializes the migration body and
-# is released automatically on commit, rollback, connection loss, or process
-# death. The stable signed bigint is deliberately application-specific.
-_ALEMBIC_ADVISORY_LOCK_ID = 6075990748104101441
+# may start several ``alembic upgrade head`` processes concurrently. They are
+# serialised by a SESSION-level advisory lock held on a dedicated connection
+# for the whole upgrade (app/db/migration_lock.py). A transaction-scoped lock
+# is not enough: every autocommit_block() commits and would release it
+# (re-audit N24).
 
 # Override sqlalchemy.url from environment
 db_url = (
@@ -55,11 +56,6 @@ def run_migrations_offline() -> None:
 def do_run_migrations(connection):
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
-        if connection.dialect.name == "postgresql":
-            connection.execute(
-                text("SELECT pg_advisory_xact_lock(:lock_id)"),
-                {"lock_id": _ALEMBIC_ADVISORY_LOCK_ID},
-            )
         context.run_migrations()
 
 
@@ -88,18 +84,28 @@ async def run_async_migrations() -> None:
             exc,
         )
 
-    try:
-        connection = await connect_with_retry(
+    def _connect():
+        return connect_with_retry(
             connectable.connect,
             attempts=6,
             initial_delay_seconds=1.0,
             max_delay_seconds=5.0,
             on_retry=_log_retry,
         )
+
+    async def _migrate() -> None:
+        connection = await _connect()
         try:
             await connection.run_sync(do_run_migrations)
         finally:
             await connection.close()
+
+    try:
+        if connectable.dialect.name == "postgresql":
+            async with migration_singleton_lock(_connect):
+                await _migrate()
+        else:
+            await _migrate()
     finally:
         await connectable.dispose()
 

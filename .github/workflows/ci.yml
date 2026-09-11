@@ -587,6 +587,7 @@ jobs:
           tests/integration/test_canonical_sync_postgres.py
           tests/integration/test_run_list_natural_order_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py
+          tests/integration/test_migration_singleton_lock_postgres.py
           tests/integration/test_ws_events_persist_postgres_redis.py
           tests/integration/test_worker_pool_survives_tasks_postgres.py
           tests/integration/test_test_case_lifecycle_postgres.py

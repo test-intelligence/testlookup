@@ -17,34 +17,47 @@ COMPOSE_PATHS = (
 )
 
 
-def test_online_migrations_take_a_transaction_scoped_postgres_advisory_lock():
+LOCK_MODULE = ROOT / "backend/app/db/migration_lock.py"
+
+
+def test_online_migrations_hold_a_session_lock_around_the_whole_upgrade():
+    """N24: a transaction-scoped lock dies at the first autocommit_block().
+
+    The behaviour is proven on real PostgreSQL by
+    tests/integration/test_migration_singleton_lock_postgres.py; this pins
+    the wiring so env.py cannot drift back to the xact lock.
+    """
     source = ENV.read_text(encoding="utf-8")
-    assert "pg_advisory_xact_lock" in source
-    assert "pg_advisory_lock(" not in source
-    assert 'connection.dialect.name == "postgresql"' in source
-    assert "_ALEMBIC_ADVISORY_LOCK_ID" in source
+    assert "pg_advisory_xact_lock" not in source
+    assert source.count("async with migration_singleton_lock(") == 1
 
     tree = ast.parse(source)
     function = next(
         node
         for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "do_run_migrations"
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "run_async_migrations"
     )
-    transaction = next(
+    lock_block = next(
         node
-        for node in function.body
-        if isinstance(node, ast.With)
+        for node in ast.walk(function)
+        if isinstance(node, ast.AsyncWith)
         and any(
             isinstance(item.context_expr, ast.Call)
-            and isinstance(item.context_expr.func, ast.Attribute)
-            and item.context_expr.func.attr == "begin_transaction"
+            and getattr(item.context_expr.func, "id", None) == "migration_singleton_lock"
             for item in node.items
         )
     )
-    transaction_source = ast.get_source_segment(source, transaction) or ""
-    assert transaction_source.index("pg_advisory_xact_lock") < (
-        transaction_source.index("run_migrations")
-    )
+    body = "\n".join(ast.get_source_segment(source, stmt) or "" for stmt in lock_block.body)
+    assert "_migrate()" in body
+
+    lock = LOCK_MODULE.read_text(encoding="utf-8")
+    # Polls: a waiter blocked in pg_advisory_lock holds a snapshot that the
+    # holder's CONCURRENTLY build waits on -- an undetected deadlock.
+    assert 'text("SELECT pg_try_advisory_lock(:lock_id)")' in lock
+    assert 'text("SELECT pg_advisory_lock(' not in lock
+    assert 'text("SELECT pg_advisory_xact_lock' not in lock
+    assert 'isolation_level="AUTOCOMMIT"' in lock
+    assert "ALEMBIC_ADVISORY_LOCK_ID = 6075990748104101441" in lock
 
 
 def test_backend_container_entrypoints_do_not_run_schema_migrations():
