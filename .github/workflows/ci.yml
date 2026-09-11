@@ -158,7 +158,7 @@ jobs:
         # can't accidentally turn the gate into a no-op.
         run: |
           cd scripts
-          python -m pytest test_quality_gate.py -v
+          python -m pytest test_quality_gate.py test_mypy_ratchet.py -v
 
   # ─────────────────────────────────────────────────────────────
   # JOB 0c: Validate Mermaid diagrams in markdown
@@ -293,9 +293,13 @@ jobs:
       - name: Lint with ruff
         run: ruff check app/ tests/
 
-      - name: Type check with mypy
-        run: mypy app/ --ignore-missing-imports
-        continue-on-error: true     # Non-blocking in early phases
+      # Blocking, as a ratchet (re-audit M24). mypy reports 391 pre-existing
+      # errors in 117 files; backend/mypy-baseline.txt holds the per-file
+      # counts and a file whose count goes UP fails here. Fixing errors lowers
+      # the baseline (`python ../scripts/mypy_ratchet.py --update`). The old
+      # `continue-on-error: true` made every new type error invisible.
+      - name: Type check with mypy (ratchet)
+        run: python ../scripts/mypy_ratchet.py
 
       - name: Run tests
         env:
@@ -797,9 +801,10 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Blocking (re-audit M24): `tsc --noEmit` is clean, so any new type error
+      # is a regression and fails the job.
       - name: Type check
         run: npm run type-check
-        continue-on-error: true   # Non-blocking during iterative development phases
 
       - name: Run tests
         run: npm run test
