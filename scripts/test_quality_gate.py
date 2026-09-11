@@ -1780,6 +1780,131 @@ def test_a_parser_that_finds_no_commands_fails_loud(monkeypatch: pytest.MonkeyPa
     assert "cannot have looked properly" in violations[0].message
 
 
+# QA-B45-P3: a suite counts as RUN only if its failure can fail the build.
+_GATING = """\
+name: t
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - name: suite
+        run: python -m pytest a/tests -q
+  b:
+    runs-on: ubuntu-latest
+    steps:
+      - name: other
+        run: python -m pytest b/tests -q
+"""
+_STEP = "      - name: suite\n"
+_JOB = "  a:\n    runs-on: ubuntu-latest\n"
+_CMD = "        run: python -m pytest a/tests -q\n"
+
+
+def _a_runs(text: str) -> bool:
+    commands = qg._workflow_test_commands(text)
+    assert qg._unit_is_run("b/tests", commands), "control: job b must stay run"
+    return qg._unit_is_run("a/tests", commands)
+
+
+def _variant(anchor: str, replacement: str) -> str:
+    assert _GATING.count(anchor) == 1, anchor
+    return _GATING.replace(anchor, replacement)
+
+
+def test_the_gating_fixture_runs_the_suite() -> None:
+    assert _a_runs(_GATING)
+
+
+@pytest.mark.parametrize("mutated", [
+    _variant(_STEP, _STEP + "        if: false\n"),
+    _variant(_STEP, _STEP + "        if: ${{ false }}\n"),
+    _variant(_STEP, _STEP + "        if: \"false\"   # parked\n"),
+    _variant(_STEP, _STEP + "        if: false && github.event_name == 'push'\n"),
+    _variant(_STEP, "      - if: false\n        name: suite\n"),
+    _variant(_JOB, _JOB + "    if: false\n"),
+    _variant(_JOB, _JOB + "    if: ${{ false }}\n"),
+    _variant(_CMD, _CMD + "    if: false\n"),                  # job key AFTER steps
+    _variant(_STEP, _STEP + "        continue-on-error: true\n"),
+    _variant(_STEP, _STEP + "        continue-on-error: ${{ true }}\n"),
+    _variant(_JOB, _JOB + "    continue-on-error: true\n"),
+], ids=[
+    "step-if-false", "step-if-expr-false", "step-if-quoted-false", "step-if-false-and",
+    "step-if-first-key", "job-if-false", "job-if-expr-false", "job-if-after-steps",
+    "step-continue-on-error", "step-continue-on-error-expr", "job-continue-on-error",
+])
+def test_a_step_or_job_that_cannot_fail_the_build_runs_nothing(mutated: str) -> None:
+    assert not _a_runs(mutated)
+
+
+@pytest.mark.parametrize("command", [
+    "python -m pytest a/tests -q || true",
+    "python -m pytest a/tests -q || :",
+    "python -m pytest a/tests -q; true",
+    "python -m pytest a/tests -q ; :",
+    "python -m pytest a/tests -q || echo tests failed",
+    "python -m pytest a/tests -q || exit 0",
+])
+def test_a_swallowed_exit_status_runs_nothing(command: str) -> None:
+    assert not _a_runs(_variant(_CMD, f"        run: {command}\n"))
+
+
+@pytest.mark.parametrize("script", [
+    "set +e\n          python -m pytest a/tests -q",
+    "set +o errexit\n          python -m pytest a/tests -q",
+    "set -x +e\n          python -m pytest a/tests -q",
+])
+def test_set_plus_e_before_the_runner_runs_nothing(script: str) -> None:
+    assert not _a_runs(_variant(_CMD, f"        run: |\n          {script}\n"))
+
+
+@pytest.mark.parametrize("mutated", [
+    _variant(_STEP, _STEP + "        if: github.event_name == 'push'\n"),
+    _variant(_STEP, _STEP + "        if: always()\n"),
+    _variant(_STEP, _STEP + "        if: false || github.event_name == 'push'\n"),
+    _variant(_STEP, _STEP + "        if: ${{ 'false' }}\n"),      # a non-empty string: truthy
+    _variant(_STEP, _STEP + "        continue-on-error: false\n"),
+    _variant(_STEP, _STEP + "        continue-on-error: ${{ matrix.experimental }}\n"),
+    _variant(_JOB, _JOB + "    if: github.ref == 'refs/heads/main'\n"),
+    _variant(_CMD, "        run: python -m pytest a/tests -q || exit 1\n"),
+    _variant(_CMD, "        run: python -m pytest a/tests -q || (echo failed; exit $?)\n"),
+    _variant(_CMD, "        run: python -m pytest a/tests -q || python -m pytest a/tests --lf\n"),
+    _variant(_CMD, "        run: |\n          set +e\n          x=1\n          set -e\n"
+                   "          python -m pytest a/tests -q\n"),
+    _variant(_CMD, _CMD + "      - name: later\n        if: false\n        run: echo x\n"),
+], ids=[
+    "if-event", "if-always", "if-false-or", "if-string-false", "coe-false", "coe-matrix",
+    "job-if-branch", "or-exit-1", "or-exit-status", "or-retry", "set-e-restored",
+    "a-later-disabled-step",
+])
+def test_conditional_or_failure_preserving_steps_still_run(mutated: str) -> None:
+    assert _a_runs(mutated)
+
+
+def test_a_disabled_job_does_not_leak_into_the_next_job() -> None:
+    text = _variant("  b:\n", "  b:\n    if: false\n")
+    commands = qg._workflow_test_commands(text)
+    assert qg._unit_is_run("a/tests", commands)
+    assert not qg._unit_is_run("b/tests", commands)
+
+
+@pytest.mark.parametrize("anchor,replacement", [
+    ("      - name: Self-test the drift guard\n",
+     "      - name: Self-test the drift guard\n        if: false\n"),
+    ("  image-manifest-drift:\n", "  image-manifest-drift:\n    if: false\n"),
+    ("scripts/release/tests -v\n", "scripts/release/tests -v || true\n"),
+    ("      - name: Self-test the drift guard\n",
+     "      - name: Self-test the drift guard\n        continue-on-error: true\n"),
+], ids=["step-if-false", "job-if-false", "or-true", "continue-on-error"])
+def test_the_real_release_suite_is_unrun_when_its_step_cannot_fail(
+    anchor: str, replacement: str,
+) -> None:
+    ci = (qg.REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert ci.count(anchor) == 1, anchor
+    assert qg._unit_is_run("scripts/release/tests", qg._workflow_test_commands(ci))
+    commands = qg._workflow_test_commands(ci.replace(anchor, replacement))
+    assert not qg._unit_is_run("scripts/release/tests", commands)
+
+
 # ── backend.status-enum-vocab, generalised (re-audit L3) ────────────────────
 #
 # The guard used to recognise only columns literally named `status`. Any
@@ -1911,3 +2036,90 @@ def test_the_real_dependabot_config_covers_every_manifest() -> None:
                              text=True, check=True).stdout.split()
     gaps = qg._dependabot_gaps(tracked, text.replace(entry, ""))
     assert [gap[0] for gap in gaps] == ["mcp/requirements.txt"]
+
+
+# QA-B45-P4: the plural `directories:` form, its globs, and the manifest kinds
+# the guard used to skip.
+
+
+def test_dependabot_directories_block_and_flow_forms() -> None:
+    text = (
+        'updates:\n'
+        '  - package-ecosystem: "npm"\n'
+        '    directories:\n'
+        '      - "/frontend"\n'
+        '      # a comment inside the list\n'
+        "      - '/client/js/'   # the JS SDK\n"
+        '    schedule:\n      interval: "weekly"\n'
+        '  - package-ecosystem: pip\n'
+        '    directories:\n'
+        '    - /mcp\n'                               # items at the key's indent
+        '    - "/libs/*"\n'
+        '  - package-ecosystem: docker\n'
+        '    directories: ["/backend", "/mcp"]  # flow form\n'
+        '  - package-ecosystem: "github-actions"\n    directory: "/"\n'
+    )
+    assert qg._dependabot_entries(text) == {
+        ("npm", "/frontend"), ("npm", "/client/js"),
+        ("pip", "/mcp"), ("pip", "/libs/*"),
+        ("docker", "/backend"), ("docker", "/mcp"),
+        ("github-actions", "/"),
+    }
+
+
+def test_a_directories_list_ends_at_the_next_key() -> None:
+    text = (
+        'updates:\n'
+        '  - package-ecosystem: "npm"\n'
+        '    directories:\n'
+        '      - "/frontend"\n'
+        '    ignore:\n'
+        '      - "/not-a-directory"\n'
+    )
+    assert qg._dependabot_entries(text) == {("npm", "/frontend")}
+
+
+def test_dependabot_directory_globs_cover_by_segment() -> None:
+    entries = {("pip", "/libs/*"), ("npm", "/**"), ("docker", "/svc-?")}
+    assert qg._dependabot_covers(entries, "pip", "/libs/a")
+    assert not qg._dependabot_covers(entries, "pip", "/libs/a/b")    # `*` is one segment
+    assert not qg._dependabot_covers(entries, "pip", "/libs")
+    assert qg._dependabot_covers(entries, "npm", "/libs/a")
+    assert qg._dependabot_covers(entries, "npm", "/")
+    assert qg._dependabot_covers(entries, "npm", "/a/b/c")
+    assert qg._dependabot_covers(entries, "docker", "/svc-1")
+    assert not qg._dependabot_covers(entries, "docker", "/svc-12")
+    assert not qg._dependabot_covers(entries, "pip", "/other")       # wrong ecosystem/dir
+    assert not qg._dependabot_covers({("pip", "/libs")}, "pip", "/libs/a")
+    # `/libs/**` is the directory itself and everything below it, not a prefix.
+    deep = {("gradle", "/libs/**")}
+    assert qg._dependabot_covers(deep, "gradle", "/libs")
+    assert qg._dependabot_covers(deep, "gradle", "/libs/a/b")
+    assert not qg._dependabot_covers(deep, "gradle", "/libsx")
+
+
+def test_the_real_config_in_directories_form_still_covers_everything() -> None:
+    import subprocess
+
+    text = (qg.REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    entry = '  - package-ecosystem: "pip"\n    directory: "/mcp"\n'
+    assert text.count(entry) == 1
+    plural = text.replace(entry, '  - package-ecosystem: "pip"\n    directories:\n      - "/mcp"\n')
+    tracked = subprocess.run(["git", "ls-files"], cwd=qg.REPO_ROOT, capture_output=True,
+                             text=True, check=True).stdout.split()
+    assert qg._dependabot_gaps(tracked, plural) == []
+
+
+@pytest.mark.parametrize("manifest,ecosystem", [
+    ("tools/rs/Cargo.toml", "cargo"),
+    ("tools/gr/build.gradle", "gradle"),
+    ("tools/kt/build.gradle.kts", "gradle"),
+    ("tools/legacy/setup.py", "pip"),
+    ("tools/pe/Pipfile", "pip"),
+])
+def test_every_manifest_kind_dependabot_updates_is_enumerated(manifest: str, ecosystem: str) -> None:
+    text = 'updates:\n  - package-ecosystem: "github-actions"\n    directory: "/"\n'
+    directory = "/" + manifest.rpartition("/")[0]
+    assert qg._dependabot_gaps([manifest], text) == [(manifest, ecosystem, directory)]
+    covered = text + f'  - package-ecosystem: "{ecosystem}"\n    directories: ["{directory}"]\n'
+    assert qg._dependabot_gaps([manifest], covered) == []
