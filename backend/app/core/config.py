@@ -708,7 +708,8 @@ class Settings(BaseSettings):
     OTEL_ENABLED: bool = True
     OTEL_SERVICE_NAME: str = "testlookup"
     # OTLP HTTP collector endpoint, e.g. "http://jaeger:4318"
-    # When empty, spans are written to stdout (development fallback)
+    # When empty: stdout in development only; elsewhere nothing is exported
+    # and one warning is logged (core/tracing.py, re-audit N22)
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = None
     # Prometheus metrics endpoint
     METRICS_ENABLED: bool = True

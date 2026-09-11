@@ -933,6 +933,16 @@ jobs:
 
           for path in sorted(Path("/tmp").glob("base.yaml")) + sorted(Path("/tmp").glob("overlays-*.yaml")):
               documents = [doc for doc in yaml.safe_load_all(path.read_text()) if doc]
+              # N22: tracing on with no collector printed every span to stdout.
+              app_config = next(
+                  doc for doc in documents
+                  if doc.get("kind") == "ConfigMap"
+                  and doc["metadata"]["name"].startswith("testlookup-config")
+              )["data"]
+              assert not (
+                  str(app_config.get("OTEL_ENABLED", "")).lower() == "true"
+                  and not app_config.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+              ), (path, "OTEL_ENABLED=true without OTEL_EXPORTER_OTLP_ENDPOINT")
               deployment = next(
                   doc for doc in documents
                   if doc.get("kind") == "Deployment"
