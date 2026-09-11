@@ -1,0 +1,40 @@
+# Kubernetes backup + restore for TestLookup (re-audit M25). Runbook: README.md.
+#
+# A kustomize Component: an overlay opts in with
+#
+#   components:
+#     - ../../components/backup
+#
+# homelab and openshift-artifactory include it (their Postgres, MongoDB and
+# MinIO run in-cluster and are the system of record). Overlays on managed
+# data stores can include it too: the CronJob reaches the stores through the
+# same DATABASE_URL / MONGO_URI / MINIO_* the backend uses.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - pvc.yaml
+  - networkpolicy.yaml
+  - cronjob-backup.yaml
+  - cronjob-restore.yaml
+
+configMapGenerator:
+  # The scripts are real files so tests can run them
+  # (backend/tests/regression/test_k8s_backup.py). No name hash: the restore
+  # CronJob and the runbook refer to the name.
+  - name: testlookup-backup-scripts
+    files:
+      - lib.sh
+      - backup.sh
+      - restore.sh
+      - minio_sync.py
+    options:
+      disableNameSuffixHash: true
+  # What to restore. Every `kubectl apply -k` resets RESTORE_CONFIRM to "no",
+  # so a stale request cannot be replayed by a later deploy.
+  - name: testlookup-restore-request
+    literals:
+      - RESTORE_FILE=
+      - RESTORE_CONFIRM=no
+    options:
+      disableNameSuffixHash: true

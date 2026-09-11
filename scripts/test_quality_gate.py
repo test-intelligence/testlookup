@@ -1656,3 +1656,258 @@ def test_activity_coverage_reports_every_uncovered_mutation_not_just_the_first(
             pass
     """)
     assert len(qg._backend_activity_coverage()) == 2
+
+
+# ── ci.every-test-suite-runs (re-audit N2) ───────────────────────────────────
+#
+# The MCP suite was collected by nothing while its auth gate became the
+# security boundary. These pin the parts that decide "is this suite run":
+# what a suite is, what a runner command is, and whether a command covers it.
+
+_WORKFLOW = """\
+name: t
+jobs:
+  py:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./mcp
+    steps:
+      - uses: actions/checkout@v7
+      - name: deps
+        run: pip install pytest
+      - name: tests
+        run: python -m pytest tests -q
+  sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: sdk + cli
+        run: |
+          pip install ./client
+          python -m pytest client/tests -q
+      - name: scripts
+        run: |
+          cd scripts
+          python -m pytest test_gate.py -v
+      - name: go
+        working-directory: client/go
+        run: go test ./...
+      - name: folded
+        working-directory: ./backend
+        run: >-
+          pytest -m integration -v
+          tests/integration/test_a.py
+"""
+
+
+def test_suites_are_topmost_test_dirs_and_skip_product_code_named_test() -> None:
+    units = qg._test_units([
+        "mcp/tests/test_a.py",
+        "mcp/tests/sub/test_b.py",
+        "backend/app/routers/test_runs.py",      # product code, not a test
+        "backend/test_db.py",                    # a manual script
+        "scripts/test_gate.py",
+        "client/go/pkg/x_test.go",
+        "frontend/src/a/B.test.tsx",
+        "client/java/src/test/java/io/ATest.java",
+        "mcp/tests/conftest.py",
+    ])
+    assert units == {
+        "mcp/tests", "scripts/test_gate.py", "client/go/pkg/x_test.go",
+        "frontend/src/a/B.test.tsx", "client/java/src/test",
+    }
+
+
+def test_workflow_commands_resolve_the_effective_directory() -> None:
+    commands = qg._workflow_test_commands(_WORKFLOW)
+    assert commands == [
+        ("mcp", "python -m pytest tests -q"),
+        ("", "python -m pytest client/tests -q"),
+        ("scripts", "python -m pytest test_gate.py -v"),
+        ("client/go", "go test ./..."),
+        ("backend", "pytest -m integration -v tests/integration/test_a.py"),
+    ]
+
+
+def test_installing_pytest_is_not_running_anything() -> None:
+    commands = qg._workflow_test_commands(_WORKFLOW)
+    # `pip install pytest` has no path argument; read as a runner it would
+    # count as "run every suite under the repo root" and pass everything.
+    assert all(not c.startswith("pip ") for _, c in commands)
+    assert not qg._unit_is_run("client/js/tests", commands)
+
+
+def test_a_suite_is_run_only_by_a_command_that_names_or_contains_it() -> None:
+    commands = qg._workflow_test_commands(_WORKFLOW)
+    assert qg._unit_is_run("mcp/tests", commands)
+    assert qg._unit_is_run("client/tests", commands)
+    assert qg._unit_is_run("scripts/test_gate.py", commands)
+    assert qg._unit_is_run("client/go/pkg/x_test.go", commands)
+    # Running ONE file of a suite does not run the suite.
+    assert not qg._unit_is_run("backend/tests", commands)
+
+
+def test_the_real_repo_runs_every_suite_and_the_mcp_step_is_what_runs_it() -> None:
+    assert qg._ci_every_test_suite_runs() == []
+    ci = (qg.REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    step = "        run: python -m pytest tests -q\n"
+    assert ci.count(step) == 1
+    commands = qg._workflow_test_commands(ci.replace(step, "        run: echo skipped\n"))
+    assert not qg._unit_is_run("mcp/tests", commands), (
+        "removing the MCP pytest step must leave mcp/tests unrun"
+    )
+
+
+def test_a_bare_directory_argument_is_a_path_not_the_whole_package() -> None:
+    # `pytest tests` from the root runs root/tests, not every suite in the repo.
+    assert not qg._unit_is_run("mcp/other_tests", [("", "pytest tests")])
+    assert qg._unit_is_run("tests", [("", "pytest tests")])
+    # `-m integration` is an option value, not a path.
+    assert qg._command_paths("pytest -m integration -v tests/a.py") == (["tests/a.py"], False)
+
+
+def test_a_config_file_narrows_the_run() -> None:
+    commands = [("frontend", "npx playwright test --config playwright.docs.config.ts")]
+    assert not qg._unit_is_run("frontend/tests", commands)
+    assert qg._unit_is_run("frontend/src/a.test.ts", [("frontend", "npm run test")])
+
+
+def test_a_parser_that_finds_no_commands_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
+    # "No test commands found" must not read as "every suite is covered".
+    monkeypatch.setattr(qg, "_workflow_test_commands", lambda text: [])
+    violations = qg._ci_every_test_suite_runs()
+    assert len(violations) == 1
+    assert "cannot have looked properly" in violations[0].message
+
+
+# ── backend.status-enum-vocab, generalised (re-audit L3) ────────────────────
+#
+# The guard used to recognise only columns literally named `status`. Any
+# column whose Mapped[...] annotation or default names an enum carries the
+# same trap: `User.role == "admin"` against stored "ADMIN" matches nothing.
+
+_ENUM_MODELS = """
+    from enum import Enum
+    class UserRole(str, Enum):
+        ADMIN = "ADMIN"
+        VIEWER = "VIEWER"
+    class Channel(Enum):
+        EMAIL = "email"
+        SLACK = "slack"
+    class Status(str, Enum):
+        OPEN = "OPEN"
+        CLOSED = "CLOSED"
+    class User(Base):
+        role: Mapped[UserRole] = mapped_column(String(20), default=UserRole.VIEWER.value)
+        name: Mapped[str] = mapped_column(String(20), default="x")
+    class Org(Base):
+        default_role: Mapped[UserRole] = mapped_column(String(20))
+    class Digest(Base):
+        channel: Mapped[str] = mapped_column(String(20), default=Channel.EMAIL.value)
+        status: Mapped[str] = mapped_column(String(20), default=Status.OPEN.value)
+"""
+
+
+def _enum_repo(tmp_path: Path, service: str) -> None:
+    _write(tmp_path / "backend" / "app" / "models" / "postgres.py", _ENUM_MODELS)
+    _write(tmp_path / "backend" / "app" / "services" / "svc.py", service)
+
+
+def test_enum_backed_columns_are_found_by_annotation_or_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _enum_repo(tmp_path, "x = 1\n")
+    columns, enums = qg._enum_column_vocabularies()
+    assert columns == {
+        ("User", "role"): "UserRole",
+        ("Org", "default_role"): "UserRole",      # annotation only, no default
+        ("Digest", "channel"): "Channel",          # default only, Mapped[str]
+        ("Digest", "status"): "Status",
+    }
+    assert enums["Channel"] == {"email", "slack"}
+
+
+def test_every_enum_backed_column_is_checked_not_only_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _enum_repo(tmp_path, """
+        def q():
+            select(User).where(User.role == "admin")
+            select(User).where(User.role == "ADMIN")
+            select(Org).where(Org.default_role != "Viewer")
+            select(Digest).where(Digest.channel.in_(["email", "sms"]))
+            select(Digest).where(Digest.channel.notin_(("pager",)))
+            select(Digest).where(Digest.status != "closed")
+            select(User).where(User.name == "anything at all")
+    """)
+    messages = sorted(v.message for v in qg._backend_status_enum_vocab())
+    assert len(messages) == 5, messages
+    assert any("User.role compared to 'admin'" in m and "did you mean 'ADMIN'" in m for m in messages)
+    assert any("Org.default_role compared to 'Viewer'" in m for m in messages)
+    assert any("Digest.channel compared to 'sms'" in m for m in messages)
+    assert any("Digest.channel compared to 'pager'" in m for m in messages)
+    assert any("Digest.status compared to 'closed'" in m and "did you mean 'CLOSED'" in m for m in messages)
+    assert not any("User.name" in m for m in messages)
+
+
+def test_enum_vocab_fails_loud_when_no_column_is_enum_backed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "models" / "postgres.py", """
+        class User(Base):
+            name: Mapped[str] = mapped_column(String(20))
+    """)
+    violations = qg._backend_status_enum_vocab()
+    assert len(violations) == 1
+    assert "checked nothing" in violations[0].message
+
+
+def test_enum_vocab_real_models_cover_more_than_status() -> None:
+    columns, _ = qg._enum_column_vocabularies()
+    assert {c for (_, c) in columns} - {"status"}, "only status columns found: the L3 widening regressed"
+
+
+# ── ci.dependabot-covers-every-manifest (re-audit M23) ──────────────────────
+
+
+def test_dependabot_entries_parse_quoted_unquoted_and_commented() -> None:
+    text = (
+        'version: 2\nupdates:\n'
+        '  - package-ecosystem: "pip"\n    directory: "/backend"\n'
+        '  - package-ecosystem: npm\n    directory: /client/js/   # the JS SDK\n'
+        '  - package-ecosystem: "github-actions"\n    directory: "/"\n'
+    )
+    assert qg._dependabot_entries(text) == {
+        ("pip", "/backend"), ("npm", "/client/js"), ("github-actions", "/"),
+    }
+
+
+def test_dependabot_gaps_name_each_uncovered_manifest() -> None:
+    tracked = [
+        "backend/requirements.txt", "mcp/requirements.txt", "mcp/Dockerfile",
+        "client/js/package.json", "client/examples/python/x/requirements.txt",
+        "frontend/node_modules/a/package.json", ".github/workflows/ci.yml", "README.md",
+    ]
+    text = 'updates:\n  - package-ecosystem: "pip"\n    directory: "/backend"\n'
+    assert qg._dependabot_gaps(tracked, text) == [
+        ("client/js/package.json", "npm", "/client/js"),
+        ("mcp/Dockerfile", "docker", "/mcp"),
+        ("mcp/requirements.txt", "pip", "/mcp"),
+        (".github/workflows", "github-actions", "/"),
+    ]
+
+
+def test_the_real_dependabot_config_covers_every_manifest() -> None:
+    import subprocess
+
+    assert qg._ci_dependabot_covers_every_manifest() == []
+    text = (qg.REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    entry = '  - package-ecosystem: "pip"\n    directory: "/mcp"\n'
+    assert text.count(entry) == 1
+    tracked = subprocess.run(["git", "ls-files"], cwd=qg.REPO_ROOT, capture_output=True,
+                             text=True, check=True).stdout.split()
+    gaps = qg._dependabot_gaps(tracked, text.replace(entry, ""))
+    assert [gap[0] for gap in gaps] == ["mcp/requirements.txt"]

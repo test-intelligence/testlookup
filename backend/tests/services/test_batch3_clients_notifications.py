@@ -5,6 +5,12 @@ import types
 import pytest
 
 from app.services import jira_client, ocp_client
+# The REAL notification manager (re-audit E2): the two dispatch tests imported
+# it under a hand-listed fake app.models.postgres, which worked only when an
+# earlier test had already cached the real module; alone it failed on
+# DigestSubscription. The real str-Enum compares equal to the lowercase
+# channel strings the tests use.
+from app.services.notification import manager
 
 
 def test_jira_auth_header_and_adf_contains_link():
@@ -96,23 +102,6 @@ _FAKE_CHANNELS = SimpleNamespace(EMAIL="email", SLACK="slack", TEAMS="teams")
 
 @pytest.mark.asyncio
 async def test_notification_dispatch_missing_email_fails():
-    fake_models = SimpleNamespace(
-        NotificationChannel=_FAKE_CHANNELS,
-        NotificationEventType=SimpleNamespace(RUN_FAILED=SimpleNamespace(value="run_failed"), RUN_PASSED=SimpleNamespace(value="run_passed")),
-        NotificationLog=object,
-        NotificationPreference=object,
-        User=object,
-    )
-    with patch.dict(
-        "sys.modules",
-        {
-            "aiosmtplib": types.SimpleNamespace(send=AsyncMock()),
-            "app.models.postgres": fake_models,
-            "app.db.postgres": SimpleNamespace(AsyncSessionLocal=None),
-        },
-        clear=False,
-    ):
-        from app.services.notification import manager
     pref = SimpleNamespace(
         channel="email",
         email_override=None,
@@ -126,23 +115,6 @@ async def test_notification_dispatch_missing_email_fails():
 
 @pytest.mark.asyncio
 async def test_notification_dispatch_slack_success():
-    fake_models = SimpleNamespace(
-        NotificationChannel=_FAKE_CHANNELS,
-        NotificationEventType=SimpleNamespace(RUN_FAILED=SimpleNamespace(value="run_failed")),
-        NotificationLog=object,
-        NotificationPreference=object,
-        User=object,
-    )
-    with patch.dict(
-        "sys.modules",
-        {
-            "aiosmtplib": types.SimpleNamespace(send=AsyncMock()),
-            "app.models.postgres": fake_models,
-            "app.db.postgres": SimpleNamespace(AsyncSessionLocal=None),
-        },
-        clear=False,
-    ):
-        from app.services.notification import manager
     pref = SimpleNamespace(
         channel="slack",
         email_override=None,

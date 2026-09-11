@@ -87,15 +87,22 @@ groups:
       # and until this counter existed that isolation also made the failure
       # invisible: canonical cases, failed-test assignment or release links
       # could stop updating on every run with nothing to show for it.
+      #
+      # `> 0`, not `> 3`: on a quiet deployment (a few runs an hour) a step
+      # that fails on EVERY run never reached four failures in 30 minutes, so
+      # the alert could not fire where it mattered most. The step series are
+      # created at 0 on startup (core/metrics.py) so the first failure is an
+      # increase, and `for: 5m` (< the 30m window) rides out one scrape of
+      # jitter while a single failure still keeps it pending long enough.
       - alert: TestLookupFinalizeStepFailing
         expr: |
-          sum by (step) (increase(testlookup_finalize_step_failures_total[30m])) > 3
-        for: 0m
+          sum by (step) (increase(testlookup_finalize_step_failures_total[30m])) > 0
+        for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Post-ingestion step {{ $labels.step }} is failing repeatedly"
-          description: "The {{ $labels.step }} finalize step failed more than 3 times in 30 minutes. Runs still ingest, but whatever that step maintains has stopped updating."
+          summary: "Post-ingestion step {{ $labels.step }} is failing"
+          description: "The {{ $labels.step }} finalize step failed at least once in the last 30 minutes. Runs still ingest, but whatever that step maintains may have stopped updating."
 
       # The live-event audit copy keeps failing (re-audit M10). Ingest is
       # unaffected by design, which is exactly why nothing else would notice:

@@ -4,6 +4,14 @@ import uuid
 
 import pytest
 
+# The REAL service modules (re-audit E2). Four tests below imported them
+# inside a patch.dict(sys.modules) window holding a hand-listed fake
+# app.models.postgres. In full-suite order the real module was already cached
+# and the fake was ignored; alone, the service was imported under the fake
+# and died on a name the list had drifted from (Project, TestAttachment).
+from app.services import ingestion, metrics_service, release_linker  # noqa: E402
+
+
 def test_parse_agent_output_falls_back_on_non_json():
     with patch.dict(
         "sys.modules",
@@ -71,12 +79,6 @@ async def test_model_registry_promote_and_status(fake_redis):
 
 
 def test_metrics_compute_readiness_thresholds():
-    with patch.dict(
-        "sys.modules",
-        {"app.models.postgres": SimpleNamespace(Defect=object, TestCase=object, TestRun=object, TestStatus=object)},
-        clear=False,
-    ):
-        from app.services import metrics_service
     # Signature: (total_runs, pass_rate, active_defects, flaky_count)
     assert metrics_service._compute_readiness(50, 96, 0, 1) == "GREEN"
     assert metrics_service._compute_readiness(50, 86, 5, 10) == "AMBER"
@@ -89,28 +91,8 @@ def test_metrics_compute_readiness_thresholds():
 
 @pytest.mark.asyncio
 async def test_release_linker_link_run_idempotent():
-    class _Col:
-        """Column stand-in supporting the comparisons the linker builds."""
-
-        def is_(self, _other):
-            return None
-
-        def __eq__(self, _other):
-            return None
-
-        __hash__ = object.__hash__
-
-    class FakeLink:
-        id = _Col()
-        release_id = _Col()
-        test_run_id = _Col()
-        # Migration 0151: the linker checks whether the run already has a
-        # primary link before deciding whether this one becomes primary.
-        is_primary = _Col()
-
-        def __init__(self, **kwargs):
-            self.data = kwargs
-
+    # Runs against the real release_linker and real ORM models (re-audit E2);
+    # only the SQL construction and the session are stubbed.
     def fake_select(*args, **kwargs):
         # Chainable: the primary-link probe is select(...).where(...).limit(1).
         chain = SimpleNamespace()
@@ -142,61 +124,18 @@ async def test_release_linker_link_run_idempotent():
             sp.__aexit__ = AsyncMock(return_value=False)
             return sp
 
-    with patch.dict(
-        "sys.modules",
-        {
-            "app.models.postgres": SimpleNamespace(
-                # ``Project`` has always been in release_linker's import list;
-                # its absence here is why this test was red before 0150 too.
-                Project=object,
-                Release=object,
-                # sync_primary_release updates test_runs, so the module-level
-                # import needs this name or the stub cannot even load.
-                TestRun=_Col(),
-                ReleaseTestRunLink=FakeLink,
-                # Migration 0150: the linker records HOW each attribution was
-                # decided, so the stub has to carry the vocabulary.
-                LinkSource=SimpleNamespace(
-                    UNKNOWN=SimpleNamespace(value="unknown"),
-                    EXPLICIT_CLIENT=SimpleNamespace(value="explicit_client"),
-                    MANUAL_UI=SimpleNamespace(value="manual_ui"),
-                    ACTIVE_RELEASE=SimpleNamespace(value="active_release"),
-                ),
-            )
-        },
-        clear=False,
-    ):
-        from app.services import release_linker
-        db = FakeDB()
-        with patch("app.services.release_linker.select", new=fake_select):
-            created = await release_linker.link_run_to_release(db, uuid.uuid4(), uuid.uuid4())
-        assert created is True
-        assert len(db.added) == 1
-        db.exists = object()
-        with patch("app.services.release_linker.select", new=fake_select):
-            created_again = await release_linker.link_run_to_release(db, uuid.uuid4(), uuid.uuid4())
-        assert created_again is False
+    db = FakeDB()
+    with patch("app.services.release_linker.select", new=fake_select):
+        created = await release_linker.link_run_to_release(db, uuid.uuid4(), uuid.uuid4())
+    assert created is True
+    assert len(db.added) == 1
+    db.exists = object()
+    with patch("app.services.release_linker.select", new=fake_select):
+        created_again = await release_linker.link_run_to_release(db, uuid.uuid4(), uuid.uuid4())
+    assert created_again is False
 
 
 def test_ingestion_make_test_fingerprint_deterministic():
-    with patch.dict(
-        "sys.modules",
-        {
-            "app.db.postgres": SimpleNamespace(AsyncSessionLocal=None),
-            "app.models.schemas": SimpleNamespace(SentinelFile=object),
-            "app.models.postgres": SimpleNamespace(
-                LaunchStatus=SimpleNamespace(PASSED="PASSED", FAILED="FAILED", IN_PROGRESS="IN_PROGRESS"),
-                TestCase=object,
-                TestCaseHistory=object,
-                TestRun=object,
-                TestStatus=SimpleNamespace(PASSED="passed", FAILED="failed", BROKEN="broken", SKIPPED="skipped", UNKNOWN="unknown"),
-            ),
-            "app.db.mongo": SimpleNamespace(Collections=SimpleNamespace(RAW_ALLURE_JSON="raw_allure_json"), get_mongo_db=lambda: {}),
-            "app.services.testng_parser": SimpleNamespace(parse_testng_xml=lambda *_: []),
-        },
-        clear=False,
-    ):
-        from app.services import ingestion
     one = ingestion.make_test_fingerprint("test_login", "A")
     two = ingestion.make_test_fingerprint("test_login", "A")
     three = ingestion.make_test_fingerprint("test_login", "B")
@@ -206,33 +145,15 @@ def test_ingestion_make_test_fingerprint_deterministic():
 
 @pytest.mark.asyncio
 async def test_ingestion_store_raw_allure_batch_falls_back():
-    with patch.dict(
-        "sys.modules",
-        {
-            "app.db.postgres": SimpleNamespace(AsyncSessionLocal=None),
-            "app.models.schemas": SimpleNamespace(SentinelFile=object),
-            "app.models.postgres": SimpleNamespace(
-                LaunchStatus=SimpleNamespace(PASSED="PASSED", FAILED="FAILED", IN_PROGRESS="IN_PROGRESS"),
-                TestCase=object,
-                TestCaseHistory=object,
-                TestRun=object,
-                TestStatus=SimpleNamespace(PASSED="passed", FAILED="failed", BROKEN="broken", SKIPPED="skipped", UNKNOWN="unknown"),
-            ),
-            "app.db.mongo": SimpleNamespace(Collections=SimpleNamespace(RAW_ALLURE_JSON="raw_allure_json"), get_mongo_db=lambda: {}),
-            "app.services.testng_parser": SimpleNamespace(parse_testng_xml=lambda *_: []),
-        },
-        clear=False,
+    collection = SimpleNamespace(bulk_write=AsyncMock(side_effect=RuntimeError("x")))
+    mongo = {"raw_allure_json": collection}
+    docs = [({"allure_uuid": "u1", "test_run_id": "r1", "test_name": "t1"}, {"a": 1})]
+    fallback = AsyncMock()
+    with (
+        patch.dict("sys.modules", {"pymongo": SimpleNamespace(UpdateOne=lambda *a, **k: object())}, clear=False),
+        patch.object(ingestion, "Collections", SimpleNamespace(RAW_ALLURE_JSON="raw_allure_json")),
+        patch.object(ingestion, "get_mongo_db", return_value=mongo),
+        patch.object(ingestion, "_store_raw_allure", new=fallback),
     ):
-        from app.services import ingestion
-        collection = SimpleNamespace(bulk_write=AsyncMock(side_effect=RuntimeError("x")))
-        mongo = {"raw_allure_json": collection}
-        docs = [({"allure_uuid": "u1", "test_run_id": "r1", "test_name": "t1"}, {"a": 1})]
-        fallback = AsyncMock()
-        with (
-            patch.dict("sys.modules", {"pymongo": SimpleNamespace(UpdateOne=lambda *a, **k: object())}, clear=False),
-            patch.object(ingestion, "Collections", SimpleNamespace(RAW_ALLURE_JSON="raw_allure_json")),
-            patch.object(ingestion, "get_mongo_db", return_value=mongo),
-            patch.object(ingestion, "_store_raw_allure", new=fallback),
-        ):
-            await ingestion._store_raw_allure_batch(docs)
+        await ingestion._store_raw_allure_batch(docs)
     fallback.assert_awaited_once()

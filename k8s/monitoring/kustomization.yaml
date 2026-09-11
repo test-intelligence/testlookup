@@ -1,0 +1,21 @@
+# Alerting for clusters that run the Prometheus Operator (re-audit H5).
+#
+# OPT-IN, deliberately not part of k8s/base: a PrometheusRule on a cluster
+# without the monitoring.coreos.com CRDs makes the whole `kubectl apply -k`
+# fail. Apply it after the application overlay:
+#
+#   kubectl apply -k k8s/monitoring
+#
+# prometheusrule.yaml is generated from
+# infra/monitoring/prometheus-rules/testlookup-alerts.yml by
+# scripts/render_prometheusrule.py (the same rules the Compose stack loads).
+# To match a kube-prometheus-stack ruleSelector, add its label here, e.g.:
+#
+# labels:
+#   - pairs:
+#       release: kube-prometheus-stack
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: testlookup
+resources:
+  - prometheusrule.yaml

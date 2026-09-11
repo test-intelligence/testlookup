@@ -2324,8 +2324,15 @@ def _backend_managed_test_case_status_single_writer() -> list[Violation]:
 # them would be guesswork that fails noisily on correct code.
 
 
-def _status_enum_vocabularies() -> tuple[dict[str, str], dict[str, set[str]]]:
-    """``(model name -> status-enum name, enum name -> its string values)``.
+def _enum_column_vocabularies() -> tuple[dict[tuple[str, str], str], dict[str, set[str]]]:
+    """``((model, column) -> enum name, enum name -> its string values)``.
+
+    A column is enum-backed when its ``Mapped[...]`` annotation names an
+    enum, or its value references one (``default=SomeEnum.X.value``,
+    ``Enum(SomeEnum)``). Re-audit L3: this recognised only columns named
+    ``status``, so ``role``, ``sync_status``, ``classification``,
+    ``provider_type``, ``schedule`` and ``channel`` could be compared with
+    any hand-written string and nothing checked it.
 
     Parsed, never imported — importing ``app.models.postgres`` builds the
     SQLAlchemy engine and needs ``DATABASE_URL``, so an import-based check
@@ -2356,28 +2363,33 @@ def _status_enum_vocabularies() -> tuple[dict[str, str], dict[str, set[str]]]:
         if values:
             enums[node.name] = values
 
-    model_enum: dict[str, str] = {}
+    columns: dict[tuple[str, str], str] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
         for stmt in node.body:
             if not (isinstance(stmt, ast.AnnAssign)
-                    and getattr(stmt.target, "id", "") == "status"
+                    and isinstance(stmt.target, ast.Name)
                     and stmt.value is not None):
                 continue
-            # ``default=FlakyQuarantineStatus.PROPOSED.value`` — walk to the
-            # root Name of any attribute chain and keep the one that names an
-            # enum we parsed.
-            for sub in ast.walk(stmt.value):
-                if not isinstance(sub, ast.Attribute):
-                    continue
-                root = sub
-                while isinstance(root, ast.Attribute):
-                    root = root.value
-                if isinstance(root, ast.Name) and root.id in enums:
-                    model_enum[node.name] = root.id
-                    break
-    return model_enum, enums
+            enum_name = _enum_named_in(stmt.annotation, enums) or _enum_named_in(
+                stmt.value, enums
+            )
+            if enum_name:
+                columns[(node.name, stmt.target.id)] = enum_name
+    return columns, enums
+
+
+def _enum_named_in(expr: ast.AST, enums: dict[str, set[str]]) -> str | None:
+    """The first parsed enum that ``expr`` names: ``Mapped[SomeEnum]``,
+    ``Enum(SomeEnum)``, or the root of ``SomeEnum.X.value``."""
+    for sub in ast.walk(expr):
+        root = sub
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if isinstance(root, ast.Name) and root.id in enums:
+            return root.id
+    return None
 
 
 def _module_level_string_sequences(tree: ast.Module) -> dict[str, list[tuple[str, int]]]:
@@ -2408,8 +2420,8 @@ def _module_level_string_sequences(tree: ast.Module) -> dict[str, list[tuple[str
 
 
 def _backend_status_enum_vocab() -> list[Violation]:
-    """Status literals compared against an enum-backed ``status`` column must
-    be values of that enum.
+    """Literals compared against an enum-backed string column (``status``,
+    ``role``, ``channel``, ...) must be values of that enum.
 
     Catches the producer/consumer vocabulary drift that made the Fixer inert:
     a filter whose terms the column can never hold returns nothing forever,
@@ -2417,8 +2429,8 @@ def _backend_status_enum_vocab() -> list[Violation]:
     Nothing errors, so nothing surfaces.
     """
     models_path = REPO_ROOT / "backend" / "app" / "models" / "postgres.py"
-    model_enum, enums = _status_enum_vocabularies()
-    if not model_enum:
+    columns, enums = _enum_column_vocabularies()
+    if not columns:
         # Fail LOUD rather than open. A guard that reports OK because it could
         # not read its own reference data is the same shape as the defect it
         # exists to catch: silence that reads as success.
@@ -2427,7 +2439,7 @@ def _backend_status_enum_vocab() -> list[Violation]:
         return [Violation(
             models_path,
             1,
-            "no status column could be tied to a status enum — this guard "
+            "no model column could be tied to an enum — this guard "
             "checked nothing. Either the model module moved, or a status "
             "column stopped declaring its enum default.",
         )]
@@ -2445,13 +2457,14 @@ def _backend_status_enum_vocab() -> list[Violation]:
             owner: Optional[ast.AST] = None
             literals: list[tuple[str, int]] = []
 
-            # ``Model.status.in_([...])`` / ``.in_(_SOME_CONSTANT)``
+            column: str | None = None
+            # ``Model.<column>.in_([...])`` / ``.notin_(...)`` / ``.in_(_CONST)``
             if (isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "in_"
-                    and isinstance(node.func.value, ast.Attribute)
-                    and node.func.value.attr == "status"):
+                    and node.func.attr in ("in_", "notin_", "not_in")
+                    and isinstance(node.func.value, ast.Attribute)):
                 owner = node.func.value.value
+                column = node.func.value.attr
                 for arg in node.args:
                     if isinstance(arg, (ast.List, ast.Tuple, ast.Set)):
                         literals += [
@@ -2461,21 +2474,21 @@ def _backend_status_enum_vocab() -> list[Violation]:
                     elif isinstance(arg, ast.Name) and arg.id in consts:
                         literals += consts[arg.id]
 
-            # ``Model.status == "..."`` / ``!=``
+            # ``Model.<column> == "..."`` / ``!=``
             elif (isinstance(node, ast.Compare)
                     and isinstance(node.left, ast.Attribute)
-                    and node.left.attr == "status"
                     and len(node.ops) == 1
                     and isinstance(node.ops[0], (ast.Eq, ast.NotEq))
                     and isinstance(node.comparators[0], ast.Constant)
                     and isinstance(node.comparators[0].value, str)):
                 owner = node.left.value
+                column = node.left.attr
                 literals = [(node.comparators[0].value, node.lineno)]
 
             model = getattr(owner, "id", None)
-            if model not in model_enum or not literals:
+            if (model, column) not in columns or not literals:
                 continue
-            enum_name = model_enum[model]
+            enum_name = columns[(model, column)]
             vocabulary = enums[enum_name]
             for value, lineno in literals:
                 if value in vocabulary:
@@ -2488,7 +2501,7 @@ def _backend_status_enum_vocab() -> list[Violation]:
                 violations.append(Violation(
                     path,
                     lineno,
-                    f"{model}.status compared to {value!r}, which is not a "
+                    f"{model}.{column} compared to {value!r}, which is not a "
                     f"{enum_name} value{hint} — this filter matches nothing",
                 ))
     return violations
@@ -3369,6 +3382,358 @@ def _repo_no_gitignored_source() -> list[Violation]:
     return violations
 
 
+# ── Every test suite is executed by CI (re-audit N2) ─────────────────────────
+#
+# The MCP server's suite (100+ tests, including the principal-isolation tests
+# for the auth gate that became its security boundary) was collected by
+# nothing: the `mcp-test` job only `ast.parse`d the files. The SDK/CLI suites,
+# the Java SDK and the Go SDK had each shipped the same gap before, one at a
+# time, and each was closed by adding a job after a defect got through.
+# This guard asks the question once for the whole tree: every tracked test
+# suite must be run by a workflow step.
+#
+# Stdlib only (the quality-gate job installs no PyYAML), so the workflows are
+# read textually: jobs, their `defaults.run.working-directory`, steps, each
+# step's `working-directory` and `run` text, and `cd <dir>` inside a script.
+
+_TEST_FILE_NAME = re.compile(
+    r"(^test_[^/]*\.py$|^[^/]*_test\.py$"
+    r"|\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs)$"
+    r"|Test\.java$|_test\.go$)"
+)
+_TEST_DIR_NAMES = {"tests", "test", "__tests__"}
+# Anchored at the INVOKED program: `pip install pytest` names pytest too, and
+# with no path argument it would read as "run every suite under the root".
+_TEST_RUNNER = re.compile(
+    r"^(?:[A-Z_][A-Z0-9_]*=\S*\s+)*"
+    r"(?:python3?(?:\.\d+)?\s+-m\s+pytest\b|pytest\b|go\s+test\b"
+    r"|mvn\b.*\stest\b|npm\s+(?:run\s+)?test\b|node\s+--test\b"
+    r"|npx\s+(?:vitest|playwright\s+test)\b|vitest\b|gradle\b.*\stest\b)"
+)
+_PATHLIKE_TOKEN = re.compile(r"(/|\.(py|mjs|cjs|js|ts|tsx)$)")
+
+# Suites CI deliberately does not run, with the reason. Prefix match on the
+# unit path. Keep this list short and every entry justified.
+_SUITES_NOT_RUN_IN_CI: dict[str, str] = {
+    "frontend/tests": (
+        "Playwright e2e against a LIVE deployment (`make test-e2e`, "
+        "frontend/probe-live.config.ts); needs a running stack and "
+        "credentials. The docs-diagram subset runs in docs-diagram-render."
+    ),
+    "client/examples/": (
+        "sample projects users copy; their tests exercise a published SDK "
+        "against a running server, and are not tests of this repo"
+    ),
+}
+
+
+def _test_units(tracked: Iterable[str]) -> set[str]:
+    """Collapse tracked test files into suites ("units").
+
+    A file inside a directory named ``tests``/``test``/``__tests__`` belongs to
+    its TOPMOST such directory; any other test file is its own unit. Python
+    files named ``test_*.py`` count only inside a test directory or under
+    ``scripts/``: ``backend/app/routers/test_runs.py`` is product code about
+    test runs, and ``backend/test_db.py`` is a manual script.
+    """
+    units: set[str] = set()
+    for path in tracked:
+        parts = path.split("/")
+        if not _TEST_FILE_NAME.search(parts[-1]) or parts[-1] == "conftest.py":
+            continue
+        test_dir = next(
+            (i for i, part in enumerate(parts[:-1]) if part in _TEST_DIR_NAMES),
+            None,
+        )
+        if test_dir is not None:
+            units.add("/".join(parts[: test_dir + 1]))
+        elif parts[-1].endswith(".py") and parts[0] != "scripts":
+            continue
+        else:
+            units.add(path)
+    return units
+
+
+def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
+    """``(effective working dir, command line)`` for every test-runner command
+    in one workflow file. The directory is repo-relative POSIX, ``""`` = root."""
+
+    def norm(directory: str) -> str:
+        directory = directory.strip().strip("'\"")
+        while directory.startswith("./"):
+            directory = directory[2:]
+        return "" if directory in (".", "") else directory.rstrip("/")
+
+    lines = text.splitlines()
+    commands: list[tuple[str, str]] = []
+    job_default = ""
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):          # a new job
+            job_default = ""
+        wd = re.match(r"^\s{4,}(?:- )?working-directory:\s*(\S+)", line)
+        if wd and re.match(r"^\s{4,8}working-directory:", line) and not _in_step(lines, i):
+            job_default = norm(wd.group(1))
+        step = re.match(r"^(\s*)- ", line)
+        if step and _in_steps_list(lines, i):
+            indent = len(step.group(1))
+            j = i + 1
+            while j < len(lines) and (
+                not lines[j].strip()
+                or len(lines[j]) - len(lines[j].lstrip()) > indent
+            ):
+                j += 1
+            block = lines[i:j]
+            step_wd = job_default
+            run_lines: list[str] = []
+            for k, bline in enumerate(block):
+                body = bline[indent + 2:] if k == 0 else bline
+                m_wd = re.match(r"^\s*working-directory:\s*(\S+)", body)
+                if m_wd and len(bline) - len(bline.lstrip()) <= indent + 2:
+                    step_wd = norm(m_wd.group(1))
+                m_run = re.match(r"^(\s*)run:\s*(.*)$", body)
+                if m_run and (k == 0 or len(bline) - len(bline.lstrip()) == indent + 2):
+                    inline = m_run.group(2).strip()
+                    key_indent = indent + 2
+                    if inline and inline[0] not in "|>":
+                        run_lines = [inline]
+                    else:
+                        folded = inline.startswith(">")
+                        rest = [
+                            b.strip() for b in block[k + 1:]
+                            if b.strip() and len(b) - len(b.lstrip()) > key_indent
+                        ]
+                        run_lines = [" ".join(rest)] if folded else rest
+            cwd = step_wd
+            joined: list[str] = []
+            for raw in run_lines:
+                if joined and joined[-1].endswith("\\"):
+                    joined[-1] = joined[-1][:-1] + " " + raw
+                else:
+                    joined.append(raw)
+            for command in joined:
+                cd = re.match(r"^cd\s+(\S+)\s*$", command)
+                if cd:
+                    target = norm(cd.group(1))
+                    cwd = f"{cwd}/{target}".strip("/") if cwd else target
+                    continue
+                if _TEST_RUNNER.search(command):
+                    commands.append((cwd, command))
+            i = j
+            continue
+        i += 1
+    return commands
+
+
+def _in_steps_list(lines: list[str], index: int) -> bool:
+    """Is ``lines[index]`` (a ``- `` item) directly inside a ``steps:`` key?"""
+    indent = len(lines[index]) - len(lines[index].lstrip())
+    for back in range(index - 1, -1, -1):
+        prev = lines[back]
+        if not prev.strip() or prev.lstrip().startswith("#"):
+            continue
+        prev_indent = len(prev) - len(prev.lstrip())
+        if prev_indent < indent:
+            return prev.strip() == "steps:"
+    return False
+
+
+def _in_step(lines: list[str], index: int) -> bool:
+    """Is ``lines[index]`` inside a step (below a ``steps:`` key)?"""
+    indent = len(lines[index]) - len(lines[index].lstrip())
+    for back in range(index - 1, -1, -1):
+        prev = lines[back]
+        if not prev.strip():
+            continue
+        prev_indent = len(prev) - len(prev.lstrip())
+        if prev.strip() == "steps:" and prev_indent < indent:
+            return True
+        if re.match(r"^  [A-Za-z0-9_-]+:\s*$", prev):
+            return False
+    return False
+
+
+_RUNNER_WORDS = {
+    "python", "python3", "pytest", "go", "test", "mvn", "npm", "run", "node",
+    "npx", "vitest", "playwright", "gradle", "./gradlew",
+}
+# Options whose NEXT token is a value, not a path.
+_VALUE_OPTIONS = {"-m", "-k", "-p", "-n", "-o", "--tb", "--rootdir", "--basetemp",
+                  "--junitxml", "--junit-xml", "--cov", "--reporter"}
+# Options that narrow a run to a config file's selection: never "the whole package".
+_CONFIG_OPTIONS = {"-c", "--config"}
+
+
+def _command_paths(command: str) -> tuple[list[str], bool]:
+    """``(path arguments, restricted)`` of one runner command.
+
+    The runner words at the head (``python -m pytest``, ``npm run test``,
+    ``mvn ... test``) and option values are not paths; every other argument
+    is. ``restricted`` is set by ``--config``: ``playwright test --config
+    docs.config.ts`` runs that config's selection, not the package.
+    """
+    tokens = command.split()
+    while tokens and re.match(r"^[A-Z_][A-Z0-9_]*=", tokens[0]):
+        tokens.pop(0)
+    paths: list[str] = []
+    restricted = False
+    head = True
+    skip_next = False
+    for token in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if token.startswith("-"):
+            name = token.split("=", 1)[0]
+            if name in _CONFIG_OPTIONS:
+                restricted = True
+            if "=" not in token and (name in _VALUE_OPTIONS or name in _CONFIG_OPTIONS):
+                skip_next = True
+            continue
+        if head and token in _RUNNER_WORDS:
+            continue
+        head = False
+        paths.append(token.strip("'\""))
+    return paths, restricted
+
+
+def _unit_is_run(unit: str, commands: list[tuple[str, str]]) -> bool:
+    for cwd, command in commands:
+        if cwd and not (unit == cwd or unit.startswith(cwd + "/")):
+            continue
+        rel = unit[len(cwd) + 1:] if cwd else unit
+        paths, restricted = _command_paths(command)
+        if not paths:
+            # `npm run test`, `mvn test`, bare `pytest`: the whole package --
+            # unless a config file narrows the selection.
+            if not restricted:
+                return True
+            continue
+        for token in paths:
+            while token.startswith("./"):
+                token = token[2:]
+            token = token.removesuffix("...").rstrip("/")     # `go test ./...`
+            if token in ("", ".") or rel == token or rel.startswith(token + "/"):
+                return True
+    return False
+
+
+def _ci_every_test_suite_runs() -> list[Violation]:
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=REPO_ROOT, capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        return [Violation(REPO_ROOT / ".github", 0,
+                          "git ls-files failed; the guard could not look")]
+    tracked = [p for p in proc.stdout.decode("utf-8", "replace").split("\0") if p]
+    units = _test_units(tracked)
+
+    workflows = sorted((REPO_ROOT / ".github" / "workflows").glob("*.y*ml"))
+    commands: list[tuple[str, str]] = []
+    for workflow in workflows:
+        commands += _workflow_test_commands(workflow.read_text(encoding="utf-8"))
+
+    # Fail loud, not open: a parser that found nothing would pass every suite.
+    if len(units) < 5 or len(commands) < 5:
+        return [Violation(
+            REPO_ROOT / ".github" / "workflows" / "ci.yml", 0,
+            f"found {len(units)} test suites and {len(commands)} test commands; "
+            "the guard cannot have looked properly",
+        )]
+
+    violations: list[Violation] = []
+    for unit in sorted(units):
+        if any(unit == p.rstrip("/") or unit.startswith(p) for p in _SUITES_NOT_RUN_IN_CI):
+            continue
+        if not _unit_is_run(unit, commands):
+            violations.append(Violation(
+                REPO_ROOT / unit, 0,
+                f"test suite `{unit}` is not executed by any workflow step — "
+                "its tests are decoration until a job runs them",
+            ))
+    return violations
+
+
+# ── Dependabot covers every package manifest (re-audit M23) ─────────────────
+#
+# dependabot.yml covered backend pip, frontend npm and the Actions. mcp/, cli/,
+# the Python/JS/Java/Go SDKs and every base image got no update PRs at all, and
+# nothing said so. Manifests are enumerated from the tracked tree, so a new
+# package is covered the day it lands or the gate fails.
+
+_MANIFEST_ECOSYSTEMS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(^|/)requirements[^/]*\.txt$"), "pip"),
+    (re.compile(r"(^|/)pyproject\.toml$"), "pip"),
+    (re.compile(r"(^|/)package\.json$"), "npm"),
+    (re.compile(r"(^|/)pom\.xml$"), "maven"),
+    (re.compile(r"(^|/)go\.mod$"), "gomod"),
+    (re.compile(r"(^|/)Dockerfile[^/]*$"), "docker"),
+)
+_DEPENDABOT_EXEMPT: dict[str, str] = {
+    "client/examples/": (
+        "sample projects users copy; their pins show a working setup and are "
+        "not dependencies of this repo"
+    ),
+}
+
+
+def _dependabot_entries(text: str) -> set[tuple[str, str]]:
+    """``(ecosystem, directory)`` pairs declared in a dependabot.yml."""
+    entries: set[tuple[str, str]] = set()
+    ecosystem: str | None = None
+    for line in text.splitlines():
+        eco = re.match(r"""^\s*-\s*package-ecosystem:\s*["']?([\w-]+)["']?\s*(#.*)?$""", line)
+        if eco:
+            ecosystem = eco.group(1)
+            continue
+        directory = re.match(r"""^\s+directory:\s*["']?([^"'\s#]+)["']?\s*(#.*)?$""", line)
+        if directory and ecosystem:
+            entries.add((ecosystem, "/" + directory.group(1).strip("/")))
+            ecosystem = None
+    return entries
+
+
+def _dependabot_gaps(tracked: Iterable[str], text: str) -> list[tuple[str, str, str]]:
+    """``(manifest path, ecosystem, directory)`` for every manifest with no entry."""
+    entries = _dependabot_entries(text)
+    gaps = []
+    for path in sorted(tracked):
+        if "node_modules/" in path or any(path.startswith(p) for p in _DEPENDABOT_EXEMPT):
+            continue
+        ecosystem = next((eco for pattern, eco in _MANIFEST_ECOSYSTEMS if pattern.search(path)), None)
+        if ecosystem is None:
+            continue
+        directory = "/" + path.rpartition("/")[0]
+        if directory == "/":
+            directory = "/"
+        if (ecosystem, directory.rstrip("/") or "/") not in entries:
+            gaps.append((path, ecosystem, directory))
+    if any(p.startswith(".github/workflows/") for p in tracked) and ("github-actions", "/") not in entries:
+        gaps.append((".github/workflows", "github-actions", "/"))
+    return gaps
+
+
+def _ci_dependabot_covers_every_manifest() -> list[Violation]:
+    config = REPO_ROOT / ".github" / "dependabot.yml"
+    proc = subprocess.run(["git", "ls-files", "-z"], cwd=REPO_ROOT, capture_output=True, check=False)
+    tracked = [p for p in proc.stdout.decode("utf-8", "replace").split("\0") if p]
+    if proc.returncode != 0 or not config.exists():
+        return [Violation(config, 0, "git ls-files failed or dependabot.yml is missing; the guard could not look")]
+    text = config.read_text(encoding="utf-8")
+    manifests = [p for p in tracked if any(pat.search(p) for pat, _ in _MANIFEST_ECOSYSTEMS)]
+    if len(manifests) < 5 or not _dependabot_entries(text):
+        return [Violation(config, 0, f"found {len(manifests)} manifests and "
+                          f"{len(_dependabot_entries(text))} dependabot entries; "
+                          "the guard cannot have looked properly")]
+    return [
+        Violation(REPO_ROOT / path, 0,
+                  f"{ecosystem} manifest has no dependabot entry "
+                  f"(package-ecosystem: {ecosystem}, directory: {directory})")
+        for path, ecosystem, directory in _dependabot_gaps(tracked, text)
+    ]
+
+
 GUARDS: list[Guard] = [
     Guard(
         name="backend.no-print",
@@ -3617,8 +3982,8 @@ GUARDS: list[Guard] = [
     Guard(
         name="backend.status-enum-vocab",
         description=(
-            "Status literals filtered against an enum-backed status "
-            "column must be values of that enum — a mismatched "
+            "Literals filtered against an enum-backed string column "
+            "(status, role, channel, ...) must be values of that enum — a mismatched "
             "vocabulary makes the query match nothing, silently and "
             "forever."
         ),
@@ -3720,6 +4085,34 @@ GUARDS: list[Guard] = [
             "(or PROMPT_TEMPLATE_VERSIONS for mcp.* prompts), then: "
             + _PROMPT_ATTEST_HINT
             + ". See architecture/AI_EVALUATION.md."
+        ),
+    ),
+    Guard(
+        name="ci.every-test-suite-runs",
+        description=(
+            "Every tracked test suite (a tests/ dir, or a test file outside "
+            "one) is executed by a workflow step — a suite nothing runs is "
+            "decoration (the MCP auth-gate tests were, re-audit N2)."
+        ),
+        check=_ci_every_test_suite_runs,
+        fix_hint=(
+            "Add a step that runs the suite (pytest <path>, npm test, go test, "
+            "mvn test) to .github/workflows/ci.yml. A suite that genuinely "
+            "cannot run in CI goes in _SUITES_NOT_RUN_IN_CI with the reason."
+        ),
+    ),
+    Guard(
+        name="ci.dependabot-covers-every-manifest",
+        description=(
+            "Every tracked package manifest (requirements/pyproject, "
+            "package.json, pom.xml, go.mod, Dockerfile) and the workflows "
+            "have a .github/dependabot.yml entry (re-audit M23)."
+        ),
+        check=_ci_dependabot_covers_every_manifest,
+        fix_hint=(
+            "Add `- package-ecosystem: <eco>` with `directory: /<dir>` to "
+            ".github/dependabot.yml. Sample projects go in _DEPENDABOT_EXEMPT "
+            "with the reason."
         ),
     ),
     Guard(

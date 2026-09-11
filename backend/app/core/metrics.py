@@ -32,8 +32,20 @@ ingestion_test_cases_total = Counter(
 finalize_step_failures_total = Counter(
     "testlookup_finalize_step_failures_total",
     "Post-ingestion finalize steps that raised and were rolled back",
-    ["step"],  # suite_sync|canonical_sync|canonical_deletion_reconcile|assign_failed_tests|auto_tagging|quarantine_tagging|release_linking|commit_range|activity_ledger
+    ["step"],
 )
+# The step names ingestion_pipeline.finalize_run passes (pinned against the
+# call sites by tests/regression/test_alert_rules_are_deployable.py).
+FINALIZE_STEPS = (
+    "suite_sync", "canonical_sync", "canonical_deletion_reconcile",
+    "assign_failed_tests", "auto_tagging", "quarantine_tagging",
+    "release_linking", "commit_range", "activity_ledger",
+)
+# Create every series at 0 now. A labelled counter has no series until its
+# first inc(), and that first scrape already reads 1, so increase() sees no
+# change: the FIRST failure of a step never reached the alert.
+for _step in FINALIZE_STEPS:
+    finalize_step_failures_total.labels(step=_step)
 
 ingestion_duration_seconds = Histogram(
     "testlookup_ingestion_duration_seconds",

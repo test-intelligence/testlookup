@@ -39,7 +39,10 @@ def setup_tracing(
         service_version: Reported as service.version.
         environment:     Reported as deployment.environment (dev/staging/prod).
         otlp_endpoint:   Base URL of the OTLP collector, e.g. "http://jaeger:4318".
-                         When None, spans are written to stdout (dev fallback).
+                         When None: in development spans are written to stdout;
+                         anywhere else NOTHING is exported and one warning is
+                         logged (re-audit N22 — the stdout fallback printed
+                         ~90k log lines per 10 minutes on a real deployment).
     """
     global _initialised
     if _initialised:
@@ -80,14 +83,30 @@ def setup_tracing(
                 provider.add_span_processor(BatchSpanProcessor(exporter))
                 logger.info("OTEL tracing enabled → %s", trace_endpoint)
             except ImportError:
-                logger.warning(
-                    "opentelemetry-exporter-otlp-proto-http not installed; "
-                    "falling back to ConsoleSpanExporter"
-                )
-                provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-        else:
+                if environment == "development":
+                    logger.warning(
+                        "opentelemetry-exporter-otlp-proto-http not installed; "
+                        "falling back to ConsoleSpanExporter"
+                    )
+                    provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+                else:
+                    logger.warning(
+                        "opentelemetry-exporter-otlp-proto-http not installed; "
+                        "spans are NOT exported (no stdout fallback outside development)"
+                    )
+        elif environment == "development":
             logger.info("OTEL_EXPORTER_OTLP_ENDPOINT not set — writing spans to stdout")
             provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+        else:
+            # A provider with no processor still issues trace ids (log
+            # correlation keeps working) but exports nothing. Logged once:
+            # the _initialised guard makes this function run to here once.
+            logger.warning(
+                "OTEL_ENABLED is true but OTEL_EXPORTER_OTLP_ENDPOINT is not set "
+                "(APP_ENV=%s); spans are not exported. Set the endpoint, or "
+                "OTEL_ENABLED=false.",
+                environment,
+            )
 
         trace.set_tracer_provider(provider)
     except Exception as exc:  # noqa: BLE001 — tracing must not block app startup

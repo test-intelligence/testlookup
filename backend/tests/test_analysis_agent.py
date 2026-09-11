@@ -652,7 +652,10 @@ class TestProgressiveFallback:
         })
 
         import sys
-        sys.modules["app.services.training.classifier"] = mock_fc_module
+        # setitem restores the ORIGINAL module object on undo (re-audit E2);
+        # popping it made the next import build a second copy.
+        _modules = pytest.MonkeyPatch()
+        _modules.setitem(sys.modules, "app.services.training.classifier", mock_fc_module)
 
         try:
             result = await agent._build_progressive_fallback(
@@ -662,7 +665,7 @@ class TestProgressiveFallback:
             assert result["fallback_tier"] == 1
             assert result["fallback_reason"] == "timeout_fast_classifier"
         finally:
-            sys.modules.pop("app.services.training.classifier", None)
+            _modules.undo()
 
     @pytest.mark.asyncio
     async def test_tier2_pattern_match_on_classifier_failure(self):
@@ -672,7 +675,10 @@ class TestProgressiveFallback:
         mock_fc_module.FastClassifier.classify = AsyncMock(return_value=None)
 
         import sys
-        sys.modules["app.services.training.classifier"] = mock_fc_module
+        # setitem restores the ORIGINAL module object on undo (re-audit E2);
+        # popping it made the next import build a second copy.
+        _modules = pytest.MonkeyPatch()
+        _modules.setitem(sys.modules, "app.services.training.classifier", mock_fc_module)
 
         try:
             result = await agent._build_progressive_fallback(
@@ -682,7 +688,7 @@ class TestProgressiveFallback:
             assert result["fallback_tier"] == 2
             assert result["failure_category"] == "INFRASTRUCTURE"
         finally:
-            sys.modules.pop("app.services.training.classifier", None)
+            _modules.undo()
 
     @pytest.mark.asyncio
     async def test_tier3_generic_when_no_pattern(self):
@@ -692,7 +698,10 @@ class TestProgressiveFallback:
         mock_fc_module.FastClassifier.classify = AsyncMock(return_value=None)
 
         import sys
-        sys.modules["app.services.training.classifier"] = mock_fc_module
+        # setitem restores the ORIGINAL module object on undo (re-audit E2);
+        # popping it made the next import build a second copy.
+        _modules = pytest.MonkeyPatch()
+        _modules.setitem(sys.modules, "app.services.training.classifier", mock_fc_module)
 
         try:
             result = await agent._build_progressive_fallback(
@@ -702,7 +711,7 @@ class TestProgressiveFallback:
             assert result["fallback_tier"] == 3
             assert result["failure_category"] == "UNKNOWN"
         finally:
-            sys.modules.pop("app.services.training.classifier", None)
+            _modules.undo()
 
 
 # ── Full run method tests ─────────────────────────────────────────────────────

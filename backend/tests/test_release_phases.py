@@ -29,8 +29,25 @@ def _make_stub(name: str, **attrs) -> types.ModuleType:
     return mod
 
 
+def _stub_over_real(name: str, **overrides) -> types.ModuleType:
+    """A stub carrying EVERY public name of the real module, with ``overrides``
+    replacing some of them (re-audit E2).
+
+    A stub built from a fixed attribute list only works while
+    ``app.routers.releases`` was already imported with the real module by an
+    earlier test file. Run alone, the router is imported fresh under the stub
+    and dies on the first name nobody listed (``resolve_project_scope``). Must
+    be called BEFORE any stub is installed, so the real module binds real
+    dependencies.
+    """
+    real = importlib.import_module(name)
+    public = {k: v for k, v in vars(real).items() if not k.startswith("__")}
+    return _make_stub(name, **{**public, **overrides})
+
+
 @pytest.fixture(autouse=True)
 def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    deps_stub = _stub_over_real("app.core.deps", require_role=MagicMock(return_value=MagicMock()), get_current_active_user=MagicMock(), verify_webhook_secret=MagicMock(), require_project_role=MagicMock(return_value=MagicMock()), get_accessible_project_ids=MagicMock(return_value=None), require_release_access=MagicMock(return_value=MagicMock()), require_run_access=MagicMock(return_value=MagicMock()))
     with monkeypatch.context() as m:
         if importlib.util.find_spec("bcrypt") is None:
             m.setitem(sys.modules, "bcrypt", _make_stub("bcrypt", checkpw=MagicMock(return_value=True), hashpw=MagicMock(return_value=b"$2b$fake"), gensalt=MagicMock(return_value=b"$2b$12$salt")))
@@ -40,7 +57,7 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
             m.setitem(sys.modules, "jose", _make_stub("jose", jwt=jose_jwt_stub, JWTError=Exception))
 
         m.setitem(sys.modules, "app.core.security", _make_stub("app.core.security", verify_password=MagicMock(return_value=True), get_password_hash=MagicMock(return_value="hashed_pw"), create_access_token=MagicMock(return_value="access_token"), create_refresh_token=MagicMock(return_value="refresh_token"), decode_token=MagicMock(return_value={"sub": str(uuid.uuid4()), "type": "access"})))
-        m.setitem(sys.modules, "app.core.deps", _make_stub("app.core.deps", require_role=MagicMock(return_value=MagicMock()), get_current_active_user=MagicMock(), verify_webhook_secret=MagicMock(), require_project_role=MagicMock(return_value=MagicMock()), get_accessible_project_ids=MagicMock(return_value=None), require_release_access=MagicMock(return_value=MagicMock()), require_run_access=MagicMock(return_value=MagicMock())))
+        m.setitem(sys.modules, "app.core.deps", deps_stub)
 
         from sqlalchemy.orm import DeclarativeBase
 

@@ -25,6 +25,9 @@ metadata:
   labels:
     app.kubernetes.io/name: testlookup
     app.kubernetes.io/component: frontend
+  annotations:
+    # HSTS at the TLS edge (re-audit L1): one year, no includeSubDomains.
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
 spec:
   host: ROUTE_HOST_FRONTEND_PLACEHOLDER
   to:
@@ -46,6 +49,8 @@ metadata:
   labels:
     app.kubernetes.io/name: testlookup
     app.kubernetes.io/component: backend
+  annotations:
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
 spec:
   host: ROUTE_HOST_API_PLACEHOLDER
   to:
@@ -69,6 +74,7 @@ metadata:
     app.kubernetes.io/component: mcp
   annotations:
     haproxy.router.openshift.io/timeout: "1h"
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
     haproxy.router.openshift.io/rate-limit-connections: "true"
     haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp: "20"
     haproxy.router.openshift.io/rate-limit-connections.rate-tcp: "10"
