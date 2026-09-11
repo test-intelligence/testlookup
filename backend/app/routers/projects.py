@@ -186,7 +186,7 @@ async def get_project(
     "/{project_id}",
     response_model=ProjectResponse,
     dependencies=[
-        Depends(require_role(UserRole.QA_LEAD)),
+        Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
         Depends(require_project_access()),
     ],
 )
@@ -250,7 +250,7 @@ async def update_project(
     "/{project_id}",
     status_code=204,
     dependencies=[
-        Depends(require_role(UserRole.QA_LEAD)),
+        Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
         Depends(require_project_access()),
     ],
 )

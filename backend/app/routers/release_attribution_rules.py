@@ -185,7 +185,7 @@ async def create_attribution_rule(
     project_id: uuid.UUID,
     body: AttributionRuleIn,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     __: User = Depends(require_project_access()),
 ):
     """Create a rule. Rung 3 can fire for this project from the next run on."""
@@ -237,7 +237,7 @@ async def update_attribution_rule(
     rule_id: str,
     body: AttributionRuleUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     __: User = Depends(require_project_access()),
 ):
     rule = await _get_rule_or_404(db, project_id, rule_id)
@@ -286,7 +286,7 @@ async def delete_attribution_rule(
     project_id: uuid.UUID,
     rule_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     __: User = Depends(require_project_access()),
 ):
     """Delete a rule.

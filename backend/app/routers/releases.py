@@ -229,7 +229,7 @@ async def get_release_gate_baseline(
 async def create_release(
     body: ReleaseIn,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
 ):
     # ``require_role(QA_LEAD)`` gates by ROLE, never by project membership, and
     # ``project_id`` arrives in the BODY -- which the architectural ratchet
@@ -263,7 +263,7 @@ async def create_release(
 async def sync_releases_from_external(
     body: ReleaseSyncIn,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
 ):
     """Pull releases in from GitHub milestones or Jira fix versions.
 
@@ -322,7 +322,7 @@ async def update_release(
     release_id: str,
     body: ReleaseUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     __: User = Depends(require_release_access()),
 ):
     # Snapshot BEFORE the service applies the update. update_release mutates
@@ -399,7 +399,7 @@ async def evaluate_release_gate(
         "Pass false to preview without recording.",
     ),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     # BOTH guards, as dependencies. `require_role` answers "may this user record
     # verdicts at all"; `require_release_access` answers "may they touch THIS
     # release" — the per-id check the authorization ratchet is blind to once a
@@ -433,7 +433,7 @@ async def add_phase(
     release_id: str,
     body: PhaseIn,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     __: User = Depends(require_release_access()),
 ):
     phase = await release_service.add_phase(db, release_id, body)
@@ -448,7 +448,7 @@ async def update_phase(
     phase_id: str,
     body: PhaseUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     __: User = Depends(require_release_access()),
 ):
     # The actor travels with the call: a gate override recorded against nobody
@@ -468,7 +468,7 @@ async def update_phase(
 async def activate_release_endpoint(
     release_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     __: User = Depends(require_release_access()),
 ):
     """Make this the project's active release.
@@ -581,7 +581,7 @@ async def evaluate_release_phase_gate(
     phase_id: str,
     record: bool = Query(True, description="Append the verdict to the audit history"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     __: User = Depends(require_release_access()),
 ):
     """Evaluate ONE phase and, by default, record the verdict.
@@ -617,7 +617,7 @@ async def link_test_run(
     release_id: str,
     body: LinkRunRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     __: User = Depends(require_release_access()),
 ):
     link, is_new = await release_service.link_test_run(

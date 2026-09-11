@@ -63,7 +63,7 @@ async def get_release_decision(
 async def override_release_decision(
     run_id: uuid.UUID,
     body: ReleaseCouncilOverrideRequest,
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_run_access()),
 ):
     """

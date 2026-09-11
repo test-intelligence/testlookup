@@ -66,7 +66,7 @@ async def upsert_github_integration(
     project_id: uuid.UUID,
     payload: GitHubIntegrationWrite,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Create or replace the GitHub integration for a project. QA_LEAD+."""
@@ -91,7 +91,7 @@ async def upsert_github_integration(
 async def test_github_integration(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Probe the configured repo + PAT and report whether the
@@ -107,7 +107,7 @@ async def test_github_integration(
 async def delete_github_integration(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Delete the GitHub integration row for a project. The stored PAT

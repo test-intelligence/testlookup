@@ -63,6 +63,10 @@ BINDING_CHECKS: frozenset[str] = frozenset({
     "resolve_project_scope",    # a bound key's accessible set is {its project}
     "_enforce_api_key_project_binding",
     "_enforce_policy_binding",  # routers/release_gate_policies.py, wraps the one above
+    "get_accessible_project_ids",  # a bound key's set is {its project}; the handler filters by it
+    # Router-local helpers that call one of the above on the resource's project:
+    "_load_and_scope",          # routers/webhooks_outbound.py -> resolve_project_scope
+    "_enforce_project_access",  # routers/suites.py, test_management_suite_reviews.py -> get_accessible_project_ids
 })
 
 #: (file, handler) -> (binding check, one-line reason). Read the route before adding.
@@ -111,6 +115,111 @@ REVIEWED_OPT_INS: dict[tuple[str, str], tuple[str, str]] = {
         "_enforce_policy_binding", "the stored policy's project; system default refused"),
     ("app/routers/release_gate_policies.py", "simulate_policy"): (
         "_enforce_api_key_project_binding", "against the body run's project"),
+    # ── re-audit N26: require_role(UserRole.QA_LEAD, allow_project_key=True) ──
+    ("app/routers/projects.py", "update_project"): (
+        "require_project_access", "path {project_id}; updates that project only"),
+    ("app/routers/projects.py", "delete_project"): (
+        "require_project_access", "path {project_id}; soft-deletes that project only"),
+    ("app/routers/runs.py", "set_run_release"): (
+        "require_run_access", "path {run_id} resolved to its project"),
+    ("app/routers/notifications.py", "update_transition_policy"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/deep_investigation.py", "review_defect"): (
+        "resolve_project_scope", "called on the defect's own project"),
+    ("app/routers/deep_investigation.py", "list_pending_defects"): (
+        "get_accessible_project_ids", "the list is filtered to the accessible set"),
+    ("app/routers/release_readiness.py", "override_release_decision"): (
+        "require_run_access", "path {run_id} resolved to its project"),
+    ("app/routers/releases.py", "create_release"): (
+        "resolve_project_scope", "called on the body project_id"),
+    ("app/routers/releases.py", "sync_releases_from_external"): (
+        "resolve_project_scope", "called on the body project_id"),
+    ("app/routers/releases.py", "update_release"): (
+        "require_release_access", "path {release_id} resolved to its project"),
+    ("app/routers/releases.py", "evaluate_release_gate"): (
+        "require_release_access", "path {release_id} resolved to its project"),
+    ("app/routers/releases.py", "add_phase"): (
+        "require_release_access", "path {release_id} resolved to its project"),
+    ("app/routers/releases.py", "update_phase"): (
+        "require_release_access", "path {release_id}; the phase must belong to that release"),
+    ("app/routers/releases.py", "activate_release_endpoint"): (
+        "require_release_access", "path {release_id} resolved to its project"),
+    ("app/routers/releases.py", "evaluate_release_phase_gate"): (
+        "require_release_access", "path {release_id}; the phase must belong to that release"),
+    ("app/routers/releases.py", "link_test_run"): (
+        "require_release_access", "path {release_id}; the body run must be in the same project"),
+    ("app/routers/test_management_suite_reviews.py", "set_suite_owner"): (
+        "_enforce_project_access", "called on the named project"),
+    ("app/routers/users.py", "add_project_member"): (
+        "require_project_access", "path {project_id}; grant ceiling applies"),
+    ("app/routers/users.py", "update_project_member_role"): (
+        "require_project_access", "path {project_id}; grant ceiling applies"),
+    ("app/routers/value_metric_assumptions.py", "put_value_metric_assumptions"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/release_attribution_rules.py", "create_attribution_rule"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/release_attribution_rules.py", "update_attribution_rule"): (
+        "require_project_access", "path {project_id}; the rule is filtered by it"),
+    ("app/routers/release_attribution_rules.py", "delete_attribution_rule"): (
+        "require_project_access", "path {project_id}; the rule is filtered by it"),
+    ("app/routers/ownership.py", "create_ownership_rule"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/ownership.py", "update_ownership_rule"): (
+        "require_project_access", "path {project_id}; the rule is filtered by it"),
+    ("app/routers/ownership.py", "delete_ownership_rule"): (
+        "require_project_access", "path {project_id}; the rule is filtered by it"),
+    ("app/routers/ownership.py", "import_codeowners"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/ownership.py", "upsert_team_channel"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/ownership.py", "delete_team_channel"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/audit_dashboard.py", "list_audit_events"): (
+        "resolve_project_scope", "query project_id, or the accessible set"),
+    ("app/routers/audit_dashboard.py", "get_project_observability"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/flaky_quarantine.py", "create_proposal"): (
+        "resolve_project_scope", "called on the body project_id"),
+    ("app/routers/flaky_quarantine.py", "approve_quarantine"): (
+        "resolve_project_scope", "called on the request's own project"),
+    ("app/routers/flaky_quarantine.py", "reject_quarantine"): (
+        "resolve_project_scope", "called on the request's own project"),
+    ("app/routers/flaky_quarantine.py", "release_quarantine"): (
+        "resolve_project_scope", "called on the request's own project"),
+    ("app/routers/flaky_quarantine.py", "update_quarantine_lifecycle_policy"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/compliance_packs.py", "generate_compliance_pack"): (
+        "require_release_access", "path {release_id} resolved to its project"),
+    ("app/routers/github_integration.py", "upsert_github_integration"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/github_integration.py", "test_github_integration"): (
+        "require_project_access", "path {project_id}; probes that project's own token"),
+    ("app/routers/github_integration.py", "delete_github_integration"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/gitlab_integration.py", "upsert_gitlab_integration"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/gitlab_integration.py", "test_gitlab_integration"): (
+        "require_project_access", "path {project_id}; probes that project's own token"),
+    ("app/routers/webhooks_outbound.py", "create_webhook_subscription"): (
+        "resolve_project_scope", "called on the body project_id"),
+    ("app/routers/webhooks_outbound.py", "update_webhook_subscription"): (
+        "_load_and_scope", "the subscription's own project"),
+    ("app/routers/webhooks_outbound.py", "delete_webhook_subscription"): (
+        "_load_and_scope", "the subscription's own project"),
+    ("app/routers/webhooks_outbound.py", "test_webhook_subscription"): (
+        "_load_and_scope", "the subscription's own project"),
+    ("app/routers/webhooks_outbound.py", "replay_webhook_delivery"): (
+        "_load_and_scope", "the subscription's own project"),
+    ("app/routers/suites.py", "delete_suite"): (
+        "_enforce_project_access", "called on the suite's own project"),
+    ("app/routers/suites.py", "set_default"): (
+        "_enforce_project_access", "called on the suite's own project"),
+    ("app/routers/suites.py", "confirm_canonical_retirement"): (
+        "_enforce_project_access", "called on the canonical case's own project"),
+    ("app/routers/agent_actions.py", "list_agent_actions"): (
+        "require_project_access", "path {project_id}"),
+    ("app/routers/agent_actions.py", "transition_agent_action"): (
+        "require_project_access", "path {project_id}; the action is filtered by it"),
 }
 
 #: (file, function) -> why its hand-written ADMIN check is not a bypass.
@@ -171,13 +280,22 @@ def _calls_with_owner(tree):
     return out
 
 
-def _is_user_role_admin(node) -> bool:
+#: The roles whose require_role refuses a project-bound key, so the only ones
+#: where ``allow_project_key=True`` means anything (N20: ADMIN, N26: QA_LEAD).
+_OPT_IN_ROLES = frozenset({"ADMIN", "QA_LEAD"})
+
+
+def _is_user_role(node, names) -> bool:
     return (
         isinstance(node, ast.Attribute)
-        and node.attr == "ADMIN"
+        and node.attr in names
         and isinstance(node.value, ast.Name)
         and node.value.id == "UserRole"
     )
+
+
+def _is_user_role_admin(node) -> bool:
+    return _is_user_role(node, {"ADMIN"})
 
 
 def _names_admin(node) -> bool:
@@ -221,10 +339,10 @@ def find_opt_ins(source: str, rel: str) -> tuple[set[tuple[str, str]], list[str]
             continue
         if keyword.value.value is False:
             continue
-        if not call.args or not _is_user_role_admin(call.args[0]):
+        if not call.args or not _is_user_role(call.args[0], _OPT_IN_ROLES):
             problems.append(
                 f"{where}: allow_project_key=True only means something on "
-                "require_role(UserRole.ADMIN)"
+                "require_role(UserRole.QA_LEAD) and require_role(UserRole.ADMIN)"
             )
             continue
         found.add((rel, owner or "<module>"))
@@ -435,6 +553,15 @@ def test_scan1_finds_a_router_wide_opt_in():
     assert found == {("mem.py", "<module>")}
 
 
+def test_scan1_finds_a_qa_lead_opt_in():
+    """Re-audit N26: QA_LEAD refuses a bound key too, so its opt-ins are reviewed."""
+    found, problems = _opt_ins("""
+        async def handler(user=Depends(require_role(UserRole.QA_LEAD, allow_project_key=True))):
+            pass
+    """)
+    assert found == {("mem.py", "handler")} and not problems
+
+
 def test_scan1_ignores_the_default_and_an_explicit_false():
     found, problems = _opt_ins("""
         async def a(user=Depends(require_role(UserRole.ADMIN))):
@@ -447,10 +574,10 @@ def test_scan1_ignores_the_default_and_an_explicit_false():
 
 @pytest.mark.parametrize("code", [
     "require_role(UserRole.ADMIN, allow_project_key=FLAG)",
-    "require_role(UserRole.QA_LEAD, allow_project_key=True)",
+    "require_role(UserRole.QA_ENGINEER, allow_project_key=True)",
     "rr(UserRole.ADMIN, allow_project_key=True)",
     "require_role(UserRole.ADMIN, **opts)",
-], ids=["not-a-literal", "below-admin", "aliased-call", "splatted"])
+], ids=["not-a-literal", "below-qa-lead", "aliased-call", "splatted"])
 def test_scan1_reports_what_it_cannot_review(code):
     found, problems = _opt_ins(f"async def h(user=Depends({code})):\n    pass\n")
     assert found == set() and len(problems) == 1

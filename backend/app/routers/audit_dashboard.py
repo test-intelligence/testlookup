@@ -28,7 +28,7 @@ async def list_audit_events(
     days: int = Query(default=30, ge=1, le=365),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -84,7 +84,7 @@ async def list_categories(
 async def get_project_observability(
     project_id: uuid.UUID,
     days: int = Query(default=7, ge=1, le=90),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_project_access()),
 ):

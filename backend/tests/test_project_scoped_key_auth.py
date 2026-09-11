@@ -59,6 +59,8 @@ async def test_project_bound_key_rejects_other_project_path():
 # "role": "ADMIN" and log in as an instance administrator.
 
 _BELOW_ADMIN = [UserRole.VIEWER, UserRole.TESTER, UserRole.QA_ENGINEER, UserRole.QA_LEAD]
+#: Re-audit N26: QA_LEAD refuses a bound key as ADMIN does; these never did.
+_BELOW_QA_LEAD = [UserRole.VIEWER, UserRole.TESTER, UserRole.QA_ENGINEER]
 
 
 def _bound_key_user(role=UserRole.ADMIN, project_id=None):
@@ -107,8 +109,8 @@ async def test_an_unbound_admin_passes_either_way(allow_project_key):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", _BELOW_ADMIN)
-async def test_below_admin_a_bound_key_is_judged_by_its_role_alone(role):
+@pytest.mark.parametrize("role", _BELOW_QA_LEAD)
+async def test_below_qa_lead_a_bound_key_is_judged_by_its_role_alone(role):
     user = _bound_key_user(role)
 
     assert await require_role(role)(current_user=user) is user
@@ -119,16 +121,30 @@ async def test_below_admin_a_bound_key_is_judged_by_its_role_alone(role):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("min_role", _BELOW_ADMIN)
-async def test_a_bound_admin_key_still_passes_every_lower_role(min_role):
+@pytest.mark.parametrize("min_role", _BELOW_QA_LEAD)
+async def test_a_bound_admin_key_still_passes_every_role_below_qa_lead(min_role):
     user = _bound_key_user()
 
     assert await require_role(min_role)(current_user=user) is user
 
 
-@pytest.mark.parametrize("min_role", _BELOW_ADMIN)
-def test_opting_in_below_admin_is_refused_when_the_route_is_built(min_role):
-    """The flag means nothing below ADMIN; a route passing it has misread it."""
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner_role", [UserRole.QA_LEAD, UserRole.ADMIN])
+async def test_qa_lead_refuses_a_bound_key_unless_the_route_opts_in(owner_role):
+    """Re-audit N26: the user directory, POST /projects, training export and the
+    instance settings reads are QA_LEAD routes that span every project."""
+    user = _bound_key_user(owner_role)
+
+    with pytest.raises(HTTPException) as exc:
+        await require_role(UserRole.QA_LEAD)(current_user=user)
+    assert exc.value.status_code == 403
+    assert exc.value.detail == PROJECT_KEY_NOT_INSTANCE_ADMIN_DETAIL
+    assert await require_role(UserRole.QA_LEAD, allow_project_key=True)(current_user=user) is user
+
+
+@pytest.mark.parametrize("min_role", _BELOW_QA_LEAD)
+def test_opting_in_below_qa_lead_is_refused_when_the_route_is_built(min_role):
+    """The flag means nothing below QA_LEAD; a route passing it has misread it."""
     with pytest.raises(ValueError, match="allow_project_key"):
         require_role(min_role, allow_project_key=True)
 

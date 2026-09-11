@@ -659,8 +659,17 @@ def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Call
     allow-list of ``tests/regression/test_admin_routes_refuse_project_keys.py``,
     which fails until you do.
 
-    Below ADMIN nothing changes. Those roles never refused a bound key, so the
-    flag would mean nothing there, and passing it is a ``ValueError``.
+    **QA_LEAD is closed to a project-bound key the same way (re-audit N26).**
+    A bound key's owner is almost always an ADMIN, so it passed every
+    ``require_role(UserRole.QA_LEAD)`` route, and many of those span every
+    project: the user directory, ``POST /api/v1/projects``, the training
+    export, the instance settings reads, integration probes, AI-eval. A route
+    at QA_LEAD that confines the key to its own project opts in with
+    ``allow_project_key=True`` and is listed in the same allow-list; one that
+    does not is refused without anyone having to remember a flag.
+
+    Below QA_LEAD nothing changes. Those roles never refused a bound key, so
+    the flag would mean nothing there, and passing it is a ``ValueError``.
 
     **QA_LEAD and above also need the key's scopes to allow it (QA-R3-11,
     QA-R4-1, QA-R4-2).** A key with a non-empty scope list gets 403 unless the
@@ -673,14 +682,15 @@ def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Call
     at all. Below QA_LEAD the scopes are not read here; the project-scoped
     guards refuse such a key's writes (see ``_refuse_scoped_key_write``).
     """
-    if allow_project_key and min_role != UserRole.ADMIN:
-        raise ValueError(
-            "allow_project_key applies only to require_role(UserRole.ADMIN); "
-            f"{min_role.value} never refuses a project-bound API key"
-        )
     min_idx = _ROLE_ORDER.index(min_role)
-    refuse_project_key = min_role == UserRole.ADMIN and not allow_project_key
-    refuse_scoped_key = min_idx >= _ROLE_ORDER.index(UserRole.QA_LEAD)
+    at_least_qa_lead = min_idx >= _ROLE_ORDER.index(UserRole.QA_LEAD)
+    if allow_project_key and not at_least_qa_lead:
+        raise ValueError(
+            "allow_project_key applies only to require_role(UserRole.QA_LEAD) and "
+            f"UserRole.ADMIN; {min_role.value} never refuses a project-bound API key"
+        )
+    refuse_project_key = at_least_qa_lead and not allow_project_key
+    refuse_scoped_key = at_least_qa_lead
 
     async def _check(
         current_user: User = Depends(get_current_active_user),
