@@ -69,6 +69,11 @@ async def create_api_key(
     # ``require_instance_admin``, and ``target_user_id`` minted one for anyone.
     bound_project_id = _api_key_bound_project(current_user)
     if bound_project_id is not None:
+        if payload.project_id is None:
+            # Naming no project means this one. The new key stays bound, and
+            # `testlookup keys create`, which sends no project_id, keeps
+            # working for CI rotation (lead review of the N20 fix).
+            payload = payload.model_copy(update={"project_id": bound_project_id})
         if payload.project_id != bound_project_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

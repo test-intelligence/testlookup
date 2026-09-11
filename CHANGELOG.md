@@ -1,5 +1,127 @@
 # Changelog
 
+## 2026-09-10 — an API key bound to one project could act as an instance administrator
+
+Only an admin can mint an API key bound to a project, so most project-bound
+keys are admin credentials sitting in a CI pipeline. `require_role(ADMIN)`
+checked only the owner's role. A key leaked from one pipeline could create an
+instance admin (`POST /api/v1/users` returned its temporary password), promote
+users, change SSO, feature flags and settings, and mint itself an unbound key.
+
+`require_role(ADMIN)` now refuses a project-bound key with 403 unless the route
+opts in. Only 22 routes do, and each confines the key to its own project: run
+deletion, project reset, retention and deletion jobs, ownership import, release
+and phase deletion, run unlinking, compliance packs, member removal, and the
+release-gate policy writes. Those policy writes now check the policy's project,
+and never let a bound key write the system default. The same shortcut, an
+admin check that never looked at the key's project, is also closed in the key
+routes, the search reindex, investigations, fix attempts, chat sessions, share
+links, failure reassignment and triage. A ratchet makes every new opt-in name
+the check that makes it safe, and tests against real PostgreSQL use real keys.
+
+**Upgrade note: what a key bound to project P can no longer do.**
+
+- Any instance-wide admin route: users, invitations and roles, SSO, SCIM tokens,
+  feature flags, app settings, AI-evaluation datasets and gates, identity
+  events, the knowledge-source allow-list, model promotion, the audit export,
+  onboarding events, deleted-project storage, the admin maintenance routes.
+- Set P's own LLM quota, or use the debug run generator.
+- Mint a key for another project or another user, or list or revoke keys
+  outside P. A key minted without `project_id` is bound to P.
+- Trigger an instance-wide reindex, or write another project's or the
+  system-default release-gate policy.
+- Reach another project's investigations, fix attempts, chats, share links,
+  reassignments or triage.
+
+It still does P's own work, and rotates itself. Automation that used a bound
+key for instance-wide work needs an unbound admin key.
+
+## 2026-09-10 — log redaction, second pass
+
+- `error=`, `reason=` and `detail=` fields are treated like the log message:
+  credentials and email addresses are redacted, and hosts, ports and numbers
+  survive. An exception passed as a field value (`error=exc`) was never
+  redacted at all, because it was rendered after redaction ran; it now is.
+- Production database engines, the migration engine included, keep bound
+  parameters out of error text. A failed INSERT used to carry its values, a
+  password or token hash for instance, into the logged traceback.
+- An `Authorization` header loses its credential whatever the scheme. Only
+  Bearer was caught; `Basic dXNlcjpwYXNzd29yZA==` passed through logs, and
+  through the sanitizer that cleans tool output before it reaches an LLM.
+- A structured field named like a secret (`password=`, `token=`, `api_key=`,
+  `cookie=` and the other secret names) is redacted by its name. Names match
+  exactly, so `prompt_tokens`, `token_count` and `password_changed` are left
+  alone.
+
+By design since the first redaction change, a phone, card or SSN shape inside a
+log message or an `error=` field is no longer redacted: those patterns mangled
+hosts and byte counts. Structured fields keep them.
+
+## 2026-09-10 — offline mode, second pass on notifications and probes
+
+- `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` now covers only the deployment's own
+  destinations: the global Slack and Teams webhooks and the SMTP relay. Slack
+  and Teams put every workspace on the same hosts, so with the documented
+  example allow-listed, any user could point a personal webhook at their own
+  workspace and receive failure text and build metadata off-box. Personal and
+  team webhooks are judged by residency alone. **Upgrade note:** offline,
+  personal or team webhooks on hosted Slack or Teams that relied on the list are
+  now recorded as blocked. Clear the override to use the global webhook.
+- The Splunk and OpenShift health probes are skipped offline, like Jira and
+  GitHub. Every 15 minutes they had sent their tokens to the configured API.
+  The integrations themselves still dial out when enabled (N19, open); both
+  default to off, and SECURITY.md now says so.
+- The settings page's SMTP test button tests the relay real sends use. With no
+  stored host it tested `localhost` and could report success while every real
+  email was refused.
+- The offline-egress guards check each connection rather than each module. The
+  old check passed any module that named the gate anywhere, so an ungated SMTP
+  connection added beside a gated one went unnoticed.
+
+An allow-listed hosted mail relay still delivers to any recipient, including a
+user's own address override; the docs say so.
+
+## 2026-09-10 — migrations 0166 and 0167 no longer take an exclusive lock to clean up
+
+Both migrations build their index concurrently. Before that, they dropped an
+invalid leftover index with a plain `DROP INDEX`, which takes an exclusive lock
+on the table and queues behind every open transaction, with ingestion queued
+behind it. Measured with an 8-second open transaction: 4 of 379 concurrent
+inserts failed before, 0 of 540 now. The migrations now read the catalog and
+drop whatever holds the index's name with `DROP INDEX CONCURRENTLY`, unless it
+is already the right index, which PostgreSQL itself decides by comparing
+definitions. A valid index with the wrong definition is replaced instead of
+kept, and a non-index holding the name stops the migration with a message. This
+affects fresh upgrades only.
+
+The guard that keeps later migrations concurrent now reads the SQL a migration
+assembles from its constants, and catches unnamed builds, `REINDEX`, indexed
+columns, and unique, primary-key and exclusion constraints on existing tables.
+
+Still open (N24): the migration lock is released by the first concurrent build,
+so two migrators starting together are not serialised from that point on.
+
+## 2026-09-10 — upload and webhook hardening, and `--wait` rides out a blip
+
+- The pre-parse result count caught namespaced TRX (`<t:UnitTestResult>`), which
+  its parser reads but the count missed, so a crafted report was refused only
+  after it was parsed.
+- A sentinel key must be a plain path: no empty, `.` or `..` segment, no
+  backslash, no control character. On the local storage backend a `..` key read
+  another prefix's sentinel and filed it under the first segment's project.
+  S3 and MinIO were not affected.
+- The 64 KiB sentinel cap is now pinned by a test; the old one passed with the
+  cap raised to 64 GiB.
+- When an ingest's retries run out, it is recorded in the dead-letter stream
+  admins read at `GET /api/v1/admin/maintenance/dlq`, with the arguments needed
+  to queue it again.
+- `testlookup upload --wait` treats a 429, a 5xx or a dropped connection while
+  it polls as "not yet", honouring `Retry-After`, until `--wait-timeout`. It
+  fails early only on an answer that cannot change. `upload dir --wait` shares
+  one deadline across its files, where twenty reports with the workers down
+  used to hold a CI job for over three hours, and names every file that did not
+  finish.
+
 ## 2026-09-10 — a finished run's AI analysis was queued and never sent
 
 After a run is finalized, its follow-up work (notifications, the completion

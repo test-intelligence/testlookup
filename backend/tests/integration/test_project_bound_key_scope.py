@@ -207,8 +207,8 @@ async def test_a_bound_key_passes_the_binding_for_its_own_run():
 
 @pytest.mark.parametrize(
     "fields",
-    [{}, {"project_id": OTHER}, {"project_id": BOUND, "target_user_id": uuid.uuid4()}],
-    ids=["unbound-key", "other-project", "someone-elses-key"],
+    [{"project_id": OTHER}, {"project_id": BOUND, "target_user_id": uuid.uuid4()}],
+    ids=["other-project", "someone-elses-key"],
 )
 async def test_a_bound_key_mints_nothing_wider_than_itself(fields):
     from app.models.schemas import ApiKeyCreate
@@ -220,6 +220,24 @@ async def test_a_bound_key_mints_nothing_wider_than_itself(fields):
         create_api_key(payload=ApiKeyCreate(name="rotate", **fields), db=db, current_user=_bound_admin())
     )
     db.add.assert_not_called()
+
+
+async def test_a_bound_key_that_names_no_project_mints_one_for_its_own_project():
+    """``testlookup keys create`` sends no project_id. The key it gets must stay
+    in the caller's project -- never unbound -- and the call must not fail."""
+    from app.models.schemas import ApiKeyCreate
+    from app.routers.api_keys import create_api_key
+
+    db = _db(BOUND)  # the project lookup finds the caller's project
+    db.add = MagicMock()
+    try:
+        await create_api_key(payload=ApiKeyCreate(name="rotate"), db=db, current_user=_bound_admin())
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 -- the fake session ends the call after the insert
+        pass
+    assert db.add.called, "no key was created"
+    assert db.add.call_args.args[0].project_id == BOUND, "the new key is not bound to the caller's project"
 
 
 async def test_a_bound_key_cannot_list_another_projects_keys():

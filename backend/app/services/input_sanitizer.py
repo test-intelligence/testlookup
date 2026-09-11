@@ -50,7 +50,16 @@ _INJECTION_PATTERNS: list[re.Pattern[str]] = [
 _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Bearer / API tokens
     (re.compile(r"(Bearer\s+)[A-Za-z0-9\-._~+/]+=*", re.I), r"\1[REDACTED]"),
-    (re.compile(r"(Authorization:\s*)[^\s]+", re.I), r"\1[REDACTED]"),
+    # The credential, whatever the scheme. The scheme name alone used to be
+    # "redacted", leaving the credential after it in the prompt (the logging
+    # agent's review of H3's Authorization fix).
+    (
+        re.compile(
+            r"(Authorization:\s*(?:(?:Basic|Bearer|Digest|Negotiate|NTLM|Token)\s+)?)[^\s]+",
+            re.I,
+        ),
+        r"\1[REDACTED]",
+    ),
     # API keys (common formats)
     (re.compile(r"(api[_-]?key\s*[=:]\s*)[^\s,;\"']+", re.I), r"\1[REDACTED]"),
     (re.compile(r"(token\s*[=:]\s*)[^\s,;\"']+", re.I), r"\1[REDACTED]"),

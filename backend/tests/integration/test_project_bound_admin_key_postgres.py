@@ -284,7 +284,7 @@ async def test_the_bound_key_cannot_raise_its_own_projects_llm_budget(world):
     ) == 0
 
 
-@pytest.mark.parametrize("extra", ["none", "other-project"])
+@pytest.mark.parametrize("extra", ["other-project"])
 async def test_the_bound_key_cannot_mint_a_key_wider_than_itself(world, extra):
     body = {"name": "escape"}
     if extra == "other-project":
@@ -298,6 +298,15 @@ async def test_the_bound_key_cannot_mint_a_key_wider_than_itself(world, extra):
     assert await _count(
         world, select(func.count()).select_from(ApiKey).where(ApiKey.user_id == world.key_owner)
     ) == 1
+
+
+async def test_a_key_minted_without_a_project_is_bound_to_the_callers(world):
+    """``testlookup keys create`` sends no project_id: CI rotation must keep
+    working, and the key it gets must never be unbound."""
+    resp = await world.client.post("/api/v1/keys", headers=world.key, json={"name": "rotate-cli"})
+
+    assert resp.status_code in (200, 201), resp.text
+    assert resp.json()["project_id"] == str(world.project_a)
 
 
 # ── and still does its own project's work ────────────────────────────────────
