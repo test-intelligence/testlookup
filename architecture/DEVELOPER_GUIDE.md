@@ -33,10 +33,10 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **34 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **35 guards**.
 16 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 18 ship at zero with **no baseline file at all** — those are
+fail CI. The other 19 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -118,6 +118,12 @@ fails if a *second* deleter appears.
 | Gate id | Forbids / requires | How to satisfy |
 |---|---|---|
 | `repo.no-gitignored-source` | a source file matched by `.gitignore` | Narrow the offending pattern. The security globs (`*credentials*`, `*secrets*`, `*api_key*`) match at **every depth** and have twice silently excluded real code from a commit |
+
+### CI
+
+| Gate id | Requires | How to satisfy |
+|---|---|---|
+| `ci.every-test-suite-runs` † | every tracked test suite — a `tests/`/`test/` directory, or a test file outside one — is executed by a step in `.github/workflows/` | Add a step that runs it (`pytest <path>`, `npm test`, `go test ./...`, `mvn test`). The MCP server's 100+ tests, including the auth gate that became its security boundary, were collected by nothing (re-audit N2); the SDK, CLI, Java and Go suites each shipped the same gap before. A suite that genuinely cannot run in CI (live-deployment e2e, user-facing sample projects) goes in `_SUITES_NOT_RUN_IN_CI` in `scripts/quality_gate.py` with its reason |
 
 ### AI
 

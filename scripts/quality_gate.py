@@ -3369,6 +3369,279 @@ def _repo_no_gitignored_source() -> list[Violation]:
     return violations
 
 
+# ── Every test suite is executed by CI (re-audit N2) ─────────────────────────
+#
+# The MCP server's suite (100+ tests, including the principal-isolation tests
+# for the auth gate that became its security boundary) was collected by
+# nothing: the `mcp-test` job only `ast.parse`d the files. The SDK/CLI suites,
+# the Java SDK and the Go SDK had each shipped the same gap before, one at a
+# time, and each was closed by adding a job after a defect got through.
+# This guard asks the question once for the whole tree: every tracked test
+# suite must be run by a workflow step.
+#
+# Stdlib only (the quality-gate job installs no PyYAML), so the workflows are
+# read textually: jobs, their `defaults.run.working-directory`, steps, each
+# step's `working-directory` and `run` text, and `cd <dir>` inside a script.
+
+_TEST_FILE_NAME = re.compile(
+    r"(^test_[^/]*\.py$|^[^/]*_test\.py$"
+    r"|\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs)$"
+    r"|Test\.java$|_test\.go$)"
+)
+_TEST_DIR_NAMES = {"tests", "test", "__tests__"}
+# Anchored at the INVOKED program: `pip install pytest` names pytest too, and
+# with no path argument it would read as "run every suite under the root".
+_TEST_RUNNER = re.compile(
+    r"^(?:[A-Z_][A-Z0-9_]*=\S*\s+)*"
+    r"(?:python3?(?:\.\d+)?\s+-m\s+pytest\b|pytest\b|go\s+test\b"
+    r"|mvn\b.*\stest\b|npm\s+(?:run\s+)?test\b|node\s+--test\b"
+    r"|npx\s+(?:vitest|playwright\s+test)\b|vitest\b|gradle\b.*\stest\b)"
+)
+_PATHLIKE_TOKEN = re.compile(r"(/|\.(py|mjs|cjs|js|ts|tsx)$)")
+
+# Suites CI deliberately does not run, with the reason. Prefix match on the
+# unit path. Keep this list short and every entry justified.
+_SUITES_NOT_RUN_IN_CI: dict[str, str] = {
+    "frontend/tests": (
+        "Playwright e2e against a LIVE deployment (`make test-e2e`, "
+        "frontend/probe-live.config.ts); needs a running stack and "
+        "credentials. The docs-diagram subset runs in docs-diagram-render."
+    ),
+    "client/examples/": (
+        "sample projects users copy; their tests exercise a published SDK "
+        "against a running server, and are not tests of this repo"
+    ),
+}
+
+
+def _test_units(tracked: Iterable[str]) -> set[str]:
+    """Collapse tracked test files into suites ("units").
+
+    A file inside a directory named ``tests``/``test``/``__tests__`` belongs to
+    its TOPMOST such directory; any other test file is its own unit. Python
+    files named ``test_*.py`` count only inside a test directory or under
+    ``scripts/``: ``backend/app/routers/test_runs.py`` is product code about
+    test runs, and ``backend/test_db.py`` is a manual script.
+    """
+    units: set[str] = set()
+    for path in tracked:
+        parts = path.split("/")
+        if not _TEST_FILE_NAME.search(parts[-1]) or parts[-1] == "conftest.py":
+            continue
+        test_dir = next(
+            (i for i, part in enumerate(parts[:-1]) if part in _TEST_DIR_NAMES),
+            None,
+        )
+        if test_dir is not None:
+            units.add("/".join(parts[: test_dir + 1]))
+        elif parts[-1].endswith(".py") and parts[0] != "scripts":
+            continue
+        else:
+            units.add(path)
+    return units
+
+
+def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
+    """``(effective working dir, command line)`` for every test-runner command
+    in one workflow file. The directory is repo-relative POSIX, ``""`` = root."""
+
+    def norm(directory: str) -> str:
+        directory = directory.strip().strip("'\"")
+        while directory.startswith("./"):
+            directory = directory[2:]
+        return "" if directory in (".", "") else directory.rstrip("/")
+
+    lines = text.splitlines()
+    commands: list[tuple[str, str]] = []
+    job_default = ""
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):          # a new job
+            job_default = ""
+        wd = re.match(r"^\s{4,}(?:- )?working-directory:\s*(\S+)", line)
+        if wd and re.match(r"^\s{4,8}working-directory:", line) and not _in_step(lines, i):
+            job_default = norm(wd.group(1))
+        step = re.match(r"^(\s*)- ", line)
+        if step and _in_steps_list(lines, i):
+            indent = len(step.group(1))
+            j = i + 1
+            while j < len(lines) and (
+                not lines[j].strip()
+                or len(lines[j]) - len(lines[j].lstrip()) > indent
+            ):
+                j += 1
+            block = lines[i:j]
+            step_wd = job_default
+            run_lines: list[str] = []
+            for k, bline in enumerate(block):
+                body = bline[indent + 2:] if k == 0 else bline
+                m_wd = re.match(r"^\s*working-directory:\s*(\S+)", body)
+                if m_wd and len(bline) - len(bline.lstrip()) <= indent + 2:
+                    step_wd = norm(m_wd.group(1))
+                m_run = re.match(r"^(\s*)run:\s*(.*)$", body)
+                if m_run and (k == 0 or len(bline) - len(bline.lstrip()) == indent + 2):
+                    inline = m_run.group(2).strip()
+                    key_indent = indent + 2
+                    if inline and inline[0] not in "|>":
+                        run_lines = [inline]
+                    else:
+                        folded = inline.startswith(">")
+                        rest = [
+                            b.strip() for b in block[k + 1:]
+                            if b.strip() and len(b) - len(b.lstrip()) > key_indent
+                        ]
+                        run_lines = [" ".join(rest)] if folded else rest
+            cwd = step_wd
+            joined: list[str] = []
+            for raw in run_lines:
+                if joined and joined[-1].endswith("\\"):
+                    joined[-1] = joined[-1][:-1] + " " + raw
+                else:
+                    joined.append(raw)
+            for command in joined:
+                cd = re.match(r"^cd\s+(\S+)\s*$", command)
+                if cd:
+                    target = norm(cd.group(1))
+                    cwd = f"{cwd}/{target}".strip("/") if cwd else target
+                    continue
+                if _TEST_RUNNER.search(command):
+                    commands.append((cwd, command))
+            i = j
+            continue
+        i += 1
+    return commands
+
+
+def _in_steps_list(lines: list[str], index: int) -> bool:
+    """Is ``lines[index]`` (a ``- `` item) directly inside a ``steps:`` key?"""
+    indent = len(lines[index]) - len(lines[index].lstrip())
+    for back in range(index - 1, -1, -1):
+        prev = lines[back]
+        if not prev.strip() or prev.lstrip().startswith("#"):
+            continue
+        prev_indent = len(prev) - len(prev.lstrip())
+        if prev_indent < indent:
+            return prev.strip() == "steps:"
+    return False
+
+
+def _in_step(lines: list[str], index: int) -> bool:
+    """Is ``lines[index]`` inside a step (below a ``steps:`` key)?"""
+    indent = len(lines[index]) - len(lines[index].lstrip())
+    for back in range(index - 1, -1, -1):
+        prev = lines[back]
+        if not prev.strip():
+            continue
+        prev_indent = len(prev) - len(prev.lstrip())
+        if prev.strip() == "steps:" and prev_indent < indent:
+            return True
+        if re.match(r"^  [A-Za-z0-9_-]+:\s*$", prev):
+            return False
+    return False
+
+
+_RUNNER_WORDS = {
+    "python", "python3", "pytest", "go", "test", "mvn", "npm", "run", "node",
+    "npx", "vitest", "playwright", "gradle", "./gradlew",
+}
+# Options whose NEXT token is a value, not a path.
+_VALUE_OPTIONS = {"-m", "-k", "-p", "-n", "-o", "--tb", "--rootdir", "--basetemp",
+                  "--junitxml", "--junit-xml", "--cov", "--reporter"}
+# Options that narrow a run to a config file's selection: never "the whole package".
+_CONFIG_OPTIONS = {"-c", "--config"}
+
+
+def _command_paths(command: str) -> tuple[list[str], bool]:
+    """``(path arguments, restricted)`` of one runner command.
+
+    The runner words at the head (``python -m pytest``, ``npm run test``,
+    ``mvn ... test``) and option values are not paths; every other argument
+    is. ``restricted`` is set by ``--config``: ``playwright test --config
+    docs.config.ts`` runs that config's selection, not the package.
+    """
+    tokens = command.split()
+    while tokens and re.match(r"^[A-Z_][A-Z0-9_]*=", tokens[0]):
+        tokens.pop(0)
+    paths: list[str] = []
+    restricted = False
+    head = True
+    skip_next = False
+    for token in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if token.startswith("-"):
+            name = token.split("=", 1)[0]
+            if name in _CONFIG_OPTIONS:
+                restricted = True
+            if "=" not in token and (name in _VALUE_OPTIONS or name in _CONFIG_OPTIONS):
+                skip_next = True
+            continue
+        if head and token in _RUNNER_WORDS:
+            continue
+        head = False
+        paths.append(token.strip("'\""))
+    return paths, restricted
+
+
+def _unit_is_run(unit: str, commands: list[tuple[str, str]]) -> bool:
+    for cwd, command in commands:
+        if cwd and not (unit == cwd or unit.startswith(cwd + "/")):
+            continue
+        rel = unit[len(cwd) + 1:] if cwd else unit
+        paths, restricted = _command_paths(command)
+        if not paths:
+            # `npm run test`, `mvn test`, bare `pytest`: the whole package --
+            # unless a config file narrows the selection.
+            if not restricted:
+                return True
+            continue
+        for token in paths:
+            while token.startswith("./"):
+                token = token[2:]
+            token = token.removesuffix("...").rstrip("/")     # `go test ./...`
+            if token in ("", ".") or rel == token or rel.startswith(token + "/"):
+                return True
+    return False
+
+
+def _ci_every_test_suite_runs() -> list[Violation]:
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=REPO_ROOT, capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        return [Violation(REPO_ROOT / ".github", 0,
+                          "git ls-files failed; the guard could not look")]
+    tracked = [p for p in proc.stdout.decode("utf-8", "replace").split("\0") if p]
+    units = _test_units(tracked)
+
+    workflows = sorted((REPO_ROOT / ".github" / "workflows").glob("*.y*ml"))
+    commands: list[tuple[str, str]] = []
+    for workflow in workflows:
+        commands += _workflow_test_commands(workflow.read_text(encoding="utf-8"))
+
+    # Fail loud, not open: a parser that found nothing would pass every suite.
+    if len(units) < 5 or len(commands) < 5:
+        return [Violation(
+            REPO_ROOT / ".github" / "workflows" / "ci.yml", 0,
+            f"found {len(units)} test suites and {len(commands)} test commands; "
+            "the guard cannot have looked properly",
+        )]
+
+    violations: list[Violation] = []
+    for unit in sorted(units):
+        if any(unit == p.rstrip("/") or unit.startswith(p) for p in _SUITES_NOT_RUN_IN_CI):
+            continue
+        if not _unit_is_run(unit, commands):
+            violations.append(Violation(
+                REPO_ROOT / unit, 0,
+                f"test suite `{unit}` is not executed by any workflow step — "
+                "its tests are decoration until a job runs them",
+            ))
+    return violations
+
+
 GUARDS: list[Guard] = [
     Guard(
         name="backend.no-print",
@@ -3720,6 +3993,20 @@ GUARDS: list[Guard] = [
             "(or PROMPT_TEMPLATE_VERSIONS for mcp.* prompts), then: "
             + _PROMPT_ATTEST_HINT
             + ". See architecture/AI_EVALUATION.md."
+        ),
+    ),
+    Guard(
+        name="ci.every-test-suite-runs",
+        description=(
+            "Every tracked test suite (a tests/ dir, or a test file outside "
+            "one) is executed by a workflow step — a suite nothing runs is "
+            "decoration (the MCP auth-gate tests were, re-audit N2)."
+        ),
+        check=_ci_every_test_suite_runs,
+        fix_hint=(
+            "Add a step that runs the suite (pytest <path>, npm test, go test, "
+            "mvn test) to .github/workflows/ci.yml. A suite that genuinely "
+            "cannot run in CI goes in _SUITES_NOT_RUN_IN_CI with the reason."
         ),
     ),
     Guard(

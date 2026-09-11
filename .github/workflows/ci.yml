@@ -114,7 +114,10 @@ jobs:
       - name: Self-test the drift guard
         # Pins that the guard actually FAILS on drift — a guard that can only
         # pass is a guard that silently rots.
-        run: python -m pytest scripts/release/test_image_drift.py -v
+        # scripts/release/tests (release-manifest + image-scan tooling, 13
+        # tests, ~1 s) was run by no workflow until ci.every-test-suite-runs
+        # (re-audit N2) listed it.
+        run: python -m pytest scripts/release/test_image_drift.py scripts/release/tests -v
 
       - name: Shell syntax check — release scripts
         run: |
@@ -1124,6 +1127,12 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # client/js/tests/live-protocol-ids.test.mjs existed and nothing ran it
+      # (found by the quality gate's ci.every-test-suite-runs, re-audit N2).
+      # `npm test` rebuilds dist/ and runs node's built-in test runner: ~2 s.
+      - name: Test
+        run: npm test
 
   build-images:
     name: Build & Push Images

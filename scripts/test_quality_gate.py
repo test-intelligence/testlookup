@@ -1656,3 +1656,125 @@ def test_activity_coverage_reports_every_uncovered_mutation_not_just_the_first(
             pass
     """)
     assert len(qg._backend_activity_coverage()) == 2
+
+
+# ── ci.every-test-suite-runs (re-audit N2) ───────────────────────────────────
+#
+# The MCP suite was collected by nothing while its auth gate became the
+# security boundary. These pin the parts that decide "is this suite run":
+# what a suite is, what a runner command is, and whether a command covers it.
+
+_WORKFLOW = """\
+name: t
+jobs:
+  py:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./mcp
+    steps:
+      - uses: actions/checkout@v7
+      - name: deps
+        run: pip install pytest
+      - name: tests
+        run: python -m pytest tests -q
+  sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: sdk + cli
+        run: |
+          pip install ./client
+          python -m pytest client/tests -q
+      - name: scripts
+        run: |
+          cd scripts
+          python -m pytest test_gate.py -v
+      - name: go
+        working-directory: client/go
+        run: go test ./...
+      - name: folded
+        working-directory: ./backend
+        run: >-
+          pytest -m integration -v
+          tests/integration/test_a.py
+"""
+
+
+def test_suites_are_topmost_test_dirs_and_skip_product_code_named_test() -> None:
+    units = qg._test_units([
+        "mcp/tests/test_a.py",
+        "mcp/tests/sub/test_b.py",
+        "backend/app/routers/test_runs.py",      # product code, not a test
+        "backend/test_db.py",                    # a manual script
+        "scripts/test_gate.py",
+        "client/go/pkg/x_test.go",
+        "frontend/src/a/B.test.tsx",
+        "client/java/src/test/java/io/ATest.java",
+        "mcp/tests/conftest.py",
+    ])
+    assert units == {
+        "mcp/tests", "scripts/test_gate.py", "client/go/pkg/x_test.go",
+        "frontend/src/a/B.test.tsx", "client/java/src/test",
+    }
+
+
+def test_workflow_commands_resolve_the_effective_directory() -> None:
+    commands = qg._workflow_test_commands(_WORKFLOW)
+    assert commands == [
+        ("mcp", "python -m pytest tests -q"),
+        ("", "python -m pytest client/tests -q"),
+        ("scripts", "python -m pytest test_gate.py -v"),
+        ("client/go", "go test ./..."),
+        ("backend", "pytest -m integration -v tests/integration/test_a.py"),
+    ]
+
+
+def test_installing_pytest_is_not_running_anything() -> None:
+    commands = qg._workflow_test_commands(_WORKFLOW)
+    # `pip install pytest` has no path argument; read as a runner it would
+    # count as "run every suite under the repo root" and pass everything.
+    assert all(not c.startswith("pip ") for _, c in commands)
+    assert not qg._unit_is_run("client/js/tests", commands)
+
+
+def test_a_suite_is_run_only_by_a_command_that_names_or_contains_it() -> None:
+    commands = qg._workflow_test_commands(_WORKFLOW)
+    assert qg._unit_is_run("mcp/tests", commands)
+    assert qg._unit_is_run("client/tests", commands)
+    assert qg._unit_is_run("scripts/test_gate.py", commands)
+    assert qg._unit_is_run("client/go/pkg/x_test.go", commands)
+    # Running ONE file of a suite does not run the suite.
+    assert not qg._unit_is_run("backend/tests", commands)
+
+
+def test_the_real_repo_runs_every_suite_and_the_mcp_step_is_what_runs_it() -> None:
+    assert qg._ci_every_test_suite_runs() == []
+    ci = (qg.REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    step = "        run: python -m pytest tests -q\n"
+    assert ci.count(step) == 1
+    commands = qg._workflow_test_commands(ci.replace(step, "        run: echo skipped\n"))
+    assert not qg._unit_is_run("mcp/tests", commands), (
+        "removing the MCP pytest step must leave mcp/tests unrun"
+    )
+
+
+def test_a_bare_directory_argument_is_a_path_not_the_whole_package() -> None:
+    # `pytest tests` from the root runs root/tests, not every suite in the repo.
+    assert not qg._unit_is_run("mcp/other_tests", [("", "pytest tests")])
+    assert qg._unit_is_run("tests", [("", "pytest tests")])
+    # `-m integration` is an option value, not a path.
+    assert qg._command_paths("pytest -m integration -v tests/a.py") == (["tests/a.py"], False)
+
+
+def test_a_config_file_narrows_the_run() -> None:
+    commands = [("frontend", "npx playwright test --config playwright.docs.config.ts")]
+    assert not qg._unit_is_run("frontend/tests", commands)
+    assert qg._unit_is_run("frontend/src/a.test.ts", [("frontend", "npm run test")])
+
+
+def test_a_parser_that_finds_no_commands_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
+    # "No test commands found" must not read as "every suite is covered".
+    monkeypatch.setattr(qg, "_workflow_test_commands", lambda text: [])
+    violations = qg._ci_every_test_suite_runs()
+    assert len(violations) == 1
+    assert "cannot have looked properly" in violations[0].message
