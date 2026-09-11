@@ -193,6 +193,19 @@ async def create_api_key(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
     # ── key generation ────────────────────────────────────────────────────
+    # ── a key being revoked cannot mint (review R-B45-D-4) ───────────────
+    # The caller's key was active when it authenticated, but a revoke can
+    # commit between that and this INSERT. The FK's own KEY SHARE lock does
+    # not conflict with the revoke's UPDATE, and the revoke's cascade cannot
+    # see this uncommitted child, so the child used to commit active under a
+    # revoked parent. FOR SHARE on the parent does conflict with that UPDATE:
+    # either this mint holds it first -- the revoke waits for our commit, and
+    # its cascade then sees the child -- or the revoke does, and we read its
+    # committed is_active = false and refuse. Lock order: a mint locks only
+    # its parent, so it cannot close a cycle with a revoke.
+    if grant is not None:
+        await _lock_active_minting_parent(db, grant.key_id)
+
     raw_key = f"qai_{secrets.token_urlsafe(32)}"
     key_hash = _hash_key(raw_key)
     key_hint = raw_key[:8] + "..."
@@ -320,9 +333,7 @@ async def revoke_api_key(
     # key left the replacement working. Every ACTIVE key below this one --
     # at any depth, whoever owns it -- is revoked in this same transaction.
     # Keys minted before migration 0168 have no parent recorded (roots).
-    descendants = (
-        await db.execute(_REVOKE_DESCENDANTS, {"root": api_key.id})
-    ).all()
+    descendants = await _revoke_subtree(db, api_key.id)
 
     if api_key.project_id is not None:
         await record_activity(
@@ -357,6 +368,48 @@ async def revoke_api_key(
     for key_hash in (api_key.key_hash, *(child.key_hash for child in descendants)):
         await forget_streaming_key_hash(key_hash)
     return None
+
+
+_MINTING_PARENT = text(
+    "SELECT is_active FROM api_keys WHERE id = :parent FOR SHARE"
+).bindparams(bindparam("parent", type_=PG_UUID(as_uuid=True)))
+
+
+async def _lock_active_minting_parent(db: AsyncSession, parent_id: uuid.UUID) -> None:
+    """Hold the minting key's row for the mint's transaction; refuse it if revoked."""
+    active = (await db.execute(_MINTING_PARENT, {"parent": parent_id})).scalar_one_or_none()
+    if not active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This API key has been revoked",
+        )
+
+
+# Passes of the cascade before giving up; a pass only finds more keys when a
+# mint committed under the subtree while the previous pass waited for it.
+_MAX_CASCADE_PASSES = 64
+
+
+async def _revoke_subtree(db: AsyncSession, root_id: uuid.UUID) -> list:
+    """Revoke every active key below ``root_id``, repeating until a pass finds none.
+
+    One pass is not enough (review R-B45-D-4). A pass that has to wait for a
+    descendant's row -- a mint holding it FOR SHARE -- resumes with the
+    snapshot it started with, so the key that mint commits is invisible to
+    it. Under READ COMMITTED each new statement takes a new snapshot, so the
+    next pass sees it. Mints that reach the subtree later wait on the rows
+    this transaction holds and then read them revoked.
+    """
+    revoked: list = []
+    for _ in range(_MAX_CASCADE_PASSES):
+        batch = (await db.execute(_REVOKE_DESCENDANTS, {"root": root_id})).all()
+        if not batch:
+            return revoked
+        revoked.extend(batch)
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Keys are still being minted under this key; retry the revocation",
+    )
 
 
 # Every active descendant of :root, at any depth and whoever owns it. The
