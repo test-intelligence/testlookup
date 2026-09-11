@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
@@ -22,11 +22,81 @@ from app.models.postgres import (
     NotificationEventType,
     NotificationLog,
     NotificationPreference,
+    ProjectMember,
     User,
+    UserRole,
 )
 from app.services.notification import email_service, slack_service, teams_service
 
 logger = logging.getLogger(__name__)
+
+
+def _recipient_may_see_project(project_id: uuid.UUID):
+    """SQL: the preference's owner may read ``project_id`` right now (QA-R3-1).
+
+    A project's notifications carry its run results and failure text, so they
+    go only to someone who could read them in the app: an active account that
+    is an instance ADMIN (``get_accessible_project_ids`` answers "everything"
+    for one) or a member of the project. Checked at send time, not only when
+    the preference is written, because membership changes: a member who
+    leaves keeps the row, and an "all projects" (``project_id IS NULL``) row
+    matches every project, including ones its owner was never in.
+
+    Needs ``User`` joined on ``NotificationPreference.user_id``.
+    """
+    return and_(
+        User.is_active.is_(True),
+        or_(
+            User.role == UserRole.ADMIN.value,
+            exists().where(
+                ProjectMember.user_id == NotificationPreference.user_id,
+                ProjectMember.project_id == project_id,
+            ),
+        ),
+    )
+
+
+async def _rows_whose_recipient_may_see_project(
+    db,
+    candidates: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID]],
+) -> set[uuid.UUID]:
+    """The ids of ``(row_id, user_id, project_id)`` whose user may read the project now.
+
+    The relay's copy of :func:`_recipient_may_see_project`, for rows staged
+    earlier: same rule (active, and ADMIN or a member), one query per claim.
+    """
+    if not candidates:
+        return set()
+    user_ids = {user_id for _row, user_id, _project in candidates}
+    project_ids = {project_id for _row, _user, project_id in candidates}
+    users = {
+        user_id: (is_active, role)
+        for user_id, is_active, role in (
+            await db.execute(
+                select(User.id, User.is_active, User.role).where(User.id.in_(user_ids))
+            )
+        ).all()
+    }
+    memberships = set(
+        (
+            await db.execute(
+                select(ProjectMember.user_id, ProjectMember.project_id).where(
+                    ProjectMember.user_id.in_(user_ids),
+                    ProjectMember.project_id.in_(project_ids),
+                )
+            )
+        ).all()
+    )
+    allowed: set[uuid.UUID] = set()
+    for row_id, user_id, project_id in candidates:
+        is_active, role = users.get(user_id, (False, None))
+        if not is_active:
+            continue
+        if str(getattr(role, "value", role)) == UserRole.ADMIN.value or (
+            (user_id, project_id) in memberships
+        ):
+            allowed.add(row_id)
+    return allowed
 
 _MAX_DURABLE_DELIVERY_ATTEMPTS = 8
 _TEAM_ROUTE_METADATA_KEY = "_durable_team_route"
@@ -307,6 +377,7 @@ async def _stage_scoped_preference_deliveries(
                 NotificationPreference.project_id == project_id,
                 NotificationPreference.project_id.is_(None),
             ),
+            _recipient_may_see_project(project_id),
         )
     )
     plans = _build_notification_plans(
@@ -373,7 +444,8 @@ async def _load_and_notify(
             # The durable notification relay owns provider I/O and retries.
             return
 
-        # Load all preferences for this project (and global preferences)
+        # Load all preferences for this project (and global preferences) whose
+        # owner may still read it.
         prefs_result = await db.execute(
             select(NotificationPreference, User.email)
             .join(User, NotificationPreference.user_id == User.id)
@@ -383,6 +455,7 @@ async def _load_and_notify(
                     NotificationPreference.project_id == project_id,
                     NotificationPreference.project_id.is_(None),
                 ),
+                _recipient_may_see_project(project_id),
             )
         )
         rows = prefs_result.all()
@@ -679,6 +752,25 @@ async def relay_pending_notification_deliveries(
                 pref.id: (pref, user_email)
                 for pref, user_email in preference_result.all()
             }
+            # A row can wait minutes to hours between staging and its last
+            # retry. Re-check the recipient against each row's own project, and
+            # treat one who lost access like a deleted preference (QA-R3-1).
+            allowed_rows = await _rows_whose_recipient_may_see_project(
+                db,
+                [
+                    (row.id, preferences[row.preference_id][0].user_id, row.project_id)
+                    for row in rows
+                    if row.preference_id in preferences and row.project_id is not None
+                ],
+            )
+            preferences_by_row = {
+                row.id: preferences[row.preference_id]
+                for row in rows
+                if row.preference_id in preferences
+                and (row.project_id is None or row.id in allowed_rows)
+            }
+        else:
+            preferences_by_row = {}
         team_routes = {
             row.id: dict(row.delivery_metadata or {}).get(_TEAM_ROUTE_METADATA_KEY)
             for row in rows
@@ -689,8 +781,8 @@ async def relay_pending_notification_deliveries(
         }
         needs_email = any(
             (
-                preferences.get(row.preference_id, (None, None))[0] is not None
-                and preferences[row.preference_id][0].channel
+                preferences_by_row.get(row.id, (None, None))[0] is not None
+                and preferences_by_row[row.id][0].channel
                 == NotificationChannel.EMAIL
             )
             or (
@@ -706,8 +798,8 @@ async def relay_pending_notification_deliveries(
             for row in rows
         )
         needs_webhooks = any(
-            preferences.get(row.preference_id, (None, None))[0] is not None
-            and preferences[row.preference_id][0].channel
+            preferences_by_row.get(row.id, (None, None))[0] is not None
+            and preferences_by_row[row.id][0].channel
             in (NotificationChannel.SLACK, NotificationChannel.TEAMS)
             for row in rows
         )
@@ -819,9 +911,12 @@ async def relay_pending_notification_deliveries(
         explicit_route = explicit_routes.get(row.id)
         if isinstance(explicit_route, dict):
             return await _dispatch_snapshotted_route(row, explicit_route)
-        route = preferences.get(row.preference_id)
+        route = preferences_by_row.get(row.id)
         if route is None:
-            return "failed", "Notification preference no longer exists"
+            return "failed", (
+                "Notification preference no longer exists, or its owner can "
+                "no longer access this project"
+            )
         pref, user_email = route
         try:
             event = NotificationEventType(row.event_type)

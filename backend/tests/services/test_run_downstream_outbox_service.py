@@ -1251,6 +1251,9 @@ async def test_notification_relay_retries_provider_failure_with_stable_identity(
     token = uuid.uuid4()
     row = SimpleNamespace(
         id=uuid.uuid4(),
+        # Every NotificationLog row has a project_id column; the relay re-checks
+        # the recipient against it before delivering (QA-R3-1).
+        project_id=pref.project_id,
         preference_id=pref.id,
         delivery_attempts=1,
         delivery_token=token,
@@ -1262,8 +1265,12 @@ async def test_notification_relay_retries_provider_failure_with_stable_identity(
     )
     preferences = MagicMock()
     preferences.all.return_value = [(pref, "qa@example.test")]
+    recipient = MagicMock()
+    recipient.all.return_value = [(pref.user_id, True, "QA_ENGINEER")]
+    membership = MagicMock()
+    membership.all.return_value = [(pref.user_id, pref.project_id)]
     claim_db = MagicMock()
-    claim_db.execute = AsyncMock(return_value=preferences)
+    claim_db.execute = AsyncMock(side_effect=[preferences, recipient, membership])
     claim_db.commit = AsyncMock()
     outcome_db = MagicMock()
     outcome_db.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
