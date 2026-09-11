@@ -207,6 +207,22 @@ _METADATA_ENDPOINTS = frozenset({
 })
 
 
+#: IPv6 forms whose whole point is to carry an IPv4 address to ANOTHER network:
+#: NAT64 (well-known and RFC 8215 local-use), 6to4 and Teredo. CPython marks
+#: 64:ff9b:1::/48 and 2001::/23 ``is_private``, so without this a hostname
+#: answering 64:ff9b:1::<public v4> passed as on-box and was translated
+#: off-box by the NAT64 gateway (QA-B45-A4). The embedded IPv4's position in
+#: a local-use NAT64 address depends on a prefix length the address does not
+#: carry, so these ranges are refused outright: no on-box model server is
+#: reached through a translator or a tunnel.
+_IPV4_CARRYING_IPV6 = (
+    ipaddress.ip_network("64:ff9b::/96"),    # NAT64 well-known prefix
+    ipaddress.ip_network("64:ff9b:1::/48"),  # NAT64 local-use (RFC 8215)
+    ipaddress.ip_network("2002::/16"),       # 6to4
+    ipaddress.ip_network("2001::/32"),       # Teredo
+)
+
+
 def _is_routable(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Whether an address is NOT an acceptable on-box LLM host.
 
@@ -224,6 +240,10 @@ def _is_routable(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool
     """
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
         address = address.ipv4_mapped
+    if isinstance(address, ipaddress.IPv6Address) and any(
+        address in network for network in _IPV4_CARRYING_IPV6
+    ):
+        return True
     if address.is_link_local or address in _METADATA_ENDPOINTS:
         return True
     return not (
