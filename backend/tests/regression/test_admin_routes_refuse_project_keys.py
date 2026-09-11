@@ -228,6 +228,11 @@ REVIEWED_INLINE_ADMIN_CHECKS: dict[tuple[str, str], str] = {
         "both callers (add/update project member) run require_project_access() on the "
         "path project first, so a bound key is already confined to it"
     ),
+    ("app/services/notification/manager.py", "digest_owner_block_reason"): (
+        "re-audit N33: its user is a digest subscription's owner loaded by id in "
+        "dispatch_scheduled_digests, not the request principal, so it carries no API-key "
+        "binding to consult; the ADMIN branch keeps the workspace-wide-digest rule"
+    ),
 }
 
 _BINDING_REFERENCES = frozenset({"_api_key_bound_project", "_enforce_api_key_project_binding"})
