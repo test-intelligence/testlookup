@@ -21,8 +21,20 @@ This is the cluster bound, held in Redis:
   lapses) is stopped: its call is cancelled and the block raises
   :class:`LLMSlotLost`. Otherwise a second holder is admitted when the lease
   lapses while the first is still calling, and the bound is passed
-  (QA-B45-A5). Bounded: a holder stops at most one renew interval
-  (lease / 3) before its lease could have lapsed.
+  (QA-B45-A5).
+* The lease is timed locally from when the last successful acquire or
+  renew was SENT: the server extended it at or after that moment, so the
+  local deadline is never later than Redis's. Each renew is bounded by the
+  time left before that deadline, less a margin (QA-B45-R2-3): a renew that
+  stalls (a hung socket, a slow Redis) is abandoned, and the holder is
+  stopped before its lease can lapse, not when the stalled call returns.
+  A heartbeat that wakes after the deadline (a starved event loop) stops
+  the holder at once without trying to renew.
+* Residual: a process whose event loop is BLOCKED for longer than the
+  lease can neither renew nor stop its own call, so for that long the
+  provider may see one call over the limit. It is stopped as soon as the
+  loop runs again. ``LLM_CLUSTER_SLOT_LEASE_SECONDS`` has a floor well
+  above the Redis socket timeout (see config).
 
 The per-process semaphore stays as the local bound. When Redis is unreachable
 the cluster bound is skipped with a warning, and the local bound is what
@@ -129,26 +141,53 @@ class ClusterSemaphore:
     async def release(self, token: str) -> None:
         await self._client().zrem(self.key, token)
 
-    async def _heartbeat(self, token: str, owner: Optional[asyncio.Task], lost: asyncio.Event) -> None:
+    def _margin(self, interval: float) -> float:
+        """How long before the lease lapses a holder is stopped: its call's
+        cancellation needs a moment to unwind before a second holder may run."""
+        return min(interval / 2.0, max(0.01, self.lease_seconds * 0.05))
+
+    async def _heartbeat(
+        self,
+        token: str,
+        owner: Optional[asyncio.Task],
+        lost: asyncio.Event,
+        lease_from: Optional[float] = None,
+    ) -> None:
         interval = max(0.05, self.lease_seconds / 3.0)
-        last_renewed = time.monotonic()
+        margin = self._margin(interval)
+        # The lease runs at least `lease_seconds` from when the acquire or the
+        # last successful renew was SENT (QA-B45-R2-3).
+        lease_from = time.monotonic() if lease_from is None else lease_from
         while True:
             await asyncio.sleep(interval)
-            try:
-                renewed: Optional[bool] = await self.renew(token)
-            except Exception as exc:  # noqa: BLE001 -- judged against the lease below
-                logger.warning("llm_cluster_slot_renew_failed", key=self.key, error=str(exc)[:200])
-                renewed = None
+            sent = time.monotonic()
+            deadline = lease_from + self.lease_seconds - margin
+            renewed: Optional[bool]
+            reason = "renewal failing"
+            if sent >= deadline:
+                renewed, reason = None, "woke after the lease deadline"
+            else:
+                try:
+                    # Bounded by the lease: a renew that stalls must not keep
+                    # the holder running past the moment Redis drops it.
+                    renewed = await asyncio.wait_for(self.renew(token), timeout=deadline - sent)
+                except asyncio.TimeoutError:
+                    logger.warning("llm_cluster_slot_renew_stalled", key=self.key)
+                    renewed, reason = None, "renewal stalled"
+                except Exception as exc:  # noqa: BLE001 -- judged against the lease below
+                    logger.warning("llm_cluster_slot_renew_failed", key=self.key, error=str(exc)[:200])
+                    renewed = None
             if renewed:
-                last_renewed = time.monotonic()
+                lease_from = sent
                 continue
-            # False: Redis says the lease is gone. None: renewal failed; keep
-            # trying only while the NEXT attempt still lands inside the lease.
-            if renewed is False or time.monotonic() + interval - last_renewed >= self.lease_seconds:
+            # False: Redis says the lease is gone. None: renewal failed or
+            # stalled; keep trying only while the NEXT attempt can still
+            # finish before the deadline.
+            if renewed is False or time.monotonic() + interval >= deadline:
                 logger.warning(
                     "llm_cluster_slot_lease_lost",
                     key=self.key,
-                    reason="lease gone" if renewed is False else "renewal failing",
+                    reason="lease gone" if renewed is False else reason,
                 )
                 lost.set()
                 if owner is not None:
@@ -167,7 +206,9 @@ class ClusterSemaphore:
         deadline = time.monotonic() + max(0.0, float(timeout))
         delay = self._poll
         held = False
+        acquire_sent = time.monotonic()
         while True:
+            acquire_sent = time.monotonic()
             try:
                 held = await self.try_acquire(token)
             except Exception as exc:  # noqa: BLE001 -- degrade to the local bound
@@ -186,7 +227,7 @@ class ClusterSemaphore:
         owner = asyncio.current_task()
         lost = asyncio.Event()
         heartbeat: Optional[asyncio.Task] = (
-            asyncio.create_task(self._heartbeat(token, owner, lost)) if held else None
+            asyncio.create_task(self._heartbeat(token, owner, lost, acquire_sent)) if held else None
         )
         try:
             yield held

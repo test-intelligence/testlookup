@@ -514,11 +514,27 @@ groups:
     interval: 60s
     rules:
 
-      # Jobs the testlookup-backup CronJob creates are named
-      # testlookup-backup-<n>. Fires while the failed Job exists: delete it
-      # (or let failedJobsHistoryLimit rotate it) once the cause is fixed.
+      # Fires on the Job's Failed CONDITION (kube_job_status_condition), set
+      # only once backoffLimit is exhausted, never on kube_job_status_failed:
+      # that counts failed PODS, so a backup whose first pod failed and whose
+      # retry succeeded (backoffLimit 1) is a successful Job with failed=1,
+      # kept for 3 days by successfulJobsHistoryLimit (R-B45-R2-1).
+      #
+      # Scoped to Jobs the testlookup-backup CronJob owns (kube_job_owner;
+      # `kubectl create job --from=cronjob/...` sets that owner too) or that
+      # are named testlookup-backup-* (a hand-made manual run). Fires while
+      # the failed Job exists: delete it (or let failedJobsHistoryLimit rotate
+      # it) once the cause is fixed.
       - alert: TestLookupBackupJobFailed
-        expr: max by (namespace, job_name) (kube_job_status_failed{job_name=~"testlookup-backup-.*"}) > 0
+        expr: |
+          max by (namespace, job_name) (
+            kube_job_status_condition{condition="Failed", status="true"}
+            and on (namespace, job_name)
+            (
+              kube_job_owner{owner_kind="CronJob", owner_name="testlookup-backup"}
+              or kube_job_info{job_name=~"testlookup-backup-.*"}
+            )
+          ) == 1
         for: 0m
         labels:
           severity: critical

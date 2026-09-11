@@ -58,7 +58,7 @@ component, from `infra/monitoring/prometheus-rules/testlookup-alerts.yml`:
 
 | Alert | Fires when |
 |---|---|
-| `TestLookupBackupJobFailed` | a `testlookup-backup-*` Job has failed (`kube_job_status_failed > 0`). It keeps firing while the failed Job exists: fix the cause, then `kubectl -n testlookup delete job <name>`. |
+| `TestLookupBackupJobFailed` | a Job owned by the `testlookup-backup` CronJob (or named `testlookup-backup-*`) has FAILED: its `Failed` condition is true (`kube_job_status_condition`), which is set only once every retry (`backoffLimit`) failed. A backup whose first pod failed and whose retry succeeded does not fire. It keeps firing while the failed Job exists: fix the cause, then `kubectl -n testlookup delete job <name>`. |
 | `TestLookupBackupStale` | no successful run for 26 hours (`kube_cronjob_status_last_successful_time`), including a CronJob that is suspended or has never succeeded. |
 
 Both read **kube-state-metrics**. kube-prometheus-stack deploys and scrapes

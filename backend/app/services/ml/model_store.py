@@ -96,6 +96,32 @@ async def publish(*paths: Path) -> list[str]:
     return written
 
 
+#: Mode of a published model file: what the old ``write_bytes`` gave under
+#: the usual 022 umask. mkstemp alone would leave 0600 (R-B45-R2-7).
+MODEL_FILE_MODE = 0o644
+_TEMP_SUFFIX = ".download"
+#: A temp file older than this is the orphan of a writer that died mid-write
+#: (SIGKILL, OOM). A live write takes seconds; a younger temp file may be
+#: another process's write in progress, so it is left alone.
+STALE_DOWNLOAD_SECONDS = 15 * 60
+
+
+def _sweep_stale_downloads(model_dir: Path, *, now: float | None = None) -> list[str]:
+    """Remove temp files left by a writer that died mid-write (R-B45-R2-7).
+
+    The loaders' globs never match them, so they are clutter, not a hazard;
+    but nothing else would ever remove them.
+    """
+    cutoff = (time.time() if now is None else now) - STALE_DOWNLOAD_SECONDS
+    removed: list[str] = []
+    for path in model_dir.glob("*" + _TEMP_SUFFIX):
+        with contextlib.suppress(OSError):
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed.append(path.name)
+    return removed
+
+
 def _write_atomically(target: Path, content: bytes) -> None:
     """Publish ``content`` at ``target`` whole or not at all (re-audit R-B45-3).
 
@@ -105,12 +131,17 @@ def _write_atomically(target: Path, content: bytes) -> None:
     half written. Each write now gets its own temp file in the same directory
     (``os.replace`` is atomic only within one filesystem).
     """
-    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".", suffix=".download")
+    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".", suffix=_TEMP_SUFFIX)
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
+        # mkstemp creates 0600, and os.replace keeps it. The previous
+        # write_bytes gave 0644 under the usual 022 umask; keep that, so a
+        # process sharing ML_MODEL_DIR under another UID can still load it
+        # (R-B45-R2-7).
+        os.chmod(tmp_name, MODEL_FILE_MODE)
         os.replace(tmp_name, target)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -147,6 +178,9 @@ async def sync_down(*, force: bool = False) -> list[str]:
         prefix = _prefix()
         model_dir = Path(settings.ML_MODEL_DIR)
         await asyncio.to_thread(model_dir.mkdir, parents=True, exist_ok=True)
+        swept = await asyncio.to_thread(_sweep_stale_downloads, model_dir)
+        if swept:
+            logger.info("ml_model_stale_downloads_removed", files=swept)
         objects = await storage.list_objects(prefix)
         wanted: list[tuple[str, str, int | None]] = []
         for item in objects:

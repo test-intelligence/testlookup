@@ -46,14 +46,37 @@ class BudgetedLLM:
         self._connect_retries = max(0, int(connect_retries or 0))
 
     def _retryable(self, exc: BaseException) -> bool:
-        # An offline pin refusal (llm_egress.OffBoxTargetError) is an OSError,
-        # not a ConnectionError, so it is never retried: it is policy, not a
-        # transient fault.
+        """Only a failure that PROVES nothing was sent: the connect phase.
+
+        ``ConnectionError`` also covers ``ConnectionResetError``,
+        ``BrokenPipeError`` and ``ConnectionAbortedError``, which come AFTER
+        bytes left: retrying them re-runs, and re-bills, the request
+        (QA-B45-R2-1). An offline pin refusal (llm_egress.OffBoxTargetError)
+        is policy, not a transient fault, so it is never retried either.
+        """
         try:
             import httpx
         except ImportError:  # pragma: no cover
-            return isinstance(exc, ConnectionError)
-        return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError))
+            return isinstance(exc, ConnectionRefusedError)
+        return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, ConnectionRefusedError))
+
+    def _sdk_retries(self) -> int:
+        """Attempts the provider SDK retries INSIDE one call (its ``max_retries``).
+
+        ``None`` on a client that has the field means the SDK's own default
+        (2 for OpenAI/Anthropic), so it counts as retrying. A client without
+        the field (ChatOllama) does not retry; BudgetedLLM does, connect-phase
+        only.
+        """
+        for candidate in (self._inner, getattr(self._inner, "bound", None)):
+            if candidate is None or not hasattr(candidate, "max_retries"):
+                continue
+            value = getattr(candidate, "max_retries")
+            if value is None:
+                return 2
+            if isinstance(value, int) and not isinstance(value, bool):
+                return max(0, value)
+        return 0
 
     @staticmethod
     def _retry_delay(attempt: int) -> float:
@@ -200,14 +223,27 @@ class BudgetedLLM:
                     # QA-B45-A1: a failure after the request was sent (read
                     # timeout, cancellation, 5xx) may still be billed. Keep
                     # the worst case, and meter it: no stage records a
-                    # failed call.
-                    if reservation is not None and not cost.failure_proves_no_request(exc):
+                    # failed call. QA-B45-R2-1: a client that retries inside
+                    # the call shows only its LAST attempt's error; attempt
+                    # 1 may have been sent (and billed) before attempt 2
+                    # failed to connect. Such a failure never proves nothing
+                    # was sent.
+                    if reservation is not None and (
+                        self._sdk_retries() > 0 or not cost.failure_proves_no_request(exc)
+                    ):
                         actual_usd = reservation.estimated_usd
                         record_meter = True
                     raise
                 self._observe("success", time.perf_counter() - started)
                 metered_by_stage = self._record_usage(result)
                 if reservation is not None:
+                    # Settled at the usage the provider reported for the
+                    # attempt that succeeded. Residual (QA-B45-R2-1): an
+                    # earlier attempt the SDK retried after a read timeout
+                    # may also have been billed, and is not seen here; the
+                    # SDKs do not report their retries. Charging the worst
+                    # case on every success instead would refuse calls long
+                    # before the real spend reached the cap.
                     tokens = cost.usage_tokens(result)
                     actual_usd = (
                         cost.price(self._provider, self._model, *tokens)
@@ -215,7 +251,11 @@ class BudgetedLLM:
                         # Unreported usage: keep the worst case rather than guess low.
                         else reservation.estimated_usd
                     )
-                    record_meter = not metered_by_stage
+                    # A stage prices the TOKENS it observed. A call whose
+                    # usage was not reported added none, so the stage cannot
+                    # price it: meter its reserved worst case here, or it
+                    # reaches only the Redis counter (b45 r2 item 7).
+                    record_meter = not metered_by_stage or tokens is None
                 return result
         finally:
             await cost.settle(

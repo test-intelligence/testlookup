@@ -54,22 +54,206 @@ def _cronjob(path: Path) -> dict:
 # ── R-B45-2 ──────────────────────────────────────────────────────────────────
 
 
+# A tiny PromQL evaluator, enough for the backup rule's operators: vector
+# selectors (= and =~ matchers), `and on (...)`, `or`, `max by (...)` and a
+# scalar comparison. promtool is not installed offline, so the rule's REAL
+# expression is parsed and run against synthetic kube-state-metrics series
+# (R-B45-R2-1): a Job whose retry succeeded must not page.
+
+_TOKEN = re.compile(r'\s*(?:(=~|==|!=|>=|<=|[(){},=><])|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*)|(\d+(?:\.\d+)?))')
+
+
+def _tokens(expr: str) -> list[tuple[str, str]]:
+    out, pos, expr = [], 0, expr.strip()
+    while pos < len(expr):
+        m = _TOKEN.match(expr, pos)
+        assert m and m.end() > pos, f"cannot tokenize at {expr[pos:]!r}"
+        pos = m.end()
+        if m.group(1):
+            out.append(("op", m.group(1)))
+        elif m.group(2) is not None:
+            out.append(("str", m.group(2)))
+        elif m.group(3):
+            out.append(("id", m.group(3)))
+        else:
+            out.append(("num", m.group(4)))
+    return out
+
+
+Series = tuple[dict, float]
+
+
+class _PromQL:
+    def __init__(self, expr: str, series: list[tuple[str, dict, float]]) -> None:
+        self.toks = _tokens(expr)
+        self.i = 0
+        self.series = series
+
+    def peek(self, value: str | None = None) -> bool:
+        return self.i < len(self.toks) and (value is None or self.toks[self.i][1] == value)
+
+    def take(self, value: str | None = None) -> str:
+        assert self.i < len(self.toks), "unexpected end"
+        kind, tok = self.toks[self.i]
+        assert value is None or tok == value, (value, tok, self.toks[self.i:])
+        self.i += 1
+        return tok
+
+    def labels(self) -> list[str]:
+        self.take("(")
+        names = [self.take()]
+        while self.peek(","):
+            self.take(",")
+            names.append(self.take())
+        self.take(")")
+        return names
+
+    def run(self) -> list[Series]:
+        out = self.or_expr()
+        assert self.i == len(self.toks), self.toks[self.i:]
+        return out
+
+    def or_expr(self) -> list[Series]:
+        left = self.and_expr()
+        while self.peek("or"):
+            self.take("or")
+            right = self.and_expr()
+            keys = {frozenset(lbl.items()) for lbl, _ in left}
+            left = left + [s for s in right if frozenset(s[0].items()) not in keys]
+        return left
+
+    def and_expr(self) -> list[Series]:
+        left = self.cmp_expr()
+        while self.peek("and"):
+            self.take("and")
+            on = self.labels() if self.peek("on") and self.take("on") else None
+            right = self.cmp_expr()
+
+            def key(lbl: dict) -> frozenset:
+                return frozenset((k, v) for k, v in lbl.items() if on is None or k in on)
+
+            wanted = {key(lbl) for lbl, _ in right}
+            left = [s for s in left if key(s[0]) in wanted]
+        return left
+
+    def cmp_expr(self) -> list[Series]:
+        vec = self.primary()
+        if self.peek("==") or self.peek(">"):
+            op = self.take()
+            n = float(self.take())
+            vec = [s for s in vec if (s[1] == n if op == "==" else s[1] > n)]
+        return vec
+
+    def primary(self) -> list[Series]:
+        if self.peek("("):
+            self.take("(")
+            vec = self.or_expr()
+            self.take(")")
+            return vec
+        name = self.take()
+        if name == "max":
+            self.take("by")
+            by = self.labels()
+            self.take("(")
+            inner = self.or_expr()
+            self.take(")")
+            groups: dict[frozenset, float] = {}
+            for lbl, value in inner:
+                k = frozenset((n, lbl.get(n, "")) for n in by)
+                groups[k] = max(groups.get(k, value), value)
+            return [(dict(k), v) for k, v in groups.items()]
+        matchers: list[tuple[str, str, str]] = []
+        if self.peek("{"):
+            self.take("{")
+            while not self.peek("}"):
+                label, op, value = self.take(), self.take(), self.take()
+                matchers.append((label, op, value))
+                if self.peek(","):
+                    self.take(",")
+            self.take("}")
+        out = []
+        for metric, lbl, value in self.series:
+            if metric != name:
+                continue
+            ok = True
+            for label, op, want in matchers:
+                have = lbl.get(label, "")
+                ok &= (have == want) if op == "=" else bool(re.fullmatch(want, have)) if op == "=~" else have != want
+            if ok:
+                out.append(({**lbl, "__name__": metric}, value))
+        return out
+
+
+def _job_series(job: str, *, failed_pods: int, succeeded: int, final: str | None,
+                owner: str | None, namespace: str = "testlookup") -> list[tuple[str, dict, float]]:
+    """kube-state-metrics series for one Job, the way KSM v2 exports them."""
+    base = {"namespace": namespace, "job_name": job}
+    out = [
+        ("kube_job_info", dict(base), 1.0),
+        ("kube_job_status_failed", dict(base), float(failed_pods)),
+        ("kube_job_status_succeeded", dict(base), float(succeeded)),
+        ("kube_job_owner", {**base, "owner_kind": "CronJob" if owner else "<none>",
+                            "owner_name": owner or "<none>", "owner_is_controller": "true"}, 1.0),
+    ]
+    for condition in ("Complete", "Failed"):
+        for status in ("true", "false", "unknown"):
+            value = 1.0 if (final == condition and status == "true") or (final != condition and status == "false") else 0.0
+            out.append(("kube_job_status_condition",
+                        {**base, "condition": condition, "status": status}, value))
+    return out
+
+
+def _firing(series: list[tuple[str, dict, float]]) -> set[str]:
+    expr = _rules()["TestLookupBackupJobFailed"]["expr"]
+    return {lbl["job_name"] for lbl, _ in _PromQL(expr, series).run()}
+
+
 def test_a_failed_backup_job_alerts() -> None:
-    expr = _expr("TestLookupBackupJobFailed")
-    match = re.fullmatch(
-        r'max by \(namespace, job_name\) \(kube_job_status_failed\{job_name=~"([^"]+)"\}\) > (\d+)', expr,
-    )
-    assert match, expr
-    pattern, threshold = match.group(1), int(match.group(2))
-    assert threshold == 0  # one failure is enough
-    cronjob = _cronjob(BACKUP / "cronjob-backup.yaml")["metadata"]["name"]
-    # A CronJob names its Jobs <cronjob>-<scheduled minute>; the README's
-    # manual run uses <cronjob>-now. Both are covered; the restore is not.
-    assert re.fullmatch(pattern, f"{cronjob}-29301234")
-    assert re.fullmatch(pattern, f"{cronjob}-now")
+    cronjob = _cronjob(BACKUP / "cronjob-backup.yaml")
+    name = cronjob["metadata"]["name"]
     restore = _cronjob(BACKUP / "cronjob-restore.yaml")["metadata"]["name"]
-    assert not re.fullmatch(pattern, f"{restore}-29301234")
-    assert _rules()["TestLookupBackupJobFailed"]["labels"]["severity"] == "critical"
+    # The scenario R-B45-R2-1 is about only exists with a retry allowed.
+    assert cronjob["spec"]["jobTemplate"]["spec"]["backoffLimit"] >= 1
+    assert cronjob["spec"]["successfulJobsHistoryLimit"] >= 1
+
+    series = (
+        # every pod failed, retries exhausted: the Job's Failed condition.
+        _job_series(f"{name}-29301234", failed_pods=2, succeeded=0, final="Failed", owner=name)
+        # first pod failed, the retry succeeded: a SUCCESSFUL backup.
+        + _job_series(f"{name}-29301235", failed_pods=1, succeeded=1, final="Complete", owner=name)
+        # still retrying: one failed pod, no terminal condition yet.
+        + _job_series(f"{name}-29301236", failed_pods=1, succeeded=0, final=None, owner=name)
+        # a clean success.
+        + _job_series(f"{name}-29301237", failed_pods=0, succeeded=1, final="Complete", owner=name)
+        # `kubectl create job --from=cronjob/...` with another name: owned.
+        + _job_series("manual-backup", failed_pods=2, succeeded=0, final="Failed", owner=name)
+        # a hand-made manual run named per the README, no owner.
+        + _job_series(f"{name}-now", failed_pods=2, succeeded=0, final="Failed", owner=None)
+        # the restore and an unrelated Job fail: not a backup.
+        + _job_series(f"{restore}-29301234", failed_pods=2, succeeded=0, final="Failed", owner=restore)
+        + _job_series("other-29301234", failed_pods=2, succeeded=0, final="Failed", owner="other")
+    )
+    assert _firing(series) == {f"{name}-29301234", "manual-backup", f"{name}-now"}
+    rule = _rules()["TestLookupBackupJobFailed"]
+    assert rule["labels"]["severity"] == "critical"
+    assert rule.get("for", "0m") == "0m"
+
+
+def test_the_failed_alert_keeps_the_job_and_namespace_labels() -> None:
+    name = _cronjob(BACKUP / "cronjob-backup.yaml")["metadata"]["name"]
+    series = (
+        _job_series(f"{name}-1", failed_pods=2, succeeded=0, final="Failed", owner=name, namespace="a")
+        + _job_series(f"{name}-1", failed_pods=0, succeeded=1, final="Complete", owner=name, namespace="b")
+        # same Job name in two namespaces: the backup succeeded in c, an
+        # unrelated Job failed in d. A join on job_name alone would page.
+        + _job_series("nightly", failed_pods=0, succeeded=1, final="Complete", owner=name, namespace="c")
+        + _job_series("nightly", failed_pods=2, succeeded=0, final="Failed", owner="other", namespace="d")
+    )
+    expr = _rules()["TestLookupBackupJobFailed"]["expr"]
+    fired = _PromQL(expr, series).run()
+    # the description templates both labels; a namespace-less join would
+    # also let namespace b's successful Job match namespace a's failure.
+    assert [lbl for lbl, _ in fired] == [{"namespace": "a", "job_name": f"{name}-1"}]
 
 
 def test_no_successful_backup_in_26_hours_alerts_including_never() -> None:

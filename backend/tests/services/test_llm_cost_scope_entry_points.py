@@ -416,3 +416,95 @@ async def test_llm_triage_runs_inside_the_tests_project_scope(monkeypatch):
     monkeypatch.setattr(triage, "run_triage_agent", run_triage_agent)
     await analysis_router._classify_llm({"project_id": project_id, "test_case_id": "t-1"}, None, None)
     assert seen == [project_id]
+
+
+# ── R-B45-R2-2: the agents the API runs OUTSIDE the pipeline graph ───────────
+
+
+class _Rows:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar_one_or_none(self):
+        return self.value
+
+    def scalars(self):
+        return SimpleNamespace(all=lambda: list(self.value or []))
+
+
+class _Session:
+    def __init__(self, values):
+        self.values = iter(values)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def execute(self, *args, **kwargs):
+        return _Rows(next(self.values))
+
+
+@pytest.mark.asyncio
+async def test_the_on_demand_regression_watchman_runs_inside_the_runs_project_scope(monkeypatch):
+    """POST /agents/regression-watch ran its priced classify call unreserved."""
+    from app.agents import regression_watchman as watchman
+
+    run_project, passed_project = uuid.uuid4(), str(uuid.uuid4())
+    seen: list = []
+    cluster = SimpleNamespace(
+        cluster_id="c-1", label="l", size=2, member_test_ids=["t-1"], representative_error="boom",
+    )
+    # run's project, then clusters, then analyses
+    monkeypatch.setattr(watchman, "AsyncSessionLocal", lambda: _Session([run_project, [cluster], []]))
+
+    async def classify(self, state):
+        seen.append(current_cost_scope())
+        return {"c-1": {"classification": "new_regression"}}
+
+    monkeypatch.setattr(watchman._StandaloneWatchman, "_classify", classify)
+    result = await watchman.run_regression_watchman(str(uuid.uuid4()), passed_project)
+    assert result == {"c-1": {"classification": "new_regression"}}
+    # charged to the project the RUN belongs to, read from the run
+    assert seen == [str(run_project)]
+    assert current_cost_scope() is None
+
+
+@pytest.mark.asyncio
+async def test_the_on_demand_regression_watchman_llm_call_is_reserved(monkeypatch):
+    """The call itself, not only the agent method, sees the scope."""
+    from app.agents import regression_watchman as watchman
+    from app.core.config import settings
+
+    run_project = uuid.uuid4()
+    seen: list = []
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
+    monkeypatch.setattr(watchman, "get_llm", _get_llm(seen, '{"c-1": {"classification": "new_regression"}}'))
+    monkeypatch.setattr(watchman, "AsyncSessionLocal", lambda: _Session([run_project, [], []]))
+
+    async def classify(self, state):
+        clusters = [{"cluster_id": "c-1", "label": "l"}]
+        return await self._llm_classify({"c-1": {}}, clusters, {})
+
+    monkeypatch.setattr(watchman._StandaloneWatchman, "_classify", classify)
+    await watchman.run_regression_watchman(str(uuid.uuid4()), str(uuid.uuid4()))
+    assert seen == [str(run_project)]
+
+
+@pytest.mark.asyncio
+async def test_the_on_demand_defect_commander_runs_inside_its_projects_scope(monkeypatch):
+    """POST /agents/defect-command writes Jira content with a priced LLM call."""
+    from app.agents import defect_commander as commander
+
+    project_id = str(uuid.uuid4())
+    seen: list = []
+
+    async def promote(self, state):
+        seen.append(current_cost_scope())
+        return {"ok": True}
+
+    monkeypatch.setattr(commander._StandaloneCommander, "_promote", promote)
+    assert await commander.run_defect_commander("c-1", str(uuid.uuid4()), project_id) == {"ok": True}
+    assert seen == [project_id]
+    assert current_cost_scope() is None

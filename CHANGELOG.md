@@ -68,11 +68,15 @@
   - A signature header with non-ASCII bytes gets 401, not a 500.
   - A delivery is applied once. Jira's signature carries no timestamp, so a
     captured delivery stayed valid forever; each signed body is now recorded
-    in Redis (sha256 of the body, 7 days) and a replay gets 200 with
-    `"applied": false` and changes nothing. A body whose own `timestamp` is
-    older than 7 days is not applied either. If Redis is down the delivery
-    gets 503 and Jira retries it; a delivery that fails to apply is released
-    so the retry applies it.
+    in Redis (sha256 of the body, for 7 days plus a 15-minute clock-skew
+    allowance) and a replay gets 200 with `"applied": false` and changes
+    nothing. After that record expires, the body's own `timestamp` (epoch
+    milliseconds, which Jira Cloud puts on every signed webhook) bounds a
+    replay. A body older than 7 days, one stamped more than 15 minutes ahead
+    of the server's clock, and one with no valid numeric `timestamp`
+    (missing, null, a string, NaN) all get 200 `"applied": false`. If Redis is
+    down the delivery gets 503 and Jira retries it; a delivery that fails to
+    apply is released so the retry applies it.
 
 ### AI layer and offline mode
 
@@ -86,17 +90,28 @@
     compression, the investigator, the fixer, defect promotion, the test-case
     AI tools (API and background tasks), the weekly retro narrative, RAG
     generation and the RAG faithfulness judge, the on-demand developer and
-    manager summaries, and LLM triage.
+    manager summaries, LLM triage, and the Regression Watchman and Defect
+    Commander when the API runs them outside a pipeline. A test walks every
+    `get_llm` caller and fails on one that is neither pinned to a scope nor
+    a reviewed no-project caller.
   - **Not covered:** calls with no project to charge (an "all projects" chat,
     the training evaluator, the prompt-eval recorder). The Ragas faithfulness
     backend calls its own LLM, outside the cap. Self-hosted and unpriced models
     have no price, so they reserve nothing.
   - **A failed call keeps its reservation** unless the failure proves no request
-    reached the provider (a connect error, the offline pin, no LLM slot, or the
-    cap itself). A read timeout, a cancellation or a 5xx can come after the
-    provider did the work, so it is charged at the worst case. Such charges,
-    and every call made outside a pipeline stage, are written to the
-    PostgreSQL meter as well.
+    reached the provider (a connect error with no read or write failure in
+    its chain, the offline pin, no LLM slot, or the cap itself). A read
+    timeout, a reset, a cancellation or a 5xx can come after the provider did
+    the work, so it is charged at the worst case. A client that retries
+    inside the call (the provider SDKs' own `max_retries`) is never
+    refunded, because its error describes only the last attempt. Such
+    charges, and every call made outside a pipeline stage, are written to
+    the PostgreSQL meter as well; calls inside a stage are metered by the
+    stage, against the project the reservation was charged to.
+  - **Not charged in full:** when an SDK retries after a read timeout and the
+    retry succeeds, the call is settled at the successful attempt's reported
+    usage. The earlier attempt may also have been billed; the SDKs do not
+    report their retries.
   - The test-case AI background tasks called the async-only tools
     synchronously and failed every time; they now run.
 - **LLM concurrency is bounded across the cluster (M12).** Each in-flight call
@@ -104,9 +119,14 @@
   heartbeat, so a crashed holder frees its slot. If Redis is down, the
   per-process bound still applies. New settings:
   `LLM_CLUSTER_MAX_CONCURRENT` (default 4) and
-  `LLM_CLUSTER_SLOT_LEASE_SECONDS` (default 60). A holder whose lease cannot
-  be renewed is stopped (`LLMSlotLost`) before the lease lapses, so a second
-  holder is never admitted beside it.
+  `LLM_CLUSTER_SLOT_LEASE_SECONDS` (default 60; at least 15, which is twice
+  the Redis socket timeout plus 5 s). A holder whose lease cannot be renewed
+  is stopped (`LLMSlotLost`) before the lease lapses. Each renew is bounded
+  by the time left on the lease, measured from when the last renew was
+  sent, so a renew that stalls cannot keep a holder running past it. Not
+  covered: a process whose event loop is blocked for longer than the lease
+  can neither renew nor stop, so for that long one call can run over the
+  limit.
 - **Retrained models reach every pod (M14).** The object store (`ml-models/`)
   is the source of truth: trainers publish, pods pull missing versions (only
   model and metadata names, so nothing else is loaded as a pickle), and
@@ -124,9 +144,11 @@
   - The release-risk scorer scores the recommendation itself: a constant
     "GO, no issues" answer fails.
   - A recording names its provider and model and carries a digest over the
-    prompt hash and the outputs; the check refuses a recording without it, or
-    one edited afterwards. This is not a signature (the repository holds no
-    key): recordings are reviewed in the pull request diff.
+    prompt hash, the pass bar (`min_score`) and every case's id, input,
+    expected answer and output. The check refuses a recording without it, or
+    one whose outputs, cases or pass bar were edited afterwards. This is not
+    a signature (the repository holds no key): recordings are reviewed in the
+    pull request diff.
 - **`AI_MAX_RETRIES` governs every LLM provider (L2),** not only Jira.
 - **Offline connections dial the address that was checked (N8).** Under
   `AI_OFFLINE_MODE`, LLM and notification-webhook connections are pinned to
@@ -230,7 +252,8 @@
   - The backup covers PostgreSQL (`pg_dump`), MongoDB (`mongodump`) and every
     MinIO object, with a sha256 manifest and 14 archives kept on a PVC.
   - The restore runs only with explicit confirmation.
-  - Two alerts: `TestLookupBackupJobFailed` (a backup Job failed) and
+  - Two alerts: `TestLookupBackupJobFailed` (a backup Job failed: its
+    `Failed` condition, not a pod that failed before a retry succeeded) and
     `TestLookupBackupStale` (no successful backup in 26 hours, including one
     that never succeeded or a suspended CronJob). Both read kube-state-metrics.
   - The backup pod may reach only DNS and the in-namespace PostgreSQL, MongoDB
@@ -243,9 +266,23 @@
   provides.
 
 - **The CI guards fail closed.**
-  - `ci.every-test-suite-runs` no longer counts a suite as run when its step or
-    job has a literal-false `if:` or `continue-on-error: true`, or when the
-    command's exit status is swallowed (`|| true`, `|| :`, `; true`, `set +e`).
+  - `ci.every-test-suite-runs` counts a suite as run only if its failure can
+    fail the build. These do not count:
+    - a step or job whose `if:` is statically false (`false`,
+      `false || false`, `!true`, `1 == 2`, an event the workflow is never
+      triggered by);
+    - a job that `needs:` a skipped job, unless its own `if:` uses
+      `always()`, `failure()` or `cancelled()`;
+    - a `continue-on-error:` that is not statically false, so `${{ env.X }}`
+      counts as soft-fail;
+    - a workflow that no push or pull request triggers (a
+      `workflow_dispatch`-only one, say);
+    - a command whose exit status is lost: `|| true`, `|| :`, `; true`,
+      `set +e`, a pipe without `pipefail`, or an `&&` list with more commands
+      after it;
+    - `--collect-only`.
+  - Out of reach of a static read: an `if:` over env, matrix or step
+    outputs (counted as run), and a runner hidden inside a script.
   - `ci.dependabot-covers-every-manifest` reads the plural `directories:` form,
     including globs, and also finds Cargo, Gradle, `setup.py` and `Pipfile`
     manifests.
@@ -284,14 +321,24 @@
   modals. About 19 dialogs written inline in page files are not converted yet.
   With a dialog open inside another, only the top one handles Escape and Tab,
   and a busy inner dialog no longer lets Escape close the one beneath it.
+  Only open dialogs count. A dialog component that stays mounted while
+  closed passes `open`, and it takes its place in the stack when it opens.
 - **Failed fetches say so (M21).** Runs, Intelligence hub, Releases and Summary
   report show "data unavailable" with Retry instead of an empty state, and the
   Intelligence hub no longer searches further back after a failure. A new
   guard requires every routed page to declare how it shows a failed fetch; the
   backlog of pages that still render a failure as empty is capped at 29 and
-  can only shrink. The other labels are checked too: a "no fetch" page may
-  not read data, and a page credited with its own error display must bind
-  its fetch's error and show it.
+  can only shrink. The other labels are checked too, statically, with
+  comments and strings removed first.
+  - A "no fetch" page may not read data: SWR, a fetching hook imported by
+    any path, `fetch(`, an api, apiClient or axios read, a non-mutation
+    service call, or a child component one level down that does any of
+    these.
+  - A page credited with its own error display must bind an error from a
+    fetching hook or a `catch`, and render it.
+  - The check is necessary, not sufficient. It cannot prove the error shown
+    is the primary fetch's, and it does not read deeper than one child
+    level.
 - **The unconfirmed-retirements panel pages through every orphaned case
   (N16)** ("Showing 26–50 of 60", Previous/Next) instead of listing the first
   25 under the full total.

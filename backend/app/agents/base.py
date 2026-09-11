@@ -301,6 +301,15 @@ class BaseAgent(ABC):
         from app.services.pipeline_budget_service import get_pipeline_budget_context
 
         budget_context = get_pipeline_budget_context() or {}
+        if not project_id:
+            # Reviewer item 7 (b45 r2): most agents do not pass project_id, so
+            # the calls this stage observed -- which BudgetedLLM left for the
+            # stage to meter -- never reached the Postgres meter (only the
+            # Redis counter). The graph runs inside cost_budget_scope, which
+            # names the project the reservation was charged to.
+            from app.services.llm_cost_reservation import current_cost_scope
+
+            project_id = current_cost_scope()
         input_tokens = max(input_tokens, int(budget_context.get("observed_input_tokens") or 0))
         output_tokens = max(output_tokens, int(budget_context.get("observed_output_tokens") or 0))
         llm_calls_count = max(llm_calls_count, int(budget_context.get("observed_llm_calls") or 0))

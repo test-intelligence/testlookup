@@ -94,6 +94,25 @@ def _fail_closed(monkeypatch):
     monkeypatch.setattr(_revocation().settings, "AUTH_REVOCATION_FAIL_OPEN", False)
 
 
+@pytest.fixture(autouse=True)
+def _durable_store_healthy_and_empty(monkeypatch):
+    """Pin the durable (Postgres) revocation store instead of reaching the
+    app's real engine.
+
+    ``is_jti_revoked`` asks Postgres first. Left real, whether it answered
+    depended on whether an EARLIER test file had initialised the app engine
+    against a reachable database: alone the lookup failed and the outage
+    tests saw 503; after any scoped-key file it succeeded, "Redis down" meant
+    "not revoked" (the durable store is only required in staging/production),
+    and 3 tests got 401 (b45 r1 QA, order-dependent). Each test now states
+    the store it runs against.
+    """
+    async def _empty(statement, params):
+        return []
+
+    monkeypatch.setattr(_revocation(), "_durable_execute", _empty)
+
+
 def _valid_token(monkeypatch):
     monkeypatch.setattr(deps, "decode_token", lambda _t: dict(_PAYLOAD))
 
@@ -109,10 +128,15 @@ def _invalid_token(monkeypatch):
 
 
 def _redis_down(monkeypatch):
+    """The revocation store cannot be consulted: Redis AND the durable table."""
     async def _none():
         return None
 
+    async def _durable_down(statement, params):
+        raise ConnectionError("postgres unreachable")
+
     monkeypatch.setattr(_revocation(), "_redis", _none)
+    monkeypatch.setattr(_revocation(), "_durable_execute", _durable_down)
 
 
 def _redis_up(monkeypatch):

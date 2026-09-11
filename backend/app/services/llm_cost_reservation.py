@@ -38,11 +38,15 @@ that runs priced LLM work for a project enters :func:`cost_budget_scope`: the
 offline and deep pipelines, run-compare, project chat (and its history
 compression), the investigator, the fixer, defect promotion, the test-case AI
 tools, the weekly retro narrative, RAG faithfulness, the on-demand run
-summaries and LLM triage (pinned by
+summaries, LLM triage, and the agents the API runs outside the graph (the
+on-demand Regression Watchman and Defect Commander, R-B45-R2-2) (pinned by
 ``tests/services/test_llm_cost_scope_entry_points.py``). Calls with NO project
 are not charged, because there is no cap to charge them to: an "all projects"
-chat, the training evaluator, the prompt-eval recorder CLI. Self-hosted and
-unpriced models reserve nothing: there is no dollar figure to hold.
+chat, the training evaluator, the prompt-eval recorder CLI.
+``tests/services/test_llm_cost_scope_guard.py`` walks every ``get_llm`` caller
+and fails on one that is neither pinned to a scope nor a reviewed no-project
+caller. Self-hosted and unpriced models reserve nothing: there is no dollar
+figure to hold.
 """
 from __future__ import annotations
 
@@ -130,34 +134,50 @@ class Reservation:
 def failure_proves_no_request(exc: BaseException) -> bool:
     """True only when ``exc`` PROVES the provider never received the request.
 
-    The connect phase failing (``httpx.ConnectError``/``ConnectTimeout``, a
-    refused socket), the offline pin refusing the address, the cluster slot
-    timing out, and the cap itself refusing. Anything else (a read timeout,
-    a cancellation, a 5xx, a parse error) may come after the provider did the
-    work, and is charged in full. Only the explicit ``raise ... from`` chain
-    is followed: an SDK retry loop can leave an earlier, unrelated connect
-    error in ``__context__``.
+    Proof is the connect phase failing (``httpx.ConnectError``/
+    ``ConnectTimeout``, a refused socket), the offline pin refusing the
+    address, the cluster slot timing out, or the cap itself refusing. The
+    explicit ``raise ... from`` chain is followed (``__context__`` is not: an
+    earlier, unrelated error can sit there). It is proof only when a link is
+    one of those AND no link is a failure that can come AFTER the request was
+    sent: a read or write error or timeout, a reset or broken pipe, a
+    cancellation, any other transport or OS error. So ``ReadTimeout from
+    ConnectError`` and ``ConnectError from ReadTimeout`` are both charged
+    (QA-B45-R2-1); a 5xx or parse error with no transport cause proves
+    nothing either.
+
+    One call's exception describes one attempt. A client that retries inside
+    the call (a provider SDK's own ``max_retries``) surfaces only its LAST
+    attempt; an earlier one may have been sent and billed. BudgetedLLM does
+    not ask this question for such a client.
     """
+    import asyncio
+
     from app.services.llm_cluster_semaphore import LLMSlotTimeout
     from app.services.llm_egress import OffBoxTargetError
 
     no_send: tuple[type[BaseException], ...] = (
         ConnectionRefusedError, OffBoxTargetError, LLMSlotTimeout, CostCapExceeded,
     )
+    may_have_sent: tuple[type[BaseException], ...] = (OSError, TimeoutError, asyncio.CancelledError)
     try:
         import httpx
 
         no_send += (httpx.ConnectError, httpx.ConnectTimeout)
+        may_have_sent += (httpx.TransportError,)
     except ImportError:  # pragma: no cover
         pass
+    proven = False
     seen: set[int] = set()
     current: Optional[BaseException] = exc
     while current is not None and id(current) not in seen:
-        if isinstance(current, no_send):
-            return True
+        if isinstance(current, no_send):  # checked first: several are OSErrors
+            proven = True
+        elif isinstance(current, may_have_sent):
+            return False
         seen.add(id(current))
         current = current.__cause__
-    return False
+    return proven
 
 
 def _redis() -> Any:

@@ -88,7 +88,10 @@ async def world(monkeypatch):
         await db.commit()
 
     client = AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver")
+    # Jira Cloud stamps every webhook body (epoch ms); an unstamped one is
+    # refused (R-B45-R2-4).
     body = json.dumps({
+        "timestamp": int(time.time() * 1000),
         "issue": {"key": issue_key, "fields": {"status": {"name": "Done"}, "resolution": None}},
     }).encode()
     world = SimpleNamespace(
@@ -135,6 +138,24 @@ def _post(world, headers, body=None):
 
 async def test_a_delivery_signed_with_the_secret_is_applied(world):
     resp = await _post(world, {"X-Hub-Signature": _sign(world.body)})
+
+    assert resp.status_code == 200, resp.text
+    assert await _status(world) == "RESOLVED"
+
+
+async def test_the_signature_is_over_the_raw_bytes_not_a_reserialisation(world):
+    """Jira's body is not ``json.dumps`` output: other key order, other
+    whitespace. A verifier that re-serialised the parsed JSON before the HMAC
+    would refuse every real delivery (b45 r1 MUT4); every other body in this
+    file is json.dumps output and would not notice."""
+    body = (
+        b'{\n  "issue" : { "fields" : {"resolution":null, "status":{"name" : "Done"}},'
+        b' "key":"' + world.issue_key.encode() + b'" },\n'
+        b'  "timestamp" : ' + str(int(time.time() * 1000)).encode() + b"\n}"
+    )
+    assert body != json.dumps(json.loads(body)).encode()  # really non-canonical
+
+    resp = await _post(world, {"X-Hub-Signature": _sign(body)}, body=body)
 
     assert resp.status_code == 200, resp.text
     assert await _status(world) == "RESOLVED"
@@ -279,12 +300,38 @@ async def test_a_delivery_older_than_the_replay_window_is_not_applied(world):
 
 
 async def test_the_dedupe_record_expires_with_the_replay_window(world):
-    from app.routers.feedback import JIRA_REPLAY_WINDOW_SECONDS
+    from app.routers.feedback import JIRA_CLOCK_SKEW_SECONDS, JIRA_REPLAY_WINDOW_SECONDS
 
     resp = await _post(world, {"X-Hub-Signature": _sign(world.body)})
     assert resp.status_code == 200, resp.text
     ttl = await world.redis.ttl("jira:webhook:delivery:" + hashlib.sha256(world.body).hexdigest())
-    assert JIRA_REPLAY_WINDOW_SECONDS - 60 < ttl <= JIRA_REPLAY_WINDOW_SECONDS
+    # window + skew: a body stamped ahead of us stays acceptable that long
+    full = JIRA_REPLAY_WINDOW_SECONDS + JIRA_CLOCK_SKEW_SECONDS
+    assert full - 60 < ttl <= full
+
+
+def _stamped(world, stamp) -> bytes:
+    issue = {"key": world.issue_key, "fields": {"status": {"name": "Done"}, "resolution": None}}
+    if stamp == "missing":
+        return json.dumps({"issue": issue}).encode()
+    if stamp == "nan":
+        return b'{"timestamp": NaN, "issue": ' + json.dumps(issue).encode() + b"}"
+    return json.dumps({"timestamp": stamp, "issue": issue}).encode()
+
+
+@pytest.mark.parametrize("stamp", [
+    "missing", None, "1800000000000", "nan", int((time.time() + 30 * 24 * 3600) * 1000),
+], ids=["missing", "null", "string", "nan", "future"])
+async def test_a_delivery_whose_replay_cannot_be_bounded_is_not_applied(world, stamp):
+    """R-B45-R2-4: refused before the dedupe record, so nothing is claimed."""
+    body = _stamped(world, stamp)
+
+    resp = await _post(world, {"X-Hub-Signature": _sign(body)}, body=body)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["applied"] is False
+    assert await _status(world) == "OPEN"
+    assert not await world.redis.exists("jira:webhook:delivery:" + hashlib.sha256(body).hexdigest())
 
 
 async def test_redis_down_refuses_the_delivery_so_jira_retries(world, monkeypatch):
@@ -328,7 +375,7 @@ async def test_a_delivery_that_failed_to_apply_can_be_retried(world, monkeypatch
 
 @pytest.mark.parametrize("issue", [None, {"key": None, "fields": None}, {"fields": {"status": None}}])
 async def test_signed_bodies_with_explicit_nulls_are_not_a_500(world, issue):
-    body = json.dumps({"issue": issue, "tag": world.issue_key}).encode()
+    body = json.dumps({"timestamp": int(time.time() * 1000), "issue": issue, "tag": world.issue_key}).encode()
 
     resp = await _post(world, {"X-Hub-Signature": _sign(body)}, body=body)
 
