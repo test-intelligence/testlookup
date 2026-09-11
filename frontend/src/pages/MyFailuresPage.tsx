@@ -485,7 +485,7 @@ function ReassignModal({
   // Keyed on the failure id, so reopening the modal for a different row
   // re-fetches exactly as the old `[failure.id]` dependency did.
   const { data, error: loadError, isLoading: loading } =
-    useReassignOptions(failure.id as unknown as string)
+    useReassignOptions(failure.id)
   const options = data ?? null
   const error = loadError
     ? ((loadError as { response?: { data?: { detail?: string } } })
@@ -509,7 +509,7 @@ function ReassignModal({
     if (!selectedUserId) return
     setSubmitting(true)
     try {
-      await myFailuresService.reassign(failure.id as unknown as string, selectedUserId)
+      await myFailuresService.reassign(failure.id, selectedUserId)
       toast.success('Failure reassigned')
       onReassigned()
     } catch (err: unknown) {
@@ -672,7 +672,7 @@ function TriageStatusModal({
   async function handleSubmit() {
     setSubmitting(true)
     try {
-      await myFailuresService.updateTriageStatus(failure.id as unknown as string, {
+      await myFailuresService.updateTriageStatus(failure.id, {
         status: selected,
         notes: notes.trim() || null,
       })
