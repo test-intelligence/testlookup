@@ -339,6 +339,36 @@ async def test_the_relay_does_not_deliver_to_a_recipient_who_left(world, monkeyp
     assert "no longer access" in ex_error
 
 
+async def test_the_relay_rechecks_an_all_projects_preference_too(world, monkeypatch):
+    """An "all projects" row is staged under the run's project; its owner can
+    leave that project before the send like anyone else (QA round 4, MB)."""
+    from unittest.mock import AsyncMock
+
+    assert (await _subscribe(world, world.ex_jwt, None, email="ex-all@example.com")).status_code == 201
+    await _stage_run_failed(world, world.project_b, f"r4-relay-all-{world.tag}")
+    assert world.ex_member in await _recipients(world, world.project_b)
+    await world.leave(world.ex_member, world.project_b)
+
+    delivered: list = []
+
+    async def _dispatch(pref, *_args, **_kwargs):
+        delivered.append(pref.user_id)
+        return "sent", None
+
+    monkeypatch.setattr(world.manager, "_dispatch_to_channel", _dispatch)
+    monkeypatch.setattr(world.manager.email_service, "_get_smtp_cfg", AsyncMock(return_value={}))
+
+    await world.manager.relay_pending_notification_deliveries()
+
+    assert world.ex_member not in delivered
+    Log = world.models.NotificationLog
+    async with world.sessions() as db:
+        status_ = (await db.execute(
+            select(Log.status).where(Log.user_id == world.ex_member, Log.project_id == world.project_b)
+        )).scalar_one()
+    assert status_ != "sent"
+
+
 # ── QA-R3-2: onboarding usage events are filed under a project too ──────────
 
 

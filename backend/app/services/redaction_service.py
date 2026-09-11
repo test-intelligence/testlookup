@@ -63,6 +63,7 @@ LOG_SECRET_KEYS: frozenset[str] = _SECRET_KEY_NAMES | frozenset({
     # Names the suffixes below cannot reach (code review round 4).
     "access_tokens", "refresh_tokens", "webhook_url", "smtp_pass",
     "signing_key", "hmac_key", "app_secret_key_previous", "jwt_secret_key_previous",
+    "passphrase", "client_secret", "session_cookie",
 })
 
 #: Names that end in a secret suffix but hold no secret: a pagination cursor.
@@ -79,7 +80,7 @@ LOG_SECRET_NAME_EXCEPTIONS: frozenset[str] = frozenset({
 LOG_SECRET_SUFFIXES: tuple[str, ...] = (
     "_token", "_password", "_passwd", "_secret", "_api_key", "_apikey",
     "_secret_key", "_access_key", "_private_key", "_webhook_url",
-    "_credential", "_credentials",
+    "_credential", "_credentials", "_passphrase",
 )
 
 
@@ -133,8 +134,15 @@ _CREDENTIAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(\.webhook\.office\.com/webhookb2/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
     (re.compile(r"(outlook\.office(?:365)?\.com/webhook/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
     (re.compile(r"(discord(?:app)?\.com/api/webhooks/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
-    # Teams Workflows (Power Automate) URLs carry the credential as sig=.
-    (re.compile(r"(\.logic\.azure\.com[^\s'\"<>]*?[?&]sig=)[^\s&'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
+    # Teams Workflows (Power Automate) URLs carry the credential as sig=, on
+    # logic.azure.com and on the newer powerplatform.com host (QA round 4).
+    (
+        re.compile(
+            r"((?:\.logic\.azure\.com|\.powerplatform\.com)[^\s'\"<>]*?[?&]sig=)[^\s&'\"<>]+",
+            re.IGNORECASE,
+        ),
+        r"\1[REDACTED]",
+    ),
     # Cookies frequently contain session credentials and must be removed even
     # when their values do not resemble long random tokens.
     (re.compile(r"((?:Set-)?Cookie:\s*)[^\r\n]+", re.IGNORECASE), r"\1[REDACTED]"),

@@ -1118,7 +1118,7 @@ curl -X POST http://localhost:8000/api/v1/keys \
   -d '{
     "name": "CI Pipeline - My Project",
     "project_id": "<project-uuid>",
-    "scopes": ["test:write"],
+    "scopes": ["stream:write"],
     "expires_days": 90
   }'
 ```

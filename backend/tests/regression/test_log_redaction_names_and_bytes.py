@@ -69,7 +69,9 @@ def test_a_set_of_strings_is_still_walked():
 @pytest.mark.parametrize(
     "name",
     ["access_tokens", "refresh_tokens", "webhook_url", "smtp_pass", "signing_key", "hmac_key",
-     "app_secret_key_previous", "APP_SECRET_KEY_PREVIOUS"],
+     "app_secret_key_previous", "APP_SECRET_KEY_PREVIOUS",
+     # QA round 4.
+     "passphrase", "ssh_key_passphrase", "session_cookie"],
 )
 def test_names_the_suffixes_cannot_reach_are_listed(name):
     """Code review round 4."""
@@ -90,8 +92,11 @@ def test_a_pagination_cursor_is_not_a_secret(name):
         ("https://discord.com/api/webhooks/123/XyZsecret99", "XyZsecret99"),
         ("https://prod-11.westus.logic.azure.com:443/workflows/abc/triggers/manual/paths/invoke"
          "?api-version=2016-06-01&sp=%2Ftriggers&sv=1.0&sig=XyZsecret99", "XyZsecret99"),
+        ("https://default0a1b.2c.environment.api.powerplatform.com:443/powerautomate/automations/direct"
+         "/workflows/abc/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers&sig=XyZsecret99", "XyZsecret99"),
     ],
-    ids=["slack workflows", "slack triggers", "outlook legacy", "discord", "teams workflows"],
+    ids=["slack workflows", "slack triggers", "outlook legacy", "discord", "teams workflows",
+         "teams workflows powerplatform"],
 )
 def test_other_webhook_url_shapes_lose_their_credential(url, secret):
     assert secret not in redact_log_field("url", url)

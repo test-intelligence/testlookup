@@ -20,10 +20,9 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from typer.testing import CliRunner
-
 from testlookup_cli.app import app
 from testlookup_cli.commands import upload
+from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -251,6 +250,13 @@ def test_retry_after_zero_does_not_poll_in_a_hot_loop(fake):
     assert asyncio.run(upload._wait_for_upload("t1"))["state"] == "succeeded"
     assert fake.sleeps == [upload.WAIT_MIN_RETRY_SECONDS] * 2
     assert upload.WAIT_MIN_RETRY_SECONDS >= 1.0
+
+
+def test_a_fractional_retry_after_is_floored_too(fake):
+    """``Retry-After: 0.01`` is not zero, and polled 100 times a second (QA round 4)."""
+    fake.install(_Resp(503, {}, {"Retry-After": "0.01"}), _Resp(200, _SUCCEEDED))
+    assert asyncio.run(upload._wait_for_upload("t1"))["state"] == "succeeded"
+    assert fake.sleeps == [upload.WAIT_MIN_RETRY_SECONDS]
 
 
 def test_the_last_poll_comes_at_the_deadline_not_after_it(fake):

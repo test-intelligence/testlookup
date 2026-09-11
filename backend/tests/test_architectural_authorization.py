@@ -409,7 +409,7 @@ def _called_targets(func) -> list:
     except (OSError, TypeError, SyntaxError, IndentationError):
         return []
     targets: list = []
-    for node in ast.walk(tree):
+    for node in _live_nodes(tree):
         if not isinstance(node, ast.Call):
             continue
         fn = node.func
@@ -472,12 +472,94 @@ def _plain_name(node) -> str | None:
     return None
 
 
+_NESTED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def _is_constant_false(test: ast.AST) -> bool:
+    return isinstance(test, ast.Constant) and not test.value
+
+
+def _live_nodes(tree: ast.AST):
+    """``ast.walk`` over the code that runs as part of the function (QA round 4).
+
+    Skipped: a function, lambda or class nested inside it, which runs only if
+    something calls it, and the body of an ``if``/``while`` whose test is a
+    constant false. Either one let a check that never runs pass the scan.
+    """
+    root = tree
+    if isinstance(tree, ast.Module):
+        root = next((n for n in tree.body if isinstance(n, _NESTED_SCOPES)), tree)
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, (ast.If, ast.While)) and _is_constant_false(node.test):
+            children = [node.test, *node.orelse]
+        else:
+            children = list(ast.iter_child_nodes(node))
+        stack.extend(c for c in children if not isinstance(c, _NESTED_SCOPES))
+
+
+def _imported_names(tree: ast.AST) -> dict:
+    """``name -> object`` for the imports inside the function (``from m import f [as g]``)."""
+    import importlib
+
+    found: dict = {}
+    for node in _live_nodes(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            try:
+                module = importlib.import_module(node.module)
+            except ImportError:
+                continue
+            for alias in node.names:
+                found[alias.asname or alias.name] = getattr(module, alias.name, None)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                try:
+                    found[alias.asname or alias.name.split(".")[0]] = importlib.import_module(
+                        alias.name if alias.asname else alias.name.split(".")[0]
+                    )
+                except ImportError:
+                    continue
+    return found
+
+
+def _is_the_real_marker(func, tree: ast.AST, call: ast.Call) -> bool:
+    """A marker call counts only when its name resolves to the real function (QA round 4).
+
+    ``helper.resolve_project_scope(...)`` on some object, or a module-local
+    ``def resolve_project_scope(...)`` that checks nothing, is spelled like the
+    real check. A name ``app.core.deps`` defines must resolve to that object;
+    any other marker (a router's own ``_assert_project_access``) must resolve
+    to a callable. A qualified call must be on a module.
+    """
+    from app.core import deps
+
+    namespace = {**getattr(func, "__globals__", {}), **_imported_names(tree)}
+    fn = call.func
+    if isinstance(fn, ast.Name):
+        target = namespace.get(fn.id)
+        name = fn.id
+    elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
+        owner = namespace.get(fn.value.id)
+        if not inspect.ismodule(owner):
+            return False
+        target = getattr(owner, fn.attr, None)
+        name = fn.attr
+    else:
+        return False
+    if target is None or not callable(target):
+        return False
+    real = getattr(deps, name, None)
+    return real is None or target is real
+
+
 #: Attribute reads accepted as an ownership filter: code that scopes a query to
 #: the caller's own rows. A real read in code, never a mention in a comment.
 _OWNERSHIP_ATTRIBUTES: frozenset[str] = frozenset({"id", "username"})
 
 
-def _names_in(tree: ast.AST) -> set[str]:
+def _names_in(tree: ast.AST, func=None) -> set[str]:
     """What the code DOES, by name: every function it calls, and
     ``current_user.id``/``.username`` reads.
 
@@ -493,17 +575,20 @@ def _names_in(tree: ast.AST) -> set[str]:
     # (``track_event(user_id=current_user.id)``) it scopes nothing, and it let
     # a handler pass with its real check deleted (code review round 4).
     filtering: set[int] = set()
-    for node in ast.walk(tree):
+    for node in _live_nodes(tree):
         if isinstance(node, ast.Compare):
             filtering.update(id(operand) for operand in (node.left, *node.comparators))
         elif isinstance(node, ast.Call) and _plain_name(node.func) == "filter_by":
             filtering.update(id(keyword.value) for keyword in node.keywords)
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in _live_nodes(tree):
         if isinstance(node, ast.Call):
             called = _plain_name(node.func)
-            if called is not None:
-                names.add(called)
+            if called is None:
+                continue
+            if func is not None and called in _SCOPE_EVIDENCE and not _is_the_real_marker(func, tree, node):
+                continue
+            names.add(called)
         elif (
             isinstance(node, ast.Attribute)
             and isinstance(node.value, ast.Name)
@@ -520,7 +605,7 @@ def _function_names(func) -> set[str]:
         tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
     except (OSError, TypeError, SyntaxError, IndentationError):
         return set()
-    return _names_in(tree)
+    return _names_in(tree, func)
 
 
 def _endpoint_names(endpoint) -> set[str]:
@@ -756,16 +841,66 @@ async def an_ownership_filter(db, current_user):
 
 async def an_ownership_filter_by(db, current_user):
     return await db.execute(select(Row).filter_by(user_id=current_user.id))
+
+
+def get_accessible_project_ids(*_args):
+    """Module-local, shadowing the real one, and checking nothing."""
+    return None
+
+
+async def a_dead_branch(project_id, db, current_user):
+    if False:
+        await resolve_project_scope(db, current_user, project_id)
+    return project_id
+
+
+async def a_call_on_another_object(project_id, db, current_user, helper):
+    await helper.resolve_project_scope(db, current_user, project_id)
+    return project_id
+
+
+async def a_shadowing_local_function(project_id, db, current_user):
+    get_accessible_project_ids(db, current_user)
+    return project_id
+
+
+async def an_uncalled_nested_check(project_id, db, current_user):
+    async def _never():
+        await resolve_project_scope(db, current_user, project_id)
+    return project_id
+
+
+async def an_uncalled_nested_helper_call(project_id, db, current_user):
+    _never = lambda: _checking_helper(db, current_user, project_id)  # noqa: E731
+    return project_id
+
+
+async def a_real_call_imported_in_the_handler(project_id, db, current_user):
+    # The module-level name is the shadowing function above; this import is
+    # the real one, and it is what the call resolves to.
+    from app.core.deps import get_accessible_project_ids
+
+    return project_id in await get_accessible_project_ids(db, current_user)
+
+
+async def a_real_call_in_a_live_branch(project_id, db, current_user):
+    if project_id:
+        await resolve_project_scope(db, current_user, project_id)
+    return project_id
 '''
 
 _NOT_EVIDENCE = (
     "only_a_comment", "only_a_docstring", "only_a_string", "only_a_bare_reference",
     "only_confines_a_bound_key", "a_callee_only_mentions_it", "only_a_role_guard",
     "only_attributes_the_caller",
+    # QA round 4: a check that never runs, or is not the real function.
+    "a_dead_branch", "a_call_on_another_object", "a_shadowing_local_function",
+    "an_uncalled_nested_check", "an_uncalled_nested_helper_call",
 )
 _EVIDENCE = (
     "a_real_call", "a_real_call_through_the_module", "a_real_call_one_level_down",
     "a_key_derived_project", "an_ownership_filter", "an_ownership_filter_by",
+    "a_real_call_imported_in_the_handler", "a_real_call_in_a_live_branch",
 )
 
 
@@ -816,9 +951,11 @@ def test_the_fixture_mentions_are_visible_as_text(evidence_fixture) -> None:
     for handler in _NOT_EVIDENCE:
         func = getattr(evidence_fixture, handler)
         text = inspect.getsource(func)
-        for qualifier, name in _called_targets(func):
-            target = getattr(evidence_fixture, name, None) if qualifier is None else None
-            if callable(target):
+        # Every name the handler mentions, nested or dead code included: the
+        # point is that the text names a marker a substring reader would see.
+        for node in ast.walk(ast.parse(textwrap.dedent(text))):
+            target = getattr(evidence_fixture, node.id, None) if isinstance(node, ast.Name) else None
+            if inspect.isfunction(target) and target is not func:
                 text += inspect.getsource(target)
         assert any(m in text for m in (*_SCOPE_EVIDENCE, "_api_key_bound_project", "bound_project_id")), handler
 
