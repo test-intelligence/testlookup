@@ -21,4 +21,54 @@
 #     statement: Only reachable through the XML parser, which we never feed untrusted input.
 #     expired_at: 2026-12-01
 #     paths: ["backend/requirements.txt"]
-vulnerabilities: []
+vulnerabilities:
+  # ── backend image: starlette 0.41.3 (pinned below 0.42 by fastapi==0.115.5).
+  #    Follow-up: FastAPI/Starlette 1.x upgrade (needs a validated dependency move).
+  - id: CVE-2026-54283
+    statement: >-
+      MITIGATED. request.form() ignores its limits for urlencoded bodies; the one
+      unauthenticated form route is POST /api/v1/auth/login. FormBodyLimitMiddleware
+      (backend/app/middleware/request_hardening.py) refuses any urlencoded body over
+      FORM_URLENCODED_MAX_BYTES (64 KiB; 2 MiB for the SAML ACS, whose route also caps
+      SAMLResponse at 1 MB) with 413, by Content-Length and by counting a chunked stream,
+      before any handler or request.form() reads it.
+    expired_at: 2026-12-09
+  - id: CVE-2025-62727
+    statement: >-
+      MITIGATED. Range-header DoS in FileResponse; the unauthenticated SDK download
+      (GET /api/v1/sdk/{lang}) returns a FileResponse. RangeHeaderStripMiddleware drops
+      Range/If-Range from every request, so FileResponse never parses a range.
+    expired_at: 2026-12-09
+  - id: CVE-2026-48818
+    statement: >-
+      NOT REACHABLE. SSRF/NTLM via UNC paths in StaticFiles on Windows only; the app
+      mounts no StaticFiles and the image is Linux.
+    expired_at: 2026-12-09
+  # ── backend image: langchain-core 0.3.86 (fix 1.2.22 needs the langchain 1.x migration).
+  - id: CVE-2026-34070
+    statement: >-
+      NOT REACHABLE. Path traversal in the legacy load_prompt file loader; nothing in
+      backend/app or mcp calls load_prompt or any langchain file-based prompt/chain loader.
+      Follow-up: langchain 1.x migration.
+    expired_at: 2026-12-09
+  # ── frontend image: util-linux in nginx:alpine, no fixed version published yet.
+  - id: CVE-2026-53613
+    statement: >-
+      NOT REACHABLE. util-linux mount(8) TOCTOU; the nginx container never runs mount
+      and has no privilege to mount (non-privileged pod, no CAP_SYS_ADMIN).
+    expired_at: 2026-12-09
+  - id: CVE-2026-53614
+    statement: >-
+      NOT REACHABLE. util-linux SUID mount(8) flaw; the nginx container never runs mount
+      and has no privilege to mount (non-privileged pod, no CAP_SYS_ADMIN).
+    expired_at: 2026-12-09
+  - id: CVE-2026-76642
+    statement: >-
+      NOT REACHABLE. util-linux mount helper handling; the nginx container never runs
+      mount or a mount helper and has no privilege to mount.
+    expired_at: 2026-12-09
+  - id: CVE-2026-78410
+    statement: >-
+      NOT REACHABLE. util-linux mount(8) flaw; the nginx container never runs mount and
+      has no privilege to mount (non-privileged pod, no CAP_SYS_ADMIN).
+    expired_at: 2026-12-09

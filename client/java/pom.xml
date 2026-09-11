@@ -19,13 +19,20 @@
         <maven.compiler.target>${java.version}</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <jackson.version>2.17.1</jackson.version>
+        <!-- 2.18.8: GHSA-r7wm-3cxj-wff9, CVE-2026-54512/54513 (core + databind) -->
+        <jackson.version>2.18.8</jackson.version>
         <junit5.version>5.11.0</junit5.version>
         <testng.version>7.10.2</testng.version>
     </properties>
 
     <dependencies>
-        <!-- JSON serialization (required) -->
+        <!-- JSON serialization (required). jackson-core is pinned explicitly so
+             the fixed core version never depends on transitive resolution. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
