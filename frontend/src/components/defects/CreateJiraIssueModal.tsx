@@ -23,6 +23,7 @@ import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import { useJiraDefectMetadata, useJiraDefectPreview } from '@/hooks/useJiraDefects'
 import { defectJiraService } from '@/services/defectJiraService'
+import { useModalFocus } from '@/hooks/useModalFocus'
 
 const REASON_COPY: Record<string, string> = {
   offline_mode: 'AI_OFFLINE_MODE is on — outbound Jira calls are blocked.',
@@ -68,8 +69,9 @@ export default function CreateJiraIssueModal({
   const [issueTypeChoice, setIssueTypeChoice] = useState<string | null>(null)
   const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const dialogRef = useModalFocus({ onClose, canClose: !submitting })
 
-  const target: 'jira' | 'webhook' =
+  const target:'jira' | 'webhook' =
     targetChoice ?? (metadata && !metadata.available && metadata.webhook_available ? 'webhook' : 'jira')
   const projectKey = projectKeyChoice ?? metadata?.default_project_key ?? ''
   const issueType =
@@ -150,6 +152,7 @@ export default function CreateJiraIssueModal({
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="Create Jira issue"

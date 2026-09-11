@@ -3,7 +3,7 @@ from typing import Optional
 
 import redis.asyncio as aioredis
 
-from app.core.config import settings
+from app.core.config import REDIS_SOCKET_TIMEOUT_SECONDS, settings
 
 _pool: Optional[aioredis.ConnectionPool] = None
 _client: Optional[aioredis.Redis] = None
@@ -16,8 +16,9 @@ def get_redis_pool() -> aioredis.ConnectionPool:
             settings.REDIS_URL,
             max_connections=50,
             decode_responses=True,
-            socket_timeout=5,
-            socket_connect_timeout=5,
+            # The LLM slot lease floor is derived from this (config).
+            socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+            socket_connect_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
         )
     return _pool
 

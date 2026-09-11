@@ -158,9 +158,18 @@ async def list_my_assigned_failures(
     # 403 for a non-member) or team scope (bound it by membership). ``mine``
     # with no project is self-scoped by ``assigned_to_user_id`` already, and
     # must not pay a membership lookup on the sidebar's polling path.
+    #
+    # Re-audit N26: except for a project-bound API key. ``mine`` is scoped to
+    # the key OWNER's assignments, which span every project the owner works
+    # in, and the key is one project's credential. It resolves to {its project}.
+    from app.core.deps import _api_key_bound_project, resolve_project_scope  # noqa: PLC0415
+
     allowed_project_ids = None
-    if scoped_project_id is not None or effective_scope == "team":
-        from app.core.deps import resolve_project_scope  # noqa: PLC0415
+    if (
+        scoped_project_id is not None
+        or effective_scope == "team"
+        or _api_key_bound_project(current_user) is not None
+    ):
 
         verified_project_id, allowed_project_ids = await resolve_project_scope(
             db, current_user, str(scoped_project_id) if scoped_project_id else None
@@ -376,9 +385,18 @@ async def my_assigned_failures_count(
     # 403 for a non-member) or team scope (bound it by membership). ``mine``
     # with no project is self-scoped by ``assigned_to_user_id`` already, and
     # must not pay a membership lookup on the sidebar's polling path.
+    #
+    # Re-audit N26: except for a project-bound API key. ``mine`` is scoped to
+    # the key OWNER's assignments, which span every project the owner works
+    # in, and the key is one project's credential. It resolves to {its project}.
+    from app.core.deps import _api_key_bound_project, resolve_project_scope  # noqa: PLC0415
+
     allowed_project_ids = None
-    if scoped_project_id is not None or effective_scope == "team":
-        from app.core.deps import resolve_project_scope  # noqa: PLC0415
+    if (
+        scoped_project_id is not None
+        or effective_scope == "team"
+        or _api_key_bound_project(current_user) is not None
+    ):
 
         verified_project_id, allowed_project_ids = await resolve_project_scope(
             db, current_user, str(scoped_project_id) if scoped_project_id else None

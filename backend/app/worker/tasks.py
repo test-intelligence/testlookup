@@ -2998,7 +2998,7 @@ def generate_ai_test_cases_task(self, requirements: str, project_id: str, author
     so the HTTP request never times out."""
     import json
     import uuid as _uuid
-    from app.services.test_case_ai_agent import generate_test_cases_tool
+    from app.services.test_case_ai_agent import generate_test_cases_tool, run_tool_for_project
 
     async def _persist(result: dict) -> int:
         from app.db.postgres import AsyncSessionLocal
@@ -3067,7 +3067,9 @@ def generate_ai_test_cases_task(self, requirements: str, project_id: str, author
 
     logger.info("[Task %s] AI generate test cases project=%s", self.request.id, project_id)
     try:
-        raw = generate_test_cases_tool.invoke({"requirements": requirements})
+        raw = _run_async(run_tool_for_project(
+            generate_test_cases_tool, {"requirements": requirements}, project_id,
+        ))
         result = json.loads(raw) if isinstance(raw, str) else raw
         saved = _run_async(_persist(result))
         logger.info("[Task %s] AI generation complete, saved %d cases", self.request.id, saved)
@@ -3098,37 +3100,46 @@ def create_ai_test_plan_task(
     import json
     import uuid as _uuid
     from datetime import datetime, timezone
-    from app.services.test_case_ai_agent import optimize_test_plan_tool
+    from app.services.test_case_ai_agent import optimize_test_plan_tool, run_tool_for_project
 
     async def _build_and_save() -> dict:
         from sqlalchemy import select
         from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import ManagedTestCase, TestPlan, TestPlanItem
 
+        # R-B45-R2-5: no DB transaction rides across the LLM call (the rule
+        # fixer/workflow.py states): a pooled connection would sit idle in
+        # transaction for up to the task's 300 s. Read and snapshot, close the
+        # session, call the model, then write in a new short transaction.
         async with AsyncSessionLocal() as db:
             q = select(ManagedTestCase).where(
                 ManagedTestCase.project_id == _uuid.UUID(project_id),
                 ManagedTestCase.status.in_(["approved", "active"]),
             )
             result = await db.execute(q)
-            cases = result.scalars().all()
-            if not cases:
-                return {"error": "No approved test cases found for this project"}
+            cases = [
+                {
+                    "id": c.id,
+                    "title": c.title,
+                    "priority": c.priority,
+                    "test_type": c.test_type,
+                    "estimated_duration_minutes": c.estimated_duration_minutes or 5,
+                }
+                for c in result.scalars().all()
+            ]
+        if not cases:
+            return {"error": "No approved test cases found for this project"}
 
-            tc_json = json.dumps([{
-                "title": c.title,
-                "priority": c.priority,
-                "test_type": c.test_type,
-                "estimated_duration_minutes": c.estimated_duration_minutes or 5,
-            } for c in cases], indent=2)
-            constraints_text = constraints or "No specific constraints. Optimize for maximum risk coverage."
+        tc_json = json.dumps([{k: v for k, v in c.items() if k != "id"} for c in cases], indent=2)
+        constraints_text = constraints or "No specific constraints. Optimize for maximum risk coverage."
 
-            raw = optimize_test_plan_tool.invoke({
-                "test_cases_json": tc_json,
-                "constraints": constraints_text,
-            })
-            optimization = json.loads(raw) if isinstance(raw, str) else raw
+        raw = await run_tool_for_project(optimize_test_plan_tool, {
+            "test_cases_json": tc_json,
+            "constraints": constraints_text,
+        }, project_id)
+        optimization = json.loads(raw) if isinstance(raw, str) else raw
 
+        async with AsyncSessionLocal() as db:
             plan = TestPlan(
                 project_id=_uuid.UUID(project_id),
                 name=plan_name or f"AI Test Plan — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
@@ -3148,8 +3159,8 @@ def create_ai_test_plan_task(
             for tc in cases:
                 db.add(TestPlanItem(
                     plan_id=plan.id,
-                    test_case_id=tc.id,
-                    order_index=order_map.get(tc.title, 999),
+                    test_case_id=tc["id"],
+                    order_index=order_map.get(tc["title"], 999),
                 ))
             await db.commit()
             return {"plan_id": str(plan.id), "total_cases": len(cases)}
@@ -3182,14 +3193,16 @@ def generate_ai_strategy_task(
     import json
     import uuid as _uuid
     from datetime import datetime, timezone
-    from app.services.test_case_ai_agent import generate_test_strategy_tool
+    from app.services.test_case_ai_agent import generate_test_strategy_tool, run_tool_for_project
 
     async def _build_and_save() -> dict:
         from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import TestStrategy
         from app.core.config import settings
 
-        raw = generate_test_strategy_tool.invoke({"project_context": project_context})
+        raw = await run_tool_for_project(
+            generate_test_strategy_tool, {"project_context": project_context}, project_id,
+        )
         result = json.loads(raw) if isinstance(raw, str) else raw
 
         async with AsyncSessionLocal() as db:
@@ -3717,7 +3730,7 @@ def dispatch_scheduled_digests(self):
         from sqlalchemy import select, update
 
         from app.db.postgres import AsyncSessionLocal
-        from app.models.postgres import DigestSubscription, NotificationLog, User, UserRole
+        from app.models.postgres import DigestSubscription, NotificationLog, User
         from app.services.digest_content_service import generate_digest, render_digest_html
 
         now = datetime.now(timezone.utc)
@@ -3854,24 +3867,23 @@ def dispatch_scheduled_digests(self):
                     # the matching send-time guard, because nothing else
                     # re-checks membership at delivery and rows created before
                     # the fix are still on disk.
-                    from app.core.deps import _normalize_user_role
-
-                    blocked_global = (
-                        project_id is None
-                        and _normalize_user_role(user.role) != UserRole.ADMIN
+                    #
+                    # Re-audit N33: a project-scoped digest is checked too. Its
+                    # owner must still be active and an ADMIN or a member of the
+                    # project; one who left kept receiving it on every send.
+                    from app.services.notification.manager import (
+                        digest_owner_block_reason,
                     )
 
-                    if blocked_global:
+                    block_reason = await digest_owner_block_reason(db, user, project_id)
+
+                    if block_reason:
                         status = "skipped"
-                        error_detail = (
-                            "workspace-wide digest requires ADMIN; "
-                            "subscription is scoped to no project"
-                        )
+                        error_detail = block_reason
                         logger.warning(
-                            "Digest for subscription %s skipped — non-admin "
-                            "owner on a workspace-wide (project_id IS NULL) "
-                            "subscription",
+                            "Digest for subscription %s skipped — %s",
                             sub_id,
+                            block_reason,
                         )
                     elif skip_unchanged:
                         status = "skipped"

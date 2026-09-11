@@ -48,6 +48,16 @@ async def query_splunk_logs(service_name: str, timestamp_utc: str) -> str:
             "Cannot query backend logs. Consider this when determining root cause."
         )
 
+    # Re-audit N19: architecture/SECURITY.md s5 says every outbound
+    # integration short-circuits on AI_OFFLINE_MODE. This tool posted a search
+    # (service name and failure time) to SPLUNK_BASE_URL regardless. Hard gate,
+    # as the Splunk probe and the two sibling Splunk tools already are.
+    if settings.AI_OFFLINE_MODE:
+        return (
+            "Splunk lookup disabled: AI_OFFLINE_MODE=true forbids outbound "
+            "integration calls. Backend logs were not consulted."
+        )
+
     try:
         fail_time = datetime.fromisoformat(timestamp_utc.replace("Z", "+00:00"))
     except ValueError:

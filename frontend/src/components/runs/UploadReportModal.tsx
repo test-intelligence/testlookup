@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useProjectStore } from '@/store/projectStore'
+import { useModalFocus } from '@/hooks/useModalFocus'
 import { zip as zipAsync, zipSync } from 'fflate'
 import toast from 'react-hot-toast'
 import {
@@ -101,6 +102,7 @@ export default function UploadReportModal({
   const [result, setResult] = useState<UploadStatus['result']>(null)
 
   const busy = phase === 'uploading' || phase === 'processing'
+  const dialogRef = useModalFocus({ onClose, canClose: !busy })
 
   // Poll the async parse/ingest status once the upload is accepted, so the user
   // sees a real outcome (parsed N tests / parse error) instead of a silent run.
@@ -265,7 +267,7 @@ export default function UploadReportModal({
   }, [files, busy, effectiveProjectId, buildNumber, format, branch, commitHash, releaseName, runAi])
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="upload-report-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="upload-report-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm">
       <div className="relative w-full max-w-xl mx-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)] shrink-0">

@@ -435,7 +435,7 @@ async def add_project_member(
     project_id: uuid.UUID,
     payload: AddProjectMemberRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Add a user to a project with a role. Requires QA_LEAD or higher."""
@@ -489,7 +489,7 @@ async def update_project_member_role(
     user_id: uuid.UUID,
     payload: UpdateProjectMemberRoleRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Update a project member's role. Requires QA_LEAD or higher."""

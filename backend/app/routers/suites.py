@@ -253,7 +253,7 @@ async def update_suite(
 @router.delete(
     "/api/v1/suites/{suite_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_role(UserRole.QA_LEAD))],
+    dependencies=[Depends(require_role(UserRole.QA_LEAD, allow_project_key=True))],
 )
 async def delete_suite(
     suite_id: uuid.UUID,
@@ -269,7 +269,7 @@ async def delete_suite(
 @router.post(
     "/api/v1/suites/{suite_id}/set-default",
     response_model=TestSuiteResponse,
-    dependencies=[Depends(require_role(UserRole.QA_LEAD))],
+    dependencies=[Depends(require_role(UserRole.QA_LEAD, allow_project_key=True))],
 )
 async def set_default(
     suite_id: uuid.UUID,
@@ -467,7 +467,7 @@ async def unlink_canonical_managed_case(
 @router.post(
     "/api/v1/canonical-test-cases/{canonical_id}/confirm-retirement",
     response_model=CanonicalTestCaseResponse,
-    dependencies=[Depends(require_role(UserRole.QA_LEAD))],
+    dependencies=[Depends(require_role(UserRole.QA_LEAD, allow_project_key=True))],
 )
 async def confirm_canonical_retirement(
     canonical_id: uuid.UUID,

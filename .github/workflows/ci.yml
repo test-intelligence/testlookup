@@ -114,7 +114,10 @@ jobs:
       - name: Self-test the drift guard
         # Pins that the guard actually FAILS on drift — a guard that can only
         # pass is a guard that silently rots.
-        run: python -m pytest scripts/release/test_image_drift.py -v
+        # scripts/release/tests (release-manifest + image-scan tooling, 13
+        # tests, ~1 s) was run by no workflow until ci.every-test-suite-runs
+        # (re-audit N2) listed it.
+        run: python -m pytest scripts/release/test_image_drift.py scripts/release/tests -v
 
       - name: Shell syntax check — release scripts
         run: |
@@ -151,14 +154,14 @@ jobs:
         # The gate itself is pure stdlib file IO, but scripts/test_quality_gate.py
         # is a pytest module. This job installs nothing else, so pytest must be
         # added explicitly here (the backend test job has its own deps).
-        run: pip install pytest
+        run: pip install pytest pyyaml
 
       - name: Self-test the quality-gate script
         # Pins the ratchet semantics so a careless edit to quality_gate.py
         # can't accidentally turn the gate into a no-op.
         run: |
           cd scripts
-          python -m pytest test_quality_gate.py -v
+          python -m pytest test_quality_gate.py test_mypy_ratchet.py test_ci_security.py -v
 
   # ─────────────────────────────────────────────────────────────
   # JOB 0c: Validate Mermaid diagrams in markdown
@@ -293,9 +296,19 @@ jobs:
       - name: Lint with ruff
         run: ruff check app/ tests/
 
-      - name: Type check with mypy
-        run: mypy app/ --ignore-missing-imports
-        continue-on-error: true     # Non-blocking in early phases
+      # Blocking, as a ratchet (re-audit M24). mypy reports 391 pre-existing
+      # errors in 117 files; backend/mypy-baseline.txt holds the per-file
+      # counts and a file whose count goes UP fails here. Fixing errors lowers
+      # the baseline (`python ../scripts/mypy_ratchet.py --update`). The old
+      # `continue-on-error: true` made every new type error invisible.
+      - name: Type check with mypy (ratchet)
+        run: python ../scripts/mypy_ratchet.py --check-stale
+
+      # M16: a gated prompt's hash must match the hash its scored outputs were
+      # recorded under (backend/app/services/prompt_eval_recordings.py).
+      - name: Prompt changes need scored outputs (M16)
+        working-directory: backend
+        run: python -m app.services.prompt_eval_recordings --check
 
       - name: Run tests
         env:
@@ -310,11 +323,18 @@ jobs:
           APP_SECRET_KEY: test-secret-key-for-ci
           JWT_SECRET_KEY: test-jwt-key-for-ci
         run: |
+          # --cov-fail-under (re-audit M24): measured 75.52% line coverage of
+          # app/ on 2026-09-11 (full suite at 6afff4a2: 10275 passed, 229
+          # skipped; 48540 of 64274 statements). This job skips fewer tests
+          # (real Postgres + Redis), so it measures at least that. The floor
+          # sits 1.5 points below to absorb platform skip differences; raise
+          # it as coverage grows, never lower it to make a PR pass.
           pytest tests/ -v \
             --tb=short \
             --cov=app \
             --cov-report=xml \
             --cov-report=term-missing \
+            --cov-fail-under=74 \
             --junit-xml=test-results.xml
 
       - name: Verify late-ack broker redelivery
@@ -576,6 +596,7 @@ jobs:
           tests/integration/test_pipeline_resume_postgres.py
           tests/integration/test_report_eval_cycle_postgres.py
           tests/integration/test_run_downstream_outbox_postgres.py
+          tests/integration/test_webhook_delivery_backfill_postgres.py
           tests/integration/test_outbox_requeue_postgres.py
           tests/integration/test_durable_agent_pipeline_postgres.py
           tests/integration/test_dead_search_vector_removed_postgres.py
@@ -586,7 +607,11 @@ jobs:
           tests/integration/test_search_tags_index_postgres.py
           tests/integration/test_canonical_sync_postgres.py
           tests/integration/test_run_list_natural_order_postgres.py
+          tests/integration/test_run_seq_and_member_order_postgres.py
+          tests/integration/test_test_run_index_row_size_postgres.py
+          tests/integration/test_key_mint_revoke_race_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py
+          tests/integration/test_migration_singleton_lock_postgres.py
           tests/integration/test_ws_events_persist_postgres_redis.py
           tests/integration/test_worker_pool_survives_tasks_postgres.py
           tests/integration/test_test_case_lifecycle_postgres.py
@@ -597,13 +622,20 @@ jobs:
           tests/integration/test_purge_executor_against_real_postgres.py
           tests/integration/test_run_deletion_postgres_mongo.py
           tests/integration/test_project_bound_admin_key_postgres.py
+          tests/integration/test_key_revoke_cascade_postgres.py
           tests/integration/test_notification_preference_authz_postgres.py
           tests/integration/test_scoped_key_limits_postgres.py
+          tests/integration/test_bound_key_confinement_postgres.py
+          tests/integration/test_scoped_key_writes_postgres.py
+          tests/integration/test_outbox_requeue_audit_postgres.py
+          tests/integration/test_jira_webhook_signature_postgres.py
           tests/integration/test_live_evidence_crash_replay_postgres_redis.py
           tests/integration/test_live_fanout_redis.py
+          tests/integration/test_live_run_reset_redis.py
           tests/integration/test_live_recovery_protocol_postgres_redis.py
           tests/integration/test_compose_queue_delivery_redis.py
           tests/regression/test_notification_history_schema.py
+          tests/integration/test_llm_cost_cap_and_slots_redis_postgres.py
 
       - name: Validate Compose queue delivery evidence
         if: steps.compose-queue-scope.outputs.run == 'true'
@@ -797,9 +829,10 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Blocking (re-audit M24): `tsc --noEmit` is clean, so any new type error
+      # is a regression and fails the job.
       - name: Type check
         run: npm run type-check
-        continue-on-error: true   # Non-blocking during iterative development phases
 
       - name: Run tests
         run: npm run test
@@ -918,6 +951,16 @@ jobs:
 
           for path in sorted(Path("/tmp").glob("base.yaml")) + sorted(Path("/tmp").glob("overlays-*.yaml")):
               documents = [doc for doc in yaml.safe_load_all(path.read_text()) if doc]
+              # N22: tracing on with no collector printed every span to stdout.
+              app_config = next(
+                  doc for doc in documents
+                  if doc.get("kind") == "ConfigMap"
+                  and doc["metadata"]["name"].startswith("testlookup-config")
+              )["data"]
+              assert not (
+                  str(app_config.get("OTEL_ENABLED", "")).lower() == "true"
+                  and not app_config.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+              ), (path, "OTEL_ENABLED=true without OTEL_EXPORTER_OTLP_ENDPOINT")
               deployment = next(
                   doc for doc in documents
                   if doc.get("kind") == "Deployment"
@@ -1120,6 +1163,197 @@ jobs:
       - name: Build
         run: npm run build
 
+      # client/js/tests/live-protocol-ids.test.mjs existed and nothing ran it
+      # (found by the quality gate's ci.every-test-suite-runs, re-audit N2).
+      # `npm test` rebuilds dist/ and runs node's built-in test runner: ~2 s.
+      - name: Test
+        run: npm test
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 5a/5b: Vulnerability scanning on pull requests (re-audit M23)
+  # Release promotion already scans the exact image digests (release.yml),
+  # but nothing looked at a PR: a vulnerable dependency or base image was
+  # found, at best, after it merged. Both jobs FAIL on any HIGH or CRITICAL
+  # finding that has a fixed version (--severity HIGH,CRITICAL
+  # --ignore-unfixed --exit-code 1). A finding that cannot be fixed yet is
+  # accepted in .trivyignore.yaml with a reason and an expiry (<= 90 days);
+  # scripts/test_ci_security.py pins these settings.
+  # ─────────────────────────────────────────────────────────────
+  security-deps:
+    name: Security — Dependency scan (Trivy fs)
+    runs-on: ubuntu-latest
+    # ~2-3 min: Trivy install 5 s, DB from cache (one ~1 min download a day),
+    # frontend lockfile resolution ~40 s, scan ~1 min.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Resolve the frontend lockfile (none is committed)
+        # Trivy reads npm dependencies from a lockfile. build-images generates
+        # frontend/package-lock.json the same way before the Docker build;
+        # --package-lock-only resolves the tree without installing or running
+        # any package script.
+        working-directory: ./frontend
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Install checksum-verified Trivy 0.74.0
+        # The same pinned build and digest as release.yml's promotion scan
+        # (scripts/test_ci_security.py fails if the two drift apart).
+        env:
+          TRIVY_ARCHIVE_SHA256: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+        run: |
+          set -euo pipefail
+          curl -fsSLo trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz
+          echo "$TRIVY_ARCHIVE_SHA256  trivy.tar.gz" | sha256sum --check --strict
+          tar -xzf trivy.tar.gz trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
+          rm -f trivy trivy.tar.gz
+
+      - name: Day stamp for the vulnerability-DB cache
+        id: day
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the Trivy vulnerability database (refreshed daily)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ runner.os }}-${{ steps.day.outputs.day }}
+          restore-keys: trivy-db-${{ runner.os }}-
+
+      - name: Scan dependencies (fails on HIGH/CRITICAL with a fix)
+        # Python requirements, npm lockfiles (frontend, client/js,
+        # scripts/mermaid-check), client/java/pom.xml and client/go/go.mod.
+        # cli/ and client/ declare unpinned ranges in pyproject.toml, which
+        # Trivy cannot resolve; their pins come from Dependabot.
+        run: >-
+          trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed
+          --exit-code 1 --ignorefile .trivyignore.yaml --timeout 10m
+          --skip-dirs client/examples .
+
+  security-images:
+    name: Security — Image scan (Trivy, ${{ matrix.name }})
+    runs-on: ubuntu-latest
+    # Pull requests (and manual runs) only: pushes to main build and publish
+    # through build-images, and release.yml scans the promoted digests.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    # Skipped in ~20 s unless the PR changes what goes INTO an image (its
+    # Dockerfile, dependency manifests, the staged SDKs, this workflow or the
+    # acceptance file). When it runs: build with the gha cache 1-3 min
+    # (6-8 min cold for the backend), scan ~1 min, per image, in parallel.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: backend
+            dockerfile: backend/Dockerfile
+            target: production
+          - name: frontend
+            context: frontend
+            dockerfile: frontend/Dockerfile
+            target: production
+          - name: mcp
+            context: mcp
+            dockerfile: mcp/Dockerfile
+            target: ""
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Detect changes to this image's inputs
+        id: scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CONTEXT: ${{ matrix.context }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"
+          if git diff --quiet "$PR_BASE_SHA" HEAD -- \
+            "$CONTEXT/Dockerfile" "$CONTEXT/requirements*.txt" \
+            "$CONTEXT/package.json" "$CONTEXT/package-lock.json" \
+            client/ .trivyignore.yaml .github/workflows/ci.yml; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate frontend package-lock.json (as build-images does)
+        if: steps.scope.outputs.run == 'true' && matrix.name == 'frontend'
+        working-directory: ./frontend
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Stage client SDKs into the backend context (as build-images does)
+        if: steps.scope.outputs.run == 'true' && matrix.name == 'backend'
+        run: |
+          set -euo pipefail
+          rm -rf ./backend/__client_sdks_staged
+          mkdir -p ./backend/__client_sdks_staged
+          rsync -a --exclude='__pycache__' --exclude='node_modules' --exclude='.venv' \
+            --exclude='target' --exclude='build' --exclude='*.egg-info' \
+            ./client/ ./backend/__client_sdks_staged/
+
+      - name: Set up Docker Buildx
+        if: steps.scope.outputs.run == 'true'
+        uses: docker/setup-buildx-action@v4.3.0
+
+      - name: Build the image (not pushed)
+        if: steps.scope.outputs.run == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{ matrix.context }}
+          file: ./${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          push: false
+          load: true
+          tags: testlookup-scan/${{ matrix.name }}:${{ github.sha }}
+          cache-from: |
+            type=gha,scope=scan-${{ matrix.name }}
+            type=gha
+          cache-to: type=gha,mode=max,scope=scan-${{ matrix.name }}
+
+      - name: Install checksum-verified Trivy 0.74.0
+        # The same pinned build and digest as release.yml's promotion scan
+        # (scripts/test_ci_security.py fails if the two drift apart).
+        env:
+          TRIVY_ARCHIVE_SHA256: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+        run: |
+          set -euo pipefail
+          curl -fsSLo trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz
+          echo "$TRIVY_ARCHIVE_SHA256  trivy.tar.gz" | sha256sum --check --strict
+          tar -xzf trivy.tar.gz trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
+          rm -f trivy trivy.tar.gz
+        if: steps.scope.outputs.run == 'true'
+
+      - name: Day stamp for the vulnerability-DB cache
+        if: steps.scope.outputs.run == 'true'
+        id: day
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the Trivy vulnerability database (refreshed daily)
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ runner.os }}-${{ steps.day.outputs.day }}
+          restore-keys: trivy-db-${{ runner.os }}-
+
+      - name: Scan the image (fails on HIGH/CRITICAL with a fix)
+        if: steps.scope.outputs.run == 'true'
+        run: >-
+          trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed
+          --exit-code 1 --ignorefile .trivyignore.yaml --timeout 10m
+          testlookup-scan/${{ matrix.name }}:${{ github.sha }}
+
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
@@ -1146,6 +1380,7 @@ jobs:
         js-sdk-test,
         mermaid-check,
         docs-diagram-render,
+        security-deps,
       ]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 

@@ -135,6 +135,26 @@ COPY --from=builder /app/scripts ./scripts
 # it targets the `development` stage and uses a host volume mount instead.
 COPY --from=builder /app/__client_sdks_staged ./client_sdks
 
+# No packaging toolchain in the runtime image (Trivy on PR #26). pip,
+# setuptools and wheel are build tools: nothing at runtime imports
+# pkg_resources, setuptools or distutils (the only third-party importers are
+# guarded fallbacks, passlib.pwd which nothing imports, and numpy/cffi build
+# helpers). Removing them clears setuptools CVE-2025-47273, the wheel 0.45.1
+# and jaraco.context 5.3.0 vendored inside setuptools, and the msgpack 1.1.2 /
+# setuptools 70.3.0 that pip vendors (pip/_vendor/vendor.txt). Deleted by
+# path (a copied site-packages can hold two pip dist-infos), then proven gone.
+RUN rm -rf /usr/local/lib/python3.11/site-packages/pip \
+        /usr/local/lib/python3.11/site-packages/pip-*.dist-info \
+        /usr/local/lib/python3.11/site-packages/setuptools \
+        /usr/local/lib/python3.11/site-packages/setuptools-*.dist-info \
+        /usr/local/lib/python3.11/site-packages/pkg_resources \
+        /usr/local/lib/python3.11/site-packages/_distutils_hack \
+        /usr/local/lib/python3.11/site-packages/distutils-precedence.pth \
+        /usr/local/lib/python3.11/site-packages/wheel \
+        /usr/local/lib/python3.11/site-packages/wheel-*.dist-info \
+        /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 /usr/local/bin/wheel \
+    && python -c "import importlib.util, sys; left = [m for m in ('pip', 'setuptools', 'pkg_resources', 'wheel', '_distutils_hack') if importlib.util.find_spec(m)]; sys.exit('build tooling still importable: %s' % left if left else 0)"
+
 # Build provenance — the commit SHA + build timestamp this image was built
 # from. Wired from CI so a running container can self-report its
 # origin via GET /health/details. Empty by default (local builds) → reported

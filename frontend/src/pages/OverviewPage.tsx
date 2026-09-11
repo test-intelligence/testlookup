@@ -982,7 +982,16 @@ export default function OverviewPage() {
   // "no runs in the last 7 days" from "no runs at all", and it rendered the
   // same silent 0/— for both. One row, and SWR keys on the params so it does
   // not collide with the windowed fetch above.
-  const { data: newestRunPage } = useRuns({ page: 1, size: 1 })
+  //
+  // M22: both probes below exist to answer questions the windowed list above
+  // already answers whenever it has a row: the project has had a run, and the
+  // newest one is in the window. Each used to poll every 15 s regardless, so
+  // the page made three /runs requests per cycle. They now fetch only once the
+  // windowed list has come back EMPTY, the one case where it cannot answer.
+  // Not on a failed or pending windowed fetch: that is not "empty".
+  const windowHasRuns = recentRuns ? recentRuns.items.length > 0 : undefined
+  const needProbes = windowHasRuns === false
+  const { data: newestRunPage } = useRuns({ page: 1, size: 1 }, { enabled: needProbes })
   // "Has this project EVER had a run?" — a question about the project, not
   // about what the reader is currently filtered to. Separate from the query
   // above because that one feeds the empty-window message, which SHOULD stay
@@ -993,7 +1002,7 @@ export default function OverviewPage() {
   // them from one request.
   const { data: everHadRunPage } = useRuns(
     { page: 1, size: 1 },
-    { ignoreGlobalRelease: true },
+    { ignoreGlobalRelease: true, enabled: needProbes },
   )
   const recentRunItems = useMemo<TestRun[]>(() => recentRuns?.items ?? [], [recentRuns?.items])
   const suiteOptions = useMemo(() => collectSuiteOptions(recentRunItems), [recentRunItems])
@@ -1006,11 +1015,15 @@ export default function OverviewPage() {
     () =>
       describeEmptyWindow({
         totalInWindow: summary?.total_executions_7d?.value as number | undefined,
-        newestRunAt: newestRunPage?.items?.[0]?.created_at ?? null,
+        // Same ordering as the probe's single row, so the first windowed row
+        // is the answer whenever there is one.
+        newestRunAt: windowHasRuns
+          ? recentRunItems[0]?.created_at ?? null
+          : newestRunPage?.items?.[0]?.created_at ?? null,
         days,
         options: TIME_OPTIONS,
       }),
-    [summary?.total_executions_7d?.value, newestRunPage?.items, days],
+    [summary?.total_executions_7d?.value, windowHasRuns, recentRunItems, newestRunPage?.items, days],
   )
 
   const projectLabel = project?.name ?? 'All Projects'
@@ -1076,8 +1089,8 @@ export default function OverviewPage() {
   // Reported: /overview?release=unattributed on a project that HAS runs but
   // none in that bucket rendered "Welcome to TestLookup — no test runs here
   // yet" with the full setup wizard. An empty FILTER read as an empty PROJECT.
-  const everHadRun = (everHadRunPage?.items?.length ?? 0) > 0
-  const newestRunLoaded = everHadRunPage !== undefined
+  const everHadRun = windowHasRuns === true || (everHadRunPage?.items?.length ?? 0) > 0
+  const newestRunLoaded = windowHasRuns === true || everHadRunPage !== undefined
   const isFreshInstall = !summaryLoading && newestRunLoaded && !everHadRun
   const showFirstRunGuide = isFreshInstall && !guideDismissed
 

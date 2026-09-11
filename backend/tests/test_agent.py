@@ -225,7 +225,12 @@ class TestLLMFactory:
         mock_settings.LLM_MAX_TOKENS = 4096
         mock_settings.AI_OFFLINE_MODE = True
 
-        with patch("langchain_ollama.ChatOllama") as mock_ollama:
+        # A mocked ChatOllama has no HTTP clients for the offline pin (re-audit
+        # N8) to rebuild, and the pin refuses rather than hand one out
+        # unpinned. This test is about provider selection, so the pin is
+        # stubbed here; it is tested in test_llm_offline_egress_pinning.py.
+        with patch("langchain_ollama.ChatOllama") as mock_ollama, \
+                patch("app.services.llm_egress.pin_ollama_clients", side_effect=lambda model: model):
             from app.services.llm_factory import get_llm
             await get_llm(provider="ollama", model="qwen2.5:7b")
             mock_ollama.assert_called_once()

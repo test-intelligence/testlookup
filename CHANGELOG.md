@@ -1,5 +1,458 @@
 # Changelog
 
+## 2026-09-11 — production-readiness re-audit, batches 4 and 5
+
+### Authorization and API keys
+
+- **A project-bound key no longer acts instance-wide at QA_LEAD (N26).**
+  `require_role` at QA_LEAD now refuses a project-bound key unless the route
+  opts in, the rule ADMIN has had since N20.
+  - **Opted in:** 52 project-confined QA_LEAD routes, each listed in the
+    reviewed allow-list with the check that confines the key.
+  - **Refused:** the instance-wide routes, including the user directory,
+    `POST /api/v1/projects`, training export and finetune, settings reads and
+    the audit log, integration health, AI-eval and performance.
+
+  Also:
+  - `GET /api/v1/release-gate-policies/{id}` now checks access to the policy's
+    project (the system default stays readable).
+  - `/me/assigned-failures?scope=mine` and its count resolve a bound key to its
+    own project.
+  - The architectural authorization scan walks the mounted app, so the debug
+    router is covered, and the debug handler checks the project it is given.
+  - A key minted by a key cannot outlive it. A never-expiring key can still
+    mint a never-expiring key; a test pins that.
+- **A scoped API key writes only with a write scope (N32, N31).** An API key
+  with a non-empty scope list may use any method other than GET, HEAD and
+  OPTIONS only if it holds `project:write` or `project:admin`.
+  - **Where it is enforced:** in `get_current_active_user`, which every role
+    and project guard goes through. Writes gated at QA_ENGINEER or merely
+    signed in no longer run with a streaming key's owner role: suites, saved
+    views, triage, feedback, notification preferences, AI generation and so
+    on.
+  - **QA_LEAD and above** (`require_role`, `require_project_role`) still needs
+    `project:admin`.
+  - **Exceptions:** `POST /api/v1/keys` (mint a subset of the caller's own
+    scopes) and `DELETE /api/v1/keys/{id}` (revoke itself) accept a scoped
+    key's writes.
+  - **Unchanged:** ingest (`/api/v1/stream/*`, `/api/v1/ingest`,
+    `/api/v1/ingest/file`, `/ws/events`), legacy keys with an empty scope list,
+    and JWTs.
+  - **Vocabulary:** `stream:write`, `project:write` and `project:admin`
+    (`project:admin` implies `project:write`). `POST /api/v1/keys` refuses any
+    other scope name with a 422 listing the valid ones, and the key form
+    offers exactly these three.
+- **The outbox requeue is audited (N30).**
+  `POST /api/v1/admin/maintenance/outbox/requeue` writes an `access_audit_logs`
+  row (`admin.outbox_requeue`) in the same transaction as the requeue. It
+  records the actor, operation, `last_error`, the run and its project, the
+  limit, `dry_run`, how many rows matched and were requeued, and the outbox
+  ids. Dry runs are recorded; refused requests are not.
+- **Notifications re-check recipients at send time (N33).** The relay no
+  longer delivers a staged row whose project was deleted (`project_id` NULL
+  after `ON DELETE SET NULL`); no legitimate delivery lacks a project.
+  - **Event-driven digests** are re-checked when sent: the subscription must be
+    active and not paused, and its owner active and an ADMIN or a member of
+    the project.
+  - **Scheduled digests** check a project-scoped subscription's owner the same
+    way; previously only workspace-wide digests were checked.
+
+- **The Jira webhook must be signed.** `POST /api/v1/feedback/jira-webhook`
+  now requires Jira's `X-Hub-Signature: sha256=<HMAC-SHA256 of the raw body>`,
+  keyed with the new `JIRA_WEBHOOK_SECRET` and compared in constant time.
+  - A missing or wrong signature gets 401. An unset or placeholder secret gets
+    403 in every environment.
+  - The route no longer needs a signed-in account; Jira sends none. Before
+    this, any signed-in user or API key could send forged "resolved" events and
+    close any project's defects.
+  - A signature header with non-ASCII bytes gets 401, not a 500.
+  - A delivery is applied once. Jira's signature carries no timestamp, so a
+    captured delivery stayed valid forever; each signed body is now recorded
+    in Redis (sha256 of the body, for 7 days plus a 15-minute clock-skew
+    allowance) and a replay gets 200 with `"applied": false` and changes
+    nothing. After that record expires, the body's own `timestamp` (epoch
+    milliseconds, which Jira Cloud puts on every signed webhook) bounds a
+    replay. A body older than 7 days, one stamped more than 15 minutes ahead
+    of the server's clock, and one with no valid numeric `timestamp`
+    (missing, null, a string, NaN) all get 200 `"applied": false`, and a
+    warning (`jira_webhook_delivery_refused`) names the reason and the
+    delivery's digest prefix, never the body. If Redis is
+    down the delivery gets 503 and Jira retries it; a delivery that fails to
+    apply is released so the retry applies it.
+
+### AI layer and offline mode
+
+- **Priced LLM calls reserve against their project's monthly cost cap (M13).**
+  Each call reserves its worst-case cost before the provider is called, in one
+  atomic Redis step that takes the larger of the Redis counter and the
+  PostgreSQL meter, and settles the actual cost afterwards. It fails closed
+  when the flag, the quota or Redis cannot be read.
+  - **Covered:** every entry point that runs LLM work for a project: the
+    offline and deep pipelines, run-compare, project chat and its history
+    compression, the investigator, the fixer, defect promotion, the test-case
+    AI tools (API and background tasks), the weekly retro narrative, RAG
+    generation and the RAG faithfulness judge, the on-demand developer and
+    manager summaries, LLM triage, and the Regression Watchman and Defect
+    Commander when the API runs them outside a pipeline. A test walks every
+    `get_llm` caller and fails on one that is neither pinned to a scope nor
+    a reviewed no-project caller.
+  - **Not covered:** calls with no project to charge (an "all projects" chat,
+    the training evaluator, the prompt-eval recorder). The Ragas faithfulness
+    backend calls its own LLM, outside the cap. Self-hosted and unpriced models
+    have no price, so they reserve nothing.
+  - **A failed call keeps its reservation** unless the failure proves no request
+    reached the provider (a connect error with no read or write failure in
+    its chain, the offline pin, no LLM slot, or the cap itself). A read
+    timeout, a reset, a cancellation or a 5xx can come after the provider did
+    the work, so it is charged at the worst case. A client that retries
+    inside the call (the provider SDKs' own `max_retries`, found through
+    `.bind`, `with_structured_output` and `.with_retry` wrappers) is never
+    refunded, because its error describes only the last attempt. Such
+    charges, and every call made outside a pipeline stage, are written to
+    the PostgreSQL meter as well; calls inside a stage are metered by the
+    stage, against the project the reservation was charged to. Each call is
+    metered once: a call already written at settle (failed, or with no
+    reported usage) is not metered again by its stage, in dollars or calls.
+  - **Not charged in full:** when an SDK retries after a read timeout and the
+    retry succeeds, the call is settled at the successful attempt's reported
+    usage. The earlier attempt may also have been billed; the SDKs do not
+    report their retries.
+  - The test-case AI background tasks called the async-only tools
+    synchronously and failed every time; they now run.
+- **LLM concurrency is bounded across the cluster (M12).** Each in-flight call
+  holds a Redis lease, stamped by the Redis server's clock and renewed by a
+  heartbeat, so a crashed holder frees its slot. If Redis is down, the
+  per-process bound still applies. New settings:
+  `LLM_CLUSTER_MAX_CONCURRENT` (default 4) and
+  `LLM_CLUSTER_SLOT_LEASE_SECONDS` (default 60; at least 15, which is twice
+  the Redis socket timeout plus 5 s). A holder whose lease cannot be renewed
+  is stopped (`LLMSlotLost`) before the lease lapses. Each renew is bounded
+  by the time left on the lease, measured from when the last renew was
+  sent, so a renew that stalls cannot keep a holder running past it. Not
+  covered: a process whose event loop is blocked for longer than the lease
+  can neither renew nor stop, so for that long one call can run over the
+  limit.
+- **Retrained models reach every pod (M14).** The object store (`ml-models/`)
+  is the source of truth: trainers publish, pods pull missing versions (only
+  model and metadata names, so nothing else is loaded as a pickle), and
+  Kubernetes pods mount a per-pod cache. A ReadWriteMany volume is not
+  portable across the supported clusters. Each download writes its own temp
+  file and is renamed into place, so workers syncing at once never publish a
+  half-written model; the file IO runs off the event loop. A name must match
+  exactly (a trailing newline is refused), and one bad object no longer stops
+  the rest of the sync.
+- **Changing a gated prompt needs scored outputs (M16).**
+  `prompt_eval_recordings.json` pins each gated prompt's hash to the outputs
+  recorded and scored under it, and the check fails when the hash changes
+  without new scored outputs. Three prompts start unmeasured: the next edit to
+  any of them needs outputs recorded on a model host.
+  - The release-risk scorer scores the recommendation itself: a constant
+    "GO, no issues" answer fails.
+  - A recording names its provider and model and carries a digest over the
+    prompt hash, the pass bar (`min_score`) and every case's id, input,
+    expected answer and output. The check refuses a recording without it, or
+    one whose outputs, cases or pass bar were edited afterwards. This is not
+    a signature (the repository holds no key): recordings are reviewed in the
+    pull request diff.
+- **`AI_MAX_RETRIES` governs every LLM provider (L2),** not only Jira.
+- **Offline connections dial the address that was checked (N8).** Under
+  `AI_OFFLINE_MODE`, LLM and notification-webhook connections are pinned to
+  the on-box address validated at connect time, so a DNS answer that changes
+  in between can no longer send prompts or messages off the box. SMTP relays,
+  which admins configure, still connect by name; `architecture/SECURITY.md`
+  documents this as accepted.
+- **IPv6 addresses that carry an IPv4 address are not on-box.** NAT64
+  (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 (`2002::/16`) and Teredo
+  (`2001::/32`) are refused by the offline residency rule and the connection
+  pin; Python counts some of them as private.
+- **The residency DNS lookup no longer blocks the event loop (N11).**
+- **Splunk log search and OpenShift pod lookups do not run offline (N19),**
+  matching the probes.
+- **Release-risk consistency checks replay the gate's own rules (N34).** A
+  third of all release decisions were flagged as inconsistent with their
+  score, although each was the gate's correct answer from the pass-rate floor
+  and minimum-pass-rate rules. The check and the gate now share one mapping.
+- **Summaries cite flaky tests by this run's test ids (N29).** The model
+  answered with test names, so 46% of summaries failed their own consistency
+  check; the ids now come from the analyses marked flaky.
+
+**Upgrade notes: AI layer and offline mode.**
+- **BREAKING (offline):** mail sent through a relay named in
+  `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` now requires
+  `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS`. With it set, every recipient's
+  domain must match. An on-box relay still delivers without it (N25).
+- **Jira webhook:** set `JIRA_WEBHOOK_SECRET` and configure the same secret on
+  the Jira webhook. Until then Jira deliveries get 403.
+- **LLM concurrency:** size `LLM_CLUSTER_MAX_CONCURRENT` to your model
+  server's capacity.
+
+**Upgrade notes: API keys.**
+- **Bound keys:** a key bound to one project now gets 403 on the instance-wide
+  QA_LEAD routes. Use an unbound admin key for instance-wide automation.
+- **`stream:write` keys:** a CI key minted with only `stream:write` that also
+  wrote through other endpoints now gets 403. Mint it with `project:write`, or
+  `project:admin` for administration.
+- **Retired scope names:** keys minted earlier with `test:read`, `test:write`,
+  `report:read`, `report:write` or `admin:read` keep working as scoped keys
+  that can only read.
+
+### CI, quality gates and platform
+
+- **Every test suite runs in CI (N2).** A new quality-gate guard,
+  `ci.every-test-suite-runs`, fails when a tracked test suite is run by no
+  workflow step. It found `client/js/tests` and `scripts/release/tests`, which
+  nothing ran; both run now.
+- **Type checks are blocking (M24).** mypy is a per-file ratchet against
+  `backend/mypy-baseline.txt` (391 existing errors; a count may only go
+  down), and the frontend type-check no longer continues on error. Backend
+  tests fail below 74% line coverage (measured 75.52%).
+- **Pull requests are scanned (M23).** Trivy checks dependencies on every PR,
+  and images on PRs that change image inputs. It fails on HIGH or CRITICAL
+  findings that have a fix. Accept a finding in `.trivyignore.yaml` with a
+  reason and an expiry at most 90 days out. Dependabot now covers every
+  manifest (MCP, CLI, every SDK, base images), and the quality gate enforces
+  that.
+- **The enum-vocabulary gate covers every enum-backed column (L3):** 28
+  columns (role, channel, schedule, severity and more), not only those named
+  `status`.
+- **CLI profiles are private (L5).** `profiles.json` and `active_profile` are
+  written atomically, owner-only (0600, directory 0700) on POSIX. They were
+  0644 and written by truncating first.
+- **Tests are independent of order (E2).** Ten test files and the Celery
+  drill worker they launch no longer pollute or depend on others
+  (`test_bl01_tenant_isolation`, `test_release_phases`,
+  `test_analysis_agent`, `core/test_deps_dual_auth_error_propagation`,
+  `regression/test_fast_classifier_failures_are_counted`,
+  `services/test_batch1` to `test_batch5`, and
+  `regression/celery_visibility_worker.py`); a new guard,
+  `regression/test_suite_module_identity_hygiene.py`, keeps it so:
+  - stubs of `app.core.deps` keep every name of the real module;
+  - three module-stub polluters are fixed;
+  - notification and metrics tests import the real modules instead of fakes;
+  - a Celery-visibility drill no longer rewrites the shared Celery config on
+    import.
+
+  A new guard, `test_suite_module_identity_hygiene.py`, keeps it that way.
+- **Tracing no longer floods the logs (N22).** With no
+  `OTEL_EXPORTER_OTLP_ENDPOINT`, spans go to stdout only in development;
+  elsewhere nothing is exported and one warning is logged. The base
+  Kubernetes configmap ships `OTEL_ENABLED=false`. On the homelab it had
+  printed about 90,000 span lines every 10 minutes.
+- **The finalize-failure alert fires on the first failure (H5).**
+  `TestLookupFinalizeStepFailing` uses `> 0 for 5m`, and the step series start
+  at 0 so the first failure counts. `k8s/monitoring/` ships the rules as a
+  PrometheusRule (`kubectl apply -k k8s/monitoring` on clusters with the
+  Prometheus Operator).
+- **nginx accepts the backend's upload size and serves a fresh `index.html`
+  (M26).** `client_max_body_size 55m` is set on every frontend nginx config
+  (it was nginx's 1 MB default, against the backend's 50 MiB cap), and the
+  image's template never caches `index.html`.
+- **HSTS (L1)** is sent for one year wherever TLS terminates in front: the
+  frontend nginx and the OpenShift Routes. It is not sent on the HTTP-only
+  homelab.
+- **Backup and restore on Kubernetes (M25).** `k8s/components/backup` adds a
+  daily backup CronJob and an on-demand restore, enabled in the homelab and
+  openshift-artifactory overlays; the runbook is
+  `k8s/components/backup/README.md`.
+  - The backup covers PostgreSQL (`pg_dump`), MongoDB (`mongodump`) and every
+    MinIO object, with a sha256 manifest and 14 archives kept on a PVC.
+  - The restore runs only with explicit confirmation.
+  - **Each dump and restore step waits for its store,** up to
+    `BACKUP_WAIT_SECONDS` (default 120), before connecting. A new backup pod
+    is refused for its first moments under a default-deny NetworkPolicy, until
+    the policy controller programs its allow rules. This was found live on the
+    homelab: `pg_dump` got "connection refused" in its first second under
+    k3s/kube-router.
+  - Two alerts: `TestLookupBackupJobFailed` (a backup Job failed: its
+    `Failed` condition, not a pod that failed before a retry succeeded) and
+    `TestLookupBackupStale` (no successful backup in 26 hours, including one
+    that never succeeded or a suspended CronJob). Both read kube-state-metrics.
+  - The backup pod may reach only DNS and the in-namespace PostgreSQL, MongoDB
+    and MinIO ports. With external stores, add their addresses in the overlay.
+- **The alert rules have data on a Prometheus Operator cluster.**
+  `k8s/monitoring` now ships PodMonitors for the backend (`:8000/metrics`) and
+  every worker (`:9100/metrics`), which the Operator does not find through the
+  `prometheus.io/scrape` annotations. The backup and disk/OOM alerts need
+  kube-state-metrics and node-exporter, which the cluster's monitoring stack
+  provides.
+
+- **The CI guards fail closed.**
+  - `ci.every-test-suite-runs` counts a suite as run only if its failure can
+    fail the build. These do not count:
+    - a step or job whose `if:` is statically false (`false`,
+      `false || false`, `!true`, `1 == 2`, an event the workflow is never
+      triggered by);
+    - a job that `needs:` a skipped job, unless its own `if:` uses
+      `always()`, `failure()` or `cancelled()`;
+    - a `continue-on-error:` that is not statically false, so `${{ env.X }}`
+      counts as soft-fail;
+    - a workflow that no push or pull request triggers (a
+      `workflow_dispatch`-only one, say);
+    - a command whose exit status is lost: `|| true`, `|| :`, `; true`,
+      a runner with more commands after it while errexit is off (`set +e`,
+      or a custom `shell:` such as `bash -l {0}` or `pwsh`), a pipe without
+      `pipefail`, or an `&&` list with more commands after it (as the
+      script's last command a runner always gates);
+    - `--collect-only`.
+  - Out of reach of a static read: an `if:` over env, matrix or step
+    outputs (counted as run), and a runner hidden inside a script.
+  - `ci.dependabot-covers-every-manifest` reads the plural `directories:` form,
+    including globs, and also finds Cargo, Gradle, `setup.py` and `Pipfile`
+    manifests.
+  - The mypy ratchet checks its parsed count against mypy's own
+    `Found N errors` and normalises absolute paths. CI runs it with
+    `--check-stale`, so a fixed error must be locked into
+    `backend/mypy-baseline.txt` by the PR that fixed it; a count really may only
+    go down.
+
+- **Dependencies patched for the first Trivy scans.** These fix the HIGH
+  findings:
+  - **Backend:** aiohttp 3.14.3, langchain 0.3.30 and pypdf 6.14.2.
+  - **Java SDK:** jackson 2.18.8.
+  - **Runtime images:** the backend and MCP images no longer ship pip,
+    setuptools or wheel, which removes the setuptools, wheel, jaraco.context
+    and msgpack findings (all copies vendored inside pip). A build step fails
+    if any of them is still importable.
+  - **Frontend image:** Alpine security updates are applied at build time.
+- **Request hardening while starlette is pinned below its fixed versions.**
+  - **Form size cap (starlette CVE-2026-54283):** urlencoded form bodies over
+    `FORM_URLENCODED_MAX_BYTES` (64 KiB) are refused with 413 before any
+    handler reads them. The cap is checked by `Content-Length` and by counting
+    a chunked stream. The CVE is reachable through the unauthenticated login.
+    The SAML ACS, which takes a `SAMLResponse` of up to 1 MB, has its own cap,
+    `FORM_URLENCODED_ACS_MAX_BYTES` (2 MiB).
+  - **No `Range` headers (CVE-2025-62727):** `Range` and `If-Range` headers
+    are dropped, so the unauthenticated SDK download (a `FileResponse`) never
+    parses byte ranges.
+- **Accepted findings are recorded in `.trivyignore.yaml`.** These are
+  findings with no fix published, or not reachable, each with a concrete reason
+  and a 90-day expiry. Follow-ups: the FastAPI/Starlette 1.x upgrade, which
+  clears the three starlette entries, and the langchain 1.x migration, which
+  clears langchain-core CVE-2026-34070.
+
+**Upgrade notes: CI and platform.**
+- **Trivy:** its first run may report existing HIGH or CRITICAL findings. Fix
+  them or accept them in `.trivyignore.yaml`.
+- **Backup:** run one backup and one restore on each cluster that enables the
+  component, and confirm HSTS at your own edge if TLS does not terminate at
+  the frontend nginx or an OpenShift Route. With stores outside the cluster,
+  add an egress rule for them to the overlay, or the backup fails.
+- **Monitoring:** `kubectl apply -k k8s/monitoring` now also creates two
+  PodMonitors; add your Prometheus's `podMonitorSelector` label with the same
+  kustomize `labels` entry as the rule's.
+
+### Data, migrations and ingest
+
+- **Concurrent migrations are serialised for the whole upgrade (N24).**
+  Migrations took an advisory lock that was released when `autocommit_block()`
+  committed, so from the first `CREATE INDEX CONCURRENTLY` on, two
+  `alembic upgrade head` runs were not serialised. A session-level lock on a
+  dedicated connection now holds for the whole upgrade
+  (`backend/app/db/migration_lock.py`).
+  - **Waiting:** a waiting migrator polls `pg_try_advisory_lock` rather than
+    blocking. A blocked waiter holds a snapshot that `CREATE INDEX
+    CONCURRENTLY` waits on, which is a deadlock PostgreSQL cannot detect.
+  - **Timeout:** the wait is capped by `MIGRATION_LOCK_WAIT_SECONDS`
+    (default 1800), after which the migrator fails loudly.
+- **A legacy live `run_start` reset can no longer wipe results counted by a
+  concurrent reset or create (H6).** The check and the write are one Lua script,
+  on both the reset and the create path.
+- **Revoking an API key revokes every key it minted, at any depth and whoever
+  owns it (N35, migration 0168).** Each revoked key's streaming-cache entry is
+  dropped after the commit, and each project-bound key gets an
+  `api_key.revoked` activity row with `cascade_from`.
+  - **Races:** a key minted while its parent is being revoked cannot escape.
+    Minting locks the parent `FOR SHARE` and gets 401 if the parent was
+    revoked. The revoke repeats its cascade until a pass finds nothing, to
+    catch a key minted under a descendant.
+  - **Migration 0168:** its index is built and dropped `CONCURRENTLY`.
+- **The pre-parse result cap bounds crafted Cypress, Playwright, Cucumber and
+  Allure reports (N21).** They are counted by the arrays their parsers read
+  results from, not by optional marker keys. The count runs in linear time with
+  bounded memory. A report with a string that never closes, or nesting deeper
+  than 512 levels, is refused before parsing as an unreadable report.
+- **Real MinIO notifications are ingested (R15).** Before this, the top-level
+  `bucket/object` `Key` made the bucket the project. Now:
+  - the object key is taken from `Records[].s3.object.key`, URL-decoded and
+    checked against our bucket;
+  - MinIO's `auth_token` is accepted as `Authorization: Bearer`;
+  - `scripts/setup-minio.sh` requires `WEBHOOK_SECRET` and sets it as
+    `auth_token`, and `make setup-minio` passes `.env` to it.
+- **"Run #N" labels are served by an index (N17, migrations 0169 and 0172).**
+  Each (project, suite) is one indexed branch: 87.6 ms → 64.9 ms. The index keys
+  the suite's md5, so no legal suite name can overflow a btree row. A first
+  version stored the suite name in the index and reached 16.7 ms, but a
+  500-character multibyte suite name overflowed the row and broke ingest; 0172
+  removes that version from databases that ran it.
+- **The admin all-projects and multi-project run lists no longer scan and sort
+  every run (N18, migration 0170).** Admin list: 996.5 ms → 0.2 ms. A member of
+  3 of 30 projects: 47.3 ms → 0.5 ms, with one ordered branch per project.
+- **Migration 0162's `webhook_deliveries.run_id` backfill moved to 0171 and runs
+  in committed batches paged by id (N3).** Databases that already ran 0162 are
+  unaffected. On 240,000 rows, the longest row-lock hold drops from 6.5 s (in a
+  real migration, the whole upgrade) to 235 ms per batch.
+- **Architecture docs (N4, N13):**
+  - `architecture/INGESTION_SCALE.md` §8 covers the in-process live consumer
+    (one leader-leased process) and the per-process fan-out subscriber, with a
+    runbook.
+  - `architecture/SECURITY.md` §7a records that the shipped MinIO credential
+    is the root user, and gives the per-project `PutObject` policy and an `mc`
+    runbook.
+
+**Upgrade notes: data and migrations.**
+- **Migrations 0168–0171** run online-safe. A second migrator waits up to
+  `MIGRATION_LOCK_WAIT_SECONDS` (default 1800) for the lock, then fails loudly.
+- **Key revocation:** keys minted before 0168 have no recorded parent, so
+  revoking one does not cascade to them.
+- **MinIO webhook:** set `WEBHOOK_SECRET` before running
+  `scripts/setup-minio.sh`. MinIO sends it as `auth_token`
+  (`Authorization: Bearer`).
+
+### Frontend
+
+- **A tab coming back from the background refreshes at once (M19).** SWR
+  already skipped polling in a hidden tab, but about 80 hooks turn off focus
+  revalidation, so a returning tab showed stale data for up to one more
+  interval. The root SWR config now pins the hidden-tab pause and refetches
+  polling hooks as soon as the tab is visible. The unused
+  `useVisibilityAwareInterval` hook is removed.
+- **Overview makes one `/runs` request per poll instead of three (M22).** The
+  two lifetime probes run only when the selected window comes back empty, and
+  are answered from the windowed list otherwise. Measured live: 3 requests per
+  35 s instead of 6.
+- **Modal dialogs are keyboard-accessible (M20).** They trap Tab and Shift+Tab,
+  close on Escape (not while submitting), and return focus to the control that
+  opened them, through one shared `useModalFocus` hook. It is applied to seven
+  modals. About 19 dialogs written inline in page files are not converted yet.
+  With a dialog open inside another, only the top one handles Escape and Tab,
+  and a busy inner dialog no longer lets Escape close the one beneath it.
+  Only open dialogs count. A dialog component that stays mounted while
+  closed passes `open`, and it takes its place in the stack when it opens.
+- **Failed fetches say so (M21).** Runs, Intelligence hub, Releases and Summary
+  report show "data unavailable" with Retry instead of an empty state, and the
+  Intelligence hub no longer searches further back after a failure. A new
+  guard requires every routed page to declare how it shows a failed fetch; the
+  backlog of pages that still render a failure as empty is capped at 29 and
+  can only shrink. The other labels are checked too, statically, with
+  comments and strings removed first.
+  - A "no fetch" page may not read data: SWR, a fetching hook imported by
+    any path, `fetch(`, an api, apiClient or axios read, a non-mutation
+    service call, or a child component one level down that does any of
+    these.
+  - A page credited with its own error display must bind an error from a
+    fetching hook or a `catch`, and render it.
+  - The check is necessary, not sufficient. It cannot prove the error shown
+    is the primary fetch's, and it does not read deeper than one child
+    level.
+- **The unconfirmed-retirements panel pages through every orphaned case
+  (N16)** ("Showing 26–50 of 60", Previous/Next) instead of listing the first
+  25 under the full total.
+- Three vacuous `as unknown as string` casts in My Failures are removed (L4).
+- **Tests:** the role-based-access e2e spec no longer lands on /login in a
+  full run (E1). The sign-out test revoked the shared admin session, and the
+  spec trusted a mocked `/auth/me`. Sign-out now uses its own session, and the
+  spec verifies a real session before mocking the role.
+
 ## 2026-09-10 — a streaming-only API key could administer its project, and anyone could subscribe to another project's failures
 
 - **Notification preferences.** `POST/PUT /api/v1/notifications/preferences`

@@ -11,6 +11,10 @@ from typing import List, Literal, Optional
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: The Redis client's socket timeout (app.db.redis_client). One Redis call --
+#: an LLM slot renew, say -- can hang this long before it fails.
+REDIS_SOCKET_TIMEOUT_SECONDS = 5
+
 # Belt-and-suspenders: disable ChromaDB's anonymous telemetry via env var.
 # NOTE: the installed chromadb (0.5.20) does NOT reliably honour this env var
 # for HttpClient — it still emits "Failed to send telemetry event ..." errors.
@@ -232,6 +236,14 @@ class Settings(BaseSettings):
     MAX_ARCHIVE_ENTRIES: int = 5_000
     MAX_ARCHIVE_ENTRY_BYTES: int = 50 * 1024 * 1024          # 50 MB per entry
     MAX_ARCHIVE_RATIO: int = 100                             # uncompressed/compressed
+    # Cap on an application/x-www-form-urlencoded request body (starlette
+    # CVE-2026-54283: request.form() ignores its limits for this type, and
+    # POST /api/v1/auth/login takes one unauthenticated). The only forms are
+    # login/token exchanges, a few hundred bytes. middleware/request_hardening.py
+    FORM_URLENCODED_MAX_BYTES: int = 64 * 1024
+    # ...except the SAML ACS (POST binding), whose SAMLResponse may reach the
+    # route's own 1,000,000-char limit (routers/sso.py) plus urlencoding growth.
+    FORM_URLENCODED_ACS_MAX_BYTES: int = 2 * 1024 * 1024
     # Re-audit M5. The most test results one uploaded report may carry: the
     # same cap as a JSON batch, so a file is not a way around it. The 50MB
     # size limit bounds bytes, not rows -- 50MB of minimal JUnit elements is
@@ -419,6 +431,12 @@ class Settings(BaseSettings):
     # tenant on it (any Slack workspace), so a webhook set per user or per team
     # never uses this list. Empty: every off-box destination is refused.
     OFFLINE_NOTIFICATION_ALLOWED_HOSTS: str = ""
+    # Re-audit N25: recipient domains email may reach while AI_OFFLINE_MODE is
+    # on (comma-separated; "corp.example" exactly, ".corp.example" subdomains).
+    # Set: every recipient must match, whatever the relay. Empty: an on-box
+    # relay may deliver (its own MTA policy governs onward routing); an
+    # off-box relay admitted by OFFLINE_NOTIFICATION_ALLOWED_HOSTS is refused.
+    OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS: str = ""
     AGENT_MEMORY_RETENTION_DAYS: int = 365
     AI_CONFIDENCE_THRESHOLD: int = 80
     AIQ_GAP_REFINEMENT_ENABLED: bool = False         # AIQ-P4: gap_detection + report_refinement deep stages (default off)
@@ -428,8 +446,22 @@ class Settings(BaseSettings):
     # Report-level evaluation must use published, tenant-authorized reports in
     # deployed environments.  Tests/fixture automation may opt in explicitly.
     AI_REPORT_EVAL_ALLOW_CALLER_CORPUS: bool = False
+    # Retries after the first attempt, for outbound AI-layer calls (re-audit L2):
+    # every LLM client get_llm() builds (the provider SDK's own max_retries for
+    # the OpenAI-wire, Anthropic and Gemini clients; connect-phase failures only
+    # for ChatOllama, which has no retry of its own) and Jira ticket creation.
+    # A read timeout is not retried for Ollama: it would multiply wall clock.
     AI_MAX_RETRIES: int = 3
     AI_TIMEOUT_SECONDS: int = 300
+    # Re-audit M12: cluster-wide cap on concurrent LLM calls per provider,
+    # held as Redis leases so a crashed holder frees its slot when its lease
+    # lapses. 0 disables the cluster bound; the per-process bound
+    # (LLM_MAX_CONCURRENT_ANALYSES, the analysis stage's own semaphore) applies
+    # either way. A waiter gives up after AI_TIMEOUT_SECONDS.
+    # The lease must comfortably outlast one Redis call: at least
+    # 2 x REDIS_SOCKET_TIMEOUT_SECONDS + 5 s (0 = the default, 60).
+    LLM_CLUSTER_MAX_CONCURRENT: int = 4
+    LLM_CLUSTER_SLOT_LEASE_SECONDS: int = 60
     AI_ANALYSIS_CACHE_TTL: int = 3600                # seconds — Redis cache TTL for analysis results
     SEMANTIC_SIMILARITY_THRESHOLD: float = 0.85      # min cosine similarity for semantic cache hit
     PROMPT_OVERHEAD_TOKENS: int = 1500               # reserved tokens for system prompt + reasoning
@@ -441,6 +473,11 @@ class Settings(BaseSettings):
     JIRA_EMAIL: Optional[str] = None
     JIRA_API_TOKEN: Optional[str] = None
     JIRA_DEFAULT_PROJECT_KEY: str = "QA"
+    # The secret configured on the Jira webhook. Jira signs each delivery with
+    # it: ``X-Hub-Signature: sha256=<hex HMAC-SHA256 of the raw body>``.
+    # POST /api/v1/feedback/jira-webhook refuses every delivery (403) while
+    # it is unset or a placeholder, in every environment.
+    JIRA_WEBHOOK_SECRET: Optional[str] = None
 
     # ── Confluence (Knowledge RAG) ──────────────────────────────
     CONFLUENCE_ENABLED: bool = False
@@ -552,6 +589,21 @@ class Settings(BaseSettings):
     # set lower (e.g. QA_LEAD) to refuse IdP-driven admin grants entirely.
     SSO_MAX_PROVISIONED_ROLE: str = "ADMIN"
 
+    @field_validator("LLM_CLUSTER_SLOT_LEASE_SECONDS")
+    @classmethod
+    def _validate_llm_cluster_slot_lease(cls, v):
+        # QA-B45-R2-3: a holder renews every lease/3 and each renew is one
+        # Redis call that can hang for the socket timeout. A lease that a
+        # single stalled call can outlast leaves no room to renew again or
+        # to stop the holder before a second one is admitted.
+        minimum = 2 * REDIS_SOCKET_TIMEOUT_SECONDS + 5
+        if v and v < minimum:
+            raise ValueError(
+                f"LLM_CLUSTER_SLOT_LEASE_SECONDS must be 0 (use the built-in 60) or at least {minimum} "
+                f"(2 x the {REDIS_SOCKET_TIMEOUT_SECONDS}s Redis socket timeout + 5s); got {v}"
+            )
+        return v
+
     @field_validator("SSO_MAX_PROVISIONED_ROLE")
     @classmethod
     def _validate_sso_max_provisioned_role(cls, v):
@@ -617,6 +669,11 @@ class Settings(BaseSettings):
     #   "auto"  — ML if trained model available, else LLM if reachable, else rules
     ANALYSIS_MODE: str = "auto"
     ML_MODEL_DIR: str = "models"                     # directory for trained .joblib artifacts
+    # Re-audit M14: with several pods, ML_MODEL_DIR is a pod-local cache and the
+    # object store is the source of truth. A retrain publishes there; every pod
+    # pulls new versions (services/ml/model_store.py). On in the k8s base config.
+    ML_MODEL_SYNC_ENABLED: bool = False
+    ML_MODEL_STORE_PREFIX: str = "ml-models/"
     ML_MIN_TRAINING_SAMPLES: int = 200               # minimum labeled samples before ML activates
     ML_RETRAIN_ENABLED: bool = True                  # enable nightly Celery-beat retraining
     ML_ACCURACY_THRESHOLD: float = 0.80              # minimum accuracy to deploy a new model
@@ -708,7 +765,8 @@ class Settings(BaseSettings):
     OTEL_ENABLED: bool = True
     OTEL_SERVICE_NAME: str = "testlookup"
     # OTLP HTTP collector endpoint, e.g. "http://jaeger:4318"
-    # When empty, spans are written to stdout (development fallback)
+    # When empty: stdout in development only; elsewhere nothing is exported
+    # and one warning is logged (core/tracing.py, re-audit N22)
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = None
     # Prometheus metrics endpoint
     METRICS_ENABLED: bool = True
@@ -815,6 +873,14 @@ class Settings(BaseSettings):
                 warnings.append(
                     "CRITICAL: MONGO_URI carries a placeholder password — the "
                     "database password is the one published in .env.example"
+                )
+            # WARNING, not CRITICAL: the Jira webhook fails closed on its own (403
+            # for every delivery), so an unset secret denies rather than exposes,
+            # and refusing startup would break every deployment without Jira.
+            if self.JIRA_ENABLED and _is_placeholder_secret(self.JIRA_WEBHOOK_SECRET or ""):
+                warnings.append(
+                    "WARNING: JIRA_WEBHOOK_SECRET is unset — POST "
+                    "/api/v1/feedback/jira-webhook refuses every Jira delivery"
                 )
             if self.DEV_AUTO_LOGIN_ENABLED:
                 warnings.append("CRITICAL: DEV_AUTO_LOGIN_ENABLED is True in production — disable it")

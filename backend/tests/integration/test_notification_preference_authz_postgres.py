@@ -369,6 +369,163 @@ async def test_the_relay_rechecks_an_all_projects_preference_too(world, monkeypa
     assert status_ != "sent"
 
 
+# ── re-audit N33: a deleted project's rows, and staged digests ──────────────
+
+
+def _record_relay(world, monkeypatch):
+    """Record what the relay hands a provider, by recipient."""
+    from unittest.mock import AsyncMock
+
+    delivered: list = []
+
+    async def _dispatch(pref, *_args, **_kwargs):
+        delivered.append(pref.user_id)
+        return "sent", None
+
+    async def _email(*, to, **_kwargs):
+        delivered.append(to)
+
+    monkeypatch.setattr(world.manager, "_dispatch_to_channel", _dispatch)
+    monkeypatch.setattr(world.manager.email_service, "send_notification", _email)
+    monkeypatch.setattr(
+        world.manager.email_service, "_get_smtp_cfg", AsyncMock(return_value={"enabled": True})
+    )
+    return delivered
+
+
+async def test_the_relay_does_not_deliver_a_deleted_projects_rows(world, monkeypatch):
+    """``notification_log.project_id`` is ON DELETE SET NULL. An "all projects"
+    preference survives the project, so its staged rows reached the relay with
+    no project, skipped the re-check, and went to someone whose membership was
+    deleted with the project."""
+    Project = __import__("app.models.postgres", fromlist=["Project"]).Project
+    assert (await _subscribe(world, world.member_jwt, None, email="all@example.com")).status_code == 201
+    await _stage_run_failed(world, world.project_b, f"n33-deleted-{world.tag}")
+    assert world.member_b in await _recipients(world, world.project_b)
+    async with world.sessions.begin() as db:
+        await db.execute(delete(Project).where(Project.id == world.project_b))
+    Log = world.models.NotificationLog
+    async with world.sessions() as db:
+        orphaned = (await db.execute(
+            select(Log.project_id).where(Log.user_id == world.member_b)
+        )).scalars().all()
+    assert orphaned == [None]  # the precondition: SET NULL, not a cascade
+    delivered = _record_relay(world, monkeypatch)
+
+    await world.manager.relay_pending_notification_deliveries()
+
+    assert world.member_b not in delivered
+    async with world.sessions() as db:
+        status_ = (await db.execute(
+            select(Log.status).where(Log.user_id == world.member_b)
+        )).scalar_one()
+    assert status_ != "sent"
+
+
+async def _stage_digest(world, user_id, *, paused=False):
+    """An event-driven digest for project B, staged as the AI summary task does."""
+    from app.models.postgres import DigestSubscription
+
+    sub_id = uuid.uuid4()
+    async with world.sessions.begin() as db:
+        db.add(DigestSubscription(
+            id=sub_id, user_id=user_id, project_id=world.project_b, name=f"n33 {world.tag}",
+            schedule="PER_RUN", channel="email", is_active=True, is_paused=paused,
+        ))
+    target = f"digest-{sub_id.hex[:8]}@example.com"
+    async with world.sessions() as db:
+        await world.manager.stage_explicit_notification_deliveries(
+            db, project_id=world.project_b, run_id=None,
+            delivery_scope=f"n33-digest-{sub_id.hex}",
+            deliveries=[{
+                "route_id": str(sub_id), "user_id": user_id, "channel_type": "email",
+                "target": target, "event_type": "ai_analysis_complete",
+                "title": f"B summary {world.tag}", "body": "B's executive summary",
+                "digest_subscription_id": str(sub_id),
+            }],
+        )
+        await db.commit()
+    return target
+
+
+async def test_the_relay_rechecks_a_staged_digests_subscriber(world, monkeypatch):
+    member_target = await _stage_digest(world, world.member_b)
+    ex_target = await _stage_digest(world, world.ex_member)
+    await world.leave(world.ex_member, world.project_b)
+    delivered = _record_relay(world, monkeypatch)
+
+    await world.manager.relay_pending_notification_deliveries()
+
+    assert member_target in delivered
+    assert ex_target not in delivered
+    Log = world.models.NotificationLog
+    async with world.sessions() as db:
+        ex_error = (await db.execute(
+            select(Log.error_detail).where(Log.user_id == world.ex_member)
+        )).scalar_one()
+    assert "can no longer access" in ex_error
+
+
+async def test_the_relay_does_not_send_a_digest_paused_since_staging(world, monkeypatch):
+    target = await _stage_digest(world, world.member_b, paused=True)
+    delivered = _record_relay(world, monkeypatch)
+
+    await world.manager.relay_pending_notification_deliveries()
+
+    assert target not in delivered
+
+
+async def _user(world, user_id):
+    from app.models.postgres import User
+
+    async with world.sessions() as db:
+        return (await db.execute(select(User).where(User.id == user_id))).scalar_one()
+
+
+async def test_a_scheduled_digest_goes_only_to_an_owner_who_can_read_the_project(world):
+    """The scheduled dispatcher's send-time check, against real memberships."""
+    check = world.manager.digest_owner_block_reason
+    await world.leave(world.ex_member, world.project_b)
+
+    async with world.sessions() as db:
+        member = await check(db, await _user(world, world.member_b), world.project_b)
+        ex = await check(db, await _user(world, world.ex_member), world.project_b)
+        disabled = await check(db, await _user(world, world.disabled), world.project_b)
+        admin = await check(db, await _user(world, world.key_owner), world.project_b)
+        admin_global = await check(db, await _user(world, world.key_owner), None)
+        member_global = await check(db, await _user(world, world.member_b), None)
+
+    assert member is None and admin is None and admin_global is None
+    assert ex == "digest owner can no longer access this project"
+    assert disabled == "digest owner's account is disabled"
+    assert member_global == "workspace-wide digest requires ADMIN; subscription is scoped to no project"
+
+
+def test_the_scheduled_dispatcher_runs_the_owner_check_before_sending():
+    """The helper is only a fix if the dispatcher calls it and skips on its answer."""
+    import ast
+    import inspect
+    import textwrap
+
+    from app.worker import tasks
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(tasks.dispatch_scheduled_digests)))
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "digest_owner_block_reason"
+    ]
+    assert len(calls) == 1
+    skips = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "block_reason"
+    ]
+    assert skips and any(
+        isinstance(stmt, ast.Assign) and getattr(stmt.targets[0], "id", None) == "status"
+        and getattr(stmt.value, "value", None) == "skipped"
+        for stmt in skips[0].body
+    )
+
+
 # ── QA-R3-2: onboarding usage events are filed under a project too ──────────
 
 

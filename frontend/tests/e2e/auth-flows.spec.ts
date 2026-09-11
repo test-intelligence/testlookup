@@ -84,6 +84,12 @@ test.describe('Auth — error & session flows', () => {
   });
 
   test('sign out returns the user to /login', async ({ page }) => {
+    // Sign out on a session of this test's OWN. The server logout revokes the
+    // access token's jti; on the shared storageState token that ended the
+    // session every later spec starts from (E1). Clearing storage first makes
+    // performRealLogin mint a fresh token through its login fallback.
+    await page.goto('/login');
+    await page.evaluate(() => localStorage.clear());
     await performRealLogin(page);
     await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 });
 

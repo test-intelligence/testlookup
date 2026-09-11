@@ -506,7 +506,7 @@ async def set_run_release(
     # primary, which decides what every release-scoped analytic reads. Leaving
     # it on a membership-only guard would let any project member override a
     # QA lead's deliberate attribution.
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_run_access()),
 ):
     release_name = (body.get("release_name") or "").strip()

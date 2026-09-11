@@ -8,14 +8,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import bindparam, select, text
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
+    API_KEY_SCOPES,
     _api_key_bound_project,
     api_key_grant,
     require_api_key_owner,
     require_role,
+    takes_scoped_key_writes,
 )
 from app.db.postgres import get_db
 from app.models.postgres import ApiKey, Project, User, UserRole
@@ -55,6 +58,7 @@ def _build_api_key_response(api_key: ApiKey) -> ApiKeyResponse:
 
 
 @router.post("", response_model=ApiKeyCreatedResponse, status_code=201)
+@takes_scoped_key_writes  # mints a subset of the caller's scopes and expiry (below)
 async def create_api_key(
     payload: ApiKeyCreate,
     db: AsyncSession = Depends(get_db),
@@ -124,6 +128,21 @@ async def create_api_key(
     # original and every scope and expiry the operator had chosen.
     grant = api_key_grant(current_user)
     scopes = _normalize_scopes(payload.scopes)
+    # ── only scopes something enforces (re-audit N31) ────────────────────
+    # The key form offered test:read/write, report:read/write and admin:read,
+    # which nothing read: a key "limited" to report:read acted with its
+    # owner's full role. Checked on what the caller ASKED for; a legacy key
+    # rotating an old unknown scope inherits it, and an unknown scope grants
+    # nothing (a scoped key without project:write cannot write).
+    unknown = sorted(set(scopes) - set(API_KEY_SCOPES))
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Unknown API key scope(s): " + ", ".join(unknown)
+                + ". Valid scopes: " + ", ".join(API_KEY_SCOPES)
+            ),
+        )
     if grant is not None and grant.is_scoped:
         if not scopes:
             if "scopes" in payload.model_fields_set:
@@ -192,6 +211,19 @@ async def create_api_key(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
     # ── key generation ────────────────────────────────────────────────────
+    # ── a key being revoked cannot mint (review R-B45-D-4) ───────────────
+    # The caller's key was active when it authenticated, but a revoke can
+    # commit between that and this INSERT. The FK's own KEY SHARE lock does
+    # not conflict with the revoke's UPDATE, and the revoke's cascade cannot
+    # see this uncommitted child, so the child used to commit active under a
+    # revoked parent. FOR SHARE on the parent does conflict with that UPDATE:
+    # either this mint holds it first -- the revoke waits for our commit, and
+    # its cascade then sees the child -- or the revoke does, and we read its
+    # committed is_active = false and refuse. Lock order: a mint locks only
+    # its parent, so it cannot close a cycle with a revoke.
+    if grant is not None:
+        await _lock_active_minting_parent(db, grant.key_id)
+
     raw_key = f"qai_{secrets.token_urlsafe(32)}"
     key_hash = _hash_key(raw_key)
     key_hint = raw_key[:8] + "..."
@@ -207,6 +239,9 @@ async def create_api_key(
         scopes=scopes,
         project_id=payload.project_id,
         expires_at=expires_at,
+        # Which key minted this one, so revoking it revokes this too (re-audit
+        # N35). NULL when a signed-in user mints.
+        minted_by_key_id=grant.key_id if grant is not None else None,
     )
     db.add(api_key)
 
@@ -280,6 +315,7 @@ async def list_api_keys(
 
 
 @router.delete("/{key_id}", status_code=204)
+@takes_scoped_key_writes  # a key without project:admin revokes only itself (below)
 async def revoke_api_key(
     key_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -311,11 +347,12 @@ async def revoke_api_key(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=PROJECT_ADMIN_SCOPE_DETAIL)
     api_key.is_active = False
 
-    # The live-event path caches this credential's project for a few seconds so
-    # the full check does not run per event. Revocation is exactly when that
-    # lag is least acceptable, and ApiKey.key_hash IS the cache digest, so drop
-    # it now rather than waiting for the TTL.
-    await forget_streaming_key_hash(api_key.key_hash)
+    # ── the keys this key minted go with it (re-audit N35) ───────────────
+    # A leaked key could mint itself a replacement, and revoking the leaked
+    # key left the replacement working. Every ACTIVE key below this one --
+    # at any depth, whoever owns it -- is revoked in this same transaction.
+    # Keys minted before migration 0168 have no parent recorded (roots).
+    descendants = await _revoke_subtree(db, api_key.id)
 
     if api_key.project_id is not None:
         await record_activity(
@@ -325,8 +362,91 @@ async def revoke_api_key(
             actor=ActorRef.from_user(current_user),
             entity_id=api_key.id,
             entity_label=api_key.name,
-            context={"key_hint": api_key.key_hint},
+            context={"key_hint": api_key.key_hint, "revoked_descendants": len(descendants)},
         )
+    for child in descendants:
+        if child.project_id is not None:
+            await record_activity(
+                db,
+                project_id=child.project_id,
+                event_type="api_key.revoked",
+                actor=ActorRef.from_user(current_user),
+                entity_id=child.id,
+                entity_label=child.name,
+                context={"key_hint": child.key_hint, "cascade_from": str(api_key.id)},
+            )
 
     await db.commit()
+
+    # The live-event path caches each credential's project for a few seconds
+    # so the full check does not run per event. Revocation is exactly when
+    # that lag is least acceptable, and ApiKey.key_hash IS the cache digest,
+    # so drop every revoked key's entry now rather than waiting for the TTL.
+    # After the commit: dropped before it, a request in between re-cached the
+    # key from a row that was still active.
+    for key_hash in (api_key.key_hash, *(child.key_hash for child in descendants)):
+        await forget_streaming_key_hash(key_hash)
     return None
+
+
+_MINTING_PARENT = text(
+    "SELECT is_active FROM api_keys WHERE id = :parent FOR SHARE"
+).bindparams(bindparam("parent", type_=PG_UUID(as_uuid=True)))
+
+
+async def _lock_active_minting_parent(db: AsyncSession, parent_id: uuid.UUID) -> None:
+    """Hold the minting key's row for the mint's transaction; refuse it if revoked."""
+    active = (await db.execute(_MINTING_PARENT, {"parent": parent_id})).scalar_one_or_none()
+    if not active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This API key has been revoked",
+        )
+
+
+# Passes of the cascade before giving up; a pass only finds more keys when a
+# mint committed under the subtree while the previous pass waited for it.
+_MAX_CASCADE_PASSES = 64
+
+
+async def _revoke_subtree(db: AsyncSession, root_id: uuid.UUID) -> list:
+    """Revoke every active key below ``root_id``, repeating until a pass finds none.
+
+    One pass is not enough (review R-B45-D-4). A pass that has to wait for a
+    descendant's row -- a mint holding it FOR SHARE -- resumes with the
+    snapshot it started with, so the key that mint commits is invisible to
+    it. Under READ COMMITTED each new statement takes a new snapshot, so the
+    next pass sees it. Mints that reach the subtree later wait on the rows
+    this transaction holds and then read them revoked.
+    """
+    revoked: list = []
+    for _ in range(_MAX_CASCADE_PASSES):
+        batch = (await db.execute(_REVOKE_DESCENDANTS, {"root": root_id})).all()
+        if not batch:
+            return revoked
+        revoked.extend(batch)
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Keys are still being minted under this key; retry the revocation",
+    )
+
+
+# Every active descendant of :root, at any depth and whoever owns it. The
+# walk passes THROUGH inactive keys: a key revoked some other way may still
+# have minted active ones. UNION (not UNION ALL) stops at a repeated id.
+_REVOKE_DESCENDANTS = text(
+    """
+    WITH RECURSIVE descendants(id) AS (
+        SELECT id FROM api_keys WHERE minted_by_key_id = :root
+      UNION
+        SELECT child.id
+        FROM api_keys AS child
+        JOIN descendants AS parent ON child.minted_by_key_id = parent.id
+    )
+    UPDATE api_keys AS k
+    SET is_active = false
+    FROM descendants AS d
+    WHERE k.id = d.id AND k.is_active IS TRUE
+    RETURNING k.id, k.key_hash, k.project_id, k.name, k.key_hint
+    """
+).bindparams(bindparam("root", type_=PG_UUID(as_uuid=True)))

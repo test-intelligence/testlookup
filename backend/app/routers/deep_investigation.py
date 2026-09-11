@@ -329,7 +329,7 @@ async def check_cluster_duplicate(
 async def review_defect(
     defect_id: uuid.UUID,
     body: DefectApprovalRequest,
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -424,7 +424,7 @@ async def review_defect(
 async def list_pending_defects(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=100, description="Items per page"),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     """List defects awaiting approval in the caller's projects (QA Lead+, paginated).

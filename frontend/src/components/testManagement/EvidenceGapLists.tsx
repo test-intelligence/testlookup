@@ -4,7 +4,7 @@ import toast from 'react-hot-toast'
 
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { usePermissions } from '@/hooks/usePermissions'
-import { useOrphanedCanonicalCases } from '@/hooks/useSuites'
+import { ORPHANED_PAGE_SIZE, useOrphanedCanonicalCases } from '@/hooks/useSuites'
 import { useTestCaseEvidenceGaps } from '@/hooks/useTestManagement'
 import { onboardingService } from '@/services/onboardingService'
 import { suitesService } from '@/services/suitesService'
@@ -36,7 +36,8 @@ export default function EvidenceGapLists({ projectId }: EvidenceGapListsProps) {
   const { isQaLead } = usePermissions()
   const neverExecuted = useTestCaseEvidenceGaps('never_executed')
   const automationVanished = useTestCaseEvidenceGaps('automation_vanished')
-  const orphaned = useOrphanedCanonicalCases()
+  const [orphanPage, setOrphanPage] = useState(1)
+  const orphaned = useOrphanedCanonicalCases(orphanPage, ORPHANED_PAGE_SIZE)
   const [open, setOpen] = useState<Set<ListKey>>(() => new Set())
   const [retiring, setRetiring] = useState<CanonicalTestCase | null>(null)
   const [savingRetirement, setSavingRetirement] = useState(false)
@@ -135,6 +136,9 @@ export default function EvidenceGapLists({ projectId }: EvidenceGapListsProps) {
         error={!!orphaned.error}
         onRetry={() => void retryOrphans()}
         canConfirmRetirement={isQaLead}
+        page={orphanPage}
+        pageSize={ORPHANED_PAGE_SIZE}
+        onPage={setOrphanPage}
         onConfirm={(item) => {
           setRetirementError(null)
           setRetiring(item)
@@ -255,9 +259,13 @@ interface OrphanedListCardProps {
   onRetry: () => void
   canConfirmRetirement: boolean
   onConfirm: (item: CanonicalTestCase) => void
+  /** Paging (N16). All three, or none: without them the card cannot page. */
+  page?: number
+  pageSize?: number
+  onPage?: (page: number) => void
 }
 
-function OrphanedListCard({ open, onToggle, items, total, loading, error, onRetry, canConfirmRetirement, onConfirm }: OrphanedListCardProps) {
+function OrphanedListCard({ open, onToggle, items, total, loading, error, onRetry, canConfirmRetirement, onConfirm, page, pageSize, onPage }: OrphanedListCardProps) {
   return (
     <article className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)]">
       <button type="button" aria-expanded={open} aria-controls="evidence-list-orphaned" onClick={onToggle} className="flex w-full items-start justify-between gap-3 p-4 text-left">
@@ -296,8 +304,42 @@ function OrphanedListCard({ open, onToggle, items, total, loading, error, onRetr
               ))}
             </ul>
           )}
+          {!loading && !error && page != null && pageSize != null && onPage && (
+            <OrphanPager page={page} pageSize={pageSize} total={total} shown={items?.length ?? 0} onPage={onPage} />
+          )}
         </div>
       )}
     </article>
+  )
+}
+
+/**
+ * "Showing 26–50 of 60" with Previous/Next. Rendered whenever there is more
+ * than one page, and also on a later page that has emptied (every row on it
+ * was just confirmed), so the reader can still get back.
+ */
+function OrphanPager({ page, pageSize, total, shown, onPage }: {
+  page: number
+  pageSize: number
+  total?: number
+  shown: number
+  onPage: (page: number) => void
+}) {
+  if (total == null) return null
+  if (page <= 1 && total <= pageSize) return null
+  const offset = (page - 1) * pageSize
+  const label = shown > 0 ? `Showing ${offset + 1}–${offset + shown} of ${total}` : `Page ${page} · ${total} total`
+  return (
+    <nav aria-label="Unconfirmed retirements pages" className="mt-2 flex items-center justify-between gap-2 text-[11px] text-[var(--color-text-muted)]">
+      <span>{label}</span>
+      <span className="flex gap-1">
+        <button type="button" className="btn-secondary text-xs" disabled={page <= 1} onClick={() => onPage(page - 1)}>
+          Previous
+        </button>
+        <button type="button" className="btn-secondary text-xs" disabled={offset + pageSize >= total} onClick={() => onPage(page + 1)}>
+          Next
+        </button>
+      </span>
+    </nav>
   )
 }

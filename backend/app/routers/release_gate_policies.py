@@ -153,6 +153,14 @@ async def get_policy(
     policy = result.scalar_one_or_none()
     if not policy:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy not found")
+    # Re-audit N26: this read checked nothing, so any signed-in caller (and a
+    # key bound to another project) read any project's gate rules by id. A
+    # project's policy needs access to that project; the system default
+    # (project_id NULL) stays readable by everyone, as /system-history is.
+    if policy.project_id is not None:
+        from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+        await resolve_project_scope(db, current_user, str(policy.project_id))
     return policy
 
 

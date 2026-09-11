@@ -87,15 +87,22 @@ groups:
       # and until this counter existed that isolation also made the failure
       # invisible: canonical cases, failed-test assignment or release links
       # could stop updating on every run with nothing to show for it.
+      #
+      # `> 0`, not `> 3`: on a quiet deployment (a few runs an hour) a step
+      # that fails on EVERY run never reached four failures in 30 minutes, so
+      # the alert could not fire where it mattered most. The step series are
+      # created at 0 on startup (core/metrics.py) so the first failure is an
+      # increase, and `for: 5m` (< the 30m window) rides out one scrape of
+      # jitter while a single failure still keeps it pending long enough.
       - alert: TestLookupFinalizeStepFailing
         expr: |
-          sum by (step) (increase(testlookup_finalize_step_failures_total[30m])) > 3
-        for: 0m
+          sum by (step) (increase(testlookup_finalize_step_failures_total[30m])) > 0
+        for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Post-ingestion step {{ $labels.step }} is failing repeatedly"
-          description: "The {{ $labels.step }} finalize step failed more than 3 times in 30 minutes. Runs still ingest, but whatever that step maintains has stopped updating."
+          summary: "Post-ingestion step {{ $labels.step }} is failing"
+          description: "The {{ $labels.step }} finalize step failed at least once in the last 30 minutes. Runs still ingest, but whatever that step maintains may have stopped updating."
 
       # The live-event audit copy keeps failing (re-audit M10). Ingest is
       # unaffected by design, which is exactly why nothing else would notice:
@@ -495,3 +502,58 @@ groups:
         annotations:
           summary: "Compliance pack generation errors in the last hour"
           description: "More than 3 compliance_pack_generated_total{result=\"error\"} increments in the last hour. This is the service's error branch — not the 'release has no linked run' or 'feature disabled' branches. Likely MinIO write failure, a missing policy snapshot, or a collection helper raising. Check structlog for `compliance_pack_generated` events and the worker logs."
+
+  # ── Kubernetes backup (re-audit M25, R-B45-2) ─────────────────────────────
+  #
+  # A backup that fails every night, or a CronJob left suspended, produced a
+  # pod in Error and told nobody. These read kube-state-metrics (kube_job_*,
+  # kube_cronjob_*), which kube-prometheus-stack scrapes on its own. Where it
+  # is absent (the Compose stack) the series do not exist and neither rule
+  # fires, which is right: there is no Kubernetes backup there.
+  - name: testlookup.backup
+    interval: 60s
+    rules:
+
+      # Fires on the Job's Failed CONDITION (kube_job_status_condition), set
+      # only once backoffLimit is exhausted, never on kube_job_status_failed:
+      # that counts failed PODS, so a backup whose first pod failed and whose
+      # retry succeeded (backoffLimit 1) is a successful Job with failed=1,
+      # kept for 3 days by successfulJobsHistoryLimit (R-B45-R2-1).
+      #
+      # Scoped to Jobs the testlookup-backup CronJob owns (kube_job_owner;
+      # `kubectl create job --from=cronjob/...` sets that owner too) or that
+      # are named testlookup-backup-* (a hand-made manual run). Fires while
+      # the failed Job exists: delete it (or let failedJobsHistoryLimit rotate
+      # it) once the cause is fixed.
+      - alert: TestLookupBackupJobFailed
+        expr: |
+          max by (namespace, job_name) (
+            kube_job_status_condition{condition="Failed", status="true"}
+            and on (namespace, job_name)
+            (
+              kube_job_owner{owner_kind="CronJob", owner_name="testlookup-backup"}
+              or kube_job_info{job_name=~"testlookup-backup-.*"}
+            )
+          ) == 1
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A TestLookup backup Job failed"
+          description: "Backup Job {{ $labels.job_name }} failed: no new archive was written. Read `kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }} --all-containers`, fix the cause, then delete the failed Job. Runbook: k8s/components/backup/README.md."
+
+      # The CronJob runs daily; 26h leaves a two-hour margin for a slow run.
+      # The second branch covers a backup that has NEVER succeeded (no
+      # last-successful timestamp at all) once the CronJob is 26h old.
+      - alert: TestLookupBackupStale
+        expr: |
+          (time() - max by (namespace, cronjob) (kube_cronjob_status_last_successful_time{cronjob="testlookup-backup"})) > 26 * 3600
+          or
+          (max by (namespace, cronjob) (kube_cronjob_created{cronjob="testlookup-backup"}) < time() - 26 * 3600
+            unless on (namespace, cronjob) kube_cronjob_status_last_successful_time{cronjob="testlookup-backup"})
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No successful TestLookup backup in 26 hours"
+          description: "The testlookup-backup CronJob has not completed successfully for more than 26h (failing, suspended, or never run). The newest restorable archive is older than a day. Runbook: k8s/components/backup/README.md."

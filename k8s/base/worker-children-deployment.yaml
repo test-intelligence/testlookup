@@ -87,6 +87,9 @@ spec:
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
               mountPath: /var/cache/testlookup/chroma-onnx
+            # Re-audit M14: per-pod ML model cache (see backend-deployment.yaml).
+            - name: ml-models
+              mountPath: /var/lib/testlookup/ml-models
           resources:
             requests:
               cpu: 250m
@@ -132,4 +135,7 @@ spec:
         # worker-deployments.yaml. Fetched at most once per pod instead of
         # once per container restart.
         - name: embedder-model-cache
+          emptyDir: {}
+        # Re-audit M14: ML model cache, filled from the object store.
+        - name: ml-models
           emptyDir: {}

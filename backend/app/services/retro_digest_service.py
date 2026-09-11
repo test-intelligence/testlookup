@@ -195,12 +195,16 @@ async def generate_weekly_retro(
     released_flaky = await _count_released_flaky(db, project_id, since)
     new_regressions = await _count_new_regressions(db, project_id, since)
 
-    narrative = await _compose_narrative(
-        project_name=project_name,
-        digest=digest,
-        released_flaky=released_flaky,
-        new_regressions=new_regressions,
-    )
+    from app.services.llm_cost_reservation import cost_budget_scope
+
+    # Re-audit R-B45-1: the narrative is charged to the project's LLM cap.
+    with cost_budget_scope(project_id):
+        narrative = await _compose_narrative(
+            project_name=project_name,
+            digest=digest,
+            released_flaky=released_flaky,
+            new_regressions=new_regressions,
+        )
 
     # Wrap the existing digest with retro-specific sections. The
     # ``schedule_type`` discriminator lets the email template pick

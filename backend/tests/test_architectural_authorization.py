@@ -106,11 +106,30 @@ def _walk_deps(dependant) -> list[str]:
 
 
 def _collect_api_routes():
-    """Every ``APIRoute`` mounted under the public or protected router groups."""
-    for router in list(PROTECTED_ROUTERS) + list(PUBLIC_ROUTERS):
-        for route in router.routes:
-            if isinstance(route, APIRoute):
-                yield route
+    """Every ``APIRoute`` the real app serves.
+
+    Re-audit N26: this read ``PROTECTED_ROUTERS`` + ``PUBLIC_ROUTERS`` only, so
+    a router mounted any other way was never scanned: ``debug.router`` is
+    included separately by ``register_routers`` at ``/api/v1/debug``. The
+    mounted app is the one list nothing can be left out of.
+    """
+    from app.main import app
+
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            yield route
+
+
+def test_the_scan_reads_every_mounted_router() -> None:
+    """The debug router was invisible to every scan in this file (re-audit N26)."""
+    paths = {route.path for route in _collect_api_routes()}
+    assert "/api/v1/debug/generate-test-run" in paths
+    listed = {
+        route.endpoint
+        for router in list(PROTECTED_ROUTERS) + list(PUBLIC_ROUTERS)
+        for route in router.routes if isinstance(route, APIRoute)
+    }
+    assert listed <= {route.endpoint for route in _collect_api_routes()}
 
 
 def _scoped_params_in_path(path: str) -> set[str]:
@@ -1000,12 +1019,19 @@ PUBLIC_PREFIX_KNOWN_EXEMPT: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/health/details"),
     ("GET", "/health/ingestion"),
     ("GET", "/health/version"),
+    # App-level routes, visible since the scan reads the mounted app (re-audit
+    # N26). ``/`` (main.py ``root``) returns the app name, version and doc
+    # links; ``/metrics`` is the Prometheus instrumentator's scrape
+    # (bootstrap.py). Neither takes a caller-supplied id.
+    ("GET", "/"),
+    ("GET", "/metrics"),
 })
 
 #: Cap on the list above. The two scans in this file cap their backlogs at 3
 #: for the same reason: a list that can grow by writing a one-line note grows.
-#: Six is today's count plus room for one, so the next addition is deliberate.
-PUBLIC_PREFIX_EXEMPT_CAP = 6
+#: Eight is today's count plus room for one, so the next addition is
+#: deliberate. (Raised from 6 in N26 for the two app-level routes above.)
+PUBLIC_PREFIX_EXEMPT_CAP = 8
 
 #: Routes outside ``/api/v1`` that DO carry a tenant-owned id and do NOT check
 #: it. Deliberately separate from the exempt list above: these are open, they

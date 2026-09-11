@@ -57,7 +57,7 @@ def test_async_ai_worker_stages_snapshot_audit_and_postcommit_state_refresh(monk
         test_case_ai_agent,
         "generate_test_cases_tool",
         SimpleNamespace(
-            invoke=lambda _payload: {
+            ainvoke=AsyncMock(return_value={
                 "test_cases": [
                     {
                         "title": "AI checkout coverage",
@@ -66,7 +66,7 @@ def test_async_ai_worker_stages_snapshot_audit_and_postcommit_state_refresh(monk
                         "expected_result": "Order placed",
                     }
                 ]
-            }
+            })
         ),
     )
     emit = AsyncMock(side_effect=lambda _db: calls.append("emit"))

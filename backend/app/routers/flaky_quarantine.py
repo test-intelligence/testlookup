@@ -190,7 +190,7 @@ async def get_quarantine_request(
 )
 async def create_proposal(
     payload: QuarantineProposeRequest,
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     """Manually propose a test for quarantine. QA_LEAD+ only."""
@@ -224,7 +224,7 @@ async def create_proposal(
 async def approve_quarantine(
     request_id: uuid.UUID,
     payload: QuarantineDecisionRequest,
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     row = await svc.get_request(db, request_id)
@@ -244,7 +244,7 @@ async def approve_quarantine(
 async def reject_quarantine(
     request_id: uuid.UUID,
     payload: QuarantineDecisionRequest,
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     row = await svc.get_request(db, request_id)
@@ -389,7 +389,7 @@ async def update_quarantine_lifecycle_policy(
     project_id: uuid.UUID,
     payload: QuarantineLifecyclePolicyUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Create or replace the project's quarantine lifecycle policy.
@@ -422,7 +422,7 @@ async def update_quarantine_lifecycle_policy(
 async def release_quarantine(
     request_id: uuid.UUID,
     payload: QuarantineDecisionRequest,
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     row = await svc.get_request(db, request_id)

@@ -158,6 +158,57 @@ flowchart TB
     BUDGET --> PIPE["analysis pipeline<br/>(mode possibly downgraded)"]
 ```
 
+## 8. The live stream runs inside the API processes (re-audit N4)
+
+`app/main.py`'s lifespan starts two background tasks in **every** API worker
+process, gunicorn workers times replicas:
+
+| Task | What it reads | How many do real work |
+| --- | --- | --- |
+| `live-event-consumer` (`streams/live_consumer.py`) | the source stream, through a Redis consumer group | **one per fleet**: a leader lease (`LIVE_PROCESSOR_LEADER_KEY`, 30 s TTL, renewed every 10 s). The rest poll for the lease once a second and do nothing else. |
+| `live-fanout-subscriber` (`streams/live_fanout.py`) | the ordered fan-out stream, with plain `XREAD` | **every process**, by design: each delivers to the WebSocket and SSE clients connected to that process. |
+
+The second is not a design smell. A process can only push to its own
+sockets, so every process has to hear every fan-out entry. Starting it
+elsewhere would need a second hop back into each API process.
+
+**The exposure is the first one.** Whichever API process holds the lease
+processes the whole fleet's source stream: projecting run state, counting,
+and the Postgres and Redis writes that follow. It does so on the same event
+loop, CPU and connection pools as the HTTP requests that process is
+serving. Under a heavy live stream, that one process's request latency
+rises while its siblings stay idle, and nothing in the load balancer knows
+why.
+
+What already bounds it:
+
+- **No loss on a crash.** Entries are acknowledged only once handled. A new
+  leader first drains every entry left pending by its predecessor
+  (`XAUTOCLAIM` from `0-0`, idle time 0) before it reads anything new, so
+  order is kept. A dead leader delays the stream by up to the 30 s lease; it
+  does not drop events. Poison entries reach the DLQ after the shared
+  delivery threshold instead of blocking.
+- **No death by exception.** Both loops log and retry: the consumer after 5 s,
+  the subscriber after 1 s, marking itself not-ready. Only shutdown
+  cancellation stops them.
+- **Gaps are reconciled, not hidden.** A subscriber whose cursor falls behind
+  the trimmed fan-out stream tells its clients to re-fetch.
+
+Runbook, when one API pod's latency climbs during heavy live streaming:
+
+1. Find the leader: `redis-cli GET <LIVE_PROCESSOR_LEADER_KEY>`. The value is
+   `host:pid:uuid`, and the host is the pod.
+2. Compare that pod's request latency with its siblings'. A gap that follows
+   live-event volume is this coupling.
+3. Relieve it: `redis-cli DEL` the key. The leader loses the lease at its next
+   renewal and another process takes it, draining the pending list first.
+   Or roll the pod. Either way nothing is lost.
+4. If it recurs, give the API more workers or replicas. The leader's share
+   of one process then matters less. Extracting the consumer into its own
+   Deployment, the audit's recommendation, needs a standalone entrypoint and
+   manifests. It is not done: the leader lease already keeps the work to one
+   process, which is the correctness property an extraction would buy.
+
 ## Related docs
 
 - The functional flow these mechanics protect: [README.md §3–4](./README.md#3-ingestion--analysis-flow)

@@ -96,6 +96,10 @@ PUBLIC_ROUTERS: Sequence[APIRouter] = (
     # the router-wide protected dependency would 401 them before the handler
     # ran. Each endpoint declares its own auth requirement.
     mfa.router,
+    # Jira's resolution webhook: no user session, the HMAC signature is the
+    # credential (routers/feedback.py). Registered before PROTECTED_ROUTERS,
+    # so the literal path also wins over /feedback/{analysis_id}.
+    feedback.jira_webhook_router,
     webhooks.router,
     stream.router,
     observability_router,
@@ -214,6 +218,20 @@ def configure_middlewares(app: FastAPI) -> None:
 
     app.add_middleware(TelemetryMiddleware)
     app.add_middleware(SCIMRequestBodyLimitMiddleware)
+
+    # starlette CVE-2026-54283 / CVE-2025-62727 until the FastAPI/Starlette
+    # upgrade: see middleware/request_hardening.py.
+    from app.middleware.request_hardening import (
+        FormBodyLimitMiddleware,
+        RangeHeaderStripMiddleware,
+    )
+
+    app.add_middleware(
+        FormBodyLimitMiddleware,
+        max_bytes=settings.FORM_URLENCODED_MAX_BYTES,
+        path_limits={"/api/v1/sso/acs": settings.FORM_URLENCODED_ACS_MAX_BYTES},
+    )
+    app.add_middleware(RangeHeaderStripMiddleware)
 
     # NOTE: the proxy trust boundary is NOT installed here. It must be the
     # OUTERMOST middleware, and main.py registers more middleware after this

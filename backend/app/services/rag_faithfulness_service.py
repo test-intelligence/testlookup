@@ -235,8 +235,14 @@ async def evaluate(
     citations: list[str],
     *,
     db: Optional[AsyncSession] = None,
+    project_id: Any = None,
 ) -> Optional[dict[str, Any]]:
     """Score a single generated case for faithfulness.
+
+    ``project_id``: the single-prompt judge (``get_llm``) reserves against
+    that project's monthly LLM cap (re-audit R-B45-1). The Ragas backend
+    calls the LLM Ragas itself is configured with, outside ``get_llm``: the
+    cap cannot see those calls.
 
     Returns ``None`` when the feature flag is off (no-op). Otherwise
     returns a dict with ``score``, ``evaluator``, ``reason`` so the
@@ -271,10 +277,13 @@ async def evaluate(
     # the other one is whatever provider get_llm() resolves to.
     evaluator = "ragas" if backend == "ragas" else await _active_llm_provider()
     try:
-        if backend == "ragas":
-            score, reason = await _evaluate_via_ragas(safe_content, safe_citations)
-        else:
-            score, reason = await _evaluate_via_ollama(safe_content, safe_citations)
+        from app.services.llm_cost_reservation import cost_budget_scope
+
+        with cost_budget_scope(project_id):
+            if backend == "ragas":
+                score, reason = await _evaluate_via_ragas(safe_content, safe_citations)
+            else:
+                score, reason = await _evaluate_via_ollama(safe_content, safe_citations)
     except Exception as exc:
         logger.warning("faithfulness evaluator crashed", error=str(exc))
         return {

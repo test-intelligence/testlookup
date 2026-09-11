@@ -413,6 +413,11 @@ async def train_flaky_confidence_model() -> dict[str, Any]:
     tmp_meta.write_text(json.dumps(metadata, indent=2, default=str))
     os.replace(tmp_meta, meta_path)
 
+    # Re-audit M14: every other pod gets this version from the store.
+    from app.services.ml import model_store
+
+    await model_store.publish(model_path, meta_path)
+
     logger.info("Flaky-confidence model saved: %s (auc=%.3f, n=%d)", model_path.name, auc, len(samples))
     return {
         "status": "trained", "auc": round(auc, 4), "version": version,

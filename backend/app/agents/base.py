@@ -301,6 +301,15 @@ class BaseAgent(ABC):
         from app.services.pipeline_budget_service import get_pipeline_budget_context
 
         budget_context = get_pipeline_budget_context() or {}
+        if not project_id:
+            # Reviewer item 7 (b45 r2): most agents do not pass project_id, so
+            # the calls this stage observed -- which BudgetedLLM left for the
+            # stage to meter -- never reached the Postgres meter (only the
+            # Redis counter). The graph runs inside cost_budget_scope, which
+            # names the project the reservation was charged to.
+            from app.services.llm_cost_reservation import current_cost_scope
+
+            project_id = current_cost_scope()
         input_tokens = max(input_tokens, int(budget_context.get("observed_input_tokens") or 0))
         output_tokens = max(output_tokens, int(budget_context.get("observed_output_tokens") or 0))
         llm_calls_count = max(llm_calls_count, int(budget_context.get("observed_llm_calls") or 0))
@@ -383,15 +392,34 @@ class BaseAgent(ABC):
         # passed project_id (every agent that owns state["project_id"]
         # propagates it). Best-effort; the service itself is a no-op unless
         # the ``llm_cost_budget`` feature flag is on.
-        if project_id and (cost_usd > 0 or llm_calls_count > 0):
+        # R-B45-R3-2/3: calls BudgetedLLM already wrote to the meter at settle
+        # (a failed call, or one with no reported usage) are not metered
+        # again here -- one call, one meter row. The investigator agents
+        # price an ESTIMATE of such a call; that estimate is dropped from the
+        # meter (it still feeds their own investigation budget ledger).
+        # What is left is metered from the usage the provider REPORTED to this
+        # stage (observed_*): a settled call contributed none of it, while a
+        # caller's own figures may include an estimate of the settled call.
+        meter_calls, meter_cost = int(llm_calls_count or 0), float(cost_usd or 0.0)
+        meter_in, meter_out = int(input_tokens or 0), int(output_tokens or 0)
+        settled_calls = int(budget_context.get("settle_metered_calls") or 0)
+        if settled_calls:
+            meter_calls = max(0, meter_calls - settled_calls)
+            meter_in = int(budget_context.get("observed_input_tokens") or 0) if meter_calls else 0
+            meter_out = int(budget_context.get("observed_output_tokens") or 0) if meter_calls else 0
+            meter_cost = 0.0
+            if meter_calls and meter_in + meter_out > 0:
+                priced = await self._estimate_stage_cost(meter_in, meter_out)
+                meter_cost = priced.cost_usd if priced is not None else 0.0
+        if project_id and (meter_cost > 0 or meter_calls > 0):
             try:
                 from app.services.llm_cost_budget import record_usage
                 await record_usage(
                     project_id,
-                    cost_usd=float(cost_usd or 0.0),
-                    input_tokens=int(input_tokens or 0),
-                    output_tokens=int(output_tokens or 0),
-                    llm_calls=int(llm_calls_count or 0),
+                    cost_usd=meter_cost,
+                    input_tokens=meter_in,
+                    output_tokens=meter_out,
+                    llm_calls=meter_calls,
                 )
             except Exception as exc:  # pragma: no cover — metering is best-effort
                 self.logger.debug("llm usage record failed", error=str(exc))

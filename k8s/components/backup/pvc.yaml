@@ -1,0 +1,20 @@
+# Backup archives. Sized for BACKUP_KEEP=14 daily archives of a typical
+# deployment; `kubectl -n testlookup exec` into a restore/backup pod and
+# `du -sh /backups` to check, and resize (or lower BACKUP_KEEP) as data grows.
+#
+# A PVC lives in the same cluster (often the same storage) as the data it
+# protects. Copy archives OFF the cluster too: see README.md, "Off-cluster copy".
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: testlookup-backups
+  namespace: testlookup
+  labels:
+    app: testlookup-backup
+    app.kubernetes.io/component: backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi

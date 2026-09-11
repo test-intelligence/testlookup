@@ -451,9 +451,12 @@ async def get_training_status(db: AsyncSession, settings) -> dict:
 
 
 async def jira_resolution_webhook(db: AsyncSession, payload: dict) -> dict:
-    issue_key = payload.get("issue", {}).get("key", "")
-    status = (payload.get("issue", {}).get("fields", {}).get("status", {}).get("name", "")).lower()
-    resolution = (payload.get("issue", {}).get("fields", {}).get("resolution", {}) or {}).get("name", "").lower()
+    # ``or {}`` / ``or ""``: Jira sends explicit nulls (QA-B45-2 note).
+    issue = payload.get("issue") or {}
+    fields = issue.get("fields") or {} if isinstance(issue, dict) else {}
+    issue_key = (issue.get("key") if isinstance(issue, dict) else "") or ""
+    status = str(((fields.get("status") or {}).get("name")) or "").lower()
+    resolution = str(((fields.get("resolution") or {}).get("name")) or "").lower()
 
     is_resolved = status in ("done", "resolved", "closed", "fixed")
     is_invalid = resolution in ("won't fix", "duplicate", "invalid", "not a bug", "cannot reproduce")

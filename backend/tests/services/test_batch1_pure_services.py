@@ -1,3 +1,4 @@
+import importlib.util
 import random
 import sys
 import types
@@ -10,7 +11,14 @@ from app.services.allure_parser import _calc_duration, parse_allure_result
 from app.services.llm_factory import get_llm
 from app.services.mock_generator import generate_mock_allure_results, generate_mock_testng_results
 
-if "defusedxml.ElementTree" not in sys.modules:
+# Stub defusedxml ONLY where it is not installed (re-audit E2). The old guard
+# ("not yet imported") fired whenever this file was collected before anything
+# had imported the real package, and the stub (fromstring only, no iterparse)
+# stayed in sys.modules for the rest of the session: every later test that
+# parsed XML through defusedxml.ElementTree.iterparse failed with "cannot
+# import name 'iterparse' ... (unknown location)". defusedxml is pinned in
+# requirements.txt, so on any real environment this block does nothing.
+if importlib.util.find_spec("defusedxml") is None:
     pkg = types.ModuleType("defusedxml")
     mod = types.ModuleType("defusedxml.ElementTree")
     mod.fromstring = std_et.fromstring
@@ -72,7 +80,12 @@ def test_mock_generators_return_expected_shapes():
 @pytest.mark.asyncio
 @patch("langchain_ollama.ChatOllama")
 async def test_llm_factory_ollama_uses_registry_model(mock_ollama):
-    with patch("app.services.llm_factory._async_get_active_model", return_value="ft-model"):
+    # The mocked ChatOllama has no real HTTP clients, and the offline pin
+    # (re-audit N8) refuses to hand out a client it could not pin. This test
+    # is about which model is chosen, so the pin is stubbed here only; the pin
+    # itself is tested in tests/services/test_llm_offline_egress_pinning.py.
+    with patch("app.services.llm_factory._async_get_active_model", return_value="ft-model"), \
+            patch("app.services.llm_egress.pin_ollama_clients", side_effect=lambda model: model):
         await get_llm(provider="ollama", track="reasoning")
     kwargs = mock_ollama.call_args.kwargs
     assert kwargs["model"] == "ft-model"

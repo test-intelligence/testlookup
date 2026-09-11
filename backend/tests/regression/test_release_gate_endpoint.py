@@ -351,7 +351,8 @@ class TestTheRoutesAreGuardedAndReachable:
         # Appending to an append-only audit trail that a release decision is
         # later justified by is a privileged write, even though it only reads
         # test data to compute.
-        assert "require_role(UserRole.QA_LEAD)" in src
+        # Re-audit N26: the opt-in is safe because require_release_access confines the key.
+        assert "require_role(UserRole.QA_LEAD, allow_project_key=True)" in src
 
     def test_reading_the_gate_does_not_require_qa_lead(self):
         import inspect

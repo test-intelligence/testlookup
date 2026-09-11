@@ -13,6 +13,6 @@ describe('API key scope picker', () => {
   // A label the server does not check mints a key that reads as limited and
   // is not (QA round 4): offer only what is enforced.
   it('offers nothing the server does not enforce', () => {
-    expect([...AVAILABLE_SCOPES].sort()).toEqual(['project:admin', 'stream:write'])
+    expect([...AVAILABLE_SCOPES].sort()).toEqual(['project:admin', 'project:write', 'stream:write'])
   })
 })

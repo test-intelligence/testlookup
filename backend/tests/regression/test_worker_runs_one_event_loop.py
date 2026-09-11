@@ -17,6 +17,7 @@ APP = pathlib.Path(__file__).resolve().parents[2] / "app"
 _ALLOWED = {
     ("worker/loop_runner.py", "*"): "the runner itself",
     ("services/prompt_registry.py", "_attest"): "a command-line entry point; it never runs in a worker",
+    ("services/prompt_eval_recordings.py", "main"): "the --record command-line entry point (re-audit M16); never runs in a worker",
 }
 
 _ASYNCIO_LOOP_FUNCTIONS = {"run", "new_event_loop"}

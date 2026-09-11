@@ -1,0 +1,95 @@
+# base/networkpolicy.yaml starts from default-deny-all, so a backup pod needs
+# its own egress, and in-cluster data stores need to admit it.
+#
+# The pod holds every store credential and a full data dump, so its egress is
+# exactly what a backup needs (re-audit R-B45-5): DNS, and the in-namespace
+# Postgres (5432), MongoDB (27017) and MinIO (9000). The archive goes to a PVC,
+# which needs no network. Nothing else: not the internet, not the API, not
+# the cloud metadata service.
+#
+# An overlay whose stores are EXTERNAL (managed Postgres, Atlas, S3) must add
+# an egress rule for their CIDRs and ports; without it the backup fails
+# loudly (TestLookupBackupJobFailed), it does not silently skip a store.
+#
+# NetworkPolicies are additive: the second policy only ADDS the backup pod to
+# who may reach the stores; on a deployment with managed stores it selects
+# nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backup-egress
+  namespace: testlookup
+spec:
+  podSelector:
+    matchLabels:
+      app: testlookup-backup
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    # DNS: kube-dns / CoreDNS in kube-system (what base/networkpolicy.yaml
+    # allows every pod), and OpenShift's DNS pods, which listen on 5353
+    # behind the port-53 Service (policies see the pod port).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 5353
+        - protocol: TCP
+          port: 5353
+    - to:
+        - podSelector:
+            matchLabels:
+              app: testlookup-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: testlookup-mongo
+      ports:
+        - protocol: TCP
+          port: 27017
+    - to:
+        - podSelector:
+            matchLabels:
+              app: testlookup-minio
+      ports:
+        - protocol: TCP
+          port: 9000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backup-to-data-stores
+  namespace: testlookup
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - testlookup-postgres
+          - testlookup-mongo
+          - testlookup-minio
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: testlookup-backup

@@ -12,6 +12,7 @@
 import { useState } from 'react'
 import toast from 'react-hot-toast'
 import { flakyQuarantineService } from '@/services/flakyQuarantineService'
+import { useModalFocus } from '@/hooks/useModalFocus'
 
 export interface QuarantinePrefill {
   project_id: string
@@ -31,6 +32,7 @@ export default function ProposeQuarantineModal({
 }) {
   const [reason, setReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const dialogRef = useModalFocus({ onClose, canClose: !submitting })
   const trimmedReason = reason.trim()
 
   async function handleSubmit() {
@@ -66,6 +68,7 @@ export default function ProposeQuarantineModal({
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="Propose quarantine"

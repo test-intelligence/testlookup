@@ -17,34 +17,47 @@ COMPOSE_PATHS = (
 )
 
 
-def test_online_migrations_take_a_transaction_scoped_postgres_advisory_lock():
+LOCK_MODULE = ROOT / "backend/app/db/migration_lock.py"
+
+
+def test_online_migrations_hold_a_session_lock_around_the_whole_upgrade():
+    """N24: a transaction-scoped lock dies at the first autocommit_block().
+
+    The behaviour is proven on real PostgreSQL by
+    tests/integration/test_migration_singleton_lock_postgres.py; this pins
+    the wiring so env.py cannot drift back to the xact lock.
+    """
     source = ENV.read_text(encoding="utf-8")
-    assert "pg_advisory_xact_lock" in source
-    assert "pg_advisory_lock(" not in source
-    assert 'connection.dialect.name == "postgresql"' in source
-    assert "_ALEMBIC_ADVISORY_LOCK_ID" in source
+    assert "pg_advisory_xact_lock" not in source
+    assert source.count("async with migration_singleton_lock(") == 1
 
     tree = ast.parse(source)
     function = next(
         node
         for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "do_run_migrations"
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "run_async_migrations"
     )
-    transaction = next(
+    lock_block = next(
         node
-        for node in function.body
-        if isinstance(node, ast.With)
+        for node in ast.walk(function)
+        if isinstance(node, ast.AsyncWith)
         and any(
             isinstance(item.context_expr, ast.Call)
-            and isinstance(item.context_expr.func, ast.Attribute)
-            and item.context_expr.func.attr == "begin_transaction"
+            and getattr(item.context_expr.func, "id", None) == "migration_singleton_lock"
             for item in node.items
         )
     )
-    transaction_source = ast.get_source_segment(source, transaction) or ""
-    assert transaction_source.index("pg_advisory_xact_lock") < (
-        transaction_source.index("run_migrations")
-    )
+    body = "\n".join(ast.get_source_segment(source, stmt) or "" for stmt in lock_block.body)
+    assert "_migrate()" in body
+
+    lock = LOCK_MODULE.read_text(encoding="utf-8")
+    # Polls: a waiter blocked in pg_advisory_lock holds a snapshot that the
+    # holder's CONCURRENTLY build waits on -- an undetected deadlock.
+    assert 'text("SELECT pg_try_advisory_lock(:lock_id)")' in lock
+    assert 'text("SELECT pg_advisory_lock(' not in lock
+    assert 'text("SELECT pg_advisory_xact_lock' not in lock
+    assert 'isolation_level="AUTOCOMMIT"' in lock
+    assert "ALEMBIC_ADVISORY_LOCK_ID = 6075990748104101441" in lock
 
 
 def test_backend_container_entrypoints_do_not_run_schema_migrations():
@@ -131,3 +144,68 @@ def test_gcp_vm_migration_uses_the_same_production_build_stage_as_backend():
     assert overlay["services"]["backend"]["build"]["target"] == "production"
     assert overlay["services"]["db-migrate"]["build"]["target"] == "production"
     assert base["services"]["backend"]["build"]["context"] == base["services"]["db-migrate"]["build"]["context"]
+
+
+class _NeverLockedConnection:
+    """A lock connection whose pg_try_advisory_lock always answers false."""
+
+    def __init__(self) -> None:
+        self.tries = 0
+        self.closed = False
+        self.statements: list[str] = []
+
+    async def execution_options(self, **_options):
+        return self
+
+    async def scalar(self, statement, _params=None):
+        self.statements.append(str(statement))
+        self.tries += 1
+        return False
+
+    async def execute(self, statement, _params=None):
+        self.statements.append(str(statement))
+
+    async def close(self):
+        self.closed = True
+
+
+def test_a_migrator_that_never_gets_the_lock_times_out_in_seconds(monkeypatch):
+    """QA M3. The only test of the timeout was an integration test: with the
+    deadline check broken it polled for 1,500 s until the harness gave up. This
+    one needs no database and fails in seconds if the deadline never fires."""
+    import asyncio
+
+    from app.db import migration_lock
+
+    connection = _NeverLockedConnection()
+
+    async def _connect():
+        return connection
+
+    async def _attempt():
+        async with migration_lock.migration_singleton_lock(
+            _connect, wait_seconds=0.2, poll_seconds=0.01
+        ):
+            pytest.fail("entered the body without the lock")
+
+    async def _run():
+        with pytest.raises(migration_lock.MigrationLockTimeout):
+            await asyncio.wait_for(_attempt(), timeout=5)
+
+    asyncio.run(_run())
+    assert connection.tries >= 2, "it gave up without polling"
+    assert connection.closed, "the lock connection was left open"
+    assert not any("pg_advisory_unlock" in sql for sql in connection.statements), (
+        "it unlocked a lock it never held"
+    )
+
+
+def test_the_wait_budget_comes_from_the_environment(monkeypatch):
+    from app.db import migration_lock
+
+    monkeypatch.setenv("MIGRATION_LOCK_WAIT_SECONDS", "3")
+    assert migration_lock._wait_seconds_from_env() == 3.0
+    monkeypatch.setenv("MIGRATION_LOCK_WAIT_SECONDS", "not-a-number")
+    assert migration_lock._wait_seconds_from_env() == 1800.0
+    monkeypatch.delenv("MIGRATION_LOCK_WAIT_SECONDS")
+    assert migration_lock._wait_seconds_from_env() == 1800.0

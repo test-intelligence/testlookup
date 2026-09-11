@@ -102,8 +102,11 @@ def upgrade() -> None:
     logger.info("0153: primary_release_id backfilled for %s run(s)", total)
 
     # ── Indexes ──────────────────────────────────────────────────────────────
-    # One autocommit_block each: Postgres rejects more than one CONCURRENTLY
-    # per block.
+    # One autocommit_block each. Not required: inside a block every statement
+    # autocommits on its own, and PostgreSQL 16 accepts several CONCURRENTLY
+    # builds in one block (re-audit N24 tested it). What Postgres rejects is a
+    # CONCURRENTLY inside a transaction. One block per index just keeps each
+    # build separately visible in the log.
     for name, table, cols, unique, where in _INDEXES:
         kwargs = {}
         if where is not None:

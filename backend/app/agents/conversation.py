@@ -162,7 +162,31 @@ class ConversationAgent:
         report_id: Optional[str] = None,
         report_version: Optional[int] = None,
     ) -> dict:
-        """Process one user message and return the assistant reply."""
+        """Process one user message and return the assistant reply.
+
+        Re-audit R-B45-1: every LLM call of a project chat (the tool loop,
+        the single-shot reply, and the history compression task it spawns,
+        which copies this context) reserves against the project's monthly
+        cap. An "all projects" chat has no project, so no cap applies.
+        """
+        from app.services.llm_cost_reservation import cost_budget_scope
+
+        with cost_budget_scope(project_id):
+            return await self._chat(
+                session_id, user_message, user_id, project_id,
+                test_run_id, report_id, report_version,
+            )
+
+    async def _chat(
+        self,
+        session_id: str,
+        user_message: str,
+        user_id: str,
+        project_id: Optional[str] = None,
+        test_run_id: Optional[str] = None,
+        report_id: Optional[str] = None,
+        report_version: Optional[int] = None,
+    ) -> dict:
 
         # 1. Classify intent (fast — no LLM call)
         intent = classify_intent(user_message)

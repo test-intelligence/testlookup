@@ -89,8 +89,12 @@ export const suitesService = {
       { reason },
     ),
 
-  listOrphanedCanonicals: (projectId: string | null) =>
+  /** One page (backend default size 25, max 200); `total` counts every match. */
+  listOrphanedCanonicals: (
+    projectId: string | null,
+    paging: { page?: number; size?: number } = {},
+  ) =>
     getData<CanonicalTestCaseListResponse>('/api/v1/canonical-test-cases/orphaned', {
-      params: { ...(projectId ? { project_id: projectId } : {}) },
+      params: { ...(projectId ? { project_id: projectId } : {}), ...paging },
     }),
 }

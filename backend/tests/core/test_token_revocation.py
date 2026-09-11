@@ -43,6 +43,23 @@ class _BrokenRedis:
         raise ConnectionError("redis gone")
 
 
+async def _durable_unreachable(statement, params):
+    raise ConnectionError("durable revocation store not under test")
+
+
+@pytest.fixture(autouse=True)
+def _redis_is_the_store_under_test(monkeypatch):
+    """Pin the durable (Postgres) store unreachable in every test here.
+
+    Left real, it answered whenever an app engine could reach a migrated
+    database (CI's backend step, or after another file set the engine up):
+    the outage and escape-hatch tests then saw "not revoked" from Postgres
+    instead of the Redis verdict they assert. The durable authority has its
+    own tests (tests/regression/test_durable_token_revocation.py).
+    """
+    monkeypatch.setattr(token_revocation, "_durable_execute", _durable_unreachable)
+
+
 @pytest.fixture
 def fake_redis(monkeypatch):
     """Install a fake Redis into the revocation module."""

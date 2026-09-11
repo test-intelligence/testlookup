@@ -1339,8 +1339,20 @@ async def test_explicit_digest_delivery_retries_then_updates_subscription_once(
     )
     claim_dbs = [MagicMock(), MagicMock()]
     outcome_dbs = [MagicMock(), MagicMock()]
+    # Re-audit N33: the relay re-checks a staged digest before sending it --
+    # the subscription is still active, and its owner may still read the
+    # row's project. Each pass answers: the subscription, its owner's account,
+    # the owner's membership (an active member, so the digest may go).
+    owner_id = uuid.uuid4()
     for db in claim_dbs:
         db.commit = AsyncMock()
+        subscription = MagicMock()
+        subscription.all.return_value = [(subscription_id, owner_id)]
+        account = MagicMock()
+        account.all.return_value = [(owner_id, True, "QA_ENGINEER")]
+        membership = MagicMock()
+        membership.all.return_value = [(owner_id, row.project_id)]
+        db.execute = AsyncMock(side_effect=[subscription, account, membership])
     outcome_dbs[0].execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
     outcome_dbs[0].commit = AsyncMock()
     outcome_dbs[1].execute = AsyncMock(

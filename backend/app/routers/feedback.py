@@ -15,16 +15,21 @@ POST /api/v1/projects/{project_id}/fix-outcomes — record a merged/reverted fix
      outcome for a fingerprint as an AI-F1 ``human_indirect`` training signal
      (Agentic plan AI-5; the MCP ``record_fix_outcome`` tool's endpoint)
 """
+import hashlib
+import hmac
+import json
+import math
+import time
 import uuid
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, require_project_access, require_role, require_run_access
-from app.core.config import settings
+from app.core.config import _is_placeholder_secret, settings
 from app.db.postgres import get_db
 from app.db.mongo import get_mongo_db
 from app.models.postgres import (
@@ -40,6 +45,126 @@ router = APIRouter(prefix="/api/v1", tags=["Feedback & Training"])
 # "correct classification" dialog. Separate router because the project-scoped
 # path must carry the ``require_project_access`` guard (authorization ratchet).
 lookup_router = APIRouter(prefix="/api/v1/projects", tags=["Feedback & Training"])
+# Jira's resolution webhook. A PUBLIC router (bootstrap.PUBLIC_ROUTERS): Jira
+# sends no user session and cannot send an auth header, so the credential is
+# the HMAC signature it computes with the webhook's secret (see
+# ``_verify_jira_signature``).
+jira_webhook_router = APIRouter(prefix="/api/v1", tags=["Feedback & Training"])
+
+#: The header Jira Cloud signs a webhook delivery with, when the webhook has a
+#: secret: ``sha256=<hex HMAC-SHA256 of the raw request body>``.
+JIRA_SIGNATURE_HEADER = "X-Hub-Signature"
+
+#: What a delivery is told while no secret is configured.
+JIRA_SECRET_UNSET_DETAIL = (
+    "The Jira webhook is disabled: JIRA_WEBHOOK_SECRET is not configured"
+)
+
+
+def _verify_jira_signature(raw_body: bytes, signature: Optional[str]) -> None:
+    """Refuse a delivery that Jira did not sign with the configured secret.
+
+    403 while the secret is unset or a shipped placeholder, in every
+    environment (an HMAC with an empty or published key proves nothing); 401
+    for a missing or wrong signature. The comparison is constant time: ``==``
+    stops at the first differing character and leaks a prefix to a caller who
+    can time it.
+    """
+    secret = settings.JIRA_WEBHOOK_SECRET or ""
+    if _is_placeholder_secret(secret):
+        raise HTTPException(status_code=403, detail=JIRA_SECRET_UNSET_DETAIL)
+    expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    try:
+        # Starlette decodes a header as latin-1, so a hostile byte arrives as
+        # a non-ASCII str, which compare_digest refuses with a TypeError (a
+        # public 500). A signature is ASCII hex: anything else is simply not
+        # a valid one (QA-B45-1).
+        presented = (signature or "").strip().encode("ascii")
+    except UnicodeEncodeError:
+        presented = b""
+    if not presented or not hmac.compare_digest(expected.encode("ascii"), presented):
+        raise HTTPException(status_code=401, detail="Invalid or missing Jira webhook signature")
+
+
+#: The oldest delivery accepted, by its own ``timestamp``.
+JIRA_REPLAY_WINDOW_SECONDS = 7 * 24 * 3600
+#: How far AHEAD of our clock a delivery may be stamped (Jira's clock vs ours).
+JIRA_CLOCK_SKEW_SECONDS = 15 * 60
+#: How long a delivery is remembered. A body is accepted while
+#: ``-skew <= now - stamp <= window``, so one that arrived stamped at the skew
+#: edge stays acceptable for window + skew after it arrived: the record must
+#: outlive that, or the body could be replayed once it expired.
+JIRA_DEDUPE_TTL_SECONDS = JIRA_REPLAY_WINDOW_SECONDS + JIRA_CLOCK_SKEW_SECONDS
+_JIRA_DELIVERY_KEY = "jira:webhook:delivery:"
+
+
+def _delivery_outside_window(payload: dict) -> Optional[str]:
+    """Why a signed delivery is outside the replay window, or None.
+
+    Jira puts the event time in the body (``timestamp``, epoch milliseconds),
+    inside the signature. Jira Cloud's admin webhooks, the ones that can be
+    signed with a secret (``X-Hub-Signature``), carry it on every event.
+
+    The dedupe record expires, so the timestamp is what bounds a replay. A
+    body that cannot be bounded is refused, not waved through (R-B45-R2-4):
+    no ``timestamp``, a null, a string, a boolean, NaN or infinity (``json``
+    accepts both), or a number too large to be a time. So is a stamp more
+    than the clock skew ahead of us: it would stay "inside" the window long
+    after its record expired. Refused with 200 ``applied: false``, like a
+    replay: a 4xx would make Jira retry a body that can never be applied.
+    """
+    stamp = payload.get("timestamp")
+    if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
+        return "ignored: the delivery has no numeric timestamp, so a replay of it cannot be bounded"
+    try:
+        sent = float(stamp) / 1000.0
+    except OverflowError:
+        sent = math.inf
+    if not math.isfinite(sent):
+        return "ignored: the delivery's timestamp is not a finite time"
+    age = time.time() - sent
+    if age > JIRA_REPLAY_WINDOW_SECONDS:
+        return "ignored: delivery is older than the replay window"
+    if age < -JIRA_CLOCK_SKEW_SECONDS:
+        return "ignored: the delivery is stamped in the future"
+    return None
+
+
+async def _claim_delivery(raw_body: bytes) -> tuple[bool, str]:
+    """Record a signed delivery once (QA-B45-2). Returns ``(first_time, key)``.
+
+    Jira's HMAC carries no timestamp or nonce, so a captured delivery stays
+    validly signed forever. The identifier is the sha256 of the raw body: it
+    is covered by the signature (``X-Atlassian-Webhook-Identifier`` is not,
+    so an attacker could vary it) and it is stable across Jira's own retries
+    of one delivery. Jira's bodies carry the event ``timestamp`` (a body
+    without one is refused earlier), so two real events do not share a body.
+    SET NX with a TTL of :data:`JIRA_DEDUPE_TTL_SECONDS`.
+
+    Redis unavailable: FAIL CLOSED with 503. A resolution event is not urgent,
+    and Jira retries a failed delivery, so it is applied once Redis is back;
+    applying it without the record would reopen the replay.
+    """
+    from app.db import redis_client
+
+    key = _JIRA_DELIVERY_KEY + hashlib.sha256(raw_body).hexdigest()
+    try:
+        first = await redis_client.get_redis().set(key, "1", nx=True, ex=JIRA_DEDUPE_TTL_SECONDS)
+    except Exception as exc:  # noqa: BLE001 -- any Redis failure refuses the delivery
+        raise HTTPException(
+            status_code=503, detail="The Jira webhook cannot record deliveries right now; retry later"
+        ) from exc
+    return bool(first), key
+
+
+async def _release_delivery(key: str) -> None:
+    """The delivery was not applied: let Jira's retry apply it."""
+    from app.db import redis_client
+
+    try:
+        await redis_client.get_redis().delete(key)
+    except Exception:  # noqa: BLE001 -- the TTL still bounds it
+        pass
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -124,18 +249,61 @@ class AnalysisLookupResponse(BaseModel):
 
 # ── Feedback endpoints ────────────────────────────────────────────────────────
 
-# Declared BEFORE ``/feedback/{analysis_id}``: FastAPI matches routes in
-# declaration order, so a literal segment placed after a same-shape parameter
-# route is unreachable — the parameter route wins and "jira-webhook" is parsed
-# as a UUID. This endpoint returned 422 to every Jira delivery until it was
-# moved up. Guarded by tests/test_architectural_route_shadowing.py.
-@router.post("/feedback/jira-webhook", status_code=200)
+# On its own router, registered with the PUBLIC routers BEFORE the protected
+# ones: FastAPI matches in registration order, and a literal segment placed
+# after the same-shape ``/feedback/{analysis_id}`` is unreachable ("jira-webhook"
+# parsed as a UUID: a 422 for every delivery, once). Guarded by
+# tests/test_architectural_route_shadowing.py.
+#
+# No signed-in account (re-audit follow-up to N32). The route took any session
+# or API key and let its holder close any project's defects and write AI
+# training feedback with a forged payload, while a real Jira delivery, which
+# carries no session, could only get in with a user's key pasted into Jira.
+# The signature is the credential Jira actually has.
+@jira_webhook_router.post("/feedback/jira-webhook", status_code=200)
 async def jira_resolution_webhook(
-    payload: dict = Body(...),
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await feedback_service.jira_resolution_webhook(db, payload)
-    await db.commit()
+    raw_body = await request.body()
+    _verify_jira_signature(raw_body, request.headers.get(JIRA_SIGNATURE_HEADER))
+    try:
+        payload = json.loads(raw_body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="The body is not JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="The body must be a JSON object")
+    # A replayed delivery is acknowledged with 200 and changes nothing. Not a
+    # 409: Jira retries any non-2xx, so a genuine retry of a delivery that was
+    # already applied would be re-sent for no reason.
+    outside = _delivery_outside_window(payload)
+    if outside:
+        # R-B45-R3-4: a sender whose deliveries never apply must be diagnosable.
+        # The digest prefix identifies the delivery; the body is never logged.
+        import structlog
+
+        stamp = payload.get("timestamp")
+        kind = (
+            "missing" if stamp is None
+            else "invalid" if ("numeric" in outside or "finite" in outside)
+            else "outside_window"
+        )
+        structlog.get_logger("routers.feedback").warning(
+            "jira_webhook_delivery_refused",
+            reason=kind,
+            detail=outside,
+            delivery=hashlib.sha256(raw_body).hexdigest()[:12],
+        )
+        return {"message": outside, "applied": False}
+    first_time, key = await _claim_delivery(raw_body)
+    if not first_time:
+        return {"message": "ignored: this delivery was already received", "applied": False}
+    try:
+        result = await feedback_service.jira_resolution_webhook(db, payload)
+        await db.commit()
+    except BaseException:
+        await _release_delivery(key)
+        raise
     return result
 
 

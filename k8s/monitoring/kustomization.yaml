@@ -1,0 +1,37 @@
+# Alerting for clusters that run the Prometheus Operator (re-audit H5).
+#
+# OPT-IN, deliberately not part of k8s/base: a PrometheusRule on a cluster
+# without the monitoring.coreos.com CRDs makes the whole `kubectl apply -k`
+# fail. Apply it after the application overlay:
+#
+#   kubectl apply -k k8s/monitoring
+#
+# prometheusrule.yaml is generated from
+# infra/monitoring/prometheus-rules/testlookup-alerts.yml by
+# scripts/render_prometheusrule.py (the same rules the Compose stack loads).
+#
+# podmonitors.yaml gives the rules their data (re-audit QA-B45-P5): the
+# backend (:8000/metrics, port `http`) and every worker deployment
+# (:9100/metrics, port `metrics`) advertise metrics only through
+# `prometheus.io/scrape` annotations, which the Operator ignores. Each
+# PodMonitor sets `job` to the name the rules select on. base/networkpolicy.yaml
+# already admits scrapes from the monitoring, openshift-monitoring and
+# openshift-user-workload-monitoring namespaces on those ports.
+#
+# The backup alerts (TestLookupBackupJobFailed, TestLookupBackupStale) read
+# kube-state-metrics, which kube-prometheus-stack deploys and scrapes itself;
+# TestLookupDiskSpaceLow / TestLookupOOMKillDetected read node-exporter.
+# Without those exporters, those rules have no data.
+#
+# To match a kube-prometheus-stack ruleSelector (and its podMonitorSelector),
+# add its label here; it is applied to every resource, e.g.:
+#
+# labels:
+#   - pairs:
+#       release: kube-prometheus-stack
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: testlookup
+resources:
+  - prometheusrule.yaml
+  - podmonitors.yaml

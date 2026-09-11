@@ -1040,6 +1040,8 @@ def docs_example_allow_listed(offline, resolves, monkeypatch):
 def relay_allow_listed(offline, resolves, monkeypatch):
     resolves({})
     monkeypatch.setattr(settings, "OFFLINE_NOTIFICATION_ALLOWED_HOSTS", "smtp.sendgrid.net")
+    # Re-audit N25: an off-box relay needs the recipient domains it may reach.
+    monkeypatch.setattr(settings, "OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS", "example.com")
 
 
 def _preference(channel: str, own_webhook: str | None):
@@ -1148,7 +1150,10 @@ def test_a_digest_uses_the_allow_list_for_the_global_webhook_only(
     answers = [
         [(uuid.uuid4(), "DAILY", None, True, False)],  # the due subscription
         (user_id, project_id, channel),  # the claim
-        SimpleNamespace(id=user_id, role="QA_ENGINEER", email="qa@example.com"),
+        SimpleNamespace(id=user_id, role="QA_ENGINEER", email="qa@example.com", is_active=True),
+        # Re-audit N33: the owner may still read the project -- an active member.
+        [(user_id, True, "QA_ENGINEER")],  # the owner's account
+        [(user_id, project_id)],  # the owner's membership
         prefs if own_webhook else [],
     ]
     monkeypatch.setattr(postgres, "AsyncSessionLocal", lambda: _ScriptedSession(answers, added))

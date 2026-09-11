@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useModalFocus } from '@/hooks/useModalFocus'
 import { Bug, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
@@ -54,13 +55,8 @@ export default function DefectIntakeModal({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !submitting) onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose, submitting])
+  // Escape (unless mid-submit), Tab trap, and return focus to the opener.
+  const dialogRef = useModalFocus({ onClose, canClose: !submitting })
 
   const titleTrimmed = title.trim()
   const jiraTrimmed = jiraUrl.trim()
@@ -102,6 +98,7 @@ export default function DefectIntakeModal({
 
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"

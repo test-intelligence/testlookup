@@ -128,7 +128,11 @@ async def get_defect_candidate(
     evidence_bundle = _build_evidence_bundle(analyses, finding)
 
     # LLM-generated Jira content (with fallback)
-    jira_content = await _generate_jira_content(cluster, analyses)
+    from app.services.llm_cost_reservation import cost_budget_scope
+
+    # Re-audit R-B45-1: the ticket text is charged to the run's project.
+    with cost_budget_scope(run.project_id):
+        jira_content = await _generate_jira_content(cluster, analyses)
     memory_ownership = await _resolve_defect_owner_from_memory(
         db,
         project_id=str(run.project_id),

@@ -877,11 +877,13 @@ async def _generate_and_cache_mode_variant(
         "pass_rate": 0.0,
     }
 
+    run_project_id = None
     if db is not None:
         try:
             run_result = await db.execute(select(TestRun).where(TestRun.id == run_id))
             run = run_result.scalar_one_or_none()
             if run:
+                run_project_id = run.project_id
                 run_data = {
                     "build_number": run.build_number or "unknown",
                     "branch": run.branch or "unknown",
@@ -997,11 +999,15 @@ async def _generate_and_cache_mode_variant(
         similar_failures=similar_failures,
     )
 
+    from app.services.llm_cost_reservation import cost_budget_scope  # noqa: PLC0415
+
     try:
-        if mode == "developer":
-            variant = await render_developer_summary(assembled)
-        else:
-            variant = await render_manager_summary(assembled)
+        # Re-audit R-B45-1: charged to the run's project.
+        with cost_budget_scope(run_project_id):
+            if mode == "developer":
+                variant = await render_developer_summary(assembled)
+            else:
+                variant = await render_manager_summary(assembled)
     except Exception as exc:
         logger.warning("On-demand mode variant generation failed: %s", exc)
         return None

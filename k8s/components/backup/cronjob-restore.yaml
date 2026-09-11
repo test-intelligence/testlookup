@@ -1,0 +1,99 @@
+# Restore, run on demand only (re-audit M25). A SUSPENDED CronJob rather than
+# a loose Job file so it is rendered through the overlay like everything else:
+# the air-gapped overlay's image rewrites apply to it too. Run it with
+#
+#   kubectl -n testlookup create job restore-$(date +%s) --from=cronjob/testlookup-restore
+#
+# after the steps in README.md (scale the app down, fill in the
+# testlookup-restore-request ConfigMap). Phases, sharing an emptyDir:
+#   verify   (init) -> extract the archive, check every sha256 in manifest.json
+#   postgres (init) -> pg_restore --clean --if-exists --single-transaction
+#   mongo    (init) -> mongorestore --drop
+#   minio           -> re-upload every bucket/object
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: testlookup-restore
+  namespace: testlookup
+  labels:
+    app: testlookup-backup
+    app.kubernetes.io/component: restore
+spec:
+  suspend: true
+  # Never fires on its own (suspend), and Feb 31st never comes anyway.
+  schedule: "0 0 31 2 *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 14400
+      template:
+        metadata:
+          labels:
+            app: testlookup-backup
+            app.kubernetes.io/component: restore
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: verify
+              image: postgres:16-alpine
+              command: ["/bin/sh", "/scripts/restore.sh", "verify"]
+              envFrom:
+                - configMapRef:
+                    name: testlookup-restore-request
+              volumeMounts: &all
+                - name: scripts
+                  mountPath: /scripts
+                - name: staging
+                  mountPath: /staging
+                - name: backups
+                  mountPath: /backups
+                  readOnly: true
+              securityContext: &hardened
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+            - name: postgres
+              image: postgres:16-alpine
+              command: ["/bin/sh", "/scripts/restore.sh", "postgres"]
+              envFrom: &stores
+                - configMapRef:
+                    name: testlookup-config
+                - secretRef:
+                    name: testlookup-secrets
+              volumeMounts: *all
+              securityContext: *hardened
+            - name: mongo
+              image: mongo:7
+              command: ["/bin/sh", "/scripts/restore.sh", "mongo"]
+              envFrom: *stores
+              volumeMounts: *all
+              securityContext: *hardened
+          containers:
+            - name: minio
+              image: testlookup/backend:0.0.1
+              command: ["python", "/scripts/minio_sync.py", "restore", "/staging/minio_data.tar.gz"]
+              env:
+                - name: HOME
+                  value: /tmp
+              envFrom: *stores
+              volumeMounts: *all
+              securityContext: *hardened
+          volumes:
+            - name: scripts
+              configMap:
+                name: testlookup-backup-scripts
+            - name: staging
+              emptyDir:
+                sizeLimit: 20Gi
+            - name: backups
+              persistentVolumeClaim:
+                claimName: testlookup-backups

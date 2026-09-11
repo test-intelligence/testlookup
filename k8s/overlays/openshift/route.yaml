@@ -3,6 +3,9 @@ kind: Route
 metadata:
   name: testlookup
   namespace: testlookup
+  annotations:
+    # HSTS at the TLS edge (re-audit L1): one year, no includeSubDomains.
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
 spec:
   host: testlookup.apps.example.com
   to:
@@ -18,6 +21,8 @@ kind: Route
 metadata:
   name: testlookup-api
   namespace: testlookup
+  annotations:
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
 spec:
   host: testlookup-api.apps.example.com
   to:
@@ -35,6 +40,7 @@ metadata:
   namespace: testlookup
   annotations:
     haproxy.router.openshift.io/timeout: "1h"
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
     haproxy.router.openshift.io/rate-limit-connections: "true"
     haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp: "20"
     haproxy.router.openshift.io/rate-limit-connections.rate-tcp: "10"

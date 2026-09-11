@@ -230,21 +230,43 @@ Two classes do not simply short-circuit:
   destinations: the global Slack and Teams webhooks and the SMTP relay, which
   an admin configures. A webhook set per user (notification preferences, open
   to any authenticated user) or per team (the Ownership page, QA_LEAD and up)
-  is judged by residency alone, whatever the list says. For mail, the relay
-  is judged, not the recipient: an allow-listed hosted relay delivers wherever
-  the address points, including a user's own email override.
-- **Splunk and OpenShift are not gated yet** (re-audit N19, open). With
-  `SPLUNK_ENABLED` or `OCP_ENABLED` set, the triage agent's Splunk log search
-  (`tools/query_splunk.py`) and the OpenShift pod lookups
-  (`services/ocp_client.py`, called during ingestion and by the triage agent)
-  still call those APIs in offline mode. Both settings default to false, which
-  is why the default-install sentence above holds.
+  is judged by residency alone, whatever the list says. For mail the
+  **recipients** are judged too (re-audit N25): an allow-listed hosted relay
+  would otherwise deliver wherever an address points, including a user's own
+  email override. With `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` set, every
+  recipient must be in it (`corp.example` exactly, `.corp.example` any
+  subdomain), whatever the relay; without it, an on-box relay may deliver
+  (its own MTA policy governs onward routing) and an off-box relay is refused.
+  Enforced at every SMTP send: notifications, digests, attachments, the
+  trends report and the settings page's test email.
 
-The integration-health probes follow the gate of the integration they probe,
-and are stricter where the integration is not gated yet: the Splunk and
-OpenShift probes are skipped offline, as the Jira and GitHub probes are, so
-the 15-minute health task no longer sends the Splunk or OpenShift token
-anywhere in offline mode (code review of H10).
+**Residency is pinned at connect time** (re-audit N8). A residency check that
+resolves a name and a client that resolves it again to connect can get two
+different answers (DNS rebinding, or a TTL that turned over in between).
+Offline, the LLM clients `get_llm()` builds (Ollama chat and embeddings, and
+the OpenAI-wire LM Studio / LocalAI / vLLM clients) and every Slack or Teams
+webhook admitted by residency connect through `services/llm_egress.py`: the
+transport resolves the name itself, requires every answer to be on-box, dials
+the validated address and checks the connected peer, while the `Host` header
+and TLS SNI keep the name. **Accepted, not pinned:** the SMTP relay, which
+`aiosmtplib`/`smtplib` dial by name. The relay is set by an admin, the actor
+C3's threat model already trusts with the offline configuration, so a relay
+name that rebinds is an admin choosing egress; the test
+`test_documented_n8_limit_smtp_dials_the_relay_by_name` pins this behaviour.
+
+**Splunk and OpenShift short-circuit** like Jira and GitHub (re-audit N19,
+closed): with `SPLUNK_ENABLED` or `OCP_ENABLED` set, offline mode still stops
+the triage agent's Splunk log search (`tools/query_splunk.py`, joining the two
+Splunk tools that were already gated), and the OpenShift pod lookups
+(`services/ocp_client.get_pod_metadata`, called during ingestion and, via
+`analyze_pod_events`, by the triage agent). Both are a hard gate, not
+residency: the value of either integration is a query built from failure data
+and a service-account token sent to the configured API.
+
+The integration-health probes follow the gate of the integration they probe:
+the Splunk and OpenShift probes are skipped offline, as the Jira and GitHub
+probes are, so the 15-minute health task sends neither token anywhere in
+offline mode (code review of H10).
 
 **Ceiling semantics (2026-08-03).** The environment variable is a *hard
 ceiling*, not a default. AI settings are also stored in the database
@@ -310,6 +332,74 @@ easier to over-read than to under-read:
   overlay terminates TLS at the Route (see
   [DEPLOYMENT.md](./DEPLOYMENT.md)). There is no in-cluster mTLS between
   the backend, the workers, and the datastores.
+
+### 7a. The MinIO upload path is only as tenant-safe as the MinIO credential
+
+Re-audit N13. `POST /webhooks/minio` takes the project from the object key --
+`{project_id}/runs/{build}/upload_complete.json` -- and reads the run's result
+files from that prefix (N10, R15). That makes the key prefix the tenant
+boundary. The application enforces nothing past that point, and MinIO decides
+who may write under which prefix.
+
+**The exposure as shipped.** Every Compose file sets MinIO's
+`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` from `MINIO_ACCESS_KEY`/
+`MINIO_SECRET_KEY`. `scripts/simulate_upload.py` uploads with those same
+variables, and k8s `secrets.yaml` carries one pair. So an uploader that uses
+the documented credential is MinIO's **root** user. It can write
+`<other-project>/runs/<n>/upload_complete.json` and have a run filed in that
+project, with result files of its choosing. It can also read, overwrite or
+delete any project's reports, and reconfigure the webhook target. One leaked CI
+credential is every tenant's upload path.
+
+**Policy: one MinIO user per project, allowed to add objects under its
+own prefix only.** Nothing in the application changes. Give each project's CI
+its own MinIO user, and keep the root credential for the backend and operators:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": ["arn:aws:s3:::<bucket>/<project_id>/*"]
+    }
+  ]
+}
+```
+
+Runbook (the `mc` alias `local` is the root alias `scripts/setup-minio.sh`
+creates; `<bucket>` is `MINIO_BUCKET_NAME`):
+
+```sh
+PROJECT=<project_id>          # the UUID the project's runs are filed under
+BUCKET=<bucket>
+sed -e "s#<bucket>#${BUCKET}#" -e "s#<project_id>#${PROJECT}#" uploader-policy.json \
+  > "uploader-${PROJECT}.json"            # the JSON above, saved as uploader-policy.json
+mc admin policy create local "uploader-${PROJECT}" "uploader-${PROJECT}.json"
+mc admin user add local "ci-${PROJECT}" "$(openssl rand -hex 24)"   # hand this pair to that CI only
+mc admin policy attach local "uploader-${PROJECT}" --user "ci-${PROJECT}"
+# Check it: the project's own prefix is writable, a neighbour's is not.
+mc alias set ci "$MINIO_ENDPOINT" "ci-${PROJECT}" "<its secret>"
+mc cp ./upload_complete.json "ci/${BUCKET}/${PROJECT}/runs/probe/upload_complete.json"      # succeeds
+mc cp ./upload_complete.json "ci/${BUCKET}/<another-project>/runs/probe/upload_complete.json"  # AccessDenied
+mc rm "local/${BUCKET}/${PROJECT}/runs/probe/upload_complete.json"
+```
+
+Consequences to state plainly:
+
+- **PutObject only.** The uploader cannot list, read, overwrite-then-read or
+  delete, even inside its own prefix. S3 PutObject does overwrite an existing
+  key, so a project's CI can replace its own earlier objects. That stays
+  within the tenant.
+- **Rotate by user.** `mc admin user disable local ci-<project>` revokes one
+  CI without touching the others, which the shared root credential cannot do.
+- **Not enforced by the application.** Nothing in the backend can detect that
+  a deployment still hands out the root pair. Treat "no CI holds
+  `MINIO_ACCESS_KEY`" as a deployment check.
+- **The webhook secret is a different boundary.** `WEBHOOK_SECRET` (sent by
+  MinIO as its `auth_token`) proves a notification came from MinIO. It says
+  nothing about which uploader wrote the object.
 
 Similarly, the audit tables in §6 are append-only **by application
 convention** — no triggers, restricted grants, or WORM storage prevent

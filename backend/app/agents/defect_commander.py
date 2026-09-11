@@ -415,8 +415,14 @@ async def run_defect_commander(
         "project_key": project_key,
     }
 
+    from app.services.llm_cost_reservation import cost_budget_scope
+
     agent = _StandaloneCommander()
-    return await agent._promote(state)
+    # R-B45-R2-2 (the Regression Watchman's class): the Jira content is a
+    # priced LLM call, and outside the pipeline graph nothing else opens a
+    # cost scope. The route has already checked the run belongs to project_id.
+    with cost_budget_scope(project_id):
+        return await agent._promote(state)
 
 
 class _StandaloneCommander(DefectCommander):

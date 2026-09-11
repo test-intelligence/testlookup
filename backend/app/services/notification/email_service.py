@@ -200,7 +200,7 @@ def smtp_host(cfg: dict[str, Any]) -> str:
     return cfg.get("host") or settings.SMTP_HOST
 
 
-async def _assert_smtp_allowed(host: str) -> None:
+async def _assert_smtp_allowed(host: str, recipients: str | list[str] | None = None) -> None:
     """Refuse to hand mail to a relay that is off-box while offline.
 
     Re-audit H10. Guards every ``aiosmtplib.send`` in this module rather than
@@ -214,10 +214,22 @@ async def _assert_smtp_allowed(host: str) -> None:
 
     The relay is the deployment's own -- the SMTP settings an admin stores, or
     the environment -- so ``OFFLINE_NOTIFICATION_ALLOWED_HOSTS`` applies to it.
+
+    The recipients are judged too (re-audit N25): an allow-listed hosted relay
+    would otherwise deliver to any mailbox; see
+    ``egress.assert_recipients_allowed``.
+
+    Not pinned (re-audit N8): ``aiosmtplib`` dials the relay by name, so the
+    relay is resolved again at connect time. Accepted -- the relay is set by an
+    admin, the actor C3's threat model already trusts; see SECURITY.md s5.
     """
-    from app.services.notification.egress import assert_delivery_allowed_async
+    from app.services.notification.egress import (
+        assert_delivery_allowed_async,
+        assert_recipients_allowed_async,
+    )
 
     await assert_delivery_allowed_async("SMTP", host, deployment_wide=True)
+    await assert_recipients_allowed_async(host, recipients)
 
 
 async def send_notification(
@@ -263,7 +275,7 @@ async def send_notification(
 
     use_tls = bool(cfg.get("tls", True))
     host = smtp_host(cfg)
-    await _assert_smtp_allowed(host)
+    await _assert_smtp_allowed(host, msg["To"])
     await aiosmtplib.send(
         msg,
         hostname=host,
@@ -309,7 +321,7 @@ async def send_html_email(
 
     use_tls = bool(cfg.get("tls", True))
     host = smtp_host(cfg)
-    await _assert_smtp_allowed(host)
+    await _assert_smtp_allowed(host, msg["To"])
     await aiosmtplib.send(
         msg,
         hostname=host,
@@ -379,7 +391,7 @@ async def send_html_email_with_attachments(
 
     use_tls = bool(cfg.get("tls", True))
     host = smtp_host(cfg)
-    await _assert_smtp_allowed(host)
+    await _assert_smtp_allowed(host, msg["To"])
     await aiosmtplib.send(
         msg,
         hostname=host,

@@ -24,12 +24,11 @@ count bounds what parsing can cost. For XML that holds whatever the result
 element's name looks like: the TRX parser matches names without their
 namespace prefix, so ``<t:UnitTestResult>`` is parsed and counted; the other
 XML parsers match only the unprefixed name, so a prefixed element is neither
-parsed nor counted. A Cypress, Playwright, Cucumber or Allure
-result can leave its marker key out and still be parsed, so for those four the
-count stops accidents rather than a crafted report. The exact check after
-parsing refuses that report either way, and the 50 MB upload limit bounds what
-parsing it costs; a streaming count would close the gap (recorded as a
-follow-up to re-audit M5).
+parsed nor counted. A Cypress, Playwright, Cucumber or Allure result can leave
+its marker key out and still be parsed, so those four are counted
+structurally instead (re-audit N21, ``structural_results``): every object in
+an array under the key their parser reads results from. That bounds a crafted
+report too.
 """
 from __future__ import annotations
 
@@ -121,8 +120,140 @@ def result_limit() -> int:
     return int(settings.INGEST_MAX_RESULTS_PER_UPLOAD)
 
 
+# ── A structural count for the formats whose marker is optional (N21) ────
+#
+# A Cypress, Playwright, Cucumber or Allure result may leave its marker key
+# out and still be parsed, so a crafted report could carry any number of
+# results past the marker count. For those four the count follows the
+# parser's own structure instead: every OBJECT directly inside an array held
+# under the key the parser reads results from -- at any depth, so no nesting
+# hides one -- or, for Allure, every object in the root array (or the root
+# object itself). The parsers take results from nowhere else, so for any valid
+# JSON the count is at least what parsing yields; extra containers (a Cucumber
+# background, a nested ``tests`` the parser never visits) only lean toward
+# refusal.
+#
+# It streams, in LINEAR time and bounded memory, with no objects built. Keys
+# are decoded when they carry an escape, so a ``"tests"`` key is the
+# ``tests`` key json.loads sees.
+#
+# Linear (review R-B45-D-2). The first version found tokens with one
+# ``finditer`` over "a string, or punctuation". When a quote never closed,
+# every later quote started a new string attempt that scanned to the end of
+# the input and failed: quadratic, so 20,000 escaped quotes took 2.9 s and one
+# 50 MB upload would pin a worker for weeks -- before any JSON parse. Now the
+# scan jumps from one structural character to the next, and each string's
+# body is matched ONCE from its opening quote with possessive quantifiers
+# (no backtracking). A string that never closes is not JSON: the report is
+# refused at that point.
+#
+# Bounded (review R-B45-D-3). One frame per open container, and the depth is
+# capped: a million "[" held a million frames (96 MB). Real reports nest a few
+# dozen deep; json.loads itself gives up near a thousand.
+_ROOT = object()
+_CONTAINER_KEYS: dict[str, frozenset] = {
+    "cypress": frozenset({"tests"}),
+    "playwright": frozenset({"tests"}),
+    "cucumber": frozenset({"elements"}),
+    "allure": frozenset({_ROOT}),
+}
+MAX_NESTING = 512
+# The next character that can change the structure, or open a string.
+# Numbers, literals and whitespace never can: they cannot open a result.
+_STRUCTURAL = re.compile(r'[\[\]{},"]')
+# The rest of a string after its opening quote, through the closing quote.
+_STRING_REST = re.compile(r'[^"\\]*+(?:\\.[^"\\]*+)*+"', re.DOTALL)
+
+
+class UnreadableReport(ValueError):
+    """The report cannot be JSON: refused before any parse.
+
+    A ValueError on purpose, unlike :class:`TooManyResults`: it is a parse
+    error, and the archive loop skips an entry that raises one.
+    """
+
+
+def structural_results(content: str, fmt: str, *, stop_after: int | None = None) -> int:
+    """Count the objects the ``fmt`` parser could turn into results, streaming.
+
+    Raises :class:`UnreadableReport` for a string that never closes or nesting
+    deeper than :data:`MAX_NESTING`.
+    """
+    import json
+
+    containers = _CONTAINER_KEYS[fmt]
+    search = _STRUCTURAL.search
+    string_rest = _STRING_REST.match
+    # One frame per open container: [is_array, key it sits under, awaiting a
+    # key (objects), the last key read (objects)].
+    stack: list[list] = []
+    count = 0
+    position = 0
+    while True:
+        found = search(content, position)
+        if found is None:
+            return count
+        head = found.group()
+        position = found.end()
+        if head == '"':
+            rest = string_rest(content, position)
+            if rest is None:
+                raise UnreadableReport(
+                    "The report has a string that never closes, so it is not JSON."
+                )
+            start, position = position - 1, rest.end()
+            frame = stack[-1] if stack else None
+            if frame is not None and not frame[0] and frame[2]:
+                key = content[start + 1:position - 1]
+                if "\\" in key:
+                    try:
+                        key = json.loads(content[start:position])
+                    except ValueError:
+                        pass
+                frame[3] = key
+                frame[2] = False
+            continue
+        if head in "{[" and len(stack) >= MAX_NESTING:
+            raise UnreadableReport(
+                f"The report nests deeper than {MAX_NESTING} levels; no test report does."
+            )
+        if head == "{":
+            if stack:
+                parent = stack[-1]
+                counted = parent[0] and parent[1] in containers
+            else:
+                counted = _ROOT in containers
+            if counted:
+                count += 1
+                if stop_after is not None and count > stop_after:
+                    return count
+            stack.append([False, None, True, None])
+        elif head == "[":
+            under: object
+            if not stack:
+                under = _ROOT
+            elif stack[-1][0]:
+                under = None  # an array in an array: no parser reads results there
+            else:
+                under = stack[-1][3]
+            stack.append([True, under, False, None])
+        elif head == ",":
+            if stack and not stack[-1][0]:
+                stack[-1][2] = True
+        elif stack:  # "}" or "]"
+            stack.pop()
+    return count
+
+
 def estimated_results(content: str, fmt: str, *, stop_after: int | None = None) -> int:
-    """Count result markers in raw report text, stopping once past ``stop_after``."""
+    """Count results in raw report text, stopping once past ``stop_after``.
+
+    The four formats whose marker key is optional are counted structurally
+    (re-audit N21); the rest by their marker, which every result they parse
+    must carry.
+    """
+    if fmt in _CONTAINER_KEYS:
+        return structural_results(content, fmt, stop_after=stop_after)
     pattern = _RESULT_MARKERS.get(fmt, _JUNIT)
     seen = 0
     for seen, _match in enumerate(pattern.finditer(_countable(content, fmt)), start=1):

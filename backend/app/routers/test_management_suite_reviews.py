@@ -128,7 +128,7 @@ async def list_suite_owners(
 @router.put(
     "/suite-owners/{suite_name}",
     response_model=SuiteOwnerResponse,
-    dependencies=[Depends(require_role(UserRole.QA_LEAD))],
+    dependencies=[Depends(require_role(UserRole.QA_LEAD, allow_project_key=True))],
 )
 async def set_suite_owner(
     suite_name: str,

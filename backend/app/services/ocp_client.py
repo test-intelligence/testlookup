@@ -13,6 +13,13 @@ async def get_pod_metadata(pod_name: str, namespace: str) -> Optional[dict]:
     """Fetch pod spec, status, and events from the OpenShift API."""
     if not settings.OCP_ENABLED or not settings.OCP_API_URL:
         return None
+    # Re-audit N19: SECURITY.md s5 -- every outbound integration short-circuits
+    # on AI_OFFLINE_MODE. The OCP probe was gated (H10 review); this client,
+    # which the analysis path calls, sent the service-account token and pod
+    # names to OCP_API_URL regardless. Hard gate, as the probe is.
+    if settings.AI_OFFLINE_MODE:
+        logger.info("OCP pod lookup skipped: AI_OFFLINE_MODE=true")
+        return None
 
     headers = {"Authorization": f"Bearer {settings.OCP_SA_TOKEN}"}
     base = settings.OCP_API_URL.rstrip("/")

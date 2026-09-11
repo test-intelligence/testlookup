@@ -10,6 +10,11 @@ SECRET_KEY="${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set}"
 BUCKET="${MINIO_BUCKET_NAME:-test-telemetry}"
 BACKEND_URL="${BACKEND_URL:-http://backend:8000}"
 EVENTS_DIR="${MINIO_EVENTS_DIR:-/tmp/minio-events}"
+# The backend's WEBHOOK_SECRET. MinIO cannot add a custom header to a
+# notification; it sends its webhook target's auth_token as
+# "Authorization: Bearer <token>", which /webhooks/minio accepts (re-audit R15).
+# Without it every notification is refused with a 403.
+WEBHOOK_SECRET="${WEBHOOK_SECRET:?WEBHOOK_SECRET must be set (the backend value)}"
 
 echo "Setting up MinIO..."
 
@@ -27,6 +32,7 @@ echo "  Attachment bucket configured"
 # Configure webhook notification (triggers on JSON file uploads)
 mc admin config set "${ALIAS}" notify_webhook:1 \
   endpoint="${BACKEND_URL}/webhooks/minio" \
+  auth_token="${WEBHOOK_SECRET}" \
   queue_limit=10000 \
   "queue_dir=${EVENTS_DIR}" \
   client_cert="" \
