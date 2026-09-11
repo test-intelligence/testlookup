@@ -339,6 +339,53 @@ async def test_the_relay_does_not_deliver_to_a_recipient_who_left(world, monkeyp
     assert "no longer access" in ex_error
 
 
+# ── QA-R3-2: onboarding usage events are filed under a project too ──────────
+
+
+async def _usage_events(world, project_id):
+    Event = world.models.ProductUsageEvent
+    async with world.sessions() as db:
+        return (await db.execute(
+            select(Event.user_id).where(Event.project_id == project_id)
+        )).scalars().all()
+
+
+def _track(world, headers, project_id):
+    return world.client.post("/api/v1/onboarding/track", headers=headers, json={
+        "event_name": f"r4.probe.{world.tag}", "project_id": project_id,
+    })
+
+
+async def test_a_usage_event_is_filed_only_under_a_project_the_caller_can_access(world):
+    outsider = await _track(world, world.outsider_jwt, str(world.project_b))
+    other_project_key = await _track(world, world.key, str(world.project_b))
+    member = await _track(world, world.member_jwt, str(world.project_b))
+    own_project_key = await _track(world, world.key, str(world.project_a))
+
+    assert outsider.status_code == 403, outsider.text
+    assert other_project_key.status_code == 403, other_project_key.text
+    assert member.status_code == 200, member.text
+    assert own_project_key.status_code == 200, own_project_key.text
+    assert await _usage_events(world, world.project_b) == [world.member_b]
+    assert await _usage_events(world, world.project_a) == [world.key_owner]
+
+
+async def test_a_usage_event_without_a_usable_project_is_still_tracked(world):
+    """Fire-and-forget as before: no project, or an unparseable one, files the
+    event under no project rather than failing."""
+    none = await _track(world, world.outsider_jwt, None)
+    garbage = await _track(world, world.outsider_jwt, "not-a-uuid")
+
+    assert none.status_code == 200, none.text
+    assert garbage.status_code == 200, garbage.text
+    Event = world.models.ProductUsageEvent
+    async with world.sessions() as db:
+        filed = (await db.execute(
+            select(Event.project_id).where(Event.user_id == world.outsider)
+        )).scalars().all()
+    assert filed == [None, None]
+
+
 async def test_counting_helper_sees_rows(world):
     """Guards the guard: the recipient query above reads the table it claims to."""
     Log = world.models.NotificationLog
