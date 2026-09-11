@@ -244,6 +244,15 @@ def test_a_polls_retry_after_is_honoured(fake):
     assert fake.sleeps == [7.0, 11.0]
 
 
+def test_retry_after_zero_does_not_poll_in_a_hot_loop(fake):
+    """Proxies send ``Retry-After: 0``; honoured exactly, QA counted 22,333
+    polls in 1.5 seconds."""
+    fake.install(_Resp(503, {}, {"Retry-After": "0"}), _Resp(503, {}, {"Retry-After": "0"}), _Resp(200, _SUCCEEDED))
+    assert asyncio.run(upload._wait_for_upload("t1"))["state"] == "succeeded"
+    assert fake.sleeps == [upload.WAIT_MIN_RETRY_SECONDS] * 2
+    assert upload.WAIT_MIN_RETRY_SECONDS >= 1.0
+
+
 def test_the_last_poll_comes_at_the_deadline_not_after_it(fake):
     """A Retry-After past the deadline is cut to the deadline."""
     fake.install(_Resp(429, {}, {"Retry-After": "60"}), _Resp(200, _SUCCEEDED))

@@ -493,6 +493,23 @@ def test_the_last_retry_leaves_a_dead_letter_an_admin_can_replay(wired, task_env
     assert (sentinel.project_id, used_prefix) == (VICTIM, prefix)
 
 
+@pytest.mark.parametrize("build", ["1.0.0.123", "1694361234567890", "123-45-6789", "555-867-5309"])
+def test_a_dead_letter_keeps_the_key_it_is_replayed_with(wired, task_env, dead_letters, build):
+    """Sanitizing the replay kwargs rewrote build names shaped like an IP, a
+    card, an SSN or a phone number, so the replay named a key that does not
+    exist (QA of the N10 follow-up)."""
+    from app.services.ingestion_dlq import list_recent_stream_failures
+
+    prefix = f"{VICTIM}/runs/{build}/"
+    key = f"{prefix}upload_complete.json"
+    wired.errors[key] = ConnectionError("MinIO SlowDown")
+
+    _attempt(task_env, key, prefix, retries=task_env.task.max_retries)
+
+    [entry] = asyncio.run(list_recent_stream_failures())
+    assert entry["kwargs"] == {"sentinel_key": key, "minio_prefix": prefix}
+
+
 @pytest.mark.parametrize("retries", [0, 1, 2])
 def test_an_earlier_retry_leaves_no_dead_letter(wired, task_env, dead_letters, retries):
     prefix = f"{VICTIM}/runs/16/"

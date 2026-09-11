@@ -62,6 +62,26 @@ LOG_SECRET_KEYS: frozenset[str] = _SECRET_KEY_NAMES | frozenset({
     "x_api_token", "x_auth_token", "x_webhook_secret",
 })
 
+#: A log field whose name ENDS in one of these is a secret too: the deployment's
+#: own settings are named this way (``github_token``, ``jira_api_token``,
+#: ``openai_api_key``, ``postgres_password``, ``slack_webhook_url``), and none
+#: was in the exact list (QA of the H3 fix). A suffix, so counters and flags
+#: that merely contain the word -- ``token_count``, ``prompt_tokens``,
+#: ``password_changed``, ``api_key_id`` -- still read as they are.
+LOG_SECRET_SUFFIXES: tuple[str, ...] = (
+    "_token", "_password", "_passwd", "_secret", "_api_key", "_apikey",
+    "_secret_key", "_access_key", "_private_key", "_webhook_url",
+    "_credential", "_credentials",
+)
+
+
+def is_log_secret_name(key: object) -> bool:
+    """Whether a structured log field's NAME marks its value as a secret."""
+    if not isinstance(key, str):
+        return False
+    name = key.lower().replace("-", "_")
+    return name in LOG_SECRET_KEYS or name.endswith(LOG_SECRET_SUFFIXES)
+
 # ── Regex patterns for free-form text scrubbing ─────────────────────────────
 
 # Schemes whose name stays visible in front of a redacted Authorization
@@ -97,6 +117,10 @@ _CREDENTIAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # the line or the closing quote, since a Digest or SigV4 credential is a
     # list of quoted, comma-separated parameters.
     (_AUTHORIZATION_HEADER, r"\g<head>\g<scheme>[REDACTED]"),
+    # A Slack or Teams incoming-webhook URL is itself the credential: anyone
+    # holding it can post to the channel (QA of the H3 fix).
+    (re.compile(r"(hooks\.slack\.com/services/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"(\.webhook\.office\.com/webhookb2/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
     # Cookies frequently contain session credentials and must be removed even
     # when their values do not resemble long random tokens.
     (re.compile(r"((?:Set-)?Cookie:\s*)[^\r\n]+", re.IGNORECASE), r"\1[REDACTED]"),
@@ -212,13 +236,12 @@ def redact_log_field(key: str, value: Any, *, free_text: bool = False) -> Any:
 def _redact_log_entry(
     key: object, value: Any, scrub: Callable[[str], str], depth: int
 ) -> Any:
-    if (
-        isinstance(key, str)
-        and key.lower().replace("-", "_") in LOG_SECRET_KEYS
-        and value is not None
-        and not isinstance(value, bool)
-    ):
+    if is_log_secret_name(key) and value is not None and not isinstance(value, bool):
         return REDACTED
+    if isinstance(value, (bytes, bytearray)):
+        # The renderer decodes bytes after redaction has run, so
+        # b"password=..." reached the log intact (QA of the H3 fix).
+        value = bytes(value).decode("utf-8", errors="replace")
     if isinstance(value, str):
         scrubbed = scrub(value)
         return value if scrubbed == value else scrubbed

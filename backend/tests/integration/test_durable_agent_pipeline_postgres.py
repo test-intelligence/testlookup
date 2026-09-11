@@ -63,6 +63,12 @@ async def world(monkeypatch):
     engine = create_async_engine(_dsn(), pool_size=2, max_overflow=0)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     project_id, run_id = uuid.uuid4(), uuid.uuid4()
+    # The app engine may still hold connections an EARLIER test file opened on
+    # its own, now closed, event loop: in CI's order this test then failed with
+    # "Event loop is closed" (QA of N27). Start clean, as well as end clean.
+    from app.db import postgres as app_postgres
+
+    await app_postgres.dispose_engine_for_loop()
     async with sessions() as db:
         db.add(Project(id=project_id, name=f"n27-{project_id.hex}", slug=f"n27-{project_id.hex}"))
         await db.flush()
@@ -224,3 +230,59 @@ async def test_a_pipeline_whose_stages_ran_is_not_resumed_without_its_snapshot(w
 
     assert await workflow._claim_pipeline_resume(pipeline_run_id) is None
     assert await _status(world, pipeline_run_id) == "failed", "the refused claim changed the pipeline"
+
+
+async def test_a_deep_pipeline_that_fails_during_setup_is_failed_not_stranded(world, monkeypatch):
+    """The same guard on the deep path (QA of N27): a direct deep run that
+    failed during setup stayed 'running' for the 30-minute reaper."""
+    from app.agents import workflow
+
+    AgentPipelineRun, _ = world["models"]
+
+    async def _broken(*_args, **_kwargs):
+        raise RuntimeError("the AI config could not be read")
+
+    monkeypatch.setattr(workflow, "_resolve_analysis_mode_snapshot", _broken)
+    with pytest.raises(RuntimeError):
+        await workflow.run_deep_pipeline(
+            test_run_id=world["run"], project_id=world["project"], build_number="b-1",
+        )
+    async with world["sessions"]() as db:
+        statuses = (await db.execute(
+            select(AgentPipelineRun.status).where(
+                AgentPipelineRun.test_run_id == uuid.UUID(world["run"]),
+                AgentPipelineRun.workflow_type == "deep",
+            )
+        )).scalars().all()
+    assert statuses == ["failed"], statuses
+
+
+async def test_a_log_call_that_raises_does_not_strand_the_pipeline(world, monkeypatch):
+    """QA reproduced it with a non-UTF-8 stdout: the setup handler logged first,
+    the log call raised, and the pipeline was never marked failed."""
+    from types import SimpleNamespace
+
+    from app.agents import workflow
+
+    async def _broken(*_args, **_kwargs):
+        raise RuntimeError("setup failed")
+
+    def _error(event, *_args, **_kwargs):
+        if event == "pipeline_setup_failed":
+            raise UnicodeEncodeError("cp1252", "x", 0, 1, "cannot encode")
+
+    def _quiet(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(workflow, "_resolve_analysis_mode_snapshot", _broken)
+    monkeypatch.setattr(
+        workflow, "logger",
+        SimpleNamespace(error=_error, info=_quiet, warning=_quiet, debug=_quiet, exception=_quiet),
+    )
+    pipeline_run_id = str(uuid.uuid4())
+    with pytest.raises(RuntimeError, match="setup failed"):
+        await workflow.run_offline_pipeline(
+            test_run_id=world["run"], project_id=world["project"], build_number="b-1",
+            workflow_type="offline", pipeline_run_id=pipeline_run_id, create_if_missing=True,
+        )
+    assert await _status(world, pipeline_run_id) == "failed"

@@ -1029,6 +1029,8 @@ def ingest_test_run(
                 task_id=self.request.id,
                 kwargs=replay,
                 error=f"{type(exc).__name__}: {exc}",
+                # Already validated by sentinel_key_problem; replayed as is.
+                verbatim=("sentinel_key", "minio_prefix"),
             ))
         countdown = _exponential_backoff(self.request.retries)
         raise self.retry(exc=exc, countdown=countdown)
@@ -3579,14 +3581,30 @@ def train_flaky_confidence_model(self) -> dict:
 
 # ── DLQ helper ────────────────────────────────────────────────────────────────
 
-async def _send_to_dlq(task_name: str, task_id: str, kwargs: dict, error: str) -> None:
-    """Write a failed task to the Redis DLQ stream for manual inspection and replay."""
+async def _send_to_dlq(
+    task_name: str,
+    task_id: str,
+    kwargs: dict,
+    error: str,
+    *,
+    verbatim: tuple[str, ...] = (),
+) -> None:
+    """Write a failed task to the Redis DLQ stream for manual inspection and replay.
+
+    ``verbatim`` names kwargs recorded exactly as given: storage locators the
+    caller has already validated, which sanitizing would rewrite -- a build
+    segment like ``1.0.0.123`` reads as an IP address -- so the replay named a
+    key that does not exist (QA of the N10 follow-up).
+    """
     try:
         import json
         from app.db.redis_client import get_redis
         from app.services.ingestion_sanitization import sanitize_test_result_payload
         from app.streams import DLQ_STREAM
         safe_kwargs = sanitize_test_result_payload(kwargs)
+        for name in verbatim:
+            if name in kwargs:
+                safe_kwargs[name] = kwargs[name]
         safe_error = sanitize_test_result_payload({"error_message": error})[
             "error_message"
         ]

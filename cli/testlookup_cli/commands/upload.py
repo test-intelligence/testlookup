@@ -50,6 +50,10 @@ MAX_RETRY_TOTAL_SECONDS = 300.0
 # printing "Ingestion queued" and exiting 0, so the CI job stayed green while
 # its results were dropped. --wait polls the upload's status to the end.
 WAIT_POLL_SECONDS = 2.0
+#: The shortest pause between polls, whatever Retry-After says. Proxies and
+#: drains send ``Retry-After: 0``, and honouring it exactly polled some twenty
+#: thousand times a second during the outage the wait was riding out (QA of N15).
+WAIT_MIN_RETRY_SECONDS = 1.0
 WAIT_NOT_FOUND_GRACE_SECONDS = 30.0
 TERMINAL_UPLOAD_STATES = frozenset({"succeeded", "failed"})
 
@@ -572,7 +576,7 @@ async def _wait_for_upload(
                     problem = f"the last poll got HTTP {code}"
                     retry_after = parse_retry_after(resp.headers.get("Retry-After"))
                     if retry_after is not None:
-                        delay = retry_after
+                        delay = max(retry_after, WAIT_MIN_RETRY_SECONDS)
                 elif code >= 400:
                     try:
                         detail = resp.json().get("detail", resp.text)
@@ -588,9 +592,9 @@ async def _wait_for_upload(
             if remaining <= 0:
                 if problem is None:
                     raise UploadNotFinished(
-                        f"upload {task_id} is still {state} after {timeout:.0f}s", state
+                        f"upload {task_id} is still {state} after {timeout:g}s", state
                     )
                 raise UploadNotFinished(
-                    f"no status for upload {task_id} after {timeout:.0f}s: {problem}", state
+                    f"no status for upload {task_id} after {timeout:g}s: {problem}", state
                 )
             await _sleep(min(delay, remaining))

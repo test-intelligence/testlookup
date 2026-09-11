@@ -345,3 +345,20 @@ async def test_a_result_retried_with_its_event_id_is_counted_once(infra):
 
     state = await RedisLiveRunState.get(session_id)
     assert int(state["passed"]) == 2
+
+
+async def test_a_named_run_start_retried_after_its_run_closed_is_that_run(infra):
+    """A client that timed out on run_start and retried late used to open an
+    empty run that only the idle reaper ended (QA of N14). With an event_id the
+    retry converges on the run it started; a new run_start id begins a new run."""
+    slug = _slug()
+    start = {"type": "run_start", "build_number": "1", "event_id": "start-1"}
+    first = (await _post(infra, slug, start))["session_id"]
+    await _post(infra, slug, {"type": "run_complete"})
+
+    late = await _post(infra, slug, start)
+    assert late["session_id"] == first
+    assert len(await _sessions_for(infra, slug)) == 1, "the late retry opened a phantom run"
+
+    second = (await _post(infra, slug, {**start, "event_id": "start-2"}))["session_id"]
+    assert second != first
