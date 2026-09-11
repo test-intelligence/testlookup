@@ -310,6 +310,63 @@
   PodMonitors; add your Prometheus's `podMonitorSelector` label with the same
   kustomize `labels` entry as the rule's.
 
+### Data, migrations and ingest
+
+- **Concurrent migrations are serialised for the whole upgrade (N24).**
+  Migrations took an advisory lock that was released when `autocommit_block()`
+  committed, so from the first `CREATE INDEX CONCURRENTLY` on, two
+  `alembic upgrade head` runs were not serialised. A session-level lock on a
+  dedicated connection now holds for the whole upgrade
+  (`backend/app/db/migration_lock.py`).
+  - **Waiting:** a waiting migrator polls `pg_try_advisory_lock` rather than
+    blocking. A blocked waiter holds a snapshot that `CREATE INDEX
+    CONCURRENTLY` waits on, which is a deadlock PostgreSQL cannot detect.
+  - **Timeout:** the wait is capped by `MIGRATION_LOCK_WAIT_SECONDS`
+    (default 1800), after which the migrator fails loudly.
+- **A legacy live `run_start` reset can no longer wipe results counted by a
+  concurrent reset or create (H6).** The check and the write are one Lua script,
+  on both the reset and the create path.
+- **Revoking an API key revokes every key it minted, at any depth and whoever
+  owns it (N35, migration 0168).** Each revoked key's streaming-cache entry is
+  dropped after the commit, and each project-bound key gets an
+  `api_key.revoked` activity row with `cascade_from`.
+- **The pre-parse result cap bounds crafted Cypress, Playwright, Cucumber and
+  Allure reports (N21).** They are counted by the arrays their parsers read
+  results from, not by optional marker keys.
+- **Real MinIO notifications are ingested (R15).** Before this, the top-level
+  `bucket/object` `Key` made the bucket the project. Now:
+  - the object key is taken from `Records[].s3.object.key`, URL-decoded and
+    checked against our bucket;
+  - MinIO's `auth_token` is accepted as `Authorization: Bearer`;
+  - `scripts/setup-minio.sh` requires `WEBHOOK_SECRET` and sets it as
+    `auth_token`.
+- **"Run #N" labels no longer sort a suite's whole history on every /runs,
+  /live and /my-failures page (N17, migration 0169).** Measured 87.6 ms →
+  16.7 ms: an index-only scan with no Sort, instead of a Sort over 40,000 runs.
+- **The admin all-projects and multi-project run lists no longer scan and sort
+  every run (N18, migration 0170).** Admin list: 996.5 ms → 0.2 ms. A member of
+  3 of 30 projects: 47.3 ms → 0.5 ms, with one ordered branch per project.
+- **Migration 0162's `webhook_deliveries.run_id` backfill moved to 0171 and runs
+  in committed batches paged by id (N3).** Databases that already ran 0162 are
+  unaffected. On 240,000 rows, the longest row-lock hold drops from 6.5 s (in a
+  real migration, the whole upgrade) to 235 ms per batch.
+- **Architecture docs (N4, N13):**
+  - `architecture/INGESTION_SCALE.md` §8 covers the in-process live consumer
+    (one leader-leased process) and the per-process fan-out subscriber, with a
+    runbook.
+  - `architecture/SECURITY.md` §7a records that the shipped MinIO credential
+    is the root user, and gives the per-project `PutObject` policy and an `mc`
+    runbook.
+
+**Upgrade notes: data and migrations.**
+- **Migrations 0168–0171** run online-safe. A second migrator waits up to
+  `MIGRATION_LOCK_WAIT_SECONDS` (default 1800) for the lock, then fails loudly.
+- **Key revocation:** keys minted before 0168 have no recorded parent, so
+  revoking one does not cascade to them.
+- **MinIO webhook:** set `WEBHOOK_SECRET` before running
+  `scripts/setup-minio.sh`. MinIO sends it as `auth_token`
+  (`Authorization: Bearer`).
+
 ### Frontend
 
 - **A tab coming back from the background refreshes at once (M19).** SWR
