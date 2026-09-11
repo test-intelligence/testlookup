@@ -10,6 +10,8 @@ export function useProjectScopedSWR<Data>(
   fetcher: (projectId: string | null) => Promise<Data>,
   options?: SWRConfiguration<Data>,
   deps: unknown[] = [],
+  /** false → no key, no request, no polling (a caller-side condition). */
+  enabled = true,
 ) {
   const projectId = useActiveProjectId()
 
@@ -19,7 +21,7 @@ export function useProjectScopedSWR<Data>(
   const fetcherProjectId = projectId === ALL_PROJECTS_ID ? null : projectId
 
   return useSWR<Data>(
-    projectId !== null ? [baseKey, projectId, ...deps] : null,
+    enabled && projectId !== null ? [baseKey, projectId, ...deps] : null,
     () => fetcher(fetcherProjectId),
     options,
   )
