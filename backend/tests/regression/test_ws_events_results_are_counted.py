@@ -137,6 +137,26 @@ class _Redis:
         removed = (self.hashes.pop(key, None) is not None) or removed
         return int(removed)
 
+    async def eval(self, script, numkeys, *keys_and_args):
+        """live_run_state._START_LUA's semantics, run in one step as Redis does.
+
+        Its atomicity under real concurrency is proven on real Redis in
+        tests/integration/test_live_run_reset_redis.py.
+        """
+        from app.streams.live_run_state import _START_LUA
+
+        assert script == _START_LUA and numkeys == 2
+        key, active, reset, _ttl, run_id, *pairs = keys_and_args
+        existed = key in self.hashes
+        if existed:
+            if reset != "1" or self.hashes[key].get("status") != "completed":
+                self.sets.setdefault(active, set()).add(run_id)
+                return "kept"
+            del self.hashes[key]
+        self.hashes[key] = dict(zip(pairs[::2], pairs[1::2]))
+        self.sets.setdefault(active, set()).add(run_id)
+        return "replaced" if existed else "created"
+
 
 @pytest.fixture
 def live(monkeypatch):

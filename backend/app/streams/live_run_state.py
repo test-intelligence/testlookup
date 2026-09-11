@@ -26,6 +26,28 @@ _TTL = 86_400          # 24 hours — cleans up abandoned runs automatically
 _WARN_THRESHOLD = 10   # need at least this many completed tests before warning
 _WARN_PASS_RATE  = 50.0
 
+# start()'s decision and write, atomically (re-audit H6, batch 5).
+# KEYS[1] state hash, KEYS[2] active set.
+# ARGV[1] '1' = reset a COMPLETED run, ARGV[2] TTL, ARGV[3] run id,
+# ARGV[4..] the new state's field/value pairs.
+# Returns 'kept' (an existing run left alone), 'replaced' or 'created'.
+_START_LUA = r"""
+local existed = redis.call('EXISTS', KEYS[1]) == 1
+if existed then
+  if ARGV[1] ~= '1' or redis.call('HGET', KEYS[1], 'status') ~= 'completed' then
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+    redis.call('SADD', KEYS[2], ARGV[3])
+    return 'kept'
+  end
+  redis.call('DEL', KEYS[1])
+end
+redis.call('HSET', KEYS[1], unpack(ARGV, 4))
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+redis.call('SADD', KEYS[2], ARGV[3])
+if existed then return 'replaced' end
+return 'created'
+"""
+
 
 class RedisLiveRunState:
     """
@@ -75,14 +97,13 @@ class RedisLiveRunState:
         # wiped its counts (QA and code review of the H6 fix). The consumer
         # never resets: its call can arrive after the producer's -- even after
         # the run completed -- and must change nothing.
-        replace = False
-        if await redis.exists(key):
-            if not reset or (await redis.hget(key, "status")) != "completed":  # type: ignore[misc]
-                await redis.expire(key, _TTL)
-                await redis.sadd(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
-                return
-            replace = True
-
+        #
+        # The decision and the write are ONE Lua script (re-audit H6, batch 5).
+        # Done as EXISTS, HGET, then a replace, two run_starts for a completed
+        # run could both see "completed": the first replaced the state, a result
+        # was counted, and the second replaced it again and wiped that result.
+        # The create path had the same gap: two creators could both see no key,
+        # and the later HSET zeroed what the earlier one's run had counted.
         now = datetime.now(timezone.utc).isoformat()
         mapping: dict = {
             "run_id":       run_id,
@@ -103,20 +124,23 @@ class RedisLiveRunState:
             mapping["launch_name"] = launch_name
         if suite_name:
             mapping["suite_name"] = suite_name
-        if replace:
-            # One transaction: the finished run's state goes and the new run's
-            # arrives together, so nothing counted in between can be wiped, or
-            # land on a half-written state.
-            pipe = redis.pipeline(transaction=True)
-            pipe.delete(key)
-            pipe.hset(key, mapping=mapping)
-            pipe.expire(key, _TTL)
-            pipe.sadd(LIVE_ACTIVE_SET, run_id)
-            await pipe.execute()
-        else:
-            await redis.hset(key, mapping=mapping)  # type: ignore[misc]
-            await redis.expire(key, _TTL)
-            await redis.sadd(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
+        pairs: list[Any] = []
+        for field, value in mapping.items():
+            pairs.extend((field, str(value)))
+        outcome = await redis.eval(  # type: ignore[misc]
+            _START_LUA,
+            2,
+            key,
+            LIVE_ACTIVE_SET,
+            "1" if reset else "0",
+            str(_TTL),
+            run_id,
+            *pairs,
+        )
+        if isinstance(outcome, bytes):
+            outcome = outcome.decode()
+        if outcome == "kept":
+            return
         logger.info("Live run started: %s build=%s launch=%s suite=%s",
                     run_id, build_number, launch_name or "-", suite_name or "-")
 

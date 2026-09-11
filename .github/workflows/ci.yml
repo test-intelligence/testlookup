@@ -602,6 +602,7 @@ jobs:
           tests/integration/test_scoped_key_limits_postgres.py
           tests/integration/test_live_evidence_crash_replay_postgres_redis.py
           tests/integration/test_live_fanout_redis.py
+          tests/integration/test_live_run_reset_redis.py
           tests/integration/test_live_recovery_protocol_postgres_redis.py
           tests/integration/test_compose_queue_delivery_redis.py
           tests/regression/test_notification_history_schema.py
