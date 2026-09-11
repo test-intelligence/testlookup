@@ -170,6 +170,28 @@ def _status(store):
     return [a.status for a in store.attempts]
 
 
+@pytest.mark.asyncio
+async def test_patch_generation_runs_inside_the_projects_llm_cost_scope(monkeypatch):
+    """Re-audit R-B45-1: the generator's LLM calls reserve against the
+    project's monthly cap."""
+    from app.services.llm_cost_reservation import current_cost_scope
+
+    store = _Store()
+    _wire(monkeypatch, store, config=_config(), candidates=[_cand()])
+    seen: list = []
+
+    async def generate(**kwargs):
+        seen.append(current_cost_scope())
+        return await _gen_none()
+
+    await workflow.run_fixer_run(
+        str(PROJECT_ID), str(uuid.uuid4()),
+        runner_override=FakeRunner(outcome=RESULT_VALIDATED), generate_fn=generate,
+    )
+    assert seen == [str(PROJECT_ID)]
+    assert current_cost_scope() is None
+
+
 # ── Shadow: validated, NEVER a PR ────────────────────────────────────────────
 
 

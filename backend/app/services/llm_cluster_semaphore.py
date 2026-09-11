@@ -16,6 +16,13 @@ This is the cluster bound, held in Redis:
 * A holder renews its lease while its call runs; release removes it. A holder
   that crashes stops renewing, and its slot frees itself when the lease lapses
   -- a dead pod cannot leak capacity forever.
+* A LIVE holder that cannot keep its lease (renew says the lease is gone, or
+  renewals keep failing until the next one would land after the lease
+  lapses) is stopped: its call is cancelled and the block raises
+  :class:`LLMSlotLost`. Otherwise a second holder is admitted when the lease
+  lapses while the first is still calling, and the bound is passed
+  (QA-B45-A5). Bounded: a holder stops at most one renew interval
+  (lease / 3) before its lease could have lapsed.
 
 The per-process semaphore stays as the local bound. When Redis is unreachable
 the cluster bound is skipped with a warning, and the local bound is what
@@ -75,6 +82,13 @@ class LLMSlotTimeout(TimeoutError):
     """No cluster slot became free within the wait budget."""
 
 
+class LLMSlotLost(RuntimeError):
+    """The slot's lease could not be kept, so the call holding it was stopped.
+
+    Not a "no request was sent" failure: the call was in flight.
+    """
+
+
 class ClusterSemaphore:
     def __init__(
         self,
@@ -115,16 +129,31 @@ class ClusterSemaphore:
     async def release(self, token: str) -> None:
         await self._client().zrem(self.key, token)
 
-    async def _heartbeat(self, token: str) -> None:
+    async def _heartbeat(self, token: str, owner: Optional[asyncio.Task], lost: asyncio.Event) -> None:
         interval = max(0.05, self.lease_seconds / 3.0)
+        last_renewed = time.monotonic()
         while True:
             await asyncio.sleep(interval)
             try:
-                if not await self.renew(token):
-                    logger.warning("llm_cluster_slot_lease_lost", key=self.key)
-                    return
-            except Exception as exc:  # noqa: BLE001 -- the lease will lapse on its own
+                renewed: Optional[bool] = await self.renew(token)
+            except Exception as exc:  # noqa: BLE001 -- judged against the lease below
                 logger.warning("llm_cluster_slot_renew_failed", key=self.key, error=str(exc)[:200])
+                renewed = None
+            if renewed:
+                last_renewed = time.monotonic()
+                continue
+            # False: Redis says the lease is gone. None: renewal failed; keep
+            # trying only while the NEXT attempt still lands inside the lease.
+            if renewed is False or time.monotonic() + interval - last_renewed >= self.lease_seconds:
+                logger.warning(
+                    "llm_cluster_slot_lease_lost",
+                    key=self.key,
+                    reason="lease gone" if renewed is False else "renewal failing",
+                )
+                lost.set()
+                if owner is not None:
+                    owner.cancel()
+                return
 
     @contextlib.asynccontextmanager
     async def slot(self, *, timeout: float) -> AsyncIterator[bool]:
@@ -154,11 +183,22 @@ class ClusterSemaphore:
             await asyncio.sleep(delay)
             delay = min(delay * 2, self._max_poll)
 
+        owner = asyncio.current_task()
+        lost = asyncio.Event()
         heartbeat: Optional[asyncio.Task] = (
-            asyncio.create_task(self._heartbeat(token)) if held else None
+            asyncio.create_task(self._heartbeat(token, owner, lost)) if held else None
         )
         try:
             yield held
+        except asyncio.CancelledError:
+            if not lost.is_set():
+                raise  # an ordinary cancellation from outside
+            if owner is not None:
+                owner.uncancel()  # the heartbeat's cancel, consumed here
+            raise LLMSlotLost(
+                f"the LLM slot lease on {self.key} could not be kept; the call was stopped "
+                "so the cluster bound holds"
+            ) from None
         finally:
             if heartbeat is not None:
                 heartbeat.cancel()

@@ -414,7 +414,15 @@ def test_every_image_is_one_the_release_manifest_pins() -> None:
 def test_the_backup_pod_can_reach_the_stores_under_default_deny() -> None:
     egress, stores = _docs("networkpolicy.yaml")
     assert egress["spec"]["podSelector"]["matchLabels"] == {"app": "testlookup-backup"}
-    assert egress["spec"]["egress"] == [{}]
+    # R-B45-5: no allow-all rule; every rule names a peer and a port, and the
+    # three stores are among them (the full set is pinned in
+    # test_backup_alerts_and_scrape_targets.py).
+    assert all(rule.get("to") and rule.get("ports") for rule in egress["spec"]["egress"])
+    reachable = {
+        (peer.get("podSelector", {}).get("matchLabels", {}).get("app"), port["port"])
+        for rule in egress["spec"]["egress"] for peer in rule["to"] for port in rule["ports"]
+    }
+    assert {("testlookup-postgres", 5432), ("testlookup-mongo", 27017), ("testlookup-minio", 9000)} <= reachable
     assert {"testlookup-postgres", "testlookup-mongo", "testlookup-minio"} <= set(
         stores["spec"]["podSelector"]["matchExpressions"][0]["values"])
     assert stores["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"] == {"app": "testlookup-backup"}

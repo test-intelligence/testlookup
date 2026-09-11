@@ -16,7 +16,14 @@ This module puts the wall at the invocation boundary
   estimate would pass the cap, and otherwise adds the estimate. Concurrent
   callers are serialised by Redis, not by luck.
 * After the call the actual cost is settled: ``actual - estimate`` is added,
-  which releases the unused part (all of it when the call failed).
+  which releases the unused part. A call that FAILED keeps its whole
+  reservation unless the failure proves no request reached the provider
+  (:func:`failure_proves_no_request`): a read timeout, a cancellation or a
+  5xx can come after the provider did (and billed) the work, and an
+  over-count is the safe side (QA-B45-A1).
+* A charge no pipeline stage meters (a failed call, or a call outside any
+  stage) is also written to the durable Postgres meter, so a lost Redis key
+  heals to the right total.
 
 The counter holds committed spend plus in-flight reservations for one
 project-month. Seeding it with ``max(counter, postgres)`` on every reserve means
@@ -26,12 +33,16 @@ Fails CLOSED: with the ``llm_cost_budget`` flag on and a cap configured, a
 priced call whose reservation cannot be made (Redis or Postgres unreachable)
 is refused. A cap that could not be checked is not a cap.
 
-Scope: a reservation needs to know whose budget to charge. Pipelines set it for
-the whole graph with :func:`cost_budget_scope`; the run-compare report does the
-same. An LLM call made outside any scope (chat, investigator) is not charged to
-a project here, as it was not before -- the per-stage meter still records what
-the pipelines spend. Self-hosted and unpriced models reserve nothing: there is
-no dollar figure to hold.
+Scope: a reservation needs to know whose budget to charge. Every entry point
+that runs priced LLM work for a project enters :func:`cost_budget_scope`: the
+offline and deep pipelines, run-compare, project chat (and its history
+compression), the investigator, the fixer, defect promotion, the test-case AI
+tools, the weekly retro narrative, RAG faithfulness, the on-demand run
+summaries and LLM triage (pinned by
+``tests/services/test_llm_cost_scope_entry_points.py``). Calls with NO project
+are not charged, because there is no cap to charge them to: an "all projects"
+chat, the training evaluator, the prompt-eval recorder CLI. Self-hosted and
+unpriced models reserve nothing: there is no dollar figure to hold.
 """
 from __future__ import annotations
 
@@ -61,9 +72,15 @@ _COST_SCOPE: ContextVar[Optional[str]] = ContextVar("llm_cost_scope", default=No
 def cost_budget_scope(project_id: Any) -> Iterator[None]:
     """Charge every LLM call made inside this block to ``project_id``.
 
-    A ContextVar, so it follows the graph into every task it spawns.
+    A ContextVar, so it follows the graph into every task it spawns. With no
+    project (``None``/empty) the block keeps whatever scope is already in
+    force: a helper that does not know its project must not switch off the
+    charging of the pipeline that called it.
     """
-    token = _COST_SCOPE.set(str(project_id) if project_id else None)
+    if not project_id:
+        yield
+        return
+    token = _COST_SCOPE.set(str(project_id))
     try:
         yield
     finally:
@@ -108,6 +125,39 @@ class Reservation:
     estimated_usd: float
     ttl_seconds: int
     settled: bool = False
+
+
+def failure_proves_no_request(exc: BaseException) -> bool:
+    """True only when ``exc`` PROVES the provider never received the request.
+
+    The connect phase failing (``httpx.ConnectError``/``ConnectTimeout``, a
+    refused socket), the offline pin refusing the address, the cluster slot
+    timing out, and the cap itself refusing. Anything else (a read timeout,
+    a cancellation, a 5xx, a parse error) may come after the provider did the
+    work, and is charged in full. Only the explicit ``raise ... from`` chain
+    is followed: an SDK retry loop can leave an earlier, unrelated connect
+    error in ``__context__``.
+    """
+    from app.services.llm_cluster_semaphore import LLMSlotTimeout
+    from app.services.llm_egress import OffBoxTargetError
+
+    no_send: tuple[type[BaseException], ...] = (
+        ConnectionRefusedError, OffBoxTargetError, LLMSlotTimeout, CostCapExceeded,
+    )
+    try:
+        import httpx
+
+        no_send += (httpx.ConnectError, httpx.ConnectTimeout)
+    except ImportError:  # pragma: no cover
+        pass
+    seen: set[int] = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, no_send):
+            return True
+        seen.add(id(current))
+        current = current.__cause__
+    return False
 
 
 def _redis() -> Any:
@@ -236,17 +286,30 @@ async def reserve(
     return Reservation(key=key, project_id=scope, estimated_usd=estimate_usd, ttl_seconds=ttl)
 
 
-async def settle(reservation: Optional[Reservation], actual_usd: float) -> None:
+async def settle(
+    reservation: Optional[Reservation],
+    actual_usd: float,
+    *,
+    record_meter: bool = False,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+) -> None:
     """Replace the reservation with the actual cost (``0`` releases it all).
 
     Best-effort: if the store is unreachable the reservation stays counted
     until the period ends -- an over-count that can refuse a call early,
     never an under-count that lets the cap be passed.
+
+    ``record_meter``: no pipeline stage will meter this charge (a failed
+    call, or a call outside a stage), so it is added to the durable Postgres
+    meter here. A stage meters its own successful calls; recording those
+    here too would count them twice.
     """
     if reservation is None or reservation.settled:
         return
     reservation.settled = True
-    delta = max(0.0, float(actual_usd or 0.0)) - reservation.estimated_usd
+    charged = max(0.0, float(actual_usd or 0.0))
+    delta = charged - reservation.estimated_usd
     try:
         await _redis().eval(_SETTLE_LUA, 1, reservation.key, repr(delta), reservation.ttl_seconds)
     except Exception as exc:  # noqa: BLE001 -- see docstring
@@ -256,6 +319,21 @@ async def settle(reservation: Optional[Reservation], actual_usd: float) -> None:
             delta_usd=delta,
             error=str(exc)[:200],
         )
+    if record_meter and charged > 0:
+        from app.services.llm_cost_budget import record_usage
+
+        try:
+            await record_usage(
+                reservation.project_id,
+                cost_usd=charged,
+                input_tokens=int(input_tokens or 0),
+                output_tokens=int(output_tokens or 0),
+                llm_calls=1,
+            )
+        except Exception as exc:  # noqa: BLE001 -- the Redis counter still holds it
+            logger.warning(
+                "llm_cost_meter_record_failed", project_id=reservation.project_id, error=str(exc)[:200],
+            )
 
 
 def usage_tokens(result: Any) -> Optional[tuple[int, int]]:

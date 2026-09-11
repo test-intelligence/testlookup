@@ -43,13 +43,34 @@ deletes nothing.
 
 ```sh
 kubectl -n testlookup get cronjob testlookup-backup
-kubectl -n testlookup create job backup-now --from=cronjob/testlookup-backup
-kubectl -n testlookup wait --for=condition=complete job/backup-now --timeout=30m
-kubectl -n testlookup logs job/backup-now --all-containers
+kubectl -n testlookup create job testlookup-backup-now --from=cronjob/testlookup-backup
+kubectl -n testlookup wait --for=condition=complete job/testlookup-backup-now --timeout=30m
+kubectl -n testlookup logs job/testlookup-backup-now --all-containers
 ```
 
-Alert when a backup Job fails, for example with kube-state-metrics
-`kube_job_status_failed{job_name=~"testlookup-backup.*"} > 0`.
+(Name a manual Job `testlookup-backup-<something>` so the failure alert
+covers it too.)
+
+## Alerts
+
+`k8s/monitoring` (opt-in, Prometheus Operator) ships two rules for this
+component, from `infra/monitoring/prometheus-rules/testlookup-alerts.yml`:
+
+| Alert | Fires when |
+|---|---|
+| `TestLookupBackupJobFailed` | a `testlookup-backup-*` Job has failed (`kube_job_status_failed > 0`). It keeps firing while the failed Job exists: fix the cause, then `kubectl -n testlookup delete job <name>`. |
+| `TestLookupBackupStale` | no successful run for 26 hours (`kube_cronjob_status_last_successful_time`), including a CronJob that is suspended or has never succeeded. |
+
+Both read **kube-state-metrics**. kube-prometheus-stack deploys and scrapes
+it; on any other Prometheus, scrape kube-state-metrics or these rules have no
+data and stay silent.
+
+## Network access
+
+The backup pod may reach DNS and the in-namespace Postgres (5432), MongoDB
+(27017) and MinIO (9000), nothing else (`networkpolicy.yaml`). If your stores
+are external, add an egress rule for their addresses in your overlay; until
+you do, the backup fails and `TestLookupBackupJobFailed` fires.
 
 ## Off-cluster copy
 

@@ -186,6 +186,7 @@ async def ai_create_plan(
     optimization = await ai_optimize_plan(
         [{"title": case.title, "priority": case.priority, "test_type": case.test_type, "estimated_duration_minutes": case.estimated_duration_minutes or 5} for case in cases],
         payload.constraints or "",
+        project_id=payload.project_id,
     )
 
     plan = TestPlan(

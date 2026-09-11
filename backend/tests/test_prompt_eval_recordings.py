@@ -92,8 +92,11 @@ async def test_a_changed_prompt_recorded_with_good_outputs_passes(tmp_path, monk
     new_hash = _edit(monkeypatch, CLASSIFIER)
     path = _copy(tmp_path)
     model = _Model(_classifier_answer(path))
-    entry = await rec.record(CLASSIFIER, invoke=model, path=path, recorded_by="fake:test")
+    entry = await rec.record(
+        CLASSIFIER, invoke=model, path=path, recorded_by="fake:test", provider="fake", model="test-model",
+    )
     assert entry["measured"] is True
+    assert entry["provenance"]["provider"] == "fake" and entry["provenance"]["model"] == "test-model"
     assert entry["content_hash"] == new_hash
     assert entry["score"] == 1.0
     # The model was shown the NEW prompt text, not the old one.
@@ -107,7 +110,9 @@ async def test_a_changed_prompt_recorded_with_good_outputs_passes(tmp_path, monk
 async def test_recorded_outputs_that_score_badly_fail(tmp_path, monkeypatch):
     _edit(monkeypatch, CLASSIFIER)
     path = _copy(tmp_path)
-    entry = await rec.record(CLASSIFIER, invoke=_Model(_classifier_answer(path, wrong=True)), path=path)
+    entry = await rec.record(
+        CLASSIFIER, invoke=_Model(_classifier_answer(path, wrong=True)), path=path, provider="fake", model="m",
+    )
     assert entry["score"] == pytest.approx(0.2)  # only the UNKNOWN case is right
     problems, _ = rec.check_recordings(path)
     assert any("score 0.20 < min_score 0.80" in p for p in problems)
@@ -161,13 +166,104 @@ def test_regression_scorer_gives_partial_credit():
     assert rec._score_regression_classification(case) == 0.5
 
 
+def _answer(recommendation, blocking=(), conditions=()):
+    return json.dumps({
+        "reasoning": "r", "recommendation": recommendation,
+        "blocking_issues": list(blocking), "conditions_for_go": list(conditions),
+    })
+
+
 def test_release_grounding_scorer_applies_the_prompts_rules():
-    ok = '{"reasoning": "No failures detected.", "blocking_issues": [], "conditions_for_go": []}'
-    invented = '{"reasoning": "r", "blocking_issues": ["made up"], "conditions_for_go": []}'
-    conditions_on_go = '{"reasoning": "r", "blocking_issues": [], "conditions_for_go": ["x"]}'
     go = {"expected": {"has_failures": False, "recommendation": "GO"}}
-    assert rec._score_release_grounding({**go, "output": ok}) == 1.0
-    assert rec._score_release_grounding({**go, "output": invented}) == 0.0
-    assert rec._score_release_grounding({**go, "output": conditions_on_go}) == 0.0
+    assert rec._score_release_grounding({**go, "output": _answer("GO")}) == 1.0
+    assert rec._score_release_grounding({**go, "output": _answer("GO", blocking=["made up"])}) == 0.0
+    assert rec._score_release_grounding({**go, "output": _answer("GO", conditions=["x"])}) == 0.0
     conditional = {"expected": {"has_failures": True, "recommendation": "CONDITIONAL_GO"}}
-    assert rec._score_release_grounding({**conditional, "output": conditions_on_go}) == 1.0
+    assert rec._score_release_grounding({**conditional, "output": _answer("CONDITIONAL_GO", conditions=["x"])}) == 1.0
+    assert rec._score_release_grounding({**conditional, "output": _answer("CONDITIONAL_GO")}) == 0.0
+    no_go = {"expected": {"has_failures": True, "recommendation": "NO_GO"}}
+    assert rec._score_release_grounding({**no_go, "output": _answer("NO_GO", blocking=["checkout 500s"])}) == 1.0
+    assert rec._score_release_grounding({**no_go, "output": _answer("NO_GO")}) == 0.0
+
+
+def test_the_release_scorer_scores_the_decision_itself():
+    """QA-B45-A2: "GO, no issues" for every case scored 1.0 against min 1.0."""
+    no_go = {"expected": {"has_failures": True, "recommendation": "NO_GO"}}
+    assert rec._score_release_grounding({**no_go, "output": _answer("GO")}) == 0.0
+    # Only the decision is wrong; every grounding rule is satisfied.
+    assert rec._score_release_grounding({**no_go, "output": _answer("GO", blocking=["checkout 500s"])}) == 0.0
+    go = {"expected": {"has_failures": False, "recommendation": "GO"}}
+    assert rec._score_release_grounding({**go, "output": _answer("NO_GO")}) == 0.0
+    assert rec._score_release_grounding({**go, "output": _answer("go")}) == 1.0  # case-insensitive
+    assert rec._score_release_grounding({**no_go, "output": _answer("CONDITIONAL_GO", conditions=["x"])}) == 0.0
+
+    entry = dict(rec.load_recordings()["prompts"]["release_risk_reasoning"])
+    constant = '{"reasoning": "Ship it.", "recommendation": "GO", "blocking_issues": [], "conditions_for_go": []}'
+    entry["cases"] = [{**case, "output": constant} for case in entry["cases"]]
+    assert {c["expected"]["recommendation"] for c in entry["cases"]} > {"GO"}
+    assert rec.score_entry(entry) < float(entry["min_score"])
+
+    right = {"GO": _answer("GO"), "CONDITIONAL_GO": _answer("CONDITIONAL_GO", conditions=["c"]),
+             "NO_GO": _answer("NO_GO", blocking=["b"])}
+    entry["cases"] = [{**case, "output": right[case["expected"]["recommendation"]]} for case in entry["cases"]]
+    assert rec.score_entry(entry) == 1.0
+
+
+# ── QA-B45-A3: provenance ───────────────────────────────────────────────────
+
+
+async def _recorded(tmp_path, monkeypatch):
+    _edit(monkeypatch, CLASSIFIER)
+    path = _copy(tmp_path)
+    await rec.record(
+        CLASSIFIER, invoke=_Model(_classifier_answer(path)), path=path, provider="fake", model="test-model",
+    )
+    return path
+
+
+def _rewrite(path, change):
+    data = json.loads(path.read_text())
+    change(data["prompts"][CLASSIFIER])
+    path.write_text(json.dumps(data))
+
+
+@pytest.mark.asyncio
+async def test_a_recording_names_its_model_and_the_check_accepts_it(tmp_path, monkeypatch):
+    path = await _recorded(tmp_path, monkeypatch)
+    provenance = json.loads(path.read_text())["prompts"][CLASSIFIER]["provenance"]
+    assert provenance["provider"] == "fake" and provenance["model"] == "test-model"
+    assert provenance["recorded_at"] and len(provenance["outputs_sha256"]) == 64
+    assert rec.check_recordings(path)[0] == []
+
+
+@pytest.mark.asyncio
+async def test_an_output_edited_after_recording_fails(tmp_path, monkeypatch):
+    path = await _recorded(tmp_path, monkeypatch)
+    _rewrite(path, lambda e: e["cases"][0].update(output=e["cases"][0]["output"] + " "))
+    problems, _ = rec.check_recordings(path)
+    assert any("do not match their provenance digest" in p for p in problems)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["provider", "model", "recorded_at", "outputs_sha256"])
+async def test_a_recording_without_provenance_fails(tmp_path, monkeypatch, field):
+    path = await _recorded(tmp_path, monkeypatch)
+    _rewrite(path, lambda e: e["provenance"].update({field: ""}))
+    problems, _ = rec.check_recordings(path)
+    assert any("no provenance" in p for p in problems)
+
+
+def test_hand_written_outputs_with_no_model_run_fail(tmp_path, monkeypatch):
+    """QA's forgery: measured=true, the current hash, outputs typed from
+    each case's expected answer, and no recording run."""
+    new_hash = _edit(monkeypatch, CLASSIFIER)
+    path = _copy(tmp_path)
+
+    def forge(entry):
+        entry.update(measured=True, content_hash=new_hash)
+        for case in entry["cases"]:
+            case["output"] = json.dumps({"category": case["expected"]["category"]})
+
+    _rewrite(path, forge)
+    problems, _ = rec.check_recordings(path)
+    assert any(p.startswith(f"{CLASSIFIER}:") and "no provenance" in p for p in problems)

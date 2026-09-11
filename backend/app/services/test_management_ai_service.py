@@ -24,7 +24,7 @@ async def generate_ai_cases(
 ) -> dict:
     from app.services.test_case_ai_agent import ai_generate_test_cases
 
-    result = await ai_generate_test_cases(payload.requirements)
+    result = await ai_generate_test_cases(payload.requirements, project_id=payload.project_id)
     created_ids: list[str] = []
 
     if payload.persist and result.get("test_cases"):
@@ -140,7 +140,7 @@ async def review_test_case_with_ai(
         "test_data": test_case.test_data,
         "test_type": test_case.test_type,
     }
-    result = await ai_review_test_case(tc_dict)
+    result = await ai_review_test_case(tc_dict, project_id=test_case.project_id)
 
     test_case.ai_quality_score = result.get("quality_score")
     test_case.ai_review_notes = result
@@ -183,7 +183,7 @@ async def analyze_case_coverage(db: AsyncSession, payload: AICoverageAnalysisReq
         ).limit(200)
     )
     existing = [{"title": test_case.title, "objective": test_case.objective or ""} for test_case in result.scalars().all()]
-    return await ai_analyze_coverage(payload.requirements, existing)
+    return await ai_analyze_coverage(payload.requirements, existing, project_id=payload.project_id)
 
 
 async def list_strategies(db: AsyncSession, project_id: Optional[uuid.UUID]) -> list[TestStrategy]:
@@ -201,7 +201,7 @@ async def generate_ai_strategy(
 ) -> TestStrategy:
     from app.services.test_case_ai_agent import ai_generate_strategy
 
-    result = await ai_generate_strategy(payload.project_context)
+    result = await ai_generate_strategy(payload.project_context, project_id=payload.project_id)
     strategy = TestStrategy(
         project_id=payload.project_id,
         name=payload.strategy_name or f"Test Strategy - {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",

@@ -502,3 +502,42 @@ groups:
         annotations:
           summary: "Compliance pack generation errors in the last hour"
           description: "More than 3 compliance_pack_generated_total{result=\"error\"} increments in the last hour. This is the service's error branch — not the 'release has no linked run' or 'feature disabled' branches. Likely MinIO write failure, a missing policy snapshot, or a collection helper raising. Check structlog for `compliance_pack_generated` events and the worker logs."
+
+  # ── Kubernetes backup (re-audit M25, R-B45-2) ─────────────────────────────
+  #
+  # A backup that fails every night, or a CronJob left suspended, produced a
+  # pod in Error and told nobody. These read kube-state-metrics (kube_job_*,
+  # kube_cronjob_*), which kube-prometheus-stack scrapes on its own. Where it
+  # is absent (the Compose stack) the series do not exist and neither rule
+  # fires, which is right: there is no Kubernetes backup there.
+  - name: testlookup.backup
+    interval: 60s
+    rules:
+
+      # Jobs the testlookup-backup CronJob creates are named
+      # testlookup-backup-<n>. Fires while the failed Job exists: delete it
+      # (or let failedJobsHistoryLimit rotate it) once the cause is fixed.
+      - alert: TestLookupBackupJobFailed
+        expr: max by (namespace, job_name) (kube_job_status_failed{job_name=~"testlookup-backup-.*"}) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A TestLookup backup Job failed"
+          description: "Backup Job {{ $labels.job_name }} failed: no new archive was written. Read `kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }} --all-containers`, fix the cause, then delete the failed Job. Runbook: k8s/components/backup/README.md."
+
+      # The CronJob runs daily; 26h leaves a two-hour margin for a slow run.
+      # The second branch covers a backup that has NEVER succeeded (no
+      # last-successful timestamp at all) once the CronJob is 26h old.
+      - alert: TestLookupBackupStale
+        expr: |
+          (time() - max by (namespace, cronjob) (kube_cronjob_status_last_successful_time{cronjob="testlookup-backup"})) > 26 * 3600
+          or
+          (max by (namespace, cronjob) (kube_cronjob_created{cronjob="testlookup-backup"}) < time() - 26 * 3600
+            unless on (namespace, cronjob) kube_cronjob_status_last_successful_time{cronjob="testlookup-backup"})
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No successful TestLookup backup in 26 hours"
+          description: "The testlookup-backup CronJob has not completed successfully for more than 26h (failing, suspended, or never run). The newest restorable archive is older than a day. Runbook: k8s/components/backup/README.md."

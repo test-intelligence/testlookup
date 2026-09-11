@@ -1,0 +1,60 @@
+# Scrape targets for the alert rules on a Prometheus Operator cluster
+# (re-audit QA-B45-P5).
+#
+# The backend and worker pods advertise /metrics only through
+# `prometheus.io/scrape` annotations, which the Prometheus Operator (and
+# kube-prometheus-stack) ignores by default. Without these PodMonitors the
+# PrometheusRule next to them evaluates over no data and never fires.
+#
+# Each endpoint names the container port the deployment declares, and
+# relabels `job` to the name the rules (and the Compose scrape config,
+# infra/monitoring/prometheus.yml) use.
+#
+# The backup alerts read kube-state-metrics (kube_job_*, kube_cronjob_*),
+# which kube-prometheus-stack scrapes on its own: no monitor for it here.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: testlookup-backend
+  namespace: testlookup
+  labels:
+    app.kubernetes.io/name: testlookup
+    app.kubernetes.io/part-of: testlookup
+spec:
+  selector:
+    matchLabels:
+      app: testlookup-backend
+  podMetricsEndpoints:
+    # k8s/base/backend-deployment.yaml: containerPort 8000, name http.
+    - port: http
+      path: /metrics
+      interval: 15s
+      relabelings:
+        - action: replace
+          targetLabel: job
+          replacement: testlookup-backend
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: testlookup-worker
+  namespace: testlookup
+  labels:
+    app.kubernetes.io/name: testlookup
+    app.kubernetes.io/part-of: testlookup
+spec:
+  # Every Celery worker deployment (critical, ingestion, ai, default) and the
+  # prefork-children deployment carry this label and serve their aggregated
+  # prometheus-client registry on the `metrics` port (9100). The finalize
+  # step counter (TestLookupFinalizeStepFailing) is incremented here.
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: worker
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      relabelings:
+        - action: replace
+          targetLabel: job
+          replacement: testlookup-worker

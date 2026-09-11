@@ -45,17 +45,26 @@ def no_cluster_bound(monkeypatch):
     monkeypatch.setattr(settings, "LLM_CLUSTER_MAX_CONCURRENT", 0)
 
 
+class _Ledger(list):
+    """reserve/settle events, plus whether each settle was sent to the meter."""
+
+    def __init__(self):
+        super().__init__()
+        self.meter: list[bool] = []
+
+
 @pytest.fixture
 def ledger(monkeypatch):
     """Record reserve/settle without a store."""
-    events: list[tuple] = []
+    events = _Ledger()
 
     async def fake_reserve(provider, model, *, input_tokens, max_output_tokens):
         events.append(("reserve", provider, model, input_tokens, max_output_tokens))
         return Reservation(key="k", project_id=PROJECT, estimated_usd=0.5, ttl_seconds=60)
 
-    async def fake_settle(reservation, actual):
+    async def fake_settle(reservation, actual, *, record_meter=False, **tokens):
         events.append(("settle", actual))
+        events.meter.append(record_meter)
 
     monkeypatch.setattr(cost, "reserve", fake_reserve)
     monkeypatch.setattr(cost, "settle", fake_settle)
@@ -168,13 +177,164 @@ async def test_a_successful_call_settles_its_actual_cost(ledger):
     assert ledger[1] == ("settle", pytest.approx(cost.price("openai", "gpt-4o-mini", 1000, 500)))
 
 
+def _wrapped(outer: BaseException, cause: BaseException) -> BaseException:
+    """What an SDK raises: its own error ``from`` the transport's."""
+    outer.__cause__ = cause
+    return outer
+
+
+def _billable_failures() -> dict[str, BaseException]:
+    import asyncio
+
+    import httpx
+
+    return {
+        "provider 5xx": RuntimeError("provider 500"),
+        "read timeout": httpx.ReadTimeout("read timed out"),
+        "cancelled mid-call": asyncio.CancelledError(),
+        "SDK error from a read error": _wrapped(RuntimeError("APIConnectionError"), httpx.ReadError("reset")),
+        "timeout after a retried connect (context only)": _connect_then_read_timeout(),
+    }
+
+
+def _connect_then_read_timeout() -> BaseException:
+    import httpx
+
+    try:
+        try:
+            raise httpx.ConnectError("first attempt refused")
+        except httpx.ConnectError:
+            raise httpx.ReadTimeout("second attempt timed out")
+    except httpx.ReadTimeout as exc:
+        assert isinstance(exc.__context__, httpx.ConnectError) and exc.__cause__ is None
+        return exc
+
+
+def _no_request_failures() -> dict[str, BaseException]:
+    import httpx
+
+    from app.services.llm_egress import OffBoxTargetError
+
+    return {
+        "connect error": httpx.ConnectError("refused"),
+        "connect timeout": httpx.ConnectTimeout("connect timed out"),
+        "socket refused": ConnectionRefusedError("refused"),
+        "offline pin": OffBoxTargetError("8.8.8.8 is off-box"),
+        "SDK error from a connect error": _wrapped(RuntimeError("APIConnectionError"), httpx.ConnectError("x")),
+        "cap refused": CostCapExceeded("over"),
+    }
+
+
 @pytest.mark.asyncio
-async def test_a_failed_call_releases_its_reservation(ledger):
-    inner = _Inner(fail=RuntimeError("provider 500"))
+@pytest.mark.parametrize("case", sorted(_billable_failures()))
+async def test_a_call_that_may_have_reached_the_provider_keeps_its_whole_reservation(ledger, case):
+    """QA-B45-A1: the provider may have done (and billed) the work."""
+    inner = _Inner(fail=_billable_failures()[case])
     with cost_budget_scope(PROJECT):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(BaseException):
+            await _llm(inner).ainvoke("prompt")
+    assert inner.calls == 1
+    assert ledger[-1] == ("settle", 0.5)
+    assert ledger.meter[-1] is True  # and the durable meter records it
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", sorted(_no_request_failures()))
+async def test_a_failure_that_proves_no_request_releases_the_reservation(ledger, case):
+    inner = _Inner(fail=_no_request_failures()[case])
+    with cost_budget_scope(PROJECT):
+        with pytest.raises(BaseException):
             await _llm(inner).ainvoke("prompt")
     assert ledger[-1] == ("settle", 0.0)
+    assert ledger.meter[-1] is False
+
+
+@pytest.mark.asyncio
+async def test_no_slot_in_time_charges_nothing(ledger, monkeypatch):
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def full(provider):
+        raise llm_cluster_semaphore.LLMSlotTimeout("full")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(llm_cluster_semaphore, "cluster_llm_slot", full)
+    inner = _Inner()
+    with cost_budget_scope(PROJECT):
+        with pytest.raises(llm_cluster_semaphore.LLMSlotTimeout):
+            await _llm(inner).ainvoke("prompt")
+    assert inner.calls == 0
+    assert ledger[-1] == ("settle", 0.0)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_while_waiting_for_a_slot_charges_nothing(ledger, monkeypatch):
+    import asyncio
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def waiting(provider):
+        await asyncio.sleep(3600)
+        yield True  # pragma: no cover
+
+    monkeypatch.setattr(llm_cluster_semaphore, "cluster_llm_slot", waiting)
+    inner = _Inner()
+
+    async def call():
+        with cost_budget_scope(PROJECT):
+            await _llm(inner).ainvoke("prompt")
+
+    task = asyncio.create_task(call())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert inner.calls == 0
+    assert ledger[-1] == ("settle", 0.0)
+
+
+@pytest.mark.asyncio
+async def test_a_success_outside_a_stage_is_metered_and_one_inside_a_stage_is_not(ledger):
+    """A stage meters the calls it observed; anything else is metered at settle."""
+    from app.services.pipeline_budget_service import (
+        reset_pipeline_budget_context,
+        set_pipeline_budget_context,
+    )
+
+    with cost_budget_scope(PROJECT):
+        await _llm(_Inner()).ainvoke("prompt")
+        token = set_pipeline_budget_context(stage_name="summary")
+        try:
+            await _llm(_Inner()).ainvoke("prompt")
+        finally:
+            reset_pipeline_budget_context(token)
+    assert ledger.meter == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_settle_writes_a_kept_charge_to_the_durable_meter(monkeypatch):
+    import app.services.llm_cost_budget as budget
+
+    recorded: list[tuple] = []
+
+    async def fake_record(project_id, **kwargs):
+        recorded.append((project_id, kwargs))
+
+    class Redis:
+        async def eval(self, *args):
+            return "0"
+
+    monkeypatch.setattr(budget, "record_usage", fake_record)
+    monkeypatch.setattr(cost, "_redis", lambda: Redis())
+    kept = Reservation(key="k", project_id=PROJECT, estimated_usd=0.5, ttl_seconds=60)
+    await cost.settle(kept, 0.5, record_meter=True, input_tokens=7, output_tokens=3)
+    released = Reservation(key="k", project_id=PROJECT, estimated_usd=0.5, ttl_seconds=60)
+    await cost.settle(released, 0.0, record_meter=True)
+    unmetered = Reservation(key="k", project_id=PROJECT, estimated_usd=0.5, ttl_seconds=60)
+    await cost.settle(unmetered, 0.4, record_meter=False)
+    assert recorded == [
+        (PROJECT, {"cost_usd": 0.5, "input_tokens": 7, "output_tokens": 3, "llm_calls": 1}),
+    ]
 
 
 @pytest.mark.asyncio
