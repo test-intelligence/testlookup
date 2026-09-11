@@ -116,6 +116,9 @@ spec:
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
               mountPath: /var/cache/testlookup/chroma-onnx
+            # Re-audit M14: per-pod ML model cache (see backend-deployment.yaml).
+            - name: ml-models
+              mountPath: /var/lib/testlookup/ml-models
           resources:
             requests:
               cpu: 250m
@@ -189,6 +192,9 @@ spec:
         # directory and re-downloaded the archive, which then contributed to
         # the next OOM. Now it is fetched at most once per pod.
         - name: embedder-model-cache
+          emptyDir: {}
+        # Re-audit M14: ML model cache, filled from the object store.
+        - name: ml-models
           emptyDir: {}
 
 ---
@@ -312,6 +318,9 @@ spec:
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
               mountPath: /var/cache/testlookup/chroma-onnx
+            # Re-audit M14: per-pod ML model cache (see backend-deployment.yaml).
+            - name: ml-models
+              mountPath: /var/lib/testlookup/ml-models
           # memory limit 2Gi -> 4Gi, i.e. 1024Mi per child at --concurrency=4.
           # This worker shared worker-default's 512Mi-per-child budget, the
           # joint-lowest of any worker, and runs the ingestion path that drove
@@ -391,6 +400,9 @@ spec:
         # directory and re-downloaded the archive, which then contributed to
         # the next OOM. Now it is fetched at most once per pod.
         - name: embedder-model-cache
+          emptyDir: {}
+        # Re-audit M14: ML model cache, filled from the object store.
+        - name: ml-models
           emptyDir: {}
 
 ---
@@ -488,6 +500,9 @@ spec:
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
               mountPath: /var/cache/testlookup/chroma-onnx
+            # Re-audit M14: per-pod ML model cache (see backend-deployment.yaml).
+            - name: ml-models
+              mountPath: /var/lib/testlookup/ml-models
           resources:
             requests:
               cpu: 500m
@@ -561,6 +576,9 @@ spec:
         # directory and re-downloaded the archive, which then contributed to
         # the next OOM. Now it is fetched at most once per pod.
         - name: embedder-model-cache
+          emptyDir: {}
+        # Re-audit M14: ML model cache, filled from the object store.
+        - name: ml-models
           emptyDir: {}
 
 ---
@@ -665,6 +683,9 @@ spec:
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
               mountPath: /var/cache/testlookup/chroma-onnx
+            # Re-audit M14: per-pod ML model cache (see backend-deployment.yaml).
+            - name: ml-models
+              mountPath: /var/lib/testlookup/ml-models
           # memory limit 1Gi -> 4Gi, i.e. 1024Mi per child at --concurrency=4.
           #
           # 2Gi was tried first, by analogy with worker-ingestion. Measured on
@@ -742,6 +763,9 @@ spec:
         # directory and re-downloaded the archive, which then contributed to
         # the next OOM. Now it is fetched at most once per pod.
         - name: embedder-model-cache
+          emptyDir: {}
+        # Re-audit M14: ML model cache, filled from the object store.
+        - name: ml-models
           emptyDir: {}
 
 ---

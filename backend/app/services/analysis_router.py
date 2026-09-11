@@ -155,6 +155,13 @@ async def refresh_analysis_mode_from_cache() -> str:
     global _cached_mode, _cached_mode_ts, _ollama_model_available, _ollama_probe_ts
     import time
 
+    # Re-audit M14: pull any model version another pod trained, before the
+    # synchronous availability check below reads ML_MODEL_DIR. Throttled and
+    # never raises.
+    from app.services.ml import model_store
+
+    await model_store.sync_down()
+
     # Refresh Ollama probe (throttled to TTL) — never raises.
     now = time.monotonic()
     if (now - _ollama_probe_ts) > _OLLAMA_PROBE_TTL_SECONDS:

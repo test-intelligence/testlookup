@@ -886,6 +886,10 @@ async def refresh_flaky_coach(
         # FLK-P3: ML flakiness-confidence learned from human quarantine
         # decisions. None when no trained model is available — the deterministic
         # Wilson/intermittency signals still stand on their own.
+        # Re-audit M14: pick up a version another pod trained (throttled).
+        from app.services.ml import model_store
+
+        await model_store.sync_down()
         ml_confidence = FlakyConfidenceModel.predict(
             build_flaky_feature_vector(failure_rate, signals, window_records)
         )

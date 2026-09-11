@@ -635,6 +635,11 @@ class Settings(BaseSettings):
     #   "auto"  — ML if trained model available, else LLM if reachable, else rules
     ANALYSIS_MODE: str = "auto"
     ML_MODEL_DIR: str = "models"                     # directory for trained .joblib artifacts
+    # Re-audit M14: with several pods, ML_MODEL_DIR is a pod-local cache and the
+    # object store is the source of truth. A retrain publishes there; every pod
+    # pulls new versions (services/ml/model_store.py). On in the k8s base config.
+    ML_MODEL_SYNC_ENABLED: bool = False
+    ML_MODEL_STORE_PREFIX: str = "ml-models/"
     ML_MIN_TRAINING_SAMPLES: int = 200               # minimum labeled samples before ML activates
     ML_RETRAIN_ENABLED: bool = True                  # enable nightly Celery-beat retraining
     ML_ACCURACY_THRESHOLD: float = 0.80              # minimum accuracy to deploy a new model

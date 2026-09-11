@@ -274,6 +274,10 @@ class FlakySentinelAgent(BaseAgent):
         ]
         signals = compute_intermittency_signals(records)
         wilson = wilson_failure_confidence(failed_count, len(statuses))
+        # Re-audit M14: pick up a version another pod trained (throttled).
+        from app.services.ml import model_store
+
+        await model_store.sync_down()
         ml_confidence = FlakyConfidenceModel.predict(
             build_flaky_feature_vector(failure_rate, signals, records)
         )
