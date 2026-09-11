@@ -180,11 +180,17 @@ async def test_a_migrator_that_cannot_get_the_lock_gives_up_loudly():
     try:
         async with migration_singleton_lock(engine.connect):
             started = time.monotonic()
-            with pytest.raises(MigrationLockTimeout):
+
+            async def _second_migrator():
                 async with migration_singleton_lock(
                     engine.connect, wait_seconds=0.5, poll_seconds=0.05
                 ):
                     pytest.fail("entered the body without the lock")
+
+            # wait_for: a deadline that never fires fails here in seconds,
+            # instead of polling until the job times out (QA M3).
+            with pytest.raises(MigrationLockTimeout):
+                await asyncio.wait_for(_second_migrator(), timeout=10)
             assert time.monotonic() - started < 10
     finally:
         await engine.dispose()

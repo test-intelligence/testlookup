@@ -184,6 +184,34 @@ async def test_a_mint_under_a_descendant_is_caught_by_a_second_pass(world):
     assert not await _active(engine, child), "the grandchild escaped the cascade"
 
 
+async def test_a_planted_cycle_terminates_and_revokes_each_key_once(world):
+    """QA L1. A cycle cannot arise today -- a parent exists before its child
+    and nothing UPDATEs minted_by_key_id -- but the walk must still stop on
+    one. The CTE's UNION (not UNION ALL) drops a repeated id; with UNION ALL
+    the recursion never ends and the revoke hangs holding row locks."""
+    engine, user, project, root, parent = world
+    other = uuid.uuid4()
+    async with engine.begin() as conn:
+        await conn.execute(_KEY_INSERT, {
+            "id": other, "user": user, "name": f"o-{other.hex[:6]}", "hash": uuid.uuid4().hex * 2,
+            "project": project, "parent": parent,
+        })
+        # root -> parent -> other -> root: a cycle through three keys.
+        await conn.execute(
+            text("UPDATE api_keys SET minted_by_key_id = :other WHERE id = :root"),
+            {"other": other, "root": root},
+        )
+    async with AsyncSession(engine) as revoke:
+        # A runaway recursion is cut off by the server, not left running.
+        await revoke.execute(text("SET LOCAL statement_timeout = '10s'"))
+        revoked = await asyncio.wait_for(_revoke(revoke, root), 20)
+        await revoke.commit()
+    ids = [str(row.id) for row in revoked]
+    assert sorted(ids) == sorted([str(parent), str(other)]), ids  # each exactly once
+    for key in (root, parent, other):
+        assert not await _active(engine, key)
+
+
 def _call_lines(func) -> dict[str, list[int]]:
     """Name -> source lines of each call of that bare name (ast.walk is not source order)."""
     tree = ast.parse(textwrap.dedent(inspect.getsource(func)))

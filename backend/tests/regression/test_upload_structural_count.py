@@ -222,6 +222,42 @@ def test_nesting_past_the_cap_is_refused_in_bounded_memory(opener):
     assert peak < 2 * 1024 * 1024, peak
 
 
+@pytest.mark.parametrize("kilobytes", [16, 32], ids=["16KB", "32KB"])
+def test_qas_repro_is_refused_fast(kilobytes):
+    """QA-B45-D-1's repro exactly: a quote, then escaped quotes, as playwright.
+    The quadratic tokenizer took 0.42 s at 16 KB and 1.72 s at 32 KB."""
+    report = '"' + _ESCAPED_QUOTE * (kilobytes * 1024 // 2)
+    started = time.perf_counter()
+    with pytest.raises(UnreadableReport):
+        upload_limits.estimated_results(report, "playwright")
+    assert time.perf_counter() - started < 0.1
+
+
+def test_two_million_open_brackets_stay_small():
+    """QA-B45-D-1's memory repro: 2,000,000 "[" peaked at 193 MB."""
+    report = "[" * 2_000_000
+    tracemalloc.start()
+    try:
+        with pytest.raises(UnreadableReport):
+            upload_limits.estimated_results(report, "playwright")
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 2 * 1024 * 1024, peak
+
+
+@pytest.mark.parametrize("fmt, report", [
+    ("cypress", '{"results": [{"tests": {"a": {}, "b": {}}}]}'),
+    ("playwright", '{"suites": [{"specs": [{"tests": {"x": {}}}]}]}'),
+    ("cucumber", '[{"elements": {"a": {}}}]'),
+], ids=["cypress", "playwright", "cucumber"])
+def test_only_objects_inside_a_container_array_count(fmt, report):
+    """QA M4: an object held under ``tests``/``elements`` but not in an array
+    is no result -- the parsers iterate a list there and skip anything else."""
+    assert _parsed(fmt, report) == 0
+    assert upload_limits.estimated_results(report, fmt) == 0
+
+
 def test_nesting_at_the_cap_is_still_counted():
     depth = MAX_NESTING
     assert upload_limits.structural_results("[" * depth + "]" * depth, "cypress") == 0
