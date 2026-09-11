@@ -473,6 +473,70 @@ async def test_a_legacy_key_still_administers_below_admin(world):
     assert resp.status_code == 200, resp.text
 
 
+# ── each layer of the rule, alone ─────────────────────────────────────────────
+#
+# QA's four doors carry BOTH require_role(QA_LEAD) and require_project_access,
+# so either layer refuses them and neither is tested by them. These routes
+# carry only one layer each (found by walking the real app's dependencies).
+# The body is deliberately empty: a dependency's 403 comes before the body's
+# 422, so anything but 403 means the key got past authorization.
+
+
+#: require_role(QA_LEAD or ADMIN), no project guard: the require_role layer alone.
+_ROLE_ONLY_WRITES = {
+    "create outbound webhook": ("POST", "/api/v1/webhooks"),
+    "create project": ("POST", "/api/v1/projects"),
+    "create release": ("POST", "/api/v1/releases"),
+}
+
+
+@pytest.mark.parametrize("key", ["stream", "stream_unbound"])
+@pytest.mark.parametrize("door", sorted(_ROLE_ONLY_WRITES))
+async def test_a_qa_lead_route_refuses_a_stream_scoped_key(world, door, key):
+    method, path = _ROLE_ONLY_WRITES[door]
+
+    resp = await world.client.request(method, path, headers=world.headers[key], json={})
+
+    assert resp.status_code == 403, resp.text
+    assert "project:admin" in resp.json()["detail"]
+
+
+def _guard_only_writes(world):
+    """A project-scoped guard, no QA_LEAD+ role: the guard layer alone, per method."""
+    a, run = world.project_a, world.run_1
+    return {
+        "PUT agent policy": ("PUT", f"/api/v1/projects/{a}/agent-policies/r4b-agent"),
+        "PUT fixer config": ("PUT", f"/api/v1/projects/{a}/fixer/config"),
+        "POST fix outcome": ("POST", f"/api/v1/projects/{a}/fix-outcomes"),
+        "POST recover live run": ("POST", f"/api/v1/runs/{run}/recover-live"),
+    }
+
+
+#: ``stream_unbound`` belongs to an ADMIN, whom these guards wave through
+#: before any membership check: the refusal must come before that bypass.
+@pytest.mark.parametrize("key", ["stream", "stream_unbound"])
+@pytest.mark.parametrize(
+    "door", ["PUT agent policy", "PUT fixer config", "POST fix outcome", "POST recover live run"]
+)
+async def test_a_project_guard_refuses_a_stream_scoped_keys_write(world, door, key):
+    method, path = _guard_only_writes(world)[door]
+
+    resp = await world.client.request(method, path, headers=world.headers[key], json={})
+
+    assert resp.status_code == 403, resp.text
+    assert "project:admin" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("key", ["project_admin", "legacy"])
+async def test_a_project_guard_lets_an_admin_scoped_or_legacy_key_write(world, key):
+    method, path = _guard_only_writes(world)["POST fix outcome"]
+
+    resp = await world.client.request(method, path, headers=world.headers[key], json={})
+
+    # Past authorization: the empty body is what is refused.
+    assert resp.status_code == 422, resp.text
+
+
 # ── QA-R4-2: an UNBOUND stream-scoped key is not an instance administrator ───
 
 
