@@ -234,14 +234,11 @@ async def test_run_numbers_read_the_index_in_order_under_a_generic_plan(engine, 
     # 87.6 ms for the pre-N17 BitmapOr and Sort.
     plan = await _generic_plan(engine, statement)
     rendered = json.dumps(plan)[:4000]
-    # A bitmap read names its index on the Bitmap Index Scan child, and the
-    # table on the Bitmap Heap Scan above it: check both halves.
-    used = {n["Index Name"] for n in _nodes(plan) if n.get("Index Name")}
-    assert used == {SEQ_INDEX}, (used, rendered)
-    scans = _run_scans(plan)
-    assert scans and all(
-        n["Node Type"] in ("Bitmap Heap Scan", "Index Scan", "Index Only Scan") for n in scans
-    ), rendered
+    # WHICH index the default plan reads is a cost choice by table size, and
+    # is deliberately not asserted: on CI's fresh, small table it reads each
+    # partition through ix_test_runs_project_environment and filters on the
+    # suite hash; on a large one it takes this index (lead review of the N17
+    # test, the same trap as the N18 join-back). Only the shape is the code's.
     assert not any(n["Node Type"] == "BitmapOr" for n in _nodes(plan)), rendered
     appends = [n for n in _nodes(plan) if n["Node Type"] == "Append"]
     assert len(appends) == 1 and len(appends[0]["Plans"]) == 3, rendered  # API, UI, NULL suite
