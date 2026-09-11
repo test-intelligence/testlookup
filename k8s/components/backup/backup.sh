@@ -21,6 +21,7 @@ COMPONENTS="postgres.dump mongo.archive.gz minio_data.tar.gz"
 phase_postgres() {
     pg_setup
     rm -f "$STAGING/postgres.dump" "$STAGING/postgres.dump.tmp" "$STAGING/alembic_head"
+    wait_for postgres postgres_ready
     pg_dump --format=custom --no-owner --dbname="$PG_DBNAME" --file="$STAGING/postgres.dump.tmp" \
         || die "pg_dump failed"
     [ -s "$STAGING/postgres.dump.tmp" ] || die "pg_dump produced an empty file"
@@ -34,6 +35,7 @@ phase_postgres() {
 phase_mongo() {
     uri=$(mongo_uri)
     rm -f "$STAGING/mongo.archive.gz" "$STAGING/mongo.archive.gz.tmp"
+    wait_for mongo mongo_ready "$uri"
     mongodump --quiet --uri="$uri" --archive="$STAGING/mongo.archive.gz.tmp" --gzip \
         || die "mongodump failed"
     [ -s "$STAGING/mongo.archive.gz.tmp" ] || die "mongodump produced an empty file"

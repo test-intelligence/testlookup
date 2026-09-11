@@ -72,6 +72,25 @@ The backup pod may reach DNS and the in-namespace Postgres (5432), MongoDB
 are external, add an egress rule for their addresses in your overlay; until
 you do, the backup fails and `TestLookupBackupJobFailed` fires.
 
+## Troubleshooting: "Connection refused" in the first second
+
+Each phase waits for its own store before touching it: `pg_isready` for
+Postgres, a `mongosh` ping for MongoDB, and MinIO's `/minio/health/live`. It
+polls every `BACKUP_WAIT_INTERVAL` seconds (default 2) and fails loudly after
+`BACKUP_WAIT_SECONDS` (default 120).
+
+The wait exists because of the first live run on the homelab. k3s enforces
+NetworkPolicy with kube-router, which programs a new pod's label-matched allow
+rules shortly after the pod starts. Until then the namespace's
+`default-deny-all` rejects the pod's traffic. `pg_dump` therefore failed in its
+first second with `Connection refused` on both attempts, although the
+policies, labels and Service were correct and DNS resolved (namespace-wide
+rules apply at once). Calico and other enforcers have similar startup windows.
+
+If a phase still logs `not reachable after …s`, the store really is
+unreachable: check the store's pod, the `allow-backup-*` NetworkPolicies and
+the Service.
+
 ## Off-cluster copy
 
 The PVC is in the same cluster, and often on the same storage, as the data it

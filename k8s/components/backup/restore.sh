@@ -43,6 +43,7 @@ phase_verify() {
 
 phase_postgres() {
     pg_setup
+    wait_for postgres postgres_ready
     pg_restore --clean --if-exists --no-owner --single-transaction --exit-on-error \
         --dbname="$PG_DBNAME" "$STAGING/postgres.dump" || die "pg_restore failed"
     log "postgres restored"
@@ -50,6 +51,7 @@ phase_postgres() {
 
 phase_mongo() {
     uri=$(mongo_uri)
+    wait_for mongo mongo_ready "$uri"
     mongorestore --quiet --uri="$uri" --archive="$STAGING/mongo.archive.gz" --gzip --drop \
         || die "mongorestore failed"
     log "mongo restored"

@@ -60,6 +60,21 @@ if [ "${SHIM_EMPTY:-}" = mongodump ]; then : > "$out"; else printf 'mongo-fake' 
 """,
     "mongorestore": """echo "mongorestore $*" >> "$SHIM_LOG"
 """,
+    # Readiness probes (the wait added after the homelab run): count calls in
+    # $SHIM_LOG.count.<tool>; SHIM_NOT_READY=N fails the first N calls,
+    # SHIM_NEVER_READY=<tool> fails every call.
+    "pg_isready": """echo "pg_isready $*" >> "$SHIM_LOG"
+n=$(cat "$SHIM_LOG.count.pg" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$SHIM_LOG.count.pg"
+[ "${SHIM_NEVER_READY:-}" = pg_isready ] && exit 2
+[ "$n" -gt "${SHIM_NOT_READY:-0}" ] || exit 2
+exit 0
+""",
+    "mongosh": """echo "mongosh $*" >> "$SHIM_LOG"
+n=$(cat "$SHIM_LOG.count.mongo" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$SHIM_LOG.count.mongo"
+[ "${SHIM_NEVER_READY:-}" = mongosh ] && exit 1
+[ "$n" -gt "${SHIM_NOT_READY:-0}" ] || exit 1
+exit 0
+""",
 }
 
 
@@ -84,6 +99,8 @@ def _run(box: Path, script: str, phase: str, **env: str) -> subprocess.Completed
         "SHIM_LOG": _posix(box / "shim.log"),
         "DATABASE_URL": "postgresql+asyncpg://tl:secret@db:5432/testlookup",
         "MONGO_URI": "mongodb://mongo:27017",
+        "BACKUP_WAIT_SECONDS": "20",
+        "BACKUP_WAIT_INTERVAL": "1",
     }
     for key in ("SYSTEMROOT", "TEMP", "TMP", "HOME"):
         if key in os.environ:
@@ -93,6 +110,8 @@ def _run(box: Path, script: str, phase: str, **env: str) -> subprocess.Completed
     return subprocess.run(
         [SH, _posix(COMPONENT / script), phase],
         env=base, capture_output=True, text=True, check=False,
+        # An unbounded wait must fail the test, not hang the suite.
+        timeout=90,
     )
 
 
@@ -437,3 +456,117 @@ def test_overlays_with_in_cluster_stores_include_the_component(overlay: str) -> 
     kustomization = yaml.safe_load(
         (REPO_ROOT / "k8s" / "overlays" / overlay / "kustomization.yaml").read_text(encoding="utf-8"))
     assert "../../components/backup" in kustomization.get("components", [])
+
+
+# ── wait for each store before touching it (homelab run, re-audit M25) ──────
+#
+# The first live run failed in its first second: pg_dump got "Connection
+# refused" because k3s/kube-router had not yet programmed the new pod's
+# NetworkPolicy allow rules. Each phase now waits for its own store.
+
+
+def _order(box: Path) -> list[str]:
+    return [line.split()[0] for line in _log(box).splitlines()]
+
+
+@needs_sh
+@pytest.mark.parametrize("script,phase,probe,tool", [
+    ("backup.sh", "postgres", "pg_isready", "pg_dump"),
+    ("backup.sh", "mongo", "mongosh", "mongodump"),
+    ("restore.sh", "postgres", "pg_isready", "pg_restore"),
+    ("restore.sh", "mongo", "mongosh", "mongorestore"),
+])
+def test_each_phase_waits_until_its_store_answers_then_proceeds(box, script, phase, probe, tool) -> None:
+    if script == "restore.sh":
+        (box / "staging" / "postgres.dump").write_bytes(b"x")
+        (box / "staging" / "mongo.archive.gz").write_bytes(b"x")
+    result = _run(box, script, phase, SHIM_NOT_READY="2")
+    assert result.returncode == 0, result.stderr
+    order = _order(box)
+    assert order[:4] == [probe, probe, probe, tool], order   # 2 refusals, 1 success, then the tool
+    assert "not accepting connections yet" in result.stdout
+
+
+@needs_sh
+@pytest.mark.parametrize("script,phase,probe,tool", [
+    ("backup.sh", "postgres", "pg_isready", "pg_dump"),
+    ("backup.sh", "mongo", "mongosh", "mongodump"),
+    ("restore.sh", "postgres", "pg_isready", "pg_restore"),
+    ("restore.sh", "mongo", "mongosh", "mongorestore"),
+])
+def test_a_store_that_never_answers_fails_at_the_deadline_not_later(box, script, phase, probe, tool) -> None:
+    import time
+
+    start = time.monotonic()
+    result = _run(box, script, phase, SHIM_NEVER_READY=probe, BACKUP_WAIT_SECONDS="3")
+    took = time.monotonic() - start
+    assert result.returncode != 0
+    assert "not reachable after" in result.stderr and "BACKUP_WAIT_SECONDS=3" in result.stderr
+    assert tool not in _order(box)
+    assert took < 30, f"gave up after {took:.0f}s; the deadline was 3s"
+
+
+@needs_sh
+def test_the_probes_target_exactly_what_the_dumps_use(box) -> None:
+    assert _run(box, "backup.sh", "postgres").returncode == 0
+    assert _run(box, "backup.sh", "mongo").returncode == 0
+    lines = _log(box).splitlines()
+    pg = next(line for line in lines if line.startswith("pg_isready"))
+    assert "-d postgresql://tl:secret@db:5432/testlookup" in pg and " -h " not in pg
+    mongo = next(line for line in lines if line.startswith("mongosh"))
+    assert "mongodb://mongo:27017" in mongo
+
+
+def test_minio_wait_retries_then_gives_up_at_its_deadline() -> None:
+    import time
+
+    sync = _minio_sync()
+    answers = iter([False, False, True])
+    sync.wait_for("minio", lambda: next(answers), limit=10, interval=0.01)
+    start = time.monotonic()
+    with pytest.raises(SystemExit, match="not reachable"):
+        sync.wait_for("minio", lambda: False, limit=0.3, interval=0.05)
+    assert time.monotonic() - start < 5
+
+
+@pytest.mark.parametrize("mode", ["dump", "restore"])
+def test_minio_main_waits_before_touching_the_store(monkeypatch, mode: str) -> None:
+    sync = _minio_sync()
+    calls = []
+    monkeypatch.setattr(sync, "wait_for", lambda store, probe: calls.append(("wait", store, probe)))
+    monkeypatch.setattr(sync, mode, lambda path: calls.append((mode, path)))
+    assert sync.main(["minio_sync.py", mode, "/x.tar.gz"]) == 0
+    assert calls == [("wait", "minio", sync.minio_ready), (mode, "/x.tar.gz")]
+
+
+def _rendered(overlay: str) -> list[dict]:
+    kubectl = shutil.which("kubectl")
+    if kubectl is None:
+        pytest.skip("kubectl not installed (rendering only; no cluster access)")
+    out = subprocess.run([kubectl, "kustomize", str(REPO_ROOT / "k8s" / "overlays" / overlay)],
+                         capture_output=True, text=True, check=True).stdout
+    return [d for d in yaml.safe_load_all(out) if d]
+
+
+def _before(text: str, first: str, then: str, inside: str) -> bool:
+    body = text[text.index(inside):]
+    return body.index(first) < body.index(then)
+
+
+@pytest.mark.parametrize("overlay", ["homelab", "openshift-artifactory"])
+def test_rendered_backup_waits_before_every_dump(overlay: str) -> None:
+    docs = _rendered(overlay)
+    cronjob = next(d for d in docs if d["kind"] == "CronJob" and d["metadata"]["name"] == "testlookup-backup")
+    inits = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["initContainers"]
+    assert [c["command"][1:] for c in inits] == [
+        ["/scripts/backup.sh", "postgres"], ["/scripts/backup.sh", "mongo"],
+        ["/scripts/minio_sync.py", "dump", "/staging/minio_data.tar.gz"],
+    ]
+    scripts = next(d for d in docs if d["kind"] == "ConfigMap"
+                   and d["metadata"]["name"] == "testlookup-backup-scripts")["data"]
+    backup, lib, minio = scripts["backup.sh"], scripts["lib.sh"], scripts["minio_sync.py"]
+    assert _before(backup, "wait_for postgres postgres_ready", "pg_dump --format", "phase_postgres() {")
+    assert _before(backup, "wait_for mongo mongo_ready", "mongodump --quiet", "phase_mongo() {")
+    assert _before(minio, 'wait_for("minio", minio_ready)', "(dump if argv", "def main(")
+    assert 'limit="${BACKUP_WAIT_SECONDS:-120}"' in lib
+    assert 'os.environ.get("BACKUP_WAIT_SECONDS", "120")' in minio
