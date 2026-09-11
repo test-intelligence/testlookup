@@ -132,6 +132,35 @@ but their eval story is thinner: they steer an external assistant's tool
 calls rather than a scored model output, so the attestation covers them as
 hash-pinned + reviewed, not metric-gated.
 
+**What the attestation does not measure, and the gate that does (re-audit
+M16).** The offline attestation scores golden items whose correctness is
+written in the dataset, so it passes whatever the prompt text says: it proves
+a version moved, not that outputs stayed good. For prompts whose output is a
+checkable decision, `prompt_eval_recordings.json` holds golden cases, the raw
+model outputs recorded for them, and the prompt hash those outputs were
+produced under; `app/services/prompt_eval_recordings.py` scores them
+(`fast_classifier_system`: category matches; `regression_watchman_classify`:
+per-cluster classification matches; `release_risk_reasoning`: the prompt's own
+grounding rules hold). The gate fails when a gated prompt's current hash is not
+the hash its outputs were recorded under, when a "measured" entry has no
+outputs, or when the outputs score below `min_score`. It runs in the backend
+test job (`tests/test_prompt_eval_recordings.py`) and as
+`python -m app.services.prompt_eval_recordings --check`.
+
+```bash
+# after editing a gated prompt (on a machine with the model):
+cd backend
+python -m app.services.prompt_eval_recordings --record fast_classifier_system [--model qwen2.5:7b]
+python -m app.services.prompt_eval_recordings --check
+# commit the prompt edit + prompt_eval_recordings.json with the manifest + attestation
+```
+
+When this landed no outputs had been recorded (no model was available), so all
+three gated prompts are **unmeasured**: `--check` lists them by name and never
+counts them as passing. An unmeasured entry is accepted only at the exact hash
+frozen in `GRANDFATHERED_UNMEASURED`, so the first edit to any of them fails
+the gate until real outputs are recorded and scored.
+
 Runtime provenance: the registry's version tags (`v<version>:<hash12>`) are
 stamped into the pipeline version snapshot
 (`workflow._runtime_version_snapshot` → `prompt_registry` digest, plus the
