@@ -46,6 +46,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
@@ -1773,7 +1774,7 @@ export default function RunsPage() {
 
   const { options: suiteOptions } = useSuiteOptions(days || 0)
 
-  const { data, isLoading } = useRuns({
+  const { data, isLoading, error: runsError, mutate: retryRuns } = useRuns({
     page: 1,
     size: ANALYTICS_FETCH_SIZE,
     days: days || undefined,
@@ -1863,6 +1864,13 @@ export default function RunsPage() {
         description="Select a project from the top bar to view test runs."
       />
     )
+  }
+
+  // M21: a failed fetch is not an empty window. Without this the page fell
+  // through to "No runs in the window. Try a longer window or check your
+  // reporter." during an outage.
+  if (runsError && !data) {
+    return <DataUnavailable error={runsError} onRetry={() => void retryRuns()} testId="runs-data-unavailable" />
   }
 
   if (isLoading && runs.length === 0) {

@@ -7,6 +7,7 @@ import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
@@ -602,7 +603,7 @@ export default function ReleasesPage() {
   const project   = useProjectStore(s => s.activeProject)
   const projectId = useProjectStore(s => s.activeProjectId)
 
-  const { data, isLoading, mutate: refetch } = useReleases()
+  const { data, isLoading, error: releasesError, mutate: refetch } = useReleases()
   // Memoize so the array identity is stable across renders — the downstream
   // `derived` useMemo keys on it, and a fresh `data?.items ?? []` literal each
   // render would defeat that memo (exhaustive-deps).
@@ -662,6 +663,11 @@ export default function ReleasesPage() {
 
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
+
+  // M21: an outage used to render "No releases yet" and a create-release CTA.
+  if (releasesError && !data) {
+    return <DataUnavailable error={releasesError} onRetry={() => void refetch()} testId="releases-data-unavailable" />
+  }
 
   if (!project && !isAllProjects) {
     return (
