@@ -58,7 +58,10 @@ class _Client:
 
     async def get(self, url, **_kwargs):
         self.calls.append(("GET", url, None))
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 @pytest.fixture
@@ -203,6 +206,90 @@ def test_an_unknown_upload_fails_after_the_grace_period(fake):
     fake.install(*[_Resp(404, {"detail": "Upload task not found or expired"}) for _ in range(40)])
     with pytest.raises(Exception, match="HTTP 404"):
         asyncio.run(upload._wait_for_upload("t1"))
+
+
+# ── --wait rides out what a rollout does to a poll (code review of N15) ──
+#
+# A status poll is a GET that changes nothing, so a 429, a 5xx or a dropped
+# connection says nothing about the upload. One 502 from the ingress during a
+# rolling deploy failed the CI step although the upload went on to succeed.
+
+_SUCCEEDED = {"task_id": "t1", "state": "succeeded", "run_id": "r1"}
+
+
+def _dropped(kind=httpx.ConnectError, message="connection reset by peer"):
+    return kind(message, request=httpx.Request("GET", "http://tl.test/api/v1/ingest/uploads/t1"))
+
+
+@pytest.mark.parametrize("code", [429, 500, 502, 503, 504])
+def test_a_transient_answer_while_polling_is_not_yet(fake, code):
+    fake.install(_Resp(code, {"detail": "busy"}), _Resp(200, _SUCCEEDED))
+    assert asyncio.run(upload._wait_for_upload("t1"))["state"] == "succeeded"
+    assert fake.sleeps == [2.0]
+
+
+def test_a_dropped_connection_while_polling_is_not_yet(fake):
+    fake.install(_dropped(), _dropped(httpx.ReadTimeout, "timed out"), _Resp(200, _SUCCEEDED))
+    assert asyncio.run(upload._wait_for_upload("t1"))["state"] == "succeeded"
+    assert fake.sleeps == [2.0, 2.0]
+
+
+def test_a_polls_retry_after_is_honoured(fake):
+    fake.install(
+        _Resp(503, {}, {"Retry-After": "7"}),
+        _Resp(429, {}, {"Retry-After": "11"}),
+        _Resp(200, _SUCCEEDED),
+    )
+    asyncio.run(upload._wait_for_upload("t1"))
+    assert fake.sleeps == [7.0, 11.0]
+
+
+def test_the_last_poll_comes_at_the_deadline_not_after_it(fake):
+    """A Retry-After past the deadline is cut to the deadline."""
+    fake.install(_Resp(429, {}, {"Retry-After": "60"}), _Resp(200, _SUCCEEDED))
+    assert asyncio.run(upload._wait_for_upload("t1", timeout=10))["state"] == "succeeded"
+    assert fake.sleeps == [10.0]
+
+
+@pytest.mark.parametrize("code", [400, 401, 403, 409, 422])
+def test_an_answer_that_cannot_change_fails_the_wait_at_once(fake, code):
+    fake.install(_Resp(code, {"detail": "refused"}))
+    with pytest.raises(Exception, match=f"HTTP {code} while waiting for upload t1: refused"):
+        asyncio.run(upload._wait_for_upload("t1"))
+    assert fake.sleeps == []
+
+
+def test_transient_answers_until_the_deadline_fail_with_the_last_one(fake):
+    fake.install(*[_Resp(503) for _ in range(10)])
+    with pytest.raises(Exception, match="no status for upload t1 after 5s: the last poll got HTTP 503"):
+        asyncio.run(upload._wait_for_upload("t1", timeout=5))
+    assert sum(fake.sleeps) == 5
+
+
+def test_a_server_unreachable_until_the_deadline_fails_as_unreachable(fake):
+    fake.install(*[_dropped() for _ in range(10)])
+    with pytest.raises(Exception, match="Cannot reach the TestLookup server"):
+        asyncio.run(upload._wait_for_upload("t1", timeout=5))
+    assert sum(fake.sleeps) == 5
+
+
+def test_upload_file_with_wait_survives_a_rollout(fake, monkeypatch, tmp_path):
+    """The exit code a CI step reads, through the real poll loop."""
+    monkeypatch.setattr(upload, "resolve_commit_range", lambda **_kw: None)
+
+    async def _accepted(**_kw):
+        return {"status": "accepted", "run_id": "r1", "task_id": "t1"}
+
+    monkeypatch.setattr(upload, "_upload_file", _accepted)
+    fake.install(
+        _Resp(502), _dropped(), _Resp(503, {}, {"Retry-After": "3"}), _Resp(200, _SUCCEEDED)
+    )
+    res = runner.invoke(
+        app, ["upload", "file", str(_report(tmp_path)), "-p", "p", "-b", "1", "--wait"]
+    )
+    assert res.exit_code == 0, res.output
+    assert "Ingested" in res.output
+    assert fake.sleeps == [2.0, 2.0, 3.0]
 
 
 # ── The exit code a CI step reads ───────────────────────────────────────

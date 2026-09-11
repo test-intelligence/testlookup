@@ -201,8 +201,10 @@ def upload_file(
     The file is parsed and ingested asynchronously on the server.
     AI analysis is triggered automatically after ingestion completes.
     ``--wait`` waits for that outcome and exits non-zero when the server
-    refuses the report (over the result cap, unparseable, empty). A 429 or 503
-    is retried, honouring Retry-After, for up to five minutes.
+    refuses the report (over the result cap, unparseable, empty). While it
+    waits, a 429, a 5xx or a dropped connection only means "not yet", until
+    --wait-timeout. An upload that meets a 429 or 503 is retried, honouring
+    Retry-After, for up to five minutes.
 
     Examples:
         testlookup upload file results.xml -p <project-id> -b build-42
@@ -484,45 +486,74 @@ async def _upload_file(
         raise map_connection_error(exc, base_url) from exc
 
 
+def _poll_is_transient(status_code: int) -> bool:
+    """A status-poll answer that says nothing about the upload itself.
+
+    A 429 or a 5xx, to a GET that changes nothing: an ingress mid-rollout, a
+    restarting pod, a rate budget that refills. The upload carries on.
+    """
+    return status_code == 429 or status_code >= 500
+
+
 async def _wait_for_upload(
     task_id: str,
     profile_name: Optional[str] = None,
     timeout: float = 600.0,
 ) -> dict:
-    """Poll the upload's status until it succeeds or fails (re-audit N15)."""
+    """Poll the upload's status until it succeeds or fails (re-audit N15).
+
+    Returns the terminal status, ``failed`` included: the caller decides what a
+    refusal means. Raises when ``timeout`` runs out first, and at once on an
+    answer that cannot change: 401, 403, any other 4xx, or a 404 once
+    ``WAIT_NOT_FOUND_GRACE_SECONDS`` have passed.
+
+    A transient answer is "not yet" (code review of N15): a 429, a 5xx or a
+    dropped connection. One 502 from the ingress during a rolling deploy used
+    to fail the CI step although the upload went on to succeed. The next poll
+    waits for the server's Retry-After when it sends one, else the poll
+    interval, but never past the deadline: the last poll comes at the deadline.
+    """
     import httpx
 
     profile = get_profile(profile_name)
     base_url = profile.get("url", "http://localhost:8000").rstrip("/")
     headers = client._build_headers(profile)
+    url = f"{base_url}/api/v1/ingest/uploads/{task_id}"
     started = _clock()
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as http:
-            while True:
-                resp = await http.get(
-                    f"{base_url}/api/v1/ingest/uploads/{task_id}", headers=headers
-                )
-                elapsed = _clock() - started
-                if resp.status_code == 404 and elapsed < WAIT_NOT_FOUND_GRACE_SECONDS:
+    deadline = started + timeout
+    state = "pending"
+    problem: Optional[str] = None  # why the last poll told us nothing, if it did not
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        while True:
+            delay = WAIT_POLL_SECONDS
+            try:
+                resp = await http.get(url, headers=headers)
+            except httpx.RequestError as exc:
+                problem = f"the last poll failed: {map_connection_error(exc, base_url)}"
+            else:
+                code = resp.status_code
+                if code == 404 and _clock() - started < WAIT_NOT_FOUND_GRACE_SECONDS:
                     # The status record may not be written yet.
-                    await _sleep(WAIT_POLL_SECONDS)
-                    continue
-                if resp.status_code >= 400:
+                    problem = "the server did not know the upload yet (HTTP 404)"
+                elif _poll_is_transient(code):
+                    problem = f"the last poll got HTTP {code}"
+                    retry_after = parse_retry_after(resp.headers.get("Retry-After"))
+                    if retry_after is not None:
+                        delay = retry_after
+                elif code >= 400:
                     try:
                         detail = resp.json().get("detail", resp.text)
                     except Exception:
                         detail = resp.text
-                    raise Exception(
-                        f"HTTP {resp.status_code} while waiting for upload {task_id}: {detail}"
-                    )
-                status = resp.json()
-                if status.get("state") in TERMINAL_UPLOAD_STATES:
-                    return status
-                if elapsed >= timeout:
-                    raise Exception(
-                        f"upload {task_id} is still {status.get('state', 'pending')} "
-                        f"after {timeout:.0f}s"
-                    )
-                await _sleep(WAIT_POLL_SECONDS)
-    except httpx.RequestError as exc:
-        raise map_connection_error(exc, base_url) from exc
+                    raise Exception(f"HTTP {code} while waiting for upload {task_id}: {detail}")
+                else:
+                    status = resp.json()
+                    if status.get("state") in TERMINAL_UPLOAD_STATES:
+                        return status
+                    state, problem = status.get("state", "pending"), None
+            remaining = deadline - _clock()
+            if remaining <= 0:
+                if problem is None:
+                    raise Exception(f"upload {task_id} is still {state} after {timeout:.0f}s")
+                raise Exception(f"no status for upload {task_id} after {timeout:.0f}s: {problem}")
+            await _sleep(min(delay, remaining))
