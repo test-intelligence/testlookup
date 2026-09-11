@@ -240,3 +240,123 @@ describe('useModalFocus with a dialog inside a dialog', () => {
     expect(button('Inner first')).toHaveFocus()
   })
 })
+
+// ── QA-B45-R2-5: dialogs that stay mounted while closed ─────────────────────
+
+/** The usual rules-of-hooks shape: the hook first, then the early return. */
+function Lazy({ open, name, onClose }: { open: boolean; name: string; onClose: () => void }) {
+  const ref = useModalFocus({ onClose })
+  if (!open) return null
+  return (
+    <div ref={ref} role="dialog" aria-label={name}>
+      <button type="button">{name} button</button>
+    </div>
+  )
+}
+
+/** Passes `open`, and keeps its (hidden) root in the page while closed. */
+function Kept({ open, name, onClose }: { open: boolean; name: string; onClose: () => void }) {
+  const ref = useModalFocus({ onClose, open })
+  return (
+    <div ref={ref} role="dialog" aria-label={name} hidden={!open}>
+      <button type="button">{name} button</button>
+    </div>
+  )
+}
+
+describe('useModalFocus with dialogs that stay mounted while closed', () => {
+  it('a closed dialog mounted later does not block Escape for one opened before it', () => {
+    const onA = vi.fn()
+    const onB = vi.fn()
+    function Two() {
+      const [aOpen, setAOpen] = useState(false)
+      return (
+        <>
+          <button type="button" onClick={() => setAOpen(true)}>Open A</button>
+          <Lazy open={aOpen} name="A" onClose={() => { onA(); setAOpen(false) }} />
+          <Lazy open={false} name="B" onClose={onB} />
+        </>
+      )
+    }
+    render(<Two />)
+    fireEvent.click(button('Open A'))
+    // (No `open` passed: the hook cannot tell this component opened, so it
+    // does not move focus in -- a dialog mounted while closed passes `open`,
+    // see Kept below. What must hold regardless is the keyboard stack.)
+
+    escape()
+    expect(onA).toHaveBeenCalledTimes(1)
+    expect(onB).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog', { name: 'A' })).toBeNull()
+  })
+
+  it('a dialog mounted first but opened second is on top', () => {
+    const onA = vi.fn()
+    const onB = vi.fn()
+    function Both() {
+      const [aOpen, setAOpen] = useState(false)
+      const [bOpen, setBOpen] = useState(true)
+      return (
+        <>
+          <button type="button" onClick={() => setAOpen(true)}>Open A</button>
+          <Kept open={aOpen} name="A" onClose={() => { onA(); setAOpen(false) }} />
+          <Kept open={bOpen} name="B" onClose={() => { onB(); setBOpen(false) }} />
+        </>
+      )
+    }
+    render(<Both />)
+    fireEvent.click(button('Open A'))
+
+    escape()
+    expect(onA).toHaveBeenCalledTimes(1)
+    expect(onB).not.toHaveBeenCalled()
+    escape() // A is closed now: B is the only open dialog
+    expect(onB).toHaveBeenCalledTimes(1)
+  })
+
+  it('closing through `open` gives focus back and releases the keyboard', () => {
+    const onA = vi.fn()
+    function One() {
+      const [aOpen, setAOpen] = useState(false)
+      return (
+        <>
+          <button type="button" onClick={() => setAOpen(true)}>Open A</button>
+          <Kept open={aOpen} name="A" onClose={() => { onA(); setAOpen(false) }} />
+        </>
+      )
+    }
+    render(<One />)
+    const opener = button('Open A')
+    opener.focus()
+    fireEvent.click(opener)
+    expect(button('A button')).toHaveFocus()
+    escape()
+    expect(onA).toHaveBeenCalledTimes(1)
+    expect(opener).toHaveFocus()
+    // Closed: a Tab is no longer trapped, and Escape reaches nobody.
+    expect(tab()).toBe(false)
+    escape()
+    expect(onA).toHaveBeenCalledTimes(1)
+  })
+
+  it('reopening takes a fresh opener', () => {
+    function Reopen() {
+      const [aOpen, setAOpen] = useState(false)
+      return (
+        <>
+          <button type="button" onClick={() => setAOpen(true)}>First opener</button>
+          <button type="button" onClick={() => setAOpen(true)}>Second opener</button>
+          <Kept open={aOpen} name="A" onClose={() => setAOpen(false)} />
+        </>
+      )
+    }
+    render(<Reopen />)
+    for (const name of ['First opener', 'Second opener']) {
+      const opener = button(name)
+      opener.focus()
+      fireEvent.click(opener)
+      escape()
+      expect(opener).toHaveFocus()
+    }
+  })
+})
