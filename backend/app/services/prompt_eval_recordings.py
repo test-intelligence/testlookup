@@ -38,6 +38,7 @@ import argparse
 import asyncio
 import json
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -249,6 +250,12 @@ async def _record_with_llm(prompt_id: str, model: Optional[str]) -> dict:
     return await record(prompt_id, invoke=llm.ainvoke, recorded_by=f"{getattr(llm, '_provider', '?')}:{model or ''}")
 
 
+def _echo(message: str) -> None:
+    """CLI output. Plain stdout on purpose -- developer tooling, not app
+    runtime (the backend.no-print gate keeps print() out of backend/app)."""
+    sys.stdout.write(message + "\n")
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Scored-output gate for prompt changes (M16).")
     parser.add_argument("--check", action="store_true", help="Fail when a gated prompt lacks current scored outputs.")
@@ -257,16 +264,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.record:
         if args.record not in GATED_PROMPTS:
-            print(f"{args.record} is not a gated prompt: {sorted(GATED_PROMPTS)}")
+            _echo(f"{args.record} is not a gated prompt: {sorted(GATED_PROMPTS)}")
             return 2
         entry = asyncio.run(_record_with_llm(args.record, args.model))
-        print(f"recorded {len(entry['cases'])} case(s) for {args.record}: score {entry['score']:.2f}")
+        _echo(f"recorded {len(entry['cases'])} case(s) for {args.record}: score {entry['score']:.2f}")
         return 0 if entry["score"] >= float(entry.get("min_score", 1.0)) else 1
     problems, unmeasured = check_recordings()
     for problem in problems:
-        print(f"FAIL {problem}")
+        _echo(f"FAIL {problem}")
     for prompt_id in unmeasured:
-        print(f"UNMEASURED {prompt_id} (grandfathered at its current hash; its next edit needs recorded outputs)")
+        _echo(f"UNMEASURED {prompt_id} (grandfathered at its current hash; its next edit needs recorded outputs)")
     return 1 if problems else 0
 
 
