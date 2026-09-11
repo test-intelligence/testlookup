@@ -185,6 +185,19 @@
     MinIO object, with a sha256 manifest and 14 archives kept on a PVC.
   - The restore runs only with explicit confirmation.
 
+- **The CI guards fail closed.**
+  - `ci.every-test-suite-runs` no longer counts a suite as run when its step or
+    job has a literal-false `if:` or `continue-on-error: true`, or when the
+    command's exit status is swallowed (`|| true`, `|| :`, `; true`, `set +e`).
+  - `ci.dependabot-covers-every-manifest` reads the plural `directories:` form,
+    including globs, and also finds Cargo, Gradle, `setup.py` and `Pipfile`
+    manifests.
+  - The mypy ratchet checks its parsed count against mypy's own
+    `Found N errors` and normalises absolute paths. CI runs it with
+    `--check-stale`, so a fixed error must be locked into
+    `backend/mypy-baseline.txt` by the PR that fixed it; a count really may only
+    go down.
+
 **Upgrade notes: CI and platform.**
 - **Trivy:** its first run may report existing HIGH or CRITICAL findings. Fix
   them or accept them in `.trivyignore.yaml`.
