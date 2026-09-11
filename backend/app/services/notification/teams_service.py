@@ -149,9 +149,10 @@ async def send_notification(
     meta = metadata or {}
     payload = _build_adaptive_card(title, body, event_type, meta)
 
-    from app.core.http_client import get_public_http_client
+    from app.services.notification.egress import delivery_http_client
 
-    client = get_public_http_client()
+    # Offline, pinned to the on-box address the gate approved (re-audit N8).
+    client = delivery_http_client(webhook_url, deployment_wide=deployment_wide)
     headers = {"X-TestLookup-Delivery": delivery_id} if delivery_id else None
     response = await client.post(
         webhook_url,

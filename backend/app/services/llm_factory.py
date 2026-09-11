@@ -26,10 +26,62 @@ class BudgetedLLM:
     including direct graph call sites, shares the same admission decision.
     """
 
-    def __init__(self, inner: BaseChatModel, *, provider: str = "unknown", model: str = "unknown"):
+    def __init__(
+        self,
+        inner: BaseChatModel,
+        *,
+        provider: str = "unknown",
+        model: str = "unknown",
+        connect_retries: int = 0,
+    ):
         self._inner = inner
         self._provider = provider
         self._model = model
+        # Re-audit L2: AI_MAX_RETRIES for a provider client with no retry of
+        # its own (ChatOllama). Connect-phase failures only -- no request
+        # reached the server, so a retry cannot double-bill or double-run it,
+        # and a read timeout is NOT retried (it would multiply the stage's
+        # wall clock by the retry count). Clients with native retries get
+        # AI_MAX_RETRIES through their own ``max_retries`` instead.
+        self._connect_retries = max(0, int(connect_retries or 0))
+
+    def _retryable(self, exc: BaseException) -> bool:
+        # An offline pin refusal (llm_egress.OffBoxTargetError) is an OSError,
+        # not a ConnectionError, so it is never retried: it is policy, not a
+        # transient fault.
+        try:
+            import httpx
+        except ImportError:  # pragma: no cover
+            return isinstance(exc, ConnectionError)
+        return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError))
+
+    @staticmethod
+    def _retry_delay(attempt: int) -> float:
+        return min(0.5 * (2 ** attempt), 8.0)
+
+    async def _call_async(self, args, kwargs):
+        import asyncio
+
+        attempt = 0
+        while True:
+            try:
+                return await self._inner.ainvoke(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 -- re-raised unless retryable
+                if attempt >= self._connect_retries or not self._retryable(exc):
+                    raise
+                await asyncio.sleep(self._retry_delay(attempt))
+                attempt += 1
+
+    def _call_sync(self, args, kwargs):
+        attempt = 0
+        while True:
+            try:
+                return self._inner.invoke(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 -- re-raised unless retryable
+                if attempt >= self._connect_retries or not self._retryable(exc):
+                    raise
+                time.sleep(self._retry_delay(attempt))
+                attempt += 1
 
     def _check(self) -> None:
         from app.services.pipeline_budget_service import get_pipeline_budget_context
@@ -115,22 +167,63 @@ class BudgetedLLM:
         # budget decision taken here.
         self._check()
         args, kwargs = self._prepare_invocation(args, kwargs)
-        started = time.perf_counter()
+        from app.services import llm_cost_reservation as cost
+        from app.services.llm_cluster_semaphore import cluster_llm_slot
+
+        # Re-audit M13: reserve this call's worst case against the project's
+        # monthly cap atomically, BEFORE the provider is called. Raises
+        # CostCapExceeded (no request made) when the cap cannot absorb it.
+        input_tokens = cost.estimate_input_tokens(args, kwargs)
+        reservation = await cost.reserve(
+            self._provider,
+            self._model,
+            input_tokens=input_tokens,
+            max_output_tokens=cost.output_ceiling(self._inner, settings.LLM_MAX_TOKENS),
+        )
+        actual_usd = 0.0
         try:
-            result = await self._inner.ainvoke(*args, **kwargs)
-        except BaseException as exc:
-            self._observe(self._status_for(exc), time.perf_counter() - started)
-            raise
-        self._observe("success", time.perf_counter() - started)
-        self._record_usage(result)
-        return result
+            # Re-audit M12: one cluster-wide slot per in-flight call.
+            async with cluster_llm_slot(self._provider):
+                started = time.perf_counter()
+                try:
+                    result = await self._call_async(args, kwargs)
+                except BaseException as exc:
+                    self._observe(self._status_for(exc), time.perf_counter() - started)
+                    raise
+                self._observe("success", time.perf_counter() - started)
+                self._record_usage(result)
+                if reservation is not None:
+                    tokens = cost.usage_tokens(result)
+                    actual_usd = (
+                        cost.price(self._provider, self._model, *tokens)
+                        if tokens is not None
+                        # Unreported usage: keep the worst case rather than guess low.
+                        else reservation.estimated_usd
+                    )
+                return result
+        finally:
+            await cost.settle(reservation, actual_usd)
 
     def invoke(self, *args, **kwargs):
         self._check()
         args, kwargs = self._prepare_invocation(args, kwargs)
+        from app.services import llm_cost_reservation as cost
+
+        # The reservation store is async. A synchronous call charged to a
+        # capped-eligible project cannot reserve, so it is refused rather than
+        # let through unchecked (re-audit M13). No app code path uses it today.
+        if cost.current_cost_scope() and cost.price(
+            self._provider,
+            self._model,
+            cost.estimate_input_tokens(args, kwargs),
+            cost.output_ceiling(self._inner, settings.LLM_MAX_TOKENS),
+        ) > 0:
+            raise cost.CostCapExceeded(
+                "synchronous invoke cannot reserve against the LLM cost cap; use ainvoke"
+            )
         started = time.perf_counter()
         try:
-            result = self._inner.invoke(*args, **kwargs)
+            result = self._call_sync(args, kwargs)
         except BaseException as exc:
             self._observe(self._status_for(exc), time.perf_counter() - started)
             raise
@@ -143,6 +236,7 @@ class BudgetedLLM:
             self._inner.bind(*args, **kwargs),
             provider=self._provider,
             model=self._model,
+            connect_retries=self._connect_retries,
         )
 
     def with_structured_output(self, *args, **kwargs):
@@ -150,14 +244,33 @@ class BudgetedLLM:
             self._inner.with_structured_output(*args, **kwargs),
             provider=self._provider,
             model=self._model,
+            connect_retries=self._connect_retries,
         )
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
 
 
-def _budgeted(model: BaseChatModel, *, provider: str, model_name: str) -> BudgetedLLM:
-    return BudgetedLLM(model, provider=provider, model=model_name)
+def _budgeted(
+    model: BaseChatModel, *, provider: str, model_name: str, connect_retries: int = 0,
+) -> BudgetedLLM:
+    return BudgetedLLM(model, provider=provider, model=model_name, connect_retries=connect_retries)
+
+
+def _pinned_http_clients(offline: bool) -> dict:
+    """``http_client``/``http_async_client`` for an OpenAI-wire LOCAL provider.
+
+    Under AI_OFFLINE_MODE the connection is pinned to the on-box addresses
+    validated at connect time (re-audit N8); online, the SDK's own clients.
+    """
+    if not offline:
+        return {}
+    from app.services.llm_egress import local_only_async_client, local_only_sync_client
+
+    return {
+        "http_client": local_only_sync_client(),
+        "http_async_client": local_only_async_client(),
+    }
 
 
 def _default_llm_base_url(provider: str) -> str | None:
@@ -202,9 +315,11 @@ async def get_llm(
     _max_tokens = _effective.get("max_tokens", settings.LLM_MAX_TOKENS)
     _base_url = _effective.get("base_url") or _default_llm_base_url(_provider)
     _offline = _effective.get("offline_mode", settings.AI_OFFLINE_MODE)
-    from app.services.llm_policy_service import enforce_provider_policy
+    from app.services.llm_policy_service import enforce_provider_policy_async
 
-    enforce_provider_policy(_provider, offline=bool(_offline), base_url=_base_url)
+    # Async: the residency lookup must not block the event loop (re-audit N11).
+    await enforce_provider_policy_async(_provider, offline=bool(_offline), base_url=_base_url)
+    _retries = max(0, int(settings.AI_MAX_RETRIES or 0))
 
     # Resolve model name: explicit override > fine-tuned registry > effective config > env default
     if model:
@@ -221,7 +336,7 @@ async def get_llm(
 
     if _provider == "ollama":
         from langchain_ollama import ChatOllama
-        return _budgeted(ChatOllama(
+        chat = ChatOllama(
             model=_model,
             base_url=_base_url or settings.OLLAMA_BASE_URL,
             temperature=_temperature,
@@ -230,7 +345,13 @@ async def get_llm(
             # prompts server-side with no error -- silent evidence loss (F-5).
             num_predict=_max_tokens,
             num_ctx=settings.OLLAMA_NUM_CTX,
-        ), provider=_provider, model_name=_model)
+        )
+        if _offline:
+            from app.services.llm_egress import pin_ollama_clients
+            pin_ollama_clients(chat)
+        # ChatOllama has no retry of its own; BudgetedLLM applies AI_MAX_RETRIES
+        # to connect-phase failures (re-audit L2).
+        return _budgeted(chat, provider=_provider, model_name=_model, connect_retries=_retries)
 
     elif _provider == "lmstudio":
         from langchain_openai import ChatOpenAI
@@ -240,6 +361,8 @@ async def get_llm(
             api_key="lm-studio",  # type: ignore
             temperature=_temperature,
             max_tokens=_max_tokens,
+            max_retries=_retries,
+            **_pinned_http_clients(bool(_offline)),
         ), provider=_provider, model_name=_model)
 
     elif _provider == "localai":
@@ -250,6 +373,8 @@ async def get_llm(
             api_key="localai",  # type: ignore
             temperature=_temperature,
             max_tokens=_max_tokens,
+            max_retries=_retries,
+            **_pinned_http_clients(bool(_offline)),
         ), provider=_provider, model_name=_model)
 
     elif _provider == "vllm":
@@ -260,6 +385,8 @@ async def get_llm(
             api_key="vllm",  # type: ignore
             temperature=_temperature,
             max_tokens=_max_tokens,
+            max_retries=_retries,
+            **_pinned_http_clients(bool(_offline)),
         ), provider=_provider, model_name=_model)
 
     elif _provider == "openai":
@@ -273,6 +400,7 @@ async def get_llm(
             **({"base_url": _base_url} if _base_url else {}),
             temperature=_temperature,
             max_tokens=_max_tokens,
+            max_retries=_retries,
         ), provider=_provider, model_name=_model)
 
     elif _provider == "gemini":
@@ -284,6 +412,7 @@ async def get_llm(
             model=_model,
             google_api_key=_api_key,
             temperature=_temperature,
+            max_retries=_retries,
         ), provider=_provider, model_name=_model)
 
     elif _provider == "anthropic":
@@ -298,6 +427,7 @@ async def get_llm(
             api_key=_api_key,
             temperature=_temperature,
             max_tokens=_max_tokens,
+            max_retries=_retries,
         ), provider=_provider, model_name=_model)
 
     elif _provider == "openrouter":
@@ -319,6 +449,7 @@ async def get_llm(
             base_url=_base_url or settings.OPENROUTER_BASE_URL,
             temperature=_temperature,
             max_tokens=_max_tokens,
+            max_retries=_retries,
             default_headers={
                 "HTTP-Referer": settings.OPENROUTER_SITE_URL,
                 "X-Title": settings.OPENROUTER_APP_NAME,
@@ -347,10 +478,15 @@ def get_embedding_model():
 
     if provider == "ollama":
         from langchain_ollama import OllamaEmbeddings
-        return OllamaEmbeddings(
+        embeddings = OllamaEmbeddings(
             model=model,
             base_url=settings.OLLAMA_BASE_URL,
         )
+        if settings.AI_OFFLINE_MODE:
+            # Same connect-time pin as the chat models (re-audit N8).
+            from app.services.llm_egress import pin_ollama_clients
+            pin_ollama_clients(embeddings)
+        return embeddings
     elif provider == "openai":
         if settings.AI_OFFLINE_MODE:
             raise ValueError("AI_OFFLINE_MODE=true — cannot use OpenAI embeddings")

@@ -419,6 +419,12 @@ class Settings(BaseSettings):
     # tenant on it (any Slack workspace), so a webhook set per user or per team
     # never uses this list. Empty: every off-box destination is refused.
     OFFLINE_NOTIFICATION_ALLOWED_HOSTS: str = ""
+    # Re-audit N25: recipient domains email may reach while AI_OFFLINE_MODE is
+    # on (comma-separated; "corp.example" exactly, ".corp.example" subdomains).
+    # Set: every recipient must match, whatever the relay. Empty: an on-box
+    # relay may deliver (its own MTA policy governs onward routing); an
+    # off-box relay admitted by OFFLINE_NOTIFICATION_ALLOWED_HOSTS is refused.
+    OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS: str = ""
     AGENT_MEMORY_RETENTION_DAYS: int = 365
     AI_CONFIDENCE_THRESHOLD: int = 80
     AIQ_GAP_REFINEMENT_ENABLED: bool = False         # AIQ-P4: gap_detection + report_refinement deep stages (default off)
@@ -428,8 +434,20 @@ class Settings(BaseSettings):
     # Report-level evaluation must use published, tenant-authorized reports in
     # deployed environments.  Tests/fixture automation may opt in explicitly.
     AI_REPORT_EVAL_ALLOW_CALLER_CORPUS: bool = False
+    # Retries after the first attempt, for outbound AI-layer calls (re-audit L2):
+    # every LLM client get_llm() builds (the provider SDK's own max_retries for
+    # the OpenAI-wire, Anthropic and Gemini clients; connect-phase failures only
+    # for ChatOllama, which has no retry of its own) and Jira ticket creation.
+    # A read timeout is not retried for Ollama: it would multiply wall clock.
     AI_MAX_RETRIES: int = 3
     AI_TIMEOUT_SECONDS: int = 300
+    # Re-audit M12: cluster-wide cap on concurrent LLM calls per provider,
+    # held as Redis leases so a crashed holder frees its slot when its lease
+    # lapses. 0 disables the cluster bound; the per-process bound
+    # (LLM_MAX_CONCURRENT_ANALYSES, the analysis stage's own semaphore) applies
+    # either way. A waiter gives up after AI_TIMEOUT_SECONDS.
+    LLM_CLUSTER_MAX_CONCURRENT: int = 4
+    LLM_CLUSTER_SLOT_LEASE_SECONDS: int = 60
     AI_ANALYSIS_CACHE_TTL: int = 3600                # seconds — Redis cache TTL for analysis results
     SEMANTIC_SIMILARITY_THRESHOLD: float = 0.85      # min cosine similarity for semantic cache hit
     PROMPT_OVERHEAD_TOKENS: int = 1500               # reserved tokens for system prompt + reasoning
@@ -617,6 +635,11 @@ class Settings(BaseSettings):
     #   "auto"  — ML if trained model available, else LLM if reachable, else rules
     ANALYSIS_MODE: str = "auto"
     ML_MODEL_DIR: str = "models"                     # directory for trained .joblib artifacts
+    # Re-audit M14: with several pods, ML_MODEL_DIR is a pod-local cache and the
+    # object store is the source of truth. A retrain publishes there; every pod
+    # pulls new versions (services/ml/model_store.py). On in the k8s base config.
+    ML_MODEL_SYNC_ENABLED: bool = False
+    ML_MODEL_STORE_PREFIX: str = "ml-models/"
     ML_MIN_TRAINING_SAMPLES: int = 200               # minimum labeled samples before ML activates
     ML_RETRAIN_ENABLED: bool = True                  # enable nightly Celery-beat retraining
     ML_ACCURACY_THRESHOLD: float = 0.80              # minimum accuracy to deploy a new model

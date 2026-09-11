@@ -399,6 +399,35 @@ def _apply_kind_rules(
     return recommendation, evals, breakdown, applied, counterfactual
 
 
+def escalate_recommendation(recommendation: str, rule_evaluations) -> tuple[str, str]:
+    """Apply failed policy rules to a base recommendation.
+
+    A failing BLOCK rule forces NO_GO; a failing WARN rule turns GO into
+    CONDITIONAL_GO. Returns ``(recommendation, overall_result)``.
+
+    Accepts live ``RuleEvaluation`` objects or their persisted dict form, so
+    the release consistency check can replay a stored decision with the very
+    rule the gate applied (re-audit N34: the check used to re-derive the
+    verdict from the score alone and flagged a third of all decisions).
+    """
+    def field(ev, name):
+        return ev.get(name) if isinstance(ev, dict) else getattr(ev, name, None)
+
+    overall_result = "PASS"
+    for ev in rule_evaluations or []:
+        if field(ev, "passed"):
+            continue
+        action = field(ev, "action")
+        if action == "BLOCK":
+            overall_result = "BLOCK"
+            recommendation = "NO_GO"
+        elif action == "WARN" and overall_result != "BLOCK":
+            overall_result = "WARN"
+            if recommendation == "GO":
+                recommendation = "CONDITIONAL_GO"
+    return recommendation, overall_result
+
+
 def _count_release_decision(recommendation: str, level: str) -> None:
     """Record one release-gate decision. Never raises.
 
@@ -489,17 +518,9 @@ async def evaluate_policy(
             rule_evals.append(evaluation)
     rule_evals.extend(kind_evals)
 
-    # Escalate recommendation based on rule results
-    overall_result = "PASS"
-    for ev in rule_evals:
-        if not ev.passed:
-            if ev.action == "BLOCK":
-                overall_result = "BLOCK"
-                recommendation = "NO_GO"
-            elif ev.action == "WARN" and overall_result != "BLOCK":
-                overall_result = "WARN"
-                if recommendation == "GO":
-                    recommendation = "CONDITIONAL_GO"
+    # Escalate recommendation based on rule results. One function, shared with
+    # the release consistency check, which replays it (re-audit N34).
+    recommendation, overall_result = escalate_recommendation(recommendation, rule_evals)
 
     # A failing BLOCK rule outranks the kind-budget downgrade (US-9.3): if it
     # restored NO_GO, correct the trail so it doesn't claim a downgrade that

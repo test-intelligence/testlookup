@@ -360,6 +360,38 @@ class SummaryAgent(BaseAgent):
 
         return sorted(analyses.items(), key=sort_key)
 
+    @classmethod
+    def _ground_flaky_ids(
+        cls, layer3: dict, analyses: dict[str, dict],
+    ) -> tuple[dict, list[str]]:
+        """``layer3`` with ``flaky_test_ids`` taken from the analyses (re-audit N29).
+
+        The ids are the analysed tests marked ``is_flaky``, in the report's
+        own order -- the rule the deterministic fallback and the assembler
+        already apply, so every summary path cites the same id space the
+        consistency check verifies. Returns the payload and the model entries
+        that did not resolve (by id or by test name) to one of those tests.
+        """
+        flaky_ids = [
+            str(test_id) for test_id, analysis in cls._sorted_analyses(analyses)
+            if isinstance(analysis, dict) and analysis.get("is_flaky")
+        ]
+        by_name: dict[str, str] = {}
+        for test_id, analysis in analyses.items():
+            if not isinstance(analysis, dict):
+                continue
+            for name in (analysis.get("test_name"), (analysis.get("meta") or {}).get("test_name")):
+                if name:
+                    by_name.setdefault(str(name), str(test_id))
+        flaky_set = set(flaky_ids)
+        cited = layer3.get("flaky_test_ids")
+        dropped = [
+            str(entry) for entry in (cited if isinstance(cited, list) else [])
+            if str(entry).strip()
+            and (str(entry) if str(entry) in flaky_set else by_name.get(str(entry))) not in flaky_set
+        ]
+        return {**layer3, "flaky_test_ids": flaky_ids[:10]}, dropped
+
     def _build_context(
         self,
         run_data: dict,
@@ -666,6 +698,28 @@ class SummaryAgent(BaseAgent):
         layer3 = grounded_layers["layer3_evidence_pack"]
         layer4 = grounded_layers["layer4_action_plan"]
         citation_coverage = coverage_summary(grounding_records)
+
+        # Re-audit N29: the evidence-pack prompt asks for "flaky_test_ids", but
+        # the context shows the model each failure by NAME and never by id, so
+        # the model answered with names ("test_beta"). The consistency check
+        # compares them with this run's analysed ids and failed 226 of 490
+        # homelab summaries -- every one of them on names. The list is a fact
+        # the analyses already hold, so it is set from them, as the
+        # deterministic fallback and the assembler already do; a model entry
+        # that does not resolve to a flaky analysed test is dropped, on record.
+        if isinstance(layer3, dict):
+            layer3, flaky_dropped = self._ground_flaky_ids(layer3, analyses)
+            if flaky_dropped and pipeline_run_id:
+                await self.log_decision(
+                    pipeline_run_id,
+                    decision_point="flaky_ids_unresolved",
+                    chosen="dropped",
+                    rationale=(
+                        f"{len(flaky_dropped)} flaky entr(y/ies) named by the model did not "
+                        "resolve to a flaky test analysed in this run"
+                    ),
+                    context={"dropped": flaky_dropped[:5]},
+                )
 
         # ── Executive panel (deterministic, never LLM-generated) ─────────
         from app.services.executive_panel_builder import build_executive_panel  # noqa: PLC0415

@@ -390,10 +390,15 @@ class TestGetLlmAsync:
         mock_module.ChatOllama = mock_chat_ollama
 
         import sys
+        from unittest.mock import patch
+
         sys.modules["langchain_ollama"] = mock_module
         try:
             from app.services.llm_factory import BudgetedLLM, get_llm
-            llm = await get_llm(provider="ollama", model="qwen2.5:7b")
+            # The mocked model has no HTTP clients for the offline pin (re-audit
+            # N8) to rebuild; the pin is tested in test_llm_offline_egress_pinning.
+            with patch("app.services.llm_egress.pin_ollama_clients", side_effect=lambda model: model):
+                llm = await get_llm(provider="ollama", model="qwen2.5:7b")
             assert isinstance(llm, BudgetedLLM), "budget/redaction gate must not be bypassed"
             assert llm._inner is mock_llm
             mock_chat_ollama.assert_called_once()

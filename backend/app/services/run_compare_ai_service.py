@@ -153,8 +153,12 @@ async def generate_and_save_report(
     if deterministic_only:
         report = build_validated_fallback_report(compare_payload)
     else:
+        from app.services.llm_cost_reservation import cost_budget_scope
+
         agent = RunCompareAgent()
-        report = await agent.generate(compare_payload)
+        # Re-audit M13: the report's LLM calls reserve against the cap.
+        with cost_budget_scope(project_id):
+            report = await agent.generate(compare_payload)
     row = await _get_row(
         db,
         project_id=project_id,

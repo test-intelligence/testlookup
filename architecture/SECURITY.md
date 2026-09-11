@@ -230,21 +230,43 @@ Two classes do not simply short-circuit:
   destinations: the global Slack and Teams webhooks and the SMTP relay, which
   an admin configures. A webhook set per user (notification preferences, open
   to any authenticated user) or per team (the Ownership page, QA_LEAD and up)
-  is judged by residency alone, whatever the list says. For mail, the relay
-  is judged, not the recipient: an allow-listed hosted relay delivers wherever
-  the address points, including a user's own email override.
-- **Splunk and OpenShift are not gated yet** (re-audit N19, open). With
-  `SPLUNK_ENABLED` or `OCP_ENABLED` set, the triage agent's Splunk log search
-  (`tools/query_splunk.py`) and the OpenShift pod lookups
-  (`services/ocp_client.py`, called during ingestion and by the triage agent)
-  still call those APIs in offline mode. Both settings default to false, which
-  is why the default-install sentence above holds.
+  is judged by residency alone, whatever the list says. For mail the
+  **recipients** are judged too (re-audit N25): an allow-listed hosted relay
+  would otherwise deliver wherever an address points, including a user's own
+  email override. With `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` set, every
+  recipient must be in it (`corp.example` exactly, `.corp.example` any
+  subdomain), whatever the relay; without it, an on-box relay may deliver
+  (its own MTA policy governs onward routing) and an off-box relay is refused.
+  Enforced at every SMTP send: notifications, digests, attachments, the
+  trends report and the settings page's test email.
 
-The integration-health probes follow the gate of the integration they probe,
-and are stricter where the integration is not gated yet: the Splunk and
-OpenShift probes are skipped offline, as the Jira and GitHub probes are, so
-the 15-minute health task no longer sends the Splunk or OpenShift token
-anywhere in offline mode (code review of H10).
+**Residency is pinned at connect time** (re-audit N8). A residency check that
+resolves a name and a client that resolves it again to connect can get two
+different answers (DNS rebinding, or a TTL that turned over in between).
+Offline, the LLM clients `get_llm()` builds (Ollama chat and embeddings, and
+the OpenAI-wire LM Studio / LocalAI / vLLM clients) and every Slack or Teams
+webhook admitted by residency connect through `services/llm_egress.py`: the
+transport resolves the name itself, requires every answer to be on-box, dials
+the validated address and checks the connected peer, while the `Host` header
+and TLS SNI keep the name. **Accepted, not pinned:** the SMTP relay, which
+`aiosmtplib`/`smtplib` dial by name. The relay is set by an admin, the actor
+C3's threat model already trusts with the offline configuration, so a relay
+name that rebinds is an admin choosing egress; the test
+`test_documented_n8_limit_smtp_dials_the_relay_by_name` pins this behaviour.
+
+**Splunk and OpenShift short-circuit** like Jira and GitHub (re-audit N19,
+closed): with `SPLUNK_ENABLED` or `OCP_ENABLED` set, offline mode still stops
+the triage agent's Splunk log search (`tools/query_splunk.py`, joining the two
+Splunk tools that were already gated), and the OpenShift pod lookups
+(`services/ocp_client.get_pod_metadata`, called during ingestion and, via
+`analyze_pod_events`, by the triage agent). Both are a hard gate, not
+residency: the value of either integration is a query built from failure data
+and a service-account token sent to the configured API.
+
+The integration-health probes follow the gate of the integration they probe:
+the Splunk and OpenShift probes are skipped offline, as the Jira and GitHub
+probes are, so the 15-minute health task sends neither token anywhere in
+offline mode (code review of H10).
 
 **Ceiling semantics (2026-08-03).** The environment variable is a *hard
 ceiling*, not a default. AI settings are also stored in the database

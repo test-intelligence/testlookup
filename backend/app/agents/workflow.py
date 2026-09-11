@@ -1888,7 +1888,12 @@ async def run_offline_pipeline(
             test_run_id=test_run_id,
             build_number=build_number,
         )
-        final_state = await cast(Any, app).ainvoke(initial_state)
+        from app.services.llm_cost_reservation import cost_budget_scope
+
+        # Re-audit M13: every LLM call in this graph reserves against this
+        # project's monthly cap at the invocation boundary.
+        with cost_budget_scope(cast(dict[str, Any], initial_state).get("project_id")):
+            final_state = await cast(Any, app).ainvoke(initial_state)
         final_state = attach_workflow_plan_and_verification(
             cast(dict[str, Any], final_state),
             workflow_type=workflow_type,
@@ -2100,7 +2105,11 @@ async def run_deep_pipeline(
             test_run_id=test_run_id,
             build_number=build_number,
         )
-        final_state = await cast(Any, _deep_app).ainvoke(initial_state)
+        from app.services.llm_cost_reservation import cost_budget_scope
+
+        # Re-audit M13: as the standard graph above.
+        with cost_budget_scope(cast(dict[str, Any], initial_state).get("project_id")):
+            final_state = await cast(Any, _deep_app).ainvoke(initial_state)
         final_state = attach_workflow_plan_and_verification(
             cast(dict[str, Any], final_state),
             workflow_type="deep",

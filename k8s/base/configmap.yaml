@@ -41,6 +41,15 @@ data:
   # subdomains). A shared host admits every tenant on it, so a webhook set per
   # user or per team never uses this list. Empty refuses all.
   OFFLINE_NOTIFICATION_ALLOWED_HOSTS: ""
+  # Recipient domains email may reach while offline (comma-separated;
+  # .corp.example matches subdomains). Required when the allow-list above names
+  # an off-box mail relay; empty lets an on-box relay deliver.
+  OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS: ""
+  # Re-audit M14: trained ML models. The object store (ml-models/ in the
+  # MinIO bucket) is the source of truth; ML_MODEL_DIR is a per-pod cache on
+  # the ml-models emptyDir every app pod mounts, filled by model_store.sync_down.
+  ML_MODEL_DIR: "/var/lib/testlookup/ml-models"
+  ML_MODEL_SYNC_ENABLED: "true"
   # BUG-001: disable ChromaDB anonymous telemetry (posthog phone-home that errors
   # against the installed posthog and floods AI-worker logs; also wrong offline).
   ANONYMIZED_TELEMETRY: "False"

@@ -387,6 +387,11 @@ async def train_classifier() -> dict[str, Any]:
         tmp_meta.write_text(json.dumps(metadata, indent=2, default=str))
         os.replace(tmp_meta, meta_path)
 
+        # Re-audit M14: every other pod gets this version from the store.
+        from app.services.ml import model_store
+
+        await model_store.publish(model_path, meta_path)
+
         logger.info("Model saved: %s (accuracy: %.3f)", model_path, accuracy)
         return {
             "status": "trained",

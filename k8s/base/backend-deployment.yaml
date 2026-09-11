@@ -68,6 +68,10 @@ spec:
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
               mountPath: /var/cache/testlookup/chroma-onnx
+            # Re-audit M14: per-pod cache of trained ML models (ML_MODEL_DIR);
+            # the object store is the source of truth (ml/model_store.py).
+            - name: ml-models
+              mountPath: /var/lib/testlookup/ml-models
           resources:
             requests:
               cpu: 250m
@@ -119,6 +123,11 @@ spec:
         # ChromaDB's all-MiniLM ONNX weights (79 MB) — see the note in
         # worker-deployments.yaml.
         - name: embedder-model-cache
+          emptyDir: {}
+        # Re-audit M14: ML model cache. emptyDir, not a volume shared across
+        # pods -- sharing is through the object store, which every overlay has
+        # (an RWX volume is not: EBS, PD and local-path are ReadWriteOnce).
+        - name: ml-models
           emptyDir: {}
       topologySpreadConstraints:
         - maxSkew: 1

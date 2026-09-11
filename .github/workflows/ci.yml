@@ -607,6 +607,7 @@ jobs:
           tests/integration/test_live_recovery_protocol_postgres_redis.py
           tests/integration/test_compose_queue_delivery_redis.py
           tests/regression/test_notification_history_schema.py
+          tests/integration/test_llm_cost_cap_and_slots_redis_postgres.py
 
       - name: Validate Compose queue delivery evidence
         if: steps.compose-queue-scope.outputs.run == 'true'

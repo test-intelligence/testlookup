@@ -1,0 +1,134 @@
+{
+  "prompts": {
+    "fast_classifier_system": {
+      "cases": [
+        {
+          "case_id": "clear_npe_root_cause",
+          "expected": {"category": "PRODUCT_BUG"},
+          "input": {
+            "error_message": "NullPointerException: Cannot invoke method on null",
+            "stack_trace": "at PaymentService.processRefund(PaymentService.java:142)",
+            "test_name": "test_payment_refund_success"
+          }
+        },
+        {
+          "case_id": "latency_root_cause",
+          "expected": {"category": "INFRASTRUCTURE"},
+          "input": {
+            "error_message": "AssertionError: Expected response time < 200ms, got 5432ms",
+            "stack_trace": "at PerformanceTest.testApiLatency(PerformanceTest.java:88)",
+            "test_name": "test_api_response_time"
+          }
+        },
+        {
+          "case_id": "selector_change_root_cause",
+          "expected": {"category": "AUTOMATION_DEFECT"},
+          "input": {
+            "error_message": "ElementNotFound: #login-button",
+            "stack_trace": "at LoginPage.clickLogin(LoginPage.ts:25)",
+            "test_name": "test_login_flow"
+          }
+        },
+        {
+          "case_id": "missing_fixture_root_cause",
+          "expected": {"category": "TEST_DATA"},
+          "input": {
+            "error_message": "FileNotFoundError: /data/fixtures/users.csv",
+            "stack_trace": "at DataImporter.load(DataImporter.py:12)",
+            "test_name": "test_data_import"
+          }
+        },
+        {
+          "case_id": "insufficient_evidence",
+          "expected": {"category": "UNKNOWN"},
+          "input": {
+            "error_message": "AssertionError: Expected 10, got 8",
+            "stack_trace": "(no trace available)",
+            "test_name": "test_concurrent_writes"
+          }
+        }
+      ],
+      "content_hash": "9d46ffbbed7b",
+      "measured": false,
+      "min_score": 0.8,
+      "notes": "Cases: golden_datasets.get_golden_root_cause_items. Unmeasured until recorded with a real model.",
+      "task_type": "classification"
+    },
+    "regression_watchman_classify": {
+      "cases": [
+        {
+          "case_id": "first_time_failure",
+          "expected": {"classifications": {"cl_001": "new_regression"}},
+          "input": {
+            "clusters_json": "{\"cl_001\": {\"tests\": [\"test_checkout_total\", \"test_checkout_tax\"], \"error\": \"AssertionError: total 99.00 != 100.00\", \"first_failed\": \"this run\"}}",
+            "history_json": "{\"cl_001\": {\"baseline_runs\": 10, \"failures_in_baseline\": 0}}"
+          }
+        },
+        {
+          "case_id": "retry_passing_flake",
+          "expected": {"classifications": {"cl_002": "known_flaky_recurrence"}},
+          "input": {
+            "clusters_json": "{\"cl_002\": {\"tests\": [\"test_dashboard_widgets\"], \"error\": \"TimeoutError: waiting for .widget-grid\", \"first_failed\": \"2026-07-02\"}}",
+            "history_json": "{\"cl_002\": {\"baseline_runs\": 20, \"failures_in_baseline\": 7, \"passed_on_retry\": 6, \"code_changed_in_area\": false}}"
+          }
+        },
+        {
+          "case_id": "database_failover",
+          "expected": {"classifications": {"cl_003": "environmental_anomaly"}},
+          "input": {
+            "clusters_json": "{\"cl_003\": {\"tests\": [\"test_orders_list\", \"test_orders_create\", \"test_users_list\"], \"error\": \"ConnectionRefusedError: postgres-primary:5432\", \"first_failed\": \"this run\"}}",
+            "history_json": "{\"cl_003\": {\"baseline_runs\": 15, \"failures_in_baseline\": 0, \"infra_events\": [\"postgres failover at 10:02 UTC\"]}}"
+          }
+        }
+      ],
+      "content_hash": "2ac1510063fd",
+      "measured": false,
+      "min_score": 0.66,
+      "notes": "Unmeasured until recorded with a real model.",
+      "task_type": "regression_classification"
+    },
+    "release_risk_reasoning": {
+      "cases": [
+        {
+          "case_id": "go_without_failures",
+          "expected": {"has_failures": false, "recommendation": "GO"},
+          "input": {
+            "composite": 12,
+            "failures": "",
+            "recommendation": "GO",
+            "scores_json": "{\"pass_rate\": 5, \"regression\": 8, \"flakiness\": 20, \"coverage\": 15}",
+            "summary": "Pass rate 98.5% (197/200); no new regressions."
+          }
+        },
+        {
+          "case_id": "conditional_go_with_checkout_bugs",
+          "expected": {"has_failures": true, "recommendation": "CONDITIONAL_GO"},
+          "input": {
+            "composite": 38,
+            "failures": "test_checkout_payment_over_999: AssertionError amount rejected; test_cart_total_after_coupon: expected 42.00 got 47.00",
+            "recommendation": "CONDITIONAL_GO",
+            "scores_json": "{\"pass_rate\": 25, \"regression\": 55, \"flakiness\": 10, \"coverage\": 30}",
+            "summary": "Pass rate 91% (182/200); 2 product bugs in checkout."
+          }
+        },
+        {
+          "case_id": "no_go_auth_outage",
+          "expected": {"has_failures": true, "recommendation": "NO_GO"},
+          "input": {
+            "composite": 72,
+            "failures": "14 tests in auth-suite fail with 401 on valid credentials after the token-service change",
+            "recommendation": "NO_GO",
+            "scores_json": "{\"pass_rate\": 70, \"regression\": 90, \"flakiness\": 12, \"coverage\": 40}",
+            "summary": "Pass rate 78% (156/200); auth regressions across every login path."
+          }
+        }
+      ],
+      "content_hash": "a152fb254091",
+      "measured": false,
+      "min_score": 1.0,
+      "notes": "Scored against the prompt's own grounding rules. Unmeasured until recorded with a real model.",
+      "task_type": "release_grounding"
+    }
+  },
+  "schema_version": 1
+}

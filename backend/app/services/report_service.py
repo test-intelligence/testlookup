@@ -191,11 +191,17 @@ def send_email(recipient: str, subject: str, html_body: str) -> None:
     # Re-audit H10 (code review): this path used stdlib smtplib, outside the
     # notification package the gate was added to, so a trends report reached a
     # public relay while every notification to the same relay was refused.
-    from app.services.notification.egress import OfflineEgressBlocked, assert_delivery_allowed
+    from app.services.notification.egress import (
+        OfflineEgressBlocked,
+        assert_delivery_allowed,
+        assert_recipients_allowed,
+    )
 
     try:
         # The deployment's own relay, so the operator's allow-list applies.
         assert_delivery_allowed("SMTP", settings.SMTP_HOST, deployment_wide=True)
+        # Re-audit N25: and the recipient, which the caller typed in.
+        assert_recipients_allowed(settings.SMTP_HOST, recipient)
     except OfflineEgressBlocked as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
