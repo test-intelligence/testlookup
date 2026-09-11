@@ -1854,7 +1854,39 @@ def test_a_swallowed_exit_status_runs_nothing(command: str) -> None:
     "set -x +e\n          python -m pytest a/tests -q",
 ])
 def test_set_plus_e_before_the_runner_runs_nothing(script: str) -> None:
-    assert not _a_runs(_variant(_CMD, f"        run: |\n          {script}\n"))
+    # Something runs after the runner, so its failure is dropped.
+    assert not _a_runs(_variant(_CMD, f"        run: |\n          {script}\n          echo done\n"))
+    # As the LAST command its status is the step's, errexit or not (QA-B45-R3-2).
+    assert _a_runs(_variant(_CMD, f"        run: |\n          {script}\n"))
+
+
+_BARE = "        run: python -m pytest a/tests -q\n"
+_THEN_MORE = "        run: |\n          python -m pytest a/tests -q\n          echo done\n"
+_PIPED = "        run: python -m pytest a/tests -q | tee log\n"
+
+
+@pytest.mark.parametrize("shell,bare,then_more,piped", [
+    ("bash -l {0}", True, False, False),
+    ("bash -e {0}", True, True, False),
+    ("bash -eo pipefail {0}", True, True, True),
+    ("bash --noprofile --norc -eo pipefail {0}", True, True, True),
+    ("/bin/bash -l {0}", True, False, False),
+    ("bash -l -o errexit {0}", True, True, False),
+    ("bash", True, True, True),
+    ("sh", True, True, False),
+    ("pwsh", True, False, False),
+    ("powershell", True, False, False),
+], ids=["bash-l", "bash-e", "bash-eo-pipefail", "bash-full", "abs-bash-l", "bash-o-errexit",
+        "bash", "sh", "pwsh", "powershell"])
+def test_each_shell_is_judged_by_what_it_runs(shell: str, bare: bool, then_more: bool, piped: bool) -> None:
+    """QA-B45-R3-2: `shell: bash -l {0}` (no -e, no pipefail) with pytest as
+    the last line gates -- the old gate counted it, round 2 did not. A runner
+    followed by more commands without errexit, or piped without pipefail,
+    does not."""
+    step = f"        shell: {shell}\n"
+    assert _a_runs(_variant(_CMD, step + _BARE)) is bare
+    assert _a_runs(_variant(_CMD, step + _THEN_MORE)) is then_more
+    assert _a_runs(_variant(_CMD, step + _PIPED)) is piped
 
 
 @pytest.mark.parametrize("mutated", [
