@@ -284,6 +284,24 @@ def test_every_smtp_connection_in_the_app_consults_the_egress_gate():
     )
 
 
+def _aiosmtplib_modules() -> list:
+    """Every module object a sender may reach aiosmtplib through.
+
+    Several suites put a stub in ``sys.modules["aiosmtplib"]`` when they are
+    collected, so the module a sender bound at import and the one a later
+    ``import aiosmtplib`` returns can differ with collection order. Patching
+    only one of them fails on the stub, or lets a send through the other
+    really be attempted.
+    """
+    import sys
+
+    from app.routers import app_settings
+    from app.services.notification import email_service
+
+    candidates = (email_service.aiosmtplib, app_settings.aiosmtplib, sys.modules.get("aiosmtplib"))
+    return list({id(module): module for module in candidates if module is not None}.values())
+
+
 @pytest.fixture
 def smtp_sends(monkeypatch):
     """Every aiosmtplib.send, recorded instead of sent."""
@@ -292,8 +310,15 @@ def smtp_sends(monkeypatch):
     async def _fake_send(*_args, **kwargs):
         sent.append(kwargs)
 
-    monkeypatch.setattr("aiosmtplib.send", _fake_send)
+    for module in _aiosmtplib_modules():
+        monkeypatch.setattr(module, "send", _fake_send, raising=False)
     return sent
+
+
+def _patch_probe_smtp(monkeypatch, fake) -> None:
+    """The SMTP probe's ``aiosmtplib.SMTP``, on every module object it may use."""
+    for module in _aiosmtplib_modules():
+        monkeypatch.setattr(module, "SMTP", fake, raising=False)
 
 
 @pytest.mark.asyncio
@@ -436,7 +461,7 @@ async def test_the_smtp_probe_does_not_log_in_to_a_public_relay_offline(offline,
     monkeypatch.setattr(settings, "SMTP_ENABLED", True)
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.gmail.com")
     opened: list[dict] = []
-    monkeypatch.setattr("aiosmtplib.SMTP", lambda *a, **k: opened.append(k))
+    _patch_probe_smtp(monkeypatch, lambda *a, **k: opened.append(k))
 
     result = await probes.probe_smtp()
     assert result.status == "skipped"
@@ -528,9 +553,25 @@ def test_an_allow_listed_public_host_is_delivered_to_offline(offline, resolves, 
     """The escape hatch the review asked for: keep the LLM ceiling, keep Slack."""
     resolves({})
     monkeypatch.setattr(settings, "OFFLINE_NOTIFICATION_ALLOWED_HOSTS", "hooks.slack.com")
-    assert assert_delivery_allowed("Slack", PUBLIC_WEBHOOK) is None
+    assert assert_delivery_allowed("Slack", PUBLIC_WEBHOOK, deployment_wide=True) is None
     with pytest.raises(OfflineEgressBlocked):
-        assert_delivery_allowed("SMTP", "smtp.gmail.com")
+        assert_delivery_allowed("SMTP", "smtp.gmail.com", deployment_wide=True)
+
+
+def test_the_allow_list_covers_only_the_deployments_own_destinations(offline, resolves, monkeypatch):
+    """Second review of H10: Slack and Teams put every workspace on the same
+    hosts, so an allow-listed hooks.slack.com admits a webhook to any
+    workspace. A destination the operator did not configure gets residency
+    alone, and that stricter rule is the default."""
+    resolves({})
+    monkeypatch.setattr(settings, "OFFLINE_NOTIFICATION_ALLOWED_HOSTS", "hooks.slack.com")
+    with pytest.raises(OfflineEgressBlocked) as exc:
+        assert_delivery_allowed("Slack", PUBLIC_WEBHOOK)
+    assert "OFFLINE_NOTIFICATION_ALLOWED_HOSTS" in str(exc.value), (
+        "the refusal must say why the operator's exception did not apply"
+    )
+    resolves({"mattermost.internal": True})
+    assert assert_delivery_allowed("Slack", LAN_WEBHOOK) is None, "residency still applies"
 
 
 @pytest.mark.parametrize(
@@ -551,10 +592,10 @@ def test_a_leading_dot_matches_subdomains_on_a_dot_boundary(
     resolves({})
     monkeypatch.setattr(settings, "OFFLINE_NOTIFICATION_ALLOWED_HOSTS", " .Example.com , other.org")
     if allowed:
-        assert assert_delivery_allowed("SMTP", host) is None
+        assert assert_delivery_allowed("SMTP", host, deployment_wide=True) is None
     else:
         with pytest.raises(OfflineEgressBlocked):
-            assert_delivery_allowed("SMTP", host)
+            assert_delivery_allowed("SMTP", host, deployment_wide=True)
 
 
 @pytest.mark.asyncio
@@ -659,3 +700,386 @@ def test_the_escape_hatch_is_documented_where_operators_look():
     for doc in ("THREAT_MODEL.md", ".env.example", "k8s/base/configmap.yaml"):
         text = (root / doc).read_text(encoding="utf-8")
         assert "OFFLINE_NOTIFICATION_ALLOWED_HOSTS" in text, f"{doc} does not name the setting"
+
+
+# ── Second review of H10: the allow-list is the deployment's, not a user's ──
+#
+# The list works per host, and Slack and Teams put every workspace on the same
+# hosts. With the documented example allow-listed, any authenticated user could
+# set a personal webhook (POST/PUT /api/v1/notifications/preferences) to a
+# workspace of their own and receive failure text there. The list now covers
+# the deployment's own destinations only: the global webhooks and the relay.
+
+ORG_SLACK = "https://hooks.slack.com/services/TORG/BORG/org-alerts"
+OWN_SLACK = "https://hooks.slack.com/services/TMINE/BMINE/my-own-workspace"
+ORG_TEAMS = "https://contoso.webhook.office.com/webhookb2/org-alerts"
+OWN_TEAMS = "https://mine.webhook.office.com/webhookb2/my-own-tenant"
+_WEBHOOKS = {"slack": (ORG_SLACK, OWN_SLACK), "teams": (ORG_TEAMS, OWN_TEAMS)}
+_HOSTED_RELAY = {
+    "enabled": True,
+    "host": "smtp.sendgrid.net",
+    "port": 587,
+    "from_address": "noreply@example.com",
+}
+
+
+class _Response:
+    def raise_for_status(self):
+        return None
+
+
+class _PostRecorder:
+    """The public HTTP client the webhook senders use, recording each post."""
+
+    def __init__(self):
+        self.urls: list[str] = []
+
+    async def post(self, url, **_kwargs):
+        self.urls.append(url)
+        return _Response()
+
+
+@pytest.fixture
+def posted(monkeypatch):
+    from app.core import http_client
+
+    recorder = _PostRecorder()
+    monkeypatch.setattr(http_client, "get_public_http_client", lambda: recorder)
+    return recorder
+
+
+@pytest.fixture
+def docs_example_allow_listed(offline, resolves, monkeypatch):
+    """The CHANGELOG's own example; nothing resolves on-box."""
+    resolves({})
+    monkeypatch.setattr(
+        settings, "OFFLINE_NOTIFICATION_ALLOWED_HOSTS", "hooks.slack.com,.webhook.office.com"
+    )
+
+
+@pytest.fixture
+def relay_allow_listed(offline, resolves, monkeypatch):
+    resolves({})
+    monkeypatch.setattr(settings, "OFFLINE_NOTIFICATION_ALLOWED_HOSTS", "smtp.sendgrid.net")
+
+
+def _preference(channel: str, own_webhook: str | None):
+    from types import SimpleNamespace
+
+    from app.services.notification import manager
+
+    return SimpleNamespace(
+        channel=manager.NotificationChannel(channel),
+        email_override=None,
+        slack_webhook_url=own_webhook if channel == "slack" else None,
+        teams_webhook_url=own_webhook if channel == "teams" else None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["slack", "teams"])
+async def test_the_global_webhook_is_delivered_and_a_personal_one_refused(
+    docs_example_allow_listed, posted, channel
+):
+    from app.services.notification import manager
+
+    org_hook, own_hook = _WEBHOOKS[channel]
+    global_webhooks = {f"{channel}_enabled": True, f"{channel}_webhook_url": org_hook}
+    event = manager.NotificationEventType.RUN_FAILED
+
+    delivered = await manager._dispatch_to_channel(
+        _preference(channel, None), None, "t", "b", event, {}, global_webhooks=global_webhooks
+    )
+    assert delivered == ("sent", None)
+    assert posted.urls == [org_hook]
+
+    status, error = await manager._dispatch_to_channel(
+        _preference(channel, own_hook), None, "t", "b", event, {}, global_webhooks=global_webhooks
+    )
+    assert status == "failed"
+    assert "OFFLINE_NOTIFICATION_ALLOWED_HOSTS" in error, error
+    assert posted.urls == [org_hook], "the personal webhook was posted to"
+
+
+class _Answer:
+    """One query result, in whichever shape the dispatcher reads it."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def all(self):
+        return self._value
+
+    def first(self):
+        return self._value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+    def scalars(self):
+        return self
+
+
+class _ScriptedSession:
+    """Every AsyncSessionLocal() the digest task opens; answers in order."""
+
+    def __init__(self, answers: list, added: list):
+        self._answers = answers
+        self._added = added
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+    async def execute(self, _statement):
+        return _Answer(self._answers.pop(0))
+
+    async def commit(self):
+        return None
+
+    def add(self, row):
+        self._added.append(row)
+
+
+@pytest.mark.parametrize("channel", ["slack", "teams"])
+@pytest.mark.parametrize("own_webhook", [True, False], ids=["personal", "global"])
+def test_a_digest_uses_the_allow_list_for_the_global_webhook_only(
+    docs_example_allow_listed, posted, monkeypatch, channel, own_webhook
+):
+    """The scheduled digest takes the subscriber's own webhook first, then the
+    global one: the same two kinds of destination, so the same rule."""
+    import uuid
+    from types import SimpleNamespace
+
+    import app.db.postgres as postgres
+    from app.services import digest_content_service, integration_config_service
+    from app.worker import tasks
+
+    org_hook, own_hook = _WEBHOOKS[channel]
+    user_id, project_id = uuid.uuid4(), uuid.uuid4()
+    prefs = [
+        SimpleNamespace(
+            slack_webhook_url=own_hook if channel == "slack" else None,
+            teams_webhook_url=own_hook if channel == "teams" else None,
+        )
+    ]
+    added: list = []
+    answers = [
+        [(uuid.uuid4(), "DAILY", None, True, False)],  # the due subscription
+        (user_id, project_id, channel),  # the claim
+        SimpleNamespace(id=user_id, role="QA_ENGINEER", email="qa@example.com"),
+        prefs if own_webhook else [],
+    ]
+    monkeypatch.setattr(postgres, "AsyncSessionLocal", lambda: _ScriptedSession(answers, added))
+
+    async def _digest(*_args, **_kwargs):
+        return {"project_name": "Acme", "is_zero_change": False}
+
+    async def _global(_db):
+        return {f"{channel}_enabled": True, f"{channel}_webhook_url": org_hook}
+
+    monkeypatch.setattr(digest_content_service, "generate_digest", _digest)
+    monkeypatch.setattr(digest_content_service, "render_digest_text", lambda _digest: "digest")
+    monkeypatch.setattr(
+        digest_content_service, "digest_text_with_attachment_note", lambda text, _flag: text
+    )
+    monkeypatch.setattr(integration_config_service, "resolve_global_notification_webhooks", _global)
+
+    tasks.dispatch_scheduled_digests.run()
+
+    assert answers == [], f"the dispatcher stopped early; unanswered: {answers}"
+    [log] = added
+    if own_webhook:
+        assert posted.urls == [], "the digest went to the subscriber's own workspace"
+        assert log.status == "failed"
+        assert "OFFLINE_NOTIFICATION_ALLOWED_HOSTS" in log.error_detail
+    else:
+        assert log.status == "sent", log.error_detail
+        assert posted.urls == [org_hook]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["slack", "teams"])
+async def test_a_team_channel_is_not_covered_by_the_allow_list(
+    docs_example_allow_listed, posted, channel
+):
+    """A QA lead sets a team's webhook per project on the Ownership page. That
+    is not the operator's decision either, so it gets residency alone."""
+    from app.services import notification_routing as routing
+
+    _org_hook, team_hook = _WEBHOOKS[channel]
+    status, error = await routing.send_to_team_channel(
+        routing.TeamChannelInfo(team_name="Identity", channel_type=channel, target=team_hook),
+        "t", "b", "test.newly_failing", {},
+    )
+    assert status == "failed"
+    assert "OFFLINE_NOTIFICATION_ALLOWED_HOSTS" in (error or "")
+    assert posted.urls == []
+
+
+@pytest.mark.asyncio
+async def test_startup_does_not_warn_about_an_allow_listed_global_webhook(
+    docs_example_allow_listed, monkeypatch
+):
+    from app.services.notification import egress
+
+    async def _configured():
+        return [("Slack", ORG_SLACK), ("Teams", ORG_TEAMS)]
+
+    monkeypatch.setattr(egress, "_configured_destinations", _configured)
+    assert await egress.offline_destination_warnings() == []
+
+
+# The relay is the deployment's own. Narrowing the list must not take the escape
+# hatch away from mail: one test per SMTP entry point.
+
+
+@pytest.mark.asyncio
+async def test_an_allow_listed_relay_still_takes_email(relay_allow_listed, smtp_sends):
+    from app.services.notification import email_service
+
+    await email_service.send_html_email(
+        "qa@example.com", "Digest", "<p>b</p>", smtp_cfg=dict(_HOSTED_RELAY)
+    )
+    assert [call["hostname"] for call in smtp_sends] == ["smtp.sendgrid.net"]
+
+
+@pytest.mark.asyncio
+async def test_an_allow_listed_relay_still_takes_the_smtp_test_email(
+    relay_allow_listed, smtp_sends, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from app.routers import app_settings
+
+    async def _stored(_db):
+        return dict(_HOSTED_RELAY)
+
+    monkeypatch.setattr(app_settings, "_load_smtp_row", _stored)
+    result = await app_settings.test_smtp_config(
+        current_user=SimpleNamespace(id=1, email="qa@example.com"), db=None
+    )
+    assert result.success is True, result.message
+    assert [call["hostname"] for call in smtp_sends] == ["smtp.sendgrid.net"]
+
+
+def test_an_allow_listed_relay_still_takes_the_report_email(relay_allow_listed, monkeypatch):
+    from app.services import report_service
+
+    monkeypatch.setattr(settings, "SMTP_ENABLED", True)
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.sendgrid.net")
+    opened: list[str] = []
+
+    class _Server:
+        def __init__(self, host, *_args, **_kwargs):
+            opened.append(host)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def starttls(self, **_kwargs):
+            return None
+
+        def login(self, *_args):
+            return None
+
+        def sendmail(self, *_args):
+            return None
+
+    monkeypatch.setattr(report_service.smtplib, "SMTP", _Server)
+    report_service.send_email("qa@example.com", "Trends", "<p>x</p>")
+    assert opened == ["smtp.sendgrid.net"]
+
+
+@pytest.mark.asyncio
+async def test_an_allow_listed_relay_is_still_probed(relay_allow_listed, monkeypatch):
+    from app.services import integration_probe_service as probes
+
+    monkeypatch.setattr(settings, "SMTP_ENABLED", True)
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.sendgrid.net")
+    connected: list[str] = []
+
+    class _Smtp:
+        def __init__(self, hostname, **_kwargs):
+            connected.append(hostname)
+
+        async def connect(self):
+            return None
+
+        async def login(self, *_args):
+            return None
+
+        async def quit(self):
+            return None
+
+    _patch_probe_smtp(monkeypatch, _Smtp)
+    result = await probes.probe_smtp()
+    assert connected == ["smtp.sendgrid.net"]
+    assert result.status == "healthy", result.message
+
+
+def _callee(call: ast.Call) -> str | None:
+    return getattr(call.func, "id", None) or getattr(call.func, "attr", None)
+
+
+def _webhook_send_sites() -> list[tuple[str, ast.Call, ast.AST]]:
+    """Every call to the Slack or Teams sender in app/, with its enclosing function."""
+    sites = []
+    for path in sorted(APP_DIR.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "send_notification"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in {"slack_service", "teams_service"}
+            ):
+                continue
+            scope = parents.get(node)
+            while scope is not None and not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                scope = parents.get(scope)
+            sites.append((f"{path.relative_to(APP_DIR).as_posix()}:{node.lineno}", node, scope))
+    return sites
+
+
+def test_every_slack_and_teams_send_says_whose_webhook_it_is():
+    """By the AST, per call site. The senders default to the stricter rule, so
+    a caller that says nothing is safe; this makes every caller decide, and
+    admits True only from preference_webhook, which returns it for the
+    admin-configured global webhook alone."""
+    sites = _webhook_send_sites()
+    modules = {site.split(":")[0] for site, _call, _scope in sites}
+    assert {"services/notification/manager.py", "services/notification_routing.py", "worker/tasks.py"} <= modules, (
+        f"the scan no longer finds the known senders: {sorted(modules)}"
+    )
+    offenders = []
+    for site, call, scope in sites:
+        stated = {keyword.arg: keyword.value for keyword in call.keywords}.get("deployment_wide")
+        from_helper = {
+            target.elts[1].id
+            for node in ast.walk(scope)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and _callee(node.value) == "preference_webhook"
+            for target in node.targets
+            if isinstance(target, ast.Tuple)
+            and len(target.elts) == 2
+            and isinstance(target.elts[1], ast.Name)
+        } if scope is not None else set()
+        if isinstance(stated, ast.Constant) and stated.value is False:
+            continue
+        if isinstance(stated, ast.Name) and stated.id in from_helper:
+            continue
+        offenders.append(site)
+    assert not offenders, (
+        "these Slack/Teams sends do not say whether their webhook is the "
+        "deployment's own (deployment_wide=False, or the flag preference_webhook "
+        "returns): " + ", ".join(offenders)
+    )

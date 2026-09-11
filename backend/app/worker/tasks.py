@@ -3942,18 +3942,20 @@ def dispatch_scheduled_digests(self):
                             .order_by(NotificationPreference.project_id.desc().nullslast())
                         )
                         prefs = pref_result.scalars().all()
-                        webhook_url = None
-                        for p in prefs:
-                            webhook_url = (
-                                p.slack_webhook_url if channel == "slack"
-                                else p.teams_webhook_url
-                            )
-                            if webhook_url:
-                                break
-                        if not webhook_url:
-                            global_webhooks = await resolve_global_notification_webhooks(db)
-                            if global_webhooks[f"{channel}_enabled"]:
-                                webhook_url = global_webhooks[f"{channel}_webhook_url"]
+                        from app.services.notification.manager import preference_webhook
+
+                        field = f"{channel}_webhook_url"
+                        override = next(
+                            (getattr(p, field) for p in prefs if getattr(p, field)), None
+                        )
+                        # A user's own webhook is never deployment-wide, so the
+                        # operator's allow-list does not cover it; only the
+                        # global webhook is (code review of H10).
+                        webhook_url, deployment_wide = preference_webhook(
+                            channel,
+                            override,
+                            None if override else await resolve_global_notification_webhooks(db),
+                        )
                         if not webhook_url:
                             status = "failed"
                             error_detail = f"No {channel} webhook URL configured"
@@ -3978,6 +3980,7 @@ def dispatch_scheduled_digests(self):
                                         body=digest_body,
                                         event_type="digest_delivery",
                                         metadata={},
+                                        deployment_wide=deployment_wide,
                                     )
                                 else:
                                     from app.services.notification import teams_service
@@ -3987,6 +3990,7 @@ def dispatch_scheduled_digests(self):
                                         body=digest_body,
                                         event_type="digest_delivery",
                                         metadata={},
+                                        deployment_wide=deployment_wide,
                                     )
                             except Exception as e:
                                 status = "failed"

@@ -93,6 +93,25 @@ def _enabled_global_webhook(channel: str, resolved: Optional[dict]) -> Optional[
     return settings.TEAMS_WEBHOOK_URL if settings.TEAMS_ENABLED else None
 
 
+def preference_webhook(
+    channel: str, override: Optional[str], resolved: Optional[dict]
+) -> tuple[Optional[str], bool]:
+    """The webhook a subscriber's delivery goes to, and whether it is the deployment's own.
+
+    ``override`` is the subscriber's own webhook, which ``POST/PUT
+    /api/v1/notifications/preferences`` accepts from any authenticated user.
+    It wins when set, and it is never deployment-wide. The operator's
+    ``OFFLINE_NOTIFICATION_ALLOWED_HOSTS`` names hosts, and Slack and Teams
+    put every workspace on the same hosts, so a user could otherwise receive
+    notification content in a workspace of their own (code review of H10).
+    Without an override the delivery falls back to the global webhook an
+    admin configured, which is deployment-wide.
+    """
+    if override:
+        return override, False
+    return _enabled_global_webhook(channel, resolved), True
+
+
 def _notification_channel_value(channel: NotificationChannel | str) -> str:
     """Normalize ORM enum values across PostgreSQL driver configurations."""
     if isinstance(channel, NotificationChannel):
@@ -147,7 +166,9 @@ async def _dispatch_to_channel(
             )
 
         elif pref.channel == NotificationChannel.SLACK:
-            webhook_url = pref.slack_webhook_url or _enabled_global_webhook("slack", global_webhooks)
+            webhook_url, deployment_wide = preference_webhook(
+                "slack", pref.slack_webhook_url, global_webhooks
+            )
             if not webhook_url:
                 return "failed", "No Slack webhook URL configured"
             await slack_service.send_notification(
@@ -157,10 +178,13 @@ async def _dispatch_to_channel(
                 event_type=event_type.value,
                 metadata=metadata,
                 delivery_id=delivery_id,
+                deployment_wide=deployment_wide,
             )
 
         elif pref.channel == NotificationChannel.TEAMS:
-            webhook_url = pref.teams_webhook_url or _enabled_global_webhook("teams", global_webhooks)
+            webhook_url, deployment_wide = preference_webhook(
+                "teams", pref.teams_webhook_url, global_webhooks
+            )
             if not webhook_url:
                 return "failed", "No Teams webhook URL configured"
             await teams_service.send_notification(
@@ -170,6 +194,7 @@ async def _dispatch_to_channel(
                 event_type=event_type.value,
                 metadata=metadata,
                 delivery_id=delivery_id,
+                deployment_wide=deployment_wide,
             )
 
         return "sent", None
@@ -722,6 +747,9 @@ async def relay_pending_notification_deliveries(
                     delivery_id=row.delivery_key,
                 )
             elif channel == NotificationChannel.SLACK:
+                # A team route's webhook was set per project by a QA lead, and
+                # an explicit route's target per subscription. Neither is the
+                # deployment's own, so the allow-list does not cover them.
                 await slack_service.send_notification(
                     webhook_url=target,
                     title=row.title,
@@ -729,6 +757,7 @@ async def relay_pending_notification_deliveries(
                     event_type=event.value,
                     metadata=metadata,
                     delivery_id=row.delivery_key,
+                    deployment_wide=False,
                 )
             elif channel == NotificationChannel.TEAMS:
                 await teams_service.send_notification(
@@ -738,6 +767,7 @@ async def relay_pending_notification_deliveries(
                     event_type=event.value,
                     metadata=metadata,
                     delivery_id=row.delivery_key,
+                    deployment_wide=False,
                 )
             return "sent", None
         except Exception as exc:  # noqa: BLE001

@@ -119,10 +119,18 @@ async def send_notification(
     event_type: str,
     metadata: dict | None = None,
     delivery_id: str | None = None,
+    *,
+    deployment_wide: bool = False,
 ) -> None:
     """
     POST a Block Kit message to a Slack incoming webhook URL.
     Raises httpx.HTTPStatusError on non-2xx response.
+
+    ``deployment_wide`` is True only for the deployment's own webhook, the
+    global Slack setting an admin configures. Only that one may use
+    ``OFFLINE_NOTIFICATION_ALLOWED_HOSTS``: every Slack workspace shares
+    hooks.slack.com, so a user's or a team's webhook is judged by residency
+    alone (code review of H10).
     """
     from app.services.notification.egress import assert_delivery_allowed_async
 
@@ -130,7 +138,7 @@ async def send_notification(
     # this path posted notification content to a caller-configured URL
     # without checking it. Residency, not channel name: a self-hosted
     # webhook on the LAN is still a legitimate offline destination.
-    await assert_delivery_allowed_async("Slack", webhook_url)
+    await assert_delivery_allowed_async("Slack", webhook_url, deployment_wide=deployment_wide)
 
     meta = metadata or {}
     colour = _EVENT_COLOUR.get(event_type, "#3b82f6")

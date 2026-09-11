@@ -194,7 +194,8 @@ def send_email(recipient: str, subject: str, html_body: str) -> None:
     from app.services.notification.egress import OfflineEgressBlocked, assert_delivery_allowed
 
     try:
-        assert_delivery_allowed("SMTP", settings.SMTP_HOST)
+        # The deployment's own relay, so the operator's allow-list applies.
+        assert_delivery_allowed("SMTP", settings.SMTP_HOST, deployment_wide=True)
     except OfflineEgressBlocked as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

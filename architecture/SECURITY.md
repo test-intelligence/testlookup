@@ -223,7 +223,16 @@ Two classes do not simply short-circuit:
 - **Notification channels** are judged by **residency** rather than switched
   off: a Slack-compatible webhook or mail relay on the LAN still works
   offline, a public one is refused, and `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` is
-  the operator's explicit, per-host exception (re-audit H10).
+  the operator's explicit, per-host exception (re-audit H10). Because the
+  exception is per host, and Slack and Teams put every workspace on the same
+  hosts, allow-listing `hooks.slack.com` admits every Slack workspace, not
+  only the operator's. It therefore covers only the deployment's own
+  destinations: the global Slack and Teams webhooks and the SMTP relay, which
+  an admin configures. A webhook set per user (notification preferences, open
+  to any authenticated user) or per team (the Ownership page, QA_LEAD and up)
+  is judged by residency alone, whatever the list says. For mail, the relay
+  is judged, not the recipient: an allow-listed hosted relay delivers wherever
+  the address points, including a user's own email override.
 - **Splunk and OpenShift are not gated yet** (re-audit N19, open). With
   `SPLUNK_ENABLED` or `OCP_ENABLED` set, the triage agent's Splunk log search
   (`tools/query_splunk.py`) and the OpenShift pod lookups

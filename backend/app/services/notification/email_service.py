@@ -211,10 +211,13 @@ async def _assert_smtp_allowed(host: str) -> None:
     Residency, not channel: an internal relay is a legitimate offline
     destination and stays allowed; ``smtp.gmail.com`` is egress however
     ordinary "email" sounds. The DNS lookup runs off the event loop.
+
+    The relay is the deployment's own -- the SMTP settings an admin stores, or
+    the environment -- so ``OFFLINE_NOTIFICATION_ALLOWED_HOSTS`` applies to it.
     """
     from app.services.notification.egress import assert_delivery_allowed_async
 
-    await assert_delivery_allowed_async("SMTP", host)
+    await assert_delivery_allowed_async("SMTP", host, deployment_wide=True)
 
 
 async def send_notification(

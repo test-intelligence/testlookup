@@ -51,7 +51,9 @@ async def _offline_refusal(provider: str, destination: str | None) -> ProbeResul
     )
 
     try:
-        await assert_delivery_allowed_async(provider, destination)
+        # A probe checks the deployment's own configuration only (the SMTP
+        # relay, Slack's API with the bot token), so the allow-list applies.
+        await assert_delivery_allowed_async(provider, destination, deployment_wide=True)
     except OfflineEgressBlocked as exc:
         return ProbeResult(provider.lower(), "skipped", message=str(exc)[:300])
     return None

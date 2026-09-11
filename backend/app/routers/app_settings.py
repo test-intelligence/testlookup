@@ -209,7 +209,8 @@ async def test_smtp_config(
     )
 
     try:
-        await assert_delivery_allowed_async("SMTP", host)
+        # The stored relay is the deployment's own: the allow-list applies.
+        await assert_delivery_allowed_async("SMTP", host, deployment_wide=True)
     except OfflineEgressBlocked as exc:
         return SmtpTestResult(success=False, message=str(exc))
 

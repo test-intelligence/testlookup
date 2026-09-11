@@ -32,6 +32,14 @@ One explicit exception (code review of H10): ``OFFLINE_NOTIFICATION_ALLOWED_HOST
 names hosts an operator has decided may receive notifications although they
 are off-box -- a hosted Slack workspace, say -- so keeping the LLM ceiling does
 not mean giving up alerting. Anything not named there still has to be on-box.
+
+The exception covers only the deployment's own destinations: the global Slack
+and Teams webhooks and the SMTP relay, which an admin configures (second code
+review of H10). Slack and Teams put every workspace on the same few hosts, so
+naming ``hooks.slack.com`` admits every Slack workspace, not only the
+operator's. A webhook a user or a team lead typed in is therefore judged by
+residency alone; otherwise any user could point a personal webhook at a
+workspace of their own and receive failure text there.
 """
 from __future__ import annotations
 
@@ -60,12 +68,19 @@ def _host_of(destination: str) -> str | None:
     return text.rsplit(":", 1)[0] if text.count(":") == 1 else text
 
 
-def assert_delivery_allowed(channel: str, destination: str | None) -> None:
+def assert_delivery_allowed(
+    channel: str, destination: str | None, *, deployment_wide: bool = False
+) -> None:
     """Refuse an off-box notification while ``AI_OFFLINE_MODE`` is set.
 
     Fails CLOSED: a destination that cannot be resolved, or that resolves to
     even one routable address, is treated as remote. Under an offline ceiling
     "we could not prove this stays on-box" must deny.
+
+    ``deployment_wide=True`` marks the deployment's own destination (a global
+    webhook, the SMTP relay), the only kind ``OFFLINE_NOTIFICATION_ALLOWED_HOSTS``
+    can admit. The default is the stricter rule, so a sender that does not say
+    is judged by residency alone.
     """
     if not settings.AI_OFFLINE_MODE:
         return
@@ -78,20 +93,31 @@ def assert_delivery_allowed(channel: str, destination: str | None) -> None:
             "refusing to deliver"
         )
 
-    if _allow_listed(host):
+    listed = _allow_listed(host)
+    if listed and deployment_wide:
         return
 
     if host_is_local(host):
         return
 
     logger.warning(
-        "offline_egress_blocked channel=%s host=%s", channel, host
+        "offline_egress_blocked channel=%s host=%s deployment_wide=%s",
+        channel, host, deployment_wide,
     )
-    raise OfflineEgressBlocked(
+    message = (
         f"AI_OFFLINE_MODE=true but the {channel} destination '{host}' is not a "
         "loopback or private address — refusing to send notification content "
         "off-box"
     )
+    if listed:
+        # Say why the operator's exception did not apply; a refusal of a host
+        # they named would otherwise read as a bug.
+        message += (
+            f"; OFFLINE_NOTIFICATION_ALLOWED_HOSTS names '{host}', but it covers "
+            "only the deployment's own webhooks and mail relay, not a webhook "
+            "set per user or per team"
+        )
+    raise OfflineEgressBlocked(message)
 
 
 def _allow_listed(host: str) -> bool:
@@ -99,7 +125,8 @@ def _allow_listed(host: str) -> bool:
 
     ``OFFLINE_NOTIFICATION_ALLOWED_HOSTS`` is comma-separated. ``hooks.slack.com``
     matches that host only; ``.example.com`` matches any subdomain of
-    example.com, on a dot boundary, and not example.com itself.
+    example.com, on a dot boundary, and not example.com itself. Consulted for a
+    deployment-wide destination only (see :func:`assert_delivery_allowed`).
     """
     entries = [
         entry.strip().lower()
@@ -116,7 +143,9 @@ def _allow_listed(host: str) -> bool:
     return False
 
 
-async def assert_delivery_allowed_async(channel: str, destination: str | None) -> None:
+async def assert_delivery_allowed_async(
+    channel: str, destination: str | None, *, deployment_wide: bool = False
+) -> None:
     """:func:`assert_delivery_allowed`, with the DNS lookup off the event loop.
 
     The residency check resolves the host with a blocking ``getaddrinfo``, and
@@ -126,7 +155,9 @@ async def assert_delivery_allowed_async(channel: str, destination: str | None) -
     """
     if not settings.AI_OFFLINE_MODE:
         return
-    await asyncio.to_thread(assert_delivery_allowed, channel, destination)
+    await asyncio.to_thread(
+        assert_delivery_allowed, channel, destination, deployment_wide=deployment_wide
+    )
 
 
 async def _configured_destinations() -> list[tuple[str, str | None]]:
@@ -173,7 +204,8 @@ async def offline_destination_warnings() -> list[str]:
     warnings: list[str] = []
     for channel, destination in await _configured_destinations():
         try:
-            await assert_delivery_allowed_async(channel, destination)
+            # Every destination listed is the deployment's own.
+            await assert_delivery_allowed_async(channel, destination, deployment_wide=True)
         except OfflineEgressBlocked as exc:
             warnings.append(str(exc))
     return warnings

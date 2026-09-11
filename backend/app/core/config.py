@@ -413,9 +413,11 @@ class Settings(BaseSettings):
     AI_LLM_PROVIDER_ALLOWLIST: str = ""
     # Optional comma-separated HTTP(S) origins for provider endpoint overrides.
     AI_LLM_ALLOWED_BASE_URLS: str = ""
-    # Off-box hosts that may still receive Slack, Teams and SMTP notifications
-    # while AI_OFFLINE_MODE is on: comma-separated, and ".example.com" matches
-    # subdomains. Empty: every off-box notification destination is refused.
+    # Off-box hosts the deployment's own Slack and Teams webhooks and SMTP
+    # relay may still reach while AI_OFFLINE_MODE is on: comma-separated host
+    # names, and ".example.com" matches subdomains. A shared host admits every
+    # tenant on it (any Slack workspace), so a webhook set per user or per team
+    # never uses this list. Empty: every off-box destination is refused.
     OFFLINE_NOTIFICATION_ALLOWED_HOSTS: str = ""
     AGENT_MEMORY_RETENTION_DAYS: int = 365
     AI_CONFIDENCE_THRESHOLD: int = 80
