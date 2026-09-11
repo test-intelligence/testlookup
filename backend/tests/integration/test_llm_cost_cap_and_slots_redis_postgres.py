@@ -153,6 +153,54 @@ async def test_a_lost_counter_heals_from_the_durable_meter(capped_project):
     assert 0 < await redis.ttl(key)
 
 
+async def test_calls_that_fail_after_reaching_the_provider_cannot_pass_the_cap(capped_project, monkeypatch):
+    """QA-B45-A1 repro: each call's provider work is billed, then the read
+    times out. Settled at $0, all ten were admitted and the month closed
+    $0.30 over. Kept at the estimate, only what fits is admitted, and the
+    durable meter records every kept charge."""
+    import httpx
+    from sqlalchemy import select
+
+    from app.core.config import settings
+    from app.db import postgres as app_postgres_module
+    from app.models.postgres import ProjectLlmUsage
+    from app.services import llm_cost_reservation as cost
+    from app.services.llm_factory import BudgetedLLM
+
+    project_id, key, redis = capped_project
+    monkeypatch.setattr(settings, "LLM_CLUSTER_MAX_CONCURRENT", 0)
+    monkeypatch.setattr(cost, "estimate_input_tokens", lambda args, kwargs: INPUT_TOKENS)
+    billed: list[float] = []
+
+    class TimesOutAfterGenerating:
+        max_tokens = 1
+
+        async def ainvoke(self, *args, **kwargs):
+            billed.append(cost.price(PROVIDER, MODEL, INPUT_TOKENS, 1))
+            raise httpx.ReadTimeout("provider generated, then the read timed out")
+
+    llm = BudgetedLLM(TimesOutAfterGenerating(), provider=PROVIDER, model=MODEL)
+    refused = 0
+    with cost.cost_budget_scope(project_id):
+        for _ in range(10):
+            try:
+                await llm.ainvoke("prompt")
+            except httpx.ReadTimeout:
+                pass
+            except cost.CostCapExceeded:
+                refused += 1
+    assert len(billed) == 3 and refused == 7
+    counter = float(await redis.get(key))
+    assert counter == pytest.approx(COMMITTED_USD + sum(billed))
+    assert counter <= CAP_USD
+    async with app_postgres_module.AsyncSessionLocal() as db:
+        usage = (await db.execute(
+            select(ProjectLlmUsage).where(ProjectLlmUsage.project_id == project_id)
+        )).scalar_one()
+    assert float(usage.total_cost_usd) == pytest.approx(COMMITTED_USD + sum(billed))
+    assert usage.total_llm_calls == 3
+
+
 # ── M12 ─────────────────────────────────────────────────────────────────────
 
 

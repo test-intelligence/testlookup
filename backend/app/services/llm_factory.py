@@ -108,12 +108,14 @@ class BudgetedLLM:
         return clean_args, clean_kwargs
 
     @staticmethod
-    def _record_usage(result) -> None:
+    def _record_usage(result) -> bool:
+        """Add the call to the active stage's budget context. Returns whether
+        there was one: a stage meters (and bills) the calls it observed."""
         from app.services.pipeline_budget_service import get_pipeline_budget_context
 
         context = get_pipeline_budget_context()
         if context is None:
-            return
+            return False
         context["observed_llm_calls"] = int(context.get("observed_llm_calls") or 0) + 1
         usage = getattr(result, "usage_metadata", None) or {}
         if not isinstance(usage, dict):
@@ -129,6 +131,7 @@ class BudgetedLLM:
             context["observed_input_tokens"] = int(context.get("observed_input_tokens") or 0) + input_tokens
         if isinstance(output_tokens, int) and output_tokens >= 0:
             context["observed_output_tokens"] = int(context.get("observed_output_tokens") or 0) + output_tokens
+        return True
 
     def _observe(self, status: str, elapsed: float) -> None:
         """Record one provider call. Never raises -- telemetry is not the call.
@@ -180,7 +183,12 @@ class BudgetedLLM:
             input_tokens=input_tokens,
             max_output_tokens=cost.output_ceiling(self._inner, settings.LLM_MAX_TOKENS),
         )
+        # Nothing is charged unless the provider may have been reached: a
+        # failure while waiting for the slot (or a cancellation there) never
+        # sent anything.
         actual_usd = 0.0
+        record_meter = False
+        tokens: Optional[tuple[int, int]] = None
         try:
             # Re-audit M12: one cluster-wide slot per in-flight call.
             async with cluster_llm_slot(self._provider):
@@ -189,9 +197,16 @@ class BudgetedLLM:
                     result = await self._call_async(args, kwargs)
                 except BaseException as exc:
                     self._observe(self._status_for(exc), time.perf_counter() - started)
+                    # QA-B45-A1: a failure after the request was sent (read
+                    # timeout, cancellation, 5xx) may still be billed. Keep
+                    # the worst case, and meter it: no stage records a
+                    # failed call.
+                    if reservation is not None and not cost.failure_proves_no_request(exc):
+                        actual_usd = reservation.estimated_usd
+                        record_meter = True
                     raise
                 self._observe("success", time.perf_counter() - started)
-                self._record_usage(result)
+                metered_by_stage = self._record_usage(result)
                 if reservation is not None:
                     tokens = cost.usage_tokens(result)
                     actual_usd = (
@@ -200,9 +215,14 @@ class BudgetedLLM:
                         # Unreported usage: keep the worst case rather than guess low.
                         else reservation.estimated_usd
                     )
+                    record_meter = not metered_by_stage
                 return result
         finally:
-            await cost.settle(reservation, actual_usd)
+            await cost.settle(
+                reservation, actual_usd, record_meter=record_meter,
+                input_tokens=tokens[0] if tokens else 0,
+                output_tokens=tokens[1] if tokens else 0,
+            )
 
     def invoke(self, *args, **kwargs):
         self._check()
