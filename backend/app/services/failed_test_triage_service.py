@@ -29,6 +29,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.deps import _api_key_bound_project
 from app.models.postgres import (
     ProjectMember,
     TestCase,
@@ -66,7 +67,12 @@ async def _actor_can_triage(
     * The current assignee, OR
     * Instance ADMIN (break-glass), OR
     * A QA_LEAD / ADMIN on the project.
+
+    A project-bound API key never passes outside its own project, not even as
+    the assignee, whatever its owner's role (re-audit N20).
     """
+    if _api_key_bound_project(actor_user) not in (None, project_id):
+        raise TriageError(403, "This API key is restricted to a different project")
     if tc.assigned_to_user_id == actor_user.id:
         return True
     if actor_user.role == UserRole.ADMIN.value:

@@ -1165,6 +1165,24 @@ def require_api_key_owner():
         if owner_id is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
 
+        # A project-bound caller manages only keys bound to its own project
+        # (re-audit N20). Without this, the ADMIN return below let a CI key act
+        # on its owner's keys for every other project, and on unbound ones.
+        # Asked only for a bound caller, so every other request issues exactly
+        # the one query it always did.
+        if _api_key_bound_project(current_user) is not None:
+            key_project_id = (await db.execute(
+                select(ApiKey.project_id).where(ApiKey.id == key_uuid)
+            )).scalar_one_or_none()
+            _enforce_api_key_project_binding(
+                current_user,
+                key_project_id,
+                detail=(
+                    "This API key is bound to one project; it can only manage "
+                    "keys bound to that project"
+                ),
+            )
+
         if _normalize_user_role(current_user.role) == UserRole.ADMIN:
             return current_user
         if owner_id != current_user.id:
@@ -1216,6 +1234,11 @@ def require_session_access():
         if session is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
+        # A project-bound API key reaches only chat filed under its own project,
+        # and never another project's through the ADMIN bypass below (re-audit
+        # N20). A session filed under no project is refused too: it can hold
+        # anything its owner asked about. No-op for an unbound caller.
+        _enforce_api_key_project_binding(current_user, session.project_id)
         is_admin = _normalize_user_role(current_user.role) == UserRole.ADMIN
         if not is_admin and session.user_id != current_user.id:
             raise HTTPException(
@@ -1257,6 +1280,10 @@ def require_link_access():
         if link is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
 
+        # A project-bound API key reaches only its own project's share links,
+        # and never another project's through the ADMIN bypass below (re-audit
+        # N20). No-op for an unbound caller.
+        _enforce_api_key_project_binding(current_user, link.project_id)
         is_admin = _normalize_user_role(current_user.role) == UserRole.ADMIN
         if is_admin or link.created_by_id == current_user.id:
             return link

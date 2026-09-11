@@ -35,6 +35,7 @@ from app.agents.fixer.state import (
     is_valid_runner_image,
 )
 from app.core.deps import (
+    _enforce_api_key_project_binding,
     get_current_active_user,
     get_db,
     require_project_access,
@@ -70,6 +71,11 @@ def require_attempt_access():
         ).scalar_one_or_none()
         if not project_id:
             raise HTTPException(status_code=404, detail="Fix attempt not found")
+        # A project-bound API key reaches only its own project's attempts,
+        # whatever its owner's role: the ADMIN return below used to hand a CI
+        # key every tenant's (re-audit N20; compare core/deps.py
+        # _make_project_scoped_guard).
+        _enforce_api_key_project_binding(current_user, project_id)
         role_value = getattr(current_user.role, "value", current_user.role)
         if str(role_value) == UserRole.ADMIN.value:
             return current_user

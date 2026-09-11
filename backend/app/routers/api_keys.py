@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_api_key_owner, require_role
+from app.core.deps import _api_key_bound_project, require_api_key_owner, require_role
 from app.db.postgres import get_db
 from app.models.postgres import ApiKey, Project, User, UserRole
 from app.models.schemas import ApiKeyCreate, ApiKeyCreatedResponse, ApiKeyResponse
@@ -57,7 +57,35 @@ async def create_api_key(
 
     ADMIN can supply ``project_id`` to restrict the key to a single project
     and ``target_user_id`` to create a key on behalf of another user.
+
+    A caller authenticated with a project-bound key may mint only a key bound
+    to that same project, for its own owner (re-audit N20). That is what CI
+    needs to rotate its key, and nothing wider.
     """
+    # ── a project-bound caller stays inside its project (re-audit N20) ───
+    # Only an ADMIN can bind a key to a project, so a bound key is usually an
+    # ADMIN's CI credential. Omitting ``project_id`` used to mint its owner an
+    # UNBOUND key, a credential for every project that passes
+    # ``require_instance_admin``, and ``target_user_id`` minted one for anyone.
+    bound_project_id = _api_key_bound_project(current_user)
+    if bound_project_id is not None:
+        if payload.project_id != bound_project_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This API key is bound to one project; it can only create "
+                    "keys bound to that same project. Set project_id to it."
+                ),
+            )
+        if payload.target_user_id is not None and payload.target_user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This API key is bound to one project; it can only create "
+                    "keys for its own owner"
+                ),
+            )
+
     # ── target user resolution ────────────────────────────────────────────
     owner_id = current_user.id
     if payload.target_user_id is not None:
@@ -145,14 +173,32 @@ async def list_api_keys(
 ):
     """List active API keys. Non-admin users see only their own keys.
     ADMIN can filter by project_id to see all keys bound to a project.
+
+    A caller authenticated with a project-bound key sees only keys bound to
+    that project, and naming another project is a 403 (re-audit N20).
     """
     stmt = select(ApiKey).where(ApiKey.is_active == True)  # noqa: E712
+
+    bound_project_id = _api_key_bound_project(current_user)
+    if (
+        bound_project_id is not None
+        and project_id is not None
+        and project_id != bound_project_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This API key is restricted to a different project",
+        )
 
     is_admin = current_user.role == UserRole.ADMIN.value or current_user.role == UserRole.ADMIN
     if is_admin and project_id is not None:
         stmt = stmt.where(ApiKey.project_id == project_id)
     else:
         stmt = stmt.where(ApiKey.user_id == current_user.id)
+        if bound_project_id is not None:
+            # Its owner's keys, but only those bound to the same project: a
+            # key for one project does not learn about its owner's others.
+            stmt = stmt.where(ApiKey.project_id == bound_project_id)
 
     stmt = stmt.order_by(ApiKey.created_at.desc())
     result = await db.execute(stmt)
@@ -166,7 +212,11 @@ async def revoke_api_key(
     current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
     _: User = Depends(require_api_key_owner()),
 ):
-    """Revoke (soft-delete) an API key. Only the owner can revoke their own keys."""
+    """Revoke (soft-delete) an API key. Only the owner can revoke their own keys.
+
+    A caller authenticated with a project-bound key may revoke only keys bound
+    to that project; ``require_api_key_owner`` refuses the rest (re-audit N20).
+    """
     result = await db.execute(
         select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == current_user.id)
     )
