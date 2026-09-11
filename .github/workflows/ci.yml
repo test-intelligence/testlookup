@@ -594,6 +594,7 @@ jobs:
           tests/integration/test_protected_artifact_cascade_postgres.py
           tests/integration/test_purge_executor_against_real_postgres.py
           tests/integration/test_run_deletion_postgres_mongo.py
+          tests/integration/test_project_bound_admin_key_postgres.py
           tests/integration/test_live_evidence_crash_replay_postgres_redis.py
           tests/integration/test_live_fanout_redis.py
           tests/integration/test_live_recovery_protocol_postgres_redis.py
