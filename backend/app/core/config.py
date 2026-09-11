@@ -441,6 +441,11 @@ class Settings(BaseSettings):
     JIRA_EMAIL: Optional[str] = None
     JIRA_API_TOKEN: Optional[str] = None
     JIRA_DEFAULT_PROJECT_KEY: str = "QA"
+    # The secret configured on the Jira webhook. Jira signs each delivery with
+    # it: ``X-Hub-Signature: sha256=<hex HMAC-SHA256 of the raw body>``.
+    # POST /api/v1/feedback/jira-webhook refuses every delivery (403) while
+    # it is unset or a placeholder, in every environment.
+    JIRA_WEBHOOK_SECRET: Optional[str] = None
 
     # ── Confluence (Knowledge RAG) ──────────────────────────────
     CONFLUENCE_ENABLED: bool = False
@@ -815,6 +820,14 @@ class Settings(BaseSettings):
                 warnings.append(
                     "CRITICAL: MONGO_URI carries a placeholder password — the "
                     "database password is the one published in .env.example"
+                )
+            # WARNING, not CRITICAL: the Jira webhook fails closed on its own (403
+            # for every delivery), so an unset secret denies rather than exposes,
+            # and refusing startup would break every deployment without Jira.
+            if self.JIRA_ENABLED and _is_placeholder_secret(self.JIRA_WEBHOOK_SECRET or ""):
+                warnings.append(
+                    "WARNING: JIRA_WEBHOOK_SECRET is unset — POST "
+                    "/api/v1/feedback/jira-webhook refuses every Jira delivery"
                 )
             if self.DEV_AUTO_LOGIN_ENABLED:
                 warnings.append("CRITICAL: DEV_AUTO_LOGIN_ENABLED is True in production — disable it")

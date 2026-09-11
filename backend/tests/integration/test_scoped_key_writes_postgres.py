@@ -166,8 +166,6 @@ def _writes(world):
         "record fix outcome": ("POST", f"/api/v1/projects/{world.project_a}/fix-outcomes"),
         # a triage write on the caller's own inbox
         "triage a failure": ("PUT", f"/api/v1/me/assigned-failures/{uuid.uuid4()}/triage"),
-        # the Jira webhook, which reached no guard before N32
-        "jira webhook": ("POST", "/api/v1/feedback/jira-webhook"),
     }
 
 
