@@ -105,6 +105,12 @@ async def trigger_reindex(
     * No project named means *every* tenant's index, so that variant is
       ADMIN-only — otherwise a lead in one project rebuilds everyone else's.
     """
+    # The role check is in this body, not require_role, so the scope rule is
+    # applied here: a scoped key without project:admin (a CI streaming key)
+    # does not spend worker capacity on a reindex (review of QA-R4-1).
+    from app.core.deps import _refuse_scoped_key_without_project_admin  # noqa: PLC0415
+
+    _refuse_scoped_key_without_project_admin(current_user)
     role = getattr(current_user.role, "value", current_user.role)
     is_admin = role == UserRole.ADMIN.value
     # A project-bound API key is not an instance admin, whatever its owner's

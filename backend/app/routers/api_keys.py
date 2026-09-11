@@ -297,6 +297,18 @@ async def revoke_api_key(
     api_key = result.scalar_one_or_none()
     if not api_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+    # A scoped key without project:admin may revoke itself (a leaked CI key
+    # retiring its own credential), never its owner's other keys (review of
+    # QA-R4-1: a stream key revoked its owner's project:admin key).
+    from app.core.deps import (  # noqa: PLC0415
+        PROJECT_ADMIN_SCOPE,
+        PROJECT_ADMIN_SCOPE_DETAIL,
+        api_key_grant,
+    )
+
+    grant = api_key_grant(current_user)
+    if grant is not None and not grant.allows(PROJECT_ADMIN_SCOPE) and api_key.id != grant.key_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=PROJECT_ADMIN_SCOPE_DETAIL)
     api_key.is_active = False
 
     # The live-event path caches this credential's project for a few seconds so

@@ -25,6 +25,13 @@
   - every route behind a project, run, release, knowledge-source,
     generation-batch or live-session guard refuses it on any method except
     GET, HEAD and OPTIONS;
+  - `POST /api/v1/search/reindex`, which checks the role in its own body,
+    refuses it too, and so does revoking any key but itself
+    (`DELETE /api/v1/keys/{id}`: a stream key had revoked its owner's
+    `project:admin` key);
+  - CLI users: a CLI profile holding such a key now gets 403 from
+    `runs intelligence refresh`, `deep-investigate` and report sharing, which
+    are project writes. Use a `project:admin` key or a signed-in session;
   - streaming (`/api/v1/stream/*`, `/ws/events`) needs `stream:write`, and
     uploads (`/api/v1/ingest*`) and `POST /api/v1/keys` are unaffected.
     None of these go through the guards above (a test walks their

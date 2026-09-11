@@ -203,7 +203,10 @@ def _refuse_scoped_key_without_project_admin(user: User) -> None:
 
 def _refuse_scoped_key_write(request: Request, user: User) -> None:
     """The project-scoped guards' half of the rule: writes need ``project:admin``."""
-    if request.method.upper() not in _SAFE_METHODS:
+    # No method (a hand-built request) is treated as a write: refused with a
+    # 403, not an AttributeError's 500.
+    method = getattr(request, "method", None)
+    if not isinstance(method, str) or method.upper() not in _SAFE_METHODS:
         _refuse_scoped_key_without_project_admin(user)
 
 

@@ -564,6 +564,58 @@ async def test_an_unbound_stream_scoped_key_cannot_use_an_opted_in_route(world):
     assert await _runs_left(world) == 2
 
 
+# ── review of QA-R4-1: the doors that check the role in their own body ──────
+
+
+@pytest.mark.parametrize("key", ["stream", "stream_unbound"])
+@pytest.mark.parametrize("query", ["?full=true", "?project_id={a}"])
+async def test_a_stream_scoped_key_cannot_queue_a_reindex(world, key, query):
+    """The unbound key's owner is an ADMIN: without the scope rule it queued
+    a rebuild of every tenant's index."""
+    resp = await world.client.post(
+        "/api/v1/search/reindex" + query.format(a=world.project_a), headers=world.headers[key]
+    )
+
+    assert resp.status_code == 403, resp.text
+    assert "project:admin" in resp.json()["detail"]
+
+
+async def _key_row(world, name):
+    ApiKey = world.models.ApiKey
+    async with world.sessions() as db:
+        return (await db.execute(
+            select(ApiKey).where(ApiKey.user_id == world.owner, ApiKey.name == f"team-a {name}")
+        )).scalar_one()
+
+
+async def test_a_stream_scoped_key_cannot_revoke_its_owners_other_keys(world):
+    target = await _key_row(world, "project_admin")
+
+    resp = await world.client.delete(f"/api/v1/keys/{target.id}", headers=world.headers["stream"])
+
+    assert resp.status_code == 403, resp.text
+    assert "project:admin" in resp.json()["detail"]
+    assert (await _key_row(world, "project_admin")).is_active is True
+
+
+async def test_a_stream_scoped_key_may_revoke_itself(world):
+    own = await _key_row(world, "stream")
+
+    resp = await world.client.delete(f"/api/v1/keys/{own.id}", headers=world.headers["stream"])
+
+    assert resp.status_code == 204, resp.text
+    assert (await _key_row(world, "stream")).is_active is False
+
+
+async def test_a_project_admin_key_still_revokes_its_owners_keys(world):
+    target = await _key_row(world, "legacy")
+
+    resp = await world.client.delete(f"/api/v1/keys/{target.id}", headers=world.headers["project_admin"])
+
+    assert resp.status_code == 204, resp.text
+    assert (await _key_row(world, "legacy")).is_active is False
+
+
 # ── the routes a CI key ingests through never reach a scope refusal ─────────
 
 
