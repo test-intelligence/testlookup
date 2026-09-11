@@ -8,6 +8,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
+    _api_key_bound_project,
+    _enforce_api_key_project_binding,
     get_current_active_user,
     require_project_access,
     require_role,
@@ -27,6 +29,39 @@ from app.models.schemas import (
 logger = logging.getLogger("routers.release_gate_policies")
 
 router = APIRouter(prefix="/api/v1/release-gate-policies", tags=["Release Gate Policies"])
+
+#: What a project-bound API key is told when it tries to write the system default.
+SYSTEM_DEFAULT_REFUSED_DETAIL = (
+    "This API key is bound to one project; the system-default policy applies "
+    "to every project without a policy of its own, so only an instance "
+    "administrator may change it"
+)
+
+
+def _enforce_policy_binding(
+    current_user: User, policy_project_id: Optional[uuid.UUID]
+) -> None:
+    """Confine a project-bound API key to its own project's policies (re-audit N20).
+
+    The write routes below opt in with ``require_role(UserRole.ADMIN,
+    allow_project_key=True)``, because a CI key may manage its own project's
+    release gate; this is the check that makes that opt-in safe.
+    ``require_project_access()`` cannot do it: it reads a PATH parameter and
+    passes silently when there is none, and here the project arrives in the
+    body or on the stored policy.
+
+    ``policy_project_id=None`` is the system default, which every project
+    without a policy of its own falls back to, so a bound key may never write
+    it. An unbound caller (a JWT, or a user-scoped key) is not affected.
+    """
+    if _api_key_bound_project(current_user) is None:
+        return
+    if policy_project_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=SYSTEM_DEFAULT_REFUSED_DETAIL,
+        )
+    _enforce_api_key_project_binding(current_user, policy_project_id)
 
 
 @router.get("", response_model=list[ReleaseGatePolicyResponse])
@@ -124,10 +159,16 @@ async def get_policy(
 @router.post("", response_model=ReleaseGatePolicyResponse, status_code=201)
 async def create_policy(
     payload: ReleaseGatePolicyCreate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: _enforce_policy_binding below confines a project-bound key.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new draft policy (ADMIN only)."""
+    """Create a new draft policy (ADMIN only).
+
+    A project-bound API key may create drafts for its own project only, never
+    for another project or the system default (re-audit N20).
+    """
+    _enforce_policy_binding(current_user, payload.project_id)
     # Validate the policy document
     _validate_policy_document(payload.rules)
 
@@ -159,7 +200,8 @@ async def create_policy(
 async def update_policy(
     policy_id: uuid.UUID,
     payload: ReleaseGatePolicyUpdate,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: _enforce_policy_binding below confines a project-bound key.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a draft policy (ADMIN only). Fails if already published."""
@@ -169,6 +211,7 @@ async def update_policy(
     policy = result.scalar_one_or_none()
     if not policy:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy not found")
+    _enforce_policy_binding(current_user, policy.project_id)
     if not policy.is_draft:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -193,7 +236,8 @@ async def update_policy(
 @router.post("/{policy_id}/publish", response_model=ReleaseGatePolicyResponse)
 async def publish_policy(
     policy_id: uuid.UUID,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: _enforce_policy_binding below confines a project-bound key.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     """Publish a draft policy: deactivates any previous active policy for the same scope."""
@@ -203,6 +247,7 @@ async def publish_policy(
     policy = result.scalar_one_or_none()
     if not policy:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy not found")
+    _enforce_policy_binding(current_user, policy.project_id)
     if not policy.is_draft:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Policy is already published")
 
@@ -233,7 +278,8 @@ async def publish_policy(
 @router.post("/{policy_id}/deactivate", response_model=ReleaseGatePolicyResponse)
 async def deactivate_policy(
     policy_id: uuid.UUID,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: _enforce_policy_binding below confines a project-bound key.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     """Deactivate a policy (falls back to system default or hardcoded)."""
@@ -243,6 +289,7 @@ async def deactivate_policy(
     policy = result.scalar_one_or_none()
     if not policy:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy not found")
+    _enforce_policy_binding(current_user, policy.project_id)
 
     policy.is_active = False
     await db.commit()
@@ -254,10 +301,23 @@ async def deactivate_policy(
 @router.post("/simulate", response_model=PolicySimulateResponse)
 async def simulate_policy(
     payload: PolicySimulateRequest,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: the run's project is checked against a project-bound key below.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     """Simulate a draft policy against a past run's decision data."""
+    # A project-bound API key may simulate only against its own project's runs:
+    # the response carries the run's recommendation, composite score and rule
+    # trail (re-audit N20). Looked up only for a bound caller, so every other
+    # request issues exactly the queries it always did.
+    if _api_key_bound_project(current_user) is not None:
+        run_project_id = (
+            await db.execute(select(TestRun.project_id).where(TestRun.id == payload.run_id))
+        ).scalar_one_or_none()
+        if run_project_id is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found")
+        _enforce_api_key_project_binding(current_user, run_project_id)
+
     # Load the existing release decision
     result = await db.execute(
         select(ReleaseDecision).where(ReleaseDecision.test_run_id == payload.run_id)
