@@ -330,19 +330,29 @@
   owns it (N35, migration 0168).** Each revoked key's streaming-cache entry is
   dropped after the commit, and each project-bound key gets an
   `api_key.revoked` activity row with `cascade_from`.
+  - **Races:** a key minted while its parent is being revoked cannot escape.
+    Minting locks the parent `FOR SHARE` and gets 401 if the parent was
+    revoked. The revoke repeats its cascade until a pass finds nothing, to
+    catch a key minted under a descendant.
+  - **Migration 0168:** its index is built and dropped `CONCURRENTLY`.
 - **The pre-parse result cap bounds crafted Cypress, Playwright, Cucumber and
   Allure reports (N21).** They are counted by the arrays their parsers read
-  results from, not by optional marker keys.
+  results from, not by optional marker keys. The count runs in linear time with
+  bounded memory. A report with a string that never closes, or nesting deeper
+  than 512 levels, is refused before parsing as an unreadable report.
 - **Real MinIO notifications are ingested (R15).** Before this, the top-level
   `bucket/object` `Key` made the bucket the project. Now:
   - the object key is taken from `Records[].s3.object.key`, URL-decoded and
     checked against our bucket;
   - MinIO's `auth_token` is accepted as `Authorization: Bearer`;
   - `scripts/setup-minio.sh` requires `WEBHOOK_SECRET` and sets it as
-    `auth_token`.
-- **"Run #N" labels no longer sort a suite's whole history on every /runs,
-  /live and /my-failures page (N17, migration 0169).** Measured 87.6 ms →
-  16.7 ms: an index-only scan with no Sort, instead of a Sort over 40,000 runs.
+    `auth_token`, and `make setup-minio` passes `.env` to it.
+- **"Run #N" labels are served by an index (N17, migrations 0169 and 0172).**
+  Each (project, suite) is one indexed branch: 87.6 ms → 64.9 ms. The index keys
+  the suite's md5, so no legal suite name can overflow a btree row. A first
+  version stored the suite name in the index and reached 16.7 ms, but a
+  500-character multibyte suite name overflowed the row and broke ingest; 0172
+  removes that version from databases that ran it.
 - **The admin all-projects and multi-project run lists no longer scan and sort
   every run (N18, migration 0170).** Admin list: 996.5 ms → 0.2 ms. A member of
   3 of 30 projects: 47.3 ms → 0.5 ms, with one ordered branch per project.
