@@ -305,7 +305,7 @@ def cli(monkeypatch):
     monkeypatch.setattr(upload, "_upload_file", _accepted)
     outcomes: dict[str, dict] = {}
 
-    async def _waited(task_id, profile_name=None, timeout=600.0):
+    async def _waited(task_id, profile_name=None, timeout=600.0, deadline=None):
         return outcomes.get(task_id, {"task_id": task_id, "state": "succeeded"})
 
     monkeypatch.setattr(upload, "_wait_for_upload", _waited)
@@ -349,3 +349,79 @@ def test_upload_dir_with_wait_fails_when_any_report_is_refused(cli, tmp_path):
     res = runner.invoke(app, ["upload", "dir", str(directory), "-p", "p", "-b", "1", "--wait"])
     assert res.exit_code == 1, res.output
     assert "too_many_results" in res.output
+
+
+# ── upload dir --wait: one deadline for every file (QA of N15) ───────────
+
+
+@pytest.fixture
+def dir_upload(fake, monkeypatch, tmp_path):
+    """`upload dir` over real files: each accepted as task-<stem>, its status served per task."""
+    monkeypatch.setattr(upload, "resolve_commit_range", lambda **_kw: None)
+
+    async def _accepted(path, **_kw):
+        return {"status": "accepted", "run_id": f"r-{path.stem}", "task_id": f"task-{path.stem}"}
+
+    monkeypatch.setattr(upload, "_upload_file", _accepted)
+    states: dict[str, str] = {}
+
+    class _StatusServer:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        async def get(self, url, **_kwargs):
+            task_id = url.rsplit("/", 1)[-1]
+            return _Resp(200, {"task_id": task_id, "state": states.get(task_id, "pending")})
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: _StatusServer())
+    directory = tmp_path / "reports"
+    directory.mkdir()
+
+    def _files(count: int) -> Path:
+        for index in range(count):
+            (directory / f"r{index}.xml").write_text("<testsuite/>", encoding="utf-8")
+        return directory
+
+    return SimpleNamespace(states=states, files=_files, sleeps=fake.sleeps)
+
+
+def _wait_dir(directory: Path):
+    return runner.invoke(
+        app,
+        ["upload", "dir", str(directory), "-p", "p", "-b", "1", "--wait", "--wait-timeout", "30"],
+    )
+
+
+def test_upload_dir_waits_once_for_every_file_not_once_per_file(dir_upload):
+    """QA: with the workers down, 20 files waited 20 x 600 s = 3 h 20 min."""
+    res = _wait_dir(dir_upload.files(4))
+    assert res.exit_code == 1, res.output
+    assert sum(dir_upload.sleeps) <= 30, (
+        f"waited {sum(dir_upload.sleeps):.0f}s in all for a 30s --wait-timeout"
+    )
+    for name in ("r0.xml", "r1.xml", "r2.xml", "r3.xml"):
+        assert f"Not finished: {name}" in res.output, res.output
+    assert "Ingested 0/4 files (4 errors)" in res.output
+
+
+def test_upload_dir_names_only_the_files_that_did_not_finish(dir_upload):
+    """A file reached after the deadline is still checked once, so one that
+    finished meanwhile is not reported as unfinished."""
+    dir_upload.states.update({"task-r1": "succeeded", "task-r2": "succeeded"})
+    res = _wait_dir(dir_upload.files(3))
+    assert res.exit_code == 1, res.output
+    assert "Not finished: r0.xml" in res.output
+    assert "Not finished: r1.xml" not in res.output
+    assert "Not finished: r2.xml" not in res.output
+    assert "Ingested 2/3 files (1 errors)" in res.output
+    assert sum(dir_upload.sleeps) <= 30
+
+
+def test_upload_dir_within_the_deadline_succeeds(dir_upload):
+    dir_upload.states.update({f"task-r{i}": "succeeded" for i in range(3)})
+    res = _wait_dir(dir_upload.files(3))
+    assert res.exit_code == 0, res.output
+    assert dir_upload.sleeps == []

@@ -53,6 +53,14 @@ WAIT_POLL_SECONDS = 2.0
 WAIT_NOT_FOUND_GRACE_SECONDS = 30.0
 TERMINAL_UPLOAD_STATES = frozenset({"succeeded", "failed"})
 
+
+class UploadNotFinished(Exception):
+    """--wait ran out of time before the upload reached a terminal state."""
+
+    def __init__(self, message: str, state: str) -> None:
+        super().__init__(message)
+        self.state = state
+
 # Seams, so tests can run the retry and wait loops on a fake clock.
 _sleep = asyncio.sleep
 _clock = time.monotonic
@@ -275,12 +283,15 @@ def upload_dir(
     ),
     wait_timeout: float = typer.Option(
         600.0, "--wait-timeout", min=1.0,
-        help="Seconds --wait waits before giving up",
+        help="Seconds --wait waits, in total for every file, before giving up",
     ),
     profile_name: Optional[str] = typer.Option(None, "--profile"),
     output_format: str = typer.Option("table", "--output", "-o"),
 ):
     """Upload all test result files (.xml, .trx, .json) in a directory.
+
+    With ``--wait``, one ``--wait-timeout`` covers every file: the command
+    exits non-zero and names each file that had not finished when it ran out.
 
     Each file is uploaded as a separate ingestion job. CI context is
     auto-detected from standard CI env vars (override with --ci-provider /
@@ -329,19 +340,36 @@ def upload_dir(
 
     if wait:
         # Every file is accepted before any is parsed, so wait for the outcomes
-        # only now: the server works through them while we wait.
+        # only now: the server works through them while we wait. One deadline
+        # covers every file (QA of N15): each file used to wait its own
+        # --wait-timeout, so 20 files with the workers down held a CI job for
+        # 3 h 20 min. A file reached after the deadline still gets one status
+        # check, so one that has finished is reported as it is.
+        deadline = _clock() + wait_timeout
         waited = []
+        unfinished: list[str] = []
         for name, data in zip(names, results):
             try:
                 data = _outcome(data, asyncio.run(_wait_for_upload(
                     data["task_id"], profile_name=profile_name, timeout=wait_timeout,
+                    deadline=deadline,
                 )))
                 _raise_if_refused(data)
+            except UploadNotFinished as e:
+                output.print_error(f"Not finished: {name} — {e}")
+                data = {**data, "state": e.state}
+                unfinished.append(name)
+                errors += 1
             except Exception as e:
                 output.print_error(f"Failed: {name} — {e}")
                 errors += 1
             waited.append(data)
         results = waited
+        if unfinished:
+            output.print_error(
+                f"Not finished within --wait-timeout ({wait_timeout:.0f}s): "
+                + ", ".join(unfinished)
+            )
 
     if results:
         output.render(results, output_format)
@@ -499,13 +527,17 @@ async def _wait_for_upload(
     task_id: str,
     profile_name: Optional[str] = None,
     timeout: float = 600.0,
+    deadline: Optional[float] = None,
 ) -> dict:
     """Poll the upload's status until it succeeds or fails (re-audit N15).
 
     Returns the terminal status, ``failed`` included: the caller decides what a
-    refusal means. Raises when ``timeout`` runs out first, and at once on an
-    answer that cannot change: 401, 403, any other 4xx, or a 404 once
-    ``WAIT_NOT_FOUND_GRACE_SECONDS`` have passed.
+    refusal means. Raises :class:`UploadNotFinished` when the deadline passes
+    first -- ``deadline`` (a ``_clock()`` reading) when given, which ``upload
+    dir`` shares across its files, else ``timeout`` from now -- and at once on
+    an answer that cannot change: 401, 403, any other 4xx, or a 404 once
+    ``WAIT_NOT_FOUND_GRACE_SECONDS`` have passed. The status is always polled
+    at least once, even when the deadline has already passed.
 
     A transient answer is "not yet" (code review of N15): a 429, a 5xx or a
     dropped connection. One 502 from the ingress during a rolling deploy used
@@ -520,7 +552,8 @@ async def _wait_for_upload(
     headers = client._build_headers(profile)
     url = f"{base_url}/api/v1/ingest/uploads/{task_id}"
     started = _clock()
-    deadline = started + timeout
+    if deadline is None:
+        deadline = started + timeout
     state = "pending"
     problem: Optional[str] = None  # why the last poll told us nothing, if it did not
     async with httpx.AsyncClient(timeout=30.0) as http:
@@ -554,6 +587,10 @@ async def _wait_for_upload(
             remaining = deadline - _clock()
             if remaining <= 0:
                 if problem is None:
-                    raise Exception(f"upload {task_id} is still {state} after {timeout:.0f}s")
-                raise Exception(f"no status for upload {task_id} after {timeout:.0f}s: {problem}")
+                    raise UploadNotFinished(
+                        f"upload {task_id} is still {state} after {timeout:.0f}s", state
+                    )
+                raise UploadNotFinished(
+                    f"no status for upload {task_id} after {timeout:.0f}s: {problem}", state
+                )
             await _sleep(min(delay, remaining))
