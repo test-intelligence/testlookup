@@ -331,6 +331,31 @@ def check_release_consistency(decision) -> ConsistencyReport:
     ))
 
     # 2. recommendation_vs_score
+    #
+    # Re-audit N34: this used to re-derive the verdict from the score alone
+    # (``_release_band``), while the gate derives it from the score AND the
+    # pass rate AND the policy (hard pass-rate floor -> NO_GO, pass rate under
+    # the minimum -> CONDITIONAL_GO, BLOCK/WARN rules, kind-budget downgrade).
+    # Two modules, one rule: a third of all homelab decisions were flagged,
+    # every one of them the gate's own correct answer. When the decision
+    # carries its policy evaluation and pass rate, the check now REPLAYS the
+    # gate's mapping -- the same functions -- and a mismatch is a real
+    # inconsistency (an error). Older decisions without them keep the
+    # score-band comparison below.
+    replayed = _replayed_recommendation(decision)
+    if replayed is not None and recommendation is not None:
+        replay_ok = recommendation == replayed
+        checks.append(ConsistencyCheck(
+            name="recommendation_vs_score",
+            passed=replay_ok,
+            severity="error",
+            details="" if replay_ok else (
+                f"recommendation={recommendation} but the gate's mapping of its own "
+                f"inputs gives {replayed}"
+            ),
+        ))
+        return _finish_release_checks(checks, recommendation, blocking_issues)
+
     rec_ok = True
     rec_detail = ""
     # Conservatism ordering: GO (least) < CONDITIONAL_GO < NO_GO (most).
@@ -372,6 +397,11 @@ def check_release_consistency(decision) -> ConsistencyReport:
         details=rec_detail,
     ))
 
+    return _finish_release_checks(checks, recommendation, blocking_issues)
+
+
+def _finish_release_checks(checks: list, recommendation, blocking_issues: list) -> ConsistencyReport:
+    """Check 3 and the report, shared by the replay and the score-band paths."""
     # 3. blocking_issues_vs_recommendation
     blocking_ok = not (recommendation == "GO" and bool(blocking_issues))
     checks.append(ConsistencyCheck(
@@ -385,6 +415,51 @@ def check_release_consistency(decision) -> ConsistencyReport:
     ))
 
     return ConsistencyReport(agent="release_risk", checks=checks)
+
+
+def _replayed_recommendation(decision: dict) -> str | None:
+    """The verdict the release gate's own mapping gives for this decision.
+
+    Replays ``criticality_service.score_to_recommendation`` with the recorded
+    effective composite, pass rate and policy thresholds, then the recorded
+    kind-budget downgrade and ``policy_evaluator_service.escalate_recommendation``
+    over the recorded rule evaluations -- the functions the gate itself ran,
+    not a copy of their thresholds (re-audit N34). ``None`` when the decision
+    does not carry those inputs. Never raises.
+    """
+    evaluation = decision.get("policy_evaluation")
+    if not isinstance(evaluation, dict):
+        return None
+    thresholds = evaluation.get("effective_thresholds")
+    composite = evaluation.get("effective_composite")
+    pass_rate = decision.get("pass_rate")
+    if pass_rate is None:
+        snapshot = decision.get("input_snapshot")
+        pass_rate = snapshot.get("pass_rate") if isinstance(snapshot, dict) else None
+    if not isinstance(thresholds, dict) or composite is None or pass_rate is None:
+        return None
+    try:
+        from app.services.criticality_service import score_to_recommendation
+        from app.services.policy_evaluator_service import escalate_recommendation
+
+        recommendation = score_to_recommendation(
+            composite=float(composite),
+            pass_rate=float(pass_rate),
+            threshold=float(thresholds["pass_rate_minimum"]),
+            go_threshold=float(thresholds["go_threshold"]),
+            no_go_threshold=float(thresholds["no_go_threshold"]),
+            hard_floor_factor=float(thresholds["pass_rate_hard_floor_factor"]),
+        )
+        # The kind-budget downgrade is applied to the base verdict before rule
+        # escalation, and is recorded as applied only when it survived.
+        if evaluation.get("kind_rule_applied") and recommendation == "NO_GO":
+            recommendation = "CONDITIONAL_GO"
+        recommendation, _overall = escalate_recommendation(
+            recommendation, evaluation.get("rule_evaluations")
+        )
+        return recommendation
+    except Exception:  # noqa: BLE001 -- a check must never raise (module contract)
+        return None
 
 
 # ── AnalysisAgent ─────────────────────────────────────────────────────────────
