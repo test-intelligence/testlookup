@@ -96,6 +96,10 @@ PUBLIC_ROUTERS: Sequence[APIRouter] = (
     # the router-wide protected dependency would 401 them before the handler
     # ran. Each endpoint declares its own auth requirement.
     mfa.router,
+    # Jira's resolution webhook: no user session, the HMAC signature is the
+    # credential (routers/feedback.py). Registered before PROTECTED_ROUTERS,
+    # so the literal path also wins over /feedback/{analysis_id}.
+    feedback.jira_webhook_router,
     webhooks.router,
     stream.router,
     observability_router,

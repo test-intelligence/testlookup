@@ -15,16 +15,19 @@ POST /api/v1/projects/{project_id}/fix-outcomes — record a merged/reverted fix
      outcome for a fingerprint as an AI-F1 ``human_indirect`` training signal
      (Agentic plan AI-5; the MCP ``record_fix_outcome`` tool's endpoint)
 """
+import hashlib
+import hmac
+import json
 import uuid
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, require_project_access, require_role, require_run_access
-from app.core.config import settings
+from app.core.config import _is_placeholder_secret, settings
 from app.db.postgres import get_db
 from app.db.mongo import get_mongo_db
 from app.models.postgres import (
@@ -40,6 +43,37 @@ router = APIRouter(prefix="/api/v1", tags=["Feedback & Training"])
 # "correct classification" dialog. Separate router because the project-scoped
 # path must carry the ``require_project_access`` guard (authorization ratchet).
 lookup_router = APIRouter(prefix="/api/v1/projects", tags=["Feedback & Training"])
+# Jira's resolution webhook. A PUBLIC router (bootstrap.PUBLIC_ROUTERS): Jira
+# sends no user session and cannot send an auth header, so the credential is
+# the HMAC signature it computes with the webhook's secret (see
+# ``_verify_jira_signature``).
+jira_webhook_router = APIRouter(prefix="/api/v1", tags=["Feedback & Training"])
+
+#: The header Jira Cloud signs a webhook delivery with, when the webhook has a
+#: secret: ``sha256=<hex HMAC-SHA256 of the raw request body>``.
+JIRA_SIGNATURE_HEADER = "X-Hub-Signature"
+
+#: What a delivery is told while no secret is configured.
+JIRA_SECRET_UNSET_DETAIL = (
+    "The Jira webhook is disabled: JIRA_WEBHOOK_SECRET is not configured"
+)
+
+
+def _verify_jira_signature(raw_body: bytes, signature: Optional[str]) -> None:
+    """Refuse a delivery that Jira did not sign with the configured secret.
+
+    403 while the secret is unset or a shipped placeholder, in every
+    environment (an HMAC with an empty or published key proves nothing); 401
+    for a missing or wrong signature. The comparison is constant time: ``==``
+    stops at the first differing character and leaks a prefix to a caller who
+    can time it.
+    """
+    secret = settings.JIRA_WEBHOOK_SECRET or ""
+    if _is_placeholder_secret(secret):
+        raise HTTPException(status_code=403, detail=JIRA_SECRET_UNSET_DETAIL)
+    expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    if not signature or not hmac.compare_digest(expected, signature.strip()):
+        raise HTTPException(status_code=401, detail="Invalid or missing Jira webhook signature")
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -124,19 +158,30 @@ class AnalysisLookupResponse(BaseModel):
 
 # ── Feedback endpoints ────────────────────────────────────────────────────────
 
-# Declared BEFORE ``/feedback/{analysis_id}``: FastAPI matches routes in
-# declaration order, so a literal segment placed after a same-shape parameter
-# route is unreachable — the parameter route wins and "jira-webhook" is parsed
-# as a UUID. This endpoint returned 422 to every Jira delivery until it was
-# moved up. Guarded by tests/test_architectural_route_shadowing.py.
-@router.post("/feedback/jira-webhook", status_code=200)
+# On its own router, registered with the PUBLIC routers BEFORE the protected
+# ones: FastAPI matches in registration order, and a literal segment placed
+# after the same-shape ``/feedback/{analysis_id}`` is unreachable ("jira-webhook"
+# parsed as a UUID: a 422 for every delivery, once). Guarded by
+# tests/test_architectural_route_shadowing.py.
+#
+# No signed-in account (re-audit follow-up to N32). The route took any session
+# or API key and let its holder close any project's defects and write AI
+# training feedback with a forged payload, while a real Jira delivery, which
+# carries no session, could only get in with a user's key pasted into Jira.
+# The signature is the credential Jira actually has.
+@jira_webhook_router.post("/feedback/jira-webhook", status_code=200)
 async def jira_resolution_webhook(
-    payload: dict = Body(...),
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    # Re-audit N32: the one write on a protected router that reached no guard,
-    # so neither the inactive-account check nor a scoped key's write rule ran.
-    _caller: User = Depends(get_current_active_user),
 ):
+    raw_body = await request.body()
+    _verify_jira_signature(raw_body, request.headers.get(JIRA_SIGNATURE_HEADER))
+    try:
+        payload = json.loads(raw_body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="The body is not JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="The body must be a JSON object")
     result = await feedback_service.jira_resolution_webhook(db, payload)
     await db.commit()
     return result
