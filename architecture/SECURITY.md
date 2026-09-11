@@ -333,6 +333,74 @@ easier to over-read than to under-read:
   [DEPLOYMENT.md](./DEPLOYMENT.md)). There is no in-cluster mTLS between
   the backend, the workers, and the datastores.
 
+### 7a. The MinIO upload path is only as tenant-safe as the MinIO credential
+
+Re-audit N13. `POST /webhooks/minio` takes the project from the object key --
+`{project_id}/runs/{build}/upload_complete.json` -- and reads the run's result
+files from that prefix (N10, R15). That makes the key prefix the tenant
+boundary. The application enforces nothing past that point, and MinIO decides
+who may write under which prefix.
+
+**The exposure as shipped.** Every Compose file sets MinIO's
+`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` from `MINIO_ACCESS_KEY`/
+`MINIO_SECRET_KEY`. `scripts/simulate_upload.py` uploads with those same
+variables, and k8s `secrets.yaml` carries one pair. So an uploader that uses
+the documented credential is MinIO's **root** user. It can write
+`<other-project>/runs/<n>/upload_complete.json` and have a run filed in that
+project, with result files of its choosing. It can also read, overwrite or
+delete any project's reports, and reconfigure the webhook target. One leaked CI
+credential is every tenant's upload path.
+
+**Policy: one MinIO user per project, allowed to add objects under its
+own prefix only.** Nothing in the application changes. Give each project's CI
+its own MinIO user, and keep the root credential for the backend and operators:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": ["arn:aws:s3:::<bucket>/<project_id>/*"]
+    }
+  ]
+}
+```
+
+Runbook (the `mc` alias `local` is the root alias `scripts/setup-minio.sh`
+creates; `<bucket>` is `MINIO_BUCKET_NAME`):
+
+```sh
+PROJECT=<project_id>          # the UUID the project's runs are filed under
+BUCKET=<bucket>
+sed -e "s#<bucket>#${BUCKET}#" -e "s#<project_id>#${PROJECT}#" uploader-policy.json \
+  > "uploader-${PROJECT}.json"            # the JSON above, saved as uploader-policy.json
+mc admin policy create local "uploader-${PROJECT}" "uploader-${PROJECT}.json"
+mc admin user add local "ci-${PROJECT}" "$(openssl rand -hex 24)"   # hand this pair to that CI only
+mc admin policy attach local "uploader-${PROJECT}" --user "ci-${PROJECT}"
+# Check it: the project's own prefix is writable, a neighbour's is not.
+mc alias set ci "$MINIO_ENDPOINT" "ci-${PROJECT}" "<its secret>"
+mc cp ./upload_complete.json "ci/${BUCKET}/${PROJECT}/runs/probe/upload_complete.json"      # succeeds
+mc cp ./upload_complete.json "ci/${BUCKET}/<another-project>/runs/probe/upload_complete.json"  # AccessDenied
+mc rm "local/${BUCKET}/${PROJECT}/runs/probe/upload_complete.json"
+```
+
+Consequences to state plainly:
+
+- **PutObject only.** The uploader cannot list, read, overwrite-then-read or
+  delete, even inside its own prefix. S3 PutObject does overwrite an existing
+  key, so a project's CI can replace its own earlier objects. That stays
+  within the tenant.
+- **Rotate by user.** `mc admin user disable local ci-<project>` revokes one
+  CI without touching the others, which the shared root credential cannot do.
+- **Not enforced by the application.** Nothing in the backend can detect that
+  a deployment still hands out the root pair. Treat "no CI holds
+  `MINIO_ACCESS_KEY`" as a deployment check.
+- **The webhook secret is a different boundary.** `WEBHOOK_SECRET` (sent by
+  MinIO as its `auth_token`) proves a notification came from MinIO. It says
+  nothing about which uploader wrote the object.
+
 Similarly, the audit tables in §6 are append-only **by application
 convention** — no triggers, restricted grants, or WORM storage prevent
 direct modification — and an enabled retention policy deliberately

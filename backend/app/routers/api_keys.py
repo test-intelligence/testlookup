@@ -8,7 +8,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import bindparam, select, text
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -225,6 +226,9 @@ async def create_api_key(
         scopes=scopes,
         project_id=payload.project_id,
         expires_at=expires_at,
+        # Which key minted this one, so revoking it revokes this too (re-audit
+        # N35). NULL when a signed-in user mints.
+        minted_by_key_id=grant.key_id if grant is not None else None,
     )
     db.add(api_key)
 
@@ -330,11 +334,14 @@ async def revoke_api_key(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=PROJECT_ADMIN_SCOPE_DETAIL)
     api_key.is_active = False
 
-    # The live-event path caches this credential's project for a few seconds so
-    # the full check does not run per event. Revocation is exactly when that
-    # lag is least acceptable, and ApiKey.key_hash IS the cache digest, so drop
-    # it now rather than waiting for the TTL.
-    await forget_streaming_key_hash(api_key.key_hash)
+    # ── the keys this key minted go with it (re-audit N35) ───────────────
+    # A leaked key could mint itself a replacement, and revoking the leaked
+    # key left the replacement working. Every ACTIVE key below this one --
+    # at any depth, whoever owns it -- is revoked in this same transaction.
+    # Keys minted before migration 0168 have no parent recorded (roots).
+    descendants = (
+        await db.execute(_REVOKE_DESCENDANTS, {"root": api_key.id})
+    ).all()
 
     if api_key.project_id is not None:
         await record_activity(
@@ -344,8 +351,49 @@ async def revoke_api_key(
             actor=ActorRef.from_user(current_user),
             entity_id=api_key.id,
             entity_label=api_key.name,
-            context={"key_hint": api_key.key_hint},
+            context={"key_hint": api_key.key_hint, "revoked_descendants": len(descendants)},
         )
+    for child in descendants:
+        if child.project_id is not None:
+            await record_activity(
+                db,
+                project_id=child.project_id,
+                event_type="api_key.revoked",
+                actor=ActorRef.from_user(current_user),
+                entity_id=child.id,
+                entity_label=child.name,
+                context={"key_hint": child.key_hint, "cascade_from": str(api_key.id)},
+            )
 
     await db.commit()
+
+    # The live-event path caches each credential's project for a few seconds
+    # so the full check does not run per event. Revocation is exactly when
+    # that lag is least acceptable, and ApiKey.key_hash IS the cache digest,
+    # so drop every revoked key's entry now rather than waiting for the TTL.
+    # After the commit: dropped before it, a request in between re-cached the
+    # key from a row that was still active.
+    for key_hash in (api_key.key_hash, *(child.key_hash for child in descendants)):
+        await forget_streaming_key_hash(key_hash)
     return None
+
+
+# Every active descendant of :root, at any depth and whoever owns it. The
+# walk passes THROUGH inactive keys: a key revoked some other way may still
+# have minted active ones. UNION (not UNION ALL) stops at a repeated id.
+_REVOKE_DESCENDANTS = text(
+    """
+    WITH RECURSIVE descendants(id) AS (
+        SELECT id FROM api_keys WHERE minted_by_key_id = :root
+      UNION
+        SELECT child.id
+        FROM api_keys AS child
+        JOIN descendants AS parent ON child.minted_by_key_id = parent.id
+    )
+    UPDATE api_keys AS k
+    SET is_active = false
+    FROM descendants AS d
+    WHERE k.id = d.id AND k.is_active IS TRUE
+    RETURNING k.id, k.key_hash, k.project_id, k.name, k.key_hint
+    """
+).bindparams(bindparam("root", type_=PG_UUID(as_uuid=True)))

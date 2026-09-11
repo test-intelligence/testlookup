@@ -596,6 +596,7 @@ jobs:
           tests/integration/test_pipeline_resume_postgres.py
           tests/integration/test_report_eval_cycle_postgres.py
           tests/integration/test_run_downstream_outbox_postgres.py
+          tests/integration/test_webhook_delivery_backfill_postgres.py
           tests/integration/test_outbox_requeue_postgres.py
           tests/integration/test_durable_agent_pipeline_postgres.py
           tests/integration/test_dead_search_vector_removed_postgres.py
@@ -606,7 +607,9 @@ jobs:
           tests/integration/test_search_tags_index_postgres.py
           tests/integration/test_canonical_sync_postgres.py
           tests/integration/test_run_list_natural_order_postgres.py
+          tests/integration/test_run_seq_and_member_order_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py
+          tests/integration/test_migration_singleton_lock_postgres.py
           tests/integration/test_ws_events_persist_postgres_redis.py
           tests/integration/test_worker_pool_survives_tasks_postgres.py
           tests/integration/test_test_case_lifecycle_postgres.py
@@ -617,6 +620,7 @@ jobs:
           tests/integration/test_purge_executor_against_real_postgres.py
           tests/integration/test_run_deletion_postgres_mongo.py
           tests/integration/test_project_bound_admin_key_postgres.py
+          tests/integration/test_key_revoke_cascade_postgres.py
           tests/integration/test_notification_preference_authz_postgres.py
           tests/integration/test_scoped_key_limits_postgres.py
           tests/integration/test_bound_key_confinement_postgres.py
@@ -625,6 +629,7 @@ jobs:
           tests/integration/test_jira_webhook_signature_postgres.py
           tests/integration/test_live_evidence_crash_replay_postgres_redis.py
           tests/integration/test_live_fanout_redis.py
+          tests/integration/test_live_run_reset_redis.py
           tests/integration/test_live_recovery_protocol_postgres_redis.py
           tests/integration/test_compose_queue_delivery_redis.py
           tests/regression/test_notification_history_schema.py

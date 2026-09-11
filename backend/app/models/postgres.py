@@ -3764,6 +3764,15 @@ class ApiKey(Base):
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # The key that minted this one (POST /api/v1/keys authenticated by a key),
+    # or NULL when a signed-in user minted it. Revoking a key revokes every
+    # active key below it (re-audit N35, migration 0168).
+    minted_by_key_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("api_keys.id", ondelete="SET NULL", name="fk_api_keys_minted_by_key_id"),
+        nullable=True,
+        index=True,
+    )
 
 
 class RunIntelligenceSnapshot(Base):

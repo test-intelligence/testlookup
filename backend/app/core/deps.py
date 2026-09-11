@@ -1559,13 +1559,33 @@ def require_link_access():
 
 
 async def verify_webhook_secret(
-    x_webhook_secret: str = Header(..., alias="X-Webhook-Secret"),
+    x_webhook_secret: Optional[str] = Header(None, alias="X-Webhook-Secret"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
 ) -> None:
-    """Validate the shared webhook secret header sent by MinIO."""
+    """Validate the shared webhook secret MinIO sends (guards /webhooks/minio only).
+
+    MinIO cannot add a custom header to a notification. Its webhook target's
+    ``auth_token`` is sent as ``Authorization: Bearer <token>`` -- so before
+    re-audit R15 a real MinIO notification never carried ``X-Webhook-Secret``
+    and was refused, every time. Either form is accepted; ``X-Webhook-Secret``
+    stays for callers already using it. ``scripts/setup-minio.sh`` sets the
+    ``auth_token``.
+    """
+    expected = str(settings.WEBHOOK_SECRET or "")
+    presented: list[str] = []
+    if x_webhook_secret is not None:
+        presented.append(str(x_webhook_secret))
+    if authorization is not None:
+        scheme, _, token = str(authorization).partition(" ")
+        if scheme.lower() == "bearer" and token:
+            presented.append(token.strip())
     # compare_digest, not ==: a plain comparison short-circuits on the first
     # differing byte, which leaks the secret's prefix to a caller who can time
-    # the response (re-audit H1).
-    if not hmac.compare_digest(str(x_webhook_secret), str(settings.WEBHOOK_SECRET)):
+    # the response (re-audit H1). An unset secret matches nothing.
+    matched = False
+    for candidate in presented:
+        matched = hmac.compare_digest(candidate, expected) or matched
+    if not expected or not matched:
         logger.warning("Webhook request with invalid secret rejected")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
