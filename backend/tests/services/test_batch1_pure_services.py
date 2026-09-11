@@ -72,7 +72,12 @@ def test_mock_generators_return_expected_shapes():
 @pytest.mark.asyncio
 @patch("langchain_ollama.ChatOllama")
 async def test_llm_factory_ollama_uses_registry_model(mock_ollama):
-    with patch("app.services.llm_factory._async_get_active_model", return_value="ft-model"):
+    # The mocked ChatOllama has no real HTTP clients, and the offline pin
+    # (re-audit N8) refuses to hand out a client it could not pin. This test
+    # is about which model is chosen, so the pin is stubbed here only; the pin
+    # itself is tested in tests/services/test_llm_offline_egress_pinning.py.
+    with patch("app.services.llm_factory._async_get_active_model", return_value="ft-model"), \
+            patch("app.services.llm_egress.pin_ollama_clients", side_effect=lambda model: model):
         await get_llm(provider="ollama", track="reasoning")
     kwargs = mock_ollama.call_args.kwargs
     assert kwargs["model"] == "ft-model"
