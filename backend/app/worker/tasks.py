@@ -3717,7 +3717,7 @@ def dispatch_scheduled_digests(self):
         from sqlalchemy import select, update
 
         from app.db.postgres import AsyncSessionLocal
-        from app.models.postgres import DigestSubscription, NotificationLog, User, UserRole
+        from app.models.postgres import DigestSubscription, NotificationLog, User
         from app.services.digest_content_service import generate_digest, render_digest_html
 
         now = datetime.now(timezone.utc)
@@ -3854,24 +3854,23 @@ def dispatch_scheduled_digests(self):
                     # the matching send-time guard, because nothing else
                     # re-checks membership at delivery and rows created before
                     # the fix are still on disk.
-                    from app.core.deps import _normalize_user_role
-
-                    blocked_global = (
-                        project_id is None
-                        and _normalize_user_role(user.role) != UserRole.ADMIN
+                    #
+                    # Re-audit N33: a project-scoped digest is checked too. Its
+                    # owner must still be active and an ADMIN or a member of the
+                    # project; one who left kept receiving it on every send.
+                    from app.services.notification.manager import (
+                        digest_owner_block_reason,
                     )
 
-                    if blocked_global:
+                    block_reason = await digest_owner_block_reason(db, user, project_id)
+
+                    if block_reason:
                         status = "skipped"
-                        error_detail = (
-                            "workspace-wide digest requires ADMIN; "
-                            "subscription is scoped to no project"
-                        )
+                        error_detail = block_reason
                         logger.warning(
-                            "Digest for subscription %s skipped — non-admin "
-                            "owner on a workspace-wide (project_id IS NULL) "
-                            "subscription",
+                            "Digest for subscription %s skipped — %s",
                             sub_id,
+                            block_reason,
                         )
                     elif skip_unchanged:
                         status = "skipped"
