@@ -116,7 +116,8 @@ def test_the_suite_key_sends_no_bind_parameters():
     compiled = runs_service._SUITE_NORM.compile(dialect=pg_asyncpg.dialect())
     assert compiled.params == {}, f"the suite key sends bind parameters: {compiled.params}"
     sql = " ".join(str(compiled).lower().split())
-    assert sql == "lower(trim(coalesce(test_runs.primary_suite_name, '')))", sql
+    # md5 of the name (review R-B45-D-1): a bounded index key whatever the name.
+    assert sql == "md5(lower(trim(coalesce(test_runs.primary_suite_name, ''))))", sql
 
 
 def test_failed_run_listing_uses_reverse_canonical_order():

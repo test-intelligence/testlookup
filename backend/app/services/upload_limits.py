@@ -133,9 +133,23 @@ def result_limit() -> int:
 # background, a nested ``tests`` the parser never visits) only lean toward
 # refusal.
 #
-# It streams: one regex pass over tokens, a stack as deep as the document, no
-# objects built. Keys are decoded when they carry an escape, so a
-# ``"te\u0073ts"`` key is the ``tests`` key json.loads sees.
+# It streams, in LINEAR time and bounded memory, with no objects built. Keys
+# are decoded when they carry an escape, so a ``"tests"`` key is the
+# ``tests`` key json.loads sees.
+#
+# Linear (review R-B45-D-2). The first version found tokens with one
+# ``finditer`` over "a string, or punctuation". When a quote never closed,
+# every later quote started a new string attempt that scanned to the end of
+# the input and failed: quadratic, so 20,000 escaped quotes took 2.9 s and one
+# 50 MB upload would pin a worker for weeks -- before any JSON parse. Now the
+# scan jumps from one structural character to the next, and each string's
+# body is matched ONCE from its opening quote with possessive quantifiers
+# (no backtracking). A string that never closes is not JSON: the report is
+# refused at that point.
+#
+# Bounded (review R-B45-D-3). One frame per open container, and the depth is
+# capped: a million "[" held a million frames (96 MB). Real reports nest a few
+# dozen deep; json.loads itself gives up near a thousand.
 _ROOT = object()
 _CONTAINER_KEYS: dict[str, frozenset] = {
     "cypress": frozenset({"tests"}),
@@ -143,35 +157,66 @@ _CONTAINER_KEYS: dict[str, frozenset] = {
     "cucumber": frozenset({"elements"}),
     "allure": frozenset({_ROOT}),
 }
-# A JSON string (unrolled, so a long string is one fast scan), or punctuation.
-# Numbers, literals and whitespace are never tokens: they cannot open a result.
-_TOKEN = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[\[\]{},]')
+MAX_NESTING = 512
+# The next character that can change the structure, or open a string.
+# Numbers, literals and whitespace never can: they cannot open a result.
+_STRUCTURAL = re.compile(r'[\[\]{},"]')
+# The rest of a string after its opening quote, through the closing quote.
+_STRING_REST = re.compile(r'[^"\\]*+(?:\\.[^"\\]*+)*+"', re.DOTALL)
+
+
+class UnreadableReport(ValueError):
+    """The report cannot be JSON: refused before any parse.
+
+    A ValueError on purpose, unlike :class:`TooManyResults`: it is a parse
+    error, and the archive loop skips an entry that raises one.
+    """
 
 
 def structural_results(content: str, fmt: str, *, stop_after: int | None = None) -> int:
-    """Count the objects the ``fmt`` parser could turn into results, streaming."""
+    """Count the objects the ``fmt`` parser could turn into results, streaming.
+
+    Raises :class:`UnreadableReport` for a string that never closes or nesting
+    deeper than :data:`MAX_NESTING`.
+    """
     import json
 
     containers = _CONTAINER_KEYS[fmt]
+    search = _STRUCTURAL.search
+    string_rest = _STRING_REST.match
     # One frame per open container: [is_array, key it sits under, awaiting a
     # key (objects), the last key read (objects)].
     stack: list[list] = []
     count = 0
-    for token in _TOKEN.finditer(content):
-        text = token.group()
-        head = text[0]
+    position = 0
+    while True:
+        found = search(content, position)
+        if found is None:
+            return count
+        head = found.group()
+        position = found.end()
         if head == '"':
+            rest = string_rest(content, position)
+            if rest is None:
+                raise UnreadableReport(
+                    "The report has a string that never closes, so it is not JSON."
+                )
+            start, position = position - 1, rest.end()
             frame = stack[-1] if stack else None
             if frame is not None and not frame[0] and frame[2]:
-                key = text[1:-1]
+                key = content[start + 1:position - 1]
                 if "\\" in key:
                     try:
-                        key = json.loads(text)
+                        key = json.loads(content[start:position])
                     except ValueError:
                         pass
                 frame[3] = key
                 frame[2] = False
             continue
+        if head in "{[" and len(stack) >= MAX_NESTING:
+            raise UnreadableReport(
+                f"The report nests deeper than {MAX_NESTING} levels; no test report does."
+            )
         if head == "{":
             if stack:
                 parent = stack[-1]
@@ -184,13 +229,14 @@ def structural_results(content: str, fmt: str, *, stop_after: int | None = None)
                     return count
             stack.append([False, None, True, None])
         elif head == "[":
+            under: object
             if not stack:
-                key = _ROOT
+                under = _ROOT
             elif stack[-1][0]:
-                key = None  # an array in an array: no parser reads results there
+                under = None  # an array in an array: no parser reads results there
             else:
-                key = stack[-1][3]
-            stack.append([True, key, False, None])
+                under = stack[-1][3]
+            stack.append([True, under, False, None])
         elif head == ",":
             if stack and not stack[-1][0]:
                 stack[-1][2] = True

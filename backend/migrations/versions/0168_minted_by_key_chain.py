@@ -17,7 +17,9 @@ who revoke a leaked key after upgrading should also review keys created by the
 same owner around the leak (upgrade note).
 
 ``api_keys`` is small (one row per credential), so the index is built inside
-the migration transaction; it does not need CONCURRENTLY.
+the migration transaction; it does not need CONCURRENTLY. (Superseded: the
+index is built CONCURRENTLY after all -- every API-key request writes
+``last_used_at``, so a SHARE lock for the build stalls them; see upgrade().)
 
 Revision ID: 0168
 Revises: 0167
@@ -44,10 +46,17 @@ def upgrade() -> None:
     op.create_foreign_key(
         FK, "api_keys", "api_keys", ["minted_by_key_id"], ["id"], ondelete="SET NULL"
     )
-    op.create_index(INDEX, "api_keys", ["minted_by_key_id"])
+    # CONCURRENTLY, outside the migration transaction, like every index build
+    # on an existing table since 0166 (tests/regression/
+    # test_migration_index_builds_are_concurrent.py): a plain CREATE INDEX
+    # holds a SHARE lock on api_keys for the build, and every API-key request
+    # writes last_used_at. The column and the FK above commit first.
+    with op.get_context().autocommit_block():
+        op.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {INDEX} ON api_keys (minted_by_key_id)")
 
 
 def downgrade() -> None:
-    op.drop_index(INDEX, table_name="api_keys")
+    with op.get_context().autocommit_block():
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {INDEX}")
     op.drop_constraint(FK, "api_keys", type_="foreignkey")
     op.drop_column("api_keys", "minted_by_key_id")

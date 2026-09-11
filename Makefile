@@ -422,9 +422,12 @@ benchmark-pipeline: ## Baseline the AI pipeline from recorded telemetry (needs r
 	@echo ""
 	@echo "==> Baseline written to benchmarks/results/pipeline_baseline.json"
 
-setup-minio: ## Manually configure MinIO bucket and webhook (runs inside Docker — no host deps)
+setup-minio: .env ## Manually configure MinIO bucket and webhook (runs inside Docker — no host deps)
+	# .env carries MINIO_ACCESS_KEY / MINIO_SECRET_KEY / WEBHOOK_SECRET, which the
+	# script requires (WEBHOOK_SECRET becomes MinIO's auth_token, re-audit R15).
 	docker run --rm \
 		--network testlookup_net \
+		--env-file "$(CURDIR)/.env" \
 		-v "$(CURDIR)/scripts/setup-minio.sh:/setup-minio.sh:ro" \
 		-e MINIO_ENDPOINT=http://minio:9000 \
 		-e BACKEND_URL=http://backend:8000 \

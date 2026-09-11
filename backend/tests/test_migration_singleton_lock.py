@@ -144,3 +144,68 @@ def test_gcp_vm_migration_uses_the_same_production_build_stage_as_backend():
     assert overlay["services"]["backend"]["build"]["target"] == "production"
     assert overlay["services"]["db-migrate"]["build"]["target"] == "production"
     assert base["services"]["backend"]["build"]["context"] == base["services"]["db-migrate"]["build"]["context"]
+
+
+class _NeverLockedConnection:
+    """A lock connection whose pg_try_advisory_lock always answers false."""
+
+    def __init__(self) -> None:
+        self.tries = 0
+        self.closed = False
+        self.statements: list[str] = []
+
+    async def execution_options(self, **_options):
+        return self
+
+    async def scalar(self, statement, _params=None):
+        self.statements.append(str(statement))
+        self.tries += 1
+        return False
+
+    async def execute(self, statement, _params=None):
+        self.statements.append(str(statement))
+
+    async def close(self):
+        self.closed = True
+
+
+def test_a_migrator_that_never_gets_the_lock_times_out_in_seconds(monkeypatch):
+    """QA M3. The only test of the timeout was an integration test: with the
+    deadline check broken it polled for 1,500 s until the harness gave up. This
+    one needs no database and fails in seconds if the deadline never fires."""
+    import asyncio
+
+    from app.db import migration_lock
+
+    connection = _NeverLockedConnection()
+
+    async def _connect():
+        return connection
+
+    async def _attempt():
+        async with migration_lock.migration_singleton_lock(
+            _connect, wait_seconds=0.2, poll_seconds=0.01
+        ):
+            pytest.fail("entered the body without the lock")
+
+    async def _run():
+        with pytest.raises(migration_lock.MigrationLockTimeout):
+            await asyncio.wait_for(_attempt(), timeout=5)
+
+    asyncio.run(_run())
+    assert connection.tries >= 2, "it gave up without polling"
+    assert connection.closed, "the lock connection was left open"
+    assert not any("pg_advisory_unlock" in sql for sql in connection.statements), (
+        "it unlocked a lock it never held"
+    )
+
+
+def test_the_wait_budget_comes_from_the_environment(monkeypatch):
+    from app.db import migration_lock
+
+    monkeypatch.setenv("MIGRATION_LOCK_WAIT_SECONDS", "3")
+    assert migration_lock._wait_seconds_from_env() == 3.0
+    monkeypatch.setenv("MIGRATION_LOCK_WAIT_SECONDS", "not-a-number")
+    assert migration_lock._wait_seconds_from_env() == 1800.0
+    monkeypatch.delenv("MIGRATION_LOCK_WAIT_SECONDS")
+    assert migration_lock._wait_seconds_from_env() == 1800.0

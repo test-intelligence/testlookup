@@ -608,6 +608,8 @@ jobs:
           tests/integration/test_canonical_sync_postgres.py
           tests/integration/test_run_list_natural_order_postgres.py
           tests/integration/test_run_seq_and_member_order_postgres.py
+          tests/integration/test_test_run_index_row_size_postgres.py
+          tests/integration/test_key_mint_revoke_race_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py
           tests/integration/test_migration_singleton_lock_postgres.py
           tests/integration/test_ws_events_persist_postgres_redis.py

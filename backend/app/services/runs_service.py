@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import ARRAY, Numeric, case, cast, false, func, literal_column, or_, select
+from sqlalchemy import ARRAY, Integer, Numeric, case, cast, false, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -123,7 +123,15 @@ async def fetch_run_suites_map(
 # The '' is a SQL literal, not a bind parameter: migration 0169 indexes this
 # exact expression, and under a generic plan a bind parameter is ``$n``, which
 # never matches the literal the index was built with (re-audit N17; M6).
-_SUITE_NORM = func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, literal_column("''"))))
+#
+# md5 of the normalised name, not the name (review R-B45-D-1): the name is a
+# String(500), up to 2,000 bytes in four-byte characters, and an index row past
+# btree's 2,704-byte limit fails the INSERT -- an ingest that 500s. The hash is
+# 32 bytes whatever the name, and equal names hash equal, so the partitions --
+# and every "Run #N" -- are exactly what they were.
+_SUITE_NORM = func.md5(
+    func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, literal_column("''"))))
+)
 
 
 # list_project_runs gives a multi-project caller one index-ordered branch per
@@ -437,7 +445,12 @@ async def list_project_runs(
     if (
         not project_id
         and accessible_project_ids
-        and len(accessible_project_ids) <= _PER_PROJECT_BRANCH_CAP
+        # A member of ONE project takes the plain path below (QA-B45-D-4): its
+        # membership filter is `project_id IN (x)`, an equality that 0167's
+        # index serves with a LIMIT. As a one-branch join it planned, under a
+        # generic plan, as a hash join over a Seq Scan of every run (59 ms at
+        # 400k runs, against 0.15 ms).
+        and 1 < len(accessible_project_ids) <= _PER_PROJECT_BRANCH_CAP
     ):
         # A member of several projects (re-audit N18). Walking a global
         # natural-order index and filtering membership passes every other
@@ -447,7 +460,12 @@ async def list_project_runs(
         # need, so the outer sort sees at most projects x page*size rows.
         from sqlalchemy import union_all  # noqa: PLC0415
 
-        deepest = page * size
+        # A literal, not a bind parameter (QA-B45-D-4): under a generic plan a
+        # bound LIMIT is `$n`, and the planner, unable to see how small it is,
+        # estimated thousands of candidates per branch. int() keeps it a
+        # number whatever the caller passed; page and size are the router's
+        # validated integers.
+        deepest = literal_column(str(int(page) * int(size)), Integer())
         branches = [
             select(TestRun.id.label("id"))
             .where(*filters, TestRun.project_id == member)

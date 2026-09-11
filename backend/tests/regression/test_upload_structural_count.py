@@ -16,13 +16,15 @@ Checked on the repo's REAL sample fixtures (the M5 bound: parsed <= counted <=
 from __future__ import annotations
 
 import json
+import time
+import tracemalloc
 from unittest.mock import patch
 
 import pytest
 
 from app.core.config import settings
 from app.services import upload_limits
-from app.services.upload_limits import TooManyResults
+from app.services.upload_limits import MAX_NESTING, TooManyResults, UnreadableReport
 from tests.regression.test_upload_result_cap import SAMPLES, _ALLURE
 
 pytestmark = pytest.mark.regression
@@ -136,3 +138,126 @@ def test_the_count_stops_once_past_the_threshold():
     """A huge crafted report is refused after scanning a threshold's worth."""
     report = _cypress(50_000)
     assert upload_limits.structural_results(report, "cypress", stop_after=20) == 21
+
+
+# ── Linear time, bounded memory (review R-B45-D-2, R-B45-D-3) ────────────
+
+_ESCAPED_QUOTE = chr(92) + '"'
+
+
+def _unclosed(units: int) -> str:
+    """The review's probe: a string of escaped quotes that never closes."""
+    return '{"results": [' + '"' + _ESCAPED_QUOTE * units
+
+
+def _many_tests(units: int) -> str:
+    return '{"results": [{"suites": [], "tests": [' + "{}," * units + "{}]}]}"
+
+
+def _best_seconds(fn, repeat: int = 3) -> float:
+    best = float("inf")
+    for _ in range(repeat):
+        started = time.perf_counter()
+        fn()
+        best = min(best, time.perf_counter() - started)
+    return best
+
+
+def _refuse_unclosed(units: int) -> None:
+    with pytest.raises(UnreadableReport, match="never closes"):
+        upload_limits.structural_results(_unclosed(units), "cypress")
+
+
+def test_the_reviews_probe_is_refused_fast():
+    """20,000 escaped quotes took 2.9 s with the quadratic tokenizer; a linear
+    scan needs well under a millisecond. Checked first, so a quadratic scanner
+    fails here quickly instead of hanging on the sizes below."""
+    assert _best_seconds(lambda: _refuse_unclosed(20_000), repeat=1) < 0.25
+
+
+@pytest.mark.parametrize("build, sizes, bound", [
+    (_refuse_unclosed, (2_000_000, 4_000_000, 8_000_000), 2.0),
+    (lambda n: upload_limits.structural_results(_many_tests(n), "cypress"),
+     (100_000, 200_000, 400_000), 6.0),
+], ids=["unclosed-string", "many-results"])
+def test_the_count_is_linear_in_the_report(build, sizes, bound):
+    """Doubling the report doubles the time -- never quadruples it."""
+    timings = [_best_seconds(lambda n=n: build(n)) for n in sizes]
+    ratios = [later / max(earlier, 1e-4) for earlier, later in zip(timings, timings[1:])]
+    assert all(ratio < 3.0 for ratio in ratios), (timings, ratios)
+    assert timings[-1] < bound, timings
+
+
+def test_the_count_still_counts_what_it_scans():
+    assert upload_limits.structural_results(_many_tests(1000), "cypress") == 1001
+
+
+def test_a_string_that_never_closes_is_refused_before_parsing(monkeypatch):
+    monkeypatch.setattr(settings, "INGEST_MAX_RESULTS_PER_UPLOAD", CAP)
+    from app.worker.tasks import _parse_file_to_results
+
+    with patch(_PARSERS["cypress"], side_effect=AssertionError("the report was parsed")):
+        with pytest.raises(UnreadableReport):
+            _parse_file_to_results(_unclosed(10), "cypress", "report.json", "run-1")
+
+
+def test_an_unreadable_report_is_a_parse_error_not_a_cap_refusal():
+    """The archive loop skips an entry that raises an ordinary parse error;
+    it must never skip TooManyResults (M5). Unreadable JSON is the former."""
+    assert issubclass(UnreadableReport, ValueError)
+    assert not issubclass(UnreadableReport, TooManyResults)
+
+
+@pytest.mark.parametrize("opener", ["[", '{"a":'], ids=["arrays", "objects"])
+def test_nesting_past_the_cap_is_refused_in_bounded_memory(opener):
+    report = opener * 1_000_000
+    tracemalloc.start()
+    try:
+        with pytest.raises(UnreadableReport, match="nests deeper"):
+            upload_limits.structural_results(report, "cypress")
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    # A million frames held 96 MB; the cap keeps it to a few hundred.
+    assert peak < 2 * 1024 * 1024, peak
+
+
+@pytest.mark.parametrize("kilobytes", [16, 32], ids=["16KB", "32KB"])
+def test_qas_repro_is_refused_fast(kilobytes):
+    """QA-B45-D-1's repro exactly: a quote, then escaped quotes, as playwright.
+    The quadratic tokenizer took 0.42 s at 16 KB and 1.72 s at 32 KB."""
+    report = '"' + _ESCAPED_QUOTE * (kilobytes * 1024 // 2)
+    started = time.perf_counter()
+    with pytest.raises(UnreadableReport):
+        upload_limits.estimated_results(report, "playwright")
+    assert time.perf_counter() - started < 0.1
+
+
+def test_two_million_open_brackets_stay_small():
+    """QA-B45-D-1's memory repro: 2,000,000 "[" peaked at 193 MB."""
+    report = "[" * 2_000_000
+    tracemalloc.start()
+    try:
+        with pytest.raises(UnreadableReport):
+            upload_limits.estimated_results(report, "playwright")
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 2 * 1024 * 1024, peak
+
+
+@pytest.mark.parametrize("fmt, report", [
+    ("cypress", '{"results": [{"tests": {"a": {}, "b": {}}}]}'),
+    ("playwright", '{"suites": [{"specs": [{"tests": {"x": {}}}]}]}'),
+    ("cucumber", '[{"elements": {"a": {}}}]'),
+], ids=["cypress", "playwright", "cucumber"])
+def test_only_objects_inside_a_container_array_count(fmt, report):
+    """QA M4: an object held under ``tests``/``elements`` but not in an array
+    is no result -- the parsers iterate a list there and skip anything else."""
+    assert _parsed(fmt, report) == 0
+    assert upload_limits.estimated_results(report, fmt) == 0
+
+
+def test_nesting_at_the_cap_is_still_counted():
+    depth = MAX_NESTING
+    assert upload_limits.structural_results("[" * depth + "]" * depth, "cypress") == 0

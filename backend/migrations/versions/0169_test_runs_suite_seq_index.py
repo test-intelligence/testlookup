@@ -37,24 +37,31 @@ down_revision = "0168"
 branch_labels = None
 depends_on = None
 
-INDEX = "ix_test_runs_project_suite_natural_seq"
+# Renamed from ix_test_runs_project_suite_natural_seq (review R-B45-D-1). The
+# first definition keyed the normalised suite NAME and INCLUDEd the column, so
+# a String(500) name was stored twice per entry: 500 CJK characters made a
+# 3,088-byte index row and 500 emoji a 4,096-byte one, past btree's 2,704-byte
+# limit -- the run's INSERT failed, and on a database already holding such a
+# run this CREATE INDEX failed and left an INVALID index. A database that ran
+# that version has the old name; 0172 drops it and builds this one.
+INDEX = "ix_test_runs_project_suite_hash_seq"
 TABLE = "test_runs"
 
-SUITE_KEY = "lower(trim(coalesce(primary_suite_name, '')))"
+# md5 of the normalised name: 32 bytes whatever the name, equal for equal
+# names, so the partitions are exactly the old ones. The widest row left is
+# a worst-case build_number (String(100)) and its natural-key array, far
+# under the limit. No INCLUDE: an index-only scan would need the full column
+# in the index -- the very bytes that overflowed -- so each branch reads the
+# heap for its rows.
+SUITE_KEY = "md5(lower(trim(coalesce(primary_suite_name, ''))))"
 NATURAL_KEY = (
     "CASE WHEN build_number ~ '[0-9]' "
     "THEN CAST(string_to_array(trim(regexp_replace(build_number, '[^0-9]+', ' ', 'g')), ' ') "
     "AS NUMERIC[]) END"
 )
-# INCLUDE (primary_suite_name): an index-only scan is possible only when every
-# base column the query touches is stored in the index -- an expression over a
-# column does not count as the column. Without it the planner fetched every
-# heap row through a Bitmap Heap Scan (unordered) and sorted again: measured
-# 52.9 ms and four Sorts, against 22.1 ms, an Index Only Scan with no heap
-# fetches and no Sort, over the same 40,000 runs.
 DEFINITION = (
     f"(project_id, ({SUITE_KEY}), ({NATURAL_KEY}) ASC NULLS LAST, "
-    "build_number, created_at, id) INCLUDE (primary_suite_name)"
+    "build_number, created_at, id)"
 )
 
 
