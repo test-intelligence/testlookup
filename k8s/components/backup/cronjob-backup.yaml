@@ -1,0 +1,110 @@
+# Daily backup (re-audit M25). One phase per container, sharing an emptyDir:
+#   postgres (init) -> pg_dump -Fc          (postgres:16-alpine)
+#   mongo    (init) -> mongodump --gzip     (mongo:7)
+#   minio    (init) -> every bucket/object  (the backend image: boto3)
+#   finalize        -> manifest.json with sha256, one .tar.gz on the PVC,
+#                      retention (newest BACKUP_KEEP archives kept)
+# A failed phase fails the pod before finalize, so no partial archive is ever
+# written. Same archive layout + manifest schema as scripts/ops/backup.sh.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: testlookup-backup
+  namespace: testlookup
+  labels:
+    app: testlookup-backup
+    app.kubernetes.io/component: backup
+spec:
+  # 02:17 in the controller manager's time zone (UTC on most clusters): off
+  # the hour, when ingestion is usually quiet.
+  schedule: "17 2 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 7200
+      template:
+        metadata:
+          labels:
+            app: testlookup-backup
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: postgres
+              image: postgres:16-alpine
+              command: ["/bin/sh", "/scripts/backup.sh", "postgres"]
+              envFrom: &stores
+                - configMapRef:
+                    name: testlookup-config
+                - secretRef:
+                    name: testlookup-secrets
+              volumeMounts: &work
+                - name: scripts
+                  mountPath: /scripts
+                - name: staging
+                  mountPath: /staging
+              securityContext: &hardened
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+              resources: &small
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  memory: 1Gi
+            - name: mongo
+              image: mongo:7
+              command: ["/bin/sh", "/scripts/backup.sh", "mongo"]
+              envFrom: *stores
+              volumeMounts: *work
+              securityContext: *hardened
+              resources: *small
+            - name: minio
+              image: testlookup/backend:0.0.1
+              command: ["python", "/scripts/minio_sync.py", "dump", "/staging/minio_data.tar.gz"]
+              env:
+                - name: HOME
+                  value: /tmp
+              envFrom: *stores
+              volumeMounts: *work
+              securityContext: *hardened
+              resources: *small
+          containers:
+            - name: finalize
+              image: postgres:16-alpine
+              command: ["/bin/sh", "/scripts/backup.sh", "finalize"]
+              env:
+                - name: BACKUP_KEEP
+                  value: "14"
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                - name: staging
+                  mountPath: /staging
+                - name: backups
+                  mountPath: /backups
+              securityContext: *hardened
+              resources: *small
+          volumes:
+            - name: scripts
+              configMap:
+                name: testlookup-backup-scripts
+            - name: staging
+              emptyDir:
+                sizeLimit: 20Gi
+            - name: backups
+              persistentVolumeClaim:
+                claimName: testlookup-backups

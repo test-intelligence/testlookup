@@ -1,0 +1,42 @@
+# base/networkpolicy.yaml starts from default-deny-all, so a backup pod needs
+# its own egress (like the backend and workers: the stores may be external),
+# and in-cluster data stores need to admit it. NetworkPolicies are additive:
+# the second policy only ADDS the backup pod to who may reach the stores; on a
+# deployment with managed stores it selects nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backup-egress
+  namespace: testlookup
+spec:
+  podSelector:
+    matchLabels:
+      app: testlookup-backup
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backup-to-data-stores
+  namespace: testlookup
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - testlookup-postgres
+          - testlookup-mongo
+          - testlookup-minio
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: testlookup-backup

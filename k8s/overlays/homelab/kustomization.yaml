@@ -13,6 +13,12 @@ resources:
   - netpol-homelab.yaml
   - frontend-nginx-configmap.yaml
 
+# Kubernetes backup + restore (re-audit M25): daily pg_dump / mongodump /
+# MinIO export to a PVC, retention, and an on-demand restore. Runbook:
+# k8s/components/backup/README.md.
+components:
+  - ../../components/backup
+
 namespace: testlookup
 
 patches:
