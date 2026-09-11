@@ -3454,9 +3454,61 @@ def _test_units(tracked: Iterable[str]) -> set[str]:
     return units
 
 
+# A suite is RUN only if its failure can fail the build (QA-B45-P3): a step or
+# job that can never execute (`if: false`), whose failure is ignored
+# (`continue-on-error: true`), or a command whose exit status is thrown away
+# (`|| true`, `; true`, `set +e` earlier in the script) runs nothing that gates.
+_LITERAL_FALSE = {"false", "0", "null", "''", '""'}
+# The right-hand side of `||` that still fails the step.
+_KEEPS_FAILURE = re.compile(r"\bexit\s+(?:[1-9]|\$)|\bfalse\b|\breturn\s+[1-9]")
+
+
+def _yaml_expression(value: str) -> str:
+    """The expression inside a YAML scalar: comment, quotes and ``${{ }}`` removed."""
+    value = re.sub(r"\s+#.*$", "", value).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        value = value[1:-1].strip()
+    wrapped = re.fullmatch(r"\$\{\{(.*)\}\}", value)
+    if wrapped:
+        value = wrapped.group(1).strip()
+    return value.lower()
+
+
+def _key_disables(key: str, value: str) -> bool:
+    """Does a step/job ``if:`` or ``continue-on-error:`` stop it from gating?"""
+    expression = _yaml_expression(value)
+    if key == "continue-on-error":
+        return expression == "true"
+    if "||" in expression:
+        return False
+    return any(part.strip().strip("()").strip() in _LITERAL_FALSE
+               for part in expression.split("&&"))
+
+
+def _swallows_failure(command: str) -> bool:
+    """Is a runner command's exit status discarded (``|| true``, ``; :``)?"""
+    if re.search(r";\s*(?:true|:)\s*(?:[;&|#]|$)", command):
+        return True
+    for rhs in command.split("||")[1:]:
+        rhs = rhs.strip()
+        if not (_KEEPS_FAILURE.search(rhs) or _TEST_RUNNER.search(rhs)):
+            return True
+    return False
+
+
+def _errexit_after(command: str, errexit: bool) -> bool:
+    """The shell's ``errexit`` state after the ``set`` builtins in ``command``."""
+    for args in re.findall(r"\bset((?:\s+[+-][A-Za-z]+(?:\s+errexit\b)?)+)", command):
+        for flags, option in re.findall(r"([+-][A-Za-z]+)(\s+errexit\b)?", args):
+            if "e" in flags[1:] or (flags[1:] == "o" and option):
+                errexit = flags[0] == "-"
+    return errexit
+
+
 def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
     """``(effective working dir, command line)`` for every test-runner command
-    in one workflow file. The directory is repo-relative POSIX, ``""`` = root."""
+    in one workflow file whose failure can fail the build. The directory is
+    repo-relative POSIX, ``""`` = root."""
 
     def norm(directory: str) -> str:
         directory = directory.strip().strip("'\"")
@@ -3465,13 +3517,26 @@ def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
         return "" if directory in (".", "") else directory.rstrip("/")
 
     lines = text.splitlines()
+    # Job-level `if:` / `continue-on-error:` may sit anywhere in the job
+    # mapping (after `steps:` too), so collect them before walking the steps.
+    disabled_jobs: set[int] = set()
+    job_start = -1
+    for index, line in enumerate(lines):
+        if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):
+            job_start = index
+        job_key = re.match(r"^    (if|continue-on-error):\s*(.*)$", line)
+        if job_key and _key_disables(job_key.group(1), job_key.group(2)):
+            disabled_jobs.add(job_start)
+
     commands: list[tuple[str, str]] = []
     job_default = ""
+    job_disabled = False
     i = 0
     while i < len(lines):
         line = lines[i]
         if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):          # a new job
             job_default = ""
+            job_disabled = i in disabled_jobs
         wd = re.match(r"^\s{4,}(?:- )?working-directory:\s*(\S+)", line)
         if wd and re.match(r"^\s{4,8}working-directory:", line) and not _in_step(lines, i):
             job_default = norm(wd.group(1))
@@ -3486,12 +3551,17 @@ def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
                 j += 1
             block = lines[i:j]
             step_wd = job_default
+            step_disabled = job_disabled
             run_lines: list[str] = []
             for k, bline in enumerate(block):
                 body = bline[indent + 2:] if k == 0 else bline
                 m_wd = re.match(r"^\s*working-directory:\s*(\S+)", body)
                 if m_wd and len(bline) - len(bline.lstrip()) <= indent + 2:
                     step_wd = norm(m_wd.group(1))
+                m_key = re.match(r"^\s*(if|continue-on-error):\s*(.*)$", body)
+                if (m_key and (k == 0 or len(bline) - len(bline.lstrip()) == indent + 2)
+                        and _key_disables(m_key.group(1), m_key.group(2))):
+                    step_disabled = True
                 m_run = re.match(r"^(\s*)run:\s*(.*)$", body)
                 if m_run and (k == 0 or len(bline) - len(bline.lstrip()) == indent + 2):
                     inline = m_run.group(2).strip()
@@ -3512,14 +3582,18 @@ def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
                     joined[-1] = joined[-1][:-1] + " " + raw
                 else:
                     joined.append(raw)
+            errexit = True        # Actions runs bash with `-e`
             for command in joined:
                 cd = re.match(r"^cd\s+(\S+)\s*$", command)
                 if cd:
                     target = norm(cd.group(1))
                     cwd = f"{cwd}/{target}".strip("/") if cwd else target
                     continue
-                if _TEST_RUNNER.search(command):
+                if _TEST_RUNNER.search(command) and not (
+                    step_disabled or not errexit or _swallows_failure(command)
+                ):
                     commands.append((cwd, command))
+                errexit = _errexit_after(command, errexit)
             i = j
             continue
         i += 1
@@ -3649,8 +3723,10 @@ def _ci_every_test_suite_runs() -> list[Violation]:
         if not _unit_is_run(unit, commands):
             violations.append(Violation(
                 REPO_ROOT / unit, 0,
-                f"test suite `{unit}` is not executed by any workflow step — "
-                "its tests are decoration until a job runs them",
+                f"test suite `{unit}` is not executed by any workflow step that "
+                "can fail the build (an `if: false` or `continue-on-error: true` "
+                "step/job, or a command whose exit status is swallowed, does not "
+                "count) — its tests are decoration until a job runs them",
             ))
     return violations
 
@@ -3665,8 +3741,12 @@ def _ci_every_test_suite_runs() -> list[Violation]:
 _MANIFEST_ECOSYSTEMS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(^|/)requirements[^/]*\.txt$"), "pip"),
     (re.compile(r"(^|/)pyproject\.toml$"), "pip"),
+    (re.compile(r"(^|/)setup\.py$"), "pip"),
+    (re.compile(r"(^|/)Pipfile$"), "pip"),              # Dependabot runs pipenv under "pip"
     (re.compile(r"(^|/)package\.json$"), "npm"),
     (re.compile(r"(^|/)pom\.xml$"), "maven"),
+    (re.compile(r"(^|/)build\.gradle(\.kts)?$"), "gradle"),
+    (re.compile(r"(^|/)Cargo\.toml$"), "cargo"),
     (re.compile(r"(^|/)go\.mod$"), "gomod"),
     (re.compile(r"(^|/)Dockerfile[^/]*$"), "docker"),
 )
@@ -3678,20 +3758,81 @@ _DEPENDABOT_EXEMPT: dict[str, str] = {
 }
 
 
+def _dependabot_dir(raw: str) -> str:
+    return "/" + raw.strip().strip("'\"").strip("/")
+
+
 def _dependabot_entries(text: str) -> set[tuple[str, str]]:
-    """``(ecosystem, directory)`` pairs declared in a dependabot.yml."""
+    """``(ecosystem, directory or glob)`` pairs declared in a dependabot.yml.
+
+    Reads both ``directory: /x`` and the plural ``directories:`` list (block
+    or ``[flow]`` form), whose items may be globs (``/libs/*``, ``/**``).
+    """
     entries: set[tuple[str, str]] = set()
     ecosystem: str | None = None
+    list_indent: int | None = None          # inside a block `directories:` list
     for line in text.splitlines():
         eco = re.match(r"""^\s*-\s*package-ecosystem:\s*["']?([\w-]+)["']?\s*(#.*)?$""", line)
         if eco:
-            ecosystem = eco.group(1)
+            ecosystem, list_indent = eco.group(1), None
             continue
+        if list_indent is not None:
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            item = re.match(r"""^(\s*)-\s*(["']?)([^"'\s#]+)\2\s*(#.*)?$""", line)
+            if item and len(item.group(1)) >= list_indent and ecosystem:
+                entries.add((ecosystem, _dependabot_dir(item.group(3))))
+                continue
+            list_indent, ecosystem = None, None
         directory = re.match(r"""^\s+directory:\s*["']?([^"'\s#]+)["']?\s*(#.*)?$""", line)
         if directory and ecosystem:
-            entries.add((ecosystem, "/" + directory.group(1).strip("/")))
+            entries.add((ecosystem, _dependabot_dir(directory.group(1))))
             ecosystem = None
+            continue
+        plural = re.match(r"""^(\s+)directories:\s*(\[[^\]]*\])?\s*(#.*)?$""", line)
+        if plural and ecosystem:
+            if plural.group(2):
+                for raw in plural.group(2)[1:-1].split(","):
+                    if raw.strip():
+                        entries.add((ecosystem, _dependabot_dir(raw)))
+                ecosystem = None
+            else:
+                list_indent = len(plural.group(1))
     return entries
+
+
+def _dependabot_glob(pattern: str) -> re.Pattern[str]:
+    """Dependabot's ``directories`` glob: ``*`` one path segment, ``**`` any depth."""
+    out = ""
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("/**", i):
+            out += "(?:/.*)?"
+            i += 3
+        elif pattern.startswith("**", i):
+            out += ".*"
+            i += 2
+        elif pattern[i] == "*":
+            out += "[^/]*"
+            i += 1
+        elif pattern[i] == "?":
+            out += "[^/]"
+            i += 1
+        else:
+            out += re.escape(pattern[i])
+            i += 1
+    return re.compile(out)
+
+
+def _dependabot_covers(entries: set[tuple[str, str]], ecosystem: str, directory: str) -> bool:
+    for eco, pattern in entries:
+        if eco != ecosystem:
+            continue
+        if pattern == directory:
+            return True
+        if any(c in pattern for c in "*?") and _dependabot_glob(pattern).fullmatch(directory):
+            return True
+    return False
 
 
 def _dependabot_gaps(tracked: Iterable[str], text: str) -> list[tuple[str, str, str]]:
@@ -3707,7 +3848,7 @@ def _dependabot_gaps(tracked: Iterable[str], text: str) -> list[tuple[str, str, 
         directory = "/" + path.rpartition("/")[0]
         if directory == "/":
             directory = "/"
-        if (ecosystem, directory.rstrip("/") or "/") not in entries:
+        if not _dependabot_covers(entries, ecosystem, directory.rstrip("/") or "/"):
             gaps.append((path, ecosystem, directory))
     if any(p.startswith(".github/workflows/") for p in tracked) and ("github-actions", "/") not in entries:
         gaps.append((".github/workflows", "github-actions", "/"))
@@ -4104,9 +4245,10 @@ GUARDS: list[Guard] = [
     Guard(
         name="ci.dependabot-covers-every-manifest",
         description=(
-            "Every tracked package manifest (requirements/pyproject, "
-            "package.json, pom.xml, go.mod, Dockerfile) and the workflows "
-            "have a .github/dependabot.yml entry (re-audit M23)."
+            "Every tracked package manifest (requirements/pyproject/setup.py/"
+            "Pipfile, package.json, pom.xml, build.gradle, Cargo.toml, go.mod, "
+            "Dockerfile) and the workflows have a .github/dependabot.yml entry, "
+            "`directory:` or `directories:` (re-audit M23, QA-B45-P4)."
         ),
         check=_ci_dependabot_covers_every_manifest,
         fix_hint=(

@@ -302,7 +302,7 @@ jobs:
       # the baseline (`python ../scripts/mypy_ratchet.py --update`). The old
       # `continue-on-error: true` made every new type error invisible.
       - name: Type check with mypy (ratchet)
-        run: python ../scripts/mypy_ratchet.py
+        run: python ../scripts/mypy_ratchet.py --check-stale
 
       # M16: a gated prompt's hash must match the hash its scored outputs were
       # recorded under (backend/app/services/prompt_eval_recordings.py).
