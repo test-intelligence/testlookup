@@ -156,20 +156,34 @@ async def world(monkeypatch):
 
 
 def _writes(world):
-    """One route per gate shape below QA_LEAD, each with a required body."""
+    """One route per gate shape below QA_LEAD, and one per non-safe METHOD.
+
+    ``(method, path, the status an authorized caller gets)``: 422 where the
+    empty body is refused, 404 for a DELETE of an id that does not exist.
+    Every non-safe method is here (b45 r1 MUT1): with only POST and PUT, a
+    ``_is_write`` that stopped counting PATCH left every test green.
+    """
     return {
         # signed in only (get_current_active_user)
-        "notification preference": ("POST", "/api/v1/notifications/preferences"),
+        "notification preference": ("POST", "/api/v1/notifications/preferences", 422),
         # QA_ENGINEER role only
-        "create suite": ("POST", "/api/v1/suites"),
+        "create suite": ("POST", "/api/v1/suites", 422),
         # project guard only, no role
-        "record fix outcome": ("POST", f"/api/v1/projects/{world.project_a}/fix-outcomes"),
+        "record fix outcome": ("POST", f"/api/v1/projects/{world.project_a}/fix-outcomes", 422),
         # a triage write on the caller's own inbox
-        "triage a failure": ("PUT", f"/api/v1/me/assigned-failures/{uuid.uuid4()}/triage"),
+        "triage a failure": ("PUT", f"/api/v1/me/assigned-failures/{uuid.uuid4()}/triage", 422),
+        # signed in only; PATCH and DELETE
+        "edit a saved view": ("PATCH", f"/api/v1/saved-views/{uuid.uuid4()}", 422),
+        "delete a saved view": ("DELETE", f"/api/v1/saved-views/{uuid.uuid4()}", 404),
     }
 
 
 _DOORS = sorted(_writes(SimpleNamespace(project_a="x")))
+
+
+def test_every_non_safe_method_has_a_door():
+    methods = {method for method, _, _ in _writes(SimpleNamespace(project_a="x")).values()}
+    assert methods == {"POST", "PUT", "PATCH", "DELETE"}
 
 
 @pytest.mark.parametrize("key", ["stream", "stream_unbound"])
@@ -177,7 +191,7 @@ _DOORS = sorted(_writes(SimpleNamespace(project_a="x")))
 async def test_a_key_without_a_write_scope_cannot_write(world, door, key):
     from app.core.deps import PROJECT_WRITE_SCOPE_DETAIL
 
-    method, path = _writes(world)[door]
+    method, path, _ = _writes(world)[door]
 
     resp = await world.client.request(method, path, headers=world.headers[key])
 
@@ -188,12 +202,12 @@ async def test_a_key_without_a_write_scope_cannot_write(world, door, key):
 @pytest.mark.parametrize("key", ["writer", "writer_unbound", "admin", "legacy", "jwt"])
 @pytest.mark.parametrize("door", _DOORS)
 async def test_a_write_scope_a_legacy_key_or_a_jwt_passes_authorization(world, door, key):
-    method, path = _writes(world)[door]
+    method, path, authorized = _writes(world)[door]
 
     resp = await world.client.request(method, path, headers=world.headers[key])
 
-    # Past every dependency: the empty body is what is refused.
-    assert resp.status_code == 422, resp.text
+    # Past every dependency: the empty body (or the missing row) is what is refused.
+    assert resp.status_code == authorized, resp.text
 
 
 async def test_a_stream_key_still_reads(world):
@@ -316,14 +330,17 @@ async def _key_count(world) -> int:
         )).scalar_one()
 
 
+@pytest.mark.parametrize("caller", ["jwt", "legacy", "stream"])
 @pytest.mark.parametrize("scopes", [
     ["report:read"], ["test:write"], ["admin:read"], ["stream:write", "test:read"],
 ])
-async def test_an_unenforced_scope_name_is_refused(world, scopes):
+async def test_an_unenforced_scope_name_is_refused(world, scopes, caller):
+    """Whoever mints: a session, a legacy key or a scoped key (b45 r1 MUT3:
+    refusing unknown names only for a JWT caller left this green)."""
     before = await _key_count(world)
 
     resp = await world.client.post(
-        "/api/v1/keys", headers=world.headers["jwt"], json={"name": "n32 unknown", "scopes": scopes},
+        "/api/v1/keys", headers=world.headers[caller], json={"name": "n32 unknown", "scopes": scopes},
     )
 
     assert resp.status_code == 422, resp.text

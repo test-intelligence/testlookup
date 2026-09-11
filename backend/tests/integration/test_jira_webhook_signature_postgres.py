@@ -143,6 +143,24 @@ async def test_a_delivery_signed_with_the_secret_is_applied(world):
     assert await _status(world) == "RESOLVED"
 
 
+async def test_the_signature_is_over_the_raw_bytes_not_a_reserialisation(world):
+    """Jira's body is not ``json.dumps`` output: other key order, other
+    whitespace. A verifier that re-serialised the parsed JSON before the HMAC
+    would refuse every real delivery (b45 r1 MUT4); every other body in this
+    file is json.dumps output and would not notice."""
+    body = (
+        b'{\n  "issue" : { "fields" : {"resolution":null, "status":{"name" : "Done"}},'
+        b' "key":"' + world.issue_key.encode() + b'" },\n'
+        b'  "timestamp" : ' + str(int(time.time() * 1000)).encode() + b"\n}"
+    )
+    assert body != json.dumps(json.loads(body)).encode()  # really non-canonical
+
+    resp = await _post(world, {"X-Hub-Signature": _sign(body)}, body=body)
+
+    assert resp.status_code == 200, resp.text
+    assert await _status(world) == "RESOLVED"
+
+
 @pytest.mark.parametrize("case", [
     "no signature, signed-in admin",
     "signed with another secret",
