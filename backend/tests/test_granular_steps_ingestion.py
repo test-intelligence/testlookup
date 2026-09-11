@@ -864,7 +864,7 @@ class _AccessDB:
 
 
 def _fake_request(run_id):
-    return SimpleNamespace(path_params={"run_id": str(run_id)})
+    return SimpleNamespace(method="GET", path_params={"run_id": str(run_id)})
 
 
 def _member_user(role="QA_ENGINEER"):
