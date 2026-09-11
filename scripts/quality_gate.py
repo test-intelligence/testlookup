@@ -3655,6 +3655,85 @@ def _ci_every_test_suite_runs() -> list[Violation]:
     return violations
 
 
+# ── Dependabot covers every package manifest (re-audit M23) ─────────────────
+#
+# dependabot.yml covered backend pip, frontend npm and the Actions. mcp/, cli/,
+# the Python/JS/Java/Go SDKs and every base image got no update PRs at all, and
+# nothing said so. Manifests are enumerated from the tracked tree, so a new
+# package is covered the day it lands or the gate fails.
+
+_MANIFEST_ECOSYSTEMS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(^|/)requirements[^/]*\.txt$"), "pip"),
+    (re.compile(r"(^|/)pyproject\.toml$"), "pip"),
+    (re.compile(r"(^|/)package\.json$"), "npm"),
+    (re.compile(r"(^|/)pom\.xml$"), "maven"),
+    (re.compile(r"(^|/)go\.mod$"), "gomod"),
+    (re.compile(r"(^|/)Dockerfile[^/]*$"), "docker"),
+)
+_DEPENDABOT_EXEMPT: dict[str, str] = {
+    "client/examples/": (
+        "sample projects users copy; their pins show a working setup and are "
+        "not dependencies of this repo"
+    ),
+}
+
+
+def _dependabot_entries(text: str) -> set[tuple[str, str]]:
+    """``(ecosystem, directory)`` pairs declared in a dependabot.yml."""
+    entries: set[tuple[str, str]] = set()
+    ecosystem: str | None = None
+    for line in text.splitlines():
+        eco = re.match(r"""^\s*-\s*package-ecosystem:\s*["']?([\w-]+)["']?\s*(#.*)?$""", line)
+        if eco:
+            ecosystem = eco.group(1)
+            continue
+        directory = re.match(r"""^\s+directory:\s*["']?([^"'\s#]+)["']?\s*(#.*)?$""", line)
+        if directory and ecosystem:
+            entries.add((ecosystem, "/" + directory.group(1).strip("/")))
+            ecosystem = None
+    return entries
+
+
+def _dependabot_gaps(tracked: Iterable[str], text: str) -> list[tuple[str, str, str]]:
+    """``(manifest path, ecosystem, directory)`` for every manifest with no entry."""
+    entries = _dependabot_entries(text)
+    gaps = []
+    for path in sorted(tracked):
+        if "node_modules/" in path or any(path.startswith(p) for p in _DEPENDABOT_EXEMPT):
+            continue
+        ecosystem = next((eco for pattern, eco in _MANIFEST_ECOSYSTEMS if pattern.search(path)), None)
+        if ecosystem is None:
+            continue
+        directory = "/" + path.rpartition("/")[0]
+        if directory == "/":
+            directory = "/"
+        if (ecosystem, directory.rstrip("/") or "/") not in entries:
+            gaps.append((path, ecosystem, directory))
+    if any(p.startswith(".github/workflows/") for p in tracked) and ("github-actions", "/") not in entries:
+        gaps.append((".github/workflows", "github-actions", "/"))
+    return gaps
+
+
+def _ci_dependabot_covers_every_manifest() -> list[Violation]:
+    config = REPO_ROOT / ".github" / "dependabot.yml"
+    proc = subprocess.run(["git", "ls-files", "-z"], cwd=REPO_ROOT, capture_output=True, check=False)
+    tracked = [p for p in proc.stdout.decode("utf-8", "replace").split("\0") if p]
+    if proc.returncode != 0 or not config.exists():
+        return [Violation(config, 0, "git ls-files failed or dependabot.yml is missing; the guard could not look")]
+    text = config.read_text(encoding="utf-8")
+    manifests = [p for p in tracked if any(pat.search(p) for pat, _ in _MANIFEST_ECOSYSTEMS)]
+    if len(manifests) < 5 or not _dependabot_entries(text):
+        return [Violation(config, 0, f"found {len(manifests)} manifests and "
+                          f"{len(_dependabot_entries(text))} dependabot entries; "
+                          "the guard cannot have looked properly")]
+    return [
+        Violation(REPO_ROOT / path, 0,
+                  f"{ecosystem} manifest has no dependabot entry "
+                  f"(package-ecosystem: {ecosystem}, directory: {directory})")
+        for path, ecosystem, directory in _dependabot_gaps(tracked, text)
+    ]
+
+
 GUARDS: list[Guard] = [
     Guard(
         name="backend.no-print",
@@ -4020,6 +4099,20 @@ GUARDS: list[Guard] = [
             "Add a step that runs the suite (pytest <path>, npm test, go test, "
             "mvn test) to .github/workflows/ci.yml. A suite that genuinely "
             "cannot run in CI goes in _SUITES_NOT_RUN_IN_CI with the reason."
+        ),
+    ),
+    Guard(
+        name="ci.dependabot-covers-every-manifest",
+        description=(
+            "Every tracked package manifest (requirements/pyproject, "
+            "package.json, pom.xml, go.mod, Dockerfile) and the workflows "
+            "have a .github/dependabot.yml entry (re-audit M23)."
+        ),
+        check=_ci_dependabot_covers_every_manifest,
+        fix_hint=(
+            "Add `- package-ecosystem: <eco>` with `directory: /<dir>` to "
+            ".github/dependabot.yml. Sample projects go in _DEPENDABOT_EXEMPT "
+            "with the reason."
         ),
     ),
     Guard(

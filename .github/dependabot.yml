@@ -1,15 +1,108 @@
+# Dependency update PRs for every package manifest in the repo (re-audit M23).
+#
+# The quality gate's ci.dependabot-covers-every-manifest guard enumerates the
+# tracked manifests (requirements*.txt / pyproject.toml / package.json /
+# pom.xml / go.mod / Dockerfile, and the workflows) and fails when one has no
+# entry here, so a new package cannot ship outside this net again. Before this
+# change only backend pip, frontend npm and the Actions were covered: mcp/,
+# cli/, the Python/JS/Java/Go SDKs and every base image were not.
+#
+# Not covered, on purpose: client/examples/** (sample projects users copy;
+# their pins show a working setup, they are not dependencies of this repo).
+#
+# Minor + patch updates are grouped per manifest to keep the PR count sane;
+# majors arrive one PR each so they can be reviewed on their own.
 version: 2
 updates:
+  # ── Python ────────────────────────────────────────────────────────────────
   - package-ecosystem: "pip"
     directory: "/backend"
     schedule:
       interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
 
+  - package-ecosystem: "pip"
+    directory: "/mcp"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/cli"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pip"
+    directory: "/client"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # ── JavaScript ────────────────────────────────────────────────────────────
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
       interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
 
+  - package-ecosystem: "npm"
+    directory: "/client/js"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "npm"
+    directory: "/scripts/mermaid-check"
+    schedule:
+      interval: "monthly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # ── Java / Go SDKs ────────────────────────────────────────────────────────
+  - package-ecosystem: "maven"
+    directory: "/client/java"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "gomod"
+    directory: "/client/go"
+    schedule:
+      interval: "weekly"
+
+  # ── Container base images ─────────────────────────────────────────────────
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/mcp"
+    schedule:
+      interval: "weekly"
+
+  # ── Workflows ─────────────────────────────────────────────────────────────
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

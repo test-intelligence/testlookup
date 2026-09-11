@@ -1,0 +1,24 @@
+# Accepted vulnerability findings for the PR security scans (re-audit M23).
+#
+# .github/workflows/ci.yml runs Trivy on every pull request:
+#   security-deps    trivy fs    (Python requirements, npm lockfiles, Maven, Go)
+#   security-images  trivy image (the backend, frontend and MCP images)
+# Both FAIL on any HIGH or CRITICAL vulnerability that has a fixed version
+# (--severity HIGH,CRITICAL --ignore-unfixed). MEDIUM and below, and findings
+# with no fix yet, are reported by Dependabot / the release scan, not blocked.
+#
+# To accept a finding you cannot fix yet, add an entry here in the PR that
+# needs it. Every entry needs all three keys (scripts/test_ci_security.py
+# enforces this):
+#   id          the CVE / GHSA id Trivy reported
+#   statement   WHY it is acceptable (not reachable, mitigated by X, ...)
+#   expired_at  a date at most 90 days out. After it, the entry stops
+#               suppressing and the scan fails again, which forces a re-review.
+# Optionally narrow it with `paths:` (the lockfile / package path Trivy printed).
+#
+# Example:
+#   - id: CVE-2024-00000
+#     statement: Only reachable through the XML parser, which we never feed untrusted input.
+#     expired_at: 2026-12-01
+#     paths: ["backend/requirements.txt"]
+vulnerabilities: []

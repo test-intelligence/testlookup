@@ -1868,3 +1868,46 @@ def test_enum_vocab_fails_loud_when_no_column_is_enum_backed(
 def test_enum_vocab_real_models_cover_more_than_status() -> None:
     columns, _ = qg._enum_column_vocabularies()
     assert {c for (_, c) in columns} - {"status"}, "only status columns found: the L3 widening regressed"
+
+
+# ── ci.dependabot-covers-every-manifest (re-audit M23) ──────────────────────
+
+
+def test_dependabot_entries_parse_quoted_unquoted_and_commented() -> None:
+    text = (
+        'version: 2\nupdates:\n'
+        '  - package-ecosystem: "pip"\n    directory: "/backend"\n'
+        '  - package-ecosystem: npm\n    directory: /client/js/   # the JS SDK\n'
+        '  - package-ecosystem: "github-actions"\n    directory: "/"\n'
+    )
+    assert qg._dependabot_entries(text) == {
+        ("pip", "/backend"), ("npm", "/client/js"), ("github-actions", "/"),
+    }
+
+
+def test_dependabot_gaps_name_each_uncovered_manifest() -> None:
+    tracked = [
+        "backend/requirements.txt", "mcp/requirements.txt", "mcp/Dockerfile",
+        "client/js/package.json", "client/examples/python/x/requirements.txt",
+        "frontend/node_modules/a/package.json", ".github/workflows/ci.yml", "README.md",
+    ]
+    text = 'updates:\n  - package-ecosystem: "pip"\n    directory: "/backend"\n'
+    assert qg._dependabot_gaps(tracked, text) == [
+        ("client/js/package.json", "npm", "/client/js"),
+        ("mcp/Dockerfile", "docker", "/mcp"),
+        ("mcp/requirements.txt", "pip", "/mcp"),
+        (".github/workflows", "github-actions", "/"),
+    ]
+
+
+def test_the_real_dependabot_config_covers_every_manifest() -> None:
+    import subprocess
+
+    assert qg._ci_dependabot_covers_every_manifest() == []
+    text = (qg.REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    entry = '  - package-ecosystem: "pip"\n    directory: "/mcp"\n'
+    assert text.count(entry) == 1
+    tracked = subprocess.run(["git", "ls-files"], cwd=qg.REPO_ROOT, capture_output=True,
+                             text=True, check=True).stdout.split()
+    gaps = qg._dependabot_gaps(tracked, text.replace(entry, ""))
+    assert [gap[0] for gap in gaps] == ["mcp/requirements.txt"]
