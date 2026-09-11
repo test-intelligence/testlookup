@@ -1014,6 +1014,22 @@ def ingest_test_run(
         logger.error("[Task %s] Ingestion failed: %s", self.request.id, exc, exc_info=True)
         _count_ingestion_run("failure", time.perf_counter() - _ingest_started)
         _release_dedup_for_retry(dedup_key, dedup_owner, self.request.id)
+        if self.request.retries >= self.max_retries:
+            # The retries are spent (code review of re-audit N10). MinIO had
+            # its 200 from the webhook and will not notify again, so without
+            # a record an object-store outage longer than the backoff loses
+            # the build. Record the call exactly as this task takes it, where
+            # an admin reads dead letters (GET /api/v1/admin/maintenance/dlq),
+            # so it can be replayed. _send_to_dlq never raises.
+            replay: dict[str, Any] = {"sentinel_key": sentinel_key, "minio_prefix": minio_prefix}
+            if sentinel_dict is not None:
+                replay["sentinel_dict"] = sentinel_dict
+            _run_async(_send_to_dlq(
+                task_name=self.name,
+                task_id=self.request.id,
+                kwargs=replay,
+                error=f"{type(exc).__name__}: {exc}",
+            ))
         countdown = _exponential_backoff(self.request.retries)
         raise self.retry(exc=exc, countdown=countdown)
 

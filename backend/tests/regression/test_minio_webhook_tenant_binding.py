@@ -23,6 +23,7 @@ cap, off the API process.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -429,6 +430,84 @@ def test_a_storage_hiccup_is_retried_by_the_task(wired, task_env):
 
     assert task_env.ingested == []
     assert len(task_env.retried) == 1, "a transient storage error was not retried"
+
+
+# ── The last failure is kept for an admin to replay (N10 review, V) ──────
+#
+# After max_retries an object-store outage still lost the build: MinIO had its
+# 200 and does not notify again, and the only trace was an ERROR log line.
+
+
+class _StreamRedis:
+    """XADD and XREVRANGE, as the dead-letter writer and the admin reader use them."""
+
+    def __init__(self) -> None:
+        self.entries: list[tuple[str, str, dict]] = []
+
+    async def xadd(self, name, fields, maxlen=None, approximate=True):
+        msg_id = f"{1725960000000 + len(self.entries) + 1}-0"
+        self.entries.append((name, msg_id, dict(fields)))
+        return msg_id
+
+    async def xrevrange(self, name, count=None, **_kwargs):
+        rows = [(i, f) for stream, i, f in reversed(self.entries) if stream == name]
+        return rows[:count] if count else rows
+
+
+@pytest.fixture
+def dead_letters(monkeypatch):
+    fake = _StreamRedis()
+    monkeypatch.setattr("app.db.redis_client.get_redis", lambda: fake)
+    return fake
+
+
+def _attempt(task_env, key: str, prefix: str, retries: int):
+    return task_env.task.apply(
+        kwargs={"sentinel_key": key, "minio_prefix": prefix},
+        task_id="t-1", retries=retries, throw=False,
+    )
+
+
+def test_the_last_retry_leaves_a_dead_letter_an_admin_can_replay(wired, task_env, dead_letters):
+    from app.services.ingestion_dlq import list_recent_stream_failures
+
+    prefix = f"{VICTIM}/runs/15/"
+    key = f"{prefix}upload_complete.json"
+    wired.errors[key] = ConnectionError("MinIO SlowDown")
+
+    _attempt(task_env, key, prefix, retries=task_env.task.max_retries)
+
+    assert len(dead_letters.entries) == 1, "the final failure did not leave exactly one dead letter"
+    [entry] = asyncio.run(list_recent_stream_failures())  # what the admin route returns
+    assert entry["task_name"] == "app.worker.tasks.ingest_test_run"
+    assert entry["kwargs"] == {"sentinel_key": key, "minio_prefix": prefix}
+    assert "MinIO SlowDown" in entry["error"]
+
+    # Replayed as recorded, once storage is back, through the real task.
+    del wired.errors[key]
+    _put_sentinel(wired, prefix, {"build_number": "15"})
+    task_env.task.apply(kwargs=entry["kwargs"], task_id="t-replay", throw=True)
+    [(sentinel, used_prefix)] = task_env.ingested
+    assert (sentinel.project_id, used_prefix) == (VICTIM, prefix)
+
+
+@pytest.mark.parametrize("retries", [0, 1, 2])
+def test_an_earlier_retry_leaves_no_dead_letter(wired, task_env, dead_letters, retries):
+    prefix = f"{VICTIM}/runs/16/"
+    key = f"{prefix}upload_complete.json"
+    wired.errors[key] = ConnectionError("MinIO SlowDown")
+
+    _attempt(task_env, key, prefix, retries=retries)
+
+    assert dead_letters.entries == [], f"retry {retries} of 3 was dead-lettered"
+    assert len(task_env.retried) == 1
+
+
+def test_a_refused_sentinel_leaves_no_dead_letter(wired, task_env, dead_letters):
+    """A refusal is final and would be refused again on replay: logged, not kept."""
+    prefix = f"{VICTIM}/runs/17/"
+    _attempt(task_env, f"{prefix}upload_complete.json", prefix, retries=task_env.task.max_retries)
+    assert dead_letters.entries == []
 
 
 # ── The handler must not read the tenant, or the object, at all ──────────
