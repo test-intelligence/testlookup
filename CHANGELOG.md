@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-09-10 — a streaming-only API key could administer its project, and anyone could subscribe to another project's failures
+
+- **Notification preferences.** `POST/PUT /api/v1/notifications/preferences`
+  accepted any `project_id`, and every enabled preference of a project was sent
+  its notifications. Any signed-in user, or any project-bound key, could
+  subscribe to another tenant's "run failed" notifications with an address or
+  webhook of its own. Writing a preference now checks the project (a bound key:
+  only its own; anyone else: membership, admins pass), a bound key lists only
+  its own project's preferences, and at send time the recipient must still be
+  an active admin or member of the project -- "all projects" preferences
+  included, which used to match every tenant's notifications.
+- **API-key scopes are enforced beyond streaming.** A key with a non-empty
+  scope list needs the new `project:admin` scope for the project-administration
+  routes a bound key may use. A `stream:write` CI key could delete runs, reset
+  its project, and mint itself a full-access, never-expiring replacement. A key
+  that creates a key grants only scopes it holds and an expiry no later than
+  its own.
+- `POST /api/v1/onboarding/track` files a usage event under a named project only
+  if the caller can access it.
+- The authorization test gate reads real calls rather than searching source
+  text, so a comment naming the scoping function no longer passes a route.
+
+**Upgrade note: API-key scopes.** Keys with an empty scope list (the default
+when none are given) keep full access. A key with a non-empty list that lacks
+`project:admin` now gets 403 on run deletion, project reset, retention and
+deletion jobs, ownership import, release and phase deletion, run unlinking,
+compliance packs, member removal and release-gate policy writes -- including
+every key minted from the API Keys settings page (`["stream:write"]`). A
+pipeline that streams and administers its project needs
+`["stream:write", "project:admin"]`, minted by an admin. A key creating a key
+may request only a subset of its scopes (omitting `scopes` copies them) and an
+expiry no later than its own (omitting `expires_days` copies it).
+
 ## 2026-09-10 — once the AI pipeline was finally sent, it still never ran
 
 The outbox fix below made finished runs publish their AI pipeline. The first
@@ -62,7 +95,14 @@ the check that makes it safe, and tests against real PostgreSQL use real keys.
   reassignments or triage.
 
 It still does P's own work, and rotates itself. Automation that used a bound
-key for instance-wide work needs an unbound admin key.
+key for instance-wide work needs an unbound admin key. A bound key whose owner is
+not an admin can no longer mint keys at all; it could mint an unbound one.
+
+**Not yet closed (N26, the next change):** the refusal applies to admin-level
+routes. Instance-wide routes a QA lead may use -- creating a project, the
+training export and fine-tune jobs, integration probes, and reads of the
+settings and AI-evaluation pages -- still accept a project-bound key whose owner
+holds that role.
 
 ## 2026-09-10 — log redaction, second pass
 
