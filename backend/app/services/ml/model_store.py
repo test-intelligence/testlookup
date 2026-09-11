@@ -30,8 +30,11 @@ Kubernetes base config does; a single-host install needs nothing).
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 import re
+import tempfile
 import time
 from pathlib import Path
 
@@ -44,8 +47,13 @@ logger = structlog.get_logger("services.ml.model_store")
 #: What may come down from the store: versioned models and their metadata.
 _ALLOWED_NAME = re.compile(
     r"^(?:(?:classifier|flaky_confidence)_v\d{8}_\d{6}\.joblib"
-    r"|training_metadata\.json|flaky_confidence_metadata\.json)$"
+    r"|training_metadata\.json|flaky_confidence_metadata\.json)"
 )
+
+
+def _is_allowed_name(name: str) -> bool:
+    """``fullmatch``: ``re.match`` with ``$`` accepts a trailing newline."""
+    return _ALLOWED_NAME.fullmatch(name) is not None
 _METADATA_NAMES = ("training_metadata.json", "flaky_confidence_metadata.json")
 
 SYNC_INTERVAL_SECONDS = 60.0
@@ -74,11 +82,12 @@ async def publish(*paths: Path) -> list[str]:
         # can then always find the model it describes.
         ordered = sorted(paths, key=lambda p: p.name in _METADATA_NAMES)
         for path in ordered:
-            if not _ALLOWED_NAME.match(path.name):
+            if not _is_allowed_name(path.name):
                 raise ValueError(f"refusing to publish an unexpected model file name: {path.name}")
             key = _prefix() + path.name
             content_type = "application/json" if path.suffix == ".json" else "application/octet-stream"
-            await storage.put_object(key, path.read_bytes(), content_type=content_type)
+            content = await asyncio.to_thread(path.read_bytes)
+            await storage.put_object(key, content, content_type=content_type)
             written.append(key)
     except Exception as exc:  # noqa: BLE001 -- the local model still serves this pod
         logger.warning("ml_model_publish_failed", error=str(exc)[:300], written=written)
@@ -88,9 +97,34 @@ async def publish(*paths: Path) -> list[str]:
 
 
 def _write_atomically(target: Path, content: bytes) -> None:
-    tmp = target.with_name(target.name + ".download")
-    tmp.write_bytes(content)
-    os.replace(tmp, target)
+    """Publish ``content`` at ``target`` whole or not at all (re-audit R-B45-3).
+
+    Every gunicorn worker and Celery child in a pod shares the model
+    directory and syncs on startup. A fixed temp name let two writers
+    truncate and write the same file while one ``os.replace`` published it
+    half written. Each write now gets its own temp file in the same directory
+    (``os.replace`` is atomic only within one filesystem).
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".", suffix=".download")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
+def _is_current(target: Path, *, is_metadata: bool, size: int | None) -> bool:
+    """A versioned file is immutable once written, so a size match is enough."""
+    return target.exists() and not is_metadata and (size is None or target.stat().st_size == size)
+
+
+def _same_content(target: Path, content: bytes) -> bool:
+    return target.exists() and target.read_bytes() == content
 
 
 async def sync_down(*, force: bool = False) -> list[str]:
@@ -112,13 +146,13 @@ async def sync_down(*, force: bool = False) -> list[str]:
         storage = _storage()
         prefix = _prefix()
         model_dir = Path(settings.ML_MODEL_DIR)
-        model_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(model_dir.mkdir, parents=True, exist_ok=True)
         objects = await storage.list_objects(prefix)
         wanted: list[tuple[str, str, int | None]] = []
         for item in objects:
             key = str(item.get("key") or item.get("Key") or "")
             name = key[len(prefix):] if key.startswith(prefix) else ""
-            if not _ALLOWED_NAME.match(name):
+            if not _is_allowed_name(name):
                 if name:
                     logger.warning("ml_model_store_unexpected_object", key=key)
                 continue
@@ -127,15 +161,22 @@ async def sync_down(*, force: bool = False) -> list[str]:
         # Models before metadata, for the same reason as publish().
         wanted.sort(key=lambda entry: entry[1] in _METADATA_NAMES)
         for key, name, size in wanted:
-            target = model_dir / name
-            is_metadata = name in _METADATA_NAMES
-            if target.exists() and not is_metadata and (size is None or target.stat().st_size == size):
-                continue  # versioned files are immutable once written
-            content = await storage.get_object_content(key)
-            if is_metadata and target.exists() and target.read_bytes() == content:
-                continue
-            _write_atomically(target, content)
-            written.append(name)
+            # One object that cannot be fetched or written is skipped; it
+            # must not cost this pod every other model (QA-B45-A6).
+            try:
+                target = model_dir / name
+                is_metadata = name in _METADATA_NAMES
+                if await asyncio.to_thread(_is_current, target, is_metadata=is_metadata, size=size):
+                    continue
+                content = await storage.get_object_content(key)
+                if is_metadata and await asyncio.to_thread(_same_content, target, content):
+                    continue
+                # File IO off the event loop: this runs on the API's and the
+                # agents' async paths (R-B45-3).
+                await asyncio.to_thread(_write_atomically, target, content)
+                written.append(name)
+            except Exception as exc:  # noqa: BLE001 -- skip this one object
+                logger.warning("ml_model_sync_object_failed", key=key, error=str(exc)[:300])
     except Exception as exc:  # noqa: BLE001 -- keep serving what this pod has
         logger.warning("ml_model_sync_failed", error=str(exc)[:300])
         return written
