@@ -153,3 +153,90 @@ describe('useModalFocus', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 })
+
+// ── QA-B45-3: nested dialogs; only the topmost one handles the keyboard ─────
+
+function Outer({
+  onOuterClose,
+  onInnerClose,
+  innerCanClose = true,
+}: {
+  onOuterClose: () => void
+  onInnerClose: () => void
+  innerCanClose?: boolean
+}) {
+  const [outerOpen, setOuterOpen] = useState(true)
+  const [innerOpen, setInnerOpen] = useState(true)
+  const ref = useModalFocus({
+    onClose: () => {
+      onOuterClose()
+      setOuterOpen(false)
+    },
+  })
+  if (!outerOpen) return null
+  return (
+    <div ref={ref} role="dialog" aria-label="Outer">
+      <button type="button">Outer first</button>
+      {innerOpen && (
+        <Inner
+          canClose={innerCanClose}
+          onClose={() => {
+            onInnerClose()
+            setInnerOpen(false)
+          }}
+        />
+      )}
+      <button type="button">Outer last</button>
+    </div>
+  )
+}
+
+function Inner({ onClose, canClose }: { onClose: () => void; canClose: boolean }) {
+  const ref = useModalFocus({ onClose, canClose })
+  return (
+    <div ref={ref} role="dialog" aria-label="Inner">
+      <button type="button">Inner first</button>
+      <button type="button">Inner last</button>
+    </div>
+  )
+}
+
+const escape = () => fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+
+describe('useModalFocus with a dialog inside a dialog', () => {
+  it('Escape closes only the inner dialog; the next Escape closes the outer', () => {
+    const onOuterClose = vi.fn()
+    const onInnerClose = vi.fn()
+    render(<Outer onOuterClose={onOuterClose} onInnerClose={onInnerClose} />)
+    button('Inner first').focus()
+
+    escape()
+    expect(onInnerClose).toHaveBeenCalledTimes(1)
+    expect(onOuterClose).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog', { name: 'Inner' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Outer' })).toBeInTheDocument()
+
+    escape()
+    expect(onOuterClose).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog', { name: 'Outer' })).toBeNull()
+  })
+
+  it('a busy inner dialog swallows Escape: the outer does not close over it', () => {
+    const onOuterClose = vi.fn()
+    const onInnerClose = vi.fn()
+    render(<Outer onOuterClose={onOuterClose} onInnerClose={onInnerClose} innerCanClose={false} />)
+    button('Inner first').focus()
+
+    escape()
+    expect(onInnerClose).not.toHaveBeenCalled()
+    expect(onOuterClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Inner' })).toBeInTheDocument()
+  })
+
+  it('Tab is trapped by the inner dialog only', () => {
+    render(<Outer onOuterClose={vi.fn()} onInnerClose={vi.fn()} />)
+    button('Inner last').focus()
+    expect(tab()).toBe(true)
+    expect(button('Inner first')).toHaveFocus()
+  })
+})

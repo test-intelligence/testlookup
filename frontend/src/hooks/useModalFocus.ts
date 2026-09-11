@@ -8,6 +8,17 @@
  *  - Escape closes it, when closing is allowed (not mid-submit);
  *  - on close, focus returns to whatever opened it.
  *
+ * Only the TOPMOST open dialog handles Escape and Tab (re-audit QA-B45-3).
+ * Every dialog listens on `document`, and `stopPropagation` does not stop
+ * another listener on the same node, so Escape in a nested dialog also
+ * closed the one beneath it -- even while the inner one was mid-submit and
+ * refused to close, unmounting its busy form. Open dialogs are kept in a
+ * module-level registry keyed by the order in which they FIRST RENDERED: a
+ * parent renders before its children (through a portal too), and a dialog
+ * opened later renders later, so the highest order is the one on top.
+ * (Effects are no use for this: React runs a child's effects before its
+ * parent's.)
+ *
  * Attach the returned ref to the element carrying role="dialog".
  * TransitionReasonDialog implemented this by hand; this is that behaviour,
  * shared, so each hand-rolled modal gets one implementation rather than none.
@@ -27,6 +38,15 @@ function focusableIn(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
     (el) => !el.hasAttribute('inert') && el.getAttribute('aria-hidden') !== 'true',
   )
+}
+
+/** First-render order of every open dialog; the largest is on top. */
+let nextOrder = 0
+const openDialogs = new Set<number>()
+
+function isTopmost(order: number): boolean {
+  for (const other of openDialogs) if (other > order) return false
+  return true
 }
 
 export interface ModalFocusOptions {
@@ -54,6 +74,8 @@ export function useModalFocus<T extends HTMLElement = HTMLDivElement>(
       ? document.activeElement
       : null,
   )
+  // Also taken at first render, for the same reason: see the header.
+  const [order] = useState(() => ++nextOrder)
 
   // Open: move focus in. Close: give focus back to the opener.
   useEffect(() => {
@@ -73,15 +95,16 @@ export function useModalFocus<T extends HTMLElement = HTMLDivElement>(
   }, [opener])
 
   useEffect(() => {
+    openDialogs.add(order)
     function onKeyDown(event: KeyboardEvent) {
       const root = ref.current
-      if (!root) return
+      if (!root || !isTopmost(order)) return
       if (event.key === 'Escape') {
         const { onClose: close, canClose: allowed } = closeRef.current
-        if (close && allowed) {
-          event.stopPropagation()
-          close()
-        }
+        // The top dialog owns Escape even while it cannot close: nothing
+        // beneath it may act on the same key press.
+        event.stopPropagation()
+        if (close && allowed) close()
         return
       }
       if (event.key !== 'Tab') return
@@ -105,8 +128,11 @@ export function useModalFocus<T extends HTMLElement = HTMLDivElement>(
       }
     }
     document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [])
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      openDialogs.delete(order)
+    }
+  }, [order])
 
   return ref
 }

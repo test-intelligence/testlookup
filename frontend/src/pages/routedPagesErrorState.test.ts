@@ -11,7 +11,13 @@
  *   - 'data-unavailable' pages must actually render DataUnavailable;
  *   - 'known-silent' is the backlog (from the b45 enumeration). It may only
  *     shrink: a listed page that starts rendering DataUnavailable fails here
- *     until it is moved out of the list, and the list may not grow.
+ *     until it is moved out of the list, and the list may not grow;
+ *   - the other two labels are checked too, or they were a way around the
+ *     guard (re-audit QA-B45-4): a 'no-fetch' page may not call SWR, a data
+ *     hook (a hook whose own source calls SWR), `api.get` or a service read;
+ *     an 'own-error-ui' page must bind an error from its data source (a
+ *     hook's `error`/`isError`, or the error state its own fetch's `catch`
+ *     sets) AND branch on or render it.
  *
  * Sources are read with import.meta.glob (not node:fs), like the route-scope
  * registry, so the guard sees exactly what Vite would bundle.
@@ -21,6 +27,7 @@ import { describe, expect, it } from 'vitest'
 import appSource from '../App.tsx?raw'
 
 const pageSources = import.meta.glob<string>('./**/*.tsx', { query: '?raw', import: 'default', eager: true })
+const hookSources = import.meta.glob<string>('../hooks/**/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true })
 
 type ErrorState =
   /** Renders <DataUnavailable> for its primary fetch. */
@@ -101,7 +108,75 @@ const REVIEWED: Record<string, ErrorState> = {
 /** The backlog's size when this guard landed. Lower it as pages are fixed. */
 const KNOWN_SILENT_CEILING = 29
 
-const routedPages = Array.from(appSource.matchAll(/lazy\(\(\) => import\('@\/pages\/([^']+)'\)\)/g), (m) => m[1])
+// Tolerant of spacing and quote style: a route written differently must not
+// fall out of the guard.
+const routedPages = Array.from(
+  appSource.matchAll(/lazy\(\s*\(\)\s*=>\s*import\(\s*['"`]@\/pages\/([^'"`]+)['"`]\s*\)\s*\)/g),
+  (m) => m[1],
+)
+
+/** Hooks that fetch: their own source calls SWR. */
+export const DATA_HOOKS = new Set(
+  Object.entries(hookSources)
+    .filter(([path, src]) => !/\.test\.tsx?$/.test(path) && /\buseSWR(?:Infinite|Immutable)?\s*[<(]/.test(src))
+    .flatMap(([, src]) => Array.from(src.matchAll(/export\s+(?:default\s+)?(?:async\s+)?(?:function|const)\s+(use[A-Z]\w*)/g), (m) => m[1])),
+)
+
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** Every way a page reads data; empty for a page that does not fetch. */
+export function dataReads(source: string): string[] {
+  const reads: string[] = []
+  for (const m of source.matchAll(/\b(?:useSWR(?:Infinite|Immutable)?\s*[<(]|api\.get\s*[<(]|\w+Service\.(?:get|list|fetch|search|load)\w*\s*\()/g)) {
+    reads.push(m[0])
+  }
+  for (const m of source.matchAll(/import\s+(\w+)?\s*,?\s*(?:\{([^}]*)\})?\s*from\s*['"]@\/hooks\/[^'"]+['"]/g)) {
+    const names = [m[1], ...(m[2] ?? '').split(',')].filter(Boolean).map((n) => n.trim())
+    for (const name of names) {
+      const [imported, local = imported] = name.split(/\s+as\s+/).map((n) => n.trim())
+      if (DATA_HOOKS.has(imported) && new RegExp(`\\b${escapeRe(local)}\\s*[<(]`).test(source)) reads.push(local)
+    }
+  }
+  return reads
+}
+
+/** Error values the page binds from its data source. */
+function boundErrors(source: string): string[] {
+  const names: string[] = []
+  // const { data, error, isError: failed } = useThing(...)   (multi-line too)
+  for (const m of source.matchAll(/(?:const|let)\s*\{([^}]*)\}\s*=\s*use[A-Z]\w*\s*[<(]/g)) {
+    for (const part of m[1].split(',')) {
+      const [key, alias] = part.split(':').map((s) => s.trim())
+      if (key === 'error' || key === 'isError') names.push(alias || key)
+    }
+  }
+  // const runs = useRuns(...) ... runs.error
+  for (const m of source.matchAll(/(?:const|let)\s+(\w+)\s*=\s*use[A-Z]\w*\s*[<(]/g)) {
+    for (const field of ['error', 'isError']) {
+      if (new RegExp(`\\b${escapeRe(m[1])}\\.${field}\\b`).test(source)) names.push(`${m[1]}.${field}`)
+    }
+  }
+  // const [loadError, setLoadError] = useState(...) set inside a catch
+  for (const m of source.matchAll(/const\s*\[\s*(\w*[eE]rror\w*)\s*,\s*(set\w+)\s*\]\s*=\s*useState/g)) {
+    // set inside a `catch {}` block, or a promise's `.catch(() => ...)`
+    const setter = escapeRe(m[2])
+    const caught = new RegExp(
+      `(?:catch\\s*(?:\\([^)]*\\))?\\s*\\{[^}]*|\\.catch\\(\\s*(?:\\([^)]*\\)|\\w+)?\\s*=>\\s*\\{?[^}]*?)\\b${setter}\\(`,
+    )
+    if (caught.test(source)) names.push(m[1])
+  }
+  return names
+}
+
+/** Whether a bound error is branched on or rendered, not merely bound. */
+export function hasOwnErrorBranch(source: string): boolean {
+  return boundErrors(source).some((name) => {
+    const n = escapeRe(name)
+    return new RegExp(
+      `(?:\\{\\s*!?\\s*${n}\\s*(?:&&|\\?|\\|\\||\\})|\\b${n}\\s*(?:&&|\\?(?!\\.))|if\\s*\\(\\s*!?\\s*${n}\\b|${n}\\s*\\)\\s*(?:\\{|return)|Boolean\\(\\s*${n}\\s*\\)|!!\\s*${n}\\b)`,
+    ).test(source)
+  })
+}
 
 const sourceOf = (page: string) => pageSources[`./${page}.tsx`]
 const rendersDataUnavailable = (page: string) =>
@@ -136,5 +211,35 @@ describe('routed pages show a failed fetch (M21)', () => {
 
   it('has no stale entries', () => {
     expect(Object.keys(REVIEWED).filter((page) => !routedPages.includes(page))).toEqual([])
+  })
+
+  it("'no-fetch' pages really read no data", () => {
+    const fetching = routedPages
+      .filter((p) => REVIEWED[p] === 'no-fetch')
+      .map((p) => [p, dataReads(sourceOf(p) ?? '')] as const)
+      .filter(([, reads]) => reads.length > 0)
+    expect(fetching, 'These pages read data: render <DataUnavailable> or classify them honestly.').toEqual([])
+  })
+
+  it("'own-error-ui' pages really bind and show their fetch's error", () => {
+    const silent = routedPages.filter((p) => REVIEWED[p] === 'own-error-ui' && !hasOwnErrorBranch(sourceOf(p) ?? ''))
+    expect(silent, 'No error from the data source is shown: these pages are known-silent.').toEqual([])
+  })
+
+  it('the label checks are not vacuous', () => {
+    expect(DATA_HOOKS.size).toBeGreaterThan(5)
+    expect(DATA_HOOKS.has('useRuns')).toBe(true)
+    expect(dataReads("import { useRuns } from '@/hooks/useRuns'\nconst { data } = useRuns(1)")).toEqual(['useRuns'])
+    expect(dataReads("const { data } = useSWR('/x', f)")).toHaveLength(1)
+    expect(dataReads('await projectsService.list()')).toHaveLength(1)
+    expect(dataReads("await api.patch('/auth/me', body)")).toEqual([])
+    expect(hasOwnErrorBranch('const { data, error } = useRuns(1)\nif (error) return <Alert />')).toBe(true)
+    expect(hasOwnErrorBranch('const { data, error } = useRuns(1)\nreturn <List />')).toBe(false)
+    expect(hasOwnErrorBranch('const [loadError, setLoadError] = useState(null)\ntry { x() } catch (e) { setLoadError(e) }\n{loadError && <p />}')).toBe(true)
+    expect(hasOwnErrorBranch("const [error, setError] = useState(null)\nload().catch(() => setError('x'))\nif (error) return <p />")).toBe(true)
+    expect(hasOwnErrorBranch('const { error: statusError } = useStatus()\n<Card failed={Boolean(statusError)} />')).toBe(true)
+    expect(hasOwnErrorBranch('const [error, setError] = useState(null)\nif (error) return <p />')).toBe(false)
+    // Every lazily routed page is still found (tolerant regex).
+    expect(routedPages.length).toBeGreaterThan(50)
   })
 })
