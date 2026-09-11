@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import ARRAY, Numeric, case, cast, false, func, literal_column, or_, select
+from sqlalchemy import ARRAY, Integer, Numeric, case, cast, false, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -465,7 +465,7 @@ async def list_project_runs(
         # estimated thousands of candidates per branch. int() keeps it a
         # number whatever the caller passed; page and size are the router's
         # validated integers.
-        deepest = literal_column(str(int(page) * int(size)))
+        deepest = literal_column(str(int(page) * int(size)), Integer())
         branches = [
             select(TestRun.id.label("id"))
             .where(*filters, TestRun.project_id == member)
