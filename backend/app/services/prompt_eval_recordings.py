@@ -21,6 +21,16 @@ This module gates the prompts whose output is a decision that can be scored:
   the CURRENT prompt through ``llm_factory.get_llm`` on every case, stores the
   outputs and the hash, and scores them.
 
+Recordings carry provenance (QA-B45-A3): ``--record`` writes the provider,
+the model, when, and ``outputs_sha256`` -- a digest over the prompt hash and
+every recorded output -- and :func:`check_recordings` refuses a measured
+entry without them, or whose outputs no longer match the digest (an output
+edited by hand after recording). This is NOT a cryptographic binding: the
+repository holds no signing key, so someone determined can recompute the
+digest. What it does is make a hand-written or hand-edited recording a
+deliberate act, visible in the PR diff of ``prompt_eval_recordings.json``,
+where recordings are reviewed like code.
+
 Honest about what is not measured yet. Real outputs need a model, and none
 were recorded when this landed, so the three gated prompts start *unmeasured*
 -- listed by name by :func:`check_recordings`, never counted as passing. An
@@ -36,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import re
 import sys
@@ -105,7 +116,11 @@ def _score_regression_classification(case: dict) -> float:
 
 
 def _score_release_grounding(case: dict) -> float:
-    """The prompt's own grounding rules, checked on the answer."""
+    """The decision, then the prompt's own grounding rules, on the answer.
+
+    The recommendation is the decision the gate exists for: a model that
+    answers "GO, no issues" to everything used to score 1.0 (QA-B45-A2).
+    """
     parsed = _json_object(case.get("output", ""))
     if not parsed or not isinstance(parsed.get("reasoning"), str) or not parsed["reasoning"].strip():
         return 0.0
@@ -114,8 +129,14 @@ def _score_release_grounding(case: dict) -> float:
     if not isinstance(blocking, list) or not isinstance(conditions, list):
         return 0.0
     expected = case["expected"]
+    if str(parsed.get("recommendation", "")).strip().upper() != expected["recommendation"]:
+        return 0.0  # the wrong decision
     if not expected["has_failures"] and blocking:
         return 0.0  # issues invented with no failure data
+    if expected["recommendation"] == "NO_GO" and expected["has_failures"] and not blocking:
+        return 0.0  # a NO_GO must name what blocks it
+    if expected["recommendation"] == "CONDITIONAL_GO" and not conditions:
+        return 0.0  # a CONDITIONAL_GO must say what the conditions are
     if expected["recommendation"] != "CONDITIONAL_GO" and conditions:
         return 0.0  # conditions only belong to CONDITIONAL_GO
     return 1.0
@@ -134,6 +155,34 @@ def score_entry(entry: dict) -> float:
         return 0.0
     scorer = SCORERS[entry["task_type"]]
     return round(sum(scorer(case) for case in cases) / len(cases), 4)
+
+
+# ── provenance ──────────────────────────────────────────────────────────────
+
+
+def outputs_digest(content_hash: str, cases: list[dict]) -> str:
+    """sha256 over the prompt hash and every (case id, output), in order."""
+    payload = json.dumps(
+        {"content_hash": content_hash, "outputs": [[c.get("case_id"), c.get("output")] for c in cases]},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _provenance_problem(prompt_id: str, entry: dict) -> Optional[str]:
+    provenance = entry.get("provenance")
+    if not isinstance(provenance, dict) or not all(
+        isinstance(provenance.get(k), str) and provenance[k].strip()
+        for k in ("provider", "model", "recorded_at", "outputs_sha256")
+    ):
+        return (
+            f"{prompt_id}: recorded outputs have no provenance (provider, model, recorded_at, "
+            f"outputs_sha256) -- record them with the model: "
+            f"python -m app.services.prompt_eval_recordings --record {prompt_id}"
+        )
+    if provenance["outputs_sha256"] != outputs_digest(str(entry.get("content_hash")), entry.get("cases") or []):
+        return f"{prompt_id}: recorded outputs do not match their provenance digest (edited after recording?)"
+    return None
 
 
 # ── the check ───────────────────────────────────────────────────────────────
@@ -184,6 +233,10 @@ def check_recordings(path: Optional[Path] = None) -> tuple[list[str], list[str]]
         if not cases or any(not isinstance(c.get("output"), str) for c in cases):
             problems.append(f"{prompt_id}: marked measured but a case has no recorded output")
             continue
+        provenance_problem = _provenance_problem(prompt_id, entry)
+        if provenance_problem:
+            problems.append(provenance_problem)
+            continue
         score = score_entry(entry)
         minimum = float(entry.get("min_score", 1.0))
         if score < minimum:
@@ -219,8 +272,11 @@ async def record(
     invoke: Callable[[list], Awaitable[Any]],
     path: Optional[Path] = None,
     recorded_by: str = "",
+    provider: str = "",
+    model: str = "",
 ) -> dict:
-    """Run the CURRENT prompt on every case, store raw outputs + hash + score."""
+    """Run the CURRENT prompt on every case, store raw outputs + hash + score,
+    and the provenance :func:`check_recordings` requires."""
     data = load_recordings(path)
     entry = dict(data["prompts"][prompt_id])
     cases = []
@@ -228,12 +284,20 @@ async def record(
         response = await invoke(render_messages(prompt_id, case["input"]))
         content = getattr(response, "content", response)
         cases.append({**case, "output": content if isinstance(content, str) else str(content)})
+    content_hash = get_prompt(prompt_id).content_hash
+    recorded_at = datetime.now(timezone.utc).isoformat()
     entry.update(
         cases=cases,
-        content_hash=get_prompt(prompt_id).content_hash,
+        content_hash=content_hash,
         measured=True,
         recorded_by=recorded_by,
-        recorded_at=datetime.now(timezone.utc).isoformat(),
+        recorded_at=recorded_at,
+        provenance={
+            "provider": provider,
+            "model": model,
+            "recorded_at": recorded_at,
+            "outputs_sha256": outputs_digest(content_hash, cases),
+        },
     )
     entry["score"] = score_entry(entry)
     data["prompts"][prompt_id] = entry
@@ -247,7 +311,12 @@ async def _record_with_llm(prompt_id: str, model: Optional[str]) -> dict:
     from app.services.llm_factory import get_llm
 
     llm = await get_llm(model=model, temperature=0.0)
-    return await record(prompt_id, invoke=llm.ainvoke, recorded_by=f"{getattr(llm, '_provider', '?')}:{model or ''}")
+    provider = str(getattr(llm, "_provider", "") or "")
+    model_name = str(getattr(llm, "_model", "") or model or "")
+    return await record(
+        prompt_id, invoke=llm.ainvoke, recorded_by=f"{provider}:{model_name}",
+        provider=provider, model=model_name,
+    )
 
 
 def _echo(message: str) -> None:
