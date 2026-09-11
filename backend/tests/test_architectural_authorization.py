@@ -161,7 +161,7 @@ def _route_is_protected(route: APIRoute) -> bool:
     # Authored test case -> project. This guard is router-local because the
     # shared test-management module also returns the loaded case to handlers.
     if "{case_id}" in path:
-        evidence = _authorization_evidence(route)
+        evidence = _authorization_names(route)
         if (
             any("require_case_access" in n for n in dep_names)
             or "require_case_access" in evidence
@@ -174,7 +174,7 @@ def _route_is_protected(route: APIRoute) -> bool:
     # may use a dependency named ``require_canonical_case_access``. Inspect the
     # handler/callee evidence as well as dependencies so both safe forms count.
     if "{canonical_id}" in path:
-        evidence = _authorization_evidence(route)
+        evidence = _authorization_names(route)
         if (
             any("require_canonical_case_access" in n for n in dep_names)
             or "_enforce_project_access" in evidence
@@ -312,13 +312,24 @@ SCOPED_IDS: frozenset[str] = frozenset({
     "defect_ids", "case_ids", "canonical_ids", "cluster_ids",
 })
 
-#: Any of these appearing in a handler — or in a function it calls — is accepted
-#: as evidence that the caller's access to the named object was verified.
+#: Any of these CALLED by a handler — or by a function it calls — is accepted as
+#: evidence that the caller's access to the named object was verified.
 #: Membership calls, ownership filters and project-bound API-key contexts all
 #: count: they are different shapes of the same guarantee.
+#:
+#: "Called" is read from the AST (``_authorization_names``), never from source
+#: text (QA-R3-10). A substring search counted a comment or a docstring that
+#: NAMED a check as the check, so deleting the only real call left the route
+#: green as long as a comment still mentioned it.
 _SCOPE_EVIDENCE: tuple[str, ...] = (
     # canonical membership resolution
     "resolve_project_scope", "get_accessible_project_ids",
+    # resolves a test case to its run and project, then checks membership
+    # (``POST /analyze`` passed only on a ``current_user.id`` read before)
+    "resolve_authorized_test_case",
+    # a notification preference's project: binding, membership, existence
+    # (QA-R3-1; the handlers reach it through their service)
+    "authorize_preference_project",
     # dependency guards
     "require_project_access", "require_run_access", "require_release_access",
     "require_session_access", "require_live_session_access", "require_link_access",
@@ -332,9 +343,15 @@ _SCOPE_EVIDENCE: tuple[str, ...] = (
     "_require_pipeline_access", "_require_valid_project_id",
     "_authorize_run_and_project", "_require_analysis_access",
     "assert_user_is_qa_lead_on_project",
-    # project-bound API key: the server derives project_id from the key itself
+    # project-bound API key: the server derives project_id from the key itself.
+    # NOT ``_api_key_bound_project`` or ``bound_project_id`` (QA-R3-10): they
+    # confine a key bound to one project and never check a JWT user, so a
+    # handler that only confines a bound key still lets any member of any
+    # project name any project. Re-audit N20 added both to handlers that also
+    # call ``resolve_project_scope``, and either alone kept the route green
+    # once that call was deleted.
     "get_streaming_api_key_context", "StreamingApiKeyContext",
-    "get_api_key_context", "_api_key_bound_project", "bound_project_id",
+    "get_api_key_context",
     # ownership filter — scoping to the caller's own rows
     "current_user.id", "current_user.username",
 )
@@ -414,7 +431,13 @@ _NEVER_SCOPE_EVIDENCE: frozenset[str] = frozenset({"require_role", "require_inst
 
 
 def _authorization_evidence(route: APIRoute) -> str:
-    """Dependency names + handler source + the source of what the handler calls."""
+    """Dependency names + handler source + the source of what the handler calls.
+
+    TEXT, comments and docstrings included. Use it only to SPOT a tenant id a
+    handler reads (``_TENANT_ID_MARKERS``), where a false match errs toward
+    looking closer. It is never proof that a check runs: that is
+    ``_authorization_names`` (QA-R3-10).
+    """
     parts = list(_walk_deps(route.dependant))
     endpoint = route.endpoint
     try:
@@ -440,6 +463,97 @@ def _authorization_evidence(route: APIRoute) -> str:
     return "\n".join(parts)
 
 
+def _plain_name(node) -> str | None:
+    """``f`` for ``f`` and ``mod.f``; None for anything else (a subscript, a call result)."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+#: Attribute reads accepted as an ownership filter: code that scopes a query to
+#: the caller's own rows. A real read in code, never a mention in a comment.
+_OWNERSHIP_ATTRIBUTES: frozenset[str] = frozenset({"id", "username"})
+
+
+def _names_in(tree: ast.AST) -> set[str]:
+    """What the code DOES, by name: every function it calls, and
+    ``current_user.id``/``.username`` reads.
+
+    Comments are not in the AST at all, and a docstring or a string literal is
+    a constant, not a call, so neither can stand in for a check (QA-R3-10).
+    Nor can a bare reference (``check = resolve_project_scope``) that is
+    never called. A callable handed to ``Depends(...)`` is in the route's
+    dependency tree, which ``_authorization_names`` reads separately.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            called = _plain_name(node.func)
+            if called is not None:
+                names.add(called)
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "current_user"
+            and node.attr in _OWNERSHIP_ATTRIBUTES
+        ):
+            names.add(f"current_user.{node.attr}")
+    return names
+
+
+def _function_names(func) -> set[str]:
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    except (OSError, TypeError, SyntaxError, IndentationError):
+        return set()
+    return _names_in(tree)
+
+
+def _endpoint_names(endpoint) -> set[str]:
+    """``_names_in`` the handler, and in each function it calls (one level down).
+
+    The same one-level delegation ``_authorization_evidence`` follows, read as
+    code instead of text. A role guard is skipped as a callee
+    (``_NEVER_SCOPE_EVIDENCE``) whatever its body calls.
+    """
+    names = _function_names(endpoint)
+    module = inspect.getmodule(endpoint)
+    if module is None:
+        return names
+    for qualifier, name in _called_targets(endpoint):
+        if name in _NEVER_SCOPE_EVIDENCE:
+            continue
+        owner = module if qualifier is None else getattr(module, qualifier, None)
+        if owner is None:
+            continue
+        target = getattr(owner, name, None)
+        if target is None or not callable(target):
+            continue
+        names |= _function_names(target)
+    return names
+
+
+def _authorization_names(route: APIRoute) -> set[str]:
+    """Every dependency's name parts plus ``_endpoint_names`` of the handler.
+
+    ``require_project_access.<locals>._check`` contributes
+    ``require_project_access``: the dependency tree is what FastAPI runs.
+    """
+    names = {part for qualname in _walk_deps(route.dependant) for part in qualname.split(".")}
+    return names | _endpoint_names(route.endpoint)
+
+
+def _has_evidence(names: set[str], markers) -> bool:
+    return any(marker in names for marker in markers)
+
+
+def _route_shows_scope_check(route: APIRoute, markers=_SCOPE_EVIDENCE) -> bool:
+    """The one decision both non-path scans make, and the self-tests exercise."""
+    return _has_evidence(_authorization_names(route), markers)
+
+
 def _list_unscoped_nonpath_routes() -> list[tuple[str, str]]:
     offenders: set[tuple[str, str]] = set()
     for route in _collect_api_routes():
@@ -450,7 +564,7 @@ def _list_unscoped_nonpath_routes() -> list[tuple[str, str]]:
             continue
         if not _non_path_scoped_ids(route):
             continue
-        if any(marker in _authorization_evidence(route) for marker in _SCOPE_EVIDENCE):
+        if _route_shows_scope_check(route):
             continue
         for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
             offenders.add((method, route.path))
@@ -489,7 +603,7 @@ def test_a_role_guard_is_never_scope_evidence() -> None:
     route = next(
         r for r in _collect_api_routes() if r.path == "/api/v1/onboarding/events"
     )
-    found = [m for m in _SCOPE_EVIDENCE if m in _authorization_evidence(route)]
+    found = [m for m in _SCOPE_EVIDENCE if m in _authorization_names(route)]
     assert not found, f"a role guard's source was read as scope evidence: {found}"
 
 
@@ -523,6 +637,171 @@ def test_a_scoped_id_outside_the_path_is_still_checked() -> None:
             + "\n  ".join(f"{m:6s} {p}" for m, p in stale)
         )
     assert not errors, "\n\n".join(errors)
+
+
+# ── Self-tests of the evidence reader, on code written for them (QA-R3-10) ──
+#
+# QA's MUT-1/1c/1e: delete ``await resolve_project_scope(...)`` from
+# ``search.trigger_reindex`` (after which any QA_LEAD reindexes any tenant) and
+# the scan stayed green, first on the comment that still named the function,
+# then on ``_api_key_bound_project`` / ``bound_project_id``. Each shape below
+# is one of those, or the next plausible one.
+
+import importlib.util  # noqa: E402
+import sys  # noqa: E402
+import textwrap  # noqa: E402
+
+import pytest  # noqa: E402
+
+_EVIDENCE_FIXTURE_SOURCE = '''
+from fastapi import Depends
+
+from app.core import deps
+from app.core.deps import (
+    _api_key_bound_project,
+    get_streaming_api_key_context,
+    resolve_project_scope,
+)
+
+
+def require_role(_role):
+    """A role guard whose body happens to call a scope function."""
+    async def _check(db=None, current_user=None):
+        await resolve_project_scope(db, current_user, None)
+    return _check
+
+
+async def only_a_comment(project_id, db, current_user):
+    # await resolve_project_scope(db, current_user, project_id)  <- deleted
+    return project_id
+
+
+async def only_a_docstring(project_id, db, current_user):
+    """Checked by resolve_project_scope, like require_project_access."""
+    return project_id
+
+
+async def only_a_string(project_id, db, current_user, log):
+    log.info("resolve_project_scope skipped for %s", project_id)
+    return project_id
+
+
+async def only_a_bare_reference(project_id, db, current_user):
+    check = resolve_project_scope
+    return project_id, check
+
+
+async def only_confines_a_bound_key(project_id, db, current_user):
+    bound_project_id = _api_key_bound_project(current_user)
+    if bound_project_id is not None and str(bound_project_id) != project_id:
+        raise PermissionError("restricted to a different project")
+    return project_id
+
+
+def _documented_helper(project_id):
+    """Callers rely on resolve_project_scope having run."""
+    return project_id
+
+
+async def a_callee_only_mentions_it(project_id, db, current_user):
+    return _documented_helper(project_id)
+
+
+async def only_a_role_guard(project_id, current_user=Depends(require_role("ADMIN"))):
+    return project_id
+
+
+async def a_real_call(project_id, db, current_user):
+    await resolve_project_scope(db, current_user, project_id)
+    return project_id
+
+
+async def a_real_call_through_the_module(project_id, db, current_user):
+    await deps.resolve_project_scope(db, current_user, project_id)
+    return project_id
+
+
+async def _checking_helper(db, current_user, project_id):
+    await resolve_project_scope(db, current_user, project_id)
+
+
+async def a_real_call_one_level_down(project_id, db, current_user):
+    await _checking_helper(db, current_user, project_id)
+    return project_id
+
+
+async def a_key_derived_project(ctx=Depends(get_streaming_api_key_context)):
+    return ctx.project_id
+'''
+
+_NOT_EVIDENCE = (
+    "only_a_comment", "only_a_docstring", "only_a_string", "only_a_bare_reference",
+    "only_confines_a_bound_key", "a_callee_only_mentions_it", "only_a_role_guard",
+)
+_EVIDENCE = (
+    "a_real_call", "a_real_call_through_the_module", "a_real_call_one_level_down",
+    "a_key_derived_project",
+)
+
+
+@pytest.fixture(scope="module")
+def evidence_fixture(tmp_path_factory):
+    """The source above as a real, importable module, so ``inspect`` reads it
+    exactly as it reads a router."""
+    path = tmp_path_factory.mktemp("evidence") / "r4_evidence_fixture.py"
+    path.write_text(_EVIDENCE_FIXTURE_SOURCE, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("r4_evidence_fixture", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # inspect.getmodule resolves through it
+    try:
+        spec.loader.exec_module(module)
+        yield module
+    finally:
+        sys.modules.pop(spec.name, None)
+
+
+def _fixture_route(module, handler: str) -> APIRoute:
+    """A real route over a fixture handler: the same object the scans read."""
+    return APIRoute(
+        f"/api/v1/r4-evidence/{handler}", endpoint=getattr(module, handler), methods=["POST"]
+    )
+
+
+@pytest.mark.parametrize("handler", _NOT_EVIDENCE)
+def test_a_mention_is_not_a_check(evidence_fixture, handler) -> None:
+    route = _fixture_route(evidence_fixture, handler)
+    found = sorted(m for m in _SCOPE_EVIDENCE if m in _authorization_names(route))
+    assert not found and not _route_shows_scope_check(route), (
+        f"{handler} performs no scope check, but {found} read as one"
+    )
+
+
+@pytest.mark.parametrize("handler", _EVIDENCE)
+def test_a_real_check_is_evidence(evidence_fixture, handler) -> None:
+    route = _fixture_route(evidence_fixture, handler)
+    assert _route_shows_scope_check(route), (
+        f"{handler} really checks the scope, but the reader saw only "
+        f"{sorted(_authorization_names(route))}"
+    )
+
+
+def test_the_fixture_mentions_are_visible_as_text(evidence_fixture) -> None:
+    """Guards the guard: each NOT-evidence handler does name a marker in its
+    text, so the tests above fail a substring reader rather than pass by luck."""
+    for handler in _NOT_EVIDENCE:
+        func = getattr(evidence_fixture, handler)
+        text = inspect.getsource(func)
+        for qualifier, name in _called_targets(func):
+            target = getattr(evidence_fixture, name, None) if qualifier is None else None
+            if callable(target):
+                text += inspect.getsource(target)
+        assert any(m in text for m in (*_SCOPE_EVIDENCE, "_api_key_bound_project", "bound_project_id")), handler
+
+
+def test_binding_confinement_is_not_scope_evidence() -> None:
+    """Both confine a key bound to one project; neither checks a JWT user."""
+    assert "_api_key_bound_project" not in _SCOPE_EVIDENCE
+    assert "bound_project_id" not in _SCOPE_EVIDENCE
 
 
 def test_the_nonpath_backlog_only_shrinks() -> None:
@@ -617,13 +896,12 @@ def test_the_outside_scan_sees_the_routes() -> None:
 
 #: Evidence accepted for a route outside ``/api/v1``.
 #:
-#: Deliberately stricter than ``_SCOPE_EVIDENCE``, which includes bare names
-#: like ``bound_project_id`` -- and ``_authorization_evidence`` reads the
-#: handler's raw source, so a mere ``bound_project_id: Optional[str] = None``
-#: declaration satisfies it. That is tolerable inside ``/api/v1``, where two
-#: other scans also run; out here this is the only scan, so a declaration must
-#: not read as a check. Every marker below names something that RESOLVES a
-#: caller to a tenant.
+#: Deliberately stricter than ``_SCOPE_EVIDENCE``, which accepts an ownership
+#: filter (a ``current_user.id`` read). That is tolerable inside ``/api/v1``,
+#: where two other scans also run; out here this is the only scan, so every
+#: marker below must name something that RESOLVES a caller to a tenant.
+#: (``bound_project_id`` used to be excluded here for the same reason; since
+#: QA-R3-10 it is not scope evidence anywhere.)
 _OUTSIDE_SCOPE_EVIDENCE: tuple[str, ...] = tuple(
     marker
     for marker in _SCOPE_EVIDENCE
@@ -755,8 +1033,7 @@ def test_a_scoped_route_outside_api_v1_is_still_checked() -> None:
             continue
         if _route_is_protected(route):
             continue
-        evidence = _authorization_evidence(route)
-        if any(marker in evidence for marker in _OUTSIDE_SCOPE_EVIDENCE):
+        if _route_shows_scope_check(route, _OUTSIDE_SCOPE_EVIDENCE):
             continue
         for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
             offenders.add((method, route.path))
