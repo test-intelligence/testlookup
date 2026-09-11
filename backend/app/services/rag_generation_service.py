@@ -6,7 +6,7 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -108,7 +108,7 @@ async def grounded_generate(
             logger.info("grounded_generation_prompt_redacted", batch_id=str(batch.id))
 
         # Step 3: Call LLM
-        generated_cases = await _call_llm_generate(augmented_prompt, generation_config)
+        generated_cases = await _call_llm_generate(augmented_prompt, generation_config, project_id=project_id)
 
         batch.cases_generated = len(generated_cases)
         batch.status = "complete"
@@ -184,7 +184,7 @@ def _build_grounded_prompt(prompt_text: str, chunks: list[RetrievedChunk]) -> st
     return "\n".join(parts)
 
 
-async def _call_llm_generate(prompt: str, config: Optional[dict]) -> list[dict]:
+async def _call_llm_generate(prompt: str, config: Optional[dict], *, project_id: Any = None) -> list[dict]:
     """Call the LLM to generate test cases. Returns list of case dicts.
 
     ``config`` may contain ``test_type``, ``priority``, ``count`` or
@@ -211,7 +211,7 @@ async def _call_llm_generate(prompt: str, config: Optional[dict]) -> list[dict]:
     try:
         from app.services.test_case_ai_agent import ai_generate_test_cases
         result = await asyncio.wait_for(
-            ai_generate_test_cases(effective_prompt),
+            ai_generate_test_cases(effective_prompt, project_id=project_id),
             timeout=llm_timeout,
         )
         if isinstance(result, list):
@@ -365,6 +365,7 @@ async def _persist_cases(
             ]
             evaluation = await evaluate(
                 _case_text_for_faithfulness(case_data), citation_texts, db=db,
+                project_id=project_id,
             )
             if evaluation is not None:
                 apply_evaluation(case, evaluation)

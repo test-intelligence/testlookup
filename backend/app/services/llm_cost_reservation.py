@@ -72,9 +72,15 @@ _COST_SCOPE: ContextVar[Optional[str]] = ContextVar("llm_cost_scope", default=No
 def cost_budget_scope(project_id: Any) -> Iterator[None]:
     """Charge every LLM call made inside this block to ``project_id``.
 
-    A ContextVar, so it follows the graph into every task it spawns.
+    A ContextVar, so it follows the graph into every task it spawns. With no
+    project (``None``/empty) the block keeps whatever scope is already in
+    force: a helper that does not know its project must not switch off the
+    charging of the pipeline that called it.
     """
-    token = _COST_SCOPE.set(str(project_id) if project_id else None)
+    if not project_id:
+        yield
+        return
+    token = _COST_SCOPE.set(str(project_id))
     try:
         yield
     finally:

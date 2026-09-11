@@ -2998,7 +2998,7 @@ def generate_ai_test_cases_task(self, requirements: str, project_id: str, author
     so the HTTP request never times out."""
     import json
     import uuid as _uuid
-    from app.services.test_case_ai_agent import generate_test_cases_tool
+    from app.services.test_case_ai_agent import generate_test_cases_tool, run_tool_for_project
 
     async def _persist(result: dict) -> int:
         from app.db.postgres import AsyncSessionLocal
@@ -3067,7 +3067,9 @@ def generate_ai_test_cases_task(self, requirements: str, project_id: str, author
 
     logger.info("[Task %s] AI generate test cases project=%s", self.request.id, project_id)
     try:
-        raw = generate_test_cases_tool.invoke({"requirements": requirements})
+        raw = _run_async(run_tool_for_project(
+            generate_test_cases_tool, {"requirements": requirements}, project_id,
+        ))
         result = json.loads(raw) if isinstance(raw, str) else raw
         saved = _run_async(_persist(result))
         logger.info("[Task %s] AI generation complete, saved %d cases", self.request.id, saved)
@@ -3098,7 +3100,7 @@ def create_ai_test_plan_task(
     import json
     import uuid as _uuid
     from datetime import datetime, timezone
-    from app.services.test_case_ai_agent import optimize_test_plan_tool
+    from app.services.test_case_ai_agent import optimize_test_plan_tool, run_tool_for_project
 
     async def _build_and_save() -> dict:
         from sqlalchemy import select
@@ -3123,10 +3125,10 @@ def create_ai_test_plan_task(
             } for c in cases], indent=2)
             constraints_text = constraints or "No specific constraints. Optimize for maximum risk coverage."
 
-            raw = optimize_test_plan_tool.invoke({
+            raw = await run_tool_for_project(optimize_test_plan_tool, {
                 "test_cases_json": tc_json,
                 "constraints": constraints_text,
-            })
+            }, project_id)
             optimization = json.loads(raw) if isinstance(raw, str) else raw
 
             plan = TestPlan(
@@ -3182,14 +3184,16 @@ def generate_ai_strategy_task(
     import json
     import uuid as _uuid
     from datetime import datetime, timezone
-    from app.services.test_case_ai_agent import generate_test_strategy_tool
+    from app.services.test_case_ai_agent import generate_test_strategy_tool, run_tool_for_project
 
     async def _build_and_save() -> dict:
         from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import TestStrategy
         from app.core.config import settings
 
-        raw = generate_test_strategy_tool.invoke({"project_context": project_context})
+        raw = await run_tool_for_project(
+            generate_test_strategy_tool, {"project_context": project_context}, project_id,
+        )
         result = json.loads(raw) if isinstance(raw, str) else raw
 
         async with AsyncSessionLocal() as db:

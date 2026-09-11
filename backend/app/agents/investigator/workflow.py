@@ -986,6 +986,15 @@ async def resume_investigation(investigation_id: str) -> dict[str, Any]:
         investigation_id, resume=True, resume_payload=payload
     )
 
+async def _run_investigator_graph(initial_state: Any) -> dict[str, Any]:
+    """Run the graph inside its project's LLM cost scope (re-audit R-B45-1):
+    the hypothesis and synthesis calls reserve against the monthly cap."""
+    from app.services.llm_cost_reservation import cost_budget_scope
+
+    with cost_budget_scope(cast(dict[str, Any], initial_state).get("project_id")):
+        return cast(dict[str, Any], await cast(Any, _investigator_app).ainvoke(initial_state))
+
+
 async def run_investigation(
     investigation_id: str,
     *,
@@ -1141,9 +1150,7 @@ async def run_investigation(
             triggered_by=triggered_by,
             mode=mode,
         )
-        final_state = cast(
-            dict[str, Any], await cast(Any, _investigator_app).ainvoke(initial_state)
-        )
+        final_state = await _run_investigator_graph(initial_state)
         wall = time.monotonic() - started
         await _finalize(
             investigation_id,

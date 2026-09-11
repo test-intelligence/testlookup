@@ -18,10 +18,19 @@ from typing import Any, cast
 from langchain.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.services.llm_cost_reservation import cost_budget_scope
 from app.services.llm_factory import get_llm
 from app.services.prompt_registry import get_prompt_text
 
 logger = logging.getLogger(__name__)
+
+
+async def run_tool_for_project(tool: Any, payload: dict[str, Any], project_id: Any) -> Any:
+    """Run one of the tools below charged to ``project_id``'s monthly LLM cap
+    (re-audit R-B45-1). The tools are async-only: ``tool.invoke`` raises
+    NotImplementedError, so every caller (the Celery tasks too) awaits this."""
+    with cost_budget_scope(project_id):
+        return await tool.ainvoke(payload)
 
 
 def _content_to_text(value: Any) -> str:
@@ -194,48 +203,52 @@ async def optimize_test_plan_tool(test_cases_json: str, constraints: str) -> str
 
 # ── High-level service functions ──────────────────────────────────────────────
 
-async def ai_generate_test_cases(requirements: str) -> dict[str, Any]:
+async def ai_generate_test_cases(requirements: str, *, project_id: Any = None) -> dict[str, Any]:
     """Generate test cases from requirements text. Returns parsed dict."""
-    raw = await generate_test_cases_tool.ainvoke({"requirements": requirements})
+    raw = await run_tool_for_project(generate_test_cases_tool, {"requirements": requirements}, project_id)
     try:
         return cast(dict[str, Any], json.loads(raw)) if isinstance(raw, str) else cast(dict[str, Any], raw)
     except json.JSONDecodeError:
         return {"test_cases": [], "error": "Failed to parse AI response"}
 
 
-async def ai_review_test_case(test_case: dict[str, Any]) -> dict[str, Any]:
+async def ai_review_test_case(test_case: dict[str, Any], *, project_id: Any = None) -> dict[str, Any]:
     """AI quality review of a test case dict. Returns review result."""
     tc_json = json.dumps(test_case, indent=2)
-    raw = await review_test_quality_tool.ainvoke({"test_case_json": tc_json})
+    raw = await run_tool_for_project(review_test_quality_tool, {"test_case_json": tc_json}, project_id)
     try:
         return cast(dict[str, Any], json.loads(raw)) if isinstance(raw, str) else cast(dict[str, Any], raw)
     except json.JSONDecodeError:
         return {"quality_score": 0, "error": "Failed to parse AI response"}
 
 
-async def ai_analyze_coverage(requirements: str, existing_tests: list[dict]) -> dict[str, Any]:
+async def ai_analyze_coverage(
+    requirements: str, existing_tests: list[dict], *, project_id: Any = None,
+) -> dict[str, Any]:
     """Analyze coverage gaps. existing_tests is list of {title, objective} dicts."""
     summary = "\n".join(f"- {t.get('title', '')}: {t.get('objective', '')}" for t in existing_tests)
-    raw = await analyze_coverage_gaps_tool.ainvoke({
+    raw = await run_tool_for_project(analyze_coverage_gaps_tool, {
         "requirements": requirements,
         "existing_tests_summary": summary or "No existing test cases yet.",
-    })
+    }, project_id)
     try:
         return cast(dict[str, Any], json.loads(raw)) if isinstance(raw, str) else cast(dict[str, Any], raw)
     except json.JSONDecodeError:
         return {"coverage_score": 0, "error": "Failed to parse AI response"}
 
 
-async def ai_generate_strategy(project_context: str) -> dict[str, Any]:
+async def ai_generate_strategy(project_context: str, *, project_id: Any = None) -> dict[str, Any]:
     """Generate test strategy for a project context description."""
-    raw = await generate_test_strategy_tool.ainvoke({"project_context": project_context})
+    raw = await run_tool_for_project(generate_test_strategy_tool, {"project_context": project_context}, project_id)
     try:
         return cast(dict[str, Any], json.loads(raw)) if isinstance(raw, str) else cast(dict[str, Any], raw)
     except json.JSONDecodeError:
         return {"error": "Failed to parse AI response"}
 
 
-async def ai_optimize_plan(test_cases: list[dict], constraints: str = "") -> dict[str, Any]:
+async def ai_optimize_plan(
+    test_cases: list[dict], constraints: str = "", *, project_id: Any = None,
+) -> dict[str, Any]:
     """Optimize test plan execution order."""
     tc_json = json.dumps([{
         "title": t.get("title", ""),
@@ -244,10 +257,10 @@ async def ai_optimize_plan(test_cases: list[dict], constraints: str = "") -> dic
         "estimated_duration_minutes": t.get("estimated_duration_minutes", 5),
     } for t in test_cases], indent=2)
     constraints_text = constraints or "No specific constraints. Optimize for maximum risk coverage."
-    raw = await optimize_test_plan_tool.ainvoke({
+    raw = await run_tool_for_project(optimize_test_plan_tool, {
         "test_cases_json": tc_json,
         "constraints": constraints_text,
-    })
+    }, project_id)
     try:
         return cast(dict[str, Any], json.loads(raw)) if isinstance(raw, str) else cast(dict[str, Any], raw)
     except json.JSONDecodeError:

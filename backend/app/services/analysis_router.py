@@ -428,20 +428,25 @@ async def _classify_llm(
         # evidence leak on identical failures). project_id may be carried on
         # the test_case or the run-level context dict.
         _pid = test_case.get("project_id") or (run_context or {}).get("project_id")
-        return await run_triage_agent(
-            test_case_id=test_case.get("test_case_id", ""),
-            test_name=test_case.get("test_name", ""),
-            service_name=test_case.get("suite_name"),
-            error_message=test_case.get("error_message"),
-            stack_trace=test_case.get("stack_trace"),
-            timestamp=test_case.get("timestamp"),
-            ocp_pod_name=test_case.get("ocp_pod_name"),
-            ocp_namespace=test_case.get("ocp_namespace"),
-            pipeline_run_id=test_case.get("pipeline_run_id"),
-            run_id=test_case.get("run_id") or (run_context or {}).get("run_id"),
-            project_id=str(_pid) if _pid else None,
-            test_fingerprint=test_case.get("test_fingerprint"),
-        )
+        from app.services.llm_cost_reservation import cost_budget_scope
+
+        # Re-audit R-B45-1: charged to the test's project, also when this
+        # runs outside a pipeline graph.
+        with cost_budget_scope(_pid):
+            return await run_triage_agent(
+                test_case_id=test_case.get("test_case_id", ""),
+                test_name=test_case.get("test_name", ""),
+                service_name=test_case.get("suite_name"),
+                error_message=test_case.get("error_message"),
+                stack_trace=test_case.get("stack_trace"),
+                timestamp=test_case.get("timestamp"),
+                ocp_pod_name=test_case.get("ocp_pod_name"),
+                ocp_namespace=test_case.get("ocp_namespace"),
+                pipeline_run_id=test_case.get("pipeline_run_id"),
+                run_id=test_case.get("run_id") or (run_context or {}).get("run_id"),
+                project_id=str(_pid) if _pid else None,
+                test_fingerprint=test_case.get("test_fingerprint"),
+            )
     except Exception as exc:  # noqa: BLE001
         reason = f"llm_error: {type(exc).__name__}: {exc}"
         logger.warning(

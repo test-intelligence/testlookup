@@ -52,6 +52,7 @@ from app.agents.fixer.state import (
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import FixAttempt
 from app.services import fixer_service
+from app.services.llm_cost_reservation import cost_budget_scope
 
 logger = structlog.get_logger("agents.fixer.workflow")
 
@@ -326,9 +327,12 @@ async def run_fixer_run(
             # Generate with NO session open — the LLM call can take minutes
             # and must never ride inside a DB transaction (mirrors the
             # validation pattern below).
-            gen = await generate(
-                candidate=candidate, diagnosis=diagnosis, test_source="", budget=budgets,
-            )
+            # Re-audit R-B45-1: the patch generation reserves against the
+            # project's monthly LLM cap.
+            with cost_budget_scope(project_id):
+                gen = await generate(
+                    candidate=candidate, diagnosis=diagnosis, test_source="", budget=budgets,
+                )
             total_tokens += int(gen.get("tokens") or 0)
             patch = gen.get("patch")
 
