@@ -37,12 +37,13 @@ def _object_keys(event: MinIOWebhookEvent) -> list[str]:
         s3 = record.get("s3") if isinstance(record, dict) else None
         if not isinstance(s3, dict):
             continue
-        obj = s3.get("object") if isinstance(s3.get("object"), dict) else {}
-        raw = obj.get("key")
+        obj = s3.get("object")
+        raw = obj.get("key") if isinstance(obj, dict) else None
         if not isinstance(raw, str) or not raw:
             continue
         named = True
-        record_bucket = (s3.get("bucket") or {}).get("name") if isinstance(s3.get("bucket"), dict) else None
+        bucket_info = s3.get("bucket")
+        record_bucket = bucket_info.get("name") if isinstance(bucket_info, dict) else None
         if record_bucket is not None and record_bucket != bucket:
             logger.info("Ignoring an event for bucket %r", record_bucket)
             continue
