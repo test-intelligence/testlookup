@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-10 — once the AI pipeline was finally sent, it still never ran
+
+The outbox fix below made finished runs publish their AI pipeline. The first
+one the homelab ever published failed 30 milliseconds in, on every attempt, and
+exposed three more defects on the same path, none of which had ever run:
+
+- The outbox-driven pipeline creates its record under a fixed id, then reads
+  the run and project back from what the create step returned. That step
+  returned neither, so the pipeline died with a KeyError before its first stage.
+- That failure came before the pipeline's error handler, so its record stayed
+  "running" and every retry was refused as not resumable. A failure between
+  creating the record and starting the graph now marks it failed. If none of
+  its stages had started, a retry resumes it under the same id with a freshly
+  resolved analysis mode; a pipeline whose stages ran still needs its stored
+  routing, as before.
+- Marking any pipeline failed crashed when there was no final state to record:
+  a helper the failure branch uses was imported only in the success branch.
+  Every failed pipeline stayed "running" until the stale-pipeline reaper found
+  it 30 minutes later, and its real error was replaced by an UnboundLocalError.
+
+Tests against real PostgreSQL now run the pipeline's real setup with only the
+LangGraph graph faked, and the keys the create step must return are read from
+the pipeline functions themselves. The only earlier test of this path replaced
+the whole pipeline with a mock.
+
 ## 2026-09-10 — an API key bound to one project could act as an instance administrator
 
 Only an admin can mint an API key bound to a project, so most project-bound
