@@ -85,3 +85,95 @@ def test_batch5_fresh_imports_are_not_left_behind(test_name: str, module_name: s
     after = _identity(module_name)
     assert after[0] is before[0], f"{test_name} left a fresh {module_name} in sys.modules"
     assert after[1] is before[1], f"{test_name} left a fresh {module_name} on its package"
+
+
+# ── imports under a fake models module (coordinator's batch, re-audit E2) ────
+#
+# services/test_batch2, _batch3 and _batch4 imported a service INSIDE
+# ``patch.dict(sys.modules, {"app.models.postgres": <hand-listed fake>})``.
+# If an earlier test had cached the real module the fake was ignored; alone,
+# the service was imported under the fake and died on the first name the list
+# had drifted from (Project, TestAttachment, DigestSubscription): passes in
+# full order, fails alone. The pattern itself is what is refused.
+
+
+def _is_sys_modules_dict_patch(call) -> bool:
+    import ast
+
+    func = call.func
+    if not (isinstance(func, ast.Attribute) and func.attr == "dict"):
+        return False
+    if not call.args:
+        return False
+    target = call.args[0]
+    names_sys_modules = (
+        (isinstance(target, ast.Constant) and target.value == "sys.modules")
+        or (isinstance(target, ast.Attribute) and target.attr == "modules"
+            and getattr(target.value, "id", "") == "sys")
+    )
+    fakes_models = len(call.args) > 1 and isinstance(call.args[1], ast.Dict) and any(
+        isinstance(k, ast.Constant) and k.value == "app.models.postgres" for k in call.args[1].keys
+    )
+    return names_sys_modules and fakes_models
+
+
+def test_no_test_imports_the_app_under_a_fake_models_module() -> None:
+    import ast
+
+    offenders = []
+    for path in sorted(TESTS.rglob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.With, ast.AsyncWith)):
+                continue
+            if not any(isinstance(item.context_expr, ast.Call)
+                       and _is_sys_modules_dict_patch(item.context_expr) for item in node.items):
+                continue
+            for inner in ast.walk(ast.Module(body=node.body, type_ignores=[])):
+                module = None
+                if isinstance(inner, ast.ImportFrom):
+                    module = inner.module or ""
+                elif isinstance(inner, ast.Import):
+                    module = inner.names[0].name
+                if module and (module == "app" or module.startswith("app.")):
+                    offenders.append(f"{path.relative_to(TESTS).as_posix()}:{inner.lineno} imports {module}")
+    assert not offenders, (
+        "import the real module at module level instead of inside a fake "
+        "app.models.postgres window:\n" + "\n".join(offenders)
+    )
+
+
+# ── the Celery drill's worker module (coordinator's batch, re-audit E2) ──────
+#
+# tests/regression/celery_visibility_worker.py configures the SHARED Celery app
+# for the disposable broker drill (visibility_timeout=4). A pytest run that
+# named it by path imported it, and every later test saw that config:
+# test_child_broker_delivery_contract failed on visibility_timeout == 3600.
+
+
+def test_importing_the_celery_drill_worker_leaves_the_shared_app_alone(monkeypatch) -> None:
+    pytest.importorskip("celery")
+    from app.worker.celery_app import celery_app
+
+    monkeypatch.delenv("VISIBILITY_WORKER_NAME", raising=False)
+    before_opts = dict(celery_app.conf.broker_transport_options or {})
+    before_queues = tuple(celery_app.conf.task_queues or ())
+    _load("regression/celery_visibility_worker.py", "_e2_visibility_worker")
+    assert dict(celery_app.conf.broker_transport_options or {}) == before_opts
+    assert tuple(celery_app.conf.task_queues or ()) == before_queues
+
+
+def test_the_drill_worker_process_still_gets_its_settings(monkeypatch) -> None:
+    pytest.importorskip("celery")
+    from app.worker.celery_app import celery_app
+
+    saved_opts = celery_app.conf.broker_transport_options
+    saved_queues = celery_app.conf.task_queues
+    monkeypatch.setenv("VISIBILITY_WORKER_NAME", "ci-visibility-test")
+    try:
+        _load("regression/celery_visibility_worker.py", "_e2_visibility_worker_on")
+        assert celery_app.conf.broker_transport_options["visibility_timeout"] == 4
+        assert any(q.name == "ci_visibility_drill" for q in celery_app.conf.task_queues)
+    finally:
+        celery_app.conf.broker_transport_options = saved_opts
+        celery_app.conf.task_queues = saved_queues

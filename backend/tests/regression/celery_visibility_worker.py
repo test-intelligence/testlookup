@@ -11,13 +11,21 @@ from app.worker.celery_app import celery_app
 
 _visibility_queue = "ci_visibility_drill"
 _visibility_exchange = Exchange("default", type="direct")
-celery_app.conf.task_queues = tuple(celery_app.conf.task_queues or ()) + (
-    Queue(_visibility_queue, _visibility_exchange, routing_key=_visibility_queue),
-)
-celery_app.conf.broker_transport_options = {
-    **dict(celery_app.conf.broker_transport_options or {}),
-    "visibility_timeout": 4,
-}
+# Only inside the drill's own worker process (re-audit E2). This file lives
+# under tests/, so a pytest run that names it by path (a pattern subset of
+# tests/*/*.py matched it via "regression") IMPORTED it, and these writes
+# then changed the shared Celery app for every later test: visibility_timeout
+# became 4 instead of 3600 and test_child_broker_delivery_contract failed.
+# _worker_process() in test_celery_visibility_redelivery.py sets
+# VISIBILITY_WORKER_NAME for the subprocess it starts; nothing else does.
+if os.environ.get("VISIBILITY_WORKER_NAME"):
+    celery_app.conf.task_queues = tuple(celery_app.conf.task_queues or ()) + (
+        Queue(_visibility_queue, _visibility_exchange, routing_key=_visibility_queue),
+    )
+    celery_app.conf.broker_transport_options = {
+        **dict(celery_app.conf.broker_transport_options or {}),
+        "visibility_timeout": 4,
+    }
 
 
 @celery_app.task(

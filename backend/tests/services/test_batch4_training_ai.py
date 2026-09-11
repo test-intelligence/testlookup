@@ -3,6 +3,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+# The REAL exporter (re-audit E2): its test imported it inside a hand-listed
+# fake app.models.postgres window, which only works while that list matches
+# what the module imports, and silently used the real module whenever an
+# earlier test had cached it.
+from app.services.training.exporter import TrainingDataExporter  # noqa: E402
+
 def test_classifier_parsing_and_default_actions():
     from app.services.training.classifier import _default_actions, _parse_classifier_output
     parsed = _parse_classifier_output('prefix {"category":"INFRASTRUCTURE","confidence":91} suffix')
@@ -64,33 +70,17 @@ async def test_model_evaluator_classifier_comparison():
 
 @pytest.mark.asyncio
 async def test_exporter_write_jsonl_splits_holdout():
-    with patch.dict(
-        "sys.modules",
-        {
-            "app.db.mongo": SimpleNamespace(Collections=SimpleNamespace(AI_ANALYSIS_PAYLOADS="ai"), get_mongo_db=lambda: {}),
-            "app.db.postgres": SimpleNamespace(AsyncSessionLocal=None),
-            "app.models.postgres": SimpleNamespace(
-                AIAnalysis=object,
-                AIFeedback=object,
-                Defect=object,
-                FeedbackRating=SimpleNamespace(CORRECT="correct", INCORRECT="incorrect"),
-                TestCase=object,
-            ),
-        },
-        clear=False,
-    ):
-        from app.services.training.exporter import TrainingDataExporter
-        exp = TrainingDataExporter()
-        uploaded = []
+    exp = TrainingDataExporter()
+    uploaded = []
 
-        async def fake_upload(path, records):
-            uploaded.append((path, len(records)))
+    async def fake_upload(path, records):
+        uploaded.append((path, len(records)))
 
-        with patch("app.services.training.exporter.settings") as s:
-            s.FINETUNE_EVAL_HOLDOUT = 0.2
-            s.FINETUNE_EXPORT_BUCKET = "b"
-            with patch.object(exp, "_upload_jsonl", side_effect=fake_upload):
-                count = await exp._write_jsonl("classifier", [{"x": i} for i in range(10)])
+    with patch("app.services.training.exporter.settings") as s:
+        s.FINETUNE_EVAL_HOLDOUT = 0.2
+        s.FINETUNE_EXPORT_BUCKET = "b"
+        with patch.object(exp, "_upload_jsonl", side_effect=fake_upload):
+            count = await exp._write_jsonl("classifier", [{"x": i} for i in range(10)])
     assert count == 8
     assert len(uploaded) == 2
 
