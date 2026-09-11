@@ -19,6 +19,15 @@
  *     hook's `error`/`isError`, or the error state its own fetch's `catch`
  *     sets) AND branch on or render it.
  *
+ * The 'own-error-ui' check is necessary, not sufficient: it proves an error
+ * from a data hook or a catch is shown, not that it is the PRIMARY fetch's
+ * error. ChatPage shows useChat's send error while its session and message
+ * fetches drop theirs, and would pass if relabelled (mutation F04 in the
+ * b45 r1 fix survives for this reason). A per-hook "does it fetch" test does
+ * not settle it either: useChat fetches, and several hooks that fetch go
+ * through wrappers a static scan misreads. Behaviour is covered by
+ * outageRendersAsNoData.lists.test.tsx; relabelling stays a reviewed change.
+ *
  * Sources are read with import.meta.glob (not node:fs), like the route-scope
  * registry, so the guard sees exactly what Vite would bundle.
  */
