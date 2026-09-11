@@ -2,6 +2,73 @@
 
 ## 2026-09-11 — production-readiness re-audit, batches 4 and 5
 
+### Authorization and API keys
+
+- **A project-bound key no longer acts instance-wide at QA_LEAD (N26).**
+  `require_role` at QA_LEAD now refuses a project-bound key unless the route
+  opts in, the rule ADMIN has had since N20.
+  - **Opted in:** 52 project-confined QA_LEAD routes, each listed in the
+    reviewed allow-list with the check that confines the key.
+  - **Refused:** the instance-wide routes, including the user directory,
+    `POST /api/v1/projects`, training export and finetune, settings reads and
+    the audit log, integration health, AI-eval and performance.
+
+  Also:
+  - `GET /api/v1/release-gate-policies/{id}` now checks access to the policy's
+    project (the system default stays readable).
+  - `/me/assigned-failures?scope=mine` and its count resolve a bound key to its
+    own project.
+  - The architectural authorization scan walks the mounted app, so the debug
+    router is covered, and the debug handler checks the project it is given.
+  - A key minted by a key cannot outlive it. A never-expiring key can still
+    mint a never-expiring key; a test pins that.
+- **A scoped API key writes only with a write scope (N32, N31).** An API key
+  with a non-empty scope list may use any method other than GET, HEAD and
+  OPTIONS only if it holds `project:write` or `project:admin`.
+  - **Where it is enforced:** in `get_current_active_user`, which every role
+    and project guard goes through. Writes gated at QA_ENGINEER or merely
+    signed in no longer run with a streaming key's owner role: suites, saved
+    views, triage, feedback, notification preferences, AI generation and so
+    on.
+  - **QA_LEAD and above** (`require_role`, `require_project_role`) still needs
+    `project:admin`.
+  - **Exceptions:** `POST /api/v1/keys` (mint a subset of the caller's own
+    scopes) and `DELETE /api/v1/keys/{id}` (revoke itself) accept a scoped
+    key's writes.
+  - **Unchanged:** ingest (`/api/v1/stream/*`, `/api/v1/ingest`,
+    `/api/v1/ingest/file`, `/ws/events`), legacy keys with an empty scope list,
+    and JWTs.
+  - **Vocabulary:** `stream:write`, `project:write` and `project:admin`
+    (`project:admin` implies `project:write`). `POST /api/v1/keys` refuses any
+    other scope name with a 422 listing the valid ones, and the key form
+    offers exactly these three.
+  - `POST /api/v1/feedback/jira-webhook` now requires an active account and
+    follows the rule.
+- **The outbox requeue is audited (N30).**
+  `POST /api/v1/admin/maintenance/outbox/requeue` writes an `access_audit_logs`
+  row (`admin.outbox_requeue`) in the same transaction as the requeue. It
+  records the actor, operation, `last_error`, the run and its project, the
+  limit, `dry_run`, how many rows matched and were requeued, and the outbox
+  ids. Dry runs are recorded; refused requests are not.
+- **Notifications re-check recipients at send time (N33).** The relay no
+  longer delivers a staged row whose project was deleted (`project_id` NULL
+  after `ON DELETE SET NULL`); no legitimate delivery lacks a project.
+  - **Event-driven digests** are re-checked when sent: the subscription must be
+    active and not paused, and its owner active and an ADMIN or a member of
+    the project.
+  - **Scheduled digests** check a project-scoped subscription's owner the same
+    way; previously only workspace-wide digests were checked.
+
+**Upgrade notes: API keys.**
+- **Bound keys:** a key bound to one project now gets 403 on the instance-wide
+  QA_LEAD routes. Use an unbound admin key for instance-wide automation.
+- **`stream:write` keys:** a CI key minted with only `stream:write` that also
+  wrote through other endpoints now gets 403. Mint it with `project:write`, or
+  `project:admin` for administration.
+- **Retired scope names:** keys minted earlier with `test:read`, `test:write`,
+  `report:read`, `report:write` or `admin:read` keep working as scoped keys
+  that can only read.
+
 ### Frontend
 
 - **A tab coming back from the background refreshes at once (M19).** SWR
