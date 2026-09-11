@@ -265,12 +265,15 @@ async def read_ai_cache_stats(
     return stats
 
 
-async def _check_run_scope(db: AsyncSession, current_user: User, run_id: uuid.UUID) -> None:
+async def _check_run_scope(
+    db: AsyncSession, current_user: User, run_id: uuid.UUID
+) -> uuid.UUID:
     """A run named in the body is checked like any scoped id (code review round 4).
 
     The route is for instance admins, who pass by role; the call is what the
     authorization scan reads, and a run that does not exist is a 404 rather
-    than an empty requeue.
+    than an empty requeue. Returns the run's project, which the audit row
+    carries.
     """
     from sqlalchemy import select  # noqa: PLC0415
 
@@ -283,6 +286,7 @@ async def _check_run_scope(db: AsyncSession, current_user: User, run_id: uuid.UU
     if project_id is None:
         raise HTTPException(status_code=404, detail="Test run not found")
     await resolve_project_scope(db, current_user, str(project_id))
+    return project_id
 
 
 class OutboxRequeueRequest(BaseModel):
@@ -337,8 +341,9 @@ async def requeue_failed_outbox_operations(
         requeue_failed_downstream_operations as _requeue,
     )
 
+    run_project_id = None
     if body.run_id is not None:
-        await _check_run_scope(db, current_user, body.run_id)
+        run_project_id = await _check_run_scope(db, current_user, body.run_id)
     try:
         rows = await _requeue(
             db,
@@ -358,6 +363,29 @@ async def requeue_failed_outbox_operations(
         dry_run=body.dry_run,
         count=len(rows),
         outbox_ids=[row["id"] for row in rows],
+    )
+    # Re-audit N30: the log line above was the only record, and logs rotate.
+    # A requeue re-runs cross-tenant work (each agent_pipeline intent starts an
+    # AI pipeline), so who did it, with which filters, and to how many rows is
+    # written to the durable audit trail, on the request's session: it commits
+    # with the requeue, and a dry run is recorded too.
+    from app.services.access_audit_service import log_access_change  # noqa: PLC0415
+
+    await log_access_change(
+        db,
+        "admin.outbox_requeue",
+        current_user,
+        project_id=run_project_id,
+        after_value={
+            "operation": body.operation,
+            "last_error": body.last_error,
+            "run_id": str(body.run_id) if body.run_id is not None else None,
+            "limit": body.limit,
+            "dry_run": body.dry_run,
+            "matched": len(rows),
+            "requeued": 0 if body.dry_run else len(rows),
+            "outbox_ids": [str(row["id"]) for row in rows],
+        },
     )
     return {
         "operation": body.operation,
