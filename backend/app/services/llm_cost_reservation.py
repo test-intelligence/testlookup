@@ -38,11 +38,15 @@ that runs priced LLM work for a project enters :func:`cost_budget_scope`: the
 offline and deep pipelines, run-compare, project chat (and its history
 compression), the investigator, the fixer, defect promotion, the test-case AI
 tools, the weekly retro narrative, RAG faithfulness, the on-demand run
-summaries and LLM triage (pinned by
+summaries, LLM triage, and the agents the API runs outside the graph (the
+on-demand Regression Watchman and Defect Commander, R-B45-R2-2) (pinned by
 ``tests/services/test_llm_cost_scope_entry_points.py``). Calls with NO project
 are not charged, because there is no cap to charge them to: an "all projects"
-chat, the training evaluator, the prompt-eval recorder CLI. Self-hosted and
-unpriced models reserve nothing: there is no dollar figure to hold.
+chat, the training evaluator, the prompt-eval recorder CLI.
+``tests/services/test_llm_cost_scope_guard.py`` walks every ``get_llm`` caller
+and fails on one that is neither pinned to a scope nor a reviewed no-project
+caller. Self-hosted and unpriced models reserve nothing: there is no dollar
+figure to hold.
 """
 from __future__ import annotations
 

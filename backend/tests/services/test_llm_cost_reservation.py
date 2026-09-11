@@ -311,6 +311,37 @@ async def test_a_success_outside_a_stage_is_metered_and_one_inside_a_stage_is_no
     assert ledger.meter == [True, False]
 
 
+class _NoUsage:
+    usage_metadata = None
+    response_metadata: dict = {}
+
+
+@pytest.mark.asyncio
+async def test_a_call_with_unreported_usage_inside_a_stage_is_metered_at_settle(ledger):
+    """b45 r2 item 7: the stage prices the TOKENS it observed. A call with no
+    reported usage adds none, so the stage cannot price it; its reserved worst
+    case must be metered here or it reaches only the Redis counter."""
+    from app.services.pipeline_budget_service import (
+        reset_pipeline_budget_context,
+        set_pipeline_budget_context,
+    )
+
+    class Unreported(_Inner):
+        async def ainvoke(self, *args, **kwargs):
+            self.calls += 1
+            return _NoUsage()
+
+    with cost_budget_scope(PROJECT):
+        token = set_pipeline_budget_context(stage_name="summary")
+        try:
+            await _llm(Unreported()).ainvoke("prompt")
+            await _llm(_Inner()).ainvoke("prompt")   # reported: the stage meters it
+        finally:
+            reset_pipeline_budget_context(token)
+    assert ledger.meter == [True, False]
+    assert [e for e in ledger if e[0] == "settle"][0] == ("settle", 0.5)  # the worst case, kept
+
+
 @pytest.mark.asyncio
 async def test_settle_writes_a_kept_charge_to_the_durable_meter(monkeypatch):
     import app.services.llm_cost_budget as budget

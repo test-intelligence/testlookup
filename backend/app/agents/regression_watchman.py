@@ -509,8 +509,16 @@ async def run_regression_watchman(
     """
     import uuid
 
+    from app.services.llm_cost_reservation import cost_budget_scope
+
     async with AsyncSessionLocal() as db:
         from app.models.postgres import AIAnalysis, FailureCluster
+
+        # R-B45-R2-2: the charge goes to the project that OWNS the run, read
+        # from the run itself, not to whatever the caller passed.
+        run_project_id = (await db.execute(
+            select(TestRun.project_id).where(TestRun.id == test_run_id)
+        )).scalar_one_or_none()
 
         clusters_result = await db.execute(
             select(FailureCluster).where(FailureCluster.test_run_id == test_run_id).limit(50)
@@ -552,7 +560,12 @@ async def run_regression_watchman(
     }
 
     agent = _StandaloneWatchman()
-    result = await agent._classify(state)
+    # R-B45-R2-2: outside the pipeline graph nothing else opens a cost scope,
+    # so the priced classify call would run unreserved against the monthly
+    # cap. Scoped here, not in the route, so every caller of this runner is
+    # charged.
+    with cost_budget_scope(run_project_id or project_id):
+        result = await agent._classify(state)
     return result
 
 

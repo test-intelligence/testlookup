@@ -215,7 +215,11 @@ class BudgetedLLM:
                         # Unreported usage: keep the worst case rather than guess low.
                         else reservation.estimated_usd
                     )
-                    record_meter = not metered_by_stage
+                    # A stage prices the TOKENS it observed. A call whose
+                    # usage was not reported added none, so the stage cannot
+                    # price it: meter its reserved worst case here, or it
+                    # reaches only the Redis counter (b45 r2 item 7).
+                    record_meter = not metered_by_stage or tokens is None
                 return result
         finally:
             await cost.settle(
