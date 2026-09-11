@@ -81,22 +81,42 @@ def test_the_key_sends_no_bind_parameters():
 
 
 def test_main_run_listing_uses_reverse_canonical_order():
+    """Both listing shapes -- one project / every project, and a member's one
+    branch per project (re-audit N18) -- order by the same four keys."""
     source = inspect.getsource(runs_service.list_project_runs)
     tree = ast.parse(source)
+    assignments = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "order_keys" for t in node.targets)
+    ]
+    assert len(assignments) == 1
+    assert ast.unparse(assignments[0].value) == (
+        "(natural_build_number_key().desc().nulls_first(), "
+        "TestRun.build_number.desc(), TestRun.created_at.desc(), TestRun.id.desc())"
+    )
     order_calls = [
         node for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "order_by"
-        and len(node.args) == 4
     ]
-    assert len(order_calls) == 1
-    assert ast.unparse(order_calls[0]) == (
-        "select(TestRun, Project.name.label('project_name')).outerjoin(Project, "
-        "Project.id == TestRun.project_id).where(*filters).order_by("
-        "natural_build_number_key().desc().nulls_first(), "
-        "TestRun.build_number.desc(), TestRun.created_at.desc(), TestRun.id.desc())"
-    )
+    # The branches' order and the page's order: both, and only, these keys.
+    assert len(order_calls) == 2
+    for call in order_calls:
+        assert [ast.unparse(arg) for arg in call.args] == ["*order_keys"], ast.unparse(call)
+
+
+def test_the_suite_key_sends_no_bind_parameters():
+    """Re-audit N17: migration 0169 indexes ``_SUITE_NORM`` exactly. A ``''``
+    sent as a bind parameter is ``$n`` under a generic plan, which never
+    matches the index's literal, so every "Run #N" page sorted again."""
+    from sqlalchemy.dialects.postgresql import asyncpg as pg_asyncpg
+
+    compiled = runs_service._SUITE_NORM.compile(dialect=pg_asyncpg.dialect())
+    assert compiled.params == {}, f"the suite key sends bind parameters: {compiled.params}"
+    sql = " ".join(str(compiled).lower().split())
+    assert sql == "lower(trim(coalesce(test_runs.primary_suite_name, '')))", sql
 
 
 def test_failed_run_listing_uses_reverse_canonical_order():

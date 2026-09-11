@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import ARRAY, Numeric, and_, case, cast, false, func, literal_column, or_, select
+from sqlalchemy import ARRAY, Numeric, case, cast, false, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -119,7 +119,18 @@ async def fetch_run_suites_map(
 # empty-string + whitespace-only suite names all collapse to a single
 # "unnamed" partition so a run that never had ``primary_suite_name`` set
 # still gets a stable sequence number within its project.
-_SUITE_NORM = func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, "")))
+#
+# The '' is a SQL literal, not a bind parameter: migration 0169 indexes this
+# exact expression, and under a generic plan a bind parameter is ``$n``, which
+# never matches the literal the index was built with (re-audit N17; M6).
+_SUITE_NORM = func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, literal_column("''"))))
+
+
+# list_project_runs gives a multi-project caller one index-ordered branch per
+# project up to this many projects (re-audit N18). Past it, the statement and
+# its plan grow with the membership list, and walking 0170's global index to
+# the LIMIT is the better trade.
+_PER_PROJECT_BRANCH_CAP = 50
 
 
 # The key's constants are SQL literals, not bind parameters: see
@@ -176,9 +187,11 @@ async def fetch_run_seq_map(
 
     Strategy:
       1. Look up each requested run's ``(project_id, suite_key)`` pair.
-      2. Run a single window-function pass over EVERY run in those
-         partitions, naturally ordered by numeric build-number chunks, then
-         the raw build number, persistence timestamp, and id.
+      2. Number EVERY run in each of those partitions, naturally ordered
+         by numeric build-number chunks, then the raw build number,
+         persistence timestamp, and id -- one UNION ALL branch per pair,
+         each read in that order from migration 0169's index, so no page
+         sorts a suite's history (re-audit N17).
       3. Return ``{run_id: rn}`` for the originally requested ids.
 
     Empty input → empty result, no queries fired. Used by ``/runs``,
@@ -197,22 +210,22 @@ async def fetch_run_seq_map(
     if not pairs:
         return {}
 
-    # 2. Build the per-pair filter as an OR of AND-pairs. SQLAlchemy
-    # supports ``tuple_(a, b).in_(...)`` but its asyncpg compilation
-    # path is finicky with mixed-type tuples — explicit ORs are
-    # uglier but bulletproof. Partition count is bounded by the page
-    # size (one project + a handful of suites in practice).
-    # Attribute access (not unpacking) so mock rows that aren't
-    # tuple-iterable still work in unit tests.
-    pair_filters = [
-        and_(TestRun.project_id == p.project_id, _SUITE_NORM == p.suite_key)
-        for p in pairs
-    ]
-    ranked = (
+    # 2. One branch per (project, suite) partition, UNION ALL-ed (re-audit
+    # N17). Each branch pins both partition keys with equalities, so its
+    # rows arrive already in window order from migration 0169's index
+    # (project_id, suite key, natural key, build_number, created_at, id):
+    # no Sort. A single window over an OR of pairs, as this used to be,
+    # can only reach those rows through a BitmapOr, which returns them
+    # unordered -- so every page sorted each suite's whole history.
+    # Partition count is bounded by the page size (one project and a
+    # handful of suites in practice). Attribute access (not unpacking) so
+    # mock rows that aren't tuple-iterable still work in unit tests.
+    from sqlalchemy import union_all  # noqa: PLC0415
+
+    branches = [
         select(
-            TestRun.id,
+            TestRun.id.label("id"),
             func.row_number().over(
-                partition_by=(TestRun.project_id, _SUITE_NORM),
                 order_by=(
                     natural_build_number_key().asc().nulls_last(),
                     TestRun.build_number.asc(),
@@ -220,10 +233,10 @@ async def fetch_run_seq_map(
                     TestRun.id.asc(),
                 ),
             ).label("rn"),
-        )
-        .where(or_(*pair_filters))
-        .subquery()
-    )
+        ).where(TestRun.project_id == p.project_id, _SUITE_NORM == p.suite_key)
+        for p in pairs
+    ]
+    ranked = (branches[0] if len(branches) == 1 else union_all(*branches)).subquery()
     final_q = select(ranked.c.id, ranked.c.rn).where(ranked.c.id.in_(run_ids))
     return {str(rid): int(rn) for rid, rn in (await db.execute(final_q)).all()}
 
@@ -411,16 +424,48 @@ async def list_project_runs(
     total = (await db.execute(count_stmt)).scalar() or 0
 
     # Items query: LEFT JOIN project to pick up project_name in one trip.
+    order_keys = (
+        natural_build_number_key().desc().nulls_first(),
+        TestRun.build_number.desc(),
+        TestRun.created_at.desc(),
+        TestRun.id.desc(),
+    )
     items_stmt = (
         select(TestRun, Project.name.label("project_name"))
         .outerjoin(Project, Project.id == TestRun.project_id)
-        .where(*filters)
-        .order_by(
-            natural_build_number_key().desc().nulls_first(),
-            TestRun.build_number.desc(),
-            TestRun.created_at.desc(),
-            TestRun.id.desc(),
-        )
+    )
+    if (
+        not project_id
+        and accessible_project_ids
+        and len(accessible_project_ids) <= _PER_PROJECT_BRANCH_CAP
+    ):
+        # A member of several projects (re-audit N18). Walking a global
+        # natural-order index and filtering membership passes every other
+        # project's rows first; a BitmapOr over 0167's index returns rows
+        # unordered and sorts them all. One branch per project instead: each
+        # is 0167's index in order, stopped at the deepest row this page can
+        # need, so the outer sort sees at most projects x page*size rows.
+        from sqlalchemy import union_all  # noqa: PLC0415
+
+        deepest = page * size
+        branches = [
+            select(TestRun.id.label("id"))
+            .where(*filters, TestRun.project_id == member)
+            .order_by(*order_keys)
+            .limit(deepest)
+            for member in sorted(accessible_project_ids, key=str)
+        ]
+        candidates = (
+            branches[0] if len(branches) == 1 else union_all(*branches)
+        ).subquery("page_candidates")
+        items_stmt = items_stmt.join(candidates, candidates.c.id == TestRun.id)
+    else:
+        # One project (0167's index), or every live project -- the admin view
+        # -- walking 0170's global natural-order index to the LIMIT.
+        items_stmt = items_stmt.where(*filters)
+    items_stmt = (
+        items_stmt
+        .order_by(*order_keys)
         .offset((page - 1) * size)
         .limit(size)
     )
