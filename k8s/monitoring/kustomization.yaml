@@ -9,7 +9,22 @@
 # prometheusrule.yaml is generated from
 # infra/monitoring/prometheus-rules/testlookup-alerts.yml by
 # scripts/render_prometheusrule.py (the same rules the Compose stack loads).
-# To match a kube-prometheus-stack ruleSelector, add its label here, e.g.:
+#
+# podmonitors.yaml gives the rules their data (re-audit QA-B45-P5): the
+# backend (:8000/metrics, port `http`) and every worker deployment
+# (:9100/metrics, port `metrics`) advertise metrics only through
+# `prometheus.io/scrape` annotations, which the Operator ignores. Each
+# PodMonitor sets `job` to the name the rules select on. base/networkpolicy.yaml
+# already admits scrapes from the monitoring, openshift-monitoring and
+# openshift-user-workload-monitoring namespaces on those ports.
+#
+# The backup alerts (TestLookupBackupJobFailed, TestLookupBackupStale) read
+# kube-state-metrics, which kube-prometheus-stack deploys and scrapes itself;
+# TestLookupDiskSpaceLow / TestLookupOOMKillDetected read node-exporter.
+# Without those exporters, those rules have no data.
+#
+# To match a kube-prometheus-stack ruleSelector (and its podMonitorSelector),
+# add its label here; it is applied to every resource, e.g.:
 #
 # labels:
 #   - pairs:
@@ -19,3 +34,4 @@ kind: Kustomization
 namespace: testlookup
 resources:
   - prometheusrule.yaml
+  - podmonitors.yaml

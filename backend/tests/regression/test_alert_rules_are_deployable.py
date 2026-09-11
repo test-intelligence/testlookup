@@ -134,6 +134,8 @@ def test_the_rule_is_opt_in_not_in_base() -> None:
     kustomization = yaml.safe_load(
         (REPO_ROOT / "k8s" / "monitoring" / "kustomization.yaml").read_text(encoding="utf-8")
     )
-    assert kustomization["resources"] == ["prometheusrule.yaml"]
+    # The rule and the PodMonitors that feed it (QA-B45-P5); both need the
+    # Operator CRDs, so both stay out of base.
+    assert kustomization["resources"] == ["prometheusrule.yaml", "podmonitors.yaml"]
     base = yaml.safe_load((REPO_ROOT / "k8s" / "base" / "kustomization.yaml").read_text(encoding="utf-8"))
     assert not any("monitoring" in str(r) or "prometheusrule" in str(r) for r in base["resources"])
