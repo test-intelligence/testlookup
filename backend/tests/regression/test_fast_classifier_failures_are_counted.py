@@ -42,6 +42,12 @@ sys.path.insert(0, str(_BENCH))
 from aggregate import _PARSE_FAILURE_POINTS  # noqa: E402
 from app.services.training.classifier import FastClassifier  # noqa: E402
 
+# The module object FastClassifier executes in (re-audit E2). A dotted-path
+# monkeypatch resolves through sys.modules / the package attribute at patch
+# time; if another test re-imported the module, that is a different object
+# and the patch silently misses, so the real LLM path ran.
+_CLASSIFIER_MODULE = sys.modules[FastClassifier.__module__]
+
 
 class _Resp:
     def __init__(self, content):
@@ -57,9 +63,10 @@ def _patch_llm(monkeypatch, response):
                 return _Resp(response)
         return _LLM()
 
-    monkeypatch.setattr("app.services.training.classifier.get_llm", _fake_get_llm)
+    monkeypatch.setattr(_CLASSIFIER_MODULE, "get_llm", _fake_get_llm)
     monkeypatch.setattr(
-        "app.services.training.classifier.ModelRegistry.get_active_model",
+        _CLASSIFIER_MODULE.ModelRegistry,
+        "get_active_model",
         AsyncMock(return_value=None),
     )
 

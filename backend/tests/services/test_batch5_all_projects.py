@@ -1,6 +1,38 @@
 """Tests for the all-projects (no project_id filter) mode."""
+import importlib
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
+
+
+def _import_fresh(name, stubs=None):
+    """A fresh copy of module ``name`` (optionally imported under ``stubs``)
+    that is NOT left behind (re-audit E2).
+
+    Deleting a module from sys.modules and re-importing it leaves the new copy
+    in sys.modules and as the parent package's attribute, so every later test
+    gets it, including a copy bound to stubbed models. The original object is
+    put back in both places; the caller keeps the fresh one to inspect.
+    """
+    parent_name, _, child = name.rpartition(".")
+    original = sys.modules.get(name)
+    parent = sys.modules.get(parent_name)
+    had_attr = parent is not None and hasattr(parent, child)
+    original_attr = getattr(parent, child, None) if had_attr else None
+    with patch.dict("sys.modules", stubs or {}, clear=False):
+        sys.modules.pop(name, None)
+        fresh = importlib.import_module(name)
+    if original is not None:
+        sys.modules[name] = original
+    else:
+        sys.modules.pop(name, None)
+    parent = sys.modules.get(parent_name)
+    if parent is not None:
+        if had_attr:
+            setattr(parent, child, original_attr)
+        elif getattr(parent, child, None) is fresh:
+            delattr(parent, child)
+    return fresh
 
 
 def _orm_stub():
@@ -42,8 +74,6 @@ def test_list_project_runs_no_filter_builds_correct_query():
     "omit the project_id WHERE clause when None" behaviour is covered by the
     analytics SQL tests further down and by the integration suite.
     """
-    import importlib
-    import sys
 
     fake_release = SimpleNamespace(id=None, name=None)
     # Only models whose attributes are accessed at import time need explicit
@@ -76,11 +106,9 @@ def test_list_project_runs_no_filter_builds_correct_query():
         ),
     )
 
-    with patch.dict("sys.modules", {"app.models.postgres": fake_models}, clear=False):
-        # Re-import to pick up mocked models if cached
-        if "app.services.runs_service" in sys.modules:
-            del sys.modules["app.services.runs_service"]
-        runs_service = importlib.import_module("app.services.runs_service")
+    runs_service = _import_fresh(
+        "app.services.runs_service", {"app.models.postgres": fake_models}
+    )
 
     # The function signature now accepts str | None
     import inspect
@@ -96,13 +124,8 @@ def test_list_project_runs_no_filter_builds_correct_query():
 
 def test_analytics_service_accepts_none_project_id():
     """All analytics functions should accept project_id=None without raising."""
-    import importlib
-    import sys
 
-    if "app.services.analytics_service" in sys.modules:
-        del sys.modules["app.services.analytics_service"]
-
-    analytics_service = importlib.import_module("app.services.analytics_service")
+    analytics_service = _import_fresh("app.services.analytics_service")
 
     import inspect
     for fn_name in (
@@ -129,8 +152,6 @@ def test_analytics_service_accepts_none_project_id():
 def test_metrics_service_accepts_none_project_id():
     """get_dashboard_summary, get_trend_data, _period_stats, _count_flaky_tests
     should all accept project_id=None."""
-    import importlib
-    import sys
     import inspect
 
     with patch.dict(
@@ -145,9 +166,7 @@ def test_metrics_service_accepts_none_project_id():
         )},
         clear=False,
     ):
-        if "app.services.metrics_service" in sys.modules:
-            del sys.modules["app.services.metrics_service"]
-        metrics_service = importlib.import_module("app.services.metrics_service")
+        metrics_service = _import_fresh("app.services.metrics_service")
 
     for fn_name in ("get_dashboard_summary", "get_trend_data", "_period_stats", "_count_flaky_tests"):
         fn = getattr(metrics_service, fn_name)
@@ -163,13 +182,8 @@ def test_metrics_service_accepts_none_project_id():
 
 def test_flaky_tests_sql_omits_project_filter_when_none():
     """When project_id is None, the generated SQL should NOT contain ':project_id'."""
-    import importlib
-    import sys
 
-    if "app.services.analytics_service" in sys.modules:
-        del sys.modules["app.services.analytics_service"]
-
-    analytics_service = importlib.import_module("app.services.analytics_service")
+    analytics_service = _import_fresh("app.services.analytics_service")
 
     # Directly inspect the SQL generated inside flaky_tests by calling it with
     # a patched db that captures the executed SQL.
@@ -197,15 +211,10 @@ def test_flaky_tests_sql_omits_project_filter_when_none():
 
 def test_flaky_tests_sql_includes_project_filter_when_provided():
     """When project_id is given, the SQL SHOULD contain 'project_id'."""
-    import importlib
-    import sys
     from unittest.mock import MagicMock
     import asyncio
 
-    if "app.services.analytics_service" in sys.modules:
-        del sys.modules["app.services.analytics_service"]
-
-    analytics_service = importlib.import_module("app.services.analytics_service")
+    analytics_service = _import_fresh("app.services.analytics_service")
 
     captured_sql = []
 

@@ -1,3 +1,4 @@
+import importlib.util
 import random
 import sys
 import types
@@ -10,7 +11,14 @@ from app.services.allure_parser import _calc_duration, parse_allure_result
 from app.services.llm_factory import get_llm
 from app.services.mock_generator import generate_mock_allure_results, generate_mock_testng_results
 
-if "defusedxml.ElementTree" not in sys.modules:
+# Stub defusedxml ONLY where it is not installed (re-audit E2). The old guard
+# ("not yet imported") fired whenever this file was collected before anything
+# had imported the real package, and the stub (fromstring only, no iterparse)
+# stayed in sys.modules for the rest of the session: every later test that
+# parsed XML through defusedxml.ElementTree.iterparse failed with "cannot
+# import name 'iterparse' ... (unknown location)". defusedxml is pinned in
+# requirements.txt, so on any real environment this block does nothing.
+if importlib.util.find_spec("defusedxml") is None:
     pkg = types.ModuleType("defusedxml")
     mod = types.ModuleType("defusedxml.ElementTree")
     mod.fromstring = std_et.fromstring

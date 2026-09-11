@@ -18,6 +18,7 @@ regression.
 """
 from __future__ import annotations
 
+import importlib
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -26,7 +27,16 @@ import pytest
 
 pytest.importorskip("asyncpg")
 
-from app.core import deps, token_revocation  # noqa: E402
+from app.core import deps  # noqa: E402
+
+
+def _revocation():
+    """The token_revocation module deps will import at CALL time (re-audit
+    E2). deps does ``from app.core.token_revocation import ...`` inside the
+    function, so it resolves through sys.modules when it runs; a module
+    object bound when this file was collected can be a different copy if
+    another test re-imported it, and a patch on that copy would miss."""
+    return importlib.import_module("app.core.token_revocation")
 
 _USER_ID = uuid.uuid4()
 _PAYLOAD = {"sub": str(_USER_ID), "type": "access", "jti": "jti-1", "iat": 1_900_000_000}
@@ -81,7 +91,7 @@ def _api_key(project_id=None):
 
 @pytest.fixture(autouse=True)
 def _fail_closed(monkeypatch):
-    monkeypatch.setattr(token_revocation.settings, "AUTH_REVOCATION_FAIL_OPEN", False)
+    monkeypatch.setattr(_revocation().settings, "AUTH_REVOCATION_FAIL_OPEN", False)
 
 
 def _valid_token(monkeypatch):
@@ -102,7 +112,7 @@ def _redis_down(monkeypatch):
     async def _none():
         return None
 
-    monkeypatch.setattr(token_revocation, "_redis", _none)
+    monkeypatch.setattr(_revocation(), "_redis", _none)
 
 
 def _redis_up(monkeypatch):
@@ -111,7 +121,7 @@ def _redis_up(monkeypatch):
     async def _get():
         return redis
 
-    monkeypatch.setattr(token_revocation, "_redis", _get)
+    monkeypatch.setattr(_revocation(), "_redis", _get)
 
 
 # ── the headline regression ─────────────────────────────────────────────────
@@ -229,7 +239,7 @@ async def test_revoked_token_still_falls_through_to_the_api_key(monkeypatch):
     async def _get():
         return redis
 
-    monkeypatch.setattr(token_revocation, "_redis", _get)
+    monkeypatch.setattr(_revocation(), "_redis", _get)
     user = _user()
 
     resolved = await deps.get_current_user_or_api_key(
