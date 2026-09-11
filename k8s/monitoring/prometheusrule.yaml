@@ -288,7 +288,7 @@ spec:
     interval: 60s
     rules:
     - alert: TestLookupBackupJobFailed
-      expr: max by (namespace, job_name) (kube_job_status_failed{job_name=~"testlookup-backup-.*"}) > 0
+      expr: "max by (namespace, job_name) (\n  kube_job_status_condition{condition=\"Failed\", status=\"true\"}\n  and on (namespace, job_name)\n  (\n    kube_job_owner{owner_kind=\"CronJob\", owner_name=\"testlookup-backup\"}\n    or kube_job_info{job_name=~\"testlookup-backup-.*\"}\n  )\n) == 1\n"
       for: 0m
       labels:
         severity: critical
