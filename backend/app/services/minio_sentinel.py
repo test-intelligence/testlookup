@@ -59,6 +59,10 @@ def sentinel_key_problem(key: str) -> str | None:
         return "is not a sentinel key"
     if _BACKSLASH in key:
         return "contains a backslash"
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in key):
+        # A NUL made the local backend raise ValueError, which was retried
+        # three times and dead-lettered instead of refused (review of U).
+        return "contains a control character"
     parts = key.split("/")
     if len(parts) < 3:
         return "is too short to name a project and a run"

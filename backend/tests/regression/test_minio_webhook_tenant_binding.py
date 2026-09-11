@@ -299,6 +299,8 @@ _UNPLAIN_KEYS = [
         f"{VICTIM}/runs/7{_BS}..{_BS}..{_BS}../{ATTACKER}/runs/7/upload_complete.json",
         id="backslash",
     ),
+    pytest.param(f"{VICTIM}/runs/7" + chr(0) + "/upload_complete.json", id="nul"),
+    pytest.param(f"{VICTIM}/runs/7" + chr(10) + "/upload_complete.json", id="newline"),
 ]
 
 
