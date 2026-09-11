@@ -251,18 +251,32 @@ async def test_a_members_list_is_one_ordered_branch_per_project(engine, seeded):
     ))
     plan = await _generic_plan(engine, _items_statement(statements))
     rendered = json.dumps(plan)[:4000]
-    scans = _run_scans(plan)
-    branch_scans = [n for n in scans if n.get("Index Name") == PROJECT_INDEX]
-    assert len(branch_scans) == len(seeded), rendered
-    assert all(
-        n["Node Type"] in ("Index Scan", "Index Only Scan") and "Bitmap" not in n["Node Type"]
-        for n in scans
-    ), rendered
-    assert not any(n["Node Type"] == "Seq Scan" and n.get("Relation Name") == "test_runs"
-                   for n in _nodes(plan)), rendered
-    # Each branch stops at its LIMIT: the outer sort sees projects x page*size rows.
-    limits = [n for n in _nodes(plan) if n["Node Type"] == "Limit"]
-    assert len(limits) >= len(seeded) + 1, rendered
+    # What this proves: the page's candidates come from one branch per
+    # project, and each branch is 0167's index read in order and stopped at
+    # a LIMIT -- so no branch sorts or scans its project's history.
+    #
+    # What it does not constrain: how the page joins those few candidate ids
+    # back to test_runs. That join reads only the candidates' rows, and its
+    # method is a cost choice by table size -- on CI's fresh, small database
+    # a hash join over the whole (tiny) table is cheaper than primary-key
+    # probes; with a real table it is probes. Asserting it would test the
+    # database's contents, not this code (lead review of the N18 test).
+    appends = [n for n in _nodes(plan) if n["Node Type"] == "Append"]
+    assert len(appends) == 1, f"expected one Append of per-project branches: {rendered}"
+    branches = appends[0].get("Plans", [])
+    assert len(branches) == len(seeded), rendered
+    for branch in branches:
+        nodes = list(_nodes(branch))
+        assert any(n["Node Type"] == "Limit" for n in nodes), f"a branch has no LIMIT: {rendered}"
+        runs = [n for n in nodes if n.get("Relation Name") == "test_runs"]
+        assert len(runs) == 1, rendered
+        assert runs[0]["Node Type"] in ("Index Scan", "Index Only Scan"), rendered
+        assert runs[0].get("Index Name") == PROJECT_INDEX, rendered
+        assert not any(n["Node Type"] == "Sort" for n in nodes), f"a branch sorts: {rendered}"
+        # The LIMIT sits above the index scan, so the read stops there.
+        limit_depth = next(i for i, n in enumerate(nodes) if n["Node Type"] == "Limit")
+        scan_depth = next(i for i, n in enumerate(nodes) if n is runs[0])
+        assert limit_depth < scan_depth, rendered
 
 
 @pytest.mark.parametrize("page", [1, 2, 3])
