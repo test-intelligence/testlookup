@@ -88,19 +88,13 @@ def upgrade() -> None:
         "webhook_deliveries",
         sa.Column("run_id", postgresql.UUID(as_uuid=True), nullable=True),
     )
-    # Preserve the association for existing run.completed rows when the run
-    # still exists. Invalid/deleted historical payloads deliberately remain
-    # NULL so the new foreign key can be installed safely.
-    op.execute(
-        """
-        UPDATE webhook_deliveries AS delivery
-        SET run_id = run.id
-        FROM test_runs AS run
-        WHERE delivery.event_type = 'run.completed'
-          AND delivery.event_payload ? 'run_id'
-          AND delivery.event_payload ->> 'run_id' = run.id::text
-        """
-    )
+    # The association for existing run.completed rows is backfilled by 0171,
+    # in committed batches (re-audit N3). It used to be one cross-table UPDATE
+    # here, holding every matched row's lock until the whole upgrade
+    # committed. A database that already ran this revision keeps what that
+    # UPDATE wrote -- Alembic never runs a revision twice -- and 0171 finds
+    # nothing left to do there. The foreign key below is safe either way:
+    # the column is NULL until 0171 fills it with existing runs only.
     op.create_foreign_key(
         "fk_webhook_deliveries_run_id",
         "webhook_deliveries",
