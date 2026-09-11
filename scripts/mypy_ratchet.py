@@ -117,6 +117,7 @@ def run_mypy() -> tuple[str, int]:
     proc = subprocess.run(
         [sys.executable, "-m", "mypy", *MYPY_ARGS],
         cwd=BACKEND, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False,  # exit 1 = "errors found"; parse_mypy_output judges the code
     )
     return proc.stdout + proc.stderr, proc.returncode
 
