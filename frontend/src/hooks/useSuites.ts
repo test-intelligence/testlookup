@@ -40,11 +40,20 @@ export function useCanonicalCase(canonicalId?: string) {
   )
 }
 
-export function useOrphanedCanonicalCases() {
+/** The orphaned-cases panel's page size (the backend's own default). */
+export const ORPHANED_PAGE_SIZE = 25
+
+/**
+ * One page of orphaned canonicals. N16: this used to ask for no page at all,
+ * got the backend's first 25, and the panel printed the full total above
+ * them, so "60" sat over 25 rows with no way to reach the other 35.
+ */
+export function useOrphanedCanonicalCases(page = 1, size = ORPHANED_PAGE_SIZE) {
   return useProjectScopedSWR(
     'canonical-orphaned',
-    (projectId) => suitesService.listOrphanedCanonicals(projectId),
-    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
+    (projectId) => suitesService.listOrphanedCanonicals(projectId, { page, size }),
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND, keepPreviousData: true },
+    [page, size],
   )
 }
 
