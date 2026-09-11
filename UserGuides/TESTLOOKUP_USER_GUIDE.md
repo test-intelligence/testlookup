@@ -1125,6 +1125,23 @@ curl -X POST http://localhost:8000/api/v1/keys \
 
 The response includes the raw key (shown once) — configure it as `TESTLOOKUP_API_KEY` in your CI environment or `testng.xml`.
 
+#### Key scopes
+
+A key with an **empty** scope list is a full-access key: it can do whatever its owner's role allows (inside its project, if it is bound to one). A key with a **non-empty** scope list is limited to what it lists. The server enforces two scopes:
+
+| Scope | Needed for |
+|---|---|
+| `stream:write` | The live streaming ingest endpoints (`/api/v1/stream/...`). The **API Keys** settings page mints keys with this scope. |
+| `project:admin` | Project administration with a project-bound key: deleting the project's runs, resetting the project, retention and deletion jobs, removing members, deleting releases and phases, compliance packs, and release-gate policies. |
+
+A scoped key without `project:admin` gets **403** on those routes. For example, a `["stream:write"]` CI key can stream results but cannot delete runs. If a pipeline needs both, mint it with `"scopes": ["stream:write", "project:admin"]`.
+
+**Rotating a key with a key.** A key that creates another key (`POST /api/v1/keys` or `testlookup keys create` authenticated with an API key) can grant only what it holds:
+- if it is scoped, the new key's scopes must be a subset of its own. Omitting `scopes` copies them, and an explicit empty list (full access) is refused;
+- the new key cannot expire later than the key that creates it. Omitting `expires_days` copies its expiry date.
+
+A signed-in user (not an API key) mints keys as before.
+
 ---
 
 ## 26. Settings

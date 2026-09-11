@@ -119,6 +119,77 @@ def credential_kind(user: User) -> str | None:
     return value if value in (CREDENTIAL_KIND_JWT, CREDENTIAL_KIND_API_KEY) else None
 
 
+# ── API-key scopes (QA-R3-11) ────────────────────────────────────────────────
+#
+# ``api_keys.scopes`` was read in exactly one place, the streaming ingest
+# dependency. Everywhere else a key declared ``["stream:write"]`` acted with
+# its owner's full role: through the routes that opt in with
+# ``require_role(UserRole.ADMIN, allow_project_key=True)`` a CI streaming key
+# deleted runs, reset its project, purged retention and removed members, and
+# ``POST /api/v1/keys`` minted it an unrestricted, never-expiring replacement
+# that outlived revoking it.
+#
+# The rule: a key with a NON-EMPTY scope list may do only what it lists. An
+# empty list is a legacy full-access key, exactly as the streaming dependency
+# has always treated it.
+
+#: Lets a scoped key use a route that opts a project-bound key in with
+#: ``require_role(UserRole.ADMIN, allow_project_key=True)``: deleting the
+#: project's runs, resetting it, its retention and deletion jobs, member
+#: removal, release/phase deletion, compliance packs, release-gate policies.
+PROJECT_ADMIN_SCOPE = "project:admin"
+
+#: What a scoped key without :data:`PROJECT_ADMIN_SCOPE` is told on such a route.
+PROJECT_ADMIN_SCOPE_DETAIL = (
+    f"This API key's scopes do not include {PROJECT_ADMIN_SCOPE!r}, which this "
+    "endpoint requires. Mint a key with that scope (or use a signed-in session)."
+)
+
+_API_KEY_GRANT_ATTR = "_testlookup_api_key_grant"
+
+
+def _normalized_scopes(value) -> tuple[str, ...]:
+    """``api_keys.scopes`` as a tuple of non-empty strings (JSON column: list, str or null)."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,) if value else ()
+    return tuple(str(scope) for scope in value if scope)
+
+
+@dataclass(frozen=True)
+class ApiKeyGrant:
+    """What the API key that authenticated this request was granted.
+
+    Stashed on the loaded ``User`` like the project binding, by
+    ``_validate_api_key``; ``None`` for a JWT.
+    """
+
+    key_id: uuid.UUID
+    scopes: tuple[str, ...]
+    expires_at: datetime | None
+
+    @property
+    def is_scoped(self) -> bool:
+        return bool(self.scopes)
+
+    def allows(self, scope: str) -> bool:
+        """An unscoped (legacy) key allows everything; a scoped one only what it lists."""
+        return not self.scopes or scope in self.scopes
+
+
+def _bind_api_key_grant(user: User, grant: ApiKeyGrant | None) -> User:
+    setattr(user, _API_KEY_GRANT_ATTR, grant)
+    return user
+
+
+def api_key_grant(user: User) -> ApiKeyGrant | None:
+    """The authenticating API key's scopes and expiry, or ``None`` (a JWT, or a
+    ``User`` that did not come from an auth dependency)."""
+    value = getattr(user, _API_KEY_GRANT_ATTR, None)
+    return value if isinstance(value, ApiKeyGrant) else None
+
+
 def _enforce_api_key_project_binding(
     user: User,
     project_id: uuid.UUID | None,
@@ -250,7 +321,9 @@ async def get_current_user(
         _count_auth_failure("inactive_user")
         raise credentials_exception
 
-    return _bind_credential_kind(_bind_api_key_project(user, None), CREDENTIAL_KIND_JWT)
+    return _bind_api_key_grant(
+        _bind_credential_kind(_bind_api_key_project(user, None), CREDENTIAL_KIND_JWT), None
+    )
 
 
 # ── CLI-5: Dual auth (JWT OR API Key) ────────────────────────────────────────
@@ -296,6 +369,14 @@ async def _validate_api_key(db: AsyncSession, raw_key: str) -> ApiKeyContext:
 
     bound = _bind_credential_kind(
         _bind_api_key_project(user, api_key.project_id), CREDENTIAL_KIND_API_KEY
+    )
+    _bind_api_key_grant(
+        bound,
+        ApiKeyGrant(
+            key_id=api_key.id,
+            scopes=_normalized_scopes(api_key.scopes),
+            expires_at=api_key.expires_at,
+        ),
     )
     return ApiKeyContext(user=bound, project_id=api_key.project_id)
 
@@ -548,6 +629,11 @@ def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Call
 
     Below ADMIN nothing changes. Those roles never refused a bound key, so the
     flag would mean nothing there, and passing it is a ``ValueError``.
+
+    **An opted-in route also needs the key's scopes to allow it (QA-R3-11).**
+    A key with a non-empty scope list gets 403 unless the list holds
+    :data:`PROJECT_ADMIN_SCOPE` (``project:admin``). A legacy key with an empty
+    list stays full-access, and a JWT has no scopes at all.
     """
     if allow_project_key and min_role != UserRole.ADMIN:
         raise ValueError(
@@ -582,6 +668,14 @@ def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Call
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=PROJECT_KEY_NOT_INSTANCE_ADMIN_DETAIL,
             )
+        if allow_project_key:
+            grant = api_key_grant(current_user)
+            if grant is not None and not grant.allows(PROJECT_ADMIN_SCOPE):
+                _count_auth_failure("insufficient_role")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=PROJECT_ADMIN_SCOPE_DETAIL,
+                )
         return current_user
 
     return _check

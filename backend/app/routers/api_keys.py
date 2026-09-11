@@ -11,7 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import _api_key_bound_project, require_api_key_owner, require_role
+from app.core.deps import (
+    _api_key_bound_project,
+    api_key_grant,
+    require_api_key_owner,
+    require_role,
+)
 from app.db.postgres import get_db
 from app.models.postgres import ApiKey, Project, User, UserRole
 from app.models.schemas import ApiKeyCreate, ApiKeyCreatedResponse, ApiKeyResponse
@@ -61,6 +66,26 @@ async def create_api_key(
     A caller authenticated with a project-bound key may mint only a key bound
     to that same project, for its own owner (re-audit N20). That is what CI
     needs to rotate its key, and nothing wider.
+
+    A caller authenticated with an API key also grants no more than it holds
+    (QA-R3-11):
+
+    * scopes: if the caller's key is scoped, the new key's scopes must be a
+      subset of them. Omitting ``scopes`` inherits the caller's; an explicit
+      empty list (a full-access key) is refused. A legacy unscoped caller
+      mints as before.
+    * expiry: the new key may not expire later than the caller's key.
+      Omitting ``expires_days`` inherits the caller's expiry. A caller with
+      no expiry mints as before.
+
+    So ``testlookup keys create``, which sends only a name, rotates a scoped,
+    expiring CI key into one with the same scopes and the same end date.
+
+    Scopes: an empty list is a full-access key. ``stream:write`` is required
+    by the streaming ingest endpoints. ``project:admin`` is required by the
+    project-administration routes a project-bound key may use (run deletion,
+    project reset, retention and deletion jobs, member removal, release/phase
+    deletion, compliance packs, release-gate policies).
     """
     # ── a project-bound caller stays inside its project (re-audit N20) ───
     # Only an ADMIN can bind a key to a project, so a bound key is usually an
@@ -88,6 +113,52 @@ async def create_api_key(
                 detail=(
                     "This API key is bound to one project; it can only create "
                     "keys for its own owner"
+                ),
+            )
+
+    # ── a key minting a key grants no more than it holds (QA-R3-11) ──────
+    # A ["stream:write"] CI key used to mint itself a ``scopes: []`` (full
+    # access), never-expiring replacement, which outlived revoking the
+    # original and every scope and expiry the operator had chosen.
+    grant = api_key_grant(current_user)
+    scopes = _normalize_scopes(payload.scopes)
+    if grant is not None and grant.is_scoped:
+        if not scopes:
+            if "scopes" in payload.model_fields_set:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "This API key is scoped; it cannot create a full-access "
+                        "key (an empty scope list). Request a subset of: "
+                        + ", ".join(grant.scopes)
+                    ),
+                )
+            scopes = list(grant.scopes)
+        beyond = sorted(set(scopes) - set(grant.scopes))
+        if beyond:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This API key can grant only the scopes it holds ("
+                    + ", ".join(grant.scopes)
+                    + "); it does not hold: "
+                    + ", ".join(beyond)
+                ),
+            )
+
+    expires_at = None
+    if payload.expires_days:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expires_days)
+    if grant is not None and grant.expires_at is not None:
+        if expires_at is None:
+            expires_at = grant.expires_at
+        elif expires_at > grant.expires_at:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "A key created with an API key may not outlive it: this key "
+                    f"expires at {grant.expires_at.isoformat()}. Omit expires_days "
+                    "to inherit that date, or ask for fewer days."
                 ),
             )
 
@@ -123,10 +194,6 @@ async def create_api_key(
     key_hash = _hash_key(raw_key)
     key_hint = raw_key[:8] + "..."
 
-    expires_at = None
-    if payload.expires_days:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expires_days)
-
     api_key = ApiKey(
         # Identity at construction: the ledger row is staged in this same
         # transaction and needs a stable entity_id without an extra flush.
@@ -135,7 +202,7 @@ async def create_api_key(
         name=payload.name,
         key_hash=key_hash,
         key_hint=key_hint,
-        scopes=payload.scopes,
+        scopes=scopes,
         project_id=payload.project_id,
         expires_at=expires_at,
     )
