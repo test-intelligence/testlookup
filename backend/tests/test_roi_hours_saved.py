@@ -402,7 +402,8 @@ class TestAssumptionsRouter:
 
         src = inspect.getsource(mod)
         assert "require_project_access()" in src
-        assert "require_role(UserRole.QA_LEAD)" in src
+        # Re-audit N26: opted in for a project-bound key; require_project_access confines it.
+        assert "require_role(UserRole.QA_LEAD, allow_project_key=True)" in src
 
 
 # ── Digest line + tile (US-12.2) ────────────────────────────────────────────

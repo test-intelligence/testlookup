@@ -253,7 +253,8 @@ def test_the_route_carries_both_guards():
     import inspect
 
     src = inspect.getsource(router_mod.activate_release_endpoint)
-    assert "require_role(UserRole.QA_LEAD)" in src
+    # Re-audit N26: QA_LEAD opts a project-bound key in; require_release_access confines it.
+    assert "require_role(UserRole.QA_LEAD, allow_project_key=True)" in src
     assert "require_release_access()" in src, (
         "the endpoint gates by role only — a QA lead could activate a release "
         "in a project they have no access to"

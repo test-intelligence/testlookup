@@ -67,7 +67,7 @@ async def put_value_metric_assumptions(
     project_id: uuid.UUID,
     payload: ValueMetricAssumptionsWrite,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Upsert the project's assumptions row. QA_LEAD+. Omitted fields keep

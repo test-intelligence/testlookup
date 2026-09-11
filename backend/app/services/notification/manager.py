@@ -98,6 +98,86 @@ async def _rows_whose_recipient_may_see_project(
             allowed.add(row_id)
     return allowed
 
+async def digest_owner_block_reason(db, user, project_id) -> Optional[str]:
+    """Why a scheduled digest must not go to ``user`` now, or ``None`` (re-audit N33).
+
+    ``dispatch_scheduled_digests`` checked only a workspace-wide subscription
+    (no project: ADMIN only). A project-scoped digest went to its owner at
+    every send, whether or not they could still read the project: a member
+    who left, or whose account was disabled, kept receiving its runs,
+    clusters and risk scores. The rule is the notification one: an active
+    account that is an instance ADMIN or a member of the project.
+    """
+    if not getattr(user, "is_active", False):
+        return "digest owner's account is disabled"
+    role = str(getattr(user.role, "value", user.role))
+    if project_id is None:
+        if role == UserRole.ADMIN.value:
+            return None
+        return "workspace-wide digest requires ADMIN; subscription is scoped to no project"
+    allowed = await _rows_whose_recipient_may_see_project(db, [(user.id, user.id, project_id)])
+    if user.id in allowed:
+        return None
+    return "digest owner can no longer access this project"
+
+
+#: Why the relay did not send a staged digest (re-audit N33).
+_DIGEST_NOT_DELIVERABLE = (
+    "Digest subscription no longer exists, is inactive or paused, or its owner "
+    "can no longer access this project"
+)
+
+
+async def _digest_rows_still_deliverable(
+    db,
+    rows: list,
+    explicit_routes: dict,
+) -> set[uuid.UUID]:
+    """The ids of staged digest rows that may still be sent (re-audit N33).
+
+    An event-driven digest is staged under the run's project with a snapshot
+    of its target, and delivered by the relay later. Nothing looked at the
+    subscription again: a subscriber who lost the project (or was disabled),
+    and a subscription paused or deleted since, still got the run's summary.
+    Same rule as a preference row: the subscription is active and not paused,
+    its owner is active and an ADMIN or a member of the row's project, and the
+    row still has a project.
+    """
+    wanted: dict[uuid.UUID, uuid.UUID] = {}
+    for row in rows:
+        route = explicit_routes.get(row.id)
+        raw = route.get("digest_subscription_id") if isinstance(route, dict) else None
+        if not raw or row.project_id is None:
+            continue
+        try:
+            wanted[row.id] = uuid.UUID(str(raw))
+        except ValueError:
+            continue
+    if not wanted:
+        return set()
+    subscriptions = {
+        sub_id: user_id
+        for sub_id, user_id in (
+            await db.execute(
+                select(DigestSubscription.id, DigestSubscription.user_id).where(
+                    DigestSubscription.id.in_(set(wanted.values())),
+                    DigestSubscription.is_active.is_(True),
+                    DigestSubscription.is_paused.is_(False),
+                )
+            )
+        ).all()
+    }
+    by_id = {row.id: row for row in rows}
+    return await _rows_whose_recipient_may_see_project(
+        db,
+        [
+            (row_id, subscriptions[sub_id], by_id[row_id].project_id)
+            for row_id, sub_id in wanted.items()
+            if sub_id in subscriptions
+        ],
+    )
+
+
 _MAX_DURABLE_DELIVERY_ATTEMPTS = 8
 _TEAM_ROUTE_METADATA_KEY = "_durable_team_route"
 _EXPLICIT_ROUTE_METADATA_KEY = "_durable_explicit_route"
@@ -755,6 +835,14 @@ async def relay_pending_notification_deliveries(
             # A row can wait minutes to hours between staging and its last
             # retry. Re-check the recipient against each row's own project, and
             # treat one who lost access like a deleted preference (QA-R3-1).
+            #
+            # Re-audit N33: a row with NO project is not delivered either. Every
+            # producer stages a relay row under a project (the scoped, team and
+            # explicit staging functions all require one, and the team fallback
+            # skips a row without one), so NULL here only means the project was
+            # deleted after staging: ``notification_log.project_id`` is ON
+            # DELETE SET NULL. Such a row used to skip the check entirely and
+            # reach members who had lost the project with it.
             allowed_rows = await _rows_whose_recipient_may_see_project(
                 db,
                 [
@@ -766,8 +854,7 @@ async def relay_pending_notification_deliveries(
             preferences_by_row = {
                 row.id: preferences[row.preference_id]
                 for row in rows
-                if row.preference_id in preferences
-                and (row.project_id is None or row.id in allowed_rows)
+                if row.preference_id in preferences and row.id in allowed_rows
             }
         else:
             preferences_by_row = {}
@@ -779,6 +866,7 @@ async def relay_pending_notification_deliveries(
             row.id: dict(row.delivery_metadata or {}).get(_EXPLICIT_ROUTE_METADATA_KEY)
             for row in rows
         }
+        digest_rows_allowed = await _digest_rows_still_deliverable(db, rows, explicit_routes)
         needs_email = any(
             (
                 preferences_by_row.get(row.id, (None, None))[0] is not None
@@ -910,6 +998,8 @@ async def relay_pending_notification_deliveries(
             return await _dispatch_snapshotted_route(row, team_route)
         explicit_route = explicit_routes.get(row.id)
         if isinstance(explicit_route, dict):
+            if explicit_route.get("digest_subscription_id") and row.id not in digest_rows_allowed:
+                return "failed", _DIGEST_NOT_DELIVERABLE
             return await _dispatch_snapshotted_route(row, explicit_route)
         route = preferences_by_row.get(row.id)
         if route is None:

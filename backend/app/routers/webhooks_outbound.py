@@ -89,7 +89,7 @@ async def create_webhook_subscription(
     payload: WebhookSubscriptionWrite,
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
 ):
     """Create a new webhook subscription. QA_LEAD+.
 
@@ -138,7 +138,7 @@ async def update_webhook_subscription(
     subscription_id: uuid.UUID,
     payload: WebhookSubscriptionWrite,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
 ):
     await _load_and_scope(db, current_user, subscription_id)
     return await svc.update_subscription(
@@ -158,7 +158,7 @@ async def update_webhook_subscription(
 async def delete_webhook_subscription(
     subscription_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
 ):
     await _load_and_scope(db, current_user, subscription_id)
     await svc.delete_subscription(db, subscription_id, current_user)
@@ -172,7 +172,7 @@ async def delete_webhook_subscription(
 async def test_webhook_subscription(
     subscription_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
 ):
     """Emit a synthetic ``run.completed`` event to this subscription so
     the customer can verify their receiver without waiting for a real
@@ -237,7 +237,7 @@ async def replay_webhook_delivery(
     subscription_id: uuid.UUID,
     delivery_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
 ):
     """Replay a failed or DLQ'd webhook delivery.
 

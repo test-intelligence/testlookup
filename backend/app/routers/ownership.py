@@ -52,7 +52,7 @@ async def create_ownership_rule(
     project_id: uuid.UUID,
     payload: OwnershipRuleCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Create a new ownership rule (QA_LEAD+)."""
@@ -79,7 +79,7 @@ async def update_ownership_rule(
     rule_id: uuid.UUID,
     payload: OwnershipRuleUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Update an ownership rule (QA_LEAD+)."""
@@ -106,7 +106,7 @@ async def delete_ownership_rule(
     project_id: uuid.UUID,
     rule_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Delete an ownership rule (QA_LEAD+)."""
@@ -188,7 +188,7 @@ async def import_codeowners(
     project_id: uuid.UUID,
     payload: CodeownersImportRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Import a GitHub CODEOWNERS file into ``path`` ownership rules (QA_LEAD+).
@@ -297,7 +297,7 @@ async def upsert_team_channel(
     team_name: str,
     payload: TeamChannelUpsert,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Create or replace the notification channel for one team (QA_LEAD+)."""
@@ -334,7 +334,7 @@ async def delete_team_channel(
     project_id: uuid.UUID,
     team_name: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Remove a team's notification channel (QA_LEAD+). Transition events

@@ -53,7 +53,7 @@ async def list_agent_actions(
     status: str | None = Query(default=None, max_length=20),
     limit: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     __: User = Depends(require_project_access()),
 ):
     query = (
@@ -74,7 +74,7 @@ async def transition_agent_action(
     action_id: uuid.UUID,
     body: ActionTransitionRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     try:

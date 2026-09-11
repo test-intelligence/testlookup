@@ -133,6 +133,9 @@ class AnalysisLookupResponse(BaseModel):
 async def jira_resolution_webhook(
     payload: dict = Body(...),
     db: AsyncSession = Depends(get_db),
+    # Re-audit N32: the one write on a protected router that reached no guard,
+    # so neither the inactive-account check nor a scoped key's write rule ran.
+    _caller: User = Depends(get_current_active_user),
 ):
     result = await feedback_service.jira_resolution_webhook(db, payload)
     await db.commit()

@@ -57,7 +57,7 @@ logger = structlog.get_logger("routers.compliance_packs")
 async def generate_compliance_pack(
     release_id: uuid.UUID,
     payload: CompliancePackGenerateRequest,
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_release_access()),
 ):

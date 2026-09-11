@@ -94,7 +94,7 @@ async def upsert_gitlab_integration(
     project_id: uuid.UUID,
     payload: GitLabConfigWrite,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Create or replace the GitLab integration for a project. QA_LEAD+.
@@ -132,7 +132,7 @@ async def upsert_gitlab_integration(
 async def test_gitlab_integration(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Probe the configured project + PAT and report reachability. QA_LEAD+."""
