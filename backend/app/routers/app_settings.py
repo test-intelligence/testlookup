@@ -206,11 +206,14 @@ async def test_smtp_config(
     from app.services.notification.egress import (
         OfflineEgressBlocked,
         assert_delivery_allowed_async,
+        assert_recipients_allowed_async,
     )
 
     try:
         # The stored relay is the deployment's own: the allow-list applies.
         await assert_delivery_allowed_async("SMTP", host, deployment_wide=True)
+        # Re-audit N25: the recipient rule applies to the test email too.
+        await assert_recipients_allowed_async(host, current_user.email)
     except OfflineEgressBlocked as exc:
         return SmtpTestResult(success=False, message=str(exc))
 

@@ -36,7 +36,7 @@ Test Runner --> Ingest API (REST) --> Backend
 | **Backend to GitHub** | Check run posts | PAT auth, HTTPS, gated by `AI_OFFLINE_MODE` + `github_checks` flag |
 | **Backend to Webhook receivers** | Event payloads | HMAC-SHA256 signed, HTTPS recommended, gated by `AI_OFFLINE_MODE` + `outbound_webhooks` flag |
 | **Backend to Slack / Teams** | Notification title, body and failure metadata | Webhook URL held per deployment, per user or per team, gated by `AI_OFFLINE_MODE` (destination residency; `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` names exceptions for the deployment's own webhooks only) |
-| **Backend to SMTP relay** | Notification, digest and report emails; the SMTP test email; the health probe's login | SMTP credentials, TLS/STARTTLS, gated by `AI_OFFLINE_MODE` (relay residency; `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` names exceptions) |
+| **Backend to SMTP relay** | Notification, digest and report emails; the SMTP test email; the health probe's login | SMTP credentials, TLS/STARTTLS, gated by `AI_OFFLINE_MODE` (relay residency; `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` names exceptions; recipients judged by `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS`) |
 | **MCP Server to Backend** | REST API calls | Stdio uses its configured JWT; network MCP validates and forwards each caller's JWT without a shared service identity |
 | **CLI to Backend** | REST API calls | Same JWT/API key auth |
 
@@ -53,10 +53,10 @@ When `AI_OFFLINE_MODE=true`:
 | **Weekly retro digest narrative** | Falls back to the deterministic template path without calling the LLM. |
 | **Feature flags** | Still functional (flags resolve via Redis/Postgres, both local). The offline gate is checked BEFORE the feature flag in every outbound service. |
 | **Slack / Teams notifications** | Delivered only to a destination that resolves to a loopback or private address — a self-hosted webhook on the LAN still works, a public one is refused. The deployment's own webhooks may also go to a host the operator names in `OFFLINE_NOTIFICATION_ALLOWED_HOSTS`; a webhook set per user or per team never uses that list. |
-| **Email (SMTP)** | Same rule: an internal relay is allowed, a public relay is refused unless the operator names it. Applies to every SMTP connection the application makes: notifications, digests, report emails, the settings page's test email and the health probe. |
+| **Email (SMTP)** | Same rule: an internal relay is allowed, a public relay is refused unless the operator names it. Applies to every SMTP connection the application makes: notifications, digests, report emails, the settings page's test email and the health probe. The **recipients** are judged too (re-audit N25): with `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` set, every recipient must be in it; without it, an on-box relay may deliver and a named off-box relay is refused, because it would deliver to any mailbox. |
 | **Integration-health probes** | A probe never dials where its integration may not: Slack's API and the SMTP relay only when on-box; Jira, GitHub, Splunk and OpenShift not at all. It reports `skipped`, with the reason. |
-| **Splunk log search, OpenShift pod lookups** | **Not gated yet (re-audit N19, open).** With `SPLUNK_ENABLED` or `OCP_ENABLED` set, the triage agent's Splunk search (`tools/query_splunk.py`) and the OpenShift pod lookups (`services/ocp_client.py`, called during ingestion and by the triage agent) still call those APIs. Both settings default to false. Their health probes are skipped (row above). |
-| **Ingestion** | Fully functional. No network calls, except the OpenShift pod lookup when `OCP_ENABLED` is set (row above). |
+| **Splunk log search, OpenShift pod lookups** | Silent no-op (re-audit N19). The triage agent's Splunk search and the OpenShift pod lookups (ingestion and triage) return without a network call, whatever `SPLUNK_ENABLED` and `OCP_ENABLED` say. |
+| **Ingestion** | Fully functional. No network calls. |
 | **Analysis (rules/ML)** | Fully functional. No network calls. |
 | **Dashboard / API / CLI / MCP** | Fully functional. All traffic is local. |
 
@@ -66,7 +66,7 @@ When `AI_OFFLINE_MODE=true`:
 - NTP time sync
 - Ollama model pulls (if the model isn't pre-cached in the volume)
 
-These are infrastructure-level, not application-level. An air-gapped deployment that pre-caches images and models, names no host in `OFFLINE_NOTIFICATION_ALLOWED_HOSTS`, and does not enable the Splunk or OpenShift integrations while N19 is open, will see zero application-level egress.
+These are infrastructure-level, not application-level. An air-gapped deployment that pre-caches images and models, and names no host in `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` will see zero application-level egress. (An on-box mail relay forwards wherever its own MTA policy sends mail; `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` fences that at the application too.)
 
 Note on how the notification channels are gated: the check is **where the
 destination resolves**, not what the channel is called. That is deliberate in

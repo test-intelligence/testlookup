@@ -143,6 +143,81 @@ def _allow_listed(host: str) -> bool:
     return False
 
 
+def _domain_listed(domain: str, entries: list[str]) -> bool:
+    name = domain.strip().lower().rstrip(".")
+    for entry in entries:
+        if entry.startswith("."):
+            if name.endswith(entry):
+                return True
+        elif name == entry:
+            return True
+    return False
+
+
+def assert_recipients_allowed(relay: str | None, recipients: str | list[str] | None) -> None:
+    """Refuse mail to recipients offline mode does not admit (re-audit N25).
+
+    The relay gate above judges where the connection goes. Mail then goes
+    wherever the addresses point, and a relay the operator allow-listed
+    because it is hosted (``smtp.office365.com``) delivers to any mailbox on
+    the internet -- including an address a user typed into their own
+    notification preferences. Offline mode admitted that relay to reach the
+    organisation's own people, not everyone.
+
+    The rule, when ``AI_OFFLINE_MODE`` is on:
+
+    * ``OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS`` set: every recipient's
+      domain must match it (``corp.example`` exactly, ``.corp.example`` any
+      subdomain), whatever the relay. The operator's own list is the fence.
+    * unset, and the relay is off-box (so it was admitted only through the
+      allow-list): refused. An operator who makes a hosted relay the offline
+      exception must say where its mail may go.
+    * unset, and the relay is on-box: allowed. That relay is the
+      organisation's own mail system and its onward routing is that MTA's
+      policy, which is where an air-gapped site already controls it.
+    """
+    if not settings.AI_OFFLINE_MODE:
+        return
+    from email.utils import getaddresses
+
+    raw = [recipients] if isinstance(recipients, str) else list(recipients or [])
+    addresses = [address for _name, address in getaddresses(raw) if address]
+    if not addresses:
+        raise OfflineEgressBlocked(
+            "AI_OFFLINE_MODE=true and the email has no recipient -- refusing to deliver"
+        )
+    entries = [
+        entry.strip().lower()
+        for entry in (settings.OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS or "").split(",")
+        if entry.strip()
+    ]
+    if not entries:
+        host = _host_of(relay or "")
+        if host and host_is_local(host):
+            return
+        raise OfflineEgressBlocked(
+            f"AI_OFFLINE_MODE=true and the SMTP relay '{host}' is off-box: set "
+            "OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS to the domains its mail may reach"
+        )
+    for address in addresses:
+        _local, at, domain = address.rpartition("@")
+        if not at or not _domain_listed(domain, entries):
+            logger.warning("offline_email_recipient_blocked domain=%s", domain or "?")
+            raise OfflineEgressBlocked(
+                f"AI_OFFLINE_MODE=true and the recipient domain '{domain or address}' is not "
+                "in OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS -- refusing to deliver"
+            )
+
+
+async def assert_recipients_allowed_async(
+    relay: str | None, recipients: str | list[str] | None
+) -> None:
+    """:func:`assert_recipients_allowed` with the relay's residency lookup off the loop."""
+    if not settings.AI_OFFLINE_MODE:
+        return
+    await asyncio.to_thread(assert_recipients_allowed, relay, recipients)
+
+
 def delivery_http_client(destination: str | None, *, deployment_wide: bool = False):
     """The HTTP client a webhook send must use once the gate has passed.
 

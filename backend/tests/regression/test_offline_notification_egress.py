@@ -1040,6 +1040,8 @@ def docs_example_allow_listed(offline, resolves, monkeypatch):
 def relay_allow_listed(offline, resolves, monkeypatch):
     resolves({})
     monkeypatch.setattr(settings, "OFFLINE_NOTIFICATION_ALLOWED_HOSTS", "smtp.sendgrid.net")
+    # Re-audit N25: an off-box relay needs the recipient domains it may reach.
+    monkeypatch.setattr(settings, "OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS", "example.com")
 
 
 def _preference(channel: str, own_webhook: str | None):

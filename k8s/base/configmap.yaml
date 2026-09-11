@@ -41,6 +41,10 @@ data:
   # subdomains). A shared host admits every tenant on it, so a webhook set per
   # user or per team never uses this list. Empty refuses all.
   OFFLINE_NOTIFICATION_ALLOWED_HOSTS: ""
+  # Recipient domains email may reach while offline (comma-separated;
+  # .corp.example matches subdomains). Required when the allow-list above names
+  # an off-box mail relay; empty lets an on-box relay deliver.
+  OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS: ""
   # BUG-001: disable ChromaDB anonymous telemetry (posthog phone-home that errors
   # against the installed posthog and floods AI-worker logs; also wrong offline).
   ANONYMIZED_TELEMETRY: "False"
