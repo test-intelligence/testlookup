@@ -599,6 +599,7 @@ jobs:
           tests/integration/test_project_bound_admin_key_postgres.py
           tests/integration/test_notification_preference_authz_postgres.py
           tests/integration/test_scoped_key_limits_postgres.py
+          tests/integration/test_bound_key_confinement_postgres.py
           tests/integration/test_live_evidence_crash_replay_postgres_redis.py
           tests/integration/test_live_fanout_redis.py
           tests/integration/test_live_recovery_protocol_postgres_redis.py
