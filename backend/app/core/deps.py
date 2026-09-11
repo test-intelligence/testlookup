@@ -145,6 +145,41 @@ PROJECT_ADMIN_SCOPE_DETAIL = (
     "endpoint requires. Mint a key with that scope (or use a signed-in session)."
 )
 
+#: Lets a scoped key WRITE (any method but GET/HEAD/OPTIONS) on a route gated
+#: below QA_LEAD: signed-in-only and QA_ENGINEER routes, and the writes of the
+#: project-scoped guards on them (re-audit N32). ``project:admin`` implies it.
+PROJECT_WRITE_SCOPE = "project:write"
+
+#: What a scoped key without :data:`PROJECT_WRITE_SCOPE` is told on a write.
+PROJECT_WRITE_SCOPE_DETAIL = (
+    f"This API key's scopes do not include {PROJECT_WRITE_SCOPE!r} (or "
+    f"{PROJECT_ADMIN_SCOPE!r}), which a write through this endpoint requires. "
+    "Mint a key with that scope (or use a signed-in session)."
+)
+
+#: Lets a key use the streaming ingest endpoints (``/api/v1/stream/*``).
+STREAM_WRITE_SCOPE = "stream:write"
+
+#: The complete server-side scope vocabulary (re-audit N31). ``POST
+#: /api/v1/keys`` refuses any other name with a 422, so every scope a key can
+#: be minted with is enforced somewhere:
+#:
+#: * ``stream:write``: the streaming ingest dependency
+#:   (``get_streaming_api_key_context``). A key without it is refused there.
+#: * ``project:write``: every non-safe request of a scoped key that reaches
+#:   ``get_current_active_user`` (all role and project guards), unless the
+#:   route is marked :func:`takes_scoped_key_writes`.
+#: * ``project:admin``: ``require_role`` at QA_LEAD and above (any method) and
+#:   ``require_project_role`` at QA_LEAD and above (writes); implies
+#:   ``project:write``.
+#:
+#: An EMPTY list is a legacy full-access key and passes every check above.
+API_KEY_SCOPES: dict[str, str] = {
+    STREAM_WRITE_SCOPE: "Stream test results (/api/v1/stream/*)",
+    PROJECT_WRITE_SCOPE: "Write below the QA_LEAD role (runs, triage, suites, feedback, ...)",
+    PROJECT_ADMIN_SCOPE: "Administer the key's project (QA_LEAD/ADMIN routes); implies project:write",
+}
+
 _API_KEY_GRANT_ATTR = "_testlookup_api_key_grant"
 
 
@@ -177,6 +212,10 @@ class ApiKeyGrant:
         """An unscoped (legacy) key allows everything; a scoped one only what it lists."""
         return not self.scopes or scope in self.scopes
 
+    def allows_write(self) -> bool:
+        """``project:write``, or ``project:admin`` which implies it (re-audit N32)."""
+        return self.allows(PROJECT_WRITE_SCOPE) or self.allows(PROJECT_ADMIN_SCOPE)
+
 
 #: Methods a scoped key without ``project:admin`` may still use on a
 #: project-scoped route (QA-R4-1): reads.
@@ -201,13 +240,60 @@ def _refuse_scoped_key_without_project_admin(user: User) -> None:
         )
 
 
-def _refuse_scoped_key_write(request: Request, user: User) -> None:
-    """The project-scoped guards' half of the rule: writes need ``project:admin``."""
-    # No method (a hand-built request) is treated as a write: refused with a
-    # 403, not an AttributeError's 500.
+def _is_write(request) -> bool:
+    """Any method but GET/HEAD/OPTIONS. No method (a hand-built request) is a
+    write: refused with a 403, not an AttributeError's 500."""
     method = getattr(request, "method", None)
-    if not isinstance(method, str) or method.upper() not in _SAFE_METHODS:
+    return not isinstance(method, str) or method.upper() not in _SAFE_METHODS
+
+
+def _refuse_scoped_key_without_write_scope(user: User) -> None:
+    """403 when the request's API key is scoped and holds neither
+    ``project:write`` nor ``project:admin`` (re-audit N32)."""
+    grant = api_key_grant(user)
+    if grant is not None and not grant.allows_write():
+        _count_auth_failure("insufficient_role")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PROJECT_WRITE_SCOPE_DETAIL,
+        )
+
+
+def _refuse_scoped_key_write(request: Request, user: User, *, admin: bool = False) -> None:
+    """The project-scoped guards' half of the rule: a write needs
+    ``project:write``, or ``project:admin`` when ``admin`` (a guard at QA_LEAD
+    and above)."""
+    if not _is_write(request):
+        return
+    if admin:
         _refuse_scoped_key_without_project_admin(user)
+    else:
+        _refuse_scoped_key_without_write_scope(user)
+
+
+_TAKES_SCOPED_KEY_WRITES_ATTR = "_testlookup_takes_scoped_key_writes"
+
+
+def takes_scoped_key_writes(endpoint: Callable) -> Callable:
+    """Mark a route handler that applies its own rules to a scoped key's writes.
+
+    ``get_current_active_user`` refuses a scoped API key's non-safe request
+    unless the key holds ``project:write`` (re-audit N32). A handler marked
+    with this takes such a key anyway, because it already confines what the
+    key can do: ``POST /api/v1/keys`` mints only a subset of the caller's
+    scopes and expiry (a ``["stream:write"]`` CI key rotates itself), and
+    ``DELETE /api/v1/keys/{key_id}`` lets a key without ``project:admin``
+    revoke only itself. The set of marked handlers is pinned by
+    ``tests/integration/test_scoped_key_writes_postgres.py``.
+    """
+    setattr(endpoint, _TAKES_SCOPED_KEY_WRITES_ATTR, True)
+    return endpoint
+
+
+def _route_takes_scoped_key_writes(request) -> bool:
+    scope = getattr(request, "scope", None)
+    endpoint = scope.get("endpoint") if isinstance(scope, dict) else None
+    return getattr(endpoint, _TAKES_SCOPED_KEY_WRITES_ATTR, False) is True
 
 
 def _bind_api_key_grant(user: User, grant: ApiKeyGrant | None) -> User:
@@ -486,15 +572,33 @@ async def get_current_user_or_api_key(
 
 
 async def get_current_active_user(
+    request: Request,
     current_user: User = Depends(get_current_user_or_api_key),
 ) -> User:
-    """Return the current user from JWT or API key, raising 403 if disabled."""
+    """Return the current user from JWT or API key, raising 403 if disabled.
+
+    **A scoped API key writes only with ``project:write`` (re-audit N32).**
+    Scopes were enforced only by ``require_role`` at QA_LEAD+ and by the
+    project guards' writes, so a ``["stream:write"]`` CI key still wrote
+    through every route gated at QA_ENGINEER or merely signed in (suites,
+    saved views, triage, feedback, notification preferences, AI generation)
+    with its owner's role. Every role and project guard resolves through this
+    dependency, so the rule lives here: a key with a NON-EMPTY scope list on
+    any method but GET/HEAD/OPTIONS needs ``project:write`` or
+    ``project:admin``, unless the handler is marked
+    :func:`takes_scoped_key_writes`. A legacy key (empty list) and a JWT pass
+    as before. The API-key ingest routes (``/api/v1/stream/*``,
+    ``/api/v1/ingest*``, ``/ws/events``) authenticate through their own
+    dependencies and never reach this one.
+    """
     if not current_user.is_active:
         _count_auth_failure("inactive_user")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Inactive user account",
         )
+    if _is_write(request) and not _route_takes_scoped_key_writes(request):
+        _refuse_scoped_key_without_write_scope(current_user)
     return current_user
 
 
@@ -512,7 +616,7 @@ class StreamingApiKeyContext:
     api_key_name: str
 
 
-_STREAM_WRITE_SCOPE = "stream:write"
+_STREAM_WRITE_SCOPE = STREAM_WRITE_SCOPE
 
 
 async def get_streaming_api_key_context(
@@ -753,7 +857,10 @@ def require_project_role(min_role: UserRole) -> Callable:
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_active_user),
     ) -> User:
-        _refuse_scoped_key_write(request, current_user)
+        # At QA_LEAD and above a write administers the project: project:admin.
+        _refuse_scoped_key_write(
+            request, current_user, admin=min_idx >= _ROLE_ORDER.index(UserRole.QA_LEAD)
+        )
         project_id_str = request.path_params.get("project_id")
         if project_id_str:
             try:

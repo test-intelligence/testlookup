@@ -40,7 +40,7 @@ import pytest
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.deps import PROJECT_KEY_NOT_INSTANCE_ADMIN_DETAIL  # noqa: E402
+from app.core.deps import PROJECT_WRITE_SCOPE_DETAIL  # noqa: E402
 
 pytest.importorskip("asyncpg")
 pytest.importorskip("httpx")
@@ -500,12 +500,11 @@ async def test_a_qa_lead_route_refuses_a_stream_scoped_key(world, door, key):
     resp = await world.client.request(method, path, headers=world.headers[key], json={})
 
     assert resp.status_code == 403, resp.text
-    if door == "create project" and key == "stream":
-        # Re-audit N26: creating a project is instance-wide, so a key bound to
-        # one project is refused on its binding before its scopes are read.
-        assert resp.json()["detail"] == PROJECT_KEY_NOT_INSTANCE_ADMIN_DETAIL
-    else:
-        assert "project:admin" in resp.json()["detail"]
+    # Re-audit N32: a write by a key without project:write is refused by
+    # get_current_active_user, before require_role reads the binding or the
+    # project:admin scope. (N26's binding refusal of POST /projects is tested
+    # with full-access keys in test_bound_key_confinement_postgres.py.)
+    assert resp.json()["detail"] == PROJECT_WRITE_SCOPE_DETAIL
 
 
 def _guard_only_writes(world):

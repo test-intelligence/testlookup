@@ -12,10 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
+    API_KEY_SCOPES,
     _api_key_bound_project,
     api_key_grant,
     require_api_key_owner,
     require_role,
+    takes_scoped_key_writes,
 )
 from app.db.postgres import get_db
 from app.models.postgres import ApiKey, Project, User, UserRole
@@ -55,6 +57,7 @@ def _build_api_key_response(api_key: ApiKey) -> ApiKeyResponse:
 
 
 @router.post("", response_model=ApiKeyCreatedResponse, status_code=201)
+@takes_scoped_key_writes  # mints a subset of the caller's scopes and expiry (below)
 async def create_api_key(
     payload: ApiKeyCreate,
     db: AsyncSession = Depends(get_db),
@@ -124,6 +127,21 @@ async def create_api_key(
     # original and every scope and expiry the operator had chosen.
     grant = api_key_grant(current_user)
     scopes = _normalize_scopes(payload.scopes)
+    # ── only scopes something enforces (re-audit N31) ────────────────────
+    # The key form offered test:read/write, report:read/write and admin:read,
+    # which nothing read: a key "limited" to report:read acted with its
+    # owner's full role. Checked on what the caller ASKED for; a legacy key
+    # rotating an old unknown scope inherits it, and an unknown scope grants
+    # nothing (a scoped key without project:write cannot write).
+    unknown = sorted(set(scopes) - set(API_KEY_SCOPES))
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Unknown API key scope(s): " + ", ".join(unknown)
+                + ". Valid scopes: " + ", ".join(API_KEY_SCOPES)
+            ),
+        )
     if grant is not None and grant.is_scoped:
         if not scopes:
             if "scopes" in payload.model_fields_set:
@@ -280,6 +298,7 @@ async def list_api_keys(
 
 
 @router.delete("/{key_id}", status_code=204)
+@takes_scoped_key_writes  # a key without project:admin revokes only itself (below)
 async def revoke_api_key(
     key_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
