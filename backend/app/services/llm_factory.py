@@ -5,7 +5,7 @@ by changing the LLM_PROVIDER environment variable — no agent code changes need
 """
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from langchain_core.language_models import BaseChatModel
 
@@ -394,10 +394,14 @@ async def get_llm(
             raise ValueError("AI_OFFLINE_MODE=true but LLM_PROVIDER=openai — refusing to call external API")
         _api_key = _effective.get("openai_api_key") or settings.OPENAI_API_KEY
         from langchain_openai import ChatOpenAI
+        # Omitted (not None) when unset, so langchain's OPENAI_API_BASE
+        # fallback still applies; typed so mypy does not match a narrowed
+        # dict value against every keyword parameter.
+        _openai_base: dict[str, Any] = {"base_url": _base_url} if _base_url else {}
         return _budgeted(ChatOpenAI(  # type: ignore
             model=_model,
             api_key=_api_key,  # type: ignore
-            **({"base_url": _base_url} if _base_url else {}),
+            **_openai_base,
             temperature=_temperature,
             max_tokens=_max_tokens,
             max_retries=_retries,

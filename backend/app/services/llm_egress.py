@@ -345,10 +345,15 @@ def pin_ollama_clients(model: Any) -> Any:
     """
     sync_holder = getattr(model, "_client", None)
     async_holder = getattr(model, "_async_client", None)
-    if not isinstance(getattr(sync_holder, "_client", None), httpx.Client) or not isinstance(
-        getattr(async_holder, "_client", None), httpx.AsyncClient
+    sync_inner = getattr(sync_holder, "_client", None)
+    async_inner = getattr(async_holder, "_client", None)
+    if (
+        sync_holder is None
+        or async_holder is None
+        or not isinstance(sync_inner, httpx.Client)
+        or not isinstance(async_inner, httpx.AsyncClient)
     ):
         raise RuntimeError("ollama client internals changed; offline connection pinning unavailable")
-    sync_holder._client = _rebuilt(sync_holder._client, local_only_sync_client)
-    async_holder._client = _rebuilt(async_holder._client, local_only_async_client)
+    sync_holder._client = _rebuilt(sync_inner, local_only_sync_client)
+    async_holder._client = _rebuilt(async_inner, local_only_async_client)
     return model

@@ -129,6 +129,69 @@
   `report:read`, `report:write` or `admin:read` keep working as scoped keys
   that can only read.
 
+### CI, quality gates and platform
+
+- **Every test suite runs in CI (N2).** A new quality-gate guard,
+  `ci.every-test-suite-runs`, fails when a tracked test suite is run by no
+  workflow step. It found `client/js/tests` and `scripts/release/tests`, which
+  nothing ran; both run now.
+- **Type checks are blocking (M24).** mypy is a per-file ratchet against
+  `backend/mypy-baseline.txt` (391 existing errors; a count may only go
+  down), and the frontend type-check no longer continues on error. Backend
+  tests fail below 74% line coverage (measured 75.52%).
+- **Pull requests are scanned (M23).** Trivy checks dependencies on every PR,
+  and images on PRs that change image inputs. It fails on HIGH or CRITICAL
+  findings that have a fix. Accept a finding in `.trivyignore.yaml` with a
+  reason and an expiry at most 90 days out. Dependabot now covers every
+  manifest (MCP, CLI, every SDK, base images), and the quality gate enforces
+  that.
+- **The enum-vocabulary gate covers every enum-backed column (L3):** 28
+  columns (role, channel, schedule, severity and more), not only those named
+  `status`.
+- **CLI profiles are private (L5).** `profiles.json` and `active_profile` are
+  written atomically, owner-only (0600, directory 0700) on POSIX. They were
+  0644 and written by truncating first.
+- **Tests are independent of order (E2).** Fifteen test files no longer
+  pollute or depend on others:
+  - stubs of `app.core.deps` keep every name of the real module;
+  - three module-stub polluters are fixed;
+  - notification and metrics tests import the real modules instead of fakes;
+  - a Celery-visibility drill no longer rewrites the shared Celery config on
+    import.
+
+  A new guard, `test_suite_module_identity_hygiene.py`, keeps it that way.
+- **Tracing no longer floods the logs (N22).** With no
+  `OTEL_EXPORTER_OTLP_ENDPOINT`, spans go to stdout only in development;
+  elsewhere nothing is exported and one warning is logged. The base
+  Kubernetes configmap ships `OTEL_ENABLED=false`. On the homelab it had
+  printed about 90,000 span lines every 10 minutes.
+- **The finalize-failure alert fires on the first failure (H5).**
+  `TestLookupFinalizeStepFailing` uses `> 0 for 5m`, and the step series start
+  at 0 so the first failure counts. `k8s/monitoring/` ships the rules as a
+  PrometheusRule (`kubectl apply -k k8s/monitoring` on clusters with the
+  Prometheus Operator).
+- **nginx accepts the backend's upload size and serves a fresh `index.html`
+  (M26).** `client_max_body_size 55m` is set on every frontend nginx config
+  (it was nginx's 1 MB default, against the backend's 50 MiB cap), and the
+  image's template never caches `index.html`.
+- **HSTS (L1)** is sent for one year wherever TLS terminates in front: the
+  frontend nginx and the OpenShift Routes. It is not sent on the HTTP-only
+  homelab.
+- **Backup and restore on Kubernetes (M25).** `k8s/components/backup` adds a
+  daily backup CronJob and an on-demand restore, enabled in the homelab and
+  openshift-artifactory overlays; the runbook is
+  `k8s/components/backup/README.md`.
+  - The backup covers PostgreSQL (`pg_dump`), MongoDB (`mongodump`) and every
+    MinIO object, with a sha256 manifest and 14 archives kept on a PVC.
+  - The restore runs only with explicit confirmation.
+
+**Upgrade notes: CI and platform.**
+- **Trivy:** its first run may report existing HIGH or CRITICAL findings. Fix
+  them or accept them in `.trivyignore.yaml`.
+- **Backup:** run one backup and one restore on each cluster that enables the
+  component, and confirm HSTS at your own edge if TLS does not terminate at
+  the frontend nginx or an OpenShift Route.
+
 ### Frontend
 
 - **A tab coming back from the background refreshes at once (M19).** SWR
