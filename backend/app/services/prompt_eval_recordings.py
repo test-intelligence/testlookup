@@ -22,10 +22,12 @@ This module gates the prompts whose output is a decision that can be scored:
   outputs and the hash, and scores them.
 
 Recordings carry provenance (QA-B45-A3): ``--record`` writes the provider,
-the model, when, and ``outputs_sha256`` -- a digest over the prompt hash and
-every recorded output -- and :func:`check_recordings` refuses a measured
-entry without them, or whose outputs no longer match the digest (an output
-edited by hand after recording). This is NOT a cryptographic binding: the
+the model, when, and ``outputs_sha256`` -- a digest over everything the
+verdict depends on: the prompt hash, ``min_score``, and every case's id,
+input, expected answer and output -- and :func:`check_recordings` refuses a
+measured entry without them, or whose recording no longer matches the digest
+(an output, an expected answer, an input or the pass bar edited by hand after
+recording, R-B45-R2-3). This is NOT a cryptographic binding: the
 repository holds no signing key, so someone determined can recompute the
 digest. What it does is make a hand-written or hand-edited recording a
 deliberate act, visible in the PR diff of ``prompt_eval_recordings.json``,
@@ -160,10 +162,24 @@ def score_entry(entry: dict) -> float:
 # ── provenance ──────────────────────────────────────────────────────────────
 
 
-def outputs_digest(content_hash: str, cases: list[dict]) -> str:
-    """sha256 over the prompt hash and every (case id, output), in order."""
+def outputs_digest(content_hash: str, cases: list[dict], min_score: Any) -> str:
+    """sha256 over everything the verdict depends on, in canonical JSON: the
+    prompt hash, the pass bar (``min_score``, as written: adding or removing
+    the key changes it too) and every case's id, input, expected answer and
+    output, in order.
+
+    Hashing only the outputs (R-B45-R2-3) let ``expected`` or ``min_score``
+    be edited after recording -- flip a case's expected answer to what the
+    model said, or lower the bar -- while the digest still verified.
+    """
     payload = json.dumps(
-        {"content_hash": content_hash, "outputs": [[c.get("case_id"), c.get("output")] for c in cases]},
+        {
+            "content_hash": content_hash,
+            "min_score": min_score,
+            "cases": [
+                [c.get("case_id"), c.get("input"), c.get("expected"), c.get("output")] for c in cases
+            ],
+        },
         sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -180,8 +196,14 @@ def _provenance_problem(prompt_id: str, entry: dict) -> Optional[str]:
             f"outputs_sha256) -- record them with the model: "
             f"python -m app.services.prompt_eval_recordings --record {prompt_id}"
         )
-    if provenance["outputs_sha256"] != outputs_digest(str(entry.get("content_hash")), entry.get("cases") or []):
-        return f"{prompt_id}: recorded outputs do not match their provenance digest (edited after recording?)"
+    expected_digest = outputs_digest(
+        str(entry.get("content_hash")), entry.get("cases") or [], entry.get("min_score"),
+    )
+    if provenance["outputs_sha256"] != expected_digest:
+        return (
+            f"{prompt_id}: the recording (outputs, cases or min_score) does not match its "
+            f"provenance digest (edited after recording?)"
+        )
     return None
 
 
@@ -296,7 +318,7 @@ async def record(
             "provider": provider,
             "model": model,
             "recorded_at": recorded_at,
-            "outputs_sha256": outputs_digest(content_hash, cases),
+            "outputs_sha256": outputs_digest(content_hash, cases, entry.get("min_score")),
         },
     )
     entry["score"] = score_entry(entry)

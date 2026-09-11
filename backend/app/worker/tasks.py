@@ -3107,30 +3107,39 @@ def create_ai_test_plan_task(
         from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import ManagedTestCase, TestPlan, TestPlanItem
 
+        # R-B45-R2-5: no DB transaction rides across the LLM call (the rule
+        # fixer/workflow.py states): a pooled connection would sit idle in
+        # transaction for up to the task's 300 s. Read and snapshot, close the
+        # session, call the model, then write in a new short transaction.
         async with AsyncSessionLocal() as db:
             q = select(ManagedTestCase).where(
                 ManagedTestCase.project_id == _uuid.UUID(project_id),
                 ManagedTestCase.status.in_(["approved", "active"]),
             )
             result = await db.execute(q)
-            cases = result.scalars().all()
-            if not cases:
-                return {"error": "No approved test cases found for this project"}
+            cases = [
+                {
+                    "id": c.id,
+                    "title": c.title,
+                    "priority": c.priority,
+                    "test_type": c.test_type,
+                    "estimated_duration_minutes": c.estimated_duration_minutes or 5,
+                }
+                for c in result.scalars().all()
+            ]
+        if not cases:
+            return {"error": "No approved test cases found for this project"}
 
-            tc_json = json.dumps([{
-                "title": c.title,
-                "priority": c.priority,
-                "test_type": c.test_type,
-                "estimated_duration_minutes": c.estimated_duration_minutes or 5,
-            } for c in cases], indent=2)
-            constraints_text = constraints or "No specific constraints. Optimize for maximum risk coverage."
+        tc_json = json.dumps([{k: v for k, v in c.items() if k != "id"} for c in cases], indent=2)
+        constraints_text = constraints or "No specific constraints. Optimize for maximum risk coverage."
 
-            raw = await run_tool_for_project(optimize_test_plan_tool, {
-                "test_cases_json": tc_json,
-                "constraints": constraints_text,
-            }, project_id)
-            optimization = json.loads(raw) if isinstance(raw, str) else raw
+        raw = await run_tool_for_project(optimize_test_plan_tool, {
+            "test_cases_json": tc_json,
+            "constraints": constraints_text,
+        }, project_id)
+        optimization = json.loads(raw) if isinstance(raw, str) else raw
 
+        async with AsyncSessionLocal() as db:
             plan = TestPlan(
                 project_id=_uuid.UUID(project_id),
                 name=plan_name or f"AI Test Plan — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
@@ -3150,8 +3159,8 @@ def create_ai_test_plan_task(
             for tc in cases:
                 db.add(TestPlanItem(
                     plan_id=plan.id,
-                    test_case_id=tc.id,
-                    order_index=order_map.get(tc.title, 999),
+                    test_case_id=tc["id"],
+                    order_index=order_map.get(tc["title"], 999),
                 ))
             await db.commit()
             return {"plan_id": str(plan.id), "total_cases": len(cases)}

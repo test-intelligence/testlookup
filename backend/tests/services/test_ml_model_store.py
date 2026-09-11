@@ -387,3 +387,55 @@ async def test_one_object_that_fails_does_not_cost_the_others(store, tmp_path, m
     monkeypatch.setattr(store, "get_object_content", flaky_get)
     assert await model_store.sync_down(force=True) == [other]
     assert (pod / other).read_bytes() == b"f"
+
+
+# ── R-B45-R2-7: the published mode; orphaned temp files are swept ────────────
+
+
+def test_a_published_model_gets_the_intended_mode_not_mkstemps_0600(tmp_path, monkeypatch):
+    modes: list[tuple[str, int]] = []
+    real_chmod = os.chmod
+
+    def spy(path, mode):
+        modes.append((Path(path).name, mode))
+        real_chmod(path, mode)
+
+    monkeypatch.setattr(model_store.os, "chmod", spy)
+    target = tmp_path / VERSION
+    model_store._write_atomically(target, b"m")
+    # the TEMP file is chmodded, before the rename publishes it
+    assert [m for _, m in modes] == [0o644]
+    assert modes[0][0].endswith(".download")
+    if os.name != "nt":  # Windows has only a read-only bit
+        assert target.stat().st_mode & 0o777 == 0o644
+
+
+@pytest.mark.asyncio
+async def test_sync_sweeps_stale_temp_files_but_not_a_write_in_progress(store, tmp_path, monkeypatch):
+    import time
+
+    pod = _pod(tmp_path, "pod", monkeypatch)
+    (pod / VERSION).write_bytes(b"kept")
+    stale = pod / f"{VERSION}.abc123.download"
+    fresh = pod / f"{VERSION}.def456.download"
+    stale.write_bytes(b"half")
+    fresh.write_bytes(b"half")
+    old = time.time() - model_store.STALE_DOWNLOAD_SECONDS - 60
+    os.utime(stale, (old, old))
+
+    await model_store.sync_down(force=True)
+    assert not stale.exists()
+    assert fresh.exists()  # another process may still be writing it
+    assert (pod / VERSION).read_bytes() == b"kept"
+
+
+def test_the_sweep_only_touches_temp_files(tmp_path):
+    import time
+
+    old = time.time() - model_store.STALE_DOWNLOAD_SECONDS - 60
+    names = [VERSION, "training_metadata.json", "notes.txt", f"{VERSION}.x.download"]
+    for name in names:
+        (tmp_path / name).write_bytes(b"x")
+        os.utime(tmp_path / name, (old, old))
+    assert model_store._sweep_stale_downloads(tmp_path) == [f"{VERSION}.x.download"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(names[:3])

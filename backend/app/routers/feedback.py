@@ -18,6 +18,7 @@ POST /api/v1/projects/{project_id}/fix-outcomes — record a merged/reverted fix
 import hashlib
 import hmac
 import json
+import math
 import time
 import uuid
 from datetime import datetime
@@ -85,19 +86,48 @@ def _verify_jira_signature(raw_body: bytes, signature: Optional[str]) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing Jira webhook signature")
 
 
-#: How long a delivery is remembered, and so the oldest delivery accepted.
+#: The oldest delivery accepted, by its own ``timestamp``.
 JIRA_REPLAY_WINDOW_SECONDS = 7 * 24 * 3600
+#: How far AHEAD of our clock a delivery may be stamped (Jira's clock vs ours).
+JIRA_CLOCK_SKEW_SECONDS = 15 * 60
+#: How long a delivery is remembered. A body is accepted while
+#: ``-skew <= now - stamp <= window``, so one that arrived stamped at the skew
+#: edge stays acceptable for window + skew after it arrived: the record must
+#: outlive that, or the body could be replayed once it expired.
+JIRA_DEDUPE_TTL_SECONDS = JIRA_REPLAY_WINDOW_SECONDS + JIRA_CLOCK_SKEW_SECONDS
 _JIRA_DELIVERY_KEY = "jira:webhook:delivery:"
 
 
-def _delivery_is_too_old(payload: dict) -> bool:
-    """Jira puts the event time in the body (``timestamp``, epoch ms), inside
-    the signature. A delivery older than the replay window can no longer be
-    matched against the dedupe record, so it is not applied."""
+def _delivery_outside_window(payload: dict) -> Optional[str]:
+    """Why a signed delivery is outside the replay window, or None.
+
+    Jira puts the event time in the body (``timestamp``, epoch milliseconds),
+    inside the signature. Jira Cloud's admin webhooks, the ones that can be
+    signed with a secret (``X-Hub-Signature``), carry it on every event.
+
+    The dedupe record expires, so the timestamp is what bounds a replay. A
+    body that cannot be bounded is refused, not waved through (R-B45-R2-4):
+    no ``timestamp``, a null, a string, a boolean, NaN or infinity (``json``
+    accepts both), or a number too large to be a time. So is a stamp more
+    than the clock skew ahead of us: it would stay "inside" the window long
+    after its record expired. Refused with 200 ``applied: false``, like a
+    replay: a 4xx would make Jira retry a body that can never be applied.
+    """
     stamp = payload.get("timestamp")
     if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
-        return False
-    return (time.time() - stamp / 1000.0) > JIRA_REPLAY_WINDOW_SECONDS
+        return "ignored: the delivery has no numeric timestamp, so a replay of it cannot be bounded"
+    try:
+        sent = float(stamp) / 1000.0
+    except OverflowError:
+        sent = math.inf
+    if not math.isfinite(sent):
+        return "ignored: the delivery's timestamp is not a finite time"
+    age = time.time() - sent
+    if age > JIRA_REPLAY_WINDOW_SECONDS:
+        return "ignored: delivery is older than the replay window"
+    if age < -JIRA_CLOCK_SKEW_SECONDS:
+        return "ignored: the delivery is stamped in the future"
+    return None
 
 
 async def _claim_delivery(raw_body: bytes) -> tuple[bool, str]:
@@ -107,8 +137,9 @@ async def _claim_delivery(raw_body: bytes) -> tuple[bool, str]:
     validly signed forever. The identifier is the sha256 of the raw body: it
     is covered by the signature (``X-Atlassian-Webhook-Identifier`` is not,
     so an attacker could vary it) and it is stable across Jira's own retries
-    of one delivery. Jira's bodies carry the event ``timestamp``, so two real
-    events do not share a body. SET NX with a TTL of the replay window.
+    of one delivery. Jira's bodies carry the event ``timestamp`` (a body
+    without one is refused earlier), so two real events do not share a body.
+    SET NX with a TTL of :data:`JIRA_DEDUPE_TTL_SECONDS`.
 
     Redis unavailable: FAIL CLOSED with 503. A resolution event is not urgent,
     and Jira retries a failed delivery, so it is applied once Redis is back;
@@ -118,7 +149,7 @@ async def _claim_delivery(raw_body: bytes) -> tuple[bool, str]:
 
     key = _JIRA_DELIVERY_KEY + hashlib.sha256(raw_body).hexdigest()
     try:
-        first = await redis_client.get_redis().set(key, "1", nx=True, ex=JIRA_REPLAY_WINDOW_SECONDS)
+        first = await redis_client.get_redis().set(key, "1", nx=True, ex=JIRA_DEDUPE_TTL_SECONDS)
     except Exception as exc:  # noqa: BLE001 -- any Redis failure refuses the delivery
         raise HTTPException(
             status_code=503, detail="The Jira webhook cannot record deliveries right now; retry later"
@@ -245,8 +276,9 @@ async def jira_resolution_webhook(
     # A replayed delivery is acknowledged with 200 and changes nothing. Not a
     # 409: Jira retries any non-2xx, so a genuine retry of a delivery that was
     # already applied would be re-sent for no reason.
-    if _delivery_is_too_old(payload):
-        return {"message": "ignored: delivery is older than the replay window", "applied": False}
+    outside = _delivery_outside_window(payload)
+    if outside:
+        return {"message": outside, "applied": False}
     first_time, key = await _claim_delivery(raw_body)
     if not first_time:
         return {"message": "ignored: this delivery was already received", "applied": False}

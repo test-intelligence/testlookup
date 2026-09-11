@@ -241,7 +241,7 @@ async def test_an_output_edited_after_recording_fails(tmp_path, monkeypatch):
     path = await _recorded(tmp_path, monkeypatch)
     _rewrite(path, lambda e: e["cases"][0].update(output=e["cases"][0]["output"] + " "))
     problems, _ = rec.check_recordings(path)
-    assert any("do not match their provenance digest" in p for p in problems)
+    assert any("does not match its provenance digest" in p for p in problems)
 
 
 @pytest.mark.asyncio
@@ -267,3 +267,57 @@ def test_hand_written_outputs_with_no_model_run_fail(tmp_path, monkeypatch):
     _rewrite(path, forge)
     problems, _ = rec.check_recordings(path)
     assert any(p.startswith(f"{CLASSIFIER}:") and "no provenance" in p for p in problems)
+
+
+def _flip(category: str) -> str:
+    return "FLAKY" if category != "FLAKY" else "UNKNOWN"
+
+
+def _swap_outputs(entry) -> None:
+    first, second = entry["cases"][0], entry["cases"][1]
+    assert first["output"] != second["output"], "the swap must change something"
+    first["output"], second["output"] = second["output"], first["output"]
+
+
+# R-B45-R2-3: the digest covers everything the verdict depends on. Each edit
+# below leaves outputs_sha256 untouched, as a hand edit would. The swap is
+# QA's surviving mutation M12 (a digest over the sorted outputs with the case
+# ids dropped would accept it).
+_TAMPER = {
+    "expected answer": lambda e: e["cases"][0]["expected"].update(
+        category=_flip(e["cases"][0]["expected"]["category"])
+    ),
+    "input": lambda e: e["cases"][0]["input"].update(
+        error_message=e["cases"][0]["input"]["error_message"] + " (edited)"
+    ),
+    "min_score lowered": lambda e: e.update(min_score=0.0),
+    "min_score removed": lambda e: e.pop("min_score"),
+    "case id": lambda e: e["cases"][0].update(case_id="renamed"),
+    "two outputs swapped": _swap_outputs,
+    "a case dropped": lambda e: e["cases"].pop(),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("edit", sorted(_TAMPER))
+async def test_editing_what_the_score_depends_on_after_recording_fails_check(tmp_path, monkeypatch, edit):
+    path = await _recorded(tmp_path, monkeypatch)
+    monkeypatch.setattr(rec, "RECORDINGS_PATH", path)
+    assert rec.main(["--check"]) == 0  # control: the untouched recording passes
+
+    _rewrite(path, _TAMPER[edit])
+    problems, _ = rec.check_recordings(path)
+    assert any(
+        p.startswith(f"{CLASSIFIER}:") and "does not match its provenance digest" in p for p in problems
+    ), problems
+    assert rec.main(["--check"]) == 1
+
+
+def test_the_shipped_recordings_carry_no_digest_to_recompute():
+    """R-B45-R2-3 changed what the digest covers. Every shipped entry is
+    unmeasured (no outputs, no provenance), so there is nothing to re-record;
+    the first real recording will carry the new digest. If this fails, a
+    measured entry has landed: re-record it rather than recompute by hand."""
+    for prompt_id, entry in rec.load_recordings()["prompts"].items():
+        assert entry.get("measured") is not True, prompt_id
+        assert "provenance" not in entry, prompt_id
