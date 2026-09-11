@@ -317,11 +317,18 @@ jobs:
           APP_SECRET_KEY: test-secret-key-for-ci
           JWT_SECRET_KEY: test-jwt-key-for-ci
         run: |
+          # --cov-fail-under (re-audit M24): measured 75.52% line coverage of
+          # app/ on 2026-09-11 (full suite at 6afff4a2: 10275 passed, 229
+          # skipped; 48540 of 64274 statements). This job skips fewer tests
+          # (real Postgres + Redis), so it measures at least that. The floor
+          # sits 1.5 points below to absorb platform skip differences; raise
+          # it as coverage grows, never lower it to make a PR pass.
           pytest tests/ -v \
             --tb=short \
             --cov=app \
             --cov-report=xml \
             --cov-report=term-missing \
+            --cov-fail-under=74 \
             --junit-xml=test-results.xml
 
       - name: Verify late-ack broker redelivery
