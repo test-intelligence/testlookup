@@ -11,6 +11,13 @@ Now a scoped key needs ``project:admin`` on those routes, an empty (legacy)
 scope list stays full access, and a key that mints a key grants no scope it
 does not hold and no expiry later than its own.
 
+QA-R4-1 / QA-R4-2: the same key still administered its project through routes
+gated below ADMIN (team-channel webhook, add member, update and delete the
+project), and an UNBOUND one created instance administrators. A scoped key
+without ``project:admin`` is now refused by ``require_role`` at QA_LEAD and
+above, and by the project-scoped guards on every write; reads and streaming
+still work.
+
 Real app, real ``api_keys`` rows authenticated by ``_validate_api_key``, no
 auth override. ``get_db`` and ``AsyncSessionLocal`` point at this test's
 engine; the app's own engine is disposed at the start and end (QA-R3-14).
@@ -56,11 +63,16 @@ class _Mongo:
         return self._Collection()
 
 
-#: name -> (scopes, days until expiry or None). Every key is bound to project A.
+#: name -> (scopes, days until expiry or None, bound to project A). All owned by
+#: one ADMIN. ``stream_unbound`` is QA-R4-2's key (and kills QA's surviving
+#: mutation MA, "scope checked only for a bound key"); ``legacy_expiring`` is
+#: QA's MD (a legacy key WITH an expiry).
 _KEYS = {
-    "stream": (["stream:write"], 30),
-    "project_admin": (["stream:write", "project:admin"], 10),
-    "legacy": ([], None),
+    "stream": (["stream:write"], 30, True),
+    "project_admin": (["stream:write", "project:admin"], 10, True),
+    "legacy": ([], None, True),
+    "stream_unbound": (["stream:write"], 30, False),
+    "legacy_expiring": ([], 5, True),
 }
 
 
@@ -80,6 +92,8 @@ async def world(monkeypatch):
         LaunchStatus,
         Project,
         ProjectActivityEvent,
+        ProjectMember,
+        TeamNotificationChannel,
         TestRun,
         User,
         UserRole,
@@ -126,14 +140,21 @@ async def world(monkeypatch):
     raw = {name: f"qai_{secrets.token_urlsafe(32)}" for name in _KEYS}
     expiry = {
         name: (None if days is None else now + timedelta(days=days))
-        for name, (_scopes, days) in _KEYS.items()
+        for name, (_scopes, days, _bound) in _KEYS.items()
     }
+    outsider = uuid.uuid4()
 
     async with sessions() as db:
         db.add(Project(id=project_a, name=project_a_name, slug=project_a_name, is_active=True))
         db.add(User(
             id=owner, email=f"r4s-owner-{tag}@example.com", username=f"r4s_owner_{tag}",
             full_name="R4 key owner", hashed_password="!unusable", role=UserRole.ADMIN.value,
+        ))
+        # QA-R4-1: the account a leaked key would make a QA_LEAD of project A.
+        db.add(User(
+            id=outsider, email=f"r4s-outsider-{tag}@example.com",
+            username=f"r4s_outsider_{tag}", full_name="R4 outsider",
+            hashed_password="!unusable", role=UserRole.QA_ENGINEER.value,
         ))
         await db.flush()
         for rid in (run_1, run_2):
@@ -142,11 +163,12 @@ async def world(monkeypatch):
                 jenkins_job="r4s", status=LaunchStatus.FAILED, ingestion_source="unknown",
                 total_tests=1, failed_tests=1,
             ))
-        for name, (scopes, _days) in _KEYS.items():
+        for name, (scopes, _days, bound) in _KEYS.items():
             db.add(ApiKey(
                 id=uuid.uuid4(), user_id=owner, name=f"team-a {name}",
                 key_hash=hashlib.sha256(raw[name].encode()).hexdigest(),
-                key_hint=raw[name][:8] + "...", scopes=scopes, project_id=project_a,
+                key_hint=raw[name][:8] + "...", scopes=scopes,
+                project_id=project_a if bound else None,
                 expires_at=expiry[name],
             ))
         await db.commit()
@@ -155,10 +177,13 @@ async def world(monkeypatch):
     world = SimpleNamespace(
         client=client, sessions=sessions, tag=tag, queued=queued,
         project_a=project_a, project_a_name=project_a_name, owner=owner,
-        run_1=run_1, run_2=run_2, expiry=expiry,
+        outsider=outsider, run_1=run_1, run_2=run_2, expiry=expiry,
         headers={name: {"X-API-Key": value} for name, value in raw.items()},
         admin_jwt={"Authorization": f"Bearer {create_access_token(str(owner))}"},
-        models=SimpleNamespace(ApiKey=ApiKey, TestRun=TestRun),
+        models=SimpleNamespace(
+            ApiKey=ApiKey, TestRun=TestRun, Project=Project, User=User,
+            ProjectMember=ProjectMember, TeamNotificationChannel=TeamNotificationChannel,
+        ),
     )
     try:
         yield world
@@ -171,8 +196,10 @@ async def world(monkeypatch):
             delete(ProjectActivityEvent).where(ProjectActivityEvent.project_id == project_a),
             delete(AccessAuditLog).where(AccessAuditLog.actor_user_id == owner),
             delete(TestRun).where(TestRun.project_id == project_a),
-            delete(User).where(User.id == owner),
+            # Members, team channels and live sessions cascade from these two.
             delete(Project).where(Project.id == project_a),
+            # owner, outsider, and any account a regression let a key create.
+            delete(User).where(User.email.like(f"r4s-%-{tag}@example.com")),
         ):
             try:
                 async with sessions.begin() as db:
@@ -317,6 +344,22 @@ async def test_a_subset_of_the_callers_scopes_is_mintable(world):
     assert _expires(resp) == world.expiry["project_admin"]
 
 
+async def test_minted_scopes_are_stored_once_each_in_order(world):
+    """QA-R4 P4: duplicates were stored; blanks were already dropped."""
+    resp = await _mint(world, "project_admin", {
+        "name": "dupes", "scopes": ["project:admin", "stream:write", "project:admin", "", "stream:write"],
+    })
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["scopes"] == ["project:admin", "stream:write"]
+    ApiKey = world.models.ApiKey
+    async with world.sessions() as db:
+        stored = (await db.execute(
+            select(ApiKey.scopes).where(ApiKey.id == uuid.UUID(resp.json()["id"]))
+        )).scalar_one()
+    assert stored == ["project:admin", "stream:write"]
+
+
 async def test_a_signed_in_admin_mints_project_admin_keys_as_before(world):
     """``project:admin`` is mintable, and a JWT caller has no scope or expiry cap."""
     resp = await _mint(world, world.admin_jwt, {
@@ -327,3 +370,198 @@ async def test_a_signed_in_admin_mints_project_admin_keys_as_before(world):
     assert resp.status_code == 201, resp.text
     assert resp.json()["scopes"] == ["stream:write", "project:admin"]
     assert resp.json()["expires_at"] is None
+
+
+async def test_a_legacy_key_with_an_expiry_passes_it_on(world):
+    """QA's MD: the expiry cap is not only for SCOPED callers. A legacy
+    (unscoped) key that expires mints, with no ``expires_days``, a key that
+    ends when it does -- not a never-expiring one that outlives it."""
+    rotated = await _mint(world, "legacy_expiring", {"name": "legacy rotated"})
+    too_long = await _mint(world, "legacy_expiring", {"name": "long", "expires_days": 365})
+
+    assert rotated.status_code == 201, rotated.text
+    assert rotated.json()["scopes"] == []
+    assert _expires(rotated) == world.expiry["legacy_expiring"]
+    assert too_long.status_code == 403, too_long.text
+
+
+# ── QA-R4-1: a stream-scoped key does not administer its project below ADMIN ─
+
+
+#: The four doors QA walked with a bound ["stream:write"] key, plus the
+#: team-channel DELETE and member role changes of the same class.
+def _project_writes(world):
+    a = world.project_a
+    return {
+        "team channel webhook": (
+            "PUT", f"/api/v1/projects/{a}/ownership/team-channels/r4b-team",
+            {"channel_type": "slack", "target": "https://hooks.slack.com/services/T0/B0/attacker"},
+        ),
+        "add member": (
+            "POST", f"/api/v1/projects/{a}/members",
+            {"user_id": str(world.outsider), "role": "QA_LEAD"},
+        ),
+        "update project": ("PUT", f"/api/v1/projects/{a}", {"description": "r4b takeover"}),
+        "delete project": ("DELETE", f"/api/v1/projects/{a}", None),
+    }
+
+
+async def _project_a_state(world):
+    m = world.models
+    async with world.sessions() as db:
+        project = await db.get(m.Project, world.project_a)
+        channels = (await db.execute(
+            select(func.count()).select_from(m.TeamNotificationChannel)
+            .where(m.TeamNotificationChannel.project_id == world.project_a)
+        )).scalar_one()
+        members = (await db.execute(
+            select(func.count()).select_from(m.ProjectMember)
+            .where(m.ProjectMember.user_id == world.outsider)
+        )).scalar_one()
+        return project.is_active, project.description, channels, members
+
+
+@pytest.mark.parametrize(
+    "door", ["team channel webhook", "add member", "update project", "delete project"]
+)
+async def test_a_stream_scoped_key_cannot_administer_its_project_below_admin(world, door):
+    method, path, body = _project_writes(world)[door]
+
+    resp = await world.client.request(method, path, headers=world.headers["stream"], json=body)
+
+    assert resp.status_code == 403, resp.text
+    assert "project:admin" in resp.json()["detail"]
+    assert await _project_a_state(world) == (True, None, 0, 0)
+
+
+async def test_a_stream_scoped_key_still_reads_and_streams(world):
+    headers = world.headers["stream"]
+    project = await world.client.get(f"/api/v1/projects/{world.project_a}", headers=headers)
+    members = await world.client.get(f"/api/v1/projects/{world.project_a}/members", headers=headers)
+    run = await world.client.get(f"/api/v1/runs/{world.run_1}", headers=headers)
+    session = await world.client.post(
+        "/api/v1/stream/sessions", headers=headers,
+        json={"project_id": str(world.project_a), "client_name": "r4b-ci"},
+    )
+
+    assert project.status_code == 200, project.text
+    assert members.status_code == 200, members.text
+    assert run.status_code == 200, run.text
+    assert session.status_code == 201, session.text
+
+
+async def test_a_project_admin_key_still_administers_below_admin(world):
+    writes = _project_writes(world)
+    results = {}
+    for door in ("team channel webhook", "add member", "update project"):
+        method, path, body = writes[door]
+        results[door] = await world.client.request(
+            method, path, headers=world.headers["project_admin"], json=body
+        )
+
+    assert results["team channel webhook"].status_code == 200, results["team channel webhook"].text
+    assert results["add member"].status_code == 201, results["add member"].text
+    assert results["update project"].status_code == 200, results["update project"].text
+    assert await _project_a_state(world) == (True, "r4b takeover", 1, 1)
+
+
+async def test_a_legacy_key_still_administers_below_admin(world):
+    method, path, body = _project_writes(world)["update project"]
+
+    resp = await world.client.request(method, path, headers=world.headers["legacy"], json=body)
+
+    assert resp.status_code == 200, resp.text
+
+
+# ── QA-R4-2: an UNBOUND stream-scoped key is not an instance administrator ───
+
+
+async def test_an_unbound_stream_scoped_key_cannot_create_an_admin(world):
+    email = f"r4s-created-{world.tag}@example.com"
+    resp = await world.client.post(
+        "/api/v1/users", headers=world.headers["stream_unbound"],
+        json={"email": email, "username": f"r4s_created_{world.tag}", "role": "ADMIN"},
+    )
+
+    assert resp.status_code == 403, resp.text
+    assert "project:admin" in resp.json()["detail"]
+    User = world.models.User
+    async with world.sessions() as db:
+        created = (await db.execute(select(func.count()).select_from(User).where(User.email == email))).scalar_one()
+    assert created == 0
+
+
+async def test_an_unbound_stream_scoped_key_cannot_use_an_opted_in_route(world):
+    resp = await _delete_run(world, world.headers["stream_unbound"], world.run_1)
+
+    assert resp.status_code == 403, resp.text
+    assert "project:admin" in resp.json()["detail"]
+    assert world.queued == []
+    assert await _runs_left(world) == 2
+
+
+# ── the routes a CI key ingests through never reach a scope refusal ─────────
+
+
+#: Every route the SDKs (client/), the CLI (cli/) and /ws/events producers call
+#: with an API key to put results in. None of them goes through a guard that
+#: refuses a scoped key, which is why there is no ingest allow-list in deps.py:
+#: they authenticate with get_api_key_context / get_streaming_api_key_context /
+#: an in-handler key lookup instead. This pins that; routing one of them
+#: through require_project_access (or require_role(QA_LEAD+)) fails here
+#: before it breaks every ["stream:write"] pipeline.
+_KEY_INGEST_ROUTES = (
+    ("POST", "/api/v1/stream/sessions"),
+    ("DELETE", "/api/v1/stream/sessions/{session_id}"),
+    ("POST", "/api/v1/stream/events/batch"),
+    ("POST", "/api/v1/stream/ingest"),
+    ("POST", "/api/v1/ingest"),
+    ("POST", "/api/v1/ingest/file"),
+    ("GET", "/api/v1/ingest/uploads/{task_id}"),
+    ("POST", "/ws/events/{run_id}"),
+    ("POST", "/api/v1/keys"),
+)
+
+_SCOPE_REFUSING_GUARDS = (
+    "require_project_access.", "require_project_role.", "require_run_access.",
+    "require_release_access.", "require_knowledge_source_access.",
+    "require_generation_batch_access.", "require_live_session_access.",
+)
+
+
+def _scope_refusals(dependant, found):
+    call = dependant.call
+    qualname = getattr(call, "__qualname__", "") or ""
+    if qualname.startswith(_SCOPE_REFUSING_GUARDS):
+        found.append(qualname)
+    code = getattr(call, "__code__", None)
+    if code is not None and call.__closure__:
+        cells = dict(zip(code.co_freevars, (c.cell_contents for c in call.__closure__)))
+        if cells.get("refuse_scoped_key") is True:
+            found.append(qualname)
+    for sub in dependant.dependencies:
+        _scope_refusals(sub, found)
+    return found
+
+
+async def test_the_ingest_routes_never_reach_a_scope_refusal():
+    from fastapi.routing import APIRoute
+
+    from app.main import app
+
+    routes = {
+        (method, route.path): route
+        for route in app.routes if isinstance(route, APIRoute)
+        for method in route.methods
+    }
+    missing = [key for key in _KEY_INGEST_ROUTES if key not in routes]
+    refused = {
+        key: _scope_refusals(routes[key].dependant, [])
+        for key in _KEY_INGEST_ROUTES if key in routes
+    }
+
+    assert missing == []
+    assert {key: found for key, found in refused.items() if found} == {}
+    # ...and the walker does see a refusal where one exists.
+    assert _scope_refusals(routes[("POST", "/api/v1/users")].dependant, [])
+    assert _scope_refusals(routes[("PUT", "/api/v1/projects/{project_id}")].dependant, [])

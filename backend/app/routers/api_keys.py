@@ -35,7 +35,9 @@ def _normalize_scopes(scopes: list[str] | tuple[str, ...] | str | None) -> list[
         return []
     if isinstance(scopes, str):
         return [scopes] if scopes else []
-    return [str(scope) for scope in scopes if scope]
+    # Blanks dropped, duplicates collapsed, first-seen order kept (QA-R4 P4:
+    # ["stream:write", "stream:write", ""] was stored with two entries).
+    return list(dict.fromkeys(str(scope) for scope in scopes if scope))
 
 
 def _build_api_key_response(api_key: ApiKey) -> ApiKeyResponse:
