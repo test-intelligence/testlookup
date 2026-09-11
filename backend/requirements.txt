@@ -46,7 +46,7 @@ aiosmtplib==5.1.2
 # ── LangChain & AI ───────────────────────────────────────────
 langchain==0.3.30        # CVE-2026-45134
 langchain-ollama==0.2.1
-langchain-openai==0.2.12
+langchain-openai==1.6.1
 langchain-google-genai==2.0.7
 langgraph==0.6.11
 
