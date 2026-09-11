@@ -42,8 +42,6 @@
     (`project:admin` implies `project:write`). `POST /api/v1/keys` refuses any
     other scope name with a 422 listing the valid ones, and the key form
     offers exactly these three.
-  - `POST /api/v1/feedback/jira-webhook` now requires an active account and
-    follows the rule.
 - **The outbox requeue is audited (N30).**
   `POST /api/v1/admin/maintenance/outbox/requeue` writes an `access_audit_logs`
   row (`admin.outbox_requeue`) in the same transaction as the requeue. It
@@ -67,30 +65,68 @@
   - The route no longer needs a signed-in account; Jira sends none. Before
     this, any signed-in user or API key could send forged "resolved" events and
     close any project's defects.
+  - A signature header with non-ASCII bytes gets 401, not a 500.
+  - A delivery is applied once. Jira's signature carries no timestamp, so a
+    captured delivery stayed valid forever; each signed body is now recorded
+    in Redis (sha256 of the body, 7 days) and a replay gets 200 with
+    `"applied": false` and changes nothing. A body whose own `timestamp` is
+    older than 7 days is not applied either. If Redis is down the delivery
+    gets 503 and Jira retries it; a delivery that fails to apply is released
+    so the retry applies it.
 
 ### AI layer and offline mode
 
-- **The monthly LLM cost cap cannot be overshot (M13).** Each LLM call reserves
-  its worst-case cost before the provider is called, in one atomic Redis step
-  that takes the larger of the Redis counter and the PostgreSQL meter. After
-  the call it settles the actual cost (zero on failure). It fails closed when
-  the flag, the quota or Redis cannot be read.
+- **Priced LLM calls reserve against their project's monthly cost cap (M13).**
+  Each call reserves its worst-case cost before the provider is called, in one
+  atomic Redis step that takes the larger of the Redis counter and the
+  PostgreSQL meter, and settles the actual cost afterwards. It fails closed
+  when the flag, the quota or Redis cannot be read.
+  - **Covered:** every entry point that runs LLM work for a project: the
+    offline and deep pipelines, run-compare, project chat and its history
+    compression, the investigator, the fixer, defect promotion, the test-case
+    AI tools (API and background tasks), the weekly retro narrative, RAG
+    generation and the RAG faithfulness judge, the on-demand developer and
+    manager summaries, and LLM triage.
+  - **Not covered:** calls with no project to charge (an "all projects" chat,
+    the training evaluator, the prompt-eval recorder). The Ragas faithfulness
+    backend calls its own LLM, outside the cap. Self-hosted and unpriced models
+    have no price, so they reserve nothing.
+  - **A failed call keeps its reservation** unless the failure proves no request
+    reached the provider (a connect error, the offline pin, no LLM slot, or the
+    cap itself). A read timeout, a cancellation or a 5xx can come after the
+    provider did the work, so it is charged at the worst case. Such charges,
+    and every call made outside a pipeline stage, are written to the
+    PostgreSQL meter as well.
+  - The test-case AI background tasks called the async-only tools
+    synchronously and failed every time; they now run.
 - **LLM concurrency is bounded across the cluster (M12).** Each in-flight call
   holds a Redis lease, stamped by the Redis server's clock and renewed by a
   heartbeat, so a crashed holder frees its slot. If Redis is down, the
   per-process bound still applies. New settings:
   `LLM_CLUSTER_MAX_CONCURRENT` (default 4) and
-  `LLM_CLUSTER_SLOT_LEASE_SECONDS` (default 60).
+  `LLM_CLUSTER_SLOT_LEASE_SECONDS` (default 60). A holder whose lease cannot
+  be renewed is stopped (`LLMSlotLost`) before the lease lapses, so a second
+  holder is never admitted beside it.
 - **Retrained models reach every pod (M14).** The object store (`ml-models/`)
   is the source of truth: trainers publish, pods pull missing versions (only
   model and metadata names, so nothing else is loaded as a pickle), and
   Kubernetes pods mount a per-pod cache. A ReadWriteMany volume is not
-  portable across the supported clusters.
+  portable across the supported clusters. Each download writes its own temp
+  file and is renamed into place, so workers syncing at once never publish a
+  half-written model; the file IO runs off the event loop. A name must match
+  exactly (a trailing newline is refused), and one bad object no longer stops
+  the rest of the sync.
 - **Changing a gated prompt needs scored outputs (M16).**
   `prompt_eval_recordings.json` pins each gated prompt's hash to the outputs
   recorded and scored under it, and the check fails when the hash changes
   without new scored outputs. Three prompts start unmeasured: the next edit to
   any of them needs outputs recorded on a model host.
+  - The release-risk scorer scores the recommendation itself: a constant
+    "GO, no issues" answer fails.
+  - A recording names its provider and model and carries a digest over the
+    prompt hash and the outputs; the check refuses a recording without it, or
+    one edited afterwards. This is not a signature (the repository holds no
+    key): recordings are reviewed in the pull request diff.
 - **`AI_MAX_RETRIES` governs every LLM provider (L2),** not only Jira.
 - **Offline connections dial the address that was checked (N8).** Under
   `AI_OFFLINE_MODE`, LLM and notification-webhook connections are pinned to
@@ -98,6 +134,10 @@
   in between can no longer send prompts or messages off the box. SMTP relays,
   which admins configure, still connect by name; `architecture/SECURITY.md`
   documents this as accepted.
+- **IPv6 addresses that carry an IPv4 address are not on-box.** NAT64
+  (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 (`2002::/16`) and Teredo
+  (`2001::/32`) are refused by the offline residency rule and the connection
+  pin; Python counts some of them as private.
 - **The residency DNS lookup no longer blocks the event loop (N11).**
 - **Splunk log search and OpenShift pod lookups do not run offline (N19),**
   matching the probes.
@@ -151,8 +191,14 @@
 - **CLI profiles are private (L5).** `profiles.json` and `active_profile` are
   written atomically, owner-only (0600, directory 0700) on POSIX. They were
   0644 and written by truncating first.
-- **Tests are independent of order (E2).** Fifteen test files no longer
-  pollute or depend on others:
+- **Tests are independent of order (E2).** Ten test files and the Celery
+  drill worker they launch no longer pollute or depend on others
+  (`test_bl01_tenant_isolation`, `test_release_phases`,
+  `test_analysis_agent`, `core/test_deps_dual_auth_error_propagation`,
+  `regression/test_fast_classifier_failures_are_counted`,
+  `services/test_batch1` to `test_batch5`, and
+  `regression/celery_visibility_worker.py`); a new guard,
+  `regression/test_suite_module_identity_hygiene.py`, keeps it so:
   - stubs of `app.core.deps` keep every name of the real module;
   - three module-stub polluters are fixed;
   - notification and metrics tests import the real modules instead of fakes;
@@ -184,13 +230,28 @@
   - The backup covers PostgreSQL (`pg_dump`), MongoDB (`mongodump`) and every
     MinIO object, with a sha256 manifest and 14 archives kept on a PVC.
   - The restore runs only with explicit confirmation.
+  - Two alerts: `TestLookupBackupJobFailed` (a backup Job failed) and
+    `TestLookupBackupStale` (no successful backup in 26 hours, including one
+    that never succeeded or a suspended CronJob). Both read kube-state-metrics.
+  - The backup pod may reach only DNS and the in-namespace PostgreSQL, MongoDB
+    and MinIO ports. With external stores, add their addresses in the overlay.
+- **The alert rules have data on a Prometheus Operator cluster.**
+  `k8s/monitoring` now ships PodMonitors for the backend (`:8000/metrics`) and
+  every worker (`:9100/metrics`), which the Operator does not find through the
+  `prometheus.io/scrape` annotations. The backup and disk/OOM alerts need
+  kube-state-metrics and node-exporter, which the cluster's monitoring stack
+  provides.
 
 **Upgrade notes: CI and platform.**
 - **Trivy:** its first run may report existing HIGH or CRITICAL findings. Fix
   them or accept them in `.trivyignore.yaml`.
 - **Backup:** run one backup and one restore on each cluster that enables the
   component, and confirm HSTS at your own edge if TLS does not terminate at
-  the frontend nginx or an OpenShift Route.
+  the frontend nginx or an OpenShift Route. With stores outside the cluster,
+  add an egress rule for them to the overlay, or the backup fails.
+- **Monitoring:** `kubectl apply -k k8s/monitoring` now also creates two
+  PodMonitors; add your Prometheus's `podMonitorSelector` label with the same
+  kustomize `labels` entry as the rule's.
 
 ### Frontend
 
@@ -208,12 +269,16 @@
   close on Escape (not while submitting), and return focus to the control that
   opened them, through one shared `useModalFocus` hook. It is applied to seven
   modals. About 19 dialogs written inline in page files are not converted yet.
+  With a dialog open inside another, only the top one handles Escape and Tab,
+  and a busy inner dialog no longer lets Escape close the one beneath it.
 - **Failed fetches say so (M21).** Runs, Intelligence hub, Releases and Summary
   report show "data unavailable" with Retry instead of an empty state, and the
   Intelligence hub no longer searches further back after a failure. A new
   guard requires every routed page to declare how it shows a failed fetch; the
   backlog of pages that still render a failure as empty is capped at 29 and
-  can only shrink.
+  can only shrink. The other labels are checked too: a "no fetch" page may
+  not read data, and a page credited with its own error display must bind
+  its fetch's error and show it.
 - **The unconfirmed-retirements panel pages through every orphaned case
   (N16)** ("Showing 26–50 of 60", Previous/Next) instead of listing the first
   25 under the full total.
