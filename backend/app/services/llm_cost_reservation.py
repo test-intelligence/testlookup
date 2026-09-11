@@ -134,34 +134,50 @@ class Reservation:
 def failure_proves_no_request(exc: BaseException) -> bool:
     """True only when ``exc`` PROVES the provider never received the request.
 
-    The connect phase failing (``httpx.ConnectError``/``ConnectTimeout``, a
-    refused socket), the offline pin refusing the address, the cluster slot
-    timing out, and the cap itself refusing. Anything else (a read timeout,
-    a cancellation, a 5xx, a parse error) may come after the provider did the
-    work, and is charged in full. Only the explicit ``raise ... from`` chain
-    is followed: an SDK retry loop can leave an earlier, unrelated connect
-    error in ``__context__``.
+    Proof is the connect phase failing (``httpx.ConnectError``/
+    ``ConnectTimeout``, a refused socket), the offline pin refusing the
+    address, the cluster slot timing out, or the cap itself refusing. The
+    explicit ``raise ... from`` chain is followed (``__context__`` is not: an
+    earlier, unrelated error can sit there). It is proof only when a link is
+    one of those AND no link is a failure that can come AFTER the request was
+    sent: a read or write error or timeout, a reset or broken pipe, a
+    cancellation, any other transport or OS error. So ``ReadTimeout from
+    ConnectError`` and ``ConnectError from ReadTimeout`` are both charged
+    (QA-B45-R2-1); a 5xx or parse error with no transport cause proves
+    nothing either.
+
+    One call's exception describes one attempt. A client that retries inside
+    the call (a provider SDK's own ``max_retries``) surfaces only its LAST
+    attempt; an earlier one may have been sent and billed. BudgetedLLM does
+    not ask this question for such a client.
     """
+    import asyncio
+
     from app.services.llm_cluster_semaphore import LLMSlotTimeout
     from app.services.llm_egress import OffBoxTargetError
 
     no_send: tuple[type[BaseException], ...] = (
         ConnectionRefusedError, OffBoxTargetError, LLMSlotTimeout, CostCapExceeded,
     )
+    may_have_sent: tuple[type[BaseException], ...] = (OSError, TimeoutError, asyncio.CancelledError)
     try:
         import httpx
 
         no_send += (httpx.ConnectError, httpx.ConnectTimeout)
+        may_have_sent += (httpx.TransportError,)
     except ImportError:  # pragma: no cover
         pass
+    proven = False
     seen: set[int] = set()
     current: Optional[BaseException] = exc
     while current is not None and id(current) not in seen:
-        if isinstance(current, no_send):
-            return True
+        if isinstance(current, no_send):  # checked first: several are OSErrors
+            proven = True
+        elif isinstance(current, may_have_sent):
+            return False
         seen.add(id(current))
         current = current.__cause__
-    return False
+    return proven
 
 
 def _redis() -> Any:

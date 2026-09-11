@@ -11,6 +11,10 @@ from typing import List, Literal, Optional
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: The Redis client's socket timeout (app.db.redis_client). One Redis call --
+#: an LLM slot renew, say -- can hang this long before it fails.
+REDIS_SOCKET_TIMEOUT_SECONDS = 5
+
 # Belt-and-suspenders: disable ChromaDB's anonymous telemetry via env var.
 # NOTE: the installed chromadb (0.5.20) does NOT reliably honour this env var
 # for HttpClient — it still emits "Failed to send telemetry event ..." errors.
@@ -446,6 +450,8 @@ class Settings(BaseSettings):
     # lapses. 0 disables the cluster bound; the per-process bound
     # (LLM_MAX_CONCURRENT_ANALYSES, the analysis stage's own semaphore) applies
     # either way. A waiter gives up after AI_TIMEOUT_SECONDS.
+    # The lease must comfortably outlast one Redis call: at least
+    # 2 x REDIS_SOCKET_TIMEOUT_SECONDS + 5 s (0 = the default, 60).
     LLM_CLUSTER_MAX_CONCURRENT: int = 4
     LLM_CLUSTER_SLOT_LEASE_SECONDS: int = 60
     AI_ANALYSIS_CACHE_TTL: int = 3600                # seconds — Redis cache TTL for analysis results
@@ -574,6 +580,21 @@ class Settings(BaseSettings):
     # is emitted. Default ADMIN honours deliberate admin-configured mappings;
     # set lower (e.g. QA_LEAD) to refuse IdP-driven admin grants entirely.
     SSO_MAX_PROVISIONED_ROLE: str = "ADMIN"
+
+    @field_validator("LLM_CLUSTER_SLOT_LEASE_SECONDS")
+    @classmethod
+    def _validate_llm_cluster_slot_lease(cls, v):
+        # QA-B45-R2-3: a holder renews every lease/3 and each renew is one
+        # Redis call that can hang for the socket timeout. A lease that a
+        # single stalled call can outlast leaves no room to renew again or
+        # to stop the holder before a second one is admitted.
+        minimum = 2 * REDIS_SOCKET_TIMEOUT_SECONDS + 5
+        if v and v < minimum:
+            raise ValueError(
+                f"LLM_CLUSTER_SLOT_LEASE_SECONDS must be 0 (default) or at least {minimum} "
+                f"(2 x the {REDIS_SOCKET_TIMEOUT_SECONDS}s Redis socket timeout + 5s); got {v}"
+            )
+        return v
 
     @field_validator("SSO_MAX_PROVISIONED_ROLE")
     @classmethod

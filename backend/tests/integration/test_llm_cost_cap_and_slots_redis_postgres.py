@@ -201,6 +201,67 @@ async def test_calls_that_fail_after_reaching_the_provider_cannot_pass_the_cap(c
     assert usage.total_llm_calls == 3
 
 
+async def test_the_real_sdk_retry_path_cannot_pass_the_cap(capped_project, monkeypatch):
+    """QA-B45-R2-1 repro, with the real ChatOpenAI(max_retries=1) through a
+    mock transport: attempt 1 is sent and billed, then its read times out;
+    the SDK retries and attempt 2 cannot connect. The SDK raises
+    APIConnectionError from ConnectError, which read as "nothing sent": all
+    ten calls were admitted, the counter stayed at $0.90 and the meter saw
+    nothing. Now only what fits is admitted and the meter records each."""
+    httpx = pytest.importorskip("httpx")
+    pytest.importorskip("langchain_openai")
+    from langchain_openai import ChatOpenAI
+    from sqlalchemy import select
+
+    from app.core.config import settings
+    from app.db import postgres as app_postgres_module
+    from app.models.postgres import ProjectLlmUsage
+    from app.services import llm_cost_reservation as cost
+    from app.services.llm_factory import BudgetedLLM
+
+    project_id, key, redis = capped_project
+    monkeypatch.setattr(settings, "LLM_CLUSTER_MAX_CONCURRENT", 0)
+    monkeypatch.setattr(cost, "estimate_input_tokens", lambda args, kwargs: INPUT_TOKENS)
+    attempts: list[int] = []
+
+    def provider(request):
+        attempts.append(1)
+        if len(attempts) % 2 == 1:
+            raise httpx.ReadTimeout("generated and billed, then the read timed out", request=request)
+        raise httpx.ConnectError("the retry could not connect", request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(provider))
+    chat = ChatOpenAI(
+        model=MODEL, api_key="sk-test", base_url="http://provider.invalid/v1",
+        max_retries=1, max_tokens=1, http_async_client=client,
+    )
+    llm = BudgetedLLM(chat, provider=PROVIDER, model=MODEL)
+    admitted = refused = 0
+    try:
+        with cost.cost_budget_scope(project_id):
+            for _ in range(10):
+                try:
+                    await llm.ainvoke("prompt")
+                except cost.CostCapExceeded:
+                    refused += 1
+                except Exception:  # noqa: BLE001 -- the SDK's APIConnectionError
+                    admitted += 1
+    finally:
+        await client.aclose()
+    estimate = cost.price(PROVIDER, MODEL, INPUT_TOKENS, 1)
+    assert (admitted, refused) == (3, 7)
+    assert len(attempts) == 6  # two sent attempts per admitted call
+    counter = float(await redis.get(key))
+    assert counter == pytest.approx(COMMITTED_USD + 3 * estimate)
+    assert counter <= CAP_USD
+    async with app_postgres_module.AsyncSessionLocal() as db:
+        usage = (await db.execute(
+            select(ProjectLlmUsage).where(ProjectLlmUsage.project_id == project_id)
+        )).scalar_one()
+    assert float(usage.total_cost_usd) == pytest.approx(COMMITTED_USD + 3 * estimate)
+    assert usage.total_llm_calls == 3
+
+
 # ── M12 ─────────────────────────────────────────────────────────────────────
 
 

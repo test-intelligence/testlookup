@@ -194,6 +194,14 @@ def _billable_failures() -> dict[str, BaseException]:
         "cancelled mid-call": asyncio.CancelledError(),
         "SDK error from a read error": _wrapped(RuntimeError("APIConnectionError"), httpx.ReadError("reset")),
         "timeout after a retried connect (context only)": _connect_then_read_timeout(),
+        # QA-B45-R2-1: a connect error anywhere in the chain no longer wins.
+        "read timeout from a connect error": _wrapped(httpx.ReadTimeout("t"), httpx.ConnectError("c")),
+        "connect error from a read timeout": _wrapped(httpx.ConnectError("c"), httpx.ReadTimeout("t")),
+        "SDK error from a connect error from a reset": _wrapped(
+            RuntimeError("APIConnectionError"), _wrapped(httpx.ConnectError("c"), ConnectionResetError("r"))
+        ),
+        "reset after sending": ConnectionResetError("reset by peer"),
+        "broken pipe": BrokenPipeError("broken pipe"),
     }
 
 
@@ -247,6 +255,112 @@ async def test_a_failure_that_proves_no_request_releases_the_reservation(ledger,
             await _llm(inner).ainvoke("prompt")
     assert ledger[-1] == ("settle", 0.0)
     assert ledger.meter[-1] is False
+
+
+# ── QA-B45-R2-1: a client that retries INSIDE the call ──────────────────────
+
+
+class _RetryingInner(_Inner):
+    """A provider SDK client with its own retries (ChatOpenAI.max_retries)."""
+
+    def __init__(self, fail, max_retries):
+        super().__init__(fail=fail)
+        self.max_retries = max_retries
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_retries", [1, 3, None], ids=["1", "3", "sdk-default"])
+async def test_a_client_that_retries_inside_the_call_never_refunds(ledger, max_retries):
+    """Its error is the LAST attempt's: attempt 1 may have been sent and billed."""
+    import httpx
+
+    inner = _RetryingInner(httpx.ConnectError("the last attempt could not connect"), max_retries)
+    with cost_budget_scope(PROJECT):
+        with pytest.raises(httpx.ConnectError):
+            await _llm(inner).ainvoke("prompt")
+    assert ledger[-1] == ("settle", 0.5)
+    assert ledger.meter[-1] is True
+
+
+@pytest.mark.asyncio
+async def test_a_client_with_retries_off_still_gets_its_refund(ledger):
+    import httpx
+
+    inner = _RetryingInner(httpx.ConnectError("refused"), 0)
+    with cost_budget_scope(PROJECT):
+        with pytest.raises(httpx.ConnectError):
+            await _llm(inner).ainvoke("prompt")
+    assert ledger[-1] == ("settle", 0.0)
+
+
+@pytest.mark.asyncio
+async def test_the_real_openai_sdk_retry_that_ends_in_a_connect_error_is_charged(ledger):
+    """QA's reproduction with the real client: attempt 1 is SENT and its read
+    times out (the provider generated and billed); the SDK retries, attempt 2
+    cannot connect, and the SDK raises APIConnectionError from ConnectError.
+    Classified by that last error, it was refunded."""
+    httpx = pytest.importorskip("httpx")
+    pytest.importorskip("langchain_openai")
+    from langchain_openai import ChatOpenAI
+
+    sent: list[str] = []
+
+    def provider(request):
+        sent.append(request.url.path)
+        if len(sent) == 1:
+            raise httpx.ReadTimeout("generated, then the read timed out", request=request)
+        raise httpx.ConnectError("the retry could not connect", request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(provider))
+    chat = ChatOpenAI(
+        model="gpt-4o-mini", api_key="sk-test", base_url="http://provider.invalid/v1",
+        max_retries=1, max_tokens=2000, http_async_client=client,
+    )
+    try:
+        with cost_budget_scope(PROJECT):
+            with pytest.raises(Exception) as raised:
+                await _llm(chat).ainvoke("prompt")
+    finally:
+        await client.aclose()
+    assert len(sent) == 2, sent  # the SDK retried inside the one call
+    assert cost.failure_proves_no_request(raised.value) is True  # the last attempt alone "proves" it...
+    assert ledger[-1] == ("settle", 0.5)  # ...and it is charged anyway
+    assert ledger.meter[-1] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_failure,retried", [
+    ("connect", True), ("reset", False), ("broken pipe", False), ("aborted", False),
+])
+async def test_budgeted_llm_retries_only_what_proves_nothing_was_sent(first_failure, retried):
+    """Its own retry (ChatOllama) re-sent after a reset, which comes after the
+    request left: the provider ran it twice (QA-B45-R2-1)."""
+    import httpx
+
+    errors = {
+        "connect": httpx.ConnectError("refused"),
+        "reset": ConnectionResetError("reset by peer"),
+        "broken pipe": BrokenPipeError("broken pipe"),
+        "aborted": ConnectionAbortedError("aborted"),
+    }
+
+    class FailsOnce(_Inner):
+        async def ainvoke(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise errors[first_failure]
+            return _Result()
+
+    inner = FailsOnce()
+    llm = BudgetedLLM(inner, provider="ollama", model="qwen2.5:7b", connect_retries=2)
+    llm._retry_delay = lambda attempt: 0.0  # type: ignore[method-assign]
+    if retried:
+        await llm.ainvoke("prompt")
+        assert inner.calls == 2
+    else:
+        with pytest.raises(type(errors[first_failure])):
+            await llm.ainvoke("prompt")
+        assert inner.calls == 1
 
 
 @pytest.mark.asyncio
