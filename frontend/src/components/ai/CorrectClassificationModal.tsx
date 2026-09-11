@@ -14,6 +14,7 @@ import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import { aiFeedbackService } from '@/services/aiFeedbackService'
 import { useAnalysisLookup } from '@/hooks/useAnalysisLookup'
+import { useModalFocus } from '@/hooks/useModalFocus'
 
 export const CATEGORY_CHOICES = [
   { id: 'FLAKY',             label: 'Flaky',              desc: 'Intermittent — passes on retry; race or fixture issue.' },
@@ -45,6 +46,7 @@ export default function CorrectClassificationModal({
   const [selected, setSelected] = useState<CategoryChoiceId | ''>('')
   const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const dialogRef = useModalFocus({ onClose, canClose: !submitting })
 
   const analysisId = analysisIdProp ?? lookup?.analysis_id ?? null
   const currentCategory = currentCategoryProp ?? lookup?.failure_category ?? 'UNKNOWN'
@@ -73,6 +75,7 @@ export default function CorrectClassificationModal({
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="Correct classification"

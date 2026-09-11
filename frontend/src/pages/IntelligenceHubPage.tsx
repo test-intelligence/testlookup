@@ -45,6 +45,7 @@ import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
@@ -182,14 +183,17 @@ export default function IntelligenceHubPage() {
   const days = Math.max(1, Math.round(rangeDef.hours / 24))
 
   const { options: suiteOptions } = useSuiteOptions(days)
-  const { data, isLoading } = useRuns({ page: 1, size: 50, days, ...(suite && { suite_name: suite }) })
+  const { data, isLoading, error: runsError, mutate: retryRuns } =
+    useRuns({ page: 1, size: 50, days, ...(suite && { suite_name: suite }) })
   const allRuns = useMemo(() => data?.items ?? [], [data?.items])
 
   // When the window is empty, "no runs" is not the useful answer — "your most
   // recent run was 10 days ago" is. This looks further back ONLY in that case,
   // so the normal path costs nothing, and it turns a dead page into a
   // one-click recovery instead of leaving the reader to guess the range.
-  const windowIsEmpty = !isLoading && allRuns.length === 0
+  // A failed fetch is not an empty window: it must not send the reader off to
+  // a wider range (M21).
+  const windowIsEmpty = !isLoading && !runsError && allRuns.length === 0
   const { data: beyondWindow } = useMostRecentRun(windowIsEmpty)
   const mostRecentBeyond = windowIsEmpty ? (beyondWindow?.items?.[0] ?? null) : null
 
@@ -258,6 +262,10 @@ export default function IntelligenceHubPage() {
     if (value && value !== 'all') next.set(key, value)
     else next.delete(key)
     setParams(next, { replace: true })
+  }
+
+  if (runsError && !data) {
+    return <DataUnavailable error={runsError} onRetry={() => void retryRuns()} testId="intelligence-data-unavailable" />
   }
 
   if (isLoading) {

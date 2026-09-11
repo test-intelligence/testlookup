@@ -18,6 +18,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
+import DataUnavailable from '@/components/ui/DataUnavailable'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { useSummaryReport } from '@/hooks/useSummaryReport'
@@ -104,7 +105,7 @@ export default function SummaryReportPage() {
     try { localStorage.setItem(LS_MODE_KEY, mode) } catch { /* ignore */ }
   }, [mode])
 
-  const { data, isLoading } = useSummaryReport({ days, mode })
+  const { data, isLoading, error: reportError, mutate: retryReport } = useSummaryReport({ days, mode })
 
   const windowLabel = days === 1 ? '24h' : `${days}d`
 
@@ -179,6 +180,16 @@ export default function SummaryReportPage() {
           description="The Summary Report aggregates a single project's test suites. Choose a project from the top bar to generate one."
           icon={<FileText className="h-6 w-6" />}
         />
+      </>
+    )
+  }
+
+  // M21: an outage used to render "No executions in this window".
+  if (reportError && !data) {
+    return (
+      <>
+        <PageHeader title="Summary Report" subtitle={`Project: ${project.name}`} />
+        <DataUnavailable error={reportError} onRetry={() => void retryReport()} testId="summary-data-unavailable" />
       </>
     )
   }

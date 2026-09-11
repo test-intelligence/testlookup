@@ -23,6 +23,11 @@ interface UseRunsOptions {
    * rather than another quietly-omitted parameter.
    */
   ignoreGlobalRelease?: boolean
+  /**
+   * false → issue no request at all (and so no 15 s poll). For a probe whose
+   * answer another fetch already gives in the common case (OverviewPage, M22).
+   */
+  enabled?: boolean
 }
 
 export function useRuns(
@@ -47,6 +52,7 @@ export function useRuns(
     // under the new release's name — and an opted-out query would share a
     // cache entry with the filtered one and get whichever landed first.
     [params, releaseId],
+    opts?.enabled ?? true,
   )
 }
 

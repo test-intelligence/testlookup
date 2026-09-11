@@ -53,10 +53,28 @@ async function navigateInApp(page: Page, route: string): Promise<void> {
   }, route);
 }
 
+/**
+ * Log in for REAL first, then assume the role.
+ *
+ * The order matters. performRealLogin trusts a 200 from /auth/me as proof the
+ * stored token is live. With the mock installed first, that 200 is the mock's,
+ * so a token revoked earlier in the run (auth-flows' sign-out calls the server
+ * logout, which revokes the token's jti and the user's refresh family) passed
+ * as a session; the first real API call then 401'd, the refresh was refused,
+ * and every test here landed on /login. Alone, the token was fresh and all
+ * three passed (E1). After a real login the token is known-good; the reload
+ * makes fetchUser pick up the mocked role.
+ */
+async function loginAs(page: Page, role: string): Promise<void> {
+  await performRealLogin(page);
+  await mockRole(page, role);
+  await page.goto('/overview');
+  await page.locator('aside').waitFor({ state: 'visible', timeout: 10000 });
+}
+
 test.describe('Role-based access control', () => {
   test('VIEWER is redirected from management routes but can use normal pages', async ({ page }) => {
-    await mockRole(page, 'VIEWER');
-    await performRealLogin(page);
+    await loginAs(page, 'VIEWER');
 
     for (const route of MANAGEMENT_ROUTES) {
       await navigateInApp(page, route);
@@ -73,8 +91,7 @@ test.describe('Role-based access control', () => {
   });
 
   test('QA_ENGINEER (below QA_LEAD) is still redirected from management routes', async ({ page }) => {
-    await mockRole(page, 'QA_ENGINEER');
-    await performRealLogin(page);
+    await loginAs(page, 'QA_ENGINEER');
 
     await navigateInApp(page, '/projects');
     await expect(page).toHaveURL(/\/overview/, { timeout: 8000 });
@@ -84,8 +101,7 @@ test.describe('Role-based access control', () => {
   });
 
   test('QA_LEAD can reach the management routes', async ({ page }) => {
-    await mockRole(page, 'QA_LEAD');
-    await performRealLogin(page);
+    await loginAs(page, 'QA_LEAD');
 
     // The guard admits QA_LEAD — the route renders instead of redirecting.
     await page.goto('/users');
