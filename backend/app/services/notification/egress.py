@@ -143,6 +143,31 @@ def _allow_listed(host: str) -> bool:
     return False
 
 
+def delivery_http_client(destination: str | None, *, deployment_wide: bool = False):
+    """The HTTP client a webhook send must use once the gate has passed.
+
+    Re-audit N8. Offline, a webhook is admitted because its host resolved
+    on-box -- and it was then posted through the PUBLIC-only client, which
+    resolved the name again and would connect to whatever public address it
+    answered this time (and refused the on-box one the gate approved). Every
+    offline destination that was admitted by residency now goes through a
+    client that re-validates and pins the on-box address at connect time.
+
+    Only the operator's allow-listed deployment-wide host (e.g. a hosted Slack
+    workspace in ``OFFLINE_NOTIFICATION_ALLOWED_HOSTS``) is off-box by design,
+    and keeps the public client. Online, the public client as before.
+    """
+    from app.core.http_client import get_public_http_client
+
+    if settings.AI_OFFLINE_MODE:
+        host = _host_of(destination or "")
+        if not (host and deployment_wide and _allow_listed(host)):
+            from app.services.llm_egress import get_local_only_http_client
+
+            return get_local_only_http_client()
+    return get_public_http_client()
+
+
 async def assert_delivery_allowed_async(
     channel: str, destination: str | None, *, deployment_wide: bool = False
 ) -> None:

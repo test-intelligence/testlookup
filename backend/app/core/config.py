@@ -428,6 +428,11 @@ class Settings(BaseSettings):
     # Report-level evaluation must use published, tenant-authorized reports in
     # deployed environments.  Tests/fixture automation may opt in explicitly.
     AI_REPORT_EVAL_ALLOW_CALLER_CORPUS: bool = False
+    # Retries after the first attempt, for outbound AI-layer calls (re-audit L2):
+    # every LLM client get_llm() builds (the provider SDK's own max_retries for
+    # the OpenAI-wire, Anthropic and Gemini clients; connect-phase failures only
+    # for ChatOllama, which has no retry of its own) and Jira ticket creation.
+    # A read timeout is not retried for Ollama: it would multiply wall clock.
     AI_MAX_RETRIES: int = 3
     AI_TIMEOUT_SECONDS: int = 300
     AI_ANALYSIS_CACHE_TTL: int = 3600                # seconds — Redis cache TTL for analysis results

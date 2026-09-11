@@ -8,6 +8,7 @@ both local and hosted providers without changing agent code.
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import socket
@@ -114,18 +115,42 @@ def _resolves_only_to_local_addresses(hostname: str) -> bool:
     ceiling "we could not prove this stays on-box" must deny, not allow.
     """
     key = hostname.strip().strip("[]")
+    cached = _cached_residency(key)
+    if cached is not None:
+        return cached
+    return _store_residency(key, _resolve_residency_uncached(key))
+
+
+def _cached_residency(key: str) -> bool | None:
     cached = _RESIDENCY_CACHE.get(key)
-    now = monotonic()
-    if cached is not None and cached[1] > now:
+    if cached is not None and cached[1] > monotonic():
         return cached[0]
+    return None
 
-    answer = _resolve_residency_uncached(key)
 
+def _store_residency(key: str, answer: bool) -> bool:
     if len(_RESIDENCY_CACHE) > 256:
         _RESIDENCY_CACHE.clear()
     ttl = _RESIDENCY_TTL_LOCAL_SECONDS if answer else _RESIDENCY_TTL_DENIED_SECONDS
-    _RESIDENCY_CACHE[key] = (answer, now + ttl)
+    _RESIDENCY_CACHE[key] = (answer, monotonic() + ttl)
     return answer
+
+
+async def host_is_local_async(hostname: str) -> bool:
+    """:func:`host_is_local` with the resolution off the event loop (re-audit N11).
+
+    ``getaddrinfo`` blocks, and a denied answer is cached for 30 s only, so
+    during a resolver outage every LLM construction re-resolved ON the loop
+    that also serves requests and drains streams. A cache hit returns without
+    a thread hop; a miss resolves in a worker thread and fills the same cache
+    the synchronous path reads.
+    """
+    key = hostname.strip().strip("[]")
+    cached = _cached_residency(key)
+    if cached is not None:
+        return cached
+    answer = await asyncio.to_thread(_resolve_residency_uncached, key)
+    return _store_residency(key, answer)
 
 
 def _resolve_residency_uncached(hostname: str) -> bool:
@@ -223,6 +248,47 @@ def enforce_provider_policy(
     ``AI_LLM_ALLOWED_BASE_URLS``. Provider clients still own connection
     validation and secrets never enter this policy result.
     """
+    profile, residency_host = _enforce_static_policy(provider, offline=offline, base_url=base_url)
+    if residency_host is not None and not _resolves_only_to_local_addresses(residency_host):
+        _refuse_off_box(residency_host)
+    return profile
+
+
+async def enforce_provider_policy_async(
+    provider: str,
+    *,
+    offline: bool,
+    base_url: str | None = None,
+) -> ProviderProfile:
+    """:func:`enforce_provider_policy` for async callers (re-audit N11).
+
+    Identical decisions; the residency lookup runs in a worker thread so a
+    slow or failing resolver cannot stall the event loop.
+    """
+    profile, residency_host = _enforce_static_policy(provider, offline=offline, base_url=base_url)
+    if residency_host is not None and not await host_is_local_async(residency_host):
+        _refuse_off_box(residency_host)
+    return profile
+
+
+def _refuse_off_box(hostname: str) -> None:
+    raise LLMPolicyViolation(
+        f"AI_OFFLINE_MODE=true but LLM base_url host '{hostname}' is "
+        "not a loopback/private address — refusing to send prompts off-box"
+    )
+
+
+def _enforce_static_policy(
+    provider: str,
+    *,
+    offline: bool,
+    base_url: str | None,
+) -> tuple[ProviderProfile, str | None]:
+    """Every check that needs no name resolution.
+
+    Returns the profile and, when the offline ceiling must still establish
+    residency, the hostname to resolve (``None`` otherwise).
+    """
     profile = provider_profile(provider)
     allowlist = configured_provider_allowlist()
     if allowlist and profile.provider not in allowlist:
@@ -253,12 +319,14 @@ def enforce_provider_policy(
         # A nominally-local provider pointed at a public host is egress, so the
         # offline ceiling refuses it even when an allowlist permitted the origin
         # (re-audit C3) — AI_OFFLINE_MODE is documented as non-bypassable.
-        if offline and not _resolves_only_to_local_addresses(parsed.hostname):
-            raise LLMPolicyViolation(
-                f"AI_OFFLINE_MODE=true but LLM base_url host '{parsed.hostname}' is "
-                "not a loopback/private address — refusing to send prompts off-box"
-            )
-    return profile
+        #
+        # This is the early, readable refusal. The connection itself is pinned
+        # to the addresses validated at connect time (llm_egress, re-audit N8),
+        # so a name that re-resolves between here and the connect is refused
+        # there.
+        if offline:
+            return profile, parsed.hostname
+    return profile, None
 
 
 def sanitize_invocation(value: Any, *, stats: dict[str, int] | None = None) -> Any:
