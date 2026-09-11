@@ -36,7 +36,10 @@ from app.services import runs_service
 
 pytestmark = pytest.mark.integration
 
-SEQ_INDEX = "ix_test_runs_project_suite_natural_seq"
+SEQ_INDEX = "ix_test_runs_project_suite_hash_seq"
+# 0169's first index, which overflowed btree for long multibyte suite names
+# (review R-B45-D-1); 0172 drops it.
+OLD_SEQ_INDEX = "ix_test_runs_project_suite_natural_seq"
 GLOBAL_INDEX = "ix_test_runs_natural_build"
 PROJECT_INDEX = "ix_test_runs_project_natural_build"
 
@@ -140,7 +143,9 @@ def _literal(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-async def _generic_plan(engine, statement) -> dict:
+async def _generic_plan(engine, statement, settings_off: tuple[str, ...] = ()) -> dict:
+    """The generic plan of ``statement``; ``settings_off`` planner knobs apply
+    to this EXPLAIN only and are reset after."""
     compiled = statement.compile(
         dialect=pg_asyncpg.dialect(), compile_kwargs={"render_postcompile": True}
     )
@@ -149,6 +154,8 @@ async def _generic_plan(engine, statement) -> dict:
     async with engine.connect() as conn:
         driver = (await conn.get_raw_connection()).driver_connection
         await driver.execute("SET plan_cache_mode = force_generic_plan")
+        for setting in settings_off:
+            await driver.execute(f"SET {setting} = off")
         await driver.execute(f"PREPARE n1718_q AS {compiled}")
         try:
             call = f"EXECUTE n1718_q({args})" if args else "EXECUTE n1718_q"
@@ -156,6 +163,8 @@ async def _generic_plan(engine, statement) -> dict:
         finally:
             await driver.execute("DEALLOCATE n1718_q")
             await driver.execute("RESET plan_cache_mode")
+            for setting in settings_off:
+                await driver.execute(f"RESET {setting}")
     return (json.loads(raw) if isinstance(raw, str) else raw)[0]["Plan"]
 
 
@@ -187,7 +196,11 @@ async def test_both_indexes_exist_and_are_valid(engine):
             "SELECT c.relname, i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
             "WHERE c.relname IN (:a, :b)"
         ), {"a": SEQ_INDEX, "b": GLOBAL_INDEX})).all())
+        old = (await conn.execute(text(
+            "SELECT count(*) FROM pg_class WHERE relname = :old AND relkind = 'i'"
+        ), {"old": OLD_SEQ_INDEX})).scalar_one()
     assert rows == {SEQ_INDEX: True, GLOBAL_INDEX: True}, rows
+    assert old == 0, f"{OLD_SEQ_INDEX} (the overflowing first 0169 index) is still there"
 
 
 async def _page_ids(engine, project) -> list[uuid.UUID]:
@@ -210,12 +223,43 @@ async def _page_ids(engine, project) -> list[uuid.UUID]:
 async def test_run_numbers_read_the_index_in_order_under_a_generic_plan(engine, seeded):
     ids = await _page_ids(engine, seeded[0])
     statements, _ = await _captured(engine, lambda db: runs_service.fetch_run_seq_map(db, ids))
-    plan = await _generic_plan(engine, statements[-1])
+    statement = statements[-1]
+
+    # 1. As planned, under default costs: every branch reads 0169's index for
+    # its own (project, suite) pair -- no BitmapOr of an OR over the pairs, the
+    # shape N17 removed. What it does NOT show: that no Sort runs. Since the
+    # index stores the md5 of the suite (review R-B45-D-1), a branch cannot be
+    # index-only, and reading a whole partition through a bitmap and sorting it
+    # can be the cheaper plan -- measured 64.9 ms for 4 x 10,000 runs, against
+    # 87.6 ms for the pre-N17 BitmapOr and Sort.
+    plan = await _generic_plan(engine, statement)
     rendered = json.dumps(plan)[:4000]
-    assert not any(n["Node Type"] == "Sort" for n in _nodes(plan)), f"still sorts: {rendered}"
+    # A bitmap read names its index on the Bitmap Index Scan child, and the
+    # table on the Bitmap Heap Scan above it: check both halves.
+    used = {n["Index Name"] for n in _nodes(plan) if n.get("Index Name")}
+    assert used == {SEQ_INDEX}, (used, rendered)
     scans = _run_scans(plan)
-    assert scans and all(n.get("Index Name") == SEQ_INDEX for n in scans), rendered
-    assert not any("Bitmap" in n["Node Type"] for n in _nodes(plan)), rendered
+    assert scans and all(
+        n["Node Type"] in ("Bitmap Heap Scan", "Index Scan", "Index Only Scan") for n in scans
+    ), rendered
+    assert not any(n["Node Type"] == "BitmapOr" for n in _nodes(plan)), rendered
+    appends = [n for n in _nodes(plan) if n["Node Type"] == "Append"]
+    assert len(appends) == 1 and len(appends[0]["Plans"]) == 3, rendered  # API, UI, NULL suite
+
+    # 2. The index CAN deliver the window's order: with sorting and bitmap scans
+    # priced out for this EXPLAIN only, each branch is a plain Index Scan on it
+    # with no Sort above. A key or direction that did not match the window
+    # would leave a Sort here whatever the settings.
+    ordered = await _generic_plan(
+        engine, statement, settings_off=("enable_sort", "enable_bitmapscan", "enable_seqscan")
+    )
+    ordered_rendered = json.dumps(ordered)[:4000]
+    assert not any(n["Node Type"] == "Sort" for n in _nodes(ordered)), ordered_rendered
+    ordered_scans = _run_scans(ordered)
+    assert ordered_scans and all(
+        n["Node Type"] in ("Index Scan", "Index Only Scan") and n.get("Index Name") == SEQ_INDEX
+        for n in ordered_scans
+    ), ordered_rendered
 
 
 async def test_run_numbers_match_the_partitioned_definition(engine, seeded):

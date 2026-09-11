@@ -123,7 +123,15 @@ async def fetch_run_suites_map(
 # The '' is a SQL literal, not a bind parameter: migration 0169 indexes this
 # exact expression, and under a generic plan a bind parameter is ``$n``, which
 # never matches the literal the index was built with (re-audit N17; M6).
-_SUITE_NORM = func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, literal_column("''"))))
+#
+# md5 of the normalised name, not the name (review R-B45-D-1): the name is a
+# String(500), up to 2,000 bytes in four-byte characters, and an index row past
+# btree's 2,704-byte limit fails the INSERT -- an ingest that 500s. The hash is
+# 32 bytes whatever the name, and equal names hash equal, so the partitions --
+# and every "Run #N" -- are exactly what they were.
+_SUITE_NORM = func.md5(
+    func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, literal_column("''"))))
+)
 
 
 # list_project_runs gives a multi-project caller one index-ordered branch per
