@@ -8,7 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, resolve_project_scope
+from app.core.deps import (
+    _api_key_bound_project,
+    get_current_active_user,
+    resolve_project_scope,
+)
 from app.core.metrics import semantic_search_duration_seconds, semantic_search_total
 from app.db.postgres import get_db
 from app.models.postgres import (
@@ -101,14 +105,27 @@ async def trigger_reindex(
     * No project named means *every* tenant's index, so that variant is
       ADMIN-only — otherwise a lead in one project rebuilds everyone else's.
     """
+    # The role check is in this body, not require_role, so the scope rule is
+    # applied here: a scoped key without project:admin (a CI streaming key)
+    # does not spend worker capacity on a reindex (review of QA-R4-1).
+    from app.core.deps import _refuse_scoped_key_without_project_admin  # noqa: PLC0415
+
+    _refuse_scoped_key_without_project_admin(current_user)
     role = getattr(current_user.role, "value", current_user.role)
     is_admin = role == UserRole.ADMIN.value
+    # A project-bound API key is not an instance admin, whatever its owner's
+    # role (re-audit N20): it may reindex its own project, never every tenant.
+    # A named project is already confined by resolve_project_scope below.
+    bound_project_id = _api_key_bound_project(current_user)
 
     if project_id is None:
-        if not is_admin:
+        if not is_admin or bound_project_id is not None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="An instance-wide reindex requires ADMIN. Pass project_id to reindex one project.",
+                detail=(
+                    "An instance-wide reindex requires an instance ADMIN, not a "
+                    "project-bound API key. Pass project_id to reindex one project."
+                ),
             )
     else:
         if not is_admin and role != UserRole.QA_LEAD.value:

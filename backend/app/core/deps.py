@@ -119,12 +119,124 @@ def credential_kind(user: User) -> str | None:
     return value if value in (CREDENTIAL_KIND_JWT, CREDENTIAL_KIND_API_KEY) else None
 
 
+# ── API-key scopes (QA-R3-11) ────────────────────────────────────────────────
+#
+# ``api_keys.scopes`` was read in exactly one place, the streaming ingest
+# dependency. Everywhere else a key declared ``["stream:write"]`` acted with
+# its owner's full role: through the routes that opt in with
+# ``require_role(UserRole.ADMIN, allow_project_key=True)`` a CI streaming key
+# deleted runs, reset its project, purged retention and removed members, and
+# ``POST /api/v1/keys`` minted it an unrestricted, never-expiring replacement
+# that outlived revoking it.
+#
+# The rule: a key with a NON-EMPTY scope list may do only what it lists. An
+# empty list is a legacy full-access key, exactly as the streaming dependency
+# has always treated it.
+
+#: Lets a scoped key use a route that opts a project-bound key in with
+#: ``require_role(UserRole.ADMIN, allow_project_key=True)``: deleting the
+#: project's runs, resetting it, its retention and deletion jobs, member
+#: removal, release/phase deletion, compliance packs, release-gate policies.
+PROJECT_ADMIN_SCOPE = "project:admin"
+
+#: What a scoped key without :data:`PROJECT_ADMIN_SCOPE` is told on such a route.
+PROJECT_ADMIN_SCOPE_DETAIL = (
+    f"This API key's scopes do not include {PROJECT_ADMIN_SCOPE!r}, which this "
+    "endpoint requires. Mint a key with that scope (or use a signed-in session)."
+)
+
+_API_KEY_GRANT_ATTR = "_testlookup_api_key_grant"
+
+
+def _normalized_scopes(value) -> tuple[str, ...]:
+    """``api_keys.scopes`` as a tuple of non-empty strings (JSON column: list, str or null)."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,) if value else ()
+    return tuple(str(scope) for scope in value if scope)
+
+
+@dataclass(frozen=True)
+class ApiKeyGrant:
+    """What the API key that authenticated this request was granted.
+
+    Stashed on the loaded ``User`` like the project binding, by
+    ``_validate_api_key``; ``None`` for a JWT.
+    """
+
+    key_id: uuid.UUID
+    scopes: tuple[str, ...]
+    expires_at: datetime | None
+
+    @property
+    def is_scoped(self) -> bool:
+        return bool(self.scopes)
+
+    def allows(self, scope: str) -> bool:
+        """An unscoped (legacy) key allows everything; a scoped one only what it lists."""
+        return not self.scopes or scope in self.scopes
+
+
+#: Methods a scoped key without ``project:admin`` may still use on a
+#: project-scoped route (QA-R4-1): reads.
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _refuse_scoped_key_without_project_admin(user: User) -> None:
+    """403 when the request's API key is scoped and lacks ``project:admin``.
+
+    The one check behind every scope refusal outside streaming (QA-R3-11,
+    QA-R4-1, QA-R4-2). A JWT (no grant) and a legacy key (empty scope list)
+    pass: ``ApiKeyGrant.allows`` treats an empty list as full access.
+    """
+    grant = api_key_grant(user)
+    if grant is not None and not grant.allows(PROJECT_ADMIN_SCOPE):
+        # Counted like any other role shortfall: a leaked CI key probing the
+        # administration surface is the burst an operator wants to see.
+        _count_auth_failure("insufficient_role")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PROJECT_ADMIN_SCOPE_DETAIL,
+        )
+
+
+def _refuse_scoped_key_write(request: Request, user: User) -> None:
+    """The project-scoped guards' half of the rule: writes need ``project:admin``."""
+    # No method (a hand-built request) is treated as a write: refused with a
+    # 403, not an AttributeError's 500.
+    method = getattr(request, "method", None)
+    if not isinstance(method, str) or method.upper() not in _SAFE_METHODS:
+        _refuse_scoped_key_without_project_admin(user)
+
+
+def _bind_api_key_grant(user: User, grant: ApiKeyGrant | None) -> User:
+    setattr(user, _API_KEY_GRANT_ATTR, grant)
+    return user
+
+
+def api_key_grant(user: User) -> ApiKeyGrant | None:
+    """The authenticating API key's scopes and expiry, or ``None`` (a JWT, or a
+    ``User`` that did not come from an auth dependency)."""
+    value = getattr(user, _API_KEY_GRANT_ATTR, None)
+    return value if isinstance(value, ApiKeyGrant) else None
+
+
 def _enforce_api_key_project_binding(
     user: User,
-    project_id: uuid.UUID,
+    project_id: uuid.UUID | None,
     *,
     detail: str = "This API key is restricted to a different project",
 ) -> None:
+    """403 when a project-bound API key reaches outside its own project.
+
+    An unbound caller (a JWT, or a user-scoped key) is never refused here: role
+    and membership are other checks' business. ``project_id=None`` names
+    something that belongs to no single project (the system-default release
+    policy, a chat session filed under no project, an unbound API key); a
+    bound key is refused that too, since it is outside the one project the key
+    names.
+    """
     bound_project_id = _api_key_bound_project(user)
     if bound_project_id is not None and bound_project_id != project_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail=detail)
@@ -241,7 +353,9 @@ async def get_current_user(
         _count_auth_failure("inactive_user")
         raise credentials_exception
 
-    return _bind_credential_kind(_bind_api_key_project(user, None), CREDENTIAL_KIND_JWT)
+    return _bind_api_key_grant(
+        _bind_credential_kind(_bind_api_key_project(user, None), CREDENTIAL_KIND_JWT), None
+    )
 
 
 # ── CLI-5: Dual auth (JWT OR API Key) ────────────────────────────────────────
@@ -287,6 +401,14 @@ async def _validate_api_key(db: AsyncSession, raw_key: str) -> ApiKeyContext:
 
     bound = _bind_credential_kind(
         _bind_api_key_project(user, api_key.project_id), CREDENTIAL_KIND_API_KEY
+    )
+    _bind_api_key_grant(
+        bound,
+        ApiKeyGrant(
+            key_id=api_key.id,
+            scopes=_normalized_scopes(api_key.scopes),
+            expires_at=api_key.expires_at,
+        ),
     )
     return ApiKeyContext(user=bound, project_id=api_key.project_id)
 
@@ -499,7 +621,16 @@ async def get_api_key_context(
     )
 
 
-def require_role(min_role: UserRole) -> Callable:
+#: What a project-bound API key is told by an ADMIN route that has not opted in
+#: -- ``require_role(UserRole.ADMIN)`` and ``require_instance_admin()``, which
+#: are now the same check.
+PROJECT_KEY_NOT_INSTANCE_ADMIN_DETAIL = (
+    "This API key is bound to one project; this endpoint spans every project "
+    "and needs an instance administrator"
+)
+
+
+def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Callable:
     """
     Return a FastAPI dependency that enforces a minimum role level.
 
@@ -507,8 +638,49 @@ def require_role(min_role: UserRole) -> Callable:
         @router.post("", dependencies=[Depends(require_role(UserRole.QA_LEAD))])
         # or
         current_user: User = Depends(require_role(UserRole.QA_ENGINEER))
+
+    **ADMIN is closed to a project-bound API key unless the route opts in
+    (re-audit N20).** The role compared here is the key OWNER's, and only an
+    ADMIN can bind a key to a project, so nearly every project-bound key is an
+    ADMIN credential: a CI pipeline's. With the role alone deciding, a key
+    leaked from one team's pipeline could create an instance administrator
+    (``POST /api/v1/users``) and, logged in as it, read and write every
+    tenant. So ``require_role(UserRole.ADMIN)`` refuses, with 403, a request
+    whose user carries an API-key project binding: the attribute
+    ``_bind_api_key_project`` sets, which ``require_instance_admin`` already
+    checked. A JWT and a user-scoped key carry no binding and pass as before.
+
+    ``allow_project_key=True`` lets such a key back in. Pass it only where the
+    route itself confines the key to its own project (a
+    ``require_project_access()`` / ``require_run_access()`` /
+    ``require_release_access()`` guard on the path id, ``resolve_project_scope``
+    on the resource's project, or an explicit
+    ``_enforce_api_key_project_binding``), and list the route in the reviewed
+    allow-list of ``tests/regression/test_admin_routes_refuse_project_keys.py``,
+    which fails until you do.
+
+    Below ADMIN nothing changes. Those roles never refused a bound key, so the
+    flag would mean nothing there, and passing it is a ``ValueError``.
+
+    **QA_LEAD and above also need the key's scopes to allow it (QA-R3-11,
+    QA-R4-1, QA-R4-2).** A key with a non-empty scope list gets 403 unless the
+    list holds :data:`PROJECT_ADMIN_SCOPE` (``project:admin``), bound or not,
+    opted in or not. The check used to run only on opted-in routes, so an
+    unbound ``["stream:write"]`` key of an ADMIN created instance
+    administrators through plain ``require_role(UserRole.ADMIN)``, and a bound
+    one administered its project through ``require_role(UserRole.QA_LEAD)``.
+    A legacy key with an empty list stays full-access, and a JWT has no scopes
+    at all. Below QA_LEAD the scopes are not read here; the project-scoped
+    guards refuse such a key's writes (see ``_refuse_scoped_key_write``).
     """
+    if allow_project_key and min_role != UserRole.ADMIN:
+        raise ValueError(
+            "allow_project_key applies only to require_role(UserRole.ADMIN); "
+            f"{min_role.value} never refuses a project-bound API key"
+        )
     min_idx = _ROLE_ORDER.index(min_role)
+    refuse_project_key = min_role == UserRole.ADMIN and not allow_project_key
+    refuse_scoped_key = min_idx >= _ROLE_ORDER.index(UserRole.QA_LEAD)
 
     async def _check(
         current_user: User = Depends(get_current_active_user),
@@ -527,9 +699,31 @@ def require_role(min_role: UserRole) -> Callable:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Requires at least {min_role.value} role",
             )
+        if refuse_project_key and _api_key_bound_project(current_user) is not None:
+            # Counted like any other role shortfall: a leaked CI key probing
+            # the admin surface is exactly the burst an operator wants to see.
+            _count_auth_failure("insufficient_role")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=PROJECT_KEY_NOT_INSTANCE_ADMIN_DETAIL,
+            )
+        if refuse_scoped_key:
+            _refuse_scoped_key_without_project_admin(current_user)
         return current_user
 
     return _check
+
+
+def require_instance_admin() -> Callable:
+    """ADMIN, and not through an API key bound to one project.
+
+    Added for the admin-maintenance router (re-audit M2, QA), whose data and
+    effects span every tenant. Since re-audit N20 that is what
+    ``require_role(UserRole.ADMIN)`` means by default, so this is a named alias
+    for it: the spelling for a route that must never opt in with
+    ``allow_project_key=True``. The maintenance router's AST test pins it.
+    """
+    return require_role(UserRole.ADMIN)
 
 
 def require_project_role(min_role: UserRole) -> Callable:
@@ -549,6 +743,7 @@ def require_project_role(min_role: UserRole) -> Callable:
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_active_user),
     ) -> User:
+        _refuse_scoped_key_write(request, current_user)
         project_id_str = request.path_params.get("project_id")
         if project_id_str:
             try:
@@ -784,6 +979,12 @@ def require_project_access(project_id_param: str = "project_id"):
     """
     Dependency that verifies the current user has access to a project.
     ADMIN bypasses. Non-members get 403.
+
+    A write (any method but GET/HEAD/OPTIONS) through a scoped API key also
+    needs ``project:admin`` (QA-R4-1), checked before the ADMIN bypass. The
+    streaming and upload routes do not use this guard (they authenticate with
+    ``get_api_key_context`` / ``get_streaming_api_key_context``), so a
+    ``stream:write`` key keeps ingesting; a route-walker test pins that.
     """
     from app.models.postgres import ProjectMember
 
@@ -792,6 +993,7 @@ def require_project_access(project_id_param: str = "project_id"):
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_active_user),
     ) -> User:
+        _refuse_scoped_key_write(request, current_user)
         bound_project_id = _api_key_bound_project(current_user)
         if bound_project_id is None and _normalize_user_role(current_user.role) == UserRole.ADMIN:
             return current_user
@@ -837,6 +1039,7 @@ def require_run_access():
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_active_user),
     ) -> User:
+        _refuse_scoped_key_write(request, current_user)
         bound_project_id = _api_key_bound_project(current_user)
         if bound_project_id is None and _normalize_user_role(current_user.role) == UserRole.ADMIN:
             return current_user
@@ -960,6 +1163,7 @@ def _make_project_scoped_guard(
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_active_user),
     ) -> User:
+        _refuse_scoped_key_write(request, current_user)
         bound_project_id = _api_key_bound_project(current_user)
         if bound_project_id is None and _normalize_user_role(current_user.role) == UserRole.ADMIN:
             return current_user
@@ -1098,6 +1302,24 @@ def require_api_key_owner():
         if owner_id is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
 
+        # A project-bound caller manages only keys bound to its own project
+        # (re-audit N20). Without this, the ADMIN return below let a CI key act
+        # on its owner's keys for every other project, and on unbound ones.
+        # Asked only for a bound caller, so every other request issues exactly
+        # the one query it always did.
+        if _api_key_bound_project(current_user) is not None:
+            key_project_id = (await db.execute(
+                select(ApiKey.project_id).where(ApiKey.id == key_uuid)
+            )).scalar_one_or_none()
+            _enforce_api_key_project_binding(
+                current_user,
+                key_project_id,
+                detail=(
+                    "This API key is bound to one project; it can only manage "
+                    "keys bound to that project"
+                ),
+            )
+
         if _normalize_user_role(current_user.role) == UserRole.ADMIN:
             return current_user
         if owner_id != current_user.id:
@@ -1149,6 +1371,11 @@ def require_session_access():
         if session is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
+        # A project-bound API key reaches only chat filed under its own project,
+        # and never another project's through the ADMIN bypass below (re-audit
+        # N20). A session filed under no project is refused too: it can hold
+        # anything its owner asked about. No-op for an unbound caller.
+        _enforce_api_key_project_binding(current_user, session.project_id)
         is_admin = _normalize_user_role(current_user.role) == UserRole.ADMIN
         if not is_admin and session.user_id != current_user.id:
             raise HTTPException(
@@ -1190,6 +1417,10 @@ def require_link_access():
         if link is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
 
+        # A project-bound API key reaches only its own project's share links,
+        # and never another project's through the ADMIN bypass below (re-audit
+        # N20). No-op for an unbound caller.
+        _enforce_api_key_project_binding(current_user, link.project_id)
         is_admin = _normalize_user_role(current_user.role) == UserRole.ADMIN
         if is_admin or link.created_by_id == current_user.id:
             return link

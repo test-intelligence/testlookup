@@ -7,7 +7,6 @@ Beat schedule (auto-configured in celery_app.py):
 
 Manual triggers available via POST /api/v1/training/export and /finetune.
 """
-import asyncio
 import logging
 
 from app.worker.celery_app import celery_app
@@ -16,34 +15,15 @@ logger = logging.getLogger("training.tasks")
 
 
 def _run_async(coro):
-    # Same loop-bound client caches as worker/tasks.py — this wrapper used to
-    # reset none of them, so a training task inherited whatever loop the last
-    # task left behind.
-    from app.db.loop_bound import reset_loop_bound_clients
-    reset_loop_bound_clients()
+    """Run a training task's coroutine on this worker child's event loop.
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        # BUG-003: dispose the pooled async engine on this loop before closing
-        # it, otherwise asyncpg connections stay bound to a dead loop and raise
-        # "Event loop is closed" when later terminated/GC'd.
-        try:
-            from app.db.postgres import dispose_engine_for_loop
-            loop.run_until_complete(dispose_engine_for_loop())
-        except Exception:
-            pass
-        try:
-            # See tasks.py: the shared httpx client is rotated per loop
-            # but never closed in the worker path, leaving a pool bound
-            # to a loop that is about to close.
-            from app.core.http_client import close_http_client
-            loop.run_until_complete(close_http_client())
-        except Exception:
-            pass
-        loop.close()
+    The same runner as ``worker/tasks.py`` (re-audit M1). This wrapper once
+    reset nothing and drained less than the other; with one implementation
+    they cannot drift apart again.
+    """
+    from app.worker.loop_runner import run_async
+
+    return run_async(coro)
 
 
 @celery_app.task(

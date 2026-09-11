@@ -4,6 +4,7 @@ All settings loaded from environment variables with sensible defaults.
 """
 import json as _json
 import os as _os
+import re as _re
 from functools import lru_cache
 from typing import List, Literal, Optional
 
@@ -38,8 +39,19 @@ _SECRET_PLACEHOLDER_MARKERS: tuple[str, ...] = (
     "replace_with",
     "your-",
     "set-a-",
-    "<",
 )
+
+#: The templates also write a placeholder as ONE angle-bracketed token --
+#: ``<base64-encoded-strong-random-secret>``, ``<set-a-strong-password>``,
+#: ``<pw>``, and in deploymentsteps.md ``<your generated key from Step 9.3>``.
+#: A bare ``"<"`` used to stand for that, which refused a real secret that
+#: merely contains the symbol (QA of re-audit N12). A token found ANYWHERE in
+#: the value then still refused about one random 32-character password in 157
+#: (``Tr0ub<A>dor&3``), and missed the guide's, which has spaces (code review
+#: and QA of that fix). So the token must be the WHOLE value: it opens with a
+#: letter or digit, and holds only letters, digits, spaces, dots, hyphens and
+#: underscores.
+_ANGLE_PLACEHOLDER = _re.compile("<[a-z0-9][a-z0-9 ._-]*>")
 
 
 def _is_placeholder_secret(value: str) -> bool:
@@ -56,12 +68,39 @@ def _is_placeholder_secret(value: str) -> bool:
     wording again and were missed by the first fix for the same reason.
 
     Substring, not prefix: a placeholder is sometimes embedded rather than
-    leading (a connection URI carrying the password, for instance).
+    leading (a connection URI carrying the password, for instance). The
+    angle-bracketed token is the exception: it must be the whole value (a
+    URI's password is judged on its own, by ``_uri_password``).
     """
     text = str(value or "").strip().lower()
     if not text:
         return True
-    return any(marker in text for marker in _SECRET_PLACEHOLDER_MARKERS)
+    return any(marker in text for marker in _SECRET_PLACEHOLDER_MARKERS) or bool(
+        _ANGLE_PLACEHOLDER.fullmatch(text)
+    )
+
+
+def _uri_password(uri: str) -> Optional[str]:
+    """The password embedded in a connection URI, or None when there is none.
+
+    Only the credential is judged: a password-less URI (the default, or a
+    deployment using another auth mechanism) is never a placeholder, and the
+    host and database parts are not secrets.
+    """
+    from urllib.parse import unquote, urlsplit
+
+    try:
+        password = urlsplit(str(uri or "")).password
+    except ValueError:
+        return None
+    return unquote(password) if password else None
+
+
+# The most test results one ingest may carry. The JSON batch schema enforces it
+# at the API (``IngestPayload.results``); the upload worker enforces it after
+# parsing a file, through ``INGEST_MAX_RESULTS_PER_UPLOAD``, which defaults to
+# it. One number, so the two paths cannot drift apart (re-audit M5).
+MAX_RESULTS_PER_INGEST = 50_000
 
 
 class Settings(BaseSettings):
@@ -179,6 +218,11 @@ class Settings(BaseSettings):
     # See docs/SCALABLE_INGESTION_DESIGN.md. Both limits operate per
     # project, per minute. Set to 0 to disable.
     INGEST_RATE_LIMIT_PER_MINUTE: int = 200       # batches per project per minute
+    # Re-audit M4/M3. POST /ws/events takes ONE event per call, so it cannot
+    # share the batch budget above: charging a batch token per event would
+    # throttle an ordinary run to 200 results a minute. This is the
+    # event-equivalent of that budget (200 batches x ~100 events). 0 disables.
+    INGEST_EVENT_RATE_LIMIT_PER_MINUTE: int = 20000   # single events per project per minute
 
     # ── Manual upload: archive (zip) safety limits (MRU-12) ───
     # Bound the DECOMPRESSED footprint of an uploaded report zip (the
@@ -188,6 +232,13 @@ class Settings(BaseSettings):
     MAX_ARCHIVE_ENTRIES: int = 5_000
     MAX_ARCHIVE_ENTRY_BYTES: int = 50 * 1024 * 1024          # 50 MB per entry
     MAX_ARCHIVE_RATIO: int = 100                             # uncompressed/compressed
+    # Re-audit M5. The most test results one uploaded report may carry: the
+    # same cap as a JSON batch, so a file is not a way around it. The 50MB
+    # size limit bounds bytes, not rows -- 50MB of minimal JUnit elements is
+    # ~1.3M results, and parsing that alone peaked at 1.3GB (measured). Checked
+    # by a cheap count before parsing and exactly after; see
+    # services/upload_limits.py. 0 disables.
+    INGEST_MAX_RESULTS_PER_UPLOAD: int = MAX_RESULTS_PER_INGEST
     # Adaptive Redis-memory backpressure. When ``maxmemory`` is set on
     # Redis, the percentage gate fires; when it isn't, the absolute
     # byte gate kicks in instead. Both 0 disables the check entirely.
@@ -362,6 +413,12 @@ class Settings(BaseSettings):
     AI_LLM_PROVIDER_ALLOWLIST: str = ""
     # Optional comma-separated HTTP(S) origins for provider endpoint overrides.
     AI_LLM_ALLOWED_BASE_URLS: str = ""
+    # Off-box hosts the deployment's own Slack and Teams webhooks and SMTP
+    # relay may still reach while AI_OFFLINE_MODE is on: comma-separated host
+    # names, and ".example.com" matches subdomains. A shared host admits every
+    # tenant on it (any Slack workspace), so a webhook set per user or per team
+    # never uses this list. Empty: every off-box destination is refused.
+    OFFLINE_NOTIFICATION_ALLOWED_HOSTS: str = ""
     AGENT_MEMORY_RETENTION_DAYS: int = 365
     AI_CONFIDENCE_THRESHOLD: int = 80
     AIQ_GAP_REFINEMENT_ENABLED: bool = False         # AIQ-P4: gap_detection + report_refinement deep stages (default off)
@@ -747,6 +804,17 @@ class Settings(BaseSettings):
                 warnings.append(
                     "CRITICAL: WEBHOOK_SECRET is set to the default — live-event and "
                     "webhook endpoints accept anyone who read the source"
+                )
+            # Re-audit N12. .env.example ships
+            # MONGO_URI=mongodb://testlookup:change-me-to-a-strong-password@...
+            # and nothing checked it, so copying the example file and deploying
+            # booted production on a published database password -- the same
+            # path the JWT/APP/WEBHOOK checks above were fixed for.
+            mongo_password = _uri_password(self.MONGO_URI)
+            if mongo_password is not None and _is_placeholder_secret(mongo_password):
+                warnings.append(
+                    "CRITICAL: MONGO_URI carries a placeholder password — the "
+                    "database password is the one published in .env.example"
                 )
             if self.DEV_AUTO_LOGIN_ENABLED:
                 warnings.append("CRITICAL: DEV_AUTO_LOGIN_ENABLED is True in production — disable it")

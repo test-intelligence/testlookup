@@ -526,6 +526,17 @@ async def ingest_live_event(
       - test_result:  {type, test_name, status, duration_ms, error_message, test_case_id?}
       - run_complete: {type}
 
+    Any event may carry an ``event_id`` (1-200 printable characters, unique
+    within its run): a POST retried with the same one is counted once. Without
+    one, ``run_start`` and ``run_complete`` are recognised by their content, and
+    every ``test_result`` is a new result.
+
+    With a project key the run is saved like an SDK run (re-audit N14). Its run
+    id can be used again once the run completes: a ``run_start`` begins a new
+    run under it, and any other event for the finished run is refused with 409.
+    ``test_case_id``, and a ``test_result``'s ``total_tests``, are honoured only
+    on the legacy path: the SDK stream's events carry neither.
+
     Authentication (re-audit H1). Preferred: a project-scoped ``X-API-Key``
     carrying the ``stream:write`` scope — the project is then derived from the
     key server-side and a caller cannot name someone else's. Legacy: the shared
@@ -554,8 +565,21 @@ async def ingest_live_event(
     except ValueError as exc:
         raise HTTPException(400, detail=str(exc)) from exc
 
+    # Re-audit M3: shed load before touching Redis at all. Every other step on
+    # this route writes to Redis (the run binding, the credential cache, the
+    # run's counters, the stream itself), and this was the one ingest path
+    # with no backpressure gate, so it kept admitting events while Redis
+    # approached OOM.
+    from app.services.ingestion_backpressure import enforce_redis_memory_backpressure
+
+    await enforce_redis_memory_backpressure()
+
     # ── Authenticate, and derive the tenant rather than trusting the body ──
     bound_project_id: Optional[str] = None
+    # Names the auto-created live session (re-audit N14): the key's own name
+    # when the full check ran. A credential-cache hit does not carry it, so it
+    # stays None and the adapter looks it up if the event creates a session.
+    api_key_name: Optional[str] = None
     if x_api_key:
         # Project-scoped, stream:write, hashed at rest. The project comes from
         # the key, so a caller cannot address another tenant at all.
@@ -571,6 +595,7 @@ async def ingest_live_event(
                 db=db, x_api_key=x_api_key
             )
             bound_project_id = str(stream_ctx.project_id)
+            api_key_name = getattr(stream_ctx, "api_key_name", None) or api_key_name
             await remember_streaming_project(x_api_key, bound_project_id)
     elif x_webhook_secret:
         if settings.LIVE_EVENTS_REQUIRE_PROJECT_KEY:
@@ -596,6 +621,16 @@ async def ingest_live_event(
                 "(or the legacy X-Webhook-Secret)."
             ),
         )
+
+    # Re-audit M4: a per-project budget, charged once the project is known and
+    # the caller authenticated -- never before, or anyone could spend another
+    # tenant's quota. Single events have their own bucket; see
+    # enforce_live_event_rate_limit. The legacy shared-secret path names no
+    # project here and is off by default, so it is not charged.
+    if bound_project_id:
+        from app.services.ingestion_rate_limit import enforce_live_event_rate_limit
+
+        await enforce_live_event_rate_limit(bound_project_id)
 
     event_type = event.get("type", "test_result")
 
@@ -664,9 +699,117 @@ async def ingest_live_event(
                 LIVE_SANITIZATION_VERSION_FIELD: LIVE_SANITIZATION_VERSION,
             }
         )
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 -- the audit copy must not block ingest
+        # Non-fatal on purpose: the event is still published below, so the
+        # run, the dashboard and the analysis are unaffected. What must not
+        # happen is the gap going unrecorded (re-audit M10) -- this used to be
+        # ``except Exception: pass``, so a Mongo outage erased the audit trail
+        # for every live event in the window and left no trace that it had.
+        from app.core.metrics import live_event_archive_failures_total
+
+        live_event_archive_failures_total.inc()
+        logger.warning(
+            "live_event_archive_failed run_id=%s event_type=%s error=%r",
+            run_id,
+            event_type,
+            exc,
+        )
+
+    # ── A project-key run is persisted like an SDK run (re-audit N14) ──────
+    #
+    # Everything below this block only ever put the event on the shared live
+    # stream: no LiveSession, no TestRun, no persistence. A run streamed here
+    # showed live and then vanished -- never in /runs, never analysed, never
+    # finalised. An event sent with a project-scoped key now goes through the
+    # SDK stream's own ingest path, which creates the session and its TestRun,
+    # counts the result in its admission script, fans it out to the dashboard,
+    # and on run_complete stages the persistence and finalisation every SDK
+    # run gets. See services/ws_event_ingest.py.
+    #
+    # The legacy shared secret names no project and is refused by default, so
+    # it keeps the old behaviour below: counted and shown live, never persisted.
+    if bound_project_id:
+        from app.services.ws_event_ingest import after_commit, ingest_one
+
+        outcome = await ingest_one(
+            db,
+            project_id=_uuid.UUID(bound_project_id),
+            api_key_name=api_key_name,
+            run_id=run_id,
+            event=safe_event,
+            api_key=x_api_key,
+        )
+        if outcome.staged:
+            # The stream router's order: commit what was staged, then finalise
+            # Redis. A close that fails to commit must not be finalised there.
+            await db.commit()
+            await after_commit(outcome)
+        return {
+            "accepted": True,
+            "run_id": run_id,
+            "event_type": event_type,
+            "session_id": outcome.session_id,
+        }
+
+    # ── Count the result where it arrives (re-audit H6) ─────────────────────
+    #
+    # Since re-audit N14 only the legacy shared-secret path reaches this: a
+    # project-key event returned above, and the SDK admission counted it.
+    #
+    # The consumer's result handler only READS the live-state counters and
+    # broadcasts them; its own comment says the increment happens at ingest,
+    # "in stream_service.ingest_event_batch()". That is true for the SDK batch
+    # path, whose admission Lua recounts its ledger sets into this same hash.
+    # It was never true here: nothing on this route touched the counters, and
+    # RedisLiveRunState.record_test_event -- the method the consumer's own
+    # docstring names for exactly this -- had no caller at all. A run streamed
+    # through this endpoint showed zero results on the live dashboard, never
+    # tripped the failure-rate early warning, and was finalised from counters
+    # that were all zero.
+    #
+    # Counted here rather than in the consumer on purpose: batch events are
+    # published into the same stream, so counting in the consumer would
+    # double-count every SDK run. This route is the only one that needs it.
+    #
+    # run_start creates the state here too. The consumer creates it as well,
+    # but asynchronously -- a result arriving before the consumer had processed
+    # its run_start found no state and was dropped. This call resets a run id
+    # being reused for a new run; the consumer's later call never resets, so it
+    # is a no-op rather than a wipe.
+    from app.streams.live_run_state import RedisLiveRunState
+
+    if event_type == "run_start":
+        # The producer's run_start begins a run: a caller reusing its run id
+        # within the state's lifetime starts a NEW run, which must not inherit
+        # the last one's counters or its "completed" status (code review of H6).
+        await RedisLiveRunState.start(
+            run_id,
+            str(safe_event.get("project_id")),
+            str(safe_event.get("build_number") or run_id),
+            _as_count(safe_event.get("total_tests")),
+            reset=True,
+        )
 
     # Enqueue to Redis Stream — returns immediately regardless of processing load
     await publish_live_event(run_id, safe_event)
+
+    if event_type == "test_result":
+        # Counted only once published: counting first meant a failed publish --
+        # a 500 the client retries -- counted the result twice (code review of
+        # H6). The producer discards the state it would have read back.
+        await RedisLiveRunState.record_test_event(
+            run_id,
+            str(safe_event.get("status") or "UNKNOWN"),
+            str(safe_event.get("test_name") or ""),
+            total_tests=_as_count(safe_event.get("total_tests")),
+            return_state=False,
+        )
     return {"accepted": True, "run_id": run_id, "event_type": event_type}
+
+
+def _as_count(value) -> int:
+    """A client-supplied count, or 0. Never lets a bad value 500 the ingest."""
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError):
+        return 0

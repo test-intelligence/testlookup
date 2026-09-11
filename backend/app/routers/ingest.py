@@ -118,6 +118,19 @@ async def ingest_batch(
     # run history / trigger their AI pipeline.
     await resolve_project_scope(db, current_user, str(target_project_id))
 
+    # Re-audit M4. Admission gates, after authorisation on purpose: charging
+    # the per-project bucket BEFORE the scope check would let any caller burn
+    # another tenant's quota. /api/v1/stream/* has had both gates since the
+    # scalable-ingestion work; these two routes -- the ones CI actually
+    # uploads through -- had neither, so one runaway pipeline could fill Redis
+    # and the worker queue for every project. Backpressure first: it needs no
+    # project and is the cheaper failure.
+    from app.services.ingestion_backpressure import enforce_redis_memory_backpressure
+    from app.services.ingestion_rate_limit import enforce_ingest_rate_limit
+
+    await enforce_redis_memory_backpressure()
+    await enforce_ingest_rate_limit(str(target_project_id))
+
     from app.worker.tasks import ingest_uploaded_results
     from app.db.storage import get_storage_provider
 
@@ -351,6 +364,19 @@ async def ingest_file(
     # Tenant isolation: non-admin users can only ingest into projects they
     # are members of (raises 403 otherwise).
     await resolve_project_scope(db, current_user, str(target_project_id))
+
+    # Re-audit M4. Admission gates, after authorisation on purpose: charging
+    # the per-project bucket BEFORE the scope check would let any caller burn
+    # another tenant's quota. /api/v1/stream/* has had both gates since the
+    # scalable-ingestion work; these two routes -- the ones CI actually
+    # uploads through -- had neither, so one runaway pipeline could fill Redis
+    # and the worker queue for every project. Backpressure first: it needs no
+    # project and is the cheaper failure.
+    from app.services.ingestion_backpressure import enforce_redis_memory_backpressure
+    from app.services.ingestion_rate_limit import enforce_ingest_rate_limit
+
+    await enforce_redis_memory_backpressure()
+    await enforce_ingest_rate_limit(str(target_project_id))
 
     from app.worker.tasks import ingest_uploaded_file
 

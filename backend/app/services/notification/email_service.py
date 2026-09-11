@@ -189,6 +189,37 @@ def _build_plain(title: str, body: str, metadata: dict) -> str:
 
 # ── Public API ────────────────────────────────────────────────
 
+def smtp_host(cfg: dict[str, Any]) -> str:
+    """The relay a send connects to: one expression for the gate and the send.
+
+    Code review of H10: the gate checked ``cfg.get("host") or SMTP_HOST`` while
+    the sends connected to ``cfg.get("host", SMTP_HOST)``. Those differ when the
+    stored host is empty, so the gate could approve one relay and the send dial
+    another.
+    """
+    return cfg.get("host") or settings.SMTP_HOST
+
+
+async def _assert_smtp_allowed(host: str) -> None:
+    """Refuse to hand mail to a relay that is off-box while offline.
+
+    Re-audit H10. Guards every ``aiosmtplib.send`` in this module rather than
+    the public functions, because there are three senders and only one of them
+    is reached through the notification manager -- gating the entry points
+    would leave the report and attachment paths open.
+
+    Residency, not channel: an internal relay is a legitimate offline
+    destination and stays allowed; ``smtp.gmail.com`` is egress however
+    ordinary "email" sounds. The DNS lookup runs off the event loop.
+
+    The relay is the deployment's own -- the SMTP settings an admin stores, or
+    the environment -- so ``OFFLINE_NOTIFICATION_ALLOWED_HOSTS`` applies to it.
+    """
+    from app.services.notification.egress import assert_delivery_allowed_async
+
+    await assert_delivery_allowed_async("SMTP", host, deployment_wide=True)
+
+
 async def send_notification(
     to: str,
     title: str,
@@ -231,9 +262,11 @@ async def send_notification(
     msg.attach(MIMEText(_build_html(title, body, event_type, meta), "html"))
 
     use_tls = bool(cfg.get("tls", True))
+    host = smtp_host(cfg)
+    await _assert_smtp_allowed(host)
     await aiosmtplib.send(
         msg,
-        hostname=cfg.get("host", settings.SMTP_HOST),
+        hostname=host,
         port=int(cfg.get("port", settings.SMTP_PORT)),
         username=cfg.get("user") or None,
         password=cfg.get("password") or None,
@@ -275,9 +308,11 @@ async def send_html_email(
     msg.attach(MIMEText(html_body, "html"))
 
     use_tls = bool(cfg.get("tls", True))
+    host = smtp_host(cfg)
+    await _assert_smtp_allowed(host)
     await aiosmtplib.send(
         msg,
-        hostname=cfg.get("host", settings.SMTP_HOST),
+        hostname=host,
         port=int(cfg.get("port", settings.SMTP_PORT)),
         username=cfg.get("user") or None,
         password=cfg.get("password") or None,
@@ -343,9 +378,11 @@ async def send_html_email_with_attachments(
         msg.attach(part)
 
     use_tls = bool(cfg.get("tls", True))
+    host = smtp_host(cfg)
+    await _assert_smtp_allowed(host)
     await aiosmtplib.send(
         msg,
-        hostname=cfg.get("host", settings.SMTP_HOST),
+        hostname=host,
         port=int(cfg.get("port", settings.SMTP_PORT)),
         username=cfg.get("user") or None,
         password=cfg.get("password") or None,

@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
@@ -22,11 +22,81 @@ from app.models.postgres import (
     NotificationEventType,
     NotificationLog,
     NotificationPreference,
+    ProjectMember,
     User,
+    UserRole,
 )
 from app.services.notification import email_service, slack_service, teams_service
 
 logger = logging.getLogger(__name__)
+
+
+def _recipient_may_see_project(project_id: uuid.UUID):
+    """SQL: the preference's owner may read ``project_id`` right now (QA-R3-1).
+
+    A project's notifications carry its run results and failure text, so they
+    go only to someone who could read them in the app: an active account that
+    is an instance ADMIN (``get_accessible_project_ids`` answers "everything"
+    for one) or a member of the project. Checked at send time, not only when
+    the preference is written, because membership changes: a member who
+    leaves keeps the row, and an "all projects" (``project_id IS NULL``) row
+    matches every project, including ones its owner was never in.
+
+    Needs ``User`` joined on ``NotificationPreference.user_id``.
+    """
+    return and_(
+        User.is_active.is_(True),
+        or_(
+            User.role == UserRole.ADMIN.value,
+            exists().where(
+                ProjectMember.user_id == NotificationPreference.user_id,
+                ProjectMember.project_id == project_id,
+            ),
+        ),
+    )
+
+
+async def _rows_whose_recipient_may_see_project(
+    db,
+    candidates: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID]],
+) -> set[uuid.UUID]:
+    """The ids of ``(row_id, user_id, project_id)`` whose user may read the project now.
+
+    The relay's copy of :func:`_recipient_may_see_project`, for rows staged
+    earlier: same rule (active, and ADMIN or a member), one query per claim.
+    """
+    if not candidates:
+        return set()
+    user_ids = {user_id for _row, user_id, _project in candidates}
+    project_ids = {project_id for _row, _user, project_id in candidates}
+    users = {
+        user_id: (is_active, role)
+        for user_id, is_active, role in (
+            await db.execute(
+                select(User.id, User.is_active, User.role).where(User.id.in_(user_ids))
+            )
+        ).all()
+    }
+    memberships = set(
+        (
+            await db.execute(
+                select(ProjectMember.user_id, ProjectMember.project_id).where(
+                    ProjectMember.user_id.in_(user_ids),
+                    ProjectMember.project_id.in_(project_ids),
+                )
+            )
+        ).all()
+    )
+    allowed: set[uuid.UUID] = set()
+    for row_id, user_id, project_id in candidates:
+        is_active, role = users.get(user_id, (False, None))
+        if not is_active:
+            continue
+        if str(getattr(role, "value", role)) == UserRole.ADMIN.value or (
+            (user_id, project_id) in memberships
+        ):
+            allowed.add(row_id)
+    return allowed
 
 _MAX_DURABLE_DELIVERY_ATTEMPTS = 8
 _TEAM_ROUTE_METADATA_KEY = "_durable_team_route"
@@ -93,6 +163,25 @@ def _enabled_global_webhook(channel: str, resolved: Optional[dict]) -> Optional[
     return settings.TEAMS_WEBHOOK_URL if settings.TEAMS_ENABLED else None
 
 
+def preference_webhook(
+    channel: str, override: Optional[str], resolved: Optional[dict]
+) -> tuple[Optional[str], bool]:
+    """The webhook a subscriber's delivery goes to, and whether it is the deployment's own.
+
+    ``override`` is the subscriber's own webhook, which ``POST/PUT
+    /api/v1/notifications/preferences`` accepts from any authenticated user.
+    It wins when set, and it is never deployment-wide. The operator's
+    ``OFFLINE_NOTIFICATION_ALLOWED_HOSTS`` names hosts, and Slack and Teams
+    put every workspace on the same hosts, so a user could otherwise receive
+    notification content in a workspace of their own (code review of H10).
+    Without an override the delivery falls back to the global webhook an
+    admin configured, which is deployment-wide.
+    """
+    if override:
+        return override, False
+    return _enabled_global_webhook(channel, resolved), True
+
+
 def _notification_channel_value(channel: NotificationChannel | str) -> str:
     """Normalize ORM enum values across PostgreSQL driver configurations."""
     if isinstance(channel, NotificationChannel):
@@ -147,7 +236,9 @@ async def _dispatch_to_channel(
             )
 
         elif pref.channel == NotificationChannel.SLACK:
-            webhook_url = pref.slack_webhook_url or _enabled_global_webhook("slack", global_webhooks)
+            webhook_url, deployment_wide = preference_webhook(
+                "slack", pref.slack_webhook_url, global_webhooks
+            )
             if not webhook_url:
                 return "failed", "No Slack webhook URL configured"
             await slack_service.send_notification(
@@ -157,10 +248,13 @@ async def _dispatch_to_channel(
                 event_type=event_type.value,
                 metadata=metadata,
                 delivery_id=delivery_id,
+                deployment_wide=deployment_wide,
             )
 
         elif pref.channel == NotificationChannel.TEAMS:
-            webhook_url = pref.teams_webhook_url or _enabled_global_webhook("teams", global_webhooks)
+            webhook_url, deployment_wide = preference_webhook(
+                "teams", pref.teams_webhook_url, global_webhooks
+            )
             if not webhook_url:
                 return "failed", "No Teams webhook URL configured"
             await teams_service.send_notification(
@@ -170,6 +264,7 @@ async def _dispatch_to_channel(
                 event_type=event_type.value,
                 metadata=metadata,
                 delivery_id=delivery_id,
+                deployment_wide=deployment_wide,
             )
 
         return "sent", None
@@ -282,6 +377,7 @@ async def _stage_scoped_preference_deliveries(
                 NotificationPreference.project_id == project_id,
                 NotificationPreference.project_id.is_(None),
             ),
+            _recipient_may_see_project(project_id),
         )
     )
     plans = _build_notification_plans(
@@ -348,7 +444,8 @@ async def _load_and_notify(
             # The durable notification relay owns provider I/O and retries.
             return
 
-        # Load all preferences for this project (and global preferences)
+        # Load all preferences for this project (and global preferences) whose
+        # owner may still read it.
         prefs_result = await db.execute(
             select(NotificationPreference, User.email)
             .join(User, NotificationPreference.user_id == User.id)
@@ -358,6 +455,7 @@ async def _load_and_notify(
                     NotificationPreference.project_id == project_id,
                     NotificationPreference.project_id.is_(None),
                 ),
+                _recipient_may_see_project(project_id),
             )
         )
         rows = prefs_result.all()
@@ -654,6 +752,25 @@ async def relay_pending_notification_deliveries(
                 pref.id: (pref, user_email)
                 for pref, user_email in preference_result.all()
             }
+            # A row can wait minutes to hours between staging and its last
+            # retry. Re-check the recipient against each row's own project, and
+            # treat one who lost access like a deleted preference (QA-R3-1).
+            allowed_rows = await _rows_whose_recipient_may_see_project(
+                db,
+                [
+                    (row.id, preferences[row.preference_id][0].user_id, row.project_id)
+                    for row in rows
+                    if row.preference_id in preferences and row.project_id is not None
+                ],
+            )
+            preferences_by_row = {
+                row.id: preferences[row.preference_id]
+                for row in rows
+                if row.preference_id in preferences
+                and (row.project_id is None or row.id in allowed_rows)
+            }
+        else:
+            preferences_by_row = {}
         team_routes = {
             row.id: dict(row.delivery_metadata or {}).get(_TEAM_ROUTE_METADATA_KEY)
             for row in rows
@@ -664,8 +781,8 @@ async def relay_pending_notification_deliveries(
         }
         needs_email = any(
             (
-                preferences.get(row.preference_id, (None, None))[0] is not None
-                and preferences[row.preference_id][0].channel
+                preferences_by_row.get(row.id, (None, None))[0] is not None
+                and preferences_by_row[row.id][0].channel
                 == NotificationChannel.EMAIL
             )
             or (
@@ -681,8 +798,8 @@ async def relay_pending_notification_deliveries(
             for row in rows
         )
         needs_webhooks = any(
-            preferences.get(row.preference_id, (None, None))[0] is not None
-            and preferences[row.preference_id][0].channel
+            preferences_by_row.get(row.id, (None, None))[0] is not None
+            and preferences_by_row[row.id][0].channel
             in (NotificationChannel.SLACK, NotificationChannel.TEAMS)
             for row in rows
         )
@@ -722,6 +839,9 @@ async def relay_pending_notification_deliveries(
                     delivery_id=row.delivery_key,
                 )
             elif channel == NotificationChannel.SLACK:
+                # A team route's webhook was set per project by a QA lead, and
+                # an explicit route's target per subscription. Neither is the
+                # deployment's own, so the allow-list does not cover them.
                 await slack_service.send_notification(
                     webhook_url=target,
                     title=row.title,
@@ -729,6 +849,7 @@ async def relay_pending_notification_deliveries(
                     event_type=event.value,
                     metadata=metadata,
                     delivery_id=row.delivery_key,
+                    deployment_wide=False,
                 )
             elif channel == NotificationChannel.TEAMS:
                 await teams_service.send_notification(
@@ -738,6 +859,7 @@ async def relay_pending_notification_deliveries(
                     event_type=event.value,
                     metadata=metadata,
                     delivery_id=row.delivery_key,
+                    deployment_wide=False,
                 )
             return "sent", None
         except Exception as exc:  # noqa: BLE001
@@ -789,9 +911,12 @@ async def relay_pending_notification_deliveries(
         explicit_route = explicit_routes.get(row.id)
         if isinstance(explicit_route, dict):
             return await _dispatch_snapshotted_route(row, explicit_route)
-        route = preferences.get(row.preference_id)
+        route = preferences_by_row.get(row.id)
         if route is None:
-            return "failed", "Notification preference no longer exists"
+            return "failed", (
+                "Notification preference no longer exists, or its owner can "
+                "no longer access this project"
+            )
         pref, user_email = route
         try:
             event = NotificationEventType(row.event_type)

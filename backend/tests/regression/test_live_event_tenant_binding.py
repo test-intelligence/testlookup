@@ -45,6 +45,17 @@ def wired(monkeypatch):
         return "1-0"
 
     monkeypatch.setattr("app.streams.producer.publish_live_event", _publish)
+    # Since re-audit N14 a project-key event is handed to the SDK stream's
+    # path (services/ws_event_ingest.py) instead of published directly. That
+    # adapter is the transport for this branch now, so it is stubbed the same
+    # way, into the same list.
+    async def _admit(_db, *, project_id, api_key_name, run_id, event, api_key=None):
+        published.append((run_id, event))
+        from app.services.ws_event_ingest import WsIngestOutcome
+
+        return WsIngestOutcome("session-1")
+
+    monkeypatch.setattr("app.services.ws_event_ingest.ingest_one", _admit)
 
     class _Coll:
         async def insert_one(self, _doc):
@@ -84,6 +95,38 @@ def wired(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.live_event_authz.remember_streaming_project", _remember_key
+    )
+
+    # Since re-audit H6 the handler counts results into the live-run state
+    # itself (it used to count nothing). These tests are about WHO may write,
+    # not about counting, so stub the state rather than let it reach Redis.
+    # The counting has its own suite: test_ws_events_results_are_counted.py.
+    async def _state_noop(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.streams.live_run_state.RedisLiveRunState.start", _state_noop
+    )
+    monkeypatch.setattr(
+        "app.streams.live_run_state.RedisLiveRunState.record_test_event",
+        _state_noop,
+    )
+
+    # Since re-audit M4/M3 the route also passes two admission gates (Redis
+    # backpressure and a per-project event budget). These tests are about WHO
+    # may write, and unstubbed the gates reach for a real Redis and wait out a
+    # connection timeout per test. The gates have their own suite:
+    # test_live_event_ingest_is_gated.py.
+    async def _gate_open(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.ingestion_backpressure.enforce_redis_memory_backpressure",
+        _gate_open,
+    )
+    monkeypatch.setattr(
+        "app.services.ingestion_rate_limit.enforce_live_event_rate_limit",
+        _gate_open,
     )
     # The SHIPPED default is True (see
     # test_the_shared_secret_is_refused_by_default). These cases opt back

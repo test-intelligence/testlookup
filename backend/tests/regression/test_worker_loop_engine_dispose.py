@@ -1,29 +1,21 @@
-"""Regression (BUG-003): "Event loop is closed" raised when an asyncpg
-connection is torn down in the Celery workers.
+"""Regression (BUG-003, re-audit M1): the async engine and the worker's event loop.
 
-Symptom (live homelab run 493d5c1f, 2026-06-06): the AI / ingestion
-workers logged ``Exception terminating connection <AdaptedConnection
-<asyncpg...Connection...>>`` → ``RuntimeError: Event loop is closed`` and
-the AI pipeline ended with ``errors=1`` / status ``partial`` (which then
-hides it on /agents).
+BUG-003 (homelab run 493d5c1f, 2026-06-06). The AI and ingestion workers logged
+``Exception terminating connection <AdaptedConnection <asyncpg...>>`` then
+``RuntimeError: Event loop is closed``, and the AI pipeline ended ``partial``.
+Every task ran on a private, short-lived loop; the ``@lru_cache``'d engine
+pooled asyncpg connections bound to the first loop that used it, and once that
+loop closed, finalising those connections on it raised.
 
-Root cause: every Celery task runs its coroutine in a private, short-lived
-event loop (``worker/tasks.py::_run_async`` → ``asyncio.new_event_loop()``
-… ``loop.close()``). The ``@lru_cache``'d ``app.db.postgres.get_engine()``
-builds the async engine — and pools its asyncpg connections — bound to the
-loop that was current on first use. When that loop is closed at the end of
-the task, the still-pooled connections remain attached to a *dead* loop; the
-next task (or GC) then tries to finalize them on that dead loop and raises
-``RuntimeError: Event loop is closed``.
+The fix then was to dispose the engine on the task's own loop, before closing
+it, after every task. Correct for a loop per task -- and the reason no
+connection ever outlived a task (re-audit M1).
 
-Fix: ``_run_async`` now disposes the engine on its own loop, in the
-``finally`` block, *before* the loop closes (``dispose_engine_for_loop()``),
-and clears the lazy-build caches so the next task rebuilds a fresh engine on
-its own loop — mirroring the Redis-singleton reset already done there.
-
-These pins assert the dispose-in-finally wiring directly (a true asyncpg
-repro needs a live Postgres), plus an end-to-end check that no
-"Event loop is closed" escapes ``_run_async``.
+Now a worker child keeps one loop (``worker/loop_runner.py``) and the engine
+lives as long as the loop. BUG-003's rule still holds one level up: the engine
+is disposed on the loop that owns it, before that loop closes -- at worker
+shutdown, or when an interrupted task discards the loop -- and never after an
+ordinary task.
 """
 from __future__ import annotations
 
@@ -32,10 +24,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# app.worker.tasks pulls in the real celery package, which isn't installed in
-# the local dev venv (it is in CI / the container). Skip the _run_async wiring
-# checks gracefully when it's absent; the dispose_engine_for_loop checks below
-# have no such dependency and always run.
+# app.worker.tasks pulls in the real celery package. Skip the _run_async checks
+# gracefully when it is absent; the dispose_engine_for_loop checks below have
+# no such dependency and always run.
 try:  # pragma: no cover - import guard
     from app.worker import tasks as _tasks  # noqa: F401
     _HAS_CELERY = True
@@ -45,6 +36,14 @@ except Exception:  # pragma: no cover
 _needs_celery = pytest.mark.skipif(
     not _HAS_CELERY, reason="celery not installed locally (runs in CI/container)"
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_leftover_worker_loop():
+    yield
+    from app.worker import loop_runner
+
+    loop_runner.shutdown_worker_loop()
 
 
 # ---------------------------------------------------------------------------
@@ -59,11 +58,6 @@ async def test_dispose_engine_for_loop_disposes_and_clears_caches(monkeypatch):
     rebuilds on a fresh loop."""
     import app.db.postgres as pg
 
-    # ``AsyncEngine.dispose`` is read-only on the instance, so we can't build a
-    # real engine and monkeypatch its method. Instead patch the cached builder
-    # to hand back a fake engine and verify dispose_engine_for_loop awaits it
-    # and clears the caches. We make cache_info() report a built engine so the
-    # "engine exists" branch is taken.
     fake_engine = MagicMock()
     fake_engine.dispose = AsyncMock()
 
@@ -92,12 +86,9 @@ async def test_dispose_engine_for_loop_disposes_and_clears_caches(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_dispose_engine_for_loop_real_engine_clears_caches(monkeypatch):
-    """Integration-flavoured variant against a REAL (non-connecting) engine:
-    after dispose, both lru_caches are empty so the next task rebuilds fresh.
-
-    Uses a non-connecting asyncpg URL — ``create_async_engine`` never opens a
-    socket, and ``dispose()`` on an unused pool makes no network call — so this
-    is safe with no live Postgres."""
+    """Against a REAL (non-connecting) engine: after dispose, both lru_caches are
+    empty so the next caller rebuilds fresh. ``create_async_engine`` never opens
+    a socket, and ``dispose()`` on an unused pool makes no network call."""
     import app.db.postgres as pg
 
     monkeypatch.setattr(
@@ -108,7 +99,6 @@ async def test_dispose_engine_for_loop_real_engine_clears_caches(monkeypatch):
     pg.get_engine.cache_clear()
     pg.get_session_factory.cache_clear()
 
-    # Force-build the engine + factory (simulating a task that touched the DB).
     pg.get_engine()
     pg.get_session_factory()
     assert pg.get_engine.cache_info().currsize == 1
@@ -116,16 +106,14 @@ async def test_dispose_engine_for_loop_real_engine_clears_caches(monkeypatch):
 
     await pg.dispose_engine_for_loop()
 
-    # Caches cleared → next get_engine() builds a brand-new engine.
     assert pg.get_engine.cache_info().currsize == 0
     assert pg.get_session_factory.cache_info().currsize == 0
 
 
 @pytest.mark.asyncio
 async def test_dispose_engine_for_loop_noop_when_engine_never_built(monkeypatch):
-    """If no task touched the DB, the engine was never built — dispose must
-    NOT force-build one just to dispose it (that would open a pool only to
-    immediately tear it down, and could fail with no DATABASE_URL)."""
+    """If nothing touched the DB, dispose must NOT force-build an engine just to
+    dispose it."""
     import app.db.postgres as pg
 
     pg.get_engine.cache_clear()
@@ -134,78 +122,63 @@ async def test_dispose_engine_for_loop_noop_when_engine_never_built(monkeypatch)
 
     with patch.object(pg, "get_engine", wraps=pg.get_engine) as spy:
         await pg.dispose_engine_for_loop()
-        # currsize==0 path: we only read cache_info(), never invoke the builder.
         spy.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# _run_async wiring
+# _run_async: one loop per worker child (re-audit M1)
 # ---------------------------------------------------------------------------
 
 
 @_needs_celery
-def test_run_async_disposes_engine_before_loop_close():
-    """The tasks._run_async finally-block must await dispose_engine_for_loop()
-    on the SAME loop, while that loop is still open (not closed)."""
+def test_the_engine_is_not_disposed_between_tasks():
+    """Three tasks, one loop, one engine: no per-task teardown, and no
+    'Event loop is closed' from reusing it."""
     from app.worker import tasks
 
-    observed: dict[str, object] = {}
+    disposed: list[object] = []
+    loops: list[object] = []
 
     async def _fake_dispose() -> None:
-        loop = asyncio.get_event_loop()
-        observed["dispose_loop"] = loop
-        observed["loop_running_at_dispose"] = loop.is_running()
-        observed["loop_closed_at_dispose"] = loop.is_closed()
+        disposed.append(asyncio.get_running_loop())
 
-    async def _body() -> str:
-        observed["body_loop"] = asyncio.get_event_loop()
-        return "ok"
-
-    with patch("app.db.postgres.dispose_engine_for_loop", _fake_dispose):
-        result = tasks._run_async(_body())
-
-    assert result == "ok"
-    # dispose ran...
-    assert "dispose_loop" in observed, "dispose_engine_for_loop was never awaited"
-    # ...on the same loop the coroutine body ran on...
-    assert observed["dispose_loop"] is observed["body_loop"]
-    # ...and BEFORE that loop was closed.
-    assert observed["loop_closed_at_dispose"] is False
-
-
-@_needs_celery
-def test_run_async_no_event_loop_closed_error_on_repeated_calls():
-    """End-to-end: invoking _run_async repeatedly (as the worker does, one
-    loop per task) must not surface a 'Event loop is closed' RuntimeError.
-
-    Before the fix the pooled engine from call N stayed bound to call N's
-    closed loop and blew up; after the fix each call disposes its own engine
-    in-loop. We stub the engine with a dispose() that records which loop it
-    ran on to prove cross-loop teardown never happens."""
-    from app.worker import tasks
-
-    # Record (loop, closed-state) AT dispose time. Checking ``is_closed()``
-    # after the loop block always reads True, because ``_run_async`` closes
-    # each loop once its coroutine finishes. The contract under test is that
-    # dispose runs BEFORE the loop is closed, which can only be observed in-loop.
-    dispose_records: list[tuple[object, bool]] = []
-
-    async def _fake_dispose() -> None:
-        loop = asyncio.get_event_loop()
-        dispose_records.append((loop, loop.is_closed()))
-
-    async def _touch_db() -> int:
-        # Simulate a task that "used" the DB.
+    async def _body() -> int:
+        loops.append(asyncio.get_running_loop())
         await asyncio.sleep(0)
         return 1
 
     with patch("app.db.postgres.dispose_engine_for_loop", _fake_dispose):
         for _ in range(3):
-            # Must not raise RuntimeError("Event loop is closed").
-            assert tasks._run_async(_touch_db()) == 1
+            assert tasks._run_async(_body()) == 1
 
-    # Three task invocations → three distinct loops, each disposed in-loop.
-    assert len(dispose_records) == 3
-    assert len(set(id(loop) for loop, _closed in dispose_records)) == 3
-    # Every dispose ran on a loop that was NOT yet closed (captured in-loop).
-    assert all(not closed_at_dispose for _loop, closed_at_dispose in dispose_records)
+    assert disposed == [], (
+        "the engine was torn down after an ordinary task, so its pool never "
+        "outlives one (re-audit M1)"
+    )
+    assert len(set(map(id, loops))) == 1, "each task got its own loop again"
+
+
+@_needs_celery
+def test_shutdown_disposes_the_engine_on_its_own_loop_before_closing_it():
+    """BUG-003's rule, at the one place teardown now happens."""
+    from app.worker import loop_runner, tasks
+
+    observed: dict[str, object] = {}
+
+    async def _fake_dispose() -> None:
+        loop = asyncio.get_running_loop()
+        observed["loop"] = loop
+        observed["closed"] = loop.is_closed()
+
+    async def _body() -> str:
+        observed["body_loop"] = asyncio.get_running_loop()
+        return "ok"
+
+    with patch("app.db.postgres.dispose_engine_for_loop", _fake_dispose):
+        assert tasks._run_async(_body()) == "ok"
+        assert "loop" not in observed, "disposed before the worker shut down"
+        loop_runner.shutdown_worker_loop()
+
+    assert observed["loop"] is observed["body_loop"], "disposed on a different loop"
+    assert observed["closed"] is False, "disposed after its loop was closed"
+    assert observed["body_loop"].is_closed(), "shutdown left the loop open"

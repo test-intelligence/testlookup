@@ -253,6 +253,19 @@ def auth_as(monkeypatch):
         if role is None:
             role = UserRole.QA_ENGINEER
         user = make_user(role=role, is_active=is_active)
+        if bound_project_id is not None:
+            # What _validate_api_key does for a project-scoped key: the binding
+            # travels on the user object, where every dependency reads it. It
+            # used to reach only get_api_key_context, so a test passing
+            # bound_project_id got a user no other dependency saw as bound.
+            from app.core.deps import (
+                CREDENTIAL_KIND_API_KEY,
+                _bind_api_key_project,
+                _bind_credential_kind,
+            )
+
+            _bind_api_key_project(user, bound_project_id)
+            _bind_credential_kind(user, CREDENTIAL_KIND_API_KEY)
 
         async def _current():
             return user

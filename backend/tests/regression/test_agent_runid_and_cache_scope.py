@@ -39,9 +39,16 @@ def test_analysis_cache_key_is_project_scoped():
     # Same failure content, different tenants → different cache entries.
     assert a != b
     assert a.endswith(":proj:project-A")
-    # No project → falls back to the legacy global key (back-compat).
+    # No project → NO key, and therefore no cache (re-audit M15).
+    #
+    # This used to assert the opposite: that a missing project "falls back to
+    # the legacy global key (back-compat)". That fallback was the defect. Both
+    # callers pass None whenever the analysis context lacks a project, so the
+    # fallback put every such analysis -- which embeds project-specific
+    # Splunk/OCP evidence -- into one namespace shared by all tenants. Pinning
+    # it as back-compat is what kept it alive.
     g = svc._scoped_cache_key("LoginTest.test_x", "NPE", "stack", None)
-    assert g == svc.compute_analysis_cache_key("LoginTest.test_x", "NPE", "stack")
+    assert g is None
 
 
 @pytest.mark.asyncio

@@ -349,6 +349,13 @@ async def create_report_eval_cycle(
     )
     from app.core.config import settings
 
+    if payload.project_id is not None:
+        # The named project is read below (its published reports); check it
+        # like any scoped id (code review round 4). An admin passes by role.
+        from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+        await resolve_project_scope(db, current_user, str(payload.project_id))
+
     try:
         reports = payload.reports
         feedback_summary = None

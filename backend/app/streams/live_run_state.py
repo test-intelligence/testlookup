@@ -45,6 +45,7 @@ class RedisLiveRunState:
         *,
         launch_name: Optional[str] = None,
         suite_name: Optional[str] = None,
+        reset: bool = False,
     ) -> None:
         """Register a new live run. Idempotent — safe to call if run already exists.
 
@@ -64,10 +65,23 @@ class RedisLiveRunState:
         # A source Redis Stream entry may be reclaimed after its side effects
         # succeeded but before XACK. Do not reset counters when that same
         # run_start is delivered again.
+        #
+        # ``reset`` is for the producer's own run_start (POST /ws/events), where
+        # the run id is the caller's: a caller that reuses the id of a run that
+        # has COMPLETED is starting a new run, which must not begin from the
+        # last run's totals, or stay "completed" (code review of re-audit H6).
+        # A run still in progress is left alone: a retried run_start, or a
+        # parallel shard opening the same id, is the same run, and resetting it
+        # wiped its counts (QA and code review of the H6 fix). The consumer
+        # never resets: its call can arrive after the producer's -- even after
+        # the run completed -- and must change nothing.
+        replace = False
         if await redis.exists(key):
-            await redis.expire(key, _TTL)
-            await redis.sadd(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
-            return
+            if not reset or (await redis.hget(key, "status")) != "completed":  # type: ignore[misc]
+                await redis.expire(key, _TTL)
+                await redis.sadd(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
+                return
+            replace = True
 
         now = datetime.now(timezone.utc).isoformat()
         mapping: dict = {
@@ -89,9 +103,20 @@ class RedisLiveRunState:
             mapping["launch_name"] = launch_name
         if suite_name:
             mapping["suite_name"] = suite_name
-        await redis.hset(key, mapping=mapping)  # type: ignore[misc]
-        await redis.expire(key, _TTL)
-        await redis.sadd(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
+        if replace:
+            # One transaction: the finished run's state goes and the new run's
+            # arrives together, so nothing counted in between can be wiped, or
+            # land on a half-written state.
+            pipe = redis.pipeline(transaction=True)
+            pipe.delete(key)
+            pipe.hset(key, mapping=mapping)
+            pipe.expire(key, _TTL)
+            pipe.sadd(LIVE_ACTIVE_SET, run_id)
+            await pipe.execute()
+        else:
+            await redis.hset(key, mapping=mapping)  # type: ignore[misc]
+            await redis.expire(key, _TTL)
+            await redis.sadd(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
         logger.info("Live run started: %s build=%s launch=%s suite=%s",
                     run_id, build_number, launch_name or "-", suite_name or "-")
 
@@ -102,6 +127,8 @@ class RedisLiveRunState:
         status: str,
         test_name: str,
         total_tests: int = 0,
+        *,
+        return_state: bool = True,
     ) -> Optional[dict]:
         """
         Atomically increment the counter for the given status and update metadata.
@@ -154,6 +181,10 @@ class RedisLiveRunState:
         pipe.hset(key, mapping=updates)
         pipe.expire(key, _TTL)
         await pipe.execute()
+        if not return_state:
+            # The producer discards the state; reading the whole hash back cost
+            # a round trip per event (code review of re-audit H6).
+            return None
         return await cls.get(run_id)
 
     @classmethod

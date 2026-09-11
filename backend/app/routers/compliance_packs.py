@@ -156,7 +156,9 @@ async def download_compliance_pack(
 async def retire_compliance_pack(
     pack_id: uuid.UUID,
     body: RetireCompliancePackRequest,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: a project-bound key may call this; resolve_project_scope on the
+    # pack's project below refuses it any other project's pack.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     """Bring a pack's retention window forward to now (S4).
@@ -203,7 +205,9 @@ async def retire_compliance_pack(
 @router.delete("/api/v1/compliance-packs/{pack_id}", status_code=204)
 async def delete_compliance_pack(
     pack_id: uuid.UUID,
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: a project-bound key may call this; resolve_project_scope on the
+    # pack's project below refuses it any other project's pack.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a pack whose retention window has already passed.

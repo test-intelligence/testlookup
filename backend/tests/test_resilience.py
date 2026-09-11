@@ -254,9 +254,14 @@ class TestAgentCache:
             mock_redis = AsyncMock()
             mock_redis.get = AsyncMock(return_value=json.dumps(cached_analysis))
             mock_get_redis.return_value = mock_redis
-            result = await _check_analysis_cache("TestLogin", "error msg", "stacktrace")
+            # Re-audit M15: with no project there is no safe key and no cache,
+            # so a hit needs a project -- and must be read under its own key.
+            result = await _check_analysis_cache(
+                "TestLogin", "error msg", "stacktrace", project_id="p-1"
+            )
             assert result is not None
             assert result["failure_category"] == "INFRASTRUCTURE"
+            assert mock_redis.get.call_args.args[0].endswith(":proj:p-1")
 
     @pytest.mark.asyncio
     async def test_cache_store_sets_with_ttl(self):
@@ -269,10 +274,12 @@ class TestAgentCache:
             await _store_analysis_cache(
                 "TestLogin", "error msg", "stacktrace",
                 {"failure_category": "BUG", "confidence_score": 85},
+                project_id="p-1",
             )
             mock_redis.set.assert_called_once()
             call_args = mock_redis.set.call_args
             assert call_args.kwargs.get("ex") == 3600  # 1 hour TTL
+            assert call_args.args[0].endswith(":proj:p-1"), "stored under an unscoped key"
 
     @pytest.mark.asyncio
     async def test_cache_no_inputs_returns_none(self):

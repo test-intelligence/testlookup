@@ -12,7 +12,7 @@ Transaction model (item #2: one commit per request):
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
@@ -427,7 +427,7 @@ async def update_release(db: AsyncSession, release_id: str, body) -> Release:
 
         # Auto-set released_at if not explicitly provided
         if "released_at" not in updates or not updates["released_at"]:
-            updates["released_at"] = datetime.now()
+            updates["released_at"] = datetime.now(timezone.utc)
 
     if "name" in updates and getattr(release, "source_system", None):
         # The external system owns the name. Both syncs write `existing.name`
@@ -844,12 +844,12 @@ async def update_phase(
     # Auto-set actual_start when transitioning to in_progress
     if updates.get("status") == "in_progress" and phase.status == "pending":
         if "actual_start" not in updates:
-            updates["actual_start"] = datetime.now()
+            updates["actual_start"] = datetime.now(timezone.utc)
 
     # Auto-set actual_end when transitioning to completed
     if updates.get("status") == "completed" and phase.status != "completed":
         if "actual_end" not in updates:
-            updates["actual_end"] = datetime.now()
+            updates["actual_end"] = datetime.now(timezone.utc)
 
     # Control fields, not columns: they drive the gate above and are recorded
     # in the audit trail, never written onto the phase row.

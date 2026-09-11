@@ -1,5 +1,888 @@
 # Changelog
 
+## 2026-09-10 — a streaming-only API key could administer its project, and anyone could subscribe to another project's failures
+
+- **Notification preferences.** `POST/PUT /api/v1/notifications/preferences`
+  accepted any `project_id`, and every enabled preference of a project was sent
+  its notifications. Any signed-in user, or any project-bound key, could
+  subscribe to another tenant's "run failed" notifications with an address or
+  webhook of its own. Writing a preference now checks the project (a bound key:
+  only its own; anyone else: membership, admins pass), a bound key lists only
+  its own project's preferences, and at send time the recipient must still be
+  an active admin or member of the project -- "all projects" preferences
+  included, which used to match every tenant's notifications.
+- **A scoped API key without `project:admin` can stream, upload and read, and
+  not administer.** A `["stream:write"]` CI key could delete runs, reset its
+  project, and mint itself a full-access, never-expiring replacement. After a
+  first fix that covered only the 22 routes opting a bound key into ADMIN, the
+  same key still set its project's team Slack webhook, added an outsider as
+  QA_LEAD, and updated and deleted the project; unbound, it created instance
+  administrators through `POST /api/v1/users` (QA-R4-1, QA-R4-2). What is
+  enforced now, for a key with a non-empty scope list that lacks
+  `project:admin`, bound or not:
+  - every route needing QA_LEAD or ADMIN (`require_role`) refuses it, reads
+    included (e.g. `GET /api/v1/users`);
+  - every route behind a project, run, release, knowledge-source,
+    generation-batch or live-session guard refuses it on any method except
+    GET, HEAD and OPTIONS;
+  - `POST /api/v1/search/reindex`, which checks the role in its own body,
+    refuses it too, and so does revoking any key but itself
+    (`DELETE /api/v1/keys/{id}`: a stream key had revoked its owner's
+    `project:admin` key);
+  - CLI users: a CLI profile holding such a key now gets 403 from
+    `runs intelligence refresh`, `deep-investigate` and report sharing, which
+    are project writes. Use a `project:admin` key or a signed-in session;
+  - streaming (`/api/v1/stream/*`, `/ws/events`) needs `stream:write`, and
+    uploads (`/api/v1/ingest*`) and `POST /api/v1/keys` are unaffected.
+    None of these go through the guards above (a test walks their
+    dependencies), so there is no ingest allow-list.
+
+  NOT enforced: other scope names (`test:read`, `report:write`...) mean
+  nothing; writes gated only by `require_role(QA_ENGINEER)` or a plain
+  signed-in check, whose handlers scope the project themselves, still act with
+  the owner's role, as do reads. A per-route scope model is still the next
+  step (N32). An empty scope list (legacy) is full access and JWTs are
+  unchanged. A key that creates a key grants only scopes it holds, each once,
+  and an expiry no later than its own, legacy keys with an expiry included.
+- `POST /api/v1/onboarding/track` files a usage event under a named project only
+  if the caller can access it.
+- The authorization test gate reads real calls rather than searching source
+  text, so a comment naming the scoping function no longer passes a route.
+
+**Upgrade note: API-key scopes.** Keys with an empty scope list (the default
+when none are given) keep full access. A key with a non-empty list that lacks
+`project:admin` now gets 403 on run deletion, project reset, retention and
+deletion jobs, ownership import, release and phase deletion, run unlinking,
+compliance packs, member removal and release-gate policy writes -- including
+every key minted from the API Keys settings page (`["stream:write"]`). A
+pipeline that streams and administers its project needs
+`["stream:write", "project:admin"]`, minted by an admin. A key creating a key
+may request only a subset of its scopes (omitting `scopes` copies them) and an
+expiry no later than its own (omitting `expires_days` copies it).
+
+## 2026-09-10 — once the AI pipeline was finally sent, it still never ran
+
+The outbox fix below made finished runs publish their AI pipeline. The first
+one the homelab ever published failed 30 milliseconds in, on every attempt, and
+exposed three more defects on the same path, none of which had ever run:
+
+- The outbox-driven pipeline creates its record under a fixed id, then reads
+  the run and project back from what the create step returned. That step
+  returned neither, so the pipeline died with a KeyError before its first stage.
+- That failure came before the pipeline's error handler, so its record stayed
+  "running" and every retry was refused as not resumable. A failure between
+  creating the record and starting the graph now marks it failed. If none of
+  its stages had started, a retry resumes it under the same id with a freshly
+  resolved analysis mode; a pipeline whose stages ran still needs its stored
+  routing, as before.
+- Marking any pipeline failed crashed when there was no final state to record:
+  a helper the failure branch uses was imported only in the success branch.
+  Every failed pipeline stayed "running" until the stale-pipeline reaper found
+  it 30 minutes later, and its real error was replaced by an UnboundLocalError.
+- The deep pipeline has the same setup guard, and both pipelines mark the
+  record failed before they log the failure, so a log call that itself fails
+  cannot strand it either.
+
+Tests against real PostgreSQL now run the pipeline's real setup with only the
+LangGraph graph faked, and the keys the create step must return are read from
+the pipeline functions themselves. The only earlier test of this path replaced
+the whole pipeline with a mock.
+
+## 2026-09-10 — an API key bound to one project could act as an instance administrator
+
+Only an admin can mint an API key bound to a project, so most project-bound
+keys are admin credentials sitting in a CI pipeline. `require_role(ADMIN)`
+checked only the owner's role. A key leaked from one pipeline could create an
+instance admin (`POST /api/v1/users` returned its temporary password), promote
+users, change SSO, feature flags and settings, and mint itself an unbound key.
+
+`require_role(ADMIN)` now refuses a project-bound key with 403 unless the route
+opts in. Only 22 routes do, and each confines the key to its own project: run
+deletion, project reset, retention and deletion jobs, ownership import, release
+and phase deletion, run unlinking, compliance packs, member removal, and the
+release-gate policy writes. Those policy writes now check the policy's project,
+and never let a bound key write the system default. The same shortcut, an
+admin check that never looked at the key's project, is also closed in the key
+routes, the search reindex, investigations, fix attempts, chat sessions, share
+links, failure reassignment and triage. A ratchet makes every new opt-in name
+the check that makes it safe, and tests against real PostgreSQL use real keys.
+
+**Upgrade note: what a key bound to project P can no longer do.**
+
+- Any instance-wide admin route: users, invitations and roles, SSO, SCIM tokens,
+  feature flags, app settings, AI-evaluation datasets and gates, identity
+  events, the knowledge-source allow-list, model promotion, the audit export,
+  onboarding events, deleted-project storage, the admin maintenance routes.
+- Set P's own LLM quota, or use the debug run generator.
+- Mint a key for another project or another user, or list or revoke keys
+  outside P. A key minted without `project_id` is bound to P.
+- Trigger an instance-wide reindex, or write another project's or the
+  system-default release-gate policy.
+- Reach another project's investigations, fix attempts, chats, share links,
+  reassignments or triage.
+
+It still does P's own work, and rotates itself. Automation that used a bound
+key for instance-wide work needs an unbound admin key. A bound key whose owner is
+not an admin can no longer mint keys at all; it could mint an unbound one.
+
+**Not yet closed (N26, the next change):** the refusal applies to admin-level
+routes. Instance-wide routes a QA lead may use -- creating a project, the
+training export and fine-tune jobs, integration probes, and reads of the
+settings and AI-evaluation pages -- still accept a project-bound key whose owner
+holds that role.
+
+## 2026-09-10 — log redaction, second pass
+
+- `error=`, `reason=` and `detail=` fields are treated like the log message:
+  credentials and email addresses are redacted, and hosts, ports and numbers
+  survive. An exception passed as a field value (`error=exc`) was never
+  redacted at all, because it was rendered after redaction ran; it now is.
+- Production database engines, the migration engine included, keep bound
+  parameters out of error text. A failed INSERT used to carry its values, a
+  password or token hash for instance, into the logged traceback.
+- An `Authorization` header loses its credential whatever the scheme. Only
+  Bearer was caught; `Basic dXNlcjpwYXNzd29yZA==` passed through logs, and
+  through the sanitizer that cleans tool output before it reaches an LLM.
+- A structured field named like a secret (`password=`, `token=`, `api_key=`,
+  `cookie=` and the other secret names) is redacted by its name. Names match
+  exactly, or by a secret suffix (`_token`, `_password`, `_secret`,
+  `_api_key`, `_secret_key`, `_webhook_url` and the like, which covers the
+  deployment's own settings such as `github_token` and `postgres_password`),
+  so `prompt_tokens`, `token_count` and `password_changed` are left alone.
+- A bytes value is decoded and redacted like text; it used to be written after
+  redaction had run. A Slack or Teams incoming-webhook URL, which is itself the
+  credential, loses its path.
+
+By design since the first redaction change, a phone, card or SSN shape inside a
+log message or an `error=` field is no longer redacted: those patterns mangled
+hosts and byte counts. Structured fields keep them. Strings inside dict and
+list fields are now redacted with their field's patterns, which they never
+were; so a `payload={"host": "10.0.0.7"}` field loses an address it used to
+show.
+
+## 2026-09-10 — offline mode, second pass on notifications and probes
+
+- `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` now covers only the deployment's own
+  destinations: the global Slack and Teams webhooks and the SMTP relay. Slack
+  and Teams put every workspace on the same hosts, so with the documented
+  example allow-listed, any user could point a personal webhook at their own
+  workspace and receive failure text and build metadata off-box. Personal and
+  team webhooks are judged by residency alone. **Upgrade note:** offline,
+  personal or team webhooks on hosted Slack or Teams that relied on the list are
+  now recorded as blocked. Clear the override to use the global webhook.
+- The Splunk and OpenShift health probes are skipped offline, like Jira and
+  GitHub. Every 15 minutes they had sent their tokens to the configured API.
+  The integrations themselves still dial out when enabled (N19, open); both
+  default to off, and SECURITY.md now says so.
+- The settings page's SMTP test button tests the relay real sends use. With no
+  stored host it tested `localhost` and could report success while every real
+  email was refused.
+- The offline-egress guards check each connection rather than each module. The
+  old check passed any module that named the gate anywhere, so an ungated SMTP
+  connection added beside a gated one went unnoticed.
+
+An allow-listed hosted mail relay still delivers to any recipient, including a
+user's own address override; the docs say so.
+
+## 2026-09-10 — migrations 0166 and 0167 no longer take an exclusive lock to clean up
+
+Both migrations build their index concurrently. Before that, they dropped an
+invalid leftover index with a plain `DROP INDEX`, which takes an exclusive lock
+on the table and queues behind every open transaction, with ingestion queued
+behind it. Measured with an 8-second open transaction: 4 of 379 concurrent
+inserts failed before, 0 of 540 now. The migrations now read the catalog and
+drop whatever holds the index's name with `DROP INDEX CONCURRENTLY`, unless it
+is already the right index, which PostgreSQL itself decides by comparing
+definitions. A valid index with the wrong definition is replaced instead of
+kept, and a non-index holding the name stops the migration with a message. This
+affects fresh upgrades only. An index of the same name on another table
+also stops the migration: it is not the migration's to drop.
+
+The guard that keeps later migrations concurrent now reads the SQL a migration
+assembles from its constants, and catches unnamed builds, `REINDEX`, indexed
+columns, and unique, primary-key and exclusion constraints on existing tables.
+
+Still open (N24): the migration lock is released by the first concurrent build,
+so two migrators starting together are not serialised from that point on.
+
+## 2026-09-10 — upload and webhook hardening, and `--wait` rides out a blip
+
+- The pre-parse result count caught namespaced TRX (`<t:UnitTestResult>`), which
+  its parser reads but the count missed, so a crafted report was refused only
+  after it was parsed.
+- A sentinel key must be a plain path: no empty, `.` or `..` segment, no
+  backslash, no control character. On the local storage backend a `..` key read
+  another prefix's sentinel and filed it under the first segment's project.
+  S3 and MinIO were not affected.
+- The 64 KiB sentinel cap is now pinned by a test; the old one passed with the
+  cap raised to 64 GiB.
+- When an ingest's retries run out, it is recorded in the dead-letter stream
+  admins read at `GET /api/v1/admin/maintenance/dlq`, with the arguments needed
+  to queue it again. The storage key is recorded as it was, so a build named
+  like `1.0.0.123` or with a 16-digit id can be replayed too.
+- `testlookup upload --wait` treats a 429, a 5xx or a dropped connection while
+  it polls as "not yet", honouring `Retry-After`, until `--wait-timeout`. It
+  fails early only on an answer that cannot change. `upload dir --wait` shares
+  one deadline across its files, where twenty reports with the workers down
+  used to hold a CI job for over three hours, and names every file that did not
+  finish. It waits at least a second between polls, even when a proxy answers
+  `Retry-After: 0`.
+
+## 2026-09-10 — a finished run's AI analysis was queued and never sent
+
+After a run is finalized, its follow-up work (notifications, the completion
+webhook, suite comparisons and, when AI analysis is requested, the multi-agent
+pipeline) is written to a durable outbox and published to Celery from there. The
+pipeline's entry named the run `run_id`; the task's parameter is `test_run_id`.
+Celery checks a task's arguments before it publishes, so every attempt failed
+with a TypeError, was retried on a backoff and failed again. No run that
+requested AI analysis ever got it, and the only sign was a pending outbox row
+whose error read `broker_TypeError`.
+
+It surfaced on the homelab, on the first run to reach that code there: a run
+streamed through `/ws/events`, whose every other follow-up completed within a
+second. The entry now uses the task's own parameter, and an entry written before
+the fix is translated when it is next published. A test now checks every
+operation the outbox publishes against its task's real signature; the existing
+tests replaced `apply_async`, which is exactly where Celery's check lives.
+
+Translating an old entry only helps one that is still retrying. The outbox
+marks an entry failed after eight attempts and never retries it, so a run whose
+pipeline had already given up would stay unanalysed after the upgrade. An
+instance admin can now put failed entries back:
+`POST /api/v1/admin/maintenance/outbox/requeue` with
+`{"operation": "agent_pipeline", "last_error": "broker_TypeError"}` lists them,
+because it is a dry run unless `"dry_run": false` is sent, and the same call
+with `"dry_run": false` requeues them, at most 500 at a time, oldest first.
+`last_error` is required, so one call cannot re-run notifications or webhooks
+that failed for their own reasons. A pipeline the bug left `running` can be
+resumed only once the stale-pipeline reaper has failed it (it runs every ten
+minutes, and fails a pipeline after thirty).
+
+**Upgrade note:** each requeued `agent_pipeline` entry starts one AI pipeline.
+On a deployment with a long backlog, requeue in slices and watch the AI
+workers, rather than all at once.
+
+## 2026-09-10 — worker database connections now outlive a single task
+
+Every Celery task ran on an event loop of its own and, when it finished, closed
+every connection it had opened: the Postgres pool, Redis and the shared HTTP
+client. The connection pool therefore never pooled anything. Each task that
+touched Postgres paid for a new TCP connection, authentication and a server
+backend process, so a burst of small tasks became a burst of connection setups.
+
+A worker process now keeps one event loop for its whole life, and every task it
+runs reuses that loop's connections. They are closed when the process exits: at
+shutdown, or when Celery recycles it after its task limit. A task cut off while
+it waits, for example by its soft time limit, still has its loop torn down and
+replaced, as every task's used to be. Anything a task leaves running is
+cancelled when it returns, so it cannot run inside the next task. The training
+tasks now share this code instead of keeping a second copy of it. The Mongo
+client is closed with the others; the per-task teardown never closed it, which
+left its monitor threads running until garbage collection.
+
+Because connections now wait in the pool between tasks, worker engines check a
+connection before handing it out, in production too. A Postgres restart then
+costs a reconnect instead of a failed task. The API still skips that check in
+production. The connection budget in `scripts/validate_db_connection_budget.py`
+already counts every process's full pool, so it does not change.
+
+## 2026-09-10 — runs streamed through /ws/events were never saved
+
+`POST /ws/events/{run_id}` takes one test event per call. It put each event on
+the live dashboard's stream and did nothing else: no live session, no test run,
+no stored results. A run streamed this way showed on the live page while it
+ran, then vanished. It never appeared under Runs, was never analysed, and never
+counted toward a release.
+
+An event sent with a project-scoped API key now goes through the same ingest
+path the SDKs use. The first event of a run opens a live session, keeping the
+caller's run id as its display name. Each result is stored and counted once.
+`run_complete` closes the session, which creates the run and queues the same
+persistence, analysis and notifications every SDK run gets. Each call is its
+own batch, so two identical results are recorded as two executions. After a
+run's first event a result costs no database round trip: the session is looked
+up once and cached.
+
+What changes for project-key callers:
+
+- A `run_id` longer than 100 characters is refused with 422, because a run
+  with that id cannot be stored.
+- A run id can be used again once its run completes: a `run_start` begins a
+  new run under it, in a new session. Any other event for the finished run is
+  refused with 409, rather than accepted and silently dropped. The database
+  decides this. A Redis marker that expires 15 days after the run is stored
+  cannot: once it had gone, a nightly job reusing its run id would have had
+  every run accepted and lost.
+- An optional `event_id` on any event makes a retried POST count once.
+  Without one, `run_start` and `run_complete` are recognised by their content,
+  so a retried close converges, even when the first attempt's commit failed.
+  A `test_result` without one is always a new result. A `run_start` that
+  arrives after its run completed always begins a new run, even a late retry
+  of the old run's start: producers reuse event ids from night to night, so the
+  two cannot be told apart, and a late retry costs only an empty run that the
+  idle reaper closes.
+- `test_case_id`, and a `test_result`'s `total_tests`, are not recorded: the
+  SDK path's events carry neither. A failing result therefore no longer queues
+  the immediate per-test analysis; the run's analysis once it completes is
+  unaffected.
+- The live session is named after the API key whether or not the key's check
+  was cached, and the live page announces the run's build number, not the
+  session's internal id.
+
+`POST /api/v1/stream/ingest` shares this path, so it gets the same database
+check. The bundled SDKs never send `run_start`: for them a completed run id
+stays closed, and a new run needs a new run id, as the API always said.
+
+The legacy shared-secret path, off by default because it names no project, is
+unchanged: shown live, never saved.
+
+Separately, live runs streamed with an API key never reached the high-volume
+detector: it looked the project up through a run that does not exist until the
+session closes. Callers that know the project now pass it.
+
+## 2026-09-10 — "All time" on the runs page sorted every run, on every page
+
+`GET /api/v1/runs` orders runs by build number in natural order, so `ui-2`
+comes before `ui-10`. That order is computed from the build number with a
+regular expression, and no index could supply it. With "All time" selected
+nothing bounds the rows the sort sees, so every page of the runs list sorted
+the project's whole history, and so did `/runs/failed-ids`.
+
+Migration 0167 indexes that exact expression, per project and in the list's
+own order, so a page is now an index scan and a limit. It is built
+concurrently, so ingestion keeps writing while it builds. The expression
+changed in two ways the index depends on. Its constants are now written into
+the SQL rather than sent as parameters: an index only matches an identical
+expression, and a parameter never matches under a generic plan. It now
+compares numbers as `numeric` rather than `bigint`: a build number with a
+digit run longer than nineteen digits used to make the listing fail, and with
+the expression indexed it would have made ingesting that run fail. A test
+against real Postgres forces a generic plan on the statement the list
+executes, and checks that the plan uses the index and sorts nothing.
+
+Not changed: the "Run #N" labels are still computed over the whole history
+of the suites on the page.
+
+## 2026-09-10 — a run's first ingest paid three round trips per new test
+
+When a finalized run reported a test its project had never seen, canonical
+sync inserted the catalog row on its own: a SAVEPOINT, an INSERT and a RELEASE
+for every new test. A project's first run, or any run whose test names changed,
+paid that once per test. The savepoint existed so that a concurrent run's sync
+inserting the same test first would unwind only that one row, not the whole
+run's catalog.
+
+New tests are now collected and inserted in chunks with `INSERT ... ON CONFLICT
+DO NOTHING`, then read back so every run case is linked, including cases whose
+row a concurrent run inserted first. Losing that race still costs nothing: no
+error, and nothing else in the batch is lost. The winning row's suite is never
+overwritten, so a case a person moved to another suite stays there. The lookup
+of existing rows is chunked as well, so a very large run cannot pass the
+driver's bind-parameter limit. The race and the suite rule are proven against
+a real Postgres, not mocks.
+
+## 2026-09-10 — the canonical test-case list returned every row
+
+`GET /api/v1/canonical-test-cases` returned every canonical test case the
+caller could see, and its `total` was the length of what it had just returned.
+Canonical rows are one per test per project and are kept forever, so the list
+only grows: an unscoped admin call measured 1,237 rows.
+
+The route now takes `page` and `size`, 25 by default and at most 200, the same
+contract as `/canonical-test-cases/orphaned`, and reports every match in
+`total`. Pages are cut in SQL and ordered by name, then id, so a page never
+repeats or skips a case whose name ties with another's. **An external client
+that relied on getting everything in one response now gets the first 25 and
+must page.** The suite view, `/suites/{id}/test-cases`, is deliberately not
+paged: its page selects and bulk-links across the whole suite.
+
+## 2026-09-10 — failed work could be counted but never read
+
+Two Redis stores hold work that failed for good. `persist_live_session` writes
+to a capped list when its retries run out. The live-event consumer moves an
+event to a capped stream after three failed deliveries and then acknowledges
+it, so the stream entry is the only surviving copy; Celery tasks such as the
+agent pipeline add themselves to the same stream when their retries run out.
+`/health/ingestion` counted the list and nothing counted the stream. No API
+returned an entry from either, so an operator could learn that work had failed
+but not what.
+
+`GET /api/v1/admin/maintenance/dlq` now returns the newest entries of both
+stores, with each stream entry's JSON decoded and the time it failed. It is for
+instance admins only, because the entries span tenants: run and project ids,
+error text and sanitized event payloads. An API key an admin bound to one
+project is refused, here and on every other maintenance endpoint, since those
+walk every project. If Redis cannot be read the route
+answers `503`. The list reader used to return an empty list on a Redis error,
+which reads as "nothing has failed". `/health/ingestion` now reports the
+stream's depth beside the list's, as `null` when it cannot be read.
+
+## 2026-09-10 — a Postgres index test that CI never ran
+
+Batch 2 added `test_search_tags_index_postgres.py` to prove that migration
+0166's trigram index can serve keyword search on tags. CI's Postgres job names
+its test files one by one, and this one was never named, so it never ran. The
+repo's existing guard for exactly this went red on the branch. The test is now
+listed. The guard also now fails if a listed file outside `tests/integration`
+would be deselected by the job's `-m integration` filter, since only that
+directory is marked automatically.
+
+## 2026-09-10 — one uploaded report could carry a million results
+
+`POST /api/v1/ingest` caps a JSON batch at 50,000 results in its schema.
+`POST /api/v1/ingest/file` had no equivalent. Its 50 MB limit bounds bytes, not
+rows: 50 MB of minimal JUnit elements is about 1.3 million results. Parsing that
+one file took 24 seconds and peaked at 1.3 GB, more than an ingestion worker's
+share of memory, and every stage after parsing then ran once per row. A 50 MB
+pytest-json report behaved the same way, peaking at 0.9 GB.
+
+An uploaded report now carries at most `INGEST_MAX_RESULTS_PER_UPLOAD` results,
+50,000 by default. The JSON schema reads the same constant, so the two routes
+cannot drift apart. The worker checks the exact count after parsing, for every
+format, and a zip is capped as a whole rather than per entry.
+
+A report far over the cap is refused before it is parsed. A cheap count of one
+marker per result stops a worst-case 50 MB file in about a tenth of a second,
+with no measurable memory. The count is an estimate, so it only refuses a report
+more than four times over the cap, never one the exact check would accept. A
+test checks every format's marker against a real report of that format: the
+first drafts of the TRX and Playwright markers matched nothing, which would have
+switched the guard off for those formats without a sound.
+
+JSON lets a key be spelled with Unicode escapes, which the parser decodes and a
+plain text search does not see: a pytest report that escaped one letter of every
+key counted no markers at all. The count decodes escapes first. For the XML
+formats and pytest every result must carry its marker, so the count bounds what
+parsing can cost. A Cypress, Playwright, Cucumber or Allure result can leave its
+marker key out and still be parsed, so for those four the count stops accidents
+rather than a crafted report. The exact check after parsing refuses such a report
+either way, and the 50 MB upload limit bounds what parsing it costs.
+
+A refused upload fails with the reason `too_many_results` and says how to split
+the report, the same way an unparseable report fails. No run is created.
+
+**Upgrade note.** A single report over 50,000 results that ingested before is
+now refused. Raise `INGEST_MAX_RESULTS_PER_UPLOAD`, or split the report. The
+refusal comes after the upload is accepted, so `testlookup upload` used to print
+success and exit 0 either way; pass the new `--wait` to wait for the server's
+outcome and exit non-zero when a report is refused.
+
+## 2026-09-10 — CI uploads and single live events skipped both ingest gates
+
+`/api/v1/stream/*` has had two admission gates since the scalable-ingestion
+work: a per-project rate limit and a Redis-memory backpressure check. The two
+routes CI uploads through, `POST /api/v1/ingest` and `POST /api/v1/ingest/file`,
+had neither. Neither did `POST /ws/events/{run_id}`, which takes one event per
+call. One runaway pipeline or producer could fill Redis and the worker queue
+for every project.
+
+All three routes now pass both gates. The gates run after the project is
+authorised, so a caller with no access to a project cannot spend its quota.
+On file uploads they run before the upload is stored or queued. The multipart
+body has already arrived by then, so a refusal saves the storage write and the
+worker's parse, not the transfer.
+
+Uploads share the existing per-project budget of 200 batches a minute with SDK
+batches. Single live events cannot use that budget: one token per event would
+throttle an ordinary run to 200 results a minute. They get their own budget,
+`INGEST_EVENT_RATE_LIMIT_PER_MINUTE`, defaulting to 20,000 events a minute per
+project. A spent budget answers `429` with a `Retry-After` header; memory
+pressure answers `503` with `Retry-After: 5`. Setting a budget to 0 disables
+it. `/health/ingestion` now reports the event budget beside the batch budget.
+Both gates fail open when Redis is unreachable, as the stream routes always
+have.
+
+`testlookup upload` retries a `429` or `503`, honouring `Retry-After`, for up to
+five minutes in all, as the SDKs do. Before, the first refusal failed the CI step.
+
+## 2026-09-10 — offline mode accepted the cloud metadata service as a local model
+
+Batch 1 made the offline egress ceiling judge an LLM `base_url` by where it
+resolves rather than by provider name: loopback and private addresses are
+on-box, anything else is refused. Review pointed out that link-local addresses
+were counted as on-box too — so `http://169.254.169.254/` passed. That address
+is the instance metadata service on every major cloud, the place a VM fetches
+its own credentials from.
+
+Deleting the link-local exemption would not have fixed it. Measured on the
+Python this ships with, `169.254.169.254` reports as *private* as well as
+link-local, so it was already being accepted through the private-address rule.
+Link-local addresses and known metadata endpoints are now checked first and
+refused. The AWS IPv6 metadata address, `fd00:ec2::254`, is not link-local at
+all — it sits in the private IPv6 range — so it is named explicitly. No
+legitimate local model server listens on a link-local address; loopback and
+ordinary private-network hosts are unaffected.
+
+## 2026-09-10 — the Mongo password in the example file booted production too
+
+Batch 1 widened the startup check that refuses to run production on a published
+secret, so it recognised every placeholder the example env files ship for the
+JWT, application and webhook secrets. Review found one it still missed:
+`.env.example` also ships `MONGO_URI` with `change-me-to-a-strong-password`
+embedded as the database password, and nothing looked at it.
+
+It is now a critical startup failure. Only the password inside the URI is
+judged: a URI with no credential — the default, or a deployment that
+authenticates some other way — is never flagged, and host and database names are
+not secrets. The Cloud Run example's `MONGO_URI` has a placeholder host but no
+password, so it is not flagged; it would fail to connect rather than leak
+anything. The Flower dashboard password in the same example file is configured
+only by the development compose file and never read by the backend, so there is
+no production startup path for this check to guard.
+
+An angle-bracketed placeholder, the form the Kubernetes secret template,
+`.env.example` and the deployment guide use
+(`<base64-encoded-strong-random-secret>`, `<set-a-strong-password>`,
+`<your generated key from Step 9.3>`), counts only when it is the whole value.
+A bare `<` used to count, which refused a real secret that merely contains the
+symbol. A token anywhere in the value then still refused about one random
+32-character password in 157, and missed the guide's placeholder, which has
+spaces.
+
+## 2026-09-10 — agent tools wrote straight into the next prompt
+
+`sanitize_tool_output` exists "to sanitise tool output before it propagates
+into action agents", and its only callers were its own tests. Both ReAct loops
+hand each tool's return value straight back to the model as the next piece of
+the prompt: the triage agent, whose tools read Allure results, REST payloads,
+Splunk and OpenShift events; and the chat copilot, whose tools return failure
+text, suite names and error messages. All of that is written by whatever is
+under test.
+
+The finding said observations were "unfiltered", and grep found sanitizers right
+next to them, which is how this survived. The sanitizers were on the *sinks* —
+citations, trace spans, the audit trail. The prompt, which is the one that
+matters, had nothing.
+
+Both choke points now sanitize. Every chat tool already returned through one
+shared function, so that function sanitizes the output and, separately, the
+error text, which can quote the failing input verbatim. It does this before the
+token budget, so the budget is spent on what the model actually sees. The triage
+agent's tools are wrapped as *copies*: that list is built on every analysis, and
+wrapping the module-level tools in place would have stacked another layer each
+time.
+
+One known cost, recorded rather than hidden: a few of the sanitizer's injection
+patterns are broad. OpenShift events routinely contain RBAC subjects like
+`system:serviceaccount:...`, and a `system:` token becomes a visible
+`[SANITIZED_INPUT]` marker. Only the matched token is replaced and the line
+stays readable. Narrowing the shared patterns would change every other caller,
+so it is a follow-up rather than part of this change.
+
+The tests prove the wiring through the function's secret redaction and length
+cap. A version that used a literal prompt-injection sentence as its fixture was
+blocked from being written by the workstation's AI-agent protection. The
+injection behaviour itself is already covered by the sanitizer's own tests.
+
+## 2026-09-10 — two caches fell back to a namespace every tenant shared
+
+The triage agent caches analyses twice: an exact-match cache in Redis and a
+similarity cache in ChromaDB. Both are scoped by project, and both explain why in
+their own comments — a cached analysis embeds project-specific Splunk and
+OpenShift evidence, so an identical failure in another project must never be
+served it.
+
+Both also fell back to a single *unscoped* key or collection when no project was
+supplied. The callers pass none whenever the analysis context lacks one, so every
+such analysis went into one namespace shared by all tenants — the leak both
+comments warned about, reached through the fallback instead of the key. An
+existing test even pinned the exact-match fallback as "back-compat", which is
+what kept it alive.
+
+With no project there is now no safe key, so there is no cache: the call takes a
+miss, which costs an analysis instead of another tenant's evidence. The guard
+lives in the cache services, not in one caller — the similarity cache's lookup
+was already guarded by the agent, its *store* was not, so it had been writing
+unscoped analyses into a collection that nothing reads. Nothing reads it yet,
+which is the only reason this was a latent leak rather than a live one.
+
+That old shared collection may still hold entries on existing deployments, and
+they may belong to any tenant. Deleting data is not something to do quietly in a
+fix, so `GET /api/v1/admin/maintenance/ai-cache`, for instance admins, reports
+`legacy_unscoped_documents`: a non-zero value means the collection should be
+purged. (The first version of this fix computed that count in a function nothing
+called.) The same numbers used to report an outage as zero documents, which
+reads as an empty cache; the route answers 503 instead, and says that ChromaDB
+is optional: a deployment that does not run it has no similarity cache, and
+nothing to purge.
+
+## 2026-09-10 — release dates were only right on servers that happen to run in UTC
+
+Marking a release released, starting a phase and completing a phase each
+auto-stamp a timestamp: `released_at`, `actual_start` and `actual_end`. All
+three columns are timezone-aware, and all three were stamped with a bare
+`datetime.now()` — the host's local wall-clock time, with no zone attached.
+
+Measured before fixing, because it decides how bad this is. The database driver
+does not reject a naive value for a timezone-aware column; it quietly treats it
+as UTC. The homelab's pods run in UTC, so its release dates were correct — by
+coincidence. On any host whose clock is not UTC, such as a developer laptop or a
+server set to local time, every one of those dates was local time labelled as
+UTC and shifted by the offset, with no error anywhere. The existing tests only
+checked that the value was set, which is true either way.
+
+All three now use `datetime.now(timezone.utc)`, and a caller-supplied value is
+still never overwritten. A new guard walks the whole application's syntax tree
+and fails on any naive `datetime.now()` or `utcnow()`. It passes with an empty
+allow-list — these three were the only ones. It reads the syntax tree rather
+than the text because two of the textual matches were docstrings discussing
+`datetime.now()`, and a guard that flags documentation gets switched off.
+
+## 2026-09-10 — the live-event audit trail could lose a whole outage without a word
+
+`POST /ws/events` keeps a sanitized copy of every live event in Mongo, as the
+operational audit trail. The write is deliberately non-fatal: the event still
+goes to the stream, so the run, the dashboard and the analysis carry on. But the
+failure branch was `except Exception: pass`. A Mongo outage erased the audit
+trail for every live event in the window, and nothing — no log line, no counter
+— recorded that it had happened.
+
+It stays non-fatal, and now leaves a trace: every failed copy increments
+`testlookup_live_event_archive_failures_total` and writes a warning naming the
+run and event type, and `TestLookupLiveEventArchiveFailing` fires when more than
+ten fail in fifteen minutes. Tests drive the real handler with Mongo raising and
+check all three properties separately — counted, logged, and still published —
+because a fix that counted the failure but let it block ingest would trade a
+silent gap for an outage.
+
+## 2026-09-10 — keyword search ignored its own indexes, and the finding named the wrong cause
+
+The re-audit reported that global search "casts `tags` JSON->text, defeating the
+trigram indexes", and suggested indexing tags. Measured against the homelab
+deployment (50,510 test cases), that fix alone would have changed nothing.
+
+Keyword search over test cases was one OR across five predicates. With the tags
+branch **removed entirely**, the plan was identical — still no trigram index
+used, still every run's test cases checked one by one. The real culprit was a
+different branch: the run-level suite name, a column on another table sitting
+inside the same OR. Postgres can combine several indexes with a bitmap OR, but
+only indexes on one table, so a single branch elsewhere forces the whole OR to
+be evaluated row by row.
+
+The tags cast was a second, independent problem — once the cross-table branch
+is gone, an unindexed `CAST(tags AS VARCHAR)` collapses the bitmap OR on its
+own. So both had to change:
+
+- The run-level branch is now its own half of a UNION. Each half applies the
+  tenant, active-project and period filters itself and takes its own top N by
+  recency, which bounds the work for a broad term and means results can only
+  ever come from a filtered half.
+- Migration 0166 adds a trigram index on `CAST(tags AS TEXT)`, and the query
+  now casts to TEXT to match. `VARCHAR` is a different expression, and an
+  expression index is only used for a predicate written identically.
+
+On the SQL the application actually emits: without the index the first half
+still scans row by row; with it, that half is a four-way bitmap OR over the
+test-name, suite, error and tags indexes. Both plans were taken inside a
+transaction that was rolled back, so the deployment was left untouched.
+
+Results are identical before and after — only the plan changes — so no
+functional test could have caught either problem. The new tests assert on the
+SQL Postgres receives, and a Postgres-backed test pins that the index serves
+the predicate and that a VARCHAR cast would not.
+
+Write cost is unmeasured: `test_cases` is insert-heavy and this adds one GIN
+index to it. It is one index over a short list, and GIN amortises inserts, but
+that is reasoning rather than a number.
+
+The index is built `CONCURRENTLY`, so the migration never blocks ingestion. A
+plain `CREATE INDEX` holds a lock that stops every write to `test_cases` for the
+whole build, which takes minutes on a large table. A concurrent build that fails
+halfway leaves an invalid index behind, so the migration drops such a leftover
+before building. A new test fails any later migration that builds an index on
+an existing table without `CONCURRENTLY`.
+
+## 2026-09-10 — live runs streamed one event at a time counted nothing
+
+The live-event consumer's result handler only *reads* a run's counters and
+broadcasts them. Its comment says the counting happens at ingest, "in
+stream_service.ingest_event_batch()". That is true for the SDK batch path,
+whose admission step recounts its ledger into the same Redis hash. It was never
+true for `POST /ws/events`: nothing on that route touched the counters, and the
+method written for exactly this — `RedisLiveRunState.record_test_event`, named
+in the consumer's own docstring — had no caller anywhere.
+
+So a run streamed through that endpoint showed zero results on the live
+dashboard, never raised the failure-rate early warning however many of its tests
+failed, and broadcast a final completion whose totals were all zero.
+
+Results are now counted where they arrive. That placement is the point. Batch
+events are published into the same stream the consumer reads, so counting in
+the consumer would have double-counted every SDK run — a test now fails if
+anyone moves it there. The route also creates the run's live state on
+`run_start` itself: the consumer does that too, but asynchronously, and a result
+that arrived first found no state and was silently dropped. The consumer's later
+call never resets counters, so it changes nothing. The route's own `run_start`
+resets a run that has completed: a caller reusing the id of a finished run,
+while its state is still kept (an hour), is starting a new run, which no longer
+inherits the previous run's counts or its completed status. A run still in
+progress is left alone, so a retried `run_start`, or a second shard opening the
+same id, keeps its counts, and the reset replaces the old state in one
+transaction. The check that the run has completed is made before that
+transaction, so two run_starts racing on a finished id can still both reset it;
+making the check atomic is recorded for a later change. A result
+is counted only once it has been published, so a failed publish, and the
+client's retry of it, no longer count it twice.
+
+The counter stores the current test's name in Redis, which makes it a third
+place event data lands. The sanitization test now covers it alongside the other
+two, and asserts the name it receives is the sanitized one.
+
+**Scope.** Since the /ws/events entry above, this counting runs only on the
+legacy shared-secret path, which is off by default: a run streamed with a
+project key is saved like an SDK run, and counted by the SDK path's admission.
+The legacy path's runs are still shown live and never saved.
+
+## 2026-09-10 — nine post-ingestion steps could fail forever without anyone knowing
+
+After a run ingests, `finalize_run` performs nine further steps: suite
+membership, canonical case sync, deletion reconcile, failed-test assignment,
+auto-tagging, quarantine tagging, release linking, commit range, and the
+activity ledger. Each runs in its own database session, so one failing cannot
+poison the next or skip it. That isolation is correct — and it is exactly what
+made failures invisible. The error branch rolled back and wrote a warning, and
+did nothing else. A step could fail on every run for weeks, and the only trace
+was a log line nobody was paged for. A project whose canonical cases, failed-test
+owners or release links had quietly stopped updating looked identical to a
+healthy one.
+
+Each failure now increments `testlookup_finalize_step_failures_total`, labelled
+by step, and `TestLookupFinalizeStepFailing` fires when any one step fails more
+than three times in thirty minutes. The label is what lets the alert say *which*
+step is broken rather than that something somewhere is.
+
+The runner used to be a closure inside `finalize_run`. It is module-level now,
+so its failure accounting can be tested without driving the whole pipeline; a
+local alias keeps all nine call sites unchanged. A test fails if a nested runner
+ever reappears, because a local copy would shadow the counted one and every step
+would go dark again without a single test noticing.
+
+## 2026-09-10 — log redaction skipped the one field that holds the message
+
+The structured-logging redaction processor scrubbed every string value in a
+record **except** `event` — the field that holds the message. Every
+`logger.warning("could not authenticate with %s", token)` renders its arguments
+there, and so does every f-string message. So the field guaranteed to carry
+free-form, unreviewed text was the field guaranteed not to be cleaned, while the
+structured key/value pairs a developer had chosen deliberately were.
+
+The message is now redacted too, and so is a logged exception's traceback, which
+used to reach the output after redaction had already run. Both are operational
+text, so they get only what a marker identifies: credentials (`Bearer`,
+`password=`, `://user:pass@`, JWTs, AWS keys) and email addresses. The phone,
+card, SSN and IP heuristics match by shape alone, and on a message they would
+rewrite byte counts, epoch seconds, build numbers and the host an operator needs
+from a warning. Structured fields keep the full set, as before.
+
+Two side effects. A structlog `.exception()` call now logs its traceback: the
+logger in use never attached one, so it was silently dropped. And in the text
+log format a traceback prints plain rather than pretty-printed.
+
+What stays exempt is only the
+record's own structure — timestamp, level, logger, service, version, env, trace
+and span ids — which the logging stack sets and a caller cannot put text into.
+Redacting those would corrupt the record rather than protect it: an `@` in a
+logger name reads as an email address. The exemptions are a named set now, and a
+test pins both that `event` is not in it and that nothing a caller controls ever
+joins it.
+
+## 2026-09-10 — offline mode did not cover the three channels that talk most
+
+`THREAT_MODEL.md` promises that with `AI_OFFLINE_MODE=true` an air-gapped
+deployment "will see zero application-level egress", and lists the outbound
+paths that honour it: LLM inference, GitHub Checks, outbound webhooks. Slack,
+Teams and SMTP appeared in neither the list nor the code. Each posted
+notification content — failure text, test names, build metadata — to a
+caller-configured destination, on a deployment whose entire premise is that it
+does not talk to the internet. Removing the new gate in a test makes the point
+better than any argument: the call reaches `hooks.slack.com` and comes back
+with an HTTP status error.
+
+**The gate is residency, not channel name**, for the same reason as the offline
+`base_url` fix: a destination is remote because of where it resolves. That
+matters in both directions. An air-gapped site's own Slack-compatible webhook
+or mail relay sits on the LAN and keeps working, so gating by product name
+would have broken exactly the deployments this protects. And `smtp.gmail.com`
+is egress however ordinary "email" sounds. A destination that cannot be
+resolved is refused, because under a ceiling "we could not prove this stays
+on-box" has to deny.
+
+Refusing raises rather than returning quietly, so the reason lands in the
+delivery's stored status. That file already drew the same line for a channel
+that is not configured: an unconfigured channel is a failure, not a send. A
+notification silently dropped but recorded as delivered is worse than one
+recorded as blocked, because only the second sends someone to look.
+
+The SMTP gate sits at each of the three `aiosmtplib.send` call sites rather
+than at the public functions, because only one of those functions is reached
+through the notification manager — gating entry points would have left the
+report and attachment paths open.
+
+The gate covers every SMTP connection the application makes, not only the
+notification package: report emails (the trends report used stdlib `smtplib`
+and bypassed it), the settings page's test email, and the 15-minute health
+probe, which logged in to the relay. The Slack probe, which called slack.com
+with the bot token, is gated the same way, and the Jira and GitHub probes are
+skipped in offline mode, as those integrations are. A ratchet walks all of
+`app/` for SMTP connections, each sender has its own test, and the residency
+lookup runs off the event loop.
+
+Four existing suites had to declare that they test the transport rather than
+the ceiling. They send to public destinations, which is now a refusal by
+default rather than a send.
+
+**Upgrade note: a breaking change for many deployments.** `AI_OFFLINE_MODE`
+defaults to `true` in the settings, `.env.example`, the base Kubernetes
+ConfigMap and the production and OpenShift overlays. A deployment on those
+defaults that posts to `hooks.slack.com`, a Teams webhook or a hosted mail relay
+records every such delivery as blocked after this upgrade. Either keep offline
+mode and name those hosts in the new `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` (for
+example `hooks.slack.com,.webhook.office.com,smtp.sendgrid.net`; a leading dot
+matches subdomains), or set `AI_OFFLINE_MODE=false`, which also allows cloud LLM
+calls. At startup the API logs a warning for each configured Slack, Teams or
+SMTP destination that offline mode will refuse.
+
+## 2026-09-10 — the upload webhook was notified about a file it never read
+
+`POST /webhooks/minio` is guarded by one deployment-wide `WEBHOOK_SECRET`. That
+credential authenticates a caller and names no tenant — and the handler took
+`project_id` straight out of the request body's
+`Records[].s3.object.userMetadata`, falling back to the object key. Either way
+the caller chose it.
+
+Downstream, `_upsert_test_run` resolves that string as a UUID **or a slug**
+against any project, so a holder of the secret could file a fabricated run into
+any tenant. And `process_sentinel` then lists and reads result objects from the
+prefix derived from the same caller-supplied key — so the one request is a
+cross-tenant read as well as a write. This is re-audit finding H1 again, at a
+different door.
+
+The handler was notified *about* an object and never fetched it. Now the
+ingestion task reads `upload_complete.json` from the object store and uses that
+as the sentinel, and takes the project from the object **key** -- where the data
+physically lives -- rather than from anything the notification or even the file
+claims. Ingesting into a project therefore requires write access to that
+project's prefix in the bucket: a storage credential, not a shared secret.
+
+The webhook itself only queues the key. A sentinel that is missing, is not a JSON
+object or is larger than 64 KiB is refused and not retried, because falling
+back to the request body is the behaviour being removed. A storage error such as
+a timeout is retried with the task's backoff. Reading the sentinel in the
+webhook, as a first version of this fix did, turned that error into a 200
+"ignored" -- and MinIO treats any 200 as delivered, so the upload was lost.
+
+It survived partly because `/webhooks/` mounts outside `/api/v1`, where neither
+authorization ratchet looked until the previous entry added a third scan. It
+was also the one route in that prefix with no tests at all; the webhook, the
+sentinel reader and the task now have them, and the source check that pins the payload field uses the syntax tree
+rather than a substring, because the handler's own comment names the field it
+must not read.
+
+The residual is a deployment question rather than a handler one: the fix is
+exactly as strong as the object store's own permissions, so a single shared
+bucket credential across projects still lets one uploader reach another's
+prefix. Recorded as a follow-up.
 ## 2026-09-10 — Agentic architecture and requirements analysis (handover document)
 
 Added `architecture/AGENTIC_OPENAPI_ARCHITECTURE.md`: a requirements-traced
@@ -47,9 +930,23 @@ and correct while the process could not start with it. A test now restates that
 validator and asserts no manifest anywhere sets the name gunicorn reads;
 reintroducing the exact outage fails three tests.
 
-This is the third variant of one mistake in this batch: assert the content,
-assert the list of locations, assert the value without the thing that consumes
-it. Deployment verification caught what none of 9,354 tests could.
+**And it was still not fixed.** Probing the running pod showed the middleware
+installed but *not outermost*: `main.py` registers the login rate limiter with
+`@app.middleware("http")` after `configure_middlewares` returns, and Starlette
+inserts at index 0, so the limiter sat outside the correction and kept bucketing
+every external caller onto the ingress address — the single loudest consequence
+in the finding. The install moved to the end of `main.py`, behind a named
+function that says why it must be called last.
+
+The test that missed *that* built a bare `FastAPI`, called
+`configure_middlewares`, and checked index 0. It passed against a synthetic app
+that has nothing registered afterwards. It now reloads the real module and
+asserts the limiter runs inside the boundary.
+
+This is the third and fourth variant of one mistake in this batch: assert the
+content, assert the list of locations, assert the value without the thing that
+consumes it, assert the wiring on a stand-in for the thing being wired.
+Deployment verification caught what none of 9,354 tests could.
 
 ## 2026-09-10 — release-readiness batch 1: when a credential names the wrong thing
 

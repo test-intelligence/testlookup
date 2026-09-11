@@ -212,12 +212,39 @@ produce an insecure install:
 
 ## 5. Offline-first as a security property
 
-`AI_OFFLINE_MODE` defaults to **True**, and every outbound integration
-short-circuits on it *before* any feature-flag check. The consequence: a
-default install provably sends nothing anywhere — no LLM API, no webhook, no
-external fetch — regardless of how feature flags are set. New integrations are
-required to join the existing offline gate list (with tests), not add their
-own ad-hoc checks.
+`AI_OFFLINE_MODE` defaults to **True**, and outbound integrations short-circuit
+on it *before* any feature-flag check. The consequence: a default install
+sends nothing anywhere — no LLM API, no webhook, no external fetch —
+regardless of how feature flags are set. New integrations are required to join
+the existing offline gate list (with tests), not add their own ad-hoc checks.
+
+Two classes do not simply short-circuit:
+
+- **Notification channels** are judged by **residency** rather than switched
+  off: a Slack-compatible webhook or mail relay on the LAN still works
+  offline, a public one is refused, and `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` is
+  the operator's explicit, per-host exception (re-audit H10). Because the
+  exception is per host, and Slack and Teams put every workspace on the same
+  hosts, allow-listing `hooks.slack.com` admits every Slack workspace, not
+  only the operator's. It therefore covers only the deployment's own
+  destinations: the global Slack and Teams webhooks and the SMTP relay, which
+  an admin configures. A webhook set per user (notification preferences, open
+  to any authenticated user) or per team (the Ownership page, QA_LEAD and up)
+  is judged by residency alone, whatever the list says. For mail, the relay
+  is judged, not the recipient: an allow-listed hosted relay delivers wherever
+  the address points, including a user's own email override.
+- **Splunk and OpenShift are not gated yet** (re-audit N19, open). With
+  `SPLUNK_ENABLED` or `OCP_ENABLED` set, the triage agent's Splunk log search
+  (`tools/query_splunk.py`) and the OpenShift pod lookups
+  (`services/ocp_client.py`, called during ingestion and by the triage agent)
+  still call those APIs in offline mode. Both settings default to false, which
+  is why the default-install sentence above holds.
+
+The integration-health probes follow the gate of the integration they probe,
+and are stricter where the integration is not gated yet: the Splunk and
+OpenShift probes are skipped offline, as the Jira and GitHub probes are, so
+the 15-minute health task no longer sends the Splunk or OpenShift token
+anywhere in offline mode (code review of H10).
 
 **Ceiling semantics (2026-08-03).** The environment variable is a *hard
 ceiling*, not a default. AI settings are also stored in the database

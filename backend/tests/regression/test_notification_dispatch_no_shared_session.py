@@ -264,3 +264,19 @@ async def test_send_notification_accepts_preresolved_cfg(monkeypatch):
 
     assert db_hit["n"] == 0
     assert sent.get("host") == "smtp.preresolved"
+
+
+# ── Delivery mechanics, not the offline ceiling ──────────────────────────
+#
+# AI_OFFLINE_MODE defaults to True, and since re-audit H10 that refuses any
+# notification bound for a destination outside the box — which is every
+# destination these tests use. They are about the transport, so they declare
+# the online path; the ceiling itself is covered in
+# tests/regression/test_offline_notification_egress.py.
+
+
+@pytest.fixture(autouse=True)
+def _delivery_is_online(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)

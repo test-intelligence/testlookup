@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
+    _enforce_api_key_project_binding,
     get_current_active_user,
     get_db,
     require_project_access,
@@ -178,6 +179,11 @@ async def _assert_can_export(
 
     from app.models.postgres import ProjectMember
 
+    # The route's require_project_access() has already confined a project-bound
+    # key to this project. Repeating it here keeps the ADMIN return below from
+    # becoming a bypass if this helper is ever reused without that guard
+    # (re-audit N20).
+    _enforce_api_key_project_binding(user, project_id)
     if _normalized_role(user) == UserRole.ADMIN.value:
         return
 

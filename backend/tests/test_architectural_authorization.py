@@ -161,7 +161,7 @@ def _route_is_protected(route: APIRoute) -> bool:
     # Authored test case -> project. This guard is router-local because the
     # shared test-management module also returns the loaded case to handlers.
     if "{case_id}" in path:
-        evidence = _authorization_evidence(route)
+        evidence = _authorization_names(route)
         if (
             any("require_case_access" in n for n in dep_names)
             or "require_case_access" in evidence
@@ -174,7 +174,7 @@ def _route_is_protected(route: APIRoute) -> bool:
     # may use a dependency named ``require_canonical_case_access``. Inspect the
     # handler/callee evidence as well as dependencies so both safe forms count.
     if "{canonical_id}" in path:
-        evidence = _authorization_evidence(route)
+        evidence = _authorization_names(route)
         if (
             any("require_canonical_case_access" in n for n in dep_names)
             or "_enforce_project_access" in evidence
@@ -312,13 +312,24 @@ SCOPED_IDS: frozenset[str] = frozenset({
     "defect_ids", "case_ids", "canonical_ids", "cluster_ids",
 })
 
-#: Any of these appearing in a handler — or in a function it calls — is accepted
-#: as evidence that the caller's access to the named object was verified.
+#: Any of these CALLED by a handler — or by a function it calls — is accepted as
+#: evidence that the caller's access to the named object was verified.
 #: Membership calls, ownership filters and project-bound API-key contexts all
 #: count: they are different shapes of the same guarantee.
+#:
+#: "Called" is read from the AST (``_authorization_names``), never from source
+#: text (QA-R3-10). A substring search counted a comment or a docstring that
+#: NAMED a check as the check, so deleting the only real call left the route
+#: green as long as a comment still mentioned it.
 _SCOPE_EVIDENCE: tuple[str, ...] = (
     # canonical membership resolution
     "resolve_project_scope", "get_accessible_project_ids",
+    # resolves a test case to its run and project, then checks membership
+    # (``POST /analyze`` passed only on a ``current_user.id`` read before)
+    "resolve_authorized_test_case",
+    # a notification preference's project: binding, membership, existence
+    # (QA-R3-1; the handlers reach it through their service)
+    "authorize_preference_project",
     # dependency guards
     "require_project_access", "require_run_access", "require_release_access",
     "require_session_access", "require_live_session_access", "require_link_access",
@@ -332,9 +343,15 @@ _SCOPE_EVIDENCE: tuple[str, ...] = (
     "_require_pipeline_access", "_require_valid_project_id",
     "_authorize_run_and_project", "_require_analysis_access",
     "assert_user_is_qa_lead_on_project",
-    # project-bound API key: the server derives project_id from the key itself
+    # project-bound API key: the server derives project_id from the key itself.
+    # NOT ``_api_key_bound_project`` or ``bound_project_id`` (QA-R3-10): they
+    # confine a key bound to one project and never check a JWT user, so a
+    # handler that only confines a bound key still lets any member of any
+    # project name any project. Re-audit N20 added both to handlers that also
+    # call ``resolve_project_scope``, and either alone kept the route green
+    # once that call was deleted.
     "get_streaming_api_key_context", "StreamingApiKeyContext",
-    "get_api_key_context", "_api_key_bound_project", "bound_project_id",
+    "get_api_key_context",
     # ownership filter — scoping to the caller's own rows
     "current_user.id", "current_user.username",
 )
@@ -392,7 +409,7 @@ def _called_targets(func) -> list:
     except (OSError, TypeError, SyntaxError, IndentationError):
         return []
     targets: list = []
-    for node in ast.walk(tree):
+    for node in _live_nodes(tree):
         if not isinstance(node, ast.Call):
             continue
         fn = node.func
@@ -404,8 +421,23 @@ def _called_targets(func) -> list:
     return targets
 
 
+#: Callees whose source is never scope evidence, whatever it mentions. A role
+#: guard answers "what is the caller", never "which tenant". Since re-audit N20
+#: ``require_role``'s own body consults the API-key binding and its docstring
+#: names the scope guards, and a handler's signature CALLS it
+#: (``Depends(require_role(...))``), so reading its source as evidence made
+#: every route with a ``require_role`` default pass this scan vacuously.
+_NEVER_SCOPE_EVIDENCE: frozenset[str] = frozenset({"require_role", "require_instance_admin"})
+
+
 def _authorization_evidence(route: APIRoute) -> str:
-    """Dependency names + handler source + the source of what the handler calls."""
+    """Dependency names + handler source + the source of what the handler calls.
+
+    TEXT, comments and docstrings included. Use it only to SPOT a tenant id a
+    handler reads (``_TENANT_ID_MARKERS``), where a false match errs toward
+    looking closer. It is never proof that a check runs: that is
+    ``_authorization_names`` (QA-R3-10).
+    """
     parts = list(_walk_deps(route.dependant))
     endpoint = route.endpoint
     try:
@@ -416,6 +448,8 @@ def _authorization_evidence(route: APIRoute) -> str:
     module = inspect.getmodule(endpoint)
     if module is not None:
         for qualifier, name in _called_targets(endpoint):
+            if name in _NEVER_SCOPE_EVIDENCE:
+                continue
             owner = module if qualifier is None else getattr(module, qualifier, None)
             if owner is None:
                 continue
@@ -429,6 +463,194 @@ def _authorization_evidence(route: APIRoute) -> str:
     return "\n".join(parts)
 
 
+def _plain_name(node) -> str | None:
+    """``f`` for ``f`` and ``mod.f``; None for anything else (a subscript, a call result)."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+_NESTED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def _is_constant_false(test: ast.AST) -> bool:
+    return isinstance(test, ast.Constant) and not test.value
+
+
+def _live_nodes(tree: ast.AST):
+    """``ast.walk`` over the code that runs as part of the function (QA round 4).
+
+    Skipped: a function, lambda or class nested inside it, which runs only if
+    something calls it, and the body of an ``if``/``while`` whose test is a
+    constant false. Either one let a check that never runs pass the scan.
+    """
+    root = tree
+    if isinstance(tree, ast.Module):
+        root = next((n for n in tree.body if isinstance(n, _NESTED_SCOPES)), tree)
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, (ast.If, ast.While)) and _is_constant_false(node.test):
+            children = [node.test, *node.orelse]
+        else:
+            children = list(ast.iter_child_nodes(node))
+        stack.extend(c for c in children if not isinstance(c, _NESTED_SCOPES))
+
+
+def _imported_names(tree: ast.AST) -> dict:
+    """``name -> object`` for the imports inside the function (``from m import f [as g]``)."""
+    import importlib
+
+    found: dict = {}
+    for node in _live_nodes(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            try:
+                module = importlib.import_module(node.module)
+            except ImportError:
+                continue
+            for alias in node.names:
+                found[alias.asname or alias.name] = getattr(module, alias.name, None)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                try:
+                    found[alias.asname or alias.name.split(".")[0]] = importlib.import_module(
+                        alias.name if alias.asname else alias.name.split(".")[0]
+                    )
+                except ImportError:
+                    continue
+    return found
+
+
+def _is_the_real_marker(func, tree: ast.AST, call: ast.Call) -> bool:
+    """A marker call counts only when its name resolves to the real function (QA round 4).
+
+    ``helper.resolve_project_scope(...)`` on some object, or a module-local
+    ``def resolve_project_scope(...)`` that checks nothing, is spelled like the
+    real check. A name ``app.core.deps`` defines must resolve to that object;
+    any other marker (a router's own ``_assert_project_access``) must resolve
+    to a callable. A qualified call must be on a module.
+    """
+    from app.core import deps
+
+    namespace = {**getattr(func, "__globals__", {}), **_imported_names(tree)}
+    fn = call.func
+    if isinstance(fn, ast.Name):
+        target = namespace.get(fn.id)
+        name = fn.id
+    elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
+        owner = namespace.get(fn.value.id)
+        if not inspect.ismodule(owner):
+            return False
+        target = getattr(owner, fn.attr, None)
+        name = fn.attr
+    else:
+        return False
+    if target is None or not callable(target):
+        return False
+    real = getattr(deps, name, None)
+    return real is None or target is real
+
+
+#: Attribute reads accepted as an ownership filter: code that scopes a query to
+#: the caller's own rows. A real read in code, never a mention in a comment.
+_OWNERSHIP_ATTRIBUTES: frozenset[str] = frozenset({"id", "username"})
+
+
+def _names_in(tree: ast.AST, func=None) -> set[str]:
+    """What the code DOES, by name: every function it calls, and
+    ``current_user.id``/``.username`` reads.
+
+    Comments are not in the AST at all, and a docstring or a string literal is
+    a constant, not a call, so neither can stand in for a check (QA-R3-10).
+    Nor can a bare reference (``check = resolve_project_scope``) that is
+    never called. A callable handed to ``Depends(...)`` is in the route's
+    dependency tree, which ``_authorization_names`` reads separately.
+    """
+    # A current_user.id read is an ownership filter only where it filters: an
+    # operand of a comparison (``.where(Row.user_id == current_user.id)``) or a
+    # ``filter_by(user_id=...)`` keyword. Passed as an attribution argument
+    # (``track_event(user_id=current_user.id)``) it scopes nothing, and it let
+    # a handler pass with its real check deleted (code review round 4).
+    filtering: set[int] = set()
+    for node in _live_nodes(tree):
+        if isinstance(node, ast.Compare):
+            filtering.update(id(operand) for operand in (node.left, *node.comparators))
+        elif isinstance(node, ast.Call) and _plain_name(node.func) == "filter_by":
+            filtering.update(id(keyword.value) for keyword in node.keywords)
+    names: set[str] = set()
+    for node in _live_nodes(tree):
+        if isinstance(node, ast.Call):
+            called = _plain_name(node.func)
+            if called is None:
+                continue
+            if func is not None and called in _SCOPE_EVIDENCE and not _is_the_real_marker(func, tree, node):
+                continue
+            names.add(called)
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "current_user"
+            and node.attr in _OWNERSHIP_ATTRIBUTES
+            and id(node) in filtering
+        ):
+            names.add(f"current_user.{node.attr}")
+    return names
+
+
+def _function_names(func) -> set[str]:
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    except (OSError, TypeError, SyntaxError, IndentationError):
+        return set()
+    return _names_in(tree, func)
+
+
+def _endpoint_names(endpoint) -> set[str]:
+    """``_names_in`` the handler, and in each function it calls (one level down).
+
+    The same one-level delegation ``_authorization_evidence`` follows, read as
+    code instead of text. A role guard is skipped as a callee
+    (``_NEVER_SCOPE_EVIDENCE``) whatever its body calls.
+    """
+    names = _function_names(endpoint)
+    module = inspect.getmodule(endpoint)
+    if module is None:
+        return names
+    for qualifier, name in _called_targets(endpoint):
+        if name in _NEVER_SCOPE_EVIDENCE:
+            continue
+        owner = module if qualifier is None else getattr(module, qualifier, None)
+        if owner is None:
+            continue
+        target = getattr(owner, name, None)
+        if target is None or not callable(target):
+            continue
+        names |= _function_names(target)
+    return names
+
+
+def _authorization_names(route: APIRoute) -> set[str]:
+    """Every dependency's name parts plus ``_endpoint_names`` of the handler.
+
+    ``require_project_access.<locals>._check`` contributes
+    ``require_project_access``: the dependency tree is what FastAPI runs.
+    """
+    names = {part for qualname in _walk_deps(route.dependant) for part in qualname.split(".")}
+    return names | _endpoint_names(route.endpoint)
+
+
+def _has_evidence(names: set[str], markers) -> bool:
+    return any(marker in names for marker in markers)
+
+
+def _route_shows_scope_check(route: APIRoute, markers=_SCOPE_EVIDENCE) -> bool:
+    """The one decision both non-path scans make, and the self-tests exercise."""
+    return _has_evidence(_authorization_names(route), markers)
+
+
 def _list_unscoped_nonpath_routes() -> list[tuple[str, str]]:
     offenders: set[tuple[str, str]] = set()
     for route in _collect_api_routes():
@@ -439,7 +661,7 @@ def _list_unscoped_nonpath_routes() -> list[tuple[str, str]]:
             continue
         if not _non_path_scoped_ids(route):
             continue
-        if any(marker in _authorization_evidence(route) for marker in _SCOPE_EVIDENCE):
+        if _route_shows_scope_check(route):
             continue
         for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
             offenders.add((method, route.path))
@@ -458,6 +680,28 @@ def test_the_nonpath_scan_actually_inspects_routes() -> None:
         "expected many routes taking a scoped id outside the path, found "
         f"{len(carriers)} — the extractor is probably broken"
     )
+
+
+def test_a_role_guard_is_never_scope_evidence() -> None:
+    """Guards the guard (re-audit N20).
+
+    ``require_role``'s source now names the API-key binding and the scope
+    guards, and every handler with a ``Depends(require_role(...))`` default
+    calls it. Read as evidence, that passed every such route vacuously: the two
+    ADMIN-only entries in ``NONPATH_KNOWN_EXEMPT`` turned "stale" the moment
+    N20 landed, which is how this was found.
+    """
+    from app.core import deps
+
+    assert any(m in inspect.getsource(deps.require_role) for m in _SCOPE_EVIDENCE), (
+        "precondition gone: require_role's source names no scope marker, so "
+        "this test no longer proves the exclusion does anything"
+    )
+    route = next(
+        r for r in _collect_api_routes() if r.path == "/api/v1/onboarding/events"
+    )
+    found = [m for m in _SCOPE_EVIDENCE if m in _authorization_names(route)]
+    assert not found, f"a role guard's source was read as scope evidence: {found}"
 
 
 def test_a_scoped_id_outside_the_path_is_still_checked() -> None:
@@ -490,6 +734,236 @@ def test_a_scoped_id_outside_the_path_is_still_checked() -> None:
             + "\n  ".join(f"{m:6s} {p}" for m, p in stale)
         )
     assert not errors, "\n\n".join(errors)
+
+
+# ── Self-tests of the evidence reader, on code written for them (QA-R3-10) ──
+#
+# QA's MUT-1/1c/1e: delete ``await resolve_project_scope(...)`` from
+# ``search.trigger_reindex`` (after which any QA_LEAD reindexes any tenant) and
+# the scan stayed green, first on the comment that still named the function,
+# then on ``_api_key_bound_project`` / ``bound_project_id``. Each shape below
+# is one of those, or the next plausible one.
+
+import importlib.util  # noqa: E402
+import sys  # noqa: E402
+import textwrap  # noqa: E402
+
+import pytest  # noqa: E402
+
+_EVIDENCE_FIXTURE_SOURCE = '''
+from fastapi import Depends
+
+from app.core import deps
+from app.core.deps import (
+    _api_key_bound_project,
+    get_streaming_api_key_context,
+    resolve_project_scope,
+)
+
+
+def require_role(_role):
+    """A role guard whose body happens to call a scope function."""
+    async def _check(db=None, current_user=None):
+        await resolve_project_scope(db, current_user, None)
+    return _check
+
+
+async def only_a_comment(project_id, db, current_user):
+    # await resolve_project_scope(db, current_user, project_id)  <- deleted
+    return project_id
+
+
+async def only_a_docstring(project_id, db, current_user):
+    """Checked by resolve_project_scope, like require_project_access."""
+    return project_id
+
+
+async def only_a_string(project_id, db, current_user, log):
+    log.info("resolve_project_scope skipped for %s", project_id)
+    return project_id
+
+
+async def only_a_bare_reference(project_id, db, current_user):
+    check = resolve_project_scope
+    return project_id, check
+
+
+async def only_confines_a_bound_key(project_id, db, current_user):
+    bound_project_id = _api_key_bound_project(current_user)
+    if bound_project_id is not None and str(bound_project_id) != project_id:
+        raise PermissionError("restricted to a different project")
+    return project_id
+
+
+def _documented_helper(project_id):
+    """Callers rely on resolve_project_scope having run."""
+    return project_id
+
+
+async def a_callee_only_mentions_it(project_id, db, current_user):
+    return _documented_helper(project_id)
+
+
+async def only_a_role_guard(project_id, current_user=Depends(require_role("ADMIN"))):
+    return project_id
+
+
+async def a_real_call(project_id, db, current_user):
+    await resolve_project_scope(db, current_user, project_id)
+    return project_id
+
+
+async def a_real_call_through_the_module(project_id, db, current_user):
+    await deps.resolve_project_scope(db, current_user, project_id)
+    return project_id
+
+
+async def _checking_helper(db, current_user, project_id):
+    await resolve_project_scope(db, current_user, project_id)
+
+
+async def a_real_call_one_level_down(project_id, db, current_user):
+    await _checking_helper(db, current_user, project_id)
+    return project_id
+
+
+async def a_key_derived_project(ctx=Depends(get_streaming_api_key_context)):
+    return ctx.project_id
+
+
+async def only_attributes_the_caller(project_id, db, current_user):
+    await track_event(db, project_id=project_id, user_id=current_user.id)
+
+
+async def an_ownership_filter(db, current_user):
+    return await db.execute(select(Row).where(Row.user_id == current_user.id))
+
+
+async def an_ownership_filter_by(db, current_user):
+    return await db.execute(select(Row).filter_by(user_id=current_user.id))
+
+
+def get_accessible_project_ids(*_args):
+    """Module-local, shadowing the real one, and checking nothing."""
+    return None
+
+
+async def a_dead_branch(project_id, db, current_user):
+    if False:
+        await resolve_project_scope(db, current_user, project_id)
+    return project_id
+
+
+async def a_call_on_another_object(project_id, db, current_user, helper):
+    await helper.resolve_project_scope(db, current_user, project_id)
+    return project_id
+
+
+async def a_shadowing_local_function(project_id, db, current_user):
+    get_accessible_project_ids(db, current_user)
+    return project_id
+
+
+async def an_uncalled_nested_check(project_id, db, current_user):
+    async def _never():
+        await resolve_project_scope(db, current_user, project_id)
+    return project_id
+
+
+async def an_uncalled_nested_helper_call(project_id, db, current_user):
+    _never = lambda: _checking_helper(db, current_user, project_id)  # noqa: E731
+    return project_id
+
+
+async def a_real_call_imported_in_the_handler(project_id, db, current_user):
+    # The module-level name is the shadowing function above; this import is
+    # the real one, and it is what the call resolves to.
+    from app.core.deps import get_accessible_project_ids
+
+    return project_id in await get_accessible_project_ids(db, current_user)
+
+
+async def a_real_call_in_a_live_branch(project_id, db, current_user):
+    if project_id:
+        await resolve_project_scope(db, current_user, project_id)
+    return project_id
+'''
+
+_NOT_EVIDENCE = (
+    "only_a_comment", "only_a_docstring", "only_a_string", "only_a_bare_reference",
+    "only_confines_a_bound_key", "a_callee_only_mentions_it", "only_a_role_guard",
+    "only_attributes_the_caller",
+    # QA round 4: a check that never runs, or is not the real function.
+    "a_dead_branch", "a_call_on_another_object", "a_shadowing_local_function",
+    "an_uncalled_nested_check", "an_uncalled_nested_helper_call",
+)
+_EVIDENCE = (
+    "a_real_call", "a_real_call_through_the_module", "a_real_call_one_level_down",
+    "a_key_derived_project", "an_ownership_filter", "an_ownership_filter_by",
+    "a_real_call_imported_in_the_handler", "a_real_call_in_a_live_branch",
+)
+
+
+@pytest.fixture(scope="module")
+def evidence_fixture(tmp_path_factory):
+    """The source above as a real, importable module, so ``inspect`` reads it
+    exactly as it reads a router."""
+    path = tmp_path_factory.mktemp("evidence") / "r4_evidence_fixture.py"
+    path.write_text(_EVIDENCE_FIXTURE_SOURCE, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("r4_evidence_fixture", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # inspect.getmodule resolves through it
+    try:
+        spec.loader.exec_module(module)
+        yield module
+    finally:
+        sys.modules.pop(spec.name, None)
+
+
+def _fixture_route(module, handler: str) -> APIRoute:
+    """A real route over a fixture handler: the same object the scans read."""
+    return APIRoute(
+        f"/api/v1/r4-evidence/{handler}", endpoint=getattr(module, handler), methods=["POST"]
+    )
+
+
+@pytest.mark.parametrize("handler", _NOT_EVIDENCE)
+def test_a_mention_is_not_a_check(evidence_fixture, handler) -> None:
+    route = _fixture_route(evidence_fixture, handler)
+    found = sorted(m for m in _SCOPE_EVIDENCE if m in _authorization_names(route))
+    assert not found and not _route_shows_scope_check(route), (
+        f"{handler} performs no scope check, but {found} read as one"
+    )
+
+
+@pytest.mark.parametrize("handler", _EVIDENCE)
+def test_a_real_check_is_evidence(evidence_fixture, handler) -> None:
+    route = _fixture_route(evidence_fixture, handler)
+    assert _route_shows_scope_check(route), (
+        f"{handler} really checks the scope, but the reader saw only "
+        f"{sorted(_authorization_names(route))}"
+    )
+
+
+def test_the_fixture_mentions_are_visible_as_text(evidence_fixture) -> None:
+    """Guards the guard: each NOT-evidence handler does name a marker in its
+    text, so the tests above fail a substring reader rather than pass by luck."""
+    for handler in _NOT_EVIDENCE:
+        func = getattr(evidence_fixture, handler)
+        text = inspect.getsource(func)
+        # Every name the handler mentions, nested or dead code included: the
+        # point is that the text names a marker a substring reader would see.
+        for node in ast.walk(ast.parse(textwrap.dedent(text))):
+            target = getattr(evidence_fixture, node.id, None) if isinstance(node, ast.Name) else None
+            if inspect.isfunction(target) and target is not func:
+                text += inspect.getsource(target)
+        assert any(m in text for m in (*_SCOPE_EVIDENCE, "_api_key_bound_project", "bound_project_id")), handler
+
+
+def test_binding_confinement_is_not_scope_evidence() -> None:
+    """Both confine a key bound to one project; neither checks a JWT user."""
+    assert "_api_key_bound_project" not in _SCOPE_EVIDENCE
+    assert "bound_project_id" not in _SCOPE_EVIDENCE
 
 
 def test_the_nonpath_backlog_only_shrinks() -> None:
@@ -539,13 +1013,18 @@ PUBLIC_PREFIX_EXEMPT_CAP = 6
 #: join them quietly.
 #:
 #: ``POST /webhooks/minio`` -- authenticated by the deployment-wide
-#: ``WEBHOOK_SECRET`` and no more. ``routers/webhooks.py:61`` reads
-#: ``project_id`` out of the request body's
-#: ``Records[].s3.object.userMetadata``, and falls back to the first segment of
-#: the object key (``:68``); either way the value is chosen by the caller, and
-#: ``:80`` hands it to ``ingest_test_run`` with no membership check. A holder of
-#: that one secret can therefore file a fabricated run into ANY project. This is
-#: the same shape as re-audit H1 and it is pre-existing, not introduced here.
+#: ``WEBHOOK_SECRET``, which names no tenant. It used to read ``project_id``
+#: out of the request body's ``Records[].s3.object.userMetadata``, so a holder
+#: of that one secret could file a fabricated run into ANY project and have its
+#: results read from any prefix (re-audit N10, the same shape as H1).
+#:
+#: FIXED for the request-body path: the handler now fetches the sentinel object
+#: it was notified about and takes the project from the object KEY, so writing
+#: into a project requires write access to that project's prefix in the bucket.
+#: It stays listed because the control is a STORAGE permission rather than a
+#: membership check this scan can see -- and because that permission is only as
+#: narrow as the deployment's object-store credentials, which is its own
+#: finding rather than something the handler can enforce.
 #:
 #: This entry was first written as an EXEMPTION, with a note claiming the
 #: payload "names an object key rather than a project". That note was wrong and
@@ -579,13 +1058,12 @@ def test_the_outside_scan_sees_the_routes() -> None:
 
 #: Evidence accepted for a route outside ``/api/v1``.
 #:
-#: Deliberately stricter than ``_SCOPE_EVIDENCE``, which includes bare names
-#: like ``bound_project_id`` -- and ``_authorization_evidence`` reads the
-#: handler's raw source, so a mere ``bound_project_id: Optional[str] = None``
-#: declaration satisfies it. That is tolerable inside ``/api/v1``, where two
-#: other scans also run; out here this is the only scan, so a declaration must
-#: not read as a check. Every marker below names something that RESOLVES a
-#: caller to a tenant.
+#: Deliberately stricter than ``_SCOPE_EVIDENCE``, which accepts an ownership
+#: filter (a ``current_user.id`` read). That is tolerable inside ``/api/v1``,
+#: where two other scans also run; out here this is the only scan, so every
+#: marker below must name something that RESOLVES a caller to a tenant.
+#: (``bound_project_id`` used to be excluded here for the same reason; since
+#: QA-R3-10 it is not scope evidence anywhere.)
 _OUTSIDE_SCOPE_EVIDENCE: tuple[str, ...] = tuple(
     marker
     for marker in _SCOPE_EVIDENCE
@@ -717,8 +1195,7 @@ def test_a_scoped_route_outside_api_v1_is_still_checked() -> None:
             continue
         if _route_is_protected(route):
             continue
-        evidence = _authorization_evidence(route)
-        if any(marker in evidence for marker in _OUTSIDE_SCOPE_EVIDENCE):
+        if _route_shows_scope_check(route, _OUTSIDE_SCOPE_EVIDENCE):
             continue
         for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
             offenders.add((method, route.path))

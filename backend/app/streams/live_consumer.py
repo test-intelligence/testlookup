@@ -257,8 +257,19 @@ class LiveEventStreamConsumer:
 
     async def _on_run_start(self, run_id: str, payload: dict) -> None:
         project_id  = payload.get("project_id", "")
-        build_number = payload.get("build_number", run_id)
+        build_number = payload.get("build_number")
 
+        if not project_id or not build_number:
+            # A run_start admitted through the SDK stream's path -- its own
+            # ingest, or /ws/events since re-audit N14 -- carries neither a
+            # project nor a build in its payload: the session that admitted it
+            # already started the run's live state with both. Read them from
+            # there, rather than fail the event three times and dead-letter it,
+            # or announce the session's UUID as the build (code review of N14).
+            state = await RedisLiveRunState.get(run_id) or {}
+            project_id = project_id or state.get("project_id", "")
+            build_number = build_number or state.get("build_number")
+        build_number = build_number or run_id
         if not project_id:
             raise ValueError("run_start event missing project_id")
 

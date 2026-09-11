@@ -125,11 +125,27 @@ async def send_notification(
     event_type: str,
     metadata: dict | None = None,
     delivery_id: str | None = None,
+    *,
+    deployment_wide: bool = False,
 ) -> None:
     """
     POST an Adaptive Card to a Microsoft Teams incoming webhook URL.
     Raises httpx.HTTPStatusError on non-2xx response.
+
+    ``deployment_wide`` is True only for the deployment's own webhook, the
+    global Teams setting an admin configures. Only that one may use
+    ``OFFLINE_NOTIFICATION_ALLOWED_HOSTS``: every tenant's webhook lives under
+    webhook.office.com, so a user's or a team's webhook is judged by residency
+    alone (code review of H10).
     """
+    from app.services.notification.egress import assert_delivery_allowed_async
+
+    # Re-audit H10: offline mode is documented as an egress ceiling, and
+    # this path posted notification content to a caller-configured URL
+    # without checking it. Residency, not channel name: a self-hosted
+    # webhook on the LAN is still a legitimate offline destination.
+    await assert_delivery_allowed_async("Teams", webhook_url, deployment_wide=deployment_wide)
+
     meta = metadata or {}
     payload = _build_adaptive_card(title, body, event_type, meta)
 

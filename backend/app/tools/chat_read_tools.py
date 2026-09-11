@@ -128,13 +128,23 @@ async def _run_bounded(tool_name: str, fetcher, tool_input: str = "") -> str:
         return _NO_CONTEXT_NOTE
     if state.token_budget_remaining <= 0:
         return _BUDGET_EXHAUSTED_NOTE
+    # Re-audit M17: every chat tool returns through here, and what it returns
+    # goes straight back into the copilot's next prompt. Failure text, suite
+    # names and error messages are written by whatever was under test, so an
+    # injected instruction arrives through exactly this path.
+    # sanitize_tool_output existed for it and had no caller. Applied BEFORE
+    # the token budget so secrets and injections are removed from the full
+    # text, and the budget is metered on what the model actually sees.
+    from app.services.input_sanitizer import sanitize_tool_output
+
     try:
         text, summary = await fetcher(state, (tool_input or "").strip())
     except Exception as exc:  # noqa: BLE001 — must never raise into the loop
         logger.debug("chat_tool_degraded", tool=tool_name, error=str(exc))
-        return f"{tool_name} unavailable: {str(exc)[:200]}"
+        # Exception text can quote the failing input, so it is sanitized too.
+        return sanitize_tool_output(f"{tool_name} unavailable: {str(exc)[:200]}")
     cap = min(state.per_call_token_cap, max(1, state.token_budget_remaining))
-    text = truncate_to_token_budget(text or "No data found.", cap)
+    text = truncate_to_token_budget(sanitize_tool_output(text or "No data found."), cap)
     state.token_budget_remaining -= estimate_token_count(text)
     state.trace.append({"tool": tool_name, "summary": summary})
     return text

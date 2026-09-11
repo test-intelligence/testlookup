@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import logging
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger("services.redaction")
@@ -21,7 +22,7 @@ logger = logging.getLogger("services.redaction")
 # ── Sensitive key names (union of audit + prompt sets) ───────────────────────
 # Matched after lowercasing and normalising hyphens → underscores.
 
-SENSITIVE_KEYS: frozenset[str] = frozenset({
+_SECRET_KEY_NAMES: frozenset[str] = frozenset({
     # Secrets
     "password", "passwd", "secret", "token", "api_key", "apikey",
     "api_token", "authorization", "auth_token", "access_token",
@@ -36,6 +37,9 @@ SENSITIVE_KEYS: frozenset[str] = frozenset({
     "client_secret", "signing_secret", "personal_access_token",
     "private_token", "session_token", "id_token", "encryption_key",
     "ssh_key", "deploy_key", "webhook_token",
+})
+
+_PII_KEY_NAMES: frozenset[str] = frozenset({
     # PII (PR-2)
     "email", "email_address", "phone", "phone_number", "mobile",
     "ssn", "social_security", "social_security_number",
@@ -44,13 +48,101 @@ SENSITIVE_KEYS: frozenset[str] = frozenset({
     "national_id", "passport_number", "drivers_license",
 })
 
+SENSITIVE_KEYS: frozenset[str] = _SECRET_KEY_NAMES | _PII_KEY_NAMES
+
+# What a structured LOG field loses by its name alone, whatever its value looks
+# like (QA of the H3 fix): the secret names above, and the header spellings a
+# request dump carries. Matched EXACTLY after lowercasing and "-" -> "_", so a
+# metric or a flag that merely contains the word -- ``prompt_tokens``,
+# ``token_count``, ``password_changed``, ``api_key_id`` -- is left alone. The
+# PII names are not here: a log's ``address=`` is as often a host as a street,
+# and PII values keep their own patterns.
+LOG_SECRET_KEYS: frozenset[str] = _SECRET_KEY_NAMES | frozenset({
+    "x_api_key", "set_cookie", "proxy_authorization",
+    "x_api_token", "x_auth_token", "x_webhook_secret",
+    # Names the suffixes below cannot reach (code review round 4).
+    "access_tokens", "refresh_tokens", "webhook_url", "smtp_pass",
+    "signing_key", "hmac_key", "app_secret_key_previous", "jwt_secret_key_previous",
+    "passphrase", "client_secret", "session_cookie",
+})
+
+#: Names that end in a secret suffix but hold no secret: a pagination cursor.
+LOG_SECRET_NAME_EXCEPTIONS: frozenset[str] = frozenset({
+    "next_page_token", "page_token", "pagination_token", "next_token",
+})
+
+#: A log field whose name ENDS in one of these is a secret too: the deployment's
+#: own settings are named this way (``github_token``, ``jira_api_token``,
+#: ``openai_api_key``, ``postgres_password``, ``slack_webhook_url``), and none
+#: was in the exact list (QA of the H3 fix). A suffix, so counters and flags
+#: that merely contain the word -- ``token_count``, ``prompt_tokens``,
+#: ``password_changed``, ``api_key_id`` -- still read as they are.
+LOG_SECRET_SUFFIXES: tuple[str, ...] = (
+    "_token", "_password", "_passwd", "_secret", "_api_key", "_apikey",
+    "_secret_key", "_access_key", "_private_key", "_webhook_url",
+    "_credential", "_credentials", "_passphrase",
+)
+
+
+def is_log_secret_name(key: object) -> bool:
+    """Whether a structured log field's NAME marks its value as a secret."""
+    if not isinstance(key, str):
+        return False
+    name = key.lower().replace("-", "_")
+    if name in LOG_SECRET_NAME_EXCEPTIONS:
+        return False
+    return name in LOG_SECRET_KEYS or name.endswith(LOG_SECRET_SUFFIXES)
+
 # ── Regex patterns for free-form text scrubbing ─────────────────────────────
 
-_SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+# Schemes whose name stays visible in front of a redacted Authorization
+# credential. Any other first word is taken as part of the credential: a raw
+# key sent with no scheme looks just like an unknown scheme's name.
+_AUTH_SCHEMES = (
+    "Basic|Bearer|Digest|Negotiate|NTLM|Kerberos|Token|ApiKey|"
+    "AWS4-HMAC-SHA256|DPoP|HOBA|Mutual|OAuth|SCRAM-SHA-1|SCRAM-SHA-256|vapid"
+)
+
+# An Authorization header's value, whatever the scheme (QA of the H3 fix).
+_AUTHORIZATION_HEADER = re.compile(
+    # The name, also inside Proxy-Authorization and a WSGI HTTP_AUTHORIZATION
+    # key; the closing quote of a dict or JSON key; ":" or "="; and the
+    # opening quote of a quoted value.
+    r"(?P<head>(?<![A-Za-z0-9])Authorization(?:\\?[\"'])?[ \t]*[:=][ \t]*"
+    r"(?P<open>\\?[\"'])?)"
+    r"(?P<scheme>(?:" + _AUTH_SCHEMES + r")[ \t]+)?"
+    # The credential runs to the value's closing quote or, unquoted, to the
+    # end of the line. (A backreference to a group that took no part never
+    # matches, so the lookahead cannot stop an unquoted value.)
+    r"(?:(?!(?P=open))[^\r\n])+",
+    re.IGNORECASE,
+)
+
+_CREDENTIAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Bearer tokens
     (re.compile(r"(Bearer\s+)[A-Za-z0-9\-_\.]{20,}", re.IGNORECASE), r"\1[REDACTED]"),
-    # Authorization headers
-    (re.compile(r"(Authorization:\s*)[^\s\n]{10,}", re.IGNORECASE), r"\1[REDACTED]"),
+    # Authorization headers, any scheme. The old pattern wanted 10+ characters
+    # in the first token after the colon -- the scheme's name -- so
+    # "Authorization: Basic dXNlcjpwYXNzd29yZA==" passed intact, as did
+    # Digest, Negotiate, NTLM and Token. The credential now runs to the end of
+    # the line or the closing quote, since a Digest or SigV4 credential is a
+    # list of quoted, comma-separated parameters.
+    (_AUTHORIZATION_HEADER, r"\g<head>\g<scheme>[REDACTED]"),
+    # A Slack or Teams incoming-webhook URL is itself the credential: anyone
+    # holding it can post to the channel (QA of the H3 fix).
+    (re.compile(r"(hooks\.slack\.com/(?:services|workflows|triggers)/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"(\.webhook\.office\.com/webhookb2/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"(outlook\.office(?:365)?\.com/webhook/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"(discord(?:app)?\.com/api/webhooks/)[^\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
+    # Teams Workflows (Power Automate) URLs carry the credential as sig=, on
+    # logic.azure.com and on the newer powerplatform.com host (QA round 4).
+    (
+        re.compile(
+            r"((?:\.logic\.azure\.com|\.powerplatform\.com)[^\s'\"<>]*?[?&]sig=)[^\s&'\"<>]+",
+            re.IGNORECASE,
+        ),
+        r"\1[REDACTED]",
+    ),
     # Cookies frequently contain session credentials and must be removed even
     # when their values do not resemble long random tokens.
     (re.compile(r"((?:Set-)?Cookie:\s*)[^\r\n]+", re.IGNORECASE), r"\1[REDACTED]"),
@@ -68,7 +160,11 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}"), "[REDACTED_JWT]"),
     # Connection strings with passwords
     (re.compile(r"(://[^:]+:)[^@]{4,}(@)"), r"\1[REDACTED]\2"),
-    # ── PII patterns (PR-2) ────────────────────────────────────────────────
+]
+
+# PII heuristics (PR-2). An email address is identified by its ``@`` and
+# domain; the others match digit runs and dotted quads by shape alone.
+_PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Email addresses
     (re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"), "[REDACTED_EMAIL]"),
     # Phone numbers (US/international formats)
@@ -79,6 +175,17 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b"), "[REDACTED_CC]"),
     # IPv4 addresses
     (re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"), "[REDACTED_IP]"),
+]
+
+# Every pattern, for free text whose shape nothing constrains (agent evidence,
+# error excerpts, stored run data).
+_SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = _CREDENTIAL_PATTERNS + _PII_PATTERNS
+
+# What a log message gets: patterns that recognise what they redact by a marker
+# (``Bearer``, ``password=``, ``://user:pass@``, a JWT's three segments, an
+# email's ``@``), never by shape alone. See redact_log_message.
+_LOG_MESSAGE_PATTERNS: list[tuple[re.Pattern[str], str]] = _CREDENTIAL_PATTERNS + [
+    pattern for pattern in _PII_PATTERNS if pattern[1] == "[REDACTED_EMAIL]"
 ]
 
 # Compiled pattern for quick key-name content check (used for string values
@@ -107,6 +214,82 @@ def redact_text(text: str) -> str:
     for pattern, replacement in _SECRET_PATTERNS:
         result = pattern.sub(replacement, result)
     return result
+
+
+def redact_log_message(text: str) -> str:
+    """Redact credentials and email addresses from a log message.
+
+    A log message is operational text: byte counts, epoch seconds, build
+    numbers, run ids shaped like ``NNN-NNN-NNNN``, version strings and host
+    addresses. The phone, SSN, card and IPv4 heuristics in :func:`redact_text`
+    match those by shape and destroy them -- ``processed 1234567890 bytes``
+    became ``processed [REDACTED_PHONE] bytes``, and the host in an
+    ``offline_egress_blocked`` warning became ``[REDACTED_IP]``. Everything
+    redacted here is recognised by a marker, so an ordinary number survives.
+    """
+    if not text:
+        return text
+    result = text
+    for pattern, replacement in _LOG_MESSAGE_PATTERNS:
+        result = pattern.sub(replacement, result)
+    return result
+
+
+def redact_log_field(key: str, value: Any, *, free_text: bool = False) -> Any:
+    """Redact one structured log field: by its name first, then by its content.
+
+    A field named in :data:`LOG_SECRET_KEYS` is replaced whatever it holds,
+    except ``None`` and a bool, which cannot carry a secret and say something
+    worth keeping ("no token", "password set"); a number is replaced, since an
+    OTP is one. A string gets the field's patterns: :func:`redact_log_message`
+    for free text, :func:`redact_text` otherwise. A dict, list, tuple or set is
+    walked and its entries get the same treatment -- a secret-named key is
+    redacted however deep it sits -- and past ``_MAX_RECURSION_DEPTH`` the
+    subtree is replaced, never passed through.
+
+    A container is copied, never edited in place: it is the caller's own
+    object and may outlive the log call. If nothing in it changed, it is
+    returned as it was.
+    """
+    scrub = redact_log_message if free_text else redact_text
+    return _redact_log_entry(key, value, scrub, 0)
+
+
+def _redact_log_entry(
+    key: object, value: Any, scrub: Callable[[str], str], depth: int
+) -> Any:
+    if is_log_secret_name(key) and value is not None and not isinstance(value, bool):
+        return REDACTED
+    if isinstance(value, (bytes, bytearray)):
+        # The renderer decodes bytes after redaction has run, so
+        # b"password=..." reached the log intact (QA of the H3 fix).
+        value = bytes(value).decode("utf-8", errors="replace")
+    if isinstance(value, str):
+        scrubbed = scrub(value)
+        return value if scrubbed == value else scrubbed
+    if isinstance(value, (dict, list, tuple, set, frozenset)):
+        if depth >= _MAX_RECURSION_DEPTH:
+            return REDACTED
+        return _redact_log_container(value, scrub, depth + 1)
+    return value
+
+
+def _redact_log_container(value: Any, scrub: Callable[[str], str], depth: int) -> Any:
+    if isinstance(value, dict):
+        entries = {k: _redact_log_entry(k, v, scrub, depth) for k, v in value.items()}
+        if all(entries[k] is v for k, v in value.items()):
+            return value
+        return entries
+    items = [_redact_log_entry(None, item, scrub, depth) for item in value]
+    if all(new is old for new, old in zip(items, value)):
+        return value
+    if isinstance(value, list):
+        return items
+    if isinstance(value, frozenset):
+        return frozenset(items)
+    if isinstance(value, set):
+        return set(items)
+    return tuple(items)
 
 
 def redact_value(key: str, value: Any) -> Any:

@@ -39,7 +39,7 @@ export const suitesService = {
 
   listCanonicalCases: (
     projectId: string | null,
-    params?: { suite_id?: string; status?: string },
+    params?: { suite_id?: string; status?: string; page?: number; size?: number },
   ) =>
     getData<CanonicalTestCaseListResponse>('/api/v1/canonical-test-cases', {
       params: {

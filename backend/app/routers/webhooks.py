@@ -4,7 +4,8 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
 from app.core.deps import verify_webhook_secret
-from app.models.schemas import MinIOWebhookEvent, SentinelFile
+from app.models.schemas import MinIOWebhookEvent
+from app.services.minio_sentinel import SENTINEL_NAME, sentinel_key_problem
 from app.worker.tasks import ingest_test_run
 
 logger = logging.getLogger(__name__)
@@ -38,60 +39,40 @@ async def minio_webhook(
     key = event.Key or ""
 
     # Only process sentinel files
-    if not key.endswith("upload_complete.json"):
+    if not key.endswith(SENTINEL_NAME):
         logger.debug("Ignoring non-sentinel upload: %s", key)
         return {"status": "ignored", "reason": "not_sentinel"}
 
-    logger.info("Sentinel file received: %s", key)
-
-    # Extract S3 prefix from key path: {project_id}/runs/{build_number}/upload_complete.json
-    parts = key.split("/")
-    if len(parts) < 3:
-        logger.warning("Unexpected sentinel key format: %s", key)
+    # {project_id}/runs/{build_number}/upload_complete.json, made of plain
+    # names. A key with an empty, "." or ".." segment, a backslash or a
+    # leading "/" is refused here, before anything is queued, and again by the
+    # task's reader (code review of the N10 follow-up): on the local storage
+    # backend a ".." let the key name one project while the sentinel came
+    # from another project's prefix.
+    problem = sentinel_key_problem(key)
+    if problem is not None:
+        logger.warning("Refusing sentinel key %r: %s", key, problem)
         return {"status": "ignored", "reason": "unexpected_key_format"}
 
+    logger.info("Sentinel file received: %s", key)
+
+    # The S3 prefix the run's result files are read from.
+    parts = key.split("/")
     minio_prefix = "/".join(parts[:-1]) + "/"
 
-    # Read sentinel content from the webhook records if available
-    sentinel_data = {}
-    records = event.Records or []
-    for record in records:
-        s3_obj = record.get("s3", {})
-        obj_key = s3_obj.get("object", {}).get("key", "")
-        if obj_key.endswith("upload_complete.json"):
-            user_meta = record.get("s3", {}).get("object", {}).get("userMetadata", {})
-            sentinel_data.update(user_meta)
+    # The sentinel is read by the ingestion task, not here (code review of
+    # re-audit N10). Reading it here answered 200 "ignored" on ANY storage
+    # error -- and MinIO treats a 200 as delivered, so one transient 503 lost
+    # the upload. The task retries a storage hiccup with backoff, reads through
+    # a size cap, and keeps the object off the API process. It takes the
+    # project from this key, never from the request body or from what the
+    # sentinel claims: see services/minio_sentinel.py.
+    task = ingest_test_run.delay(sentinel_key=key, minio_prefix=minio_prefix)
 
-    # If no sentinel data in event, derive from key path
-    if not sentinel_data.get("build_number"):
-        project_id = parts[0] if len(parts) > 0 else "unknown"
-        build_number = parts[2] if len(parts) > 2 else "unknown"
-        sentinel_data = {
-            "project_id": project_id,
-            "build_number": build_number,
-        }
-
-    try:
-        sentinel = SentinelFile(**sentinel_data)
-    except Exception as e:
-        logger.warning("Could not parse sentinel data: %s. Data: %s", e, sentinel_data)
-        return {"status": "ignored", "reason": "invalid_sentinel_content"}
-
-    task = ingest_test_run.delay(
-        sentinel_dict=sentinel.model_dump(),
-        minio_prefix=minio_prefix,
-    )
-
-    logger.info(
-        "Queued ingestion task %s for project=%s build=%s",
-        task.id,
-        sentinel.project_id,
-        sentinel.build_number,
-    )
-
+    logger.info("Queued ingestion task %s for sentinel %s", task.id, key)
     return {
         "status": "queued",
         "task_id": task.id,
-        "project_id": sentinel.project_id,
-        "build_number": sentinel.build_number,
+        "project_id": parts[0],
+        "sentinel_key": key,
     }

@@ -116,6 +116,13 @@ class LiveBatchConflictError(HTTPException):
         super().__init__(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 
+class LiveSessionClosedError(LiveBatchConflictError):
+    """The batch names a session that has closed: nothing more is admitted."""
+
+    def __init__(self, detail: str = "live session is closed"):
+        super().__init__(detail)
+
+
 def _canonical_event_json(value) -> str:
     """Stable JSON used by both legacy batch and event identity derivation."""
     return json.dumps(
@@ -216,6 +223,13 @@ end
 -- Duplicate lookup deliberately precedes the close fence: a retry of the
 -- accepted closing batch must still converge after the session is closed.
 local gate = redis.call('HGET', KEYS[3], '__gate__') or 'open'
+-- ARGV[24] is PostgreSQL's answer: the session has completed. The fence
+-- above expires with the closed ledger, 15 days after the run drains, and a
+-- missing fence reads as 'open'. This answer does not expire, so a finished
+-- session never admits a new batch (code review and QA of re-audit N14).
+if ARGV[24] == '1' then
+  gate = 'closed'
+end
 if not recovering and gate ~= 'open' then
   return {'closed', '0'}
 end
@@ -992,6 +1006,8 @@ async def _persist_event_batch(
     events,
     *,
     batch_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    session_closed: bool = False,
 ) -> int:
     """Atomically admit a complete live batch into run-isolated evidence.
 
@@ -1000,6 +1016,10 @@ async def _persist_event_batch(
     not trim either evidence buffer: only the drainer may remove committed
     evidence. ``batch_id`` is supplied by current SDKs; older SDK payloads get
     a deterministic content identity so a byte-equivalent retry converges.
+
+    ``session_closed`` says PostgreSQL has completed the session. The batch is
+    then admitted only as a retry of one the session already accepted, whatever
+    the Redis close fence says: that fence expires.
     """
     from app.streams import (
         LIVE_BATCH_DEDUP_KEY,
@@ -1108,6 +1128,8 @@ async def _persist_event_batch(
         _canonical_event_json(wire_events),
         str(_LIVE_LEGACY_BUFFER_TTL_SECONDS),
         str(86_400),
+        # ARGV[24]: the session is no longer active in PostgreSQL.
+        "1" if session_closed else "0",
     ]
     redis_keys = [
         evidence_key,
@@ -1158,7 +1180,7 @@ async def _persist_event_batch(
             f"batch_id {resolved_batch_id!r} was already used with different content"
         )
     if outcome == "closed":
-        raise LiveBatchConflictError("live session is closed")
+        raise LiveSessionClosedError()
     if outcome != "accepted" and outcome != "duplicate":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1200,9 +1222,14 @@ async def _persist_event_batch(
     if outcome == "accepted" and test_event_count > 0:
         try:
             from app.services.high_volume_detector import record_test_events
-            project_id = await _resolve_project_id_for_run(run_id)
-            if project_id:
-                await record_test_events(project_id, test_event_count)
+            # A caller that knows the project passes it (re-audit N14). The
+            # lookup is a database read per batch -- and /ws/events sends one
+            # event per batch -- and it finds nothing for an API-key session,
+            # whose TestRun only exists once the session closes, so those runs
+            # never reached the detector at all.
+            detector_project = project_id or await _resolve_project_id_for_run(run_id)
+            if detector_project:
+                await record_test_events(detector_project, test_event_count)
         except Exception as exc:
             logger.warning(
                 "high_volume_record_failed run_id=%s error=%s", run_id, exc,
@@ -1288,6 +1315,15 @@ async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchRespo
     return LiveEventBatchResponse(accepted=accepted, run_id=batch.run_id, session_id=batch.session_id)
 
 
+def _starts_a_run(events) -> bool:
+    """Whether a batch opens a run: it carries a ``run_start`` event."""
+    return any(
+        (event.model_dump() if hasattr(event, "model_dump") else dict(event)).get("event_type")
+        == "run_start"
+        for event in events
+    )
+
+
 async def ingest_via_api_key(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -1298,7 +1334,8 @@ async def ingest_via_api_key(
 
     On the first call for a given (project_id, run_id) pair, auto-creates a
     LiveSession populated from ``request.meta`` (with sensible fallbacks).
-    Subsequent calls reuse the existing session. The release record is
+    Subsequent calls reuse it while it is active; a session that has completed
+    is handled below. The release record is
     auto-created when ``meta.release_name`` is set so live runs participate
     in release tracking the same way the legacy /sessions flow does.
 
@@ -1315,13 +1352,22 @@ async def ingest_via_api_key(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Look up the most recent session for (project_id, run_id), regardless of
-    # status. We need to distinguish three cases:
-    #   1. No prior session       → create one (the happy path)
-    #   2. Active session exists  → reuse it (subsequent batches in a run)
-    #   3. Completed session      → reject 409 (the run already finalised; the
-    #      client must pick a new run_id, otherwise we'd silently start a new
-    #      run under the same display id and the UI would conflate the two).
+    # The most recent session for (project_id, run_id), whatever its status:
+    #   1. none       -> create one (the happy path);
+    #   2. active     -> reuse it (the run's later batches);
+    #   3. completed  -> that run is over. A batch that starts a run -- one
+    #      carrying a ``run_start`` event, which /ws/events producers send and
+    #      the bundled SDKs never do -- begins a NEW run under the same id, in
+    #      a new session. Any other batch is refused with 409, unless it is a
+    #      retry of a batch this session already accepted, which converges on
+    #      that batch's receipt.
+    #
+    # Decided here, from PostgreSQL. Case 3 used to go to the admission script
+    # like case 2, whose only refusal was the Redis close fence -- and that
+    # fence expires with the run's closed ledger, 15 days after the run
+    # drains. From then on a late batch, or a nightly job reusing its run id,
+    # was admitted into the finished session with 202 and never persisted
+    # (code review and QA of re-audit N14).
     existing = (
         await db.execute(
             select(LiveSession)
@@ -1333,6 +1379,37 @@ async def ingest_via_api_key(
             .limit(1)
         )
     ).scalar_one_or_none()
+
+    if existing is not None and existing.status != "active":
+        if not _starts_a_run(request.events):
+            try:
+                accepted = await _persist_event_batch(
+                    session_id=str(existing.id),
+                    run_id=str(existing.id),
+                    events=request.events,
+                    batch_id=getattr(request, "batch_id", None),
+                    project_id=str(project_id),
+                    session_closed=True,
+                )
+            except LiveSessionClosedError as exc:
+                raise LiveSessionClosedError(
+                    f"live session is closed: run '{request.run_id}' has already "
+                    "completed. Use a new run_id, or begin a new run under this "
+                    "one with a run_start event."
+                ) from exc
+            return LiveStreamIngestResponse(
+                accepted=accepted,
+                run_id=request.run_id,
+                session_id=str(existing.id),
+                created_session=False,
+            )
+        # A run_start after its run completed always begins a new run -- even
+        # a late retry of the old run's own start. The two cannot be told
+        # apart: producers reuse event ids from night to night, and joining the
+        # finished run on a matching id lost the whole next night, every later
+        # event refused as closed (code review round 4). A late retry costs an
+        # empty run that the idle reaper closes.
+        existing = None
 
     meta = request.meta
     created_session = False
@@ -1437,6 +1514,7 @@ async def ingest_via_api_key(
         run_id=str(session.id),
         events=request.events,
         batch_id=getattr(request, "batch_id", None),
+        project_id=str(project_id),
     )
 
     # Detect a run_complete event and finalize the session in the same handler.

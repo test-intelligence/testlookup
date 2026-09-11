@@ -1220,8 +1220,26 @@ async def _claim_pipeline_resume(pipeline_run_id: str) -> dict[str, Any] | None:
         mode_snapshot = metadata.get("analysis_mode_resolution")
         if not isinstance(mode_snapshot, dict) or not mode_snapshot.get("resolved"):
             # Analysis routing is part of the replay authority. Legacy rows that
-            # never persisted it must take a new pipeline attempt instead.
-            return None
+            # never persisted it must take a new pipeline attempt instead --
+            # unless it failed during setup. _create_pipeline_run writes the
+            # pipeline and its planned stages in one commit; if those stages
+            # exist and none ever started, the pipeline failed before the
+            # snapshot was persisted and has no routing to keep stable. An
+            # outbox-driven pipeline cannot take a new attempt (its id is
+            # fixed), so it resumes with a freshly resolved mode (re-audit N27).
+            # A row with no planned stages is not one of these, and stays closed.
+            from sqlalchemy import func as sa_func  # noqa: PLC0415
+
+            counts = await db.execute(
+                sa_select(
+                    sa_func.count(),
+                    sa_func.count(AgentStageResult.started_at),
+                ).where(AgentStageResult.pipeline_run_id == pipeline.id)
+            )
+            planned, started = counts.one()
+            if not planned or started:
+                return None
+            mode_snapshot = None
 
         current_attempt = metadata.get("resume_attempt", 0)
         if isinstance(current_attempt, bool) or not isinstance(current_attempt, int) or current_attempt < 0:
@@ -1728,122 +1746,137 @@ async def run_offline_pipeline(
             pipeline_run_id, test_run_id, project_id, workflow_type
         )
 
-    # Attempt to load a checksum-authorized checkpoint. Same-pipeline resume
-    # reads only the atomically claimed pipeline; new attempts use the legacy
-    # latest-failed source and intentionally get a new pipeline identity.
-    checkpoint = await _load_checkpoint(
-        test_run_id, workflow_type, pipeline_run_id=pipeline_run_id if pipeline_setup.get("resume_attempt") else None
-    )
-    if pipeline_setup.get("resume_attempt"):
-        mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
-    else:
-        mode_snapshot = await _resolve_analysis_mode_snapshot()
-    cost_budget_snapshot = await _prepare_pipeline_cost_budget(
-        pipeline_run_id=pipeline_run_id,
-        project_id=project_id,
-        pipeline_setup=pipeline_setup,
-        mode_snapshot=mode_snapshot,
-        cost_budget_mode_override=cost_budget_mode_override,
-    )
-
-    initial_state: WorkflowState = {
-        "pipeline_run_id":    pipeline_run_id,
-        "test_run_id":        test_run_id,
-        "project_id":         project_id,
-        "build_number":       build_number,
-        "workflow_type":      workflow_type,
-        "pipeline_deadline_ts": _pipeline_deadline(),
-        # Stage outputs (initialised empty — agents populate these)
-        "test_run_data":      None,
-        "branch":             None,
-        "failed_test_ids":    [],
-        "total_tests":        0,
-        "pass_rate":          0.0,
-        "ingestion_enriched": False,
-        "anomalies":          [],
-        "is_regression":      False,
-        "regression_tests":   [],
-        "anomaly_summary":    None,
-        "analyses":           {},
-        "executive_summary":  None,
-        "summary_markdown":   None,
-        "structured_summary": None,
-        "summary_provenance": None,
-        "decision_intelligence": None,
-        "decision_evidence_snapshot": None,
-        "decision_report_verification": None,
-        "triage_results":     [],
-        # Deep pipeline state (empty for offline/live pipelines)
-        "failure_clusters":   [],
-        "cluster_map":        {},
-        "cluster_child_settings": pipeline_setup["cluster_child_settings"],
-        "async_decision_report_supersession_enabled": bool(
-            pipeline_setup.get("async_decision_report_supersession_enabled", False)
-        ),
-        "contract_agent_enabled": bool(pipeline_setup.get("contract_agent_settings", {}).get("enabled", False)),
-        "defect_commander_enabled": bool(pipeline_setup.get("defect_commander_settings", {}).get("enabled", False)),
-        "contract_findings": None,
-        "log_intelligence_enabled": bool(pipeline_setup.get("log_intelligence_settings", {}).get("enabled", False)),
-        "log_findings": None,
-        "regression_watchman_enabled": bool(pipeline_setup.get("regression_watchman_settings", {}).get("enabled", False)),
-        "regression_classification": None,
-        "change_ownership_enabled": bool(pipeline_setup.get("change_ownership_settings", {}).get("enabled", False)),
-        "change_ownership_findings": None,
-        "cluster_investigation_plan": None,
-        "cluster_investigation_results": None,
-        "deep_findings":      {},
-        "flaky_findings":     [],
-        "test_health_findings": [],
-        "release_decision":   None,
-        "errors":             [],
-        "completed_stages":   [],
-        "current_stage":      "ingestion",
-        "stage_errors":       {},
-        "stage_quality":      "normal",
-        "low_confidence_count": 0,
-        # Provenance / execution tracking
-        "skipped_stages":     [],
-        "execution_path":     ExecutionPath.EXECUTED,
-        "fallback_used":      False,
-        "tools_used":         [],
-        "analysis_mode_requested": mode_snapshot["requested"],
-        "analysis_mode_resolved": mode_snapshot["resolved"],
-        "analysis_mode_resolution": mode_snapshot,
-        "_workflow_route_decisions": [],
-        "_checkpoint_stages": [],
-        "_checkpoint_replay_metadata": {},
-        "workflow_plan": pipeline_setup["initial_workflow_plan"],
-        "workflow_verification": {},
-        "agent_contracts": {},
-        "schema_version":     2,
-        "stage_metrics":      {},
-    }
-    initial_state["initial_workflow_plan"] = initial_state["workflow_plan"]
-
-    # Merge checkpoint data into initial state (restored stage outputs)
-    if checkpoint:
-        checkpoint_stages = checkpoint.pop("_checkpoint_stages", [])
-        initial_state.update(checkpoint)  # type: ignore[typeddict-item]
-        initial_state["_checkpoint_stages"] = checkpoint_stages  # type: ignore[typeddict-unknown-key]
-        logger.info(
-            "pipeline_resuming_with_checkpoint_stages",
-            pipeline_run_id=pipeline_run_id,
-            checkpoint_stages=checkpoint_stages,
+    try:
+        # Attempt to load a checksum-authorized checkpoint. Same-pipeline resume
+        # reads only the atomically claimed pipeline; new attempts use the legacy
+        # latest-failed source and intentionally get a new pipeline identity.
+        checkpoint = await _load_checkpoint(
+            test_run_id, workflow_type, pipeline_run_id=pipeline_run_id if pipeline_setup.get("resume_attempt") else None
         )
-    _apply_pipeline_cost_budget(cast(dict[str, Any], initial_state), cost_budget_snapshot)
+        if pipeline_setup.get("resume_attempt") and pipeline_setup.get("analysis_mode_resolution"):
+            mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
+        else:
+            mode_snapshot = await _resolve_analysis_mode_snapshot()
+        cost_budget_snapshot = await _prepare_pipeline_cost_budget(
+            pipeline_run_id=pipeline_run_id,
+            project_id=project_id,
+            pipeline_setup=pipeline_setup,
+            mode_snapshot=mode_snapshot,
+            cost_budget_mode_override=cost_budget_mode_override,
+        )
 
-    if workflow_type == "deep":
-        app = _deep_app
-    elif workflow_type == "live":
-        app = _live_app
-    else:
-        app = _offline_app
+        initial_state: WorkflowState = {
+            "pipeline_run_id":    pipeline_run_id,
+            "test_run_id":        test_run_id,
+            "project_id":         project_id,
+            "build_number":       build_number,
+            "workflow_type":      workflow_type,
+            "pipeline_deadline_ts": _pipeline_deadline(),
+            # Stage outputs (initialised empty — agents populate these)
+            "test_run_data":      None,
+            "branch":             None,
+            "failed_test_ids":    [],
+            "total_tests":        0,
+            "pass_rate":          0.0,
+            "ingestion_enriched": False,
+            "anomalies":          [],
+            "is_regression":      False,
+            "regression_tests":   [],
+            "anomaly_summary":    None,
+            "analyses":           {},
+            "executive_summary":  None,
+            "summary_markdown":   None,
+            "structured_summary": None,
+            "summary_provenance": None,
+            "decision_intelligence": None,
+            "decision_evidence_snapshot": None,
+            "decision_report_verification": None,
+            "triage_results":     [],
+            # Deep pipeline state (empty for offline/live pipelines)
+            "failure_clusters":   [],
+            "cluster_map":        {},
+            "cluster_child_settings": pipeline_setup["cluster_child_settings"],
+            "async_decision_report_supersession_enabled": bool(
+                pipeline_setup.get("async_decision_report_supersession_enabled", False)
+            ),
+            "contract_agent_enabled": bool(pipeline_setup.get("contract_agent_settings", {}).get("enabled", False)),
+            "defect_commander_enabled": bool(pipeline_setup.get("defect_commander_settings", {}).get("enabled", False)),
+            "contract_findings": None,
+            "log_intelligence_enabled": bool(pipeline_setup.get("log_intelligence_settings", {}).get("enabled", False)),
+            "log_findings": None,
+            "regression_watchman_enabled": bool(pipeline_setup.get("regression_watchman_settings", {}).get("enabled", False)),
+            "regression_classification": None,
+            "change_ownership_enabled": bool(pipeline_setup.get("change_ownership_settings", {}).get("enabled", False)),
+            "change_ownership_findings": None,
+            "cluster_investigation_plan": None,
+            "cluster_investigation_results": None,
+            "deep_findings":      {},
+            "flaky_findings":     [],
+            "test_health_findings": [],
+            "release_decision":   None,
+            "errors":             [],
+            "completed_stages":   [],
+            "current_stage":      "ingestion",
+            "stage_errors":       {},
+            "stage_quality":      "normal",
+            "low_confidence_count": 0,
+            # Provenance / execution tracking
+            "skipped_stages":     [],
+            "execution_path":     ExecutionPath.EXECUTED,
+            "fallback_used":      False,
+            "tools_used":         [],
+            "analysis_mode_requested": mode_snapshot["requested"],
+            "analysis_mode_resolved": mode_snapshot["resolved"],
+            "analysis_mode_resolution": mode_snapshot,
+            "_workflow_route_decisions": [],
+            "_checkpoint_stages": [],
+            "_checkpoint_replay_metadata": {},
+            "workflow_plan": pipeline_setup["initial_workflow_plan"],
+            "workflow_verification": {},
+            "agent_contracts": {},
+            "schema_version":     2,
+            "stage_metrics":      {},
+        }
+        initial_state["initial_workflow_plan"] = initial_state["workflow_plan"]
 
-    blocked_state = await _complete_cost_budget_block(
-        pipeline_run_id=pipeline_run_id,
-        workflow_type=workflow_type,
-        state=cast(dict[str, Any], initial_state),
-    )
+        # Merge checkpoint data into initial state (restored stage outputs)
+        if checkpoint:
+            checkpoint_stages = checkpoint.pop("_checkpoint_stages", [])
+            initial_state.update(checkpoint)  # type: ignore[typeddict-item]
+            initial_state["_checkpoint_stages"] = checkpoint_stages  # type: ignore[typeddict-unknown-key]
+            logger.info(
+                "pipeline_resuming_with_checkpoint_stages",
+                pipeline_run_id=pipeline_run_id,
+                checkpoint_stages=checkpoint_stages,
+            )
+        _apply_pipeline_cost_budget(cast(dict[str, Any], initial_state), cost_budget_snapshot)
+
+        if workflow_type == "deep":
+            app = _deep_app
+        elif workflow_type == "live":
+            app = _live_app
+        else:
+            app = _offline_app
+
+        blocked_state = await _complete_cost_budget_block(
+            pipeline_run_id=pipeline_run_id,
+            workflow_type=workflow_type,
+            state=cast(dict[str, Any], initial_state),
+        )
+    except Exception as exc:
+        # Anything failing between creating (or claiming) this pipeline and
+        # starting its graph left it 'running': the handler below wraps only
+        # the graph, so every retry was then refused as not resumable
+        # (re-audit N27, found on the homelab).
+        error_msg = f"Pipeline setup error: {_safe_workflow_error(exc)}"
+        # Marked first: a log call that raises (QA reproduced one with a
+        # non-UTF-8 stdout) must not leave the pipeline 'running' again.
+        await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)
+        try:
+            logger.error("pipeline_setup_failed", error_type=type(exc).__name__, exc_info=True)
+        except Exception:  # noqa: BLE001 -- the original error is what propagates
+            pass
+        raise
     if blocked_state is not None:
         return blocked_state
 
@@ -1942,109 +1975,121 @@ async def run_deep_pipeline(
             pipeline_run_id, test_run_id, project_id, "deep"
         )
 
-    checkpoint = await _load_checkpoint(
-        test_run_id, "deep", pipeline_run_id=pipeline_run_id if pipeline_setup.get("resume_attempt") else None
-    )
-    if pipeline_setup.get("resume_attempt"):
-        mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
-    else:
-        mode_snapshot = await _resolve_analysis_mode_snapshot()
-    cost_budget_snapshot = await _prepare_pipeline_cost_budget(
-        pipeline_run_id=pipeline_run_id,
-        project_id=project_id,
-        pipeline_setup=pipeline_setup,
-        mode_snapshot=mode_snapshot,
-        cost_budget_mode_override=cost_budget_mode_override,
-    )
-
-    initial_state: WorkflowState = {
-        "pipeline_run_id":    pipeline_run_id,
-        "test_run_id":        test_run_id,
-        "project_id":         project_id,
-        "build_number":       build_number,
-        "workflow_type":      "deep",
-        "pipeline_deadline_ts": _pipeline_deadline(),
-        "test_run_data":      None,
-        "branch":             None,
-        "failed_test_ids":    [],
-        "total_tests":        0,
-        "pass_rate":          0.0,
-        "ingestion_enriched": False,
-        "anomalies":          [],
-        "is_regression":      False,
-        "regression_tests":   [],
-        "anomaly_summary":    None,
-        "analyses":           {},
-        "executive_summary":  None,
-        "summary_markdown":   None,
-        "structured_summary": None,
-        "summary_provenance": None,
-        "decision_intelligence": None,
-        "decision_evidence_snapshot": None,
-        "decision_report_verification": None,
-        "triage_results":     [],
-        "failure_clusters":   [],
-        "cluster_map":        {},
-        "cluster_child_settings": pipeline_setup["cluster_child_settings"],
-        "async_decision_report_supersession_enabled": bool(
-            pipeline_setup.get("async_decision_report_supersession_enabled", False)
-        ),
-        "contract_agent_enabled": bool(pipeline_setup.get("contract_agent_settings", {}).get("enabled", False)),
-        "defect_commander_enabled": bool(pipeline_setup.get("defect_commander_settings", {}).get("enabled", False)),
-        "contract_findings": None,
-        "log_intelligence_enabled": bool(pipeline_setup.get("log_intelligence_settings", {}).get("enabled", False)),
-        "log_findings": None,
-        "regression_watchman_enabled": bool(pipeline_setup.get("regression_watchman_settings", {}).get("enabled", False)),
-        "regression_classification": None,
-        "change_ownership_enabled": bool(pipeline_setup.get("change_ownership_settings", {}).get("enabled", False)),
-        "change_ownership_findings": None,
-        "cluster_investigation_plan": None,
-        "cluster_investigation_results": None,
-        "deep_findings":      {},
-        "flaky_findings":     [],
-        "test_health_findings": [],
-        "release_decision":   None,
-        "errors":             [],
-        "completed_stages":   [],
-        "current_stage":      "ingestion",
-        "stage_errors":       {},
-        "stage_quality":      "normal",
-        "low_confidence_count": 0,
-        # Provenance / execution tracking
-        "skipped_stages":     [],
-        "execution_path":     ExecutionPath.EXECUTED,
-        "fallback_used":      False,
-        "tools_used":         [],
-        "analysis_mode_requested": mode_snapshot["requested"],
-        "analysis_mode_resolved": mode_snapshot["resolved"],
-        "analysis_mode_resolution": mode_snapshot,
-        "_workflow_route_decisions": [],
-        "_checkpoint_stages": [],
-        "_checkpoint_replay_metadata": {},
-        "workflow_plan": pipeline_setup["initial_workflow_plan"],
-        "workflow_verification": {},
-        "agent_contracts": {},
-        "schema_version":     2,
-        "stage_metrics":      {},
-    }
-    initial_state["initial_workflow_plan"] = initial_state["workflow_plan"]
-
-    if checkpoint:
-        checkpoint_stages = checkpoint.pop("_checkpoint_stages", [])
-        initial_state.update(checkpoint)  # type: ignore[typeddict-item]
-        initial_state["_checkpoint_stages"] = checkpoint_stages  # type: ignore[typeddict-unknown-key]
-        logger.info(
-            "deep_pipeline_resuming_with_checkpoint_stages",
-            pipeline_run_id=pipeline_run_id,
-            checkpoint_stages=checkpoint_stages,
+    try:
+        checkpoint = await _load_checkpoint(
+            test_run_id, "deep", pipeline_run_id=pipeline_run_id if pipeline_setup.get("resume_attempt") else None
         )
-    _apply_pipeline_cost_budget(cast(dict[str, Any], initial_state), cost_budget_snapshot)
+        if pipeline_setup.get("resume_attempt") and pipeline_setup.get("analysis_mode_resolution"):
+            mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
+        else:
+            mode_snapshot = await _resolve_analysis_mode_snapshot()
+        cost_budget_snapshot = await _prepare_pipeline_cost_budget(
+            pipeline_run_id=pipeline_run_id,
+            project_id=project_id,
+            pipeline_setup=pipeline_setup,
+            mode_snapshot=mode_snapshot,
+            cost_budget_mode_override=cost_budget_mode_override,
+        )
 
-    blocked_state = await _complete_cost_budget_block(
-        pipeline_run_id=pipeline_run_id,
-        workflow_type="deep",
-        state=cast(dict[str, Any], initial_state),
-    )
+        initial_state: WorkflowState = {
+            "pipeline_run_id":    pipeline_run_id,
+            "test_run_id":        test_run_id,
+            "project_id":         project_id,
+            "build_number":       build_number,
+            "workflow_type":      "deep",
+            "pipeline_deadline_ts": _pipeline_deadline(),
+            "test_run_data":      None,
+            "branch":             None,
+            "failed_test_ids":    [],
+            "total_tests":        0,
+            "pass_rate":          0.0,
+            "ingestion_enriched": False,
+            "anomalies":          [],
+            "is_regression":      False,
+            "regression_tests":   [],
+            "anomaly_summary":    None,
+            "analyses":           {},
+            "executive_summary":  None,
+            "summary_markdown":   None,
+            "structured_summary": None,
+            "summary_provenance": None,
+            "decision_intelligence": None,
+            "decision_evidence_snapshot": None,
+            "decision_report_verification": None,
+            "triage_results":     [],
+            "failure_clusters":   [],
+            "cluster_map":        {},
+            "cluster_child_settings": pipeline_setup["cluster_child_settings"],
+            "async_decision_report_supersession_enabled": bool(
+                pipeline_setup.get("async_decision_report_supersession_enabled", False)
+            ),
+            "contract_agent_enabled": bool(pipeline_setup.get("contract_agent_settings", {}).get("enabled", False)),
+            "defect_commander_enabled": bool(pipeline_setup.get("defect_commander_settings", {}).get("enabled", False)),
+            "contract_findings": None,
+            "log_intelligence_enabled": bool(pipeline_setup.get("log_intelligence_settings", {}).get("enabled", False)),
+            "log_findings": None,
+            "regression_watchman_enabled": bool(pipeline_setup.get("regression_watchman_settings", {}).get("enabled", False)),
+            "regression_classification": None,
+            "change_ownership_enabled": bool(pipeline_setup.get("change_ownership_settings", {}).get("enabled", False)),
+            "change_ownership_findings": None,
+            "cluster_investigation_plan": None,
+            "cluster_investigation_results": None,
+            "deep_findings":      {},
+            "flaky_findings":     [],
+            "test_health_findings": [],
+            "release_decision":   None,
+            "errors":             [],
+            "completed_stages":   [],
+            "current_stage":      "ingestion",
+            "stage_errors":       {},
+            "stage_quality":      "normal",
+            "low_confidence_count": 0,
+            # Provenance / execution tracking
+            "skipped_stages":     [],
+            "execution_path":     ExecutionPath.EXECUTED,
+            "fallback_used":      False,
+            "tools_used":         [],
+            "analysis_mode_requested": mode_snapshot["requested"],
+            "analysis_mode_resolved": mode_snapshot["resolved"],
+            "analysis_mode_resolution": mode_snapshot,
+            "_workflow_route_decisions": [],
+            "_checkpoint_stages": [],
+            "_checkpoint_replay_metadata": {},
+            "workflow_plan": pipeline_setup["initial_workflow_plan"],
+            "workflow_verification": {},
+            "agent_contracts": {},
+            "schema_version":     2,
+            "stage_metrics":      {},
+        }
+        initial_state["initial_workflow_plan"] = initial_state["workflow_plan"]
+
+        if checkpoint:
+            checkpoint_stages = checkpoint.pop("_checkpoint_stages", [])
+            initial_state.update(checkpoint)  # type: ignore[typeddict-item]
+            initial_state["_checkpoint_stages"] = checkpoint_stages  # type: ignore[typeddict-unknown-key]
+            logger.info(
+                "deep_pipeline_resuming_with_checkpoint_stages",
+                pipeline_run_id=pipeline_run_id,
+                checkpoint_stages=checkpoint_stages,
+            )
+        _apply_pipeline_cost_budget(cast(dict[str, Any], initial_state), cost_budget_snapshot)
+
+        blocked_state = await _complete_cost_budget_block(
+            pipeline_run_id=pipeline_run_id,
+            workflow_type="deep",
+            state=cast(dict[str, Any], initial_state),
+        )
+    except Exception as exc:
+        # As run_offline_pipeline (re-audit N27): a setup failure after the
+        # pipeline was created left it 'running' for the 30-minute reaper
+        # (QA of N27, on the deep path).
+        error_msg = f"Pipeline setup error: {_safe_workflow_error(exc)}"
+        await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)
+        try:
+            logger.error("pipeline_setup_failed", error_type=type(exc).__name__, exc_info=True)
+        except Exception:  # noqa: BLE001 -- the original error is what propagates
+            pass
+        raise
     if blocked_state is not None:
         return blocked_state
 
@@ -2466,6 +2511,11 @@ async def _create_pipeline_run(
             ))
         await db.commit()
         return {
+            # run_offline_pipeline's durable path reads these, as it does from
+            # _claim_pipeline_resume. Missing, every outbox-driven pipeline died
+            # with KeyError before its first stage (re-audit N27).
+            "test_run_id": str(test_run_id),
+            "project_id": str(project_id),
             "initial_workflow_plan": initial_plan,
             "cluster_child_settings": cluster_settings,
             "async_decision_report_supersession_enabled": async_report_supersession_enabled,
@@ -2485,6 +2535,14 @@ async def _mark_pipeline_done(
 ) -> None:
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select as sa_select, update as sa_update  # noqa: PLC0415
+        # One import for both branches. Imported only inside the final_state
+        # branch, the name was unbound in the else branch, so marking a
+        # pipeline failed without a final state raised UnboundLocalError and
+        # left it 'running' behind a masked error (re-audit N28).
+        from app.services.pipeline_budget_service import (  # noqa: PLC0415
+            reconcile_pipeline_budget,
+            retry_pending_stage_settlements,
+        )
 
         result = await db.execute(
             sa_select(AgentPipelineRun).where(AgentPipelineRun.id == pipeline_run_id)
@@ -2544,11 +2602,6 @@ async def _mark_pipeline_done(
                         pipeline_run_id=pipeline_run_id,
                         error_type=type(action_exc).__name__,
                     )
-                from app.services.pipeline_budget_service import (
-                    reconcile_pipeline_budget,
-                    retry_pending_stage_settlements,
-                )
-
                 budget_metadata = {
                     "run_budget": prior_metadata.get("run_budget"),
                     "budget_spend": prior_metadata.get("budget_spend", {}),

@@ -536,7 +536,8 @@ async def remove_project_member(
     project_id: uuid.UUID,
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: require_project_access() confines a project-bound key to {project_id}.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Remove a user from a project. Requires ADMIN."""

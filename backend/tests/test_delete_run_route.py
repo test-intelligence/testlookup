@@ -272,7 +272,11 @@ def test_the_endpoint_declares_both_the_role_and_the_project_guard():
     ADMIN of any project could name any run id in the deployment.
     """
     source = inspect.getsource(delete_run)
-    assert "require_role(UserRole.ADMIN)" in source, "not ADMIN-gated"
+    # N20: ADMIN, with the project-key opt-in that require_run_access below
+    # makes safe -- a CI key deletes its own project's runs, and only those.
+    assert "require_role(UserRole.ADMIN, allow_project_key=True)" in source, (
+        "not ADMIN-gated"
+    )
     assert "require_run_access()" in source, (
         "no project scoping — any ADMIN could delete any run in the deployment"
     )

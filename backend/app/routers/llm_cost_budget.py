@@ -71,6 +71,9 @@ async def upsert_project_quota(
     project_id: uuid.UUID,
     payload: LlmQuotaWrite,
     db: AsyncSession = Depends(get_db),
+    # Instance administrators only, deliberately WITHOUT allow_project_key
+    # (re-audit N20): this sets the project's own LLM spending cap and
+    # at-cap action, and a project's CI key must not raise its own budget.
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     _: User = Depends(require_project_access()),
 ):

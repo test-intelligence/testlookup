@@ -13,7 +13,12 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.bootstrap import configure_metrics, configure_middlewares, register_routers
+from app.bootstrap import (
+    configure_metrics,
+    configure_middlewares,
+    install_proxy_boundary,
+    register_routers,
+)
 from app.core.config import settings
 from app.core.http_client import close_http_client
 from app.core.logging_config import configure_logging
@@ -52,6 +57,22 @@ if settings.METRICS_ENABLED:
 
 # ── Rate limiter (login brute-force protection) ───────────────
 limiter = Limiter(key_func=get_remote_address, default_limits=[])
+
+
+async def _warn_about_refused_notification_destinations() -> None:
+    """Log each configured Slack, Teams or SMTP destination offline mode refuses.
+
+    Re-audit H10 (code review): at startup, rather than at the first
+    notification that never arrives. Runs in the background because it
+    resolves host names, and a slow resolver must not hold startup up.
+    """
+    try:
+        from app.services.notification.egress import offline_destination_warnings
+
+        for message in await offline_destination_warnings():
+            logger.warning("offline_notification_destination_refused", message=message)
+    except Exception as exc:  # noqa: BLE001 -- a diagnostic must never break startup
+        logger.warning("offline_destination_check_failed", error=str(exc))
 
 
 @asynccontextmanager
@@ -105,6 +126,9 @@ async def lifespan(app: FastAPI):
     await _fanout.initialize()
     _consumer_task = asyncio.create_task(_consumer.run(), name="live-event-consumer")
     _fanout_task = asyncio.create_task(_fanout.run(), name="live-fanout-subscriber")
+    _offline_check_task = asyncio.create_task(
+        _warn_about_refused_notification_destinations(), name="offline-destination-check"
+    )
     logger.info("Live event stream consumer started")
 
     yield  # Application runs here
@@ -112,7 +136,10 @@ async def lifespan(app: FastAPI):
     # Shutdown consumer
     _consumer_task.cancel()
     _fanout_task.cancel()
-    await asyncio.gather(_consumer_task, _fanout_task, return_exceptions=True)
+    _offline_check_task.cancel()
+    await asyncio.gather(
+        _consumer_task, _fanout_task, _offline_check_task, return_exceptions=True
+    )
     logger.info("Live event stream consumer stopped")
 
     # Shutdown DB connections and pooled outbound HTTP client
@@ -270,6 +297,15 @@ async def rate_limit_auth(request: Request, call_next):
                 content={"detail": error_msg},
             )
     return await call_next(request)
+
+
+# ── The proxy trust boundary goes on LAST ───────────────────────────────────
+# Starlette's add_middleware inserts at index 0, so the last registration is
+# the outermost and runs first. rate_limit_auth above buckets on
+# request.client.host, so it has to run INSIDE this one or it keeps counting
+# every external caller as the ingress -- re-audit H2's headline consequence.
+# Anything added below this line will sit outside the correction.
+install_proxy_boundary(app)
 
 
 # Note: the legacy ``GET /health`` shim was retired in item #10 cleanup —

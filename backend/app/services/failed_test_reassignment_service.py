@@ -35,6 +35,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.deps import _api_key_bound_project
 from app.models.postgres import (
     ProjectMember,
     TestCase,
@@ -75,7 +76,13 @@ async def _actor_has_authority(
 
     Instance-level ADMIN always passes — they're the break-glass admin.
     Otherwise, the caller's project-scoped role must be QA_LEAD or ADMIN.
+
+    A project-bound API key never passes outside its own project, whatever its
+    owner's role (re-audit N20): the ADMIN return below would otherwise hand a
+    CI key every tenant's failures.
     """
+    if _api_key_bound_project(actor_user) not in (None, project_id):
+        raise ReassignmentError(403, "This API key is restricted to a different project")
     if actor_user.role == UserRole.ADMIN.value:
         return True
     row = (

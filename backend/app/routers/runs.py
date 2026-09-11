@@ -741,7 +741,9 @@ async def delete_run(
     run_id: uuid.UUID,
     body: DeleteRunRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: a project-bound key may delete its own project's runs (CI);
+    # require_run_access() refuses it a run in any other project.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     _: User = Depends(require_run_access()),
 ):
     """Delete one run across all five stores. Irreversible.
@@ -750,7 +752,7 @@ async def delete_run(
     the gateway, and the Mongo -> MinIO -> Postgres ordering means the caller
     would get a 504 with the artifacts already gone and the run still listed.
     The work runs as a Celery job; poll it at
-    ``GET /api/v1/retention/{project_id}/deletion/jobs/{job_id}``.
+    ``GET /api/v1/projects/{project_id}/deletion/jobs/{job_id}``.
 
     Four guards, each a real hazard rather than defensive habit:
 

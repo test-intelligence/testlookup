@@ -36,6 +36,11 @@ data:
   LLM_PROVIDER: "ollama"
   LLM_MODEL: "qwen2.5:7b"
   AI_OFFLINE_MODE: "true"
+  # Off-box hosts the deployment's own Slack/Teams webhooks and SMTP relay may
+  # still reach while offline (comma-separated host names; .example.com matches
+  # subdomains). A shared host admits every tenant on it, so a webhook set per
+  # user or per team never uses this list. Empty refuses all.
+  OFFLINE_NOTIFICATION_ALLOWED_HOSTS: ""
   # BUG-001: disable ChromaDB anonymous telemetry (posthog phone-home that errors
   # against the installed posthog and floods AI-worker logs; also wrong offline).
   ANONYMIZED_TELEMETRY: "False"

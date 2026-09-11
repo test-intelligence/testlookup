@@ -7,7 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_project_access, require_role
+from app.core.deps import (
+    get_current_active_user,
+    require_project_access,
+    require_role,
+    resolve_project_scope,
+)
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 from app.services.onboarding_service import (
@@ -135,13 +140,22 @@ async def track_usage_event(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Track a product usage event for adoption analytics."""
+    """Track a product usage event for adoption analytics.
+
+    A named project must be one the caller can access (QA-R3-2): the event is
+    filed under it, and ``GET /events`` reports it as that project's adoption.
+    ``resolve_project_scope`` answers 403 for a non-member and for a key bound
+    to another project. An unparseable id is still dropped, as before, so the
+    event is filed under no project.
+    """
     project_uuid = None
     if body.project_id:
         try:
             project_uuid = uuid.UUID(body.project_id)
         except ValueError:
             pass
+    if project_uuid is not None:
+        await resolve_project_scope(db, current_user, str(project_uuid))
     await track_event(db, body.event_name, user_id=current_user.id, project_id=project_uuid, payload=body.payload)
     # Preserve fire-and-forget semantics: if the commit itself fails,
     # log it but still report "tracked" since usage analytics shouldn't

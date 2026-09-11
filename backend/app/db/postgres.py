@@ -147,11 +147,23 @@ def get_engine() -> AsyncEngine:
     return create_async_engine(
         settings.DATABASE_URL,
         echo=settings.is_development,
-        pool_pre_ping=settings.APP_ENV != "production",
+        # Re-audit M1: a worker's pooled connections now outlive a task, so a
+        # Postgres restart or an idle timeout must not strand dead ones in the
+        # pool. The API keeps the P3-5 saving; its pool was always long-lived.
+        pool_pre_ping=(
+            settings.APP_ENV != "production" or settings.PG_PROCESS_ROLE == "worker"
+        ),
         pool_size=pool["pool_size"],
         max_overflow=pool["max_overflow"],
         pool_recycle=pool["pool_recycle"],
         pool_timeout=settings.PG_POOL_TIMEOUT,
+        # Re-audit H3 review: a DBAPIError renders the statement's bound
+        # parameters into its own text -- "[parameters: (...)]" -- and
+        # tracebacks are logged as text. Redaction recognises a secret by a
+        # marker, and a bare positional value has none, so a password hash
+        # or a token hash in an INSERT or UPDATE reached the log. Production
+        # hides them; elsewhere they are how a failing statement is debugged.
+        hide_parameters=settings.APP_ENV == "production",
         connect_args={
             "server_settings": {
                 "application_name": f"testlookup-{settings.PG_PROCESS_ROLE}",
@@ -180,13 +192,16 @@ class _SessionFactoryProxy:
     binds whatever object it returned at first import — permanently, into that
     module's namespace.
 
-    That is fine in the API process, whose engine is long-lived. It is a bug in
-    the Celery worker: ``worker/tasks.py::_run_async`` disposes the engine and
-    clears both ``@lru_cache``es at the end of every task, so from the second
+    That is fine in the API process, whose engine is long-lived. It was a bug
+    in the Celery worker, whose task wrapper disposed the engine and cleared
+    both ``@lru_cache``es at the end of every task, so from the second
     task onward a module-level binding still pointed at the factory of the
     **disposed** engine. Modules importing inside a function (``tasks.py``)
     re-resolved and got a fresh factory; modules importing at module level
     (``ingestion_pipeline.py``, ``ingestion.py``, and ~38 others) did not.
+    Since re-audit M1 a worker keeps its engine across tasks, but it still
+    disposes it when an interrupted task discards the loop, and clears the
+    caches after fork, so the proxy still matters.
 
     The observable result was a 100%-reproducible failure at ``finalize_run``'s
     first query -- ``asyncpg InterfaceError: cannot perform operation: another
@@ -271,27 +286,26 @@ async def dispose_engine_for_loop() -> None:
     """Dispose the cached async engine *within the current event loop* and
     clear the lazy-build caches so the next caller rebuilds a fresh engine.
 
-    Background (BUG-003): Celery tasks each run their coroutine in a private,
-    short-lived event loop (``worker/tasks.py::_run_async`` →
-    ``asyncio.new_event_loop()`` … ``loop.close()``). The ``@lru_cache``'d
-    ``get_engine()`` builds the async engine — and its pooled asyncpg
-    connections — bound to whichever loop was current on first use. When that
-    loop is closed at the end of the task, the still-pooled connections remain
-    attached to the now-dead loop. On the next task (or at GC) asyncpg tries to
-    finalize/terminate those connections on the dead loop and raises
-    ``RuntimeError: Event loop is closed`` ("Exception terminating
-    connection …"), which surfaces in the AI pipeline as ``errors=1`` / status
-    ``partial``.
+    Background (BUG-003): Celery tasks used to run their coroutine in a
+    private, short-lived event loop (``asyncio.new_event_loop()`` ...
+    ``loop.close()``). The ``@lru_cache``'d ``get_engine()`` builds the async
+    engine -- and its pooled asyncpg connections -- bound to whichever loop was
+    current on first use. When that loop was closed at the end of the task, the
+    still-pooled connections stayed attached to the dead loop, and asyncpg
+    raised ``RuntimeError: Event loop is closed`` ("Exception terminating
+    connection ...") when it later finalized them. That surfaced in the AI
+    pipeline as ``errors=1`` / status ``partial``.
 
-    This helper must be awaited from inside the task's loop, in a ``finally``
-    block, *before* the loop is closed. After disposing, both ``@lru_cache``'d
-    builders are cleared so the next ``_run_async`` invocation constructs a new
-    engine bound to its own fresh loop — mirroring the Redis-singleton reset
-    already done in ``_run_async``.
+    A worker child now keeps one loop for its lifetime (``worker/loop_runner.py``,
+    re-audit M1), and the rule holds one level up: await this on the loop that
+    owns the engine, *before* that loop is closed -- at worker shutdown, or when
+    an interrupted task discards the loop. Both ``@lru_cache``'d builders are
+    then cleared, so the next loop builds its own engine, as
+    ``reset_loop_bound_clients`` does for Redis and Mongo.
 
     The request-path (FastAPI) engine is unaffected: the API process disposes
     via ``close_db()`` on shutdown and never closes the loop mid-process, so
-    its long-lived engine keeps its pool. Only the worker calls this per task.
+    its long-lived engine keeps its pool.
     """
     # ``get_engine`` may never have been built (a task that touched no DB).
     # Inspect the cache without forcing a build.

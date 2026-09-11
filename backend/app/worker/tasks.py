@@ -1,5 +1,4 @@
 """Celery background tasks for ingestion and AI analysis."""
-import asyncio
 import logging
 from datetime import datetime, timezone
 import random
@@ -49,87 +48,15 @@ _slog = structlog.get_logger("worker.tasks")
 
 
 def _run_async(coro):
-    """Run an async coroutine in a Celery task (sync context).
+    """Run a task's coroutine on this worker child's event loop.
 
-    Each Celery task runs in a separate thread / process.  The global async
-    clients (Redis, SQLAlchemy engine) hold references to the event loop that
-    was current when they were first created.  If that loop was already closed
-    (e.g. from a previous task invocation) we get "Event loop is closed" /
-    "Future attached to a different loop" errors.
-
-    Fix: reset the module-level singletons before creating the new loop so
-    that the first `get_redis()` call inside the coroutine creates a fresh
-    client bound to the *current* loop.
-
-    BUG-003: the SQLAlchemy async engine has the same problem but worse — its
-    asyncpg connections are *pooled* across tasks via the ``@lru_cache``'d
-    ``get_engine()``. The pool stays bound to the loop that first built it; when
-    that loop is closed here, the pooled connections become attached to a dead
-    loop and asyncpg raises ``RuntimeError: Event loop is closed`` when it later
-    tries to terminate/GC them ("Exception terminating connection …"). That
-    surfaced as the AI pipeline reporting ``errors=1`` / status ``partial``.
-    Fix: dispose the engine *inside this loop* in the ``finally`` block (which
-    closes its connections on the loop that owns them) and clear the lazy-build
-    cache so the next task rebuilds a fresh engine on its own loop.
+    One loop per worker child, reused from task to task (re-audit M1). The
+    history -- why it used to be a fresh loop per task, and the teardown that
+    implied (BUG-003) -- is in ``worker/loop_runner.py``.
     """
-    from app.db.loop_bound import reset_loop_bound_clients
-    reset_loop_bound_clients()
+    from app.worker.loop_runner import run_async
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        try:
-            # Dispose the async engine on THIS loop before it closes, so its
-            # pooled asyncpg connections are torn down on the loop that owns
-            # them (BUG-003). Must run before shutdown_asyncgens / loop.close().
-            from app.db.postgres import dispose_engine_for_loop
-            loop.run_until_complete(dispose_engine_for_loop())
-        except Exception as _exc:
-            # Previously a bare ``pass``. A failing teardown leaves the pool
-            # alive with connections bound to a loop that is about to close,
-            # and said nothing at all — which is exactly the kind of silence
-            # that hid F-027. Log it; still never raise from a finally block.
-            logger.warning("engine_dispose_failed_in_task_teardown error=%r", _exc)
-        try:
-            # The shared httpx.AsyncClient is rotated per loop by
-            # get_http_client(), but the OUTGOING one was only ever
-            # dropped -- close_http_client() is called from the FastAPI
-            # lifespan and from nowhere in the worker path, so each task
-            # abandoned a client whose pool still held sockets bound to
-            # the loop about to close. Same reasoning as the engine
-            # disposal above: drain it on the loop that owns it.
-            from app.core.http_client import close_http_client
-            loop.run_until_complete(close_http_client())
-        except Exception as _exc:
-            logger.warning(
-                "http_client_close_failed_in_task_teardown error=%r", _exc
-            )
-        try:
-            # Redis, for the same reason as the engine and the httpx client
-            # above -- and it was the one left out. ``reset_loop_bound_clients``
-            # only NULLS ``_pool``/``_client`` at the START of the next task,
-            # which abandons a redis.asyncio pool still holding sockets bound to
-            # the loop about to close here. ``close_redis()`` existed all along
-            # and was called from the FastAPI lifespan and nowhere in the worker
-            # path.
-            #
-            # The leak is per-task, so it only bites under volume: on the
-            # homelab, a burst of ~750 pipelines in one hour failed ~96% of
-            # summary stages with "Event loop is closed", against ~1.6% at
-            # normal rates. Draining on the owning loop is the same fix the
-            # engine and httpx client already received.
-            from app.db.redis_client import close_redis
-            loop.run_until_complete(close_redis())
-        except Exception as _exc:
-            logger.warning("redis_close_failed_in_task_teardown error=%r", _exc)
-        try:
-            # Close all async generators and pending tasks cleanly
-            loop.run_until_complete(loop.shutdown_asyncgens())
-        except Exception:
-            pass
-        loop.close()
+    return run_async(coro)
 
 
 class DownstreamTrackedTask(Task):
@@ -1021,29 +948,60 @@ def persist_live_session(
     max_retries=3,
     queue="ingestion",
 )
-def ingest_test_run(self, sentinel_dict: dict, minio_prefix: str):
+def ingest_test_run(
+    self,
+    sentinel_dict: dict | None = None,
+    minio_prefix: str = "",
+    sentinel_key: str | None = None,
+):
     """
     Background task: parse Allure JSON + TestNG XML from MinIO and
     upsert structured data into PostgreSQL + MongoDB.
     Deduplicates by minio_prefix so concurrent webhooks don't double-ingest.
+
+    The MinIO webhook queues the sentinel's object KEY, and this task reads the
+    sentinel (services/minio_sentinel.py): off the API process, and inside this
+    task's retries for a storage hiccup (code review of re-audit N10). A
+    sentinel that is definitively unusable -- missing, oversized, not a JSON
+    object, invalid -- is refused without a retry. ``sentinel_dict`` is the
+    shape an API from before that change queued; it is still accepted.
     """
     from app.models.schemas import SentinelFile
     from app.services.ingestion import process_sentinel
+    from app.services.minio_sentinel import SentinelRefused, read_sentinel
 
     dedup_key = f"testlookup:dedup:ingest:{minio_prefix}"
     dedup_owner = str(self.request.id)
 
-    async def _run():
+    async def _run() -> str:
         if await _is_duplicate(dedup_key, owner=dedup_owner):
             logger.info("[Task %s] Skipping duplicate ingestion for %s", self.request.id, minio_prefix)
-            return
-        sentinel = SentinelFile(**sentinel_dict)
+            return "duplicate"
+        if sentinel_key:
+            try:
+                sentinel = await read_sentinel(sentinel_key)
+            except SentinelRefused as exc:
+                logger.warning(
+                    "[Task %s] Sentinel refused, not retrying: %s (%s)",
+                    self.request.id, sentinel_key, exc,
+                )
+                return "refused"
+        else:
+            sentinel = SentinelFile(**(sentinel_dict or {}))
         await process_sentinel(sentinel, minio_prefix)
+        return "ingested"
 
     logger.info("[Task %s] Starting ingestion: %s", self.request.id, minio_prefix)
     _ingest_started = time.perf_counter()
     try:
-        _run_async(_run())
+        outcome = _run_async(_run())
+        if outcome == "refused":
+            # Nothing was ingested, and nothing a retry could change. Free the
+            # prefix, so a real upload notified later is not refused as a
+            # duplicate of this one for the lock's hour.
+            _count_ingestion_run("failure", time.perf_counter() - _ingest_started)
+            _release_dedup_for_retry(dedup_key, dedup_owner, self.request.id)
+            return
         logger.info("[Task %s] Ingestion complete", self.request.id)
         _count_ingestion_run("success", time.perf_counter() - _ingest_started)
 
@@ -1056,6 +1014,24 @@ def ingest_test_run(self, sentinel_dict: dict, minio_prefix: str):
         logger.error("[Task %s] Ingestion failed: %s", self.request.id, exc, exc_info=True)
         _count_ingestion_run("failure", time.perf_counter() - _ingest_started)
         _release_dedup_for_retry(dedup_key, dedup_owner, self.request.id)
+        if self.request.retries >= self.max_retries:
+            # The retries are spent (code review of re-audit N10). MinIO had
+            # its 200 from the webhook and will not notify again, so without
+            # a record an object-store outage longer than the backoff loses
+            # the build. Record the call exactly as this task takes it, where
+            # an admin reads dead letters (GET /api/v1/admin/maintenance/dlq),
+            # so it can be replayed. _send_to_dlq never raises.
+            replay: dict[str, Any] = {"sentinel_key": sentinel_key, "minio_prefix": minio_prefix}
+            if sentinel_dict is not None:
+                replay["sentinel_dict"] = sentinel_dict
+            _run_async(_send_to_dlq(
+                task_name=self.name,
+                task_id=self.request.id,
+                kwargs=replay,
+                error=f"{type(exc).__name__}: {exc}",
+                # Already validated by sentinel_key_problem; replayed as is.
+                verbatim=("sentinel_key", "minio_prefix"),
+            ))
         countdown = _exponential_backoff(self.request.retries)
         raise self.retry(exc=exc, countdown=countdown)
 
@@ -1239,14 +1215,27 @@ def ingest_uploaded_file(
         # Parse — any parser exception or an empty result is a user-fixable
         # problem, surfaced as a failed status rather than a silent empty run.
         from app.services.safe_archive import UnsafeZipError
+        from app.services.upload_limits import TooManyResults, enforce_result_limit
         try:
             results = _parse_file_to_results(
                 file_content, file_format, file_name, run_id, disabled_formats=disabled_formats,
             )
+            # Re-audit M5: the exact cap, on what was actually parsed.
+            enforce_result_limit(len(results))
         except UnsafeZipError as exc:
             # Archive safety violation — surface the specific code (zip_bomb,
             # unsafe_path, …) so the UI explains exactly what was rejected.
             logger.warning("upload_unsafe_archive task=%s file=%s code=%s", task_id, file_name, exc.code)
+            await upload_status.set_status(
+                task_id, run_id=run_id, project_id=project_id,
+                state=upload_status.STATE_FAILED,
+                error={"code": exc.code, "message": exc.message},
+            )
+            _emit_failed(exc.code)
+            return False
+        except TooManyResults as exc:
+            # Refused whole, before the run row is created -- like a parse error.
+            logger.warning("upload_too_many_results task=%s file=%s", task_id, file_name)
             await upload_status.set_status(
                 task_id, run_id=run_id, project_id=project_id,
                 state=upload_status.STATE_FAILED,
@@ -1419,6 +1408,7 @@ def _parse_archive_to_results(
     from app.core.config import settings
     from app.services.allure_parser import parse_allure_zip
     from app.services.safe_archive import safe_extract_zip
+    from app.services.upload_limits import TooManyResults, enforce_result_limit
 
     def _basename(n: str) -> str:
         return posixpath.basename(n)
@@ -1460,6 +1450,11 @@ def _parse_archive_to_results(
                     continue
                 text = data.decode("utf-8", errors="replace")
                 results.extend(_parse_file_to_results(text, entry_fmt, base, run_id))
+                # Re-audit M5: the cap covers the whole upload, not each entry.
+                enforce_result_limit(len(results))
+            except TooManyResults:
+                # Not 'one bad entry': the upload as a whole is refused.
+                raise
             except Exception as exc:  # noqa: BLE001 — one bad entry must not fail all
                 logger.warning("archive_entry_parse_failed entry=%s error=%s", base, exc)
                 continue
@@ -1554,6 +1549,12 @@ def _parse_file_to_results(
 
     if fmt == "archive":
         return _parse_archive_to_results(content, filename, run_id, disabled_formats=disabled_formats)
+
+    # Re-audit M5: a report so far over the result cap that parsing it would
+    # itself exhaust the worker is refused on a cheap count, unparsed.
+    from app.services.upload_limits import refuse_before_parsing
+
+    refuse_before_parsing(content, fmt)
 
     if fmt == "allure":
         from app.services.allure_parser import parse_allure_result
@@ -3580,14 +3581,30 @@ def train_flaky_confidence_model(self) -> dict:
 
 # ── DLQ helper ────────────────────────────────────────────────────────────────
 
-async def _send_to_dlq(task_name: str, task_id: str, kwargs: dict, error: str) -> None:
-    """Write a failed task to the Redis DLQ stream for manual inspection and replay."""
+async def _send_to_dlq(
+    task_name: str,
+    task_id: str,
+    kwargs: dict,
+    error: str,
+    *,
+    verbatim: tuple[str, ...] = (),
+) -> None:
+    """Write a failed task to the Redis DLQ stream for manual inspection and replay.
+
+    ``verbatim`` names kwargs recorded exactly as given: storage locators the
+    caller has already validated, which sanitizing would rewrite -- a build
+    segment like ``1.0.0.123`` reads as an IP address -- so the replay named a
+    key that does not exist (QA of the N10 follow-up).
+    """
     try:
         import json
         from app.db.redis_client import get_redis
         from app.services.ingestion_sanitization import sanitize_test_result_payload
         from app.streams import DLQ_STREAM
         safe_kwargs = sanitize_test_result_payload(kwargs)
+        for name in verbatim:
+            if name in kwargs:
+                safe_kwargs[name] = kwargs[name]
         safe_error = sanitize_test_result_payload({"error_message": error})[
             "error_message"
         ]
@@ -3943,18 +3960,20 @@ def dispatch_scheduled_digests(self):
                             .order_by(NotificationPreference.project_id.desc().nullslast())
                         )
                         prefs = pref_result.scalars().all()
-                        webhook_url = None
-                        for p in prefs:
-                            webhook_url = (
-                                p.slack_webhook_url if channel == "slack"
-                                else p.teams_webhook_url
-                            )
-                            if webhook_url:
-                                break
-                        if not webhook_url:
-                            global_webhooks = await resolve_global_notification_webhooks(db)
-                            if global_webhooks[f"{channel}_enabled"]:
-                                webhook_url = global_webhooks[f"{channel}_webhook_url"]
+                        from app.services.notification.manager import preference_webhook
+
+                        field = f"{channel}_webhook_url"
+                        override = next(
+                            (getattr(p, field) for p in prefs if getattr(p, field)), None
+                        )
+                        # A user's own webhook is never deployment-wide, so the
+                        # operator's allow-list does not cover it; only the
+                        # global webhook is (code review of H10).
+                        webhook_url, deployment_wide = preference_webhook(
+                            channel,
+                            override,
+                            None if override else await resolve_global_notification_webhooks(db),
+                        )
                         if not webhook_url:
                             status = "failed"
                             error_detail = f"No {channel} webhook URL configured"
@@ -3979,6 +3998,7 @@ def dispatch_scheduled_digests(self):
                                         body=digest_body,
                                         event_type="digest_delivery",
                                         metadata={},
+                                        deployment_wide=deployment_wide,
                                     )
                                 else:
                                     from app.services.notification import teams_service
@@ -3988,6 +4008,7 @@ def dispatch_scheduled_digests(self):
                                         body=digest_body,
                                         event_type="digest_delivery",
                                         metadata={},
+                                        deployment_wide=deployment_wide,
                                     )
                             except Exception as e:
                                 status = "failed"
@@ -5249,8 +5270,8 @@ def calibrate_flaky_classifiers(self, project_id: str | None = None) -> dict:
     """
     async def _run():
         # Imported inside the task, matching this module's convention: a
-        # module-level ``AsyncSessionLocal`` binding would pin the engine that
-        # ``_run_async`` disposes between tasks (see F-027).
+        # module-level ``AsyncSessionLocal`` binding would pin an engine the
+        # worker disposes when it tears its loop down (see F-027).
         from sqlalchemy import select
 
         from app.db.postgres import AsyncSessionLocal

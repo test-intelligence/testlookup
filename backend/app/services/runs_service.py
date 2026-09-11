@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import ARRAY, BigInteger, and_, case, cast, false, func, or_, select
+from sqlalchemy import ARRAY, Numeric, and_, case, cast, false, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -122,22 +122,42 @@ async def fetch_run_suites_map(
 _SUITE_NORM = func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, "")))
 
 
+# The key's constants are SQL literals, not bind parameters: see
+# natural_build_number_key (re-audit M6).
+_A_DIGIT = literal_column("'[0-9]'")
+_NON_DIGIT_RUN = literal_column("'[^0-9]+'")
+_SPACE = literal_column("' '")
+_EVERY_MATCH = literal_column("'g'")
+
+
 def natural_build_number_key(column=None):
     """PostgreSQL natural-sort key for free-form CI build numbers.
 
-    Numeric chunks compare as a bigint array, so ``ui-2`` sorts before
+    Numeric chunks compare as a numeric array, so ``ui-2`` sorts before
     ``ui-10``. Values without digits return NULL and are deliberately placed
     after numbered builds by callers. The textual build number and persistence
     timestamp remain tie-breakers because build-number schemes can collide.
+
+    Re-audit M6. Migration 0167 indexes this exact expression, which puts two
+    constraints on it:
+
+    * Its constants are SQL literals, not bind parameters. Postgres uses an
+      expression index only for a query expression written identically, and
+      under a generic plan -- which asyncpg's prepared statements can reach --
+      a bind parameter is ``$n``, never the literal the index was built with.
+    * It casts to ``numeric[]``, not ``bigint[]``. A digit run longer than
+      nineteen digits overflowed ``bigint``: the listing errored, and behind
+      the index the run's INSERT would have failed instead. The order is
+      identical for every value ``bigint`` could hold.
     """
     if column is None:
         column = TestRun.build_number
     numeric_chunks = func.string_to_array(
-        func.trim(func.regexp_replace(column, r"[^0-9]+", " ", "g")),
-        " ",
+        func.trim(func.regexp_replace(column, _NON_DIGIT_RUN, _SPACE, _EVERY_MATCH)),
+        _SPACE,
     )
     return case(
-        (column.op("~")(r"[0-9]"), cast(numeric_chunks, ARRAY(BigInteger))),
+        (column.op("~")(_A_DIGIT), cast(numeric_chunks, ARRAY(Numeric))),
         else_=None,
     )
 

@@ -35,16 +35,95 @@ def _add_otel_trace_context(
     return event_dict
 
 
+#: Fields owned by the log record's own structure rather than by its caller.
+#: Everything else is redacted, ``event`` included -- see _privacy_redaction.
+_STRUCTURAL_LOG_FIELDS: frozenset[str] = frozenset({
+    "timestamp",
+    "level",
+    "logger",
+    "service",
+    "version",
+    "env",
+    "trace_id",
+    "span_id",
+})
+
+#: Free-text fields, which get the marker-based set -- see _privacy_redaction.
+#: The message; the traceback and stack, rendered into the record before
+#: redaction runs; and the fields that by convention carry an exception's
+#: text (``error=str(exc)`` at some 250 call sites, ``reason=``, ``detail=``).
+#: All of them carry operational numbers and addresses: the ``10.42.0.7:6379``
+#: of a Redis error, the milliseconds of a timeout.
+_FREE_TEXT_FIELDS: frozenset[str] = frozenset(
+    {"event", "exception", "stack", "error", "reason", "detail"}
+)
+
+
 def _privacy_redaction(
     logger: WrappedLogger, method: str, event_dict: EventDict
 ) -> EventDict:
-    """Redact PII and secrets from all string values in log records (PR-5)."""
-    from app.services.redaction_service import redact_text  # noqa: PLC0415
+    """Redact PII and secrets from string values in log records (PR-5).
+
+    ``event`` used to be exempt, which put the exemption on the one field that
+    carries free-form text (re-audit H3). Every ``logger.warning("... %s",
+    value)`` renders its arguments into ``event``, as does every f-string
+    message, so the field most likely to contain a token, a connection string
+    or an address was the field guaranteed not to be scrubbed. Structured
+    key/value pairs -- which were being redacted -- are the ones a developer
+    chose deliberately.
+
+    What stays exempt is only the record's own structure. None of those fields
+    can hold caller data: they are set by this module or by structlog itself,
+    and redacting them would corrupt the record (an ``@`` in a logger name
+    reading as an email address, say).
+
+    The message is operational text, so it gets only what a marker identifies:
+    credentials and email addresses (``redact_log_message``). The phone, card
+    and IPv4 heuristics match by shape, and applied to the message they ate
+    byte counts, epoch seconds, build numbers and the host an operator needs
+    from a warning. A traceback is treated like the message: ``format_exc_info``
+    renders it into ``exception`` earlier in the chain, so it is text by the
+    time this runs, and the exception message inside it is where a rejected
+    password or a connection string usually sits. So are ``error``, ``reason``
+    and ``detail``, free text by convention (``error=str(exc)``): a Redis
+    error is read for its host and port. Every other field keeps the full set,
+    as it always had -- see ``_FREE_TEXT_FIELDS``.
+
+    An exception passed as a value (``error=exc``) is not a string, so it was
+    skipped here, and the renderer then wrote its repr -- after redaction,
+    verbatim. It is redacted as that same repr instead, so the line reads as
+    it did, less the secrets.
+
+    A field NAMED like a secret -- ``password=``, ``token=``,
+    ``authorization=`` -- is replaced whatever its value looks like (QA of the
+    H3 fix: ``password="pw-plain"`` carries no marker, and only values were
+    read). The names match exactly, so ``prompt_tokens`` and
+    ``password_changed`` are kept. A dict or list field is walked: a
+    secret-named key is redacted however deep it sits, and every string gets
+    its field's patterns. See ``redact_log_field``.
+    """
+    from app.services.redaction_service import redact_log_field  # noqa: PLC0415
 
     for key, val in event_dict.items():
-        if isinstance(val, str) and key not in ("event", "timestamp", "level", "logger", "service", "version", "env", "trace_id", "span_id"):
-            event_dict[key] = redact_text(val)
+        if key in _STRUCTURAL_LOG_FIELDS:
+            continue
+        if isinstance(val, BaseException):
+            val = _safe_repr(val)
+        event_dict[key] = redact_log_field(key, val, free_text=key in _FREE_TEXT_FIELDS)
     return event_dict
+
+
+def _safe_repr(value: object) -> str:
+    """``repr(value)``, or the default repr if the class's own one raises.
+
+    The renderer called ``repr`` inside the handler, where logging swallows an
+    error; a processor runs in the caller's frame, so a broken ``__repr__``
+    must not turn a log call into a crash.
+    """
+    try:
+        return repr(value)
+    except Exception:  # noqa: BLE001 -- a log call must not raise
+        return object.__repr__(value)
 
 
 def _add_service_info(
@@ -79,6 +158,13 @@ def configure_logging() -> None:
         _add_otel_trace_context,
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.StackInfoRenderer(),
+        # Render exc_info to text BEFORE redaction (re-audit H3, QA). Left to
+        # the renderer, a traceback -- exception message and all -- reached the
+        # output as an exc_info tuple, after redaction had already run.
+        # A structlog .exception() call carries no exc_info of its own -- the
+        # generic BoundLogger does not add it -- so its traceback was dropped.
+        structlog.dev.set_exc_info,
+        structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
         _privacy_redaction,
     ]
@@ -86,7 +172,11 @@ def configure_logging() -> None:
     renderer: Any = (
         structlog.processors.JSONRenderer()
         if use_json
-        else structlog.dev.ConsoleRenderer(colors=True)
+        # Tracebacks arrive already rendered, and redacted, by format_exc_info;
+        # the plain formatter prints them as they are instead of warning.
+        else structlog.dev.ConsoleRenderer(
+            colors=True, exception_formatter=structlog.dev.plain_traceback
+        )
     )
 
     structlog.configure(

@@ -1,0 +1,295 @@
+"""``POST /ws/events/{run_id}``, persisted the way the SDK's live stream is (re-audit N14).
+
+That endpoint takes one event per call, and it used to do exactly one thing
+with it: put it on the shared live-events stream for the dashboard. No
+LiveSession, no TestRun, no evidence, no persistence -- a run streamed through
+it showed live and then vanished. It never reached /runs, was never analysed,
+and was never finalised. The SDK's own endpoint, ``POST /api/v1/stream/ingest``,
+does all of that. So an event sent with a project-scoped key is now translated
+into that endpoint's event shape and admitted through the same path:
+
+* the first event of a run creates the LiveSession, keyed by a fresh UUID with
+  the caller's run_id kept as its display id, as for any SDK run;
+* every result is admitted to the run's evidence stream and counted by the
+  admission script itself, so nothing is counted twice;
+* ``run_complete`` closes the session, which creates the TestRun and stages the
+  persistence and finalisation every SDK run gets;
+* a run id whose run has completed can be used again: ``run_start`` begins a
+  new run under it, in a new session, and any other event for the finished run
+  is refused with 409 (``stream_service.ingest_via_api_key`` decides this from
+  PostgreSQL).
+
+Two things differ from the SDK, because this endpoint is one event per call:
+
+* The batch id comes from the event (:func:`batch_id_for`). An ``event_id``
+  sent by the client names the batch, so a retried POST is counted once.
+  Without one, ``run_start`` and ``run_complete`` use the admission's content
+  identity -- each happens once per run -- and every other event gets a fresh
+  id, because two executions of one test can send byte-identical results.
+* The session id is cached in Redis, per project and run. The full path costs
+  two SELECTs; paying that for every single event would bring back the
+  per-event database load the credential cache exists to avoid (see
+  ``live_event_authz``). Only ``run_start``, ``run_complete``, a run's first
+  event and a cache miss touch the database.
+
+The adapter only stages. The route commits and then calls :func:`after_commit`,
+which finalises a closed run in Redis and keeps the session cache -- the stream
+router's order, because the Redis side of a close may only be finalised once
+the close is durable. The request owns the transaction, as it does for every
+other service (``tests/test_architectural_transaction_boundaries.py``).
+"""
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from typing import Any, Optional
+
+import structlog
+from fastapi import HTTPException, status
+from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.schemas import LiveEvent, LiveStreamIngestRequest, LiveStreamMeta
+
+logger = structlog.get_logger(__name__)
+
+# As long as the run's project binding (live_event_authz.RUN_PROJECT_TTL_SECONDS).
+SESSION_CACHE_TTL_SECONDS = 25 * 60 * 60
+_SESSION_KEY = "testlookup:ws-events:session:{project_id}:{run_id}"
+
+
+@dataclass(frozen=True)
+class WsIngestOutcome:
+    """What the route needs once :func:`ingest_one` has staged an event."""
+
+    session_id: str
+    cache_key: str = ""
+    completes: bool = False
+    # False on the cached path: nothing was staged, so there is nothing to
+    # commit and nothing to finalise.
+    staged: bool = False
+
+
+def session_cache_key(project_id: uuid.UUID, run_id: str) -> str:
+    return _SESSION_KEY.format(project_id=project_id, run_id=run_id)
+
+
+def _count(value: Any) -> Optional[int]:
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if number >= 0 else None
+
+
+def _text(value: Any, limit: Optional[int] = None) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value)
+    return text[:limit] if limit is not None else text
+
+
+def to_live_event(event: dict) -> LiveEvent:
+    """This endpoint's ``{type, ...}`` payload as the SDK stream's ``LiveEvent``.
+
+    Lenient on purpose. The endpoint accepted any of these values before, so a
+    client sending a float duration or a non-list tag must not start getting a
+    422 now: a value the SDK model cannot hold is dropped, not rejected.
+    """
+    tags = event.get("tags")
+    metadata = event.get("metadata")
+    return LiveEvent(
+        event_type=str(event.get("type") or "test_result"),
+        test_name=_text(event.get("test_name"), 1000),
+        status=_text(event.get("status")),
+        duration_ms=_count(event.get("duration_ms")),
+        error_message=_text(event.get("error_message")),
+        stack_trace=_text(event.get("stack_trace")),
+        suite_name=_text(event.get("suite_name"), 500),
+        class_name=_text(event.get("class_name"), 500),
+        tags=[str(tag) for tag in tags] if isinstance(tags, list) else None,
+        timestamp_ms=_count(event.get("timestamp_ms")),
+        metadata=metadata if isinstance(metadata, dict) else None,
+    )
+
+
+def meta_for(event: dict) -> Optional[LiveStreamMeta]:
+    """The session metadata a ``run_start`` carries; used only if it creates the session."""
+    if event.get("type") != "run_start":
+        return None
+    return LiveStreamMeta(
+        build_number=_text(event.get("build_number"), 100),
+        total_tests=_count(event.get("total_tests")),
+    )
+
+
+_EVENT_ID_MAX_CHARS = 200
+
+
+def batch_id_for(event: dict, live_event: LiveEvent) -> Optional[str]:
+    """The admission batch id for one POST: what lets a retry converge.
+
+    * A client ``event_id`` names the event, so a POST retried after a timeout
+      is the same batch however often it arrives, and is counted once.
+    * ``run_start`` and ``run_complete`` happen once per run, so the same
+      content IS the same event: ``None`` selects the admission's content
+      identity, and a retry converges. That includes the retry of a close whose
+      commit failed, which a fresh id turned into a 409 for a run that had not
+      closed (code review of re-audit N14).
+    * Any other event gets a fresh id. Two executions of one test can send
+      byte-identical results, and a content identity would merge them.
+    """
+    raw = event.get("event_id")
+    if raw is not None and raw != "":
+        if isinstance(raw, bool) or not isinstance(raw, (str, int)):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="event_id must be a string or an integer",
+            )
+        text = str(raw)
+        if len(text) > _EVENT_ID_MAX_CHARS or any(ord(ch) < 32 or ord(ch) == 127 for ch in text):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"event_id must be 1-{_EVENT_ID_MAX_CHARS} printable characters",
+            )
+        return f"ws-{text}"
+    if live_event.event_type in ("run_start", "run_complete"):
+        return None
+    return f"ws-{uuid.uuid4().hex}"
+
+
+async def _api_key_name(db: AsyncSession, api_key: Optional[str]) -> Optional[str]:
+    """The key's own name, for a session this event may create.
+
+    The route knows it only when the credential missed its cache, so a session
+    used to be named ``ws-events`` or after its key depending on whether the key
+    had been used in the last 30 seconds (code review of re-audit N14). One
+    indexed read, on the full path only: never for a cached result.
+    """
+    if not api_key:
+        return None
+    import hashlib
+
+    from sqlalchemy import select
+
+    from app.models.postgres import ApiKey
+
+    digest = hashlib.sha256(api_key.encode()).hexdigest()
+    return (
+        await db.execute(select(ApiKey.name).where(ApiKey.key_hash == digest))
+    ).scalar_one_or_none()
+
+
+async def ingest_one(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    api_key_name: Optional[str],
+    run_id: str,
+    event: dict,
+    api_key: Optional[str] = None,
+) -> WsIngestOutcome:
+    """Stage one event through the SDK stream's path. Never commits.
+
+    The caller commits, then passes the outcome to :func:`after_commit`.
+    ``api_key_name`` is None when the route took the credential from its cache,
+    which does not hold the name: ``api_key`` is then used to look it up, and
+    only when the event takes the full path.
+    """
+    from app.services import stream_service
+
+    try:
+        live_event = to_live_event(event)
+        request = LiveStreamIngestRequest(
+            run_id=run_id,
+            batch_id=batch_id_for(event, live_event),
+            events=[live_event],
+            meta=meta_for(event),
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This event cannot be recorded as part of a run: " + "; ".join(
+                ".".join(str(part) for part in err.get("loc", ())) + ": " + str(err.get("msg", "invalid"))
+                for err in exc.errors()
+            ),
+        ) from exc
+
+    cache_key = session_cache_key(project_id, run_id)
+    completes = live_event.event_type == "run_complete"
+    # run_start takes the full path too: it may begin a new run under a
+    # finished run's id, which only PostgreSQL can decide. A cache entry that
+    # outlived its run would otherwise send it into the finished session.
+    opens = live_event.event_type == "run_start"
+
+    session_id = None if (completes or opens) else await _cached_session(cache_key)
+    if session_id:
+        # The session exists and is this project's: the key includes the
+        # project, and the route has already checked the run's binding.
+        await stream_service._persist_event_batch(
+            session_id=session_id,
+            run_id=session_id,
+            events=request.events,
+            batch_id=request.batch_id,
+            project_id=str(project_id),
+        )
+        return WsIngestOutcome(session_id)
+
+    if not api_key_name:
+        api_key_name = await _api_key_name(db, api_key) or "ws-events"
+    response = await stream_service.ingest_via_api_key(
+        db=db, project_id=project_id, api_key_name=api_key_name, request=request,
+    )
+    return WsIngestOutcome(
+        response.session_id, cache_key=cache_key, completes=completes, staged=True
+    )
+
+
+async def after_commit(outcome: WsIngestOutcome) -> None:
+    """Finish what :func:`ingest_one` staged, once the route has committed it.
+
+    The stream router's order, for the same reason: the Redis side of a close
+    may only be finalised once the close itself is durable. A cached event
+    staged nothing, so there is nothing to do.
+    """
+    if not outcome.staged:
+        return
+    from app.services import stream_service
+
+    if outcome.completes:
+        await stream_service.finalize_closed_session_redis(outcome.session_id)
+        await _forget_session(outcome.cache_key)
+    else:
+        await _remember_session(outcome.cache_key, outcome.session_id)
+
+
+async def _cached_session(cache_key: str) -> Optional[str]:
+    try:
+        from app.db.redis_client import get_redis
+
+        value = await get_redis().get(cache_key)
+    except Exception as exc:  # noqa: BLE001 -- degrades to the full path
+        # Slower, never wrong: a miss takes the database path.
+        logger.warning("ws_events_session_cache_unavailable", error=str(exc))
+        return None
+    if isinstance(value, bytes):
+        value = value.decode()
+    return value or None
+
+
+async def _remember_session(cache_key: str, session_id: str) -> None:
+    try:
+        from app.db.redis_client import get_redis
+
+        await get_redis().set(cache_key, session_id, ex=SESSION_CACHE_TTL_SECONDS)
+    except Exception as exc:  # noqa: BLE001 -- the next event just misses
+        logger.warning("ws_events_session_cache_write_failed", error=str(exc))
+
+
+async def _forget_session(cache_key: str) -> None:
+    try:
+        from app.db.redis_client import get_redis
+
+        await get_redis().delete(cache_key)
+    except Exception as exc:  # noqa: BLE001 -- a stale entry hits the closed fence
+        logger.warning("ws_events_session_cache_delete_failed", error=str(exc))

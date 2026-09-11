@@ -541,6 +541,45 @@ async def ingest_test_results(
     return count
 
 
+async def _run_isolated_step(step_name: str, coro_factory) -> bool:
+    """Run one finalize post-step in its own session; count it if it fails.
+
+    Each step commits or rolls back independently, so a failure in one cannot
+    leave the next with a poisoned session or skip it. That isolation is right,
+    and it is also what made failures invisible (re-audit H5): the except branch
+    rolled back and wrote a warning, and nothing else. Nine steps could fail on
+    every single run with no series to graph and no alert able to fire -- a
+    project whose canonical cases, failed-test assignments or release links had
+    silently stopped updating looked exactly like a healthy one.
+
+    ``testlookup_finalize_step_failures_total{step=...}`` is now incremented on
+    every failure, and ``TestLookupFinalizeStepFailing`` alerts on it.
+
+    Returns whether the step succeeded; callers that ignore it lose nothing.
+    """
+    async with AsyncSessionLocal() as step_db:
+        try:
+            await coro_factory(step_db)
+            await step_db.commit()
+            from app.services.test_management_metrics_service import (
+                emit_staged_test_management_metrics,
+            )
+
+            await emit_staged_test_management_metrics(step_db)
+        except Exception as e:
+            await step_db.rollback()
+            from app.core.metrics import finalize_step_failures_total
+
+            finalize_step_failures_total.labels(step=step_name).inc()
+            logger.warning(
+                "isolated_step_failed",
+                step=step_name,
+                error=str(e),
+            )
+            return False
+    return True
+
+
 async def finalize_run(
     run_id: str,
     project_id: str,
@@ -586,24 +625,10 @@ async def finalize_run(
 
     # Steps 2-4: each runs in an isolated session so a failure in one does not
     # leave the SQLAlchemy session in a failed state and does not skip subsequent
-    # steps. Each step commits or rolls back independently.
-    async def _run_isolated(step_name: str, coro_factory):
-        async with AsyncSessionLocal() as step_db:
-            try:
-                await coro_factory(step_db)
-                await step_db.commit()
-                from app.services.test_management_metrics_service import (
-                    emit_staged_test_management_metrics,
-                )
-
-                await emit_staged_test_management_metrics(step_db)
-            except Exception as e:
-                await step_db.rollback()
-                logger.warning(
-                    "isolated_step_failed",
-                    step=step_name,
-                    error=str(e),
-                )
+    # steps. Each step commits or rolls back independently. The runner lives at
+    # module level so its failure accounting can be tested without driving the
+    # whole pipeline; the local name keeps every call site below unchanged.
+    _run_isolated = _run_isolated_step
 
     from app.services.suite_sync_service import sync_suite_membership
     from app.services.test_suite_service import (

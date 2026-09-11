@@ -87,9 +87,10 @@ def get_http_client() -> httpx.AsyncClient:
     the shared instance and break subsequent callers.
     """
     global _shared_client, _shared_loop
-    # Celery workers execute each task on a short-lived event loop.  An
-    # httpx.AsyncClient created by one task must never be reused by the next
-    # task: its transport/pool can retain futures bound to the closed loop,
+    # A Celery worker child replaces its event loop after an interrupted task
+    # (worker/loop_runner.py; before re-audit M1, after every task). An
+    # httpx.AsyncClient created on one loop must never be reused on the next:
+    # its transport/pool can retain futures bound to the closed loop,
     # producing the exact ``Event loop is closed`` failure seen by the live
     # integration-health probe.  Keep the normal process-wide pool for a
     # long-lived loop (FastAPI), but rotate it when the owning loop changes.

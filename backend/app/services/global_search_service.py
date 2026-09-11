@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import structlog
-from sqlalchemy import case, cast, func, select, or_, String
+from sqlalchemy import case, cast, func, select, or_, String, Text, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -145,27 +145,68 @@ async def _search_test_cases(
     override_limit: Optional[int] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
+    limit = override_limit or 50
+
+    # Re-audit H9. This used to be ONE OR across five predicates, and two of
+    # them each defeated the trigram indexes on test_cases (measured on the
+    # homelab, 50,510 test_cases -- see migration 0166 for the plans):
+    #
+    #   * TestRun.primary_suite_name is a column on ANOTHER table. A bitmap OR
+    #     only combines indexes on one table, so that branch forced the whole
+    #     OR to be checked row by row. Dropping the tags branch alone left the
+    #     plan identical.
+    #   * CAST(tags AS VARCHAR) had no index, so even a one-table OR collapsed.
+    #
+    # So the run-level branch is its own half of a UNION, and tags are cast to
+    # TEXT to match ix_test_cases_tags_trgm exactly (an expression index is
+    # only used for a predicate written identically; VARCHAR is a different
+    # expression). The first half is then a four-way BitmapOr.
+    #
+    # Each half applies the tenant, active-project and period filters itself
+    # and takes its own top ``limit`` by recency. The global top ``limit`` is
+    # always inside the union of each half's top ``limit``, and bounding each
+    # half keeps a broad term from materialising every match before sorting.
+    # Ids only ever come from a filtered half, so the tenant filter cannot be
+    # bypassed by the outer query.
+    def _half(match):
+        stmt = (
+            select(TestCase.id.label("id"), TestCase.created_at.label("created_at"))
+            .join(TestRun, TestCase.test_run_id == TestRun.id)
+            .join(Project, Project.id == TestRun.project_id)
+            .where(match, Project.is_active.is_(True))
+        )
+        stmt = _apply_tenant_filter(
+            stmt, TestRun.project_id, project_id, allowed_project_ids
+        )
+        if period_start:
+            stmt = stmt.where(TestCase.created_at >= period_start)
+        return stmt.order_by(TestCase.created_at.desc()).limit(limit)
+
+    own_text = _half(or_(
+        TestCase.test_name.ilike(pattern, escape="\\"),
+        TestCase.suite_name.ilike(pattern, escape="\\"),
+        TestCase.error_message.ilike(pattern, escape="\\"),
+        cast(TestCase.tags, Text).ilike(pattern, escape="\\"),
+    )).subquery("own_text")
+    # Run-level label so a query for the session-supplied suite name (e.g.
+    # "API Regression Multi-Class") still surfaces tests of live_stream runs
+    # whose per-event ``tc.suite_name`` is the test class name.
+    run_suite = _half(
+        TestRun.primary_suite_name.ilike(pattern, escape="\\")
+    ).subquery("run_suite")
+
+    hits = union(
+        select(own_text.c.id, own_text.c.created_at),
+        select(run_suite.c.id, run_suite.c.created_at),
+    ).subquery("hits")
+
     stmt = (
         select(TestCase, TestRun.project_id)
         .join(TestRun, TestCase.test_run_id == TestRun.id)
-        .join(Project, Project.id == TestRun.project_id)
-        .where(or_(
-            TestCase.test_name.ilike(pattern, escape="\\"),
-            TestCase.suite_name.ilike(pattern, escape="\\"),
-            # Run-level label so a query for the session-supplied suite
-            # name (e.g. "API Regression Multi-Class") still surfaces
-            # tests of live_stream runs whose per-event ``tc.suite_name``
-            # is the test class name.
-            TestRun.primary_suite_name.ilike(pattern, escape="\\"),
-            TestCase.error_message.ilike(pattern, escape="\\"),
-            cast(TestCase.tags, String).ilike(pattern, escape="\\"),
-        ), Project.is_active.is_(True))
+        .join(hits, hits.c.id == TestCase.id)
         .order_by(TestCase.created_at.desc())
-        .limit(override_limit or 50)
+        .limit(limit)
     )
-    stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
-    if period_start:
-        stmt = stmt.where(TestCase.created_at >= period_start)
 
     rows = (await db.execute(stmt)).all()
     return [

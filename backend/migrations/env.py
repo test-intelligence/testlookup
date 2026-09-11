@@ -63,11 +63,20 @@ def do_run_migrations(connection):
         context.run_migrations()
 
 
+def _hide_parameters() -> bool:
+    """As ``app.db.postgres.get_engine`` does: a failed migration statement's
+    error text carries its bound values, and it is logged (re-audit H3)."""
+    from app.core.config import settings
+
+    return settings.APP_ENV == "production"
+
+
 async def run_async_migrations() -> None:
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        hide_parameters=_hide_parameters(),
     )
 
     def _log_retry(attempt: int, delay: float, exc: BaseException) -> None:

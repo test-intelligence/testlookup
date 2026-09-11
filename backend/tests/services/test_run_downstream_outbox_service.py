@@ -1251,6 +1251,9 @@ async def test_notification_relay_retries_provider_failure_with_stable_identity(
     token = uuid.uuid4()
     row = SimpleNamespace(
         id=uuid.uuid4(),
+        # Every NotificationLog row has a project_id column; the relay re-checks
+        # the recipient against it before delivering (QA-R3-1).
+        project_id=pref.project_id,
         preference_id=pref.id,
         delivery_attempts=1,
         delivery_token=token,
@@ -1262,8 +1265,12 @@ async def test_notification_relay_retries_provider_failure_with_stable_identity(
     )
     preferences = MagicMock()
     preferences.all.return_value = [(pref, "qa@example.test")]
+    recipient = MagicMock()
+    recipient.all.return_value = [(pref.user_id, True, "QA_ENGINEER")]
+    membership = MagicMock()
+    membership.all.return_value = [(pref.user_id, pref.project_id)]
     claim_db = MagicMock()
-    claim_db.execute = AsyncMock(return_value=preferences)
+    claim_db.execute = AsyncMock(side_effect=[preferences, recipient, membership])
     claim_db.commit = AsyncMock()
     outcome_db = MagicMock()
     outcome_db.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
@@ -2005,3 +2012,83 @@ def test_celery_does_not_globally_requeue_worker_lost_tasks():
     assert (
         "recover-waiting-run-finalizations" in celery_app.conf.beat_schedule
     )
+
+
+# ── Every staged payload must fit its task (found by the N14 homelab check) ──
+
+
+@pytest.mark.asyncio
+async def test_every_staged_payload_binds_to_its_task(monkeypatch):
+    """Celery checks a task's arguments inside apply_async, before anything
+    reaches the broker. agent_pipeline was staged as {run_id, ...} for a task
+    whose parameter is test_run_id, so every publish raised TypeError and no
+    finished run's AI pipeline ever started -- while every test here replaced
+    apply_async, which is exactly where that check lives."""
+    import inspect
+
+    from app.services import run_downstream_outbox as service
+
+    staged = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "stage_downstream_operation", staged)
+    run = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        build_number="build-42",
+        pass_rate=75.0,
+        total_tests=4,
+        failed_tests=1,
+        end_time=datetime(2026, 9, 8, 1, 0, tzinfo=timezone.utc),
+    )
+    session = SimpleNamespace(
+        run_id="sdk-run-42", project_id=run.project_id, build_number="build-42",
+        client_name="pytest", framework="pytest", branch="main", commit_hash="abc123",
+        suite_name="unit", completed_at=None,
+    )
+
+    await service.stage_finalize_operations(
+        MagicMock(), run=run, project=SimpleNamespace(name="payments"), run_ai=True
+    )
+    await service.stage_ai_summary_notification_operation(
+        MagicMock(), run_id=run.id, project_id=run.project_id, build_number="build-42"
+    )
+    await service.stage_live_persist_operation(
+        MagicMock(), canonical_run_id=run.id, session=session, final_state={"passed": 1}
+    )
+
+    payloads = {call.kwargs["operation"]: call.kwargs["payload"] for call in staged.await_args_list}
+    assert set(payloads) == set(service._OPERATIONS), (
+        "an operation the outbox publishes is not staged here, so its payload is unchecked"
+    )
+    tasks = service.downstream_tasks()
+    assert set(tasks) == set(service._OPERATIONS)
+    for operation, payload in sorted(payloads.items()):
+        try:
+            inspect.signature(tasks[operation].run).bind(**payload)
+        except TypeError as exc:
+            pytest.fail(f"{operation} is staged with arguments its task refuses: {exc}")
+
+
+def test_an_agent_pipeline_staged_with_the_old_key_still_publishes(monkeypatch):
+    """A run already stuck on broker_TypeError gets its analysis after the upgrade."""
+    import inspect
+
+    from app.services import run_downstream_outbox as service
+    from app.worker import tasks
+
+    apply_async = MagicMock()
+    monkeypatch.setattr(tasks.run_agent_pipeline, "apply_async", apply_async)
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        operation="agent_pipeline",
+        payload={"run_id": "r-1", "project_id": "p-1", "build_number": "b-1", "workflow_type": "offline"},
+        queue="ai_analysis",
+        priority=6,
+        dispatch_token=uuid.uuid4(),
+    )
+
+    service._publish_downstream(row)
+
+    sent = apply_async.call_args.kwargs["kwargs"]
+    assert sent == {"test_run_id": "r-1", "project_id": "p-1", "build_number": "b-1", "workflow_type": "offline"}
+    inspect.signature(tasks.run_agent_pipeline.run).bind(**sent)
+    assert row.payload["run_id"] == "r-1", "the stored intent was mutated in place"

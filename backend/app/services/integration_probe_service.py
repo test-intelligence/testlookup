@@ -37,12 +37,58 @@ class ProbeResult:
     payload_valid: bool | None = None
 
 
+async def _offline_refusal(provider: str, destination: str | None) -> ProbeResult | None:
+    """``skipped`` when offline mode forbids a notification probe's destination.
+
+    Re-audit H10 (QA): the 15-minute health task probed the SMTP relay --
+    logging in to it -- and Slack's API with the bot token, on deployments
+    whose offline ceiling refused every notification to the same places. The
+    notification channels are judged by residency, as their senders are.
+    """
+    from app.services.notification.egress import (
+        OfflineEgressBlocked,
+        assert_delivery_allowed_async,
+    )
+
+    try:
+        # A probe checks the deployment's own configuration only (the SMTP
+        # relay, Slack's API with the bot token), so the allow-list applies.
+        await assert_delivery_allowed_async(provider, destination, deployment_wide=True)
+    except OfflineEgressBlocked as exc:
+        return ProbeResult(provider.lower(), "skipped", message=str(exc)[:300])
+    return None
+
+
+def _offline_hard_gate(provider: str) -> ProbeResult | None:
+    """``skipped`` in offline mode for an integration whose calls offline mode forbids.
+
+    Jira and GitHub refuse every outbound call when ``AI_OFFLINE_MODE`` is on
+    (``defect_jira_service``, ``github_checks_service``). A probe carries the
+    same credentials, so it must not make the call either.
+
+    Splunk and OpenShift are skipped too (code review of H10): each probe sent
+    its bearer token to the configured API every 15 minutes. Their
+    integrations are not all gated yet (re-audit N19), but a probe must not
+    add egress of its own while that is open.
+    """
+    from app.core.config import settings
+
+    if settings.AI_OFFLINE_MODE:
+        return ProbeResult(
+            provider, "skipped", message=f"AI_OFFLINE_MODE=true -- outbound {provider} calls are disabled"
+        )
+    return None
+
+
 async def probe_jira() -> ProbeResult:
     """Probe Jira REST API: check auth and server info."""
     from app.core.config import settings
 
     if not settings.JIRA_ENABLED or not settings.JIRA_DOMAIN:
         return ProbeResult("jira", "skipped", message="JIRA_ENABLED=false or no domain configured")
+    refused = _offline_hard_gate("jira")
+    if refused:
+        return refused
 
     import httpx
 
@@ -74,6 +120,9 @@ async def probe_splunk() -> ProbeResult:
 
     if not settings.SPLUNK_ENABLED or not settings.SPLUNK_BASE_URL:
         return ProbeResult("splunk", "skipped", message="SPLUNK_ENABLED=false or no URL configured")
+    refused = _offline_hard_gate("splunk")
+    if refused:
+        return refused
 
     import httpx
 
@@ -101,6 +150,9 @@ async def probe_github() -> ProbeResult:
 
     if not settings.GITHUB_TOKEN:
         return ProbeResult("github", "skipped", message="No GITHUB_TOKEN configured")
+    refused = _offline_hard_gate("github")
+    if refused:
+        return refused
 
 
     start = time.monotonic()
@@ -125,6 +177,9 @@ async def probe_ocp() -> ProbeResult:
 
     if not settings.OCP_ENABLED or not settings.OCP_API_URL:
         return ProbeResult("ocp", "skipped", message="OCP_ENABLED=false or no URL configured")
+    refused = _offline_hard_gate("ocp")
+    if refused:
+        return refused
 
 
     start = time.monotonic()
@@ -164,6 +219,9 @@ async def probe_slack(config: dict | None = None) -> ProbeResult:
         if webhook_url:
             return ProbeResult("slack", "healthy", 0, "Webhook URL configured (no live test for webhooks)", None, None)
         if settings.SLACK_BOT_TOKEN:
+            refused = await _offline_refusal("Slack", "https://slack.com/api/auth.test")
+            if refused:
+                return refused
             client = get_http_client()
             resp = await client.post(
                 "https://slack.com/api/auth.test",
@@ -198,6 +256,9 @@ async def probe_smtp() -> ProbeResult:
 
     if not settings.SMTP_ENABLED:
         return ProbeResult("smtp", "skipped", message="SMTP_ENABLED=false")
+    refused = await _offline_refusal("SMTP", settings.SMTP_HOST)
+    if refused:
+        return refused
 
     start = time.monotonic()
     try:

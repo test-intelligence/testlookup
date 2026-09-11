@@ -362,7 +362,9 @@ async def update_release(
 async def delete_release(
     release_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: require_release_access() confines a project-bound key to the
+    # release's own project.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     __: User = Depends(require_release_access()),
 ):
     # Read BEFORE the delete: afterwards the name is gone and the row could
@@ -601,7 +603,9 @@ async def delete_phase(
     release_id: str,
     phase_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: the require_*_access guards below confine a project-bound key to
+    # its own project.
+    _: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     __: User = Depends(require_release_access()),
 ):
     await release_service.delete_phase(db, release_id, phase_id)
@@ -632,7 +636,9 @@ async def unlink_test_run(
     release_id: str,
     run_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: the require_*_access guards below confine a project-bound key to
+    # its own project.
+    _: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     __: User = Depends(require_run_access()),
     # The route carries TWO scoped path params and only the run was checked.
     # The authz ratchet stops at the first scoped param it can satisfy, so it

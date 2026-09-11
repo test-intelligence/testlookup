@@ -11,7 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_api_key_owner, require_role
+from app.core.deps import (
+    _api_key_bound_project,
+    api_key_grant,
+    require_api_key_owner,
+    require_role,
+)
 from app.db.postgres import get_db
 from app.models.postgres import ApiKey, Project, User, UserRole
 from app.models.schemas import ApiKeyCreate, ApiKeyCreatedResponse, ApiKeyResponse
@@ -30,7 +35,9 @@ def _normalize_scopes(scopes: list[str] | tuple[str, ...] | str | None) -> list[
         return []
     if isinstance(scopes, str):
         return [scopes] if scopes else []
-    return [str(scope) for scope in scopes if scope]
+    # Blanks dropped, duplicates collapsed, first-seen order kept (QA-R4 P4:
+    # ["stream:write", "stream:write", ""] was stored with two entries).
+    return list(dict.fromkeys(str(scope) for scope in scopes if scope))
 
 
 def _build_api_key_response(api_key: ApiKey) -> ApiKeyResponse:
@@ -57,7 +64,106 @@ async def create_api_key(
 
     ADMIN can supply ``project_id`` to restrict the key to a single project
     and ``target_user_id`` to create a key on behalf of another user.
+
+    A caller authenticated with a project-bound key may mint only a key bound
+    to that same project, for its own owner (re-audit N20). That is what CI
+    needs to rotate its key, and nothing wider.
+
+    A caller authenticated with an API key also grants no more than it holds
+    (QA-R3-11):
+
+    * scopes: if the caller's key is scoped, the new key's scopes must be a
+      subset of them. Omitting ``scopes`` inherits the caller's; an explicit
+      empty list (a full-access key) is refused. A legacy unscoped caller
+      mints as before.
+    * expiry: the new key may not expire later than the caller's key.
+      Omitting ``expires_days`` inherits the caller's expiry. A caller with
+      no expiry mints as before.
+
+    So ``testlookup keys create``, which sends only a name, rotates a scoped,
+    expiring CI key into one with the same scopes and the same end date.
+
+    Scopes: an empty list is a full-access key. ``stream:write`` is required
+    by the streaming ingest endpoints. ``project:admin`` is required by the
+    project-administration routes a project-bound key may use (run deletion,
+    project reset, retention and deletion jobs, member removal, release/phase
+    deletion, compliance packs, release-gate policies).
     """
+    # ── a project-bound caller stays inside its project (re-audit N20) ───
+    # Only an ADMIN can bind a key to a project, so a bound key is usually an
+    # ADMIN's CI credential. Omitting ``project_id`` used to mint its owner an
+    # UNBOUND key, a credential for every project that passes
+    # ``require_instance_admin``, and ``target_user_id`` minted one for anyone.
+    bound_project_id = _api_key_bound_project(current_user)
+    if bound_project_id is not None:
+        if payload.project_id is None:
+            # Naming no project means this one. The new key stays bound, and
+            # `testlookup keys create`, which sends no project_id, keeps
+            # working for CI rotation (lead review of the N20 fix).
+            payload = payload.model_copy(update={"project_id": bound_project_id})
+        if payload.project_id != bound_project_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This API key is bound to one project; it can only create "
+                    "keys bound to that same project. Set project_id to it."
+                ),
+            )
+        if payload.target_user_id is not None and payload.target_user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This API key is bound to one project; it can only create "
+                    "keys for its own owner"
+                ),
+            )
+
+    # ── a key minting a key grants no more than it holds (QA-R3-11) ──────
+    # A ["stream:write"] CI key used to mint itself a ``scopes: []`` (full
+    # access), never-expiring replacement, which outlived revoking the
+    # original and every scope and expiry the operator had chosen.
+    grant = api_key_grant(current_user)
+    scopes = _normalize_scopes(payload.scopes)
+    if grant is not None and grant.is_scoped:
+        if not scopes:
+            if "scopes" in payload.model_fields_set:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "This API key is scoped; it cannot create a full-access "
+                        "key (an empty scope list). Request a subset of: "
+                        + ", ".join(grant.scopes)
+                    ),
+                )
+            scopes = list(grant.scopes)
+        beyond = sorted(set(scopes) - set(grant.scopes))
+        if beyond:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This API key can grant only the scopes it holds ("
+                    + ", ".join(grant.scopes)
+                    + "); it does not hold: "
+                    + ", ".join(beyond)
+                ),
+            )
+
+    expires_at = None
+    if payload.expires_days:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expires_days)
+    if grant is not None and grant.expires_at is not None:
+        if expires_at is None:
+            expires_at = grant.expires_at
+        elif expires_at > grant.expires_at:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "A key created with an API key may not outlive it: this key "
+                    f"expires at {grant.expires_at.isoformat()}. Omit expires_days "
+                    "to inherit that date, or ask for fewer days."
+                ),
+            )
+
     # ── target user resolution ────────────────────────────────────────────
     owner_id = current_user.id
     if payload.target_user_id is not None:
@@ -90,10 +196,6 @@ async def create_api_key(
     key_hash = _hash_key(raw_key)
     key_hint = raw_key[:8] + "..."
 
-    expires_at = None
-    if payload.expires_days:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expires_days)
-
     api_key = ApiKey(
         # Identity at construction: the ledger row is staged in this same
         # transaction and needs a stable entity_id without an extra flush.
@@ -102,7 +204,7 @@ async def create_api_key(
         name=payload.name,
         key_hash=key_hash,
         key_hint=key_hint,
-        scopes=payload.scopes,
+        scopes=scopes,
         project_id=payload.project_id,
         expires_at=expires_at,
     )
@@ -145,14 +247,32 @@ async def list_api_keys(
 ):
     """List active API keys. Non-admin users see only their own keys.
     ADMIN can filter by project_id to see all keys bound to a project.
+
+    A caller authenticated with a project-bound key sees only keys bound to
+    that project, and naming another project is a 403 (re-audit N20).
     """
     stmt = select(ApiKey).where(ApiKey.is_active == True)  # noqa: E712
+
+    bound_project_id = _api_key_bound_project(current_user)
+    if (
+        bound_project_id is not None
+        and project_id is not None
+        and project_id != bound_project_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This API key is restricted to a different project",
+        )
 
     is_admin = current_user.role == UserRole.ADMIN.value or current_user.role == UserRole.ADMIN
     if is_admin and project_id is not None:
         stmt = stmt.where(ApiKey.project_id == project_id)
     else:
         stmt = stmt.where(ApiKey.user_id == current_user.id)
+        if bound_project_id is not None:
+            # Its owner's keys, but only those bound to the same project: a
+            # key for one project does not learn about its owner's others.
+            stmt = stmt.where(ApiKey.project_id == bound_project_id)
 
     stmt = stmt.order_by(ApiKey.created_at.desc())
     result = await db.execute(stmt)
@@ -166,13 +286,29 @@ async def revoke_api_key(
     current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
     _: User = Depends(require_api_key_owner()),
 ):
-    """Revoke (soft-delete) an API key. Only the owner can revoke their own keys."""
+    """Revoke (soft-delete) an API key. Only the owner can revoke their own keys.
+
+    A caller authenticated with a project-bound key may revoke only keys bound
+    to that project; ``require_api_key_owner`` refuses the rest (re-audit N20).
+    """
     result = await db.execute(
         select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == current_user.id)
     )
     api_key = result.scalar_one_or_none()
     if not api_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+    # A scoped key without project:admin may revoke itself (a leaked CI key
+    # retiring its own credential), never its owner's other keys (review of
+    # QA-R4-1: a stream key revoked its owner's project:admin key).
+    from app.core.deps import (  # noqa: PLC0415
+        PROJECT_ADMIN_SCOPE,
+        PROJECT_ADMIN_SCOPE_DETAIL,
+        api_key_grant,
+    )
+
+    grant = api_key_grant(current_user)
+    if grant is not None and not grant.allows(PROJECT_ADMIN_SCOPE) and api_key.id != grant.key_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=PROJECT_ADMIN_SCOPE_DETAIL)
     api_key.is_active = False
 
     # The live-event path caches this credential's project for a few seconds so

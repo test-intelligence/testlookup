@@ -294,6 +294,10 @@ async def send_to_team_channel(
     merged back into the default batch by the caller).
     """
     try:
+        # A team channel's webhook is set per project by a QA lead on the
+        # Ownership page, not by the operator, so it is never deployment-wide
+        # and OFFLINE_NOTIFICATION_ALLOWED_HOSTS does not cover it (code review
+        # of H10).
         if channel.channel_type == "slack":
             from app.services.notification import slack_service
             await slack_service.send_notification(
@@ -302,6 +306,7 @@ async def send_to_team_channel(
                 body=body,
                 event_type=event_type_value,
                 metadata=metadata,
+                deployment_wide=False,
             )
         elif channel.channel_type == "teams":
             from app.services.notification import teams_service
@@ -311,6 +316,7 @@ async def send_to_team_channel(
                 body=body,
                 event_type=event_type_value,
                 metadata=metadata,
+                deployment_wide=False,
             )
         elif channel.channel_type == "email":
             from app.services.notification import email_service

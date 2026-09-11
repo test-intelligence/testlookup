@@ -1,16 +1,24 @@
-"""Per-project token-bucket rate limit for live-stream ingestion.
+"""Per-project rate limits for every ingest route.
 
-The /api/v1/stream/ingest and /api/v1/stream/events/batch endpoints
-accept arbitrary write volume. Without a gate, a single misbehaving
-project (CI loop firing 10K events/sec, a runaway SDK) can saturate
-the Redis stream consumer + per-run buffers + Celery worker pool, and
-the resulting Redis OOM takes down the dashboard alongside ingestion.
+Ingest endpoints accept arbitrary write volume. Without a gate, a single
+misbehaving project (CI loop firing 10K events/sec, a runaway SDK) can
+saturate the Redis stream consumer + per-run buffers + Celery worker pool,
+and the resulting Redis OOM takes down the dashboard alongside ingestion.
+
+Two budgets, one mechanism (``_charge``):
+
+* ``enforce_ingest_rate_limit`` counts BATCHES. ``/api/v1/stream/ingest``,
+  ``/api/v1/stream/events/batch`` and -- since re-audit M4 --
+  ``/api/v1/ingest`` and ``/api/v1/ingest/file`` all draw on one
+  per-project bucket.
+* ``enforce_live_event_rate_limit`` counts single events on ``/ws/events``
+  (re-audit M3/N9), in a bucket of its own.
 
 The limiter is *per project*, intentionally. We're not trying to slow
 down a particular user — we're isolating projects so one team's noise
 doesn't degrade another team's UX. JWT-authenticated users still see
 the global rate limit on auth endpoints (P5-8); this is additional and
-specific to live-stream writes.
+specific to ingest writes.
 
 Design notes
 ------------
@@ -45,6 +53,9 @@ logger = structlog.get_logger(__name__)
 # namespace so a single ``KEYS testlookup:rate:*`` reveals every active
 # bucket during an incident.
 _KEY_PREFIX = "testlookup:rate:ingest:{project_id}:{minute_bucket}"
+# Single events on POST /ws/events get their own bucket and budget -- a
+# batch token per event would throttle an ordinary run (re-audit M4/M3).
+_EVENT_KEY_PREFIX = "testlookup:rate:ingest_event:{project_id}:{minute_bucket}"
 
 # Reject-counter key for /api/v1/health/ingestion to surface the recent
 # reject rate. Same minute granularity as the bucket itself so the two
@@ -108,6 +119,64 @@ async def enforce_ingest_rate_limit(
     # ``EXPIRE`` is set only on the first write of the minute (when
     # count == cost) to avoid resetting the TTL each call — the bucket
     # naturally expires after 70s, well past the next minute boundary.
+    await _charge(
+        redis,
+        key=key,
+        bucket=bucket,
+        limit=limit,
+        cost=cost,
+        project_id=project_id,
+        unit="batches",
+    )
+
+
+async def enforce_live_event_rate_limit(
+    project_id: str,
+    *,
+    cost: int = 1,
+) -> None:
+    """Per-project budget for single events on ``POST /ws/events``.
+
+    Re-audit M4/M3. That route takes ONE event per call and had no rate limit
+    at all, so one runaway producer could flood the live stream for every
+    project. It cannot share ``enforce_ingest_rate_limit``'s budget: that one
+    counts BATCHES (200 a minute by default, ~100 events each), so charging a
+    token per event would throttle an ordinary run to 200 results a minute.
+    Own key, own limit (``INGEST_EVENT_RATE_LIMIT_PER_MINUTE``), same
+    mechanics -- fail open on Redis errors, 429 with ``Retry-After``.
+    """
+    limit = settings.INGEST_EVENT_RATE_LIMIT_PER_MINUTE
+    if limit <= 0:
+        return
+
+    from app.db.redis_client import get_redis
+
+    redis = get_redis()
+    bucket = _current_minute_bucket()
+    key = _EVENT_KEY_PREFIX.format(project_id=project_id, minute_bucket=bucket)
+    await _charge(
+        redis,
+        key=key,
+        bucket=bucket,
+        limit=limit,
+        cost=cost,
+        project_id=project_id,
+        unit="events",
+    )
+
+
+async def _charge(
+    redis,
+    *,
+    key: str,
+    bucket: str,
+    limit: int,
+    cost: int,
+    project_id: str,
+    unit: str,
+) -> None:
+    """Charge one bucket; raise 429 when it overflows. Shared by both limiters
+    so the batch and single-event paths cannot drift apart."""
     try:
         count = await redis.incrby(key, cost)
         if count == cost:
@@ -143,13 +212,14 @@ async def enforce_ingest_rate_limit(
         project_id=project_id,
         count=count,
         limit=limit,
+        unit=unit,
         retry_after=retry_after,
     )
     raise HTTPException(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         detail=(
             f"Ingest rate limit exceeded for this project "
-            f"({count}/{limit} batches in the current minute). "
+            f"({count}/{limit} {unit} in the current minute). "
             f"Retry in {retry_after}s."
         ),
         headers={"Retry-After": str(retry_after)},

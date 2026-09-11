@@ -36,6 +36,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
+    _enforce_api_key_project_binding,
     get_current_active_user,
     get_db,
     require_project_access,
@@ -90,6 +91,11 @@ def require_investigation_access():
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Investigation not found",
             )
+        # A project-bound API key reaches only its own project's
+        # investigations, whatever its owner's role: the ADMIN return below
+        # used to hand a CI key every tenant's (re-audit N20; compare
+        # core/deps.py _make_project_scoped_guard).
+        _enforce_api_key_project_binding(current_user, project_id)
         role = current_user.role
         role_value = getattr(role, "value", role)
         if str(role_value) == UserRole.ADMIN.value:

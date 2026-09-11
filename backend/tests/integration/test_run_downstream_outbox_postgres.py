@@ -20,6 +20,7 @@ from app.models.postgres import (
     NotificationPreference,
     NotificationTestState,
     Project,
+    ProjectMember,
     RunDownstreamOutbox,
     TestCase as DbTestCase,
     TestStatus as DbTestStatus,
@@ -345,6 +346,10 @@ async def test_transition_default_delivery_uses_locked_transaction_without_deadl
                     is_known_flaky=False,
                 )
             )
+            # The subscriber is a member: a project's notifications go only to
+            # someone who can read the project (QA-R3-1), and the membership
+            # check runs inside the transaction that holds the project lock.
+            db.add(ProjectMember(user_id=user_id, project_id=project_id))
             db.add(
                 NotificationPreference(
                     user_id=user_id,

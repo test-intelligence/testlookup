@@ -23,6 +23,18 @@ ingestion_test_cases_total = Counter(
     ["framework", "status"],  # framework: allure|testng|junit; status: passed|failed|skipped
 )
 
+# Re-audit H5. finalize_run's post-steps each run in their own session so one
+# failure cannot poison the next -- and each failure was a log line and nothing
+# else. Nine steps (suite membership, canonical sync, deletion reconcile,
+# failed-test assignment, auto-tagging, quarantine tagging, release linking,
+# commit range, the activity ledger) could fail on every run indefinitely with
+# no metric to graph and no alert to fire.
+finalize_step_failures_total = Counter(
+    "testlookup_finalize_step_failures_total",
+    "Post-ingestion finalize steps that raised and were rolled back",
+    ["step"],  # suite_sync|canonical_sync|canonical_deletion_reconcile|assign_failed_tests|auto_tagging|quarantine_tagging|release_linking|commit_range|activity_ledger
+)
+
 ingestion_duration_seconds = Histogram(
     "testlookup_ingestion_duration_seconds",
     "Wall-clock time for a complete test-run ingestion",
@@ -40,7 +52,7 @@ uploads_total = Counter(
 upload_failures_total = Counter(
     "testlookup_upload_failures_total",
     "Manual report upload failures by error code",
-    ["code"],  # parse_error|empty_report|ingest_error|zip_bomb|unsafe_path|nested_zip|...
+    ["code"],  # parse_error|empty_report|ingest_error|too_many_results|zip_bomb|unsafe_path|nested_zip|...
 )
 
 upload_processing_seconds = Histogram(
@@ -74,6 +86,16 @@ active_pipeline_runs = Gauge(
 pipeline_execution_context_persist_failures_total = Counter(
     "testlookup_pipeline_execution_context_persist_failures_total",
     "Pipeline runs whose frozen execution-context snapshot could not be persisted before graph execution",
+)
+
+# Re-audit M10. POST /ws/events keeps a sanitized copy of every live event in
+# Mongo for the operational audit trail. That write is deliberately non-fatal
+# -- the event still reaches the stream -- but it was ``except Exception:
+# pass``: no log, no count. A Mongo outage left a hole in the audit trail
+# covering every live event in the window, and nothing recorded that it had.
+live_event_archive_failures_total = Counter(
+    "testlookup_live_event_archive_failures_total",
+    "Live events whose audit copy could not be written to Mongo (the event itself was still published)",
 )
 
 # ── Pipeline Stages ───────────────────────────────────────────────────────────

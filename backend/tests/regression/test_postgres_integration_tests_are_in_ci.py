@@ -11,6 +11,9 @@ This check closes it: adding the file to the repo forces adding it to the job.
 
 (Measured when this was written: 13 of 13 existing files were correctly listed,
 so this pins a healthy state rather than papering over a backlog.)
+
+It has since earned its keep: re-audit batch 2 added
+``test_search_tags_index_postgres.py`` without listing it, and this went red.
 """
 from __future__ import annotations
 
@@ -67,3 +70,26 @@ def test_ci_authority_seed_supplies_non_null_execution_defaults():
 
     assert "steps_present" in test_case_insert
     assert "'seeded integration failure', false" in test_case_insert
+
+
+def test_a_listed_file_outside_tests_integration_carries_the_marker():
+    """The job filters with ``-m integration``, and only ``tests/integration`` is
+    marked automatically (``tests/conftest.py``). A listed file anywhere else is
+    deselected -- silently, the job stays green -- unless it is marked itself."""
+    if not CI_WORKFLOW.exists():
+        pytest.skip("ci.yml not present in this checkout")
+
+    source = CI_WORKFLOW.read_text(encoding="utf-8")
+    step = source.split("- name: Run protected PostgreSQL integration suite", 1)[1]
+    step = step.split("- name:", 1)[0]
+    named = re.findall(r"(?<![\w/])tests/[\w/]+\.py", step)
+    assert len(named) >= 20, f"the step names too few files to be the right one: {named}"
+
+    unmarked = [
+        rel for rel in named
+        if not rel.startswith("tests/integration/")
+        and "mark.integration" not in (REPO_ROOT / "backend" / rel).read_text(encoding="utf-8")
+    ]
+    assert not unmarked, (
+        f"-m integration deselects these, so CI lists them but never runs them: {unmarked}"
+    )

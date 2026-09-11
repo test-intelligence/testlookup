@@ -24,8 +24,9 @@ pool reuse. Every one of the 32 tracebacks was identical::
 **The mechanism.** PEP 562 ``__getattr__`` runs *once per importing module*, so
 ``from app.db.postgres import AsyncSessionLocal`` at MODULE level permanently
 binds whatever object it returned at first import.
-``worker/tasks.py::_run_async`` disposes the engine and clears both
-``@lru_cache``es after every task. Modules importing **inside a function**
+``worker/tasks.py::_run_async`` then disposed the engine and cleared both
+``@lru_cache``es after every task (since re-audit M1, only when a worker
+loop is torn down). Modules importing **inside a function**
 (``tasks.py``) re-resolved and got a fresh factory; modules importing at
 **module level** (``ingestion_pipeline``, ``ingestion``, ~38 others) kept the
 factory of the **disposed** engine — hence a deterministic failure on
@@ -47,7 +48,7 @@ from app.db.postgres import AsyncSessionLocal  # noqa: E402  (module-level, on p
 
 
 def _reset_caches() -> None:
-    """Exactly what ``_run_async`` does between Celery tasks."""
+    """What the worker does to these caches when it tears its loop down."""
     postgres.get_session_factory.cache_clear()
     postgres.get_engine.cache_clear()
 

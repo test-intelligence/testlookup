@@ -19,6 +19,30 @@ def _admin() -> SimpleNamespace:
     return SimpleNamespace(id=uuid.uuid4())
 
 
+@pytest.fixture(autouse=True)
+def scope_checks(monkeypatch):
+    """The handler resolves a named project's scope first (code review round 4);
+    these tests call it directly with a bare caller, so the check is stubbed."""
+    checked = AsyncMock(return_value=(None, None))
+    monkeypatch.setattr("app.core.deps.resolve_project_scope", checked)
+    return checked
+
+
+@pytest.mark.asyncio
+async def test_a_named_project_is_scope_checked_before_anything_runs(scope_checks):
+    from fastapi import HTTPException
+
+    project = uuid.uuid4()
+    scope_checks.side_effect = HTTPException(status_code=403, detail="not yours")
+    payload = ReportEvalCycleRequest(
+        corpus_version="pilot-v1", project_id=project, test_run_ids=[uuid.uuid4()]
+    )
+    with pytest.raises(HTTPException) as exc:
+        await create_report_eval_cycle(payload, _admin(), AsyncMock())
+    assert exc.value.status_code == 403
+    assert scope_checks.await_args.args[2] == str(project)
+
+
 @pytest.mark.asyncio
 async def test_report_cycle_rejects_caller_corpus_by_default(monkeypatch):
     monkeypatch.setattr(

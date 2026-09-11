@@ -9,6 +9,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { ProjectMembersTab } from './ProjectMembersTab'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import type { Project } from '@/types/projects'
+import { AVAILABLE_SCOPES } from './keyScopeOptions'
 
 const ROLES: UserRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
 
@@ -807,7 +808,6 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
 
 // ── Create API Key Modal ──────────────────────────────────────
 
-const AVAILABLE_SCOPES = ['test:read', 'test:write', 'report:read', 'report:write', 'admin:read']
 
 function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('')

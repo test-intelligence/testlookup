@@ -3,9 +3,12 @@ import uuid
 import random
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import require_role
-from app.models.postgres import UserRole
+from app.db.postgres import get_db
+from app.models.postgres import Project, UserRole
 from app.models.schemas import SentinelFile
 from app.services.mock_generator import generate_mock_allure_results, generate_mock_testng_results
 from app.db.storage import get_storage_provider
@@ -18,6 +21,10 @@ router = APIRouter()
 @router.post(
     "/generate-test-run",
     status_code=202,
+    # Instance administrators only, deliberately WITHOUT allow_project_key
+    # (re-audit N20). It files synthetic results into whichever project the
+    # caller names, and generating synthetic data is no job for one project's
+    # CI credential.
     dependencies=[Depends(require_role(UserRole.ADMIN))],
 )
 async def generate_mock_test_run(
@@ -25,10 +32,25 @@ async def generate_mock_test_run(
     num_tests: int = 50,
     failure_rate: float = 0.2,
     report_type: Literal["allure", "testng", "both"] = "both",
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Generates a synthetic test run and triggers the ingestion pipeline.
     """
+    # Checked before anything is written. The storage prefix and the ingestion
+    # task took the project on trust, so a mistyped (or deleted) project id
+    # got synthetic results uploaded and an ingestion queued for a project
+    # that does not exist.
+    project = (
+        await db.execute(
+            select(Project.id).where(
+                Project.id == project_id, Project.is_active.is_(True)
+            )
+        )
+    ).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
     try:
         build_number = str(random.randint(10000, 99999))
         minio_prefix = f"{project_id}/builds/{build_number}/"

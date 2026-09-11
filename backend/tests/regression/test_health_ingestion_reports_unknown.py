@@ -186,3 +186,24 @@ async def test_a_healthy_redis_still_reports_ok():
     assert payload["status"] == "ok"
     assert payload["redis_reachable"] is True
     assert payload["recent"]["reject_count_this_minute"] == 0
+
+
+@pytest.mark.asyncio
+async def test_both_ingest_budgets_are_reported(monkeypatch):
+    """Re-audit M3/N9: the single-event budget is a second knob, so show it.
+
+    The thresholds are configuration, known even while Redis is not -- and an
+    operator reading a 429 from /ws/events needs the limit that produced it.
+    Distinct values prove each field is read from its own setting.
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "INGEST_RATE_LIMIT_PER_MINUTE", 321)
+    monkeypatch.setattr(settings, "INGEST_EVENT_RATE_LIMIT_PER_MINUTE", 12345)
+
+    thresholds = (await _payload_with_dead_redis())["thresholds"]
+
+    assert thresholds["rate_limit_per_minute"] == 321
+    assert thresholds["event_rate_limit_per_minute"] == 12345, (
+        "/health/ingestion does not report the single-event budget"
+    )

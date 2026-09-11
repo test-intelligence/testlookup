@@ -268,7 +268,18 @@ async def stage_finalize_operations(
         specs.append(
             (
                 "agent_pipeline",
-                {**common, "workflow_type": "offline"},
+                # run_agent_pipeline's parameter is test_run_id. Staged as
+                # ``{**common}`` it carried run_id instead, and Celery refuses a
+                # call with arguments its task does not take before publishing:
+                # every attempt failed with TypeError and was retried forever,
+                # so no finished run's analysis ever started (found by the
+                # re-audit's homelab check of N14).
+                {
+                    "test_run_id": str(run.id),
+                    "project_id": str(run.project_id),
+                    "build_number": str(run.build_number),
+                    "workflow_type": "offline",
+                },
                 "ai_analysis",
                 6,
             )
@@ -836,11 +847,86 @@ async def defer_downstream_execution(
         return True
 
 
-def _publish_downstream(row: RunDownstreamOutbox) -> None:
-    """Publish a whitelisted task with a stable Celery delivery identity."""
+#: How many failed intents one requeue may put back. The relay publishes at its
+#: own pace, but a backlog should go back in slices an operator can watch, not
+#: as one burst onto the workers.
+REQUEUE_MAX_ROWS = 500
+
+
+async def requeue_failed_downstream_operations(
+    db: AsyncSession,
+    *,
+    operation: str,
+    last_error: str | None = None,
+    run_id: uuid.UUID | None = None,
+    limit: int = 100,
+    dry_run: bool = True,
+) -> list[dict[str, Any]]:
+    """Put permanently failed intents back in the queue, oldest first. Never commits.
+
+    An intent is marked ``failed`` after MAX_DISPATCH_ATTEMPTS publish failures
+    or MAX_EXECUTION_ATTEMPTS executions, and nothing retries it after that.
+    That is right while the cause is unknown, and wrong once it is fixed: until
+    re-audit N23 every finished run's ``agent_pipeline`` intent failed with
+    ``broker_TypeError``, and no upgrade would ever have published one of them.
+    This is the operator's way back. ``dry_run`` lists what would be requeued
+    and changes nothing.
+
+    Returns each matched row as it was before the requeue.
+    """
+    if operation not in _OPERATIONS:
+        raise ValueError(f"unknown downstream operation: {operation!r}")
+    query = (
+        select(RunDownstreamOutbox)
+        .where(
+            RunDownstreamOutbox.status == "failed",
+            RunDownstreamOutbox.operation == operation,
+        )
+        .order_by(RunDownstreamOutbox.created_at, RunDownstreamOutbox.id)
+        .limit(max(1, min(int(limit), REQUEUE_MAX_ROWS)))
+    )
+    if last_error is not None:
+        query = query.where(RunDownstreamOutbox.last_error == last_error)
+    if run_id is not None:
+        query = query.where(RunDownstreamOutbox.run_id == run_id)
+    if not dry_run:
+        # Rows another admin is requeueing at this moment are skipped rather
+        # than waited on: the second caller gets fewer rows, never the same one.
+        query = query.with_for_update(skip_locked=True)
+    rows = list((await db.execute(query)).scalars().all())
+    before = [
+        {
+            "id": str(row.id),
+            "run_id": str(row.run_id),
+            "project_id": str(row.project_id),
+            "last_error": row.last_error,
+            "dispatch_failures": int(row.dispatch_failures or 0),
+            "execution_attempts": int(row.execution_attempts or 0),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+    if not dry_run:
+        for row in rows:
+            row.status = "pending"
+            row.attempts = 0
+            row.dispatch_failures = 0
+            row.execution_attempts = 0
+            row.next_attempt_at = None
+            row.lease_expires_at = None
+            row.processing_task_id = None
+            # The claim mints a fresh token, which fences any copy of the
+            # failed publication still sitting in a queue.
+            row.dispatch_token = None
+            row.last_error = None
+    return before
+
+
+def downstream_tasks() -> dict[str, Any]:
+    """The Celery task each whitelisted operation is published to."""
     from app.worker import tasks
 
-    task_by_operation = {
+    return {
         "persist_live_session": tasks.persist_live_session,
         "run_notifications": tasks.dispatch_run_notifications,
         "transition_notifications": tasks.dispatch_transition_notifications,
@@ -849,11 +935,21 @@ def _publish_downstream(row: RunDownstreamOutbox) -> None:
         "suite_comparison": tasks.precompute_suite_comparisons_for_run,
         "run_completed_webhook": tasks.dispatch_run_completed_webhook,
     }
-    task = task_by_operation.get(row.operation)
+
+
+def _publish_downstream(row: RunDownstreamOutbox) -> None:
+    """Publish a whitelisted task with a stable Celery delivery identity."""
+    task = downstream_tasks().get(row.operation)
     if task is None:
         raise ValueError(f"unsupported_downstream_operation:{row.operation}")
+    kwargs = dict(row.payload)
+    if row.operation == "agent_pipeline" and "run_id" in kwargs and "test_run_id" not in kwargs:
+        # An intent staged before the payload used the task's own parameter
+        # name. Translate it, so a run stuck on broker_TypeError gets its
+        # analysis once this ships instead of retrying forever.
+        kwargs["test_run_id"] = kwargs.pop("run_id")
     task.apply_async(
-        kwargs=dict(row.payload),
+        kwargs=kwargs,
         queue=row.queue,
         priority=int(row.priority),
         task_id=f"run-downstream-{row.id}",

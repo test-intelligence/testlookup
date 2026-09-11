@@ -299,6 +299,67 @@ async def get_or_create_canonical(
     return canonical
 
 
+# Re-audit M8. Canonical sync batches its reads and inserts. An IN list or a
+# multi-row VALUES costs one bind parameter per value, and asyncpg caps a
+# statement at 32,767: ten thousand fingerprints per IN, and a thousand rows
+# of ten columns per INSERT, stay well under it.
+_FINGERPRINT_CHUNK = 10_000
+_CANONICAL_INSERT_CHUNK = 1_000
+
+
+def _chunks(values: list, size: int):
+    """Yield bounded, non-empty slices of ``values``."""
+    for offset in range(0, len(values), size):
+        yield values[offset:offset + size]
+
+
+def _refresh_seen_canonical(
+    canonical: CanonicalTestCase, tc: TestCase, run_id: uuid.UUID
+) -> None:
+    """A run saw this canonical case: bump it, restore it, refresh its names.
+
+    ``test_suite_id`` is deliberately never touched. Moving a case between
+    suites is a person's decision (see routers/suites.py), and a run that
+    reports the case under its old suite must not undo it.
+    """
+    canonical.last_seen_run_id = run_id
+    if canonical.status in ("deleted", "needs_review"):
+        canonical.status = "active"
+        canonical.deleted_at_run_id = None
+        canonical.deleted_observed_at = None
+        canonical.retirement_confirmed_at = None
+        canonical.retirement_confirmed_by_id = None
+        canonical.retirement_reason = None
+    if tc.test_name and canonical.test_name != tc.test_name:
+        canonical.test_name = tc.test_name
+    if canonical.class_name != tc.class_name:
+        canonical.class_name = tc.class_name
+
+
+async def _insert_new_canonicals(db: AsyncSession, rows: list[dict]) -> set[str]:
+    """Insert new canonical rows in chunks; return the fingerprints THIS call inserted.
+
+    ``ON CONFLICT DO NOTHING`` on (project_id, test_fingerprint): a row that a
+    concurrent run's sync inserted first is skipped rather than raised, so
+    nothing else in the batch is lost -- the job the per-row SAVEPOINT did.
+    Rows go in fingerprint order, so two runs inserting overlapping sets take
+    their row locks in the same order instead of deadlocking.
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    inserted: set[str] = set()
+    ordered = sorted(rows, key=lambda row: row["test_fingerprint"])
+    for chunk in _chunks(ordered, _CANONICAL_INSERT_CHUNK):
+        result = await db.execute(
+            pg_insert(CanonicalTestCase)
+            .values(chunk)
+            .on_conflict_do_nothing(index_elements=["project_id", "test_fingerprint"])
+            .returning(CanonicalTestCase.test_fingerprint)
+        )
+        inserted.update(result.scalars().all())
+    return inserted
+
+
 async def sync_canonical_test_cases(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -384,18 +445,32 @@ async def sync_canonical_test_cases(
             default_suite = await get_or_create_default_suite(db, project)
 
     # ── Batch-fetch existing CanonicalTestCase rows by fingerprint ──
-    fingerprints = [tc.test_fingerprint for tc in run_cases if tc.test_fingerprint]
+    # De-duplicated and chunked: one IN over every case of a large run could
+    # pass the driver's bind-parameter limit (re-audit M8, the M5 family).
+    fingerprints = list(
+        dict.fromkeys(tc.test_fingerprint for tc in run_cases if tc.test_fingerprint)
+    )
     canonical_by_fp: dict[str, CanonicalTestCase] = {}
-    if fingerprints:
+    for chunk in _chunks(fingerprints, _FINGERPRINT_CHUNK):
         existing_result = await db.execute(
             select(CanonicalTestCase).where(
                 CanonicalTestCase.project_id == project_id,
-                CanonicalTestCase.test_fingerprint.in_(fingerprints),
+                CanonicalTestCase.test_fingerprint.in_(chunk),
             )
         )
-        canonical_by_fp = {c.test_fingerprint: c for c in existing_result.scalars().all()}
+        canonical_by_fp.update(
+            {c.test_fingerprint: c for c in existing_result.scalars().all()}
+        )
 
-    # ── Upsert per case ──────────────────────────────────────────
+    # ── Refresh what exists; collect what is new ────────────────
+    # Re-audit M8: each new fingerprint used to be inserted on its own, in a
+    # SAVEPOINT + INSERT + RELEASE, so a run's first ingest paid three round
+    # trips per test. New rows are now collected here and inserted in chunks
+    # below with ON CONFLICT DO NOTHING, which keeps what the savepoint was
+    # for: losing a race to a concurrent run's sync for the same project
+    # costs nothing, and discards nothing else in this batch.
+    new_rows: dict[str, dict] = {}
+    awaiting_insert: list[TestCase] = []
     for tc in run_cases:
         if not tc.test_fingerprint:
             counts["skipped"] += 1
@@ -408,56 +483,61 @@ async def sync_canonical_test_cases(
 
         canonical = canonical_by_fp.get(tc.test_fingerprint)
         if canonical is None:
-            canonical = CanonicalTestCase(
-                project_id=project_id,
-                test_suite_id=target_suite.id,
-                test_fingerprint=tc.test_fingerprint,
-                test_name=tc.test_name or "Unknown",
-                class_name=tc.class_name,
-                status="active",
-                source="execution",
-                first_seen_run_id=run_id,
-                last_seen_run_id=run_id,
-            )
-            # SAVEPOINT around the per-case flush: a bare db.rollback() here
-            # would discard EVERY canonical + TestCase link already added in
-            # this batch (the function runs inside ingestion_pipeline's
-            # _run_isolated session, which commits once at the end), silently
-            # truncating the run's catalog. begin_nested() unwinds only the
-            # row that lost the concurrent-upsert race.
-            try:
-                async with db.begin_nested():
-                    db.add(canonical)
-                    await db.flush()
-            except IntegrityError:
-                # Lost the race to a concurrent upsert — re-select the winner.
-                refetch = await db.execute(
-                    select(CanonicalTestCase).where(
-                        CanonicalTestCase.project_id == project_id,
-                        CanonicalTestCase.test_fingerprint == tc.test_fingerprint,
-                    )
-                )
-                canonical = refetch.scalar_one()
-            canonical_by_fp[tc.test_fingerprint] = canonical
-            counts["added"] += 1
-        else:
-            canonical.last_seen_run_id = run_id
-            if canonical.status in ("deleted", "needs_review"):
-                canonical.status = "active"
-                canonical.deleted_at_run_id = None
-                canonical.deleted_observed_at = None
-                canonical.retirement_confirmed_at = None
-                canonical.retirement_confirmed_by_id = None
-                canonical.retirement_reason = None
-            if tc.test_name and canonical.test_name != tc.test_name:
-                canonical.test_name = tc.test_name
-            if canonical.class_name != tc.class_name:
-                canonical.class_name = tc.class_name
-            counts["updated"] += 1
+            # The first occurrence decides the suite, as the per-row insert did.
+            new_rows.setdefault(tc.test_fingerprint, {
+                "id": uuid.uuid4(),
+                "project_id": project_id,
+                "test_suite_id": target_suite.id,
+                "test_fingerprint": tc.test_fingerprint,
+                "test_name": tc.test_name or "Unknown",
+                "class_name": tc.class_name,
+                "status": "active",
+                "source": "execution",
+                "first_seen_run_id": run_id,
+                "last_seen_run_id": run_id,
+            })
+            awaiting_insert.append(tc)
+            continue
 
+        _refresh_seen_canonical(canonical, tc, run_id)
+        counts["updated"] += 1
         if tc.canonical_test_case_id != canonical.id:
             tc.canonical_test_case_id = canonical.id
             counts["linked"] += 1
+
+    if new_rows:
+        inserted = await _insert_new_canonicals(db, list(new_rows.values()))
+        counts["added"] = len(inserted)
+        # Re-select every new fingerprint: this call's rows and any that a
+        # concurrent run inserted first. Linking from RETURNING alone would
+        # leave every case whose insert was skipped with no canonical at all.
+        first_case: dict[str, TestCase] = {}
+        for tc in awaiting_insert:
+            first_case.setdefault(tc.test_fingerprint, tc)
+        for chunk in _chunks(list(new_rows), _FINGERPRINT_CHUNK):
+            winners = await db.execute(
+                select(CanonicalTestCase).where(
+                    CanonicalTestCase.project_id == project_id,
+                    CanonicalTestCase.test_fingerprint.in_(chunk),
+                )
+            )
+            for canonical in winners.scalars().all():
+                canonical_by_fp[canonical.test_fingerprint] = canonical
+                if canonical.test_fingerprint not in inserted:
+                    # Another run's row: this run saw it, so refresh it --
+                    # but never re-suite it.
+                    _refresh_seen_canonical(
+                        canonical, first_case[canonical.test_fingerprint], run_id
+                    )
+                    counts["updated"] += 1
+        for tc in awaiting_insert:
+            canonical = canonical_by_fp.get(tc.test_fingerprint)
+            if canonical is None:
+                counts["skipped"] += 1
+                continue
+            if tc.canonical_test_case_id != canonical.id:
+                tc.canonical_test_case_id = canonical.id
+                counts["linked"] += 1
 
     stage_orphan_gauge_refresh(db, project_id)
     logger.info(
@@ -761,7 +841,16 @@ async def list_canonical_test_cases(
     project_ids: Optional[list[uuid.UUID]],
     suite_id: Optional[uuid.UUID] = None,
     status_filter: Optional[str] = None,
-) -> list[CanonicalTestCase]:
+    page: Optional[int] = None,
+    size: Optional[int] = None,
+) -> tuple[list[CanonicalTestCase], int]:
+    """Canonical test cases the caller may see, as ``(rows, total)``.
+
+    With ``page`` and ``size`` (re-audit M7) the rows are one page and
+    ``total`` counts every match. Without them every match is returned and
+    ``total`` is its length: the suite view selects and bulk-links across
+    the whole suite, so it cannot be handed one page of it.
+    """
     stmt = select(CanonicalTestCase)
     # Soft-deleted projects are excluded unconditionally; the membership /
     # pinned-project restriction below is applied on top.
@@ -781,14 +870,25 @@ async def list_canonical_test_cases(
     )
     if project_ids is not None:
         if not project_ids:
-            return []
+            return [], 0
         stmt = stmt.where(CanonicalTestCase.project_id.in_(project_ids))
     if suite_id is not None:
         stmt = stmt.where(CanonicalTestCase.test_suite_id == suite_id)
     if status_filter is not None:
         stmt = stmt.where(CanonicalTestCase.status == status_filter)
-    stmt = stmt.order_by(CanonicalTestCase.test_name.asc())
-    return list((await db.execute(stmt)).scalars().all())
+    # ``test_name`` is not unique (uniqueness is project + fingerprint), so
+    # ``id`` breaks ties: without it OFFSET pages can repeat or skip rows.
+    ordered = stmt.order_by(CanonicalTestCase.test_name.asc(), CanonicalTestCase.id.asc())
+    if page is None or size is None:
+        rows = list((await db.execute(ordered)).scalars().all())
+        return rows, len(rows)
+    total = int(
+        (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
+    )
+    rows = list(
+        (await db.execute(ordered.offset((page - 1) * size).limit(size))).scalars().all()
+    )
+    return rows, total
 
 
 def legacy_suite_membership_clause(suite_key: str):

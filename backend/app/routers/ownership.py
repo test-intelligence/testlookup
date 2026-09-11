@@ -130,7 +130,8 @@ async def bulk_import_rules(
     project_id: uuid.UUID,
     payload: OwnershipBulkImportRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    # N20: require_project_access() confines a project-bound key to {project_id}.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     _: User = Depends(require_project_access()),
 ):
     """Bulk import ownership rules (ADMIN only). Optionally replaces existing."""

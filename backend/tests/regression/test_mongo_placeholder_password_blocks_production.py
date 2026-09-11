@@ -1,0 +1,182 @@
+"""A placeholder Mongo password must stop production from starting.
+
+Re-audit finding N12, raised by the batch 1 review. The CRITICAL
+default-secret check was widened in batch 1 to catch every placeholder the
+example env files ship -- for ``JWT_SECRET_KEY``, ``APP_SECRET_KEY`` and
+``WEBHOOK_SECRET``. ``.env.example`` also ships::
+
+    MONGO_URI=mongodb://testlookup:change-me-to-a-strong-password@localhost:27017/...
+
+and nothing looked at it. Copying the example file and deploying booted
+production on a published database password.
+
+Only the password component is judged. A password-less URI -- the default, or a
+deployment authenticating another way -- is never a placeholder, and the host
+and database names are not secrets.
+"""
+from __future__ import annotations
+
+import pathlib
+
+import pytest
+
+from app.core.config import settings
+
+pytestmark = pytest.mark.regression
+
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture
+def production(monkeypatch):
+    """Production, with every OTHER secret real, so only Mongo is judged."""
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    monkeypatch.setattr(settings, "JWT_SECRET_KEY", "c0ffee" * 10)
+    monkeypatch.setattr(settings, "APP_SECRET_KEY", "beef" * 16)
+    monkeypatch.setattr(settings, "WEBHOOK_SECRET", "cafe" * 16)
+    monkeypatch.setattr(settings, "DEV_AUTO_LOGIN_ENABLED", False)
+    return monkeypatch
+
+
+def _mongo_failures() -> list[str]:
+    return [item for item in settings.critical_security_failures() if "MONGO_URI" in item]
+
+
+def _example_mongo_uri() -> str:
+    for line in (ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
+        if line.startswith("MONGO_URI="):
+            return line.partition("=")[2].strip()
+    raise AssertionError(".env.example no longer declares MONGO_URI — update this test")
+
+
+def test_the_example_files_mongo_uri_blocks_production(production):
+    """The exact value a copied .env.example deploys with."""
+    production.setattr(settings, "MONGO_URI", _example_mongo_uri())
+    assert _mongo_failures(), (
+        "MONGO_URI from .env.example — a published database password — boots "
+        "production without complaint"
+    )
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "mongodb://svc:replace-with-strong-mongo-password@mongo:27017/logs",
+        "mongodb+srv://svc:change-me@cluster0.example.net/logs",
+        "mongodb://svc:<base64-encoded-mongo-password>@mongo:27017/logs",
+        "mongodb://svc:<pw>@mongo:27017/logs",
+    ],
+)
+def test_every_placeholder_convention_is_caught(production, uri):
+    production.setattr(settings, "MONGO_URI", uri)
+    assert _mongo_failures()
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "mongodb://localhost:27017",                                 # the default
+        "mongodb://mongo:27017/logs",                                # no credential at all
+        "mongodb://svc:9f8e7d6c5b4a49388271aa@mongo:27017/logs",     # a real password
+        "mongodb+srv://svc:c0ffeec0ffeec0ffee@cluster0.example.net/logs",
+        "mongodb://svc:9f8e<7d6c5b4a4938@mongo:27017/logs",             # a real password with a "<"
+        # The Cloud Run example verbatim: a placeholder HOST but no password.
+        # Judging the whole URI would flag this; only the credential is a
+        # secret, and this one would fail to connect rather than leak anything.
+        "mongodb+srv://your-mongodb-host/your-database",
+    ],
+)
+def test_a_real_or_absent_password_is_not_flagged(production, uri):
+    production.setattr(settings, "MONGO_URI", uri)
+    assert _mongo_failures() == [], f"{uri} was wrongly flagged as a placeholder"
+
+
+def test_outside_production_nothing_is_flagged(monkeypatch):
+    """The check gates startup in production and staging, never development."""
+    monkeypatch.setattr(settings, "APP_ENV", "development")
+    monkeypatch.setattr(settings, "MONGO_URI", _example_mongo_uri())
+    assert _mongo_failures() == []
+
+
+# ── Angle brackets (QA of N12) ───────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "value",
+    # The fourth refused startup until the token had to be the whole value
+    # (code review of Q7); so did the fifth, a real secret with a token inside.
+    ["Tr0ub4dor&3<9xQ!r", "9f8e<7d!6>c5b4a4938", "<<>>", "Tr0ub<A>dor&3", "s3cr3t<pw>tail"],
+)
+def test_a_secret_that_merely_contains_angle_brackets_is_not_a_placeholder(value):
+    """A bare "<" refused a real, symbol-rich secret, and startup with it."""
+    from app.core.config import _is_placeholder_secret
+
+    assert not _is_placeholder_secret(value), f"{value!r} was taken for a placeholder"
+
+
+def _angle_placeholders(text: str) -> set[str]:
+    """Every ``<...>`` a file assigns to a key, read looser than the check."""
+    import re
+
+    found: set[str] = set()
+    for line in text.splitlines():
+        found |= set(re.findall("[=:] *(<[^<>]+>)", line))
+    return found
+
+
+def test_every_angle_bracket_placeholder_the_repo_ships_is_caught():
+    """Read the conventions from the files that ship them, with a looser
+    pattern than the check's own, so a new shape cannot slip past unseen."""
+    from app.core.config import _is_placeholder_secret
+
+    shipped: set[str] = set()
+    for rel in (".env.example", "k8s/base/secrets.yaml"):
+        shipped |= _angle_placeholders((ROOT / rel).read_text(encoding="utf-8"))
+    assert len(shipped) >= 5, f"the scan found too few placeholders to mean anything: {shipped}"
+    missed = sorted(token for token in shipped if not _is_placeholder_secret(token))
+    assert not missed, f"shipped placeholders the startup check would accept: {missed}"
+
+
+def test_every_documented_value_for_a_checked_secret_is_caught():
+    """The docs tell operators what to paste. deploymentsteps.md shows
+    ``APP_SECRET_KEY=<your generated key from Step 9.3>``, which has spaces; the
+    token rule before this accepted it as a real secret (QA of Q7)."""
+    import re
+    import subprocess
+
+    from app.core.config import _is_placeholder_secret
+
+    pattern = re.compile(
+        "(APP_SECRET_KEY|JWT_SECRET_KEY|WEBHOOK_SECRET)[^=:<>]{0,3}[=:] *(<[^<>]+>)"
+    )
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    documented: dict[str, str] = {}
+    for rel in tracked:
+        if not rel.endswith((".md", ".example", ".yaml", ".yml", ".env", ".txt", ".sh")):
+            continue
+        try:
+            text = (ROOT / rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in text.splitlines():
+            for _key, token in pattern.findall(line):
+                documented[token] = rel
+    assert "deploymentsteps.md" in documented.values(), (
+        f"the scan no longer sees the deployment guide's placeholder: {documented}"
+    )
+    missed = sorted(
+        f"{token} ({rel})" for token, rel in documented.items() if not _is_placeholder_secret(token)
+    )
+    assert not missed, f"documented placeholders the startup check would accept: {missed}"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["<your generated key from Step 9.3>", "<YOUR_SECRET>", " <pw> ", "<base64-encoded-strong-random-secret>"],
+)
+def test_a_whole_value_placeholder_is_refused(value):
+    from app.core.config import _is_placeholder_secret
+
+    assert _is_placeholder_secret(value), f"{value!r} was taken for a real secret"
