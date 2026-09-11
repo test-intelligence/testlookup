@@ -3474,15 +3474,169 @@ def _yaml_expression(value: str) -> str:
     return value.lower()
 
 
-def _key_disables(key: str, value: str) -> bool:
-    """Does a step/job ``if:`` or ``continue-on-error:`` stop it from gating?"""
-    expression = _yaml_expression(value)
-    if key == "continue-on-error":
-        return expression == "true"
-    if "||" in expression:
+_EXPR_TOKEN = re.compile(
+    r"\s*(?:(\|\||&&|==|!=|!|\(|\)|,)|('(?:[^']|'')*')|(-?\d+(?:\.\d+)?)|([a-z_][a-z0-9_.\-*]*))"
+)
+_UNKNOWN = object()   # a value no static reading can know (env.X, matrix.Y, a function)
+_EVENT = object()     # github.event_name
+_NULL = object()
+
+
+def _truth(value: object) -> Optional[bool]:
+    """GitHub truthiness: false, 0, '' and null are false. None = undecidable."""
+    if value is _UNKNOWN or value is _EVENT:
+        return None
+    if value is _NULL:
         return False
-    return any(part.strip().strip("()").strip() in _LITERAL_FALSE
-               for part in expression.split("&&"))
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        return value != 0
+    if isinstance(value, str):
+        return value != ""
+    return None
+
+
+class _Expr:
+    """A GitHub Actions expression, decided statically where it can be
+    (QA-B45-R2-2): literals, ``!``, ``&&``, ``||``, ``==``/``!=`` and
+    parentheses. ``github.event_name`` compared with a string is decided
+    against the workflow's own triggers when they are known. Every other
+    context value or function (``env.X``, ``matrix.Y``, ``always()``) is
+    undecidable. Three-valued: True, False, or None."""
+
+    def __init__(self, text: str, events: Optional[set[str]]) -> None:
+        self.toks: list[tuple[str, object]] = []
+        pos = 0
+        while text[pos:].strip():
+            m = _EXPR_TOKEN.match(text, pos)
+            if not m or m.end() == pos:
+                raise ValueError(text[pos:])
+            pos = m.end()
+            op, string, number, ident = m.groups()
+            if op:
+                self.toks.append(("op", op))
+            elif string is not None:
+                self.toks.append(("lit", string[1:-1].replace("''", "'")))
+            elif number is not None:
+                self.toks.append(("lit", float(number)))
+            else:
+                self.toks.append(("id", ident))
+        self.i = 0
+        self.events = events
+
+    def _peek(self, op: str) -> bool:
+        return self.i < len(self.toks) and self.toks[self.i] == ("op", op)
+
+    def _take(self) -> tuple[str, object]:
+        if self.i >= len(self.toks):
+            raise ValueError("unexpected end")
+        tok = self.toks[self.i]
+        self.i += 1
+        return tok
+
+    def parse(self) -> object:
+        value = self._or()
+        if self.i != len(self.toks):
+            raise ValueError("trailing tokens")
+        return value
+
+    def _or(self) -> object:
+        left = self._and()
+        while self._peek("||"):
+            self._take()
+            right = self._and()
+            lt, rt = _truth(left), _truth(right)
+            left = True if True in (lt, rt) else (False if lt is False and rt is False else _UNKNOWN)
+        return left
+
+    def _and(self) -> object:
+        left = self._not()
+        while self._peek("&&"):
+            self._take()
+            right = self._not()
+            lt, rt = _truth(left), _truth(right)
+            left = False if False in (lt, rt) else (True if lt is True and rt is True else _UNKNOWN)
+        return left
+
+    def _not(self) -> object:
+        if self._peek("!"):
+            self._take()
+            truth = _truth(self._not())
+            return _UNKNOWN if truth is None else not truth
+        return self._compare()
+
+    def _compare(self) -> object:
+        left = self._atom()
+        if self._peek("==") or self._peek("!="):
+            op = self._take()[1]
+            equal = self._equal(left, self._atom())
+            return _UNKNOWN if equal is None else (equal if op == "==" else not equal)
+        return left
+
+    def _equal(self, a: object, b: object) -> Optional[bool]:
+        if a is _EVENT or b is _EVENT:
+            other = b if a is _EVENT else a
+            if isinstance(other, str) and self.events is not None and other not in self.events:
+                return False  # the workflow is never triggered by that event
+            return None
+        if a is _UNKNOWN or b is _UNKNOWN or type(a) is not type(b):
+            return None  # GitHub coerces across types; do not guess
+        return a == b
+
+    def _atom(self) -> object:
+        kind, tok = self._take()
+        if (kind, tok) == ("op", "("):
+            value = self._or()
+            if not self._peek(")"):
+                raise ValueError("unbalanced")
+            self._take()
+            return value
+        if kind == "lit":
+            return tok
+        if kind != "id":
+            raise ValueError(str(tok))
+        if tok in ("true", "false"):
+            return tok == "true"
+        if tok == "null":
+            return _NULL
+        if self._peek("("):  # a function call: skip its arguments
+            depth = 0
+            while True:
+                call = self._take()
+                if call == ("op", "("):
+                    depth += 1
+                elif call == ("op", ")"):
+                    depth -= 1
+                    if depth == 0:
+                        return _UNKNOWN
+        return _EVENT if tok == "github.event_name" else _UNKNOWN
+
+
+def _constant_truth(expression: str, events: Optional[set[str]] = None) -> Optional[bool]:
+    """True/False when ``expression`` is decidable without running; else None."""
+    if not expression:
+        return None
+    try:
+        return _truth(_Expr(expression, events).parse())
+    except (ValueError, IndexError):
+        return None
+
+
+def _key_disables(key: str, value: str, events: Optional[set[str]] = None) -> bool:
+    """Does a step/job ``if:`` or ``continue-on-error:`` stop it from gating?
+
+    ``if:``: only when the expression is statically FALSE (``false``,
+    ``false || false``, ``!true``, ``1 == 2``, an event the workflow is never
+    triggered by). ``continue-on-error:`` fails safe (QA-B45-R2-2): unless
+    the value is statically false, it may be true at run time, and then the
+    step's failure is ignored -- ``${{ env.SOFT }}`` and
+    ``${{ matrix.experimental }}`` count as NOT gating.
+    """
+    truth = _constant_truth(_yaml_expression(value), events)
+    if key == "continue-on-error":
+        return truth is not False
+    return truth is False
 
 
 def _swallows_failure(command: str) -> bool:
@@ -3505,6 +3659,122 @@ def _errexit_after(command: str, errexit: bool) -> bool:
     return errexit
 
 
+# R-B45-R2-6: a pipe and an `&&` list discard a runner's status too.
+_QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
+# pytest options that collect or print and run no test.
+_NO_TEST_RUN = re.compile(r"(?:^|\s)(?:--collect-only|--co|--help|--version)(?=\s|=|$)")
+
+
+def _pipefail_after(command: str, pipefail: bool) -> bool:
+    """The shell's ``pipefail`` state after the ``set`` builtins in ``command``
+    (``set -o pipefail``, ``set -euo pipefail``, ``set +o pipefail``)."""
+    for args in re.findall(r"\bset((?:\s+[+-][A-Za-z]+(?:\s+(?!-)[A-Za-z]+)?)+)", command):
+        for flags, option in re.findall(r"([+-][A-Za-z]+)(?:\s+((?!-)[A-Za-z]+))?", args):
+            if flags[1:].endswith("o") and option == "pipefail":
+                pipefail = flags[0] == "-"
+    return pipefail
+
+
+def _shell_flags(shell: Optional[str]) -> tuple[bool, bool]:
+    """``(errexit, pipefail)`` a step's ``shell:`` starts with on a Linux runner.
+
+    No ``shell:``: Actions runs ``bash -e {0}``, WITHOUT pipefail. ``shell:
+    bash``: ``bash --noprofile --norc -eo pipefail {0}``. ``shell: sh``:
+    ``sh -e {0}``. A custom command line (``bash -x {0}``) has what it says.
+    """
+    if not shell:
+        return True, False
+    value = shell.strip().strip("'\"")
+    if value == "bash":
+        return True, True
+    if value == "sh":
+        return True, False
+    if "{0}" in value:
+        flags = "".join(re.findall(r"(?:^|\s)-([A-Za-z]+)", value))
+        return ("e" in flags or "errexit" in value), "pipefail" in value
+    return True, False
+
+
+def _masked_by_pipe_or_list(command: str, pipefail: bool, is_last: bool) -> bool:
+    """Is the runner's status (the command's FIRST element) lost to a pipe or
+    an ``&&`` list? The rule, precisely:
+
+    * ``runner | tee log``: a pipeline's status is its LAST command's unless
+      ``pipefail`` is on, so a failing runner exits 0 and ``-e`` never fires.
+    * ``runner && next``: bash ignores ``-e`` for every command of an
+      ``&&``/``||`` list except the last, so the runner failing does not stop
+      the script. The list's own status IS the runner's failure, though: as
+      the script's last command, ``pytest && echo ok`` still fails the step.
+      Only a list that something runs after (a later line, or ``; x``)
+      discards it. ``a && b`` does not mask ``a`` by itself.
+    * ``||`` is judged by :func:`_swallows_failure`.
+
+    Quoted text is ignored, so ``-k 'a|b'`` is not a pipe.
+    """
+    bare = re.sub(r"(?:^|\s)#.*$", "", _QUOTED.sub("''", command))
+    ops = re.findall(r"\|\||&&|\|&|\||;", bare)
+    if not ops:
+        return False
+    if ops[0] in ("|", "|&") and not pipefail:
+        return True
+    list_ops = [op for op in ops if op not in ("|", "|&")]
+    if list_ops and list_ops[0] == "&&" and "||" not in list_ops:
+        return not is_last or ";" in list_ops
+    return False
+
+
+# QA-B45-R2-2: a workflow gates a change only if a push or pull request runs it.
+_GATING_EVENTS = {"push", "pull_request", "pull_request_target", "merge_group", "workflow_call"}
+
+
+def _workflow_events(text: str) -> Optional[set[str]]:
+    """The events in a workflow's top-level ``on:``, or None if there is none."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        m = re.match(r"""^(?:on|"on"|'on'):\s*(.*?)\s*(?:#.*)?$""", line)
+        if not m:
+            continue
+        value = m.group(1)
+        if value:
+            if value.startswith("["):
+                return {v.strip().strip("'\"") for v in value.strip("[]").split(",") if v.strip()}
+            return {value.strip("'\"")}
+        events: set[str] = set()
+        for child in lines[index + 1:]:
+            if not child.strip() or child.lstrip().startswith("#"):
+                continue
+            if not child.startswith(" "):
+                break
+            key = re.match(r"^  (?:- )?([A-Za-z_]+)", child)
+            if key and len(child) - len(child.lstrip()) == 2:
+                events.add(key.group(1))
+        return events
+    return None
+
+
+def _workflow_gates(text: str) -> bool:
+    """Only a workflow a push or pull request triggers can fail a change:
+    ``workflow_dispatch``/``schedule``-only workflows run nothing that gates.
+    ``workflow_call`` counts (a gating workflow may call it); a workflow with
+    no readable ``on:`` does not, so a parse failure is loud, not a pass."""
+    events = _workflow_events(text)
+    return events is not None and bool(events & _GATING_EVENTS)
+
+
+def _job_needs(lines: list[str], index: int, value: str) -> list[str]:
+    """The jobs a ``needs:`` at ``lines[index]`` names (scalar, flow or block)."""
+    value = re.sub(r"\s+#.*$", "", value).strip()
+    if value:
+        return [v.strip().strip("'\"") for v in value.strip("[]").split(",") if v.strip()]
+    names = []
+    for child in lines[index + 1:]:
+        item = re.match(r"^\s{6,}-\s*['\"]?([A-Za-z0-9_-]+)", child)
+        if not item:
+            break
+        names.append(item.group(1))
+    return names
+
+
 def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
     """``(effective working dir, command line)`` for every test-runner command
     in one workflow file whose failure can fail the build. The directory is
@@ -3517,29 +3787,68 @@ def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
         return "" if directory in (".", "") else directory.rstrip("/")
 
     lines = text.splitlines()
-    # Job-level `if:` / `continue-on-error:` may sit anywhere in the job
-    # mapping (after `steps:` too), so collect them before walking the steps.
+    events = _workflow_events(text)
+    # Job-level `if:` / `continue-on-error:` / `needs:` may sit anywhere in the
+    # job mapping (after `steps:` too), so collect them before walking steps.
     disabled_jobs: set[int] = set()
     job_start = -1
+    job_starts: dict[str, int] = {}
+    job_needs: dict[str, list[str]] = {}
+    job_if: dict[str, str] = {}
+    workflow_shell: Optional[str] = None
+    in_defaults = False
     for index, line in enumerate(lines):
-        if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):
+        # workflow-level `defaults: run: shell:` (before `jobs:`)
+        if re.match(r"^\S", line):
+            in_defaults = bool(re.match(r"^defaults:\s*$", line))
+        shell_default = re.match(r"^    shell:\s*(\S.*?)\s*$", line)
+        if in_defaults and shell_default:
+            workflow_shell = shell_default.group(1)
+        job = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if job and not in_defaults:
             job_start = index
+            job_starts[job.group(1)] = index
+        current = next((n for n, s in job_starts.items() if s == job_start), None)
         job_key = re.match(r"^    (if|continue-on-error):\s*(.*)$", line)
-        if job_key and _key_disables(job_key.group(1), job_key.group(2)):
-            disabled_jobs.add(job_start)
+        if job_key and current is not None:
+            if job_key.group(1) == "if":
+                job_if[current] = job_key.group(2)
+            if _key_disables(job_key.group(1), job_key.group(2), events):
+                disabled_jobs.add(job_start)
+        needs = re.match(r"^    needs:\s*(.*)$", line)
+        if needs and current is not None:
+            job_needs[current] = _job_needs(lines, index, needs.group(1))
+    # QA-B45-R2-2: a job that `needs:` a skipped job is skipped too, unless
+    # its own `if:` runs it regardless (always(), failure(), cancelled()).
+    changed = True
+    while changed:
+        changed = False
+        skipped = {name for name, start in job_starts.items() if start in disabled_jobs}
+        for name, start in job_starts.items():
+            condition = (job_if.get(name) or "").lower()
+            if start in disabled_jobs or any(f in condition for f in ("always()", "failure()", "cancelled()")):
+                continue
+            if skipped & set(job_needs.get(name, [])):
+                disabled_jobs.add(start)
+                changed = True
 
     commands: list[tuple[str, str]] = []
     job_default = ""
+    job_shell = workflow_shell
     job_disabled = False
     i = 0
     while i < len(lines):
         line = lines[i]
         if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):          # a new job
             job_default = ""
+            job_shell = workflow_shell
             job_disabled = i in disabled_jobs
         wd = re.match(r"^\s{4,}(?:- )?working-directory:\s*(\S+)", line)
         if wd and re.match(r"^\s{4,8}working-directory:", line) and not _in_step(lines, i):
             job_default = norm(wd.group(1))
+        job_sh = re.match(r"^\s{4,8}shell:\s*(\S.*?)\s*$", line)
+        if job_sh and not _in_step(lines, i):
+            job_shell = job_sh.group(1)
         step = re.match(r"^(\s*)- ", line)
         if step and _in_steps_list(lines, i):
             indent = len(step.group(1))
@@ -3551,6 +3860,7 @@ def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
                 j += 1
             block = lines[i:j]
             step_wd = job_default
+            step_shell = job_shell
             step_disabled = job_disabled
             run_lines: list[str] = []
             for k, bline in enumerate(block):
@@ -3558,9 +3868,12 @@ def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
                 m_wd = re.match(r"^\s*working-directory:\s*(\S+)", body)
                 if m_wd and len(bline) - len(bline.lstrip()) <= indent + 2:
                     step_wd = norm(m_wd.group(1))
+                m_shell = re.match(r"^\s*shell:\s*(\S.*?)\s*$", body)
+                if m_shell and (k == 0 or len(bline) - len(bline.lstrip()) == indent + 2):
+                    step_shell = m_shell.group(1)
                 m_key = re.match(r"^\s*(if|continue-on-error):\s*(.*)$", body)
                 if (m_key and (k == 0 or len(bline) - len(bline.lstrip()) == indent + 2)
-                        and _key_disables(m_key.group(1), m_key.group(2))):
+                        and _key_disables(m_key.group(1), m_key.group(2), events)):
                     step_disabled = True
                 m_run = re.match(r"^(\s*)run:\s*(.*)$", body)
                 if m_run and (k == 0 or len(bline) - len(bline.lstrip()) == indent + 2):
@@ -3582,8 +3895,9 @@ def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
                     joined[-1] = joined[-1][:-1] + " " + raw
                 else:
                     joined.append(raw)
-            errexit = True        # Actions runs bash with `-e`
-            for command in joined:
+            # Actions runs bash with `-e` (and no pipefail) unless `shell:` says otherwise.
+            errexit, pipefail = _shell_flags(step_shell)
+            for position, command in enumerate(joined):
                 cd = re.match(r"^cd\s+(\S+)\s*$", command)
                 if cd:
                     target = norm(cd.group(1))
@@ -3591,9 +3905,12 @@ def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
                     continue
                 if _TEST_RUNNER.search(command) and not (
                     step_disabled or not errexit or _swallows_failure(command)
+                    or _masked_by_pipe_or_list(command, pipefail, position == len(joined) - 1)
+                    or _NO_TEST_RUN.search(_QUOTED.sub("''", command))
                 ):
                     commands.append((cwd, command))
                 errexit = _errexit_after(command, errexit)
+                pipefail = _pipefail_after(command, pipefail)
             i = j
             continue
         i += 1
@@ -3706,7 +4023,7 @@ def _ci_every_test_suite_runs() -> list[Violation]:
     workflows = sorted((REPO_ROOT / ".github" / "workflows").glob("*.y*ml"))
     commands: list[tuple[str, str]] = []
     for workflow in workflows:
-        commands += _workflow_test_commands(workflow.read_text(encoding="utf-8"))
+        commands += _gating_workflow_commands(workflow.read_text(encoding="utf-8"))
 
     # Fail loud, not open: a parser that found nothing would pass every suite.
     if len(units) < 5 or len(commands) < 5:
@@ -3724,11 +4041,20 @@ def _ci_every_test_suite_runs() -> list[Violation]:
             violations.append(Violation(
                 REPO_ROOT / unit, 0,
                 f"test suite `{unit}` is not executed by any workflow step that "
-                "can fail the build (an `if: false` or `continue-on-error: true` "
-                "step/job, or a command whose exit status is swallowed, does not "
-                "count) — its tests are decoration until a job runs them",
+                "can fail the build (a step/job whose `if:` is statically false or "
+                "that needs a skipped job, a `continue-on-error:` that is not "
+                "statically false, a workflow no push/pull_request triggers, or a "
+                "command whose exit status is swallowed -- `|| true`, a pipe "
+                "without pipefail, a non-final `&&` list, `--collect-only` -- does "
+                "not count) — its tests are decoration until a job runs them",
             ))
     return violations
+
+
+def _gating_workflow_commands(text: str) -> list[tuple[str, str]]:
+    """The gating runner commands of one workflow: none unless a push or pull
+    request triggers it (QA-B45-R2-2)."""
+    return _workflow_test_commands(text) if _workflow_gates(text) else []
 
 
 # ── Dependabot covers every package manifest (re-audit M23) ─────────────────

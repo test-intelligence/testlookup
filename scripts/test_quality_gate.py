@@ -1863,7 +1863,6 @@ def test_set_plus_e_before_the_runner_runs_nothing(script: str) -> None:
     _variant(_STEP, _STEP + "        if: false || github.event_name == 'push'\n"),
     _variant(_STEP, _STEP + "        if: ${{ 'false' }}\n"),      # a non-empty string: truthy
     _variant(_STEP, _STEP + "        continue-on-error: false\n"),
-    _variant(_STEP, _STEP + "        continue-on-error: ${{ matrix.experimental }}\n"),
     _variant(_JOB, _JOB + "    if: github.ref == 'refs/heads/main'\n"),
     _variant(_CMD, "        run: python -m pytest a/tests -q || exit 1\n"),
     _variant(_CMD, "        run: python -m pytest a/tests -q || (echo failed; exit $?)\n"),
@@ -1872,7 +1871,7 @@ def test_set_plus_e_before_the_runner_runs_nothing(script: str) -> None:
                    "          python -m pytest a/tests -q\n"),
     _variant(_CMD, _CMD + "      - name: later\n        if: false\n        run: echo x\n"),
 ], ids=[
-    "if-event", "if-always", "if-false-or", "if-string-false", "coe-false", "coe-matrix",
+    "if-event", "if-always", "if-false-or", "if-string-false", "coe-false",
     "job-if-branch", "or-exit-1", "or-exit-status", "or-retry", "set-e-restored",
     "a-later-disabled-step",
 ])
@@ -1903,6 +1902,156 @@ def test_the_real_release_suite_is_unrun_when_its_step_cannot_fail(
     assert qg._unit_is_run("scripts/release/tests", qg._workflow_test_commands(ci))
     commands = qg._workflow_test_commands(ci.replace(anchor, replacement))
     assert not qg._unit_is_run("scripts/release/tests", commands)
+
+
+# ── R-B45-R2-6 / QA-B45-R2-2: more forms whose failure cannot fail the build ──
+#
+# Statically decidable forms are decided; an undecidable `continue-on-error:`
+# fails safe (NOT run). What stays out of reach -- an `if:` over env/matrix/
+# step outputs, a runner hidden in a script -- is undecidable here and is
+# counted as run.
+
+
+@pytest.mark.parametrize("mutated", [
+    _variant(_STEP, _STEP + "        if: false || false\n"),
+    _variant(_STEP, _STEP + "        if: ${{ !true }}\n"),
+    _variant(_STEP, _STEP + "        if: 1 == 2\n"),
+    _variant(_STEP, _STEP + "        if: ${{ !(true && true) }}\n"),
+    _variant(_STEP, _STEP + "        if: null\n"),
+    _variant(_STEP, _STEP + "        if: ${{ 'a' == 'b' }}\n"),
+    _variant(_JOB, _JOB + "    if: false || (1 == 2)\n"),
+    _variant(_STEP, _STEP + "        continue-on-error: ${{ env.SOFT }}\n"),
+    _variant(_STEP, _STEP + "        continue-on-error: ${{ matrix.experimental }}\n"),
+    _variant(_JOB, _JOB + "    continue-on-error: ${{ fromJSON(env.SOFT) }}\n"),
+], ids=[
+    "if-false-or-false", "if-not-true", "if-1-eq-2", "if-not-and", "if-null", "if-string-neq",
+    "job-if-false-or-cmp", "coe-env", "coe-matrix", "job-coe-function",
+])
+def test_a_constant_false_if_or_an_undecidable_soft_fail_runs_nothing(mutated: str) -> None:
+    assert not _a_runs(mutated)
+
+
+def test_the_expression_reader_is_three_valued() -> None:
+    assert qg._constant_truth("false || false") is False
+    assert qg._constant_truth("!true") is False
+    assert qg._constant_truth("!(1 == 2)") is True
+    assert qg._constant_truth("'false'") is True            # a non-empty string
+    assert qg._constant_truth("false || always()") is None
+    assert qg._constant_truth("true && env.x") is None
+    assert qg._constant_truth("false && env.x") is False
+    assert qg._constant_truth("contains(github.ref, 'x') || false") is None
+    assert qg._constant_truth("github['ref']") is None       # unsupported syntax: undecided
+    assert qg._constant_truth("github.event_name == 'schedule'", {"push"}) is False
+    assert qg._constant_truth("github.event_name == 'push'", {"push"}) is None
+    assert qg._constant_truth("github.event_name != 'schedule'", {"push"}) is True
+    assert qg._constant_truth("github.event_name == 'schedule'", None) is None
+
+
+def test_an_event_the_workflow_is_never_triggered_by_runs_nothing() -> None:
+    on = _variant("name: t\n", "name: t\non: [push, pull_request]\n")
+    assert _a_runs(on)
+    for event, runs in (("schedule", False), ("push", True)):
+        text = on.replace(_STEP, _STEP + f"        if: github.event_name == '{event}'\n")
+        assert on.count(_STEP) == 1 and _a_runs(text) is runs, event
+    # With no `on:` to read, an event comparison stays undecided: counted as run.
+    assert _a_runs(_variant(_STEP, _STEP + "        if: github.event_name == 'schedule'\n"))
+
+
+_UPSTREAM = (
+    "  c:\n    if: false\n    runs-on: ubuntu-latest\n    steps:\n"
+    "      - name: c\n        run: echo c\n"
+)
+
+
+@pytest.mark.parametrize("needs", [
+    "    needs: c\n", "    needs: [c]\n", "    needs: [b, c]\n", "    needs:\n      - b\n      - c\n",
+], ids=["scalar", "flow", "flow-two", "block"])
+def test_a_job_that_needs_a_disabled_job_runs_nothing(needs: str) -> None:
+    assert not _a_runs(_variant(_JOB, _JOB + needs) + _UPSTREAM)
+
+
+def test_a_skipped_upstream_propagates_and_always_opts_out() -> None:
+    chain = (
+        _variant(_JOB, _JOB + "    needs: d\n") + _UPSTREAM
+        + "  d:\n    needs: c\n    runs-on: ubuntu-latest\n    steps:\n      - name: d\n        run: echo d\n"
+    )
+    assert not _a_runs(chain)
+    assert _a_runs(_variant(_JOB, _JOB + "    needs: c\n    if: always()\n") + _UPSTREAM)
+    assert _a_runs(_variant(_JOB, _JOB + "    needs: b\n"))          # an enabled upstream
+
+
+_PIPE = "        run: python -m pytest a/tests -q | tee log\n"
+
+
+@pytest.mark.parametrize("run", [
+    _PIPE,
+    "        run: python -m pytest a/tests -q |& tee log\n",
+    "        run: python -m pytest a/tests -q 2>&1 | tee log\n",
+    "        run: |\n          python -m pytest a/tests -q && echo ok\n          echo more\n",
+    "        run: python -m pytest a/tests -q && echo ok; echo done\n",
+    "        run: |\n          set -o pipefail\n          set +o pipefail\n          python -m pytest a/tests -q | tee log\n",
+    "        shell: sh\n" + _PIPE,
+    "        shell: bash -e {0}\n" + _PIPE,
+    "        run: python -m pytest a/tests -q --collect-only\n",
+    "        run: python -m pytest a/tests --co -q\n",
+], ids=[
+    "pipe", "pipe-stderr", "redirect-then-pipe", "and-list-then-more", "and-list-then-semicolon",
+    "pipefail-turned-off", "shell-sh-pipe", "custom-shell-no-pipefail", "collect-only", "co",
+])
+def test_a_runner_whose_status_a_pipe_or_list_drops_runs_nothing(run: str) -> None:
+    assert not _a_runs(_variant(_CMD, run))
+
+
+@pytest.mark.parametrize("run", [
+    "        run: |\n          set -euo pipefail\n          python -m pytest a/tests -q | tee log\n",
+    "        run: |\n          set -e -o pipefail\n          python -m pytest a/tests -q | tee log\n",
+    "        shell: bash\n" + _PIPE,
+    "        shell: bash -eo pipefail {0}\n" + _PIPE,
+    "        run: python -m pytest a/tests -q && echo ok\n",
+    "        run: |\n          echo start\n          python -m pytest a/tests -q && echo ok\n",
+    "        run: |\n          python -m pytest a/tests -q && echo ok || exit 1\n          echo more\n",
+    "        run: python -m pytest -k 'a|b' a/tests -q\n",
+    "        run: python -m pytest a/tests -q 2>&1\n",
+    "        run: |\n          python -m pytest a/tests -q\n          echo ok | tee x\n",
+    "        run: python -m pytest a/tests -q --cov=app --color=yes\n",
+], ids=[
+    "set-euo-pipefail", "set-e-o-pipefail", "shell-bash", "custom-shell-pipefail", "and-list-last",
+    "and-list-last-after-others", "and-then-or-exit", "quoted-pipe", "redirect-only",
+    "pipe-on-another-line", "cov-is-not-co",
+])
+def test_a_runner_whose_status_still_fails_the_step_runs(run: str) -> None:
+    assert _a_runs(_variant(_CMD, run))
+
+
+def test_a_job_or_workflow_default_shell_bash_brings_pipefail() -> None:
+    piped = _variant(_CMD, _PIPE)
+    assert not _a_runs(piped)  # control: the default shell has no pipefail
+    job = piped.replace(_JOB, _JOB + "    defaults:\n      run:\n        shell: bash\n")
+    assert piped.count(_JOB) == 1 and _a_runs(job)
+    workflow = piped.replace("jobs:\n", "defaults:\n  run:\n    shell: bash\njobs:\n")
+    assert piped.count("jobs:\n") == 1 and _a_runs(workflow)
+
+
+@pytest.mark.parametrize("on,gates", [
+    ("on: [push, pull_request]\n", True),
+    ("on: push\n", True),
+    ("on:\n  pull_request:\n    branches: [main]\n  workflow_dispatch:\n", True),
+    ("on:\n  workflow_call:\n    inputs: {}\n", True),
+    ("on:\n  workflow_dispatch:\n    inputs:\n      x: {type: string}\n", False),
+    ("on: [workflow_dispatch, schedule]\n", False),
+    ("on:\n  - schedule\n", False),
+    ("", False),  # no readable trigger: loud, not a pass
+], ids=["flow", "scalar", "block", "call", "dispatch-only", "flow-no-gating", "block-list", "none"])
+def test_only_a_workflow_a_push_or_pull_request_triggers_gates(on: str, gates: bool) -> None:
+    assert qg._workflow_gates("name: t\n" + on + "jobs:\n  a:\n    runs-on: x\n") is gates
+
+
+def test_the_real_ci_moved_to_dispatch_only_runs_no_suite() -> None:
+    ci = (qg.REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    triggers = "  push:\n    branches: [main, develop]\n  pull_request:\n    branches: [main]\n"
+    assert ci.count(triggers) == 1
+    assert qg._unit_is_run("mcp/tests", qg._gating_workflow_commands(ci))
+    assert qg._gating_workflow_commands(ci.replace(triggers, "")) == []
 
 
 # ── backend.status-enum-vocab, generalised (re-audit L3) ────────────────────
