@@ -19,6 +19,9 @@ exposed three more defects on the same path, none of which had ever run:
   a helper the failure branch uses was imported only in the success branch.
   Every failed pipeline stayed "running" until the stale-pipeline reaper found
   it 30 minutes later, and its real error was replaced by an UnboundLocalError.
+- The deep pipeline has the same setup guard, and both pipelines mark the
+  record failed before they log the failure, so a log call that itself fails
+  cannot strand it either.
 
 Tests against real PostgreSQL now run the pipeline's real setup with only the
 LangGraph graph faked, and the keys the create step must return are read from
@@ -75,12 +78,20 @@ key for instance-wide work needs an unbound admin key.
   through the sanitizer that cleans tool output before it reaches an LLM.
 - A structured field named like a secret (`password=`, `token=`, `api_key=`,
   `cookie=` and the other secret names) is redacted by its name. Names match
-  exactly, so `prompt_tokens`, `token_count` and `password_changed` are left
-  alone.
+  exactly, or by a secret suffix (`_token`, `_password`, `_secret`,
+  `_api_key`, `_secret_key`, `_webhook_url` and the like, which covers the
+  deployment's own settings such as `github_token` and `postgres_password`),
+  so `prompt_tokens`, `token_count` and `password_changed` are left alone.
+- A bytes value is decoded and redacted like text; it used to be written after
+  redaction had run. A Slack or Teams incoming-webhook URL, which is itself the
+  credential, loses its path.
 
 By design since the first redaction change, a phone, card or SSN shape inside a
 log message or an `error=` field is no longer redacted: those patterns mangled
-hosts and byte counts. Structured fields keep them.
+hosts and byte counts. Structured fields keep them. Strings inside dict and
+list fields are now redacted with their field's patterns, which they never
+were; so a `payload={"host": "10.0.0.7"}` field loses an address it used to
+show.
 
 ## 2026-09-10 — offline mode, second pass on notifications and probes
 
@@ -117,7 +128,8 @@ drop whatever holds the index's name with `DROP INDEX CONCURRENTLY`, unless it
 is already the right index, which PostgreSQL itself decides by comparing
 definitions. A valid index with the wrong definition is replaced instead of
 kept, and a non-index holding the name stops the migration with a message. This
-affects fresh upgrades only.
+affects fresh upgrades only. An index of the same name on another table
+also stops the migration: it is not the migration's to drop.
 
 The guard that keeps later migrations concurrent now reads the SQL a migration
 assembles from its constants, and catches unnamed builds, `REINDEX`, indexed
@@ -139,13 +151,15 @@ so two migrators starting together are not serialised from that point on.
   cap raised to 64 GiB.
 - When an ingest's retries run out, it is recorded in the dead-letter stream
   admins read at `GET /api/v1/admin/maintenance/dlq`, with the arguments needed
-  to queue it again.
+  to queue it again. The storage key is recorded as it was, so a build named
+  like `1.0.0.123` or with a 16-digit id can be replayed too.
 - `testlookup upload --wait` treats a 429, a 5xx or a dropped connection while
   it polls as "not yet", honouring `Retry-After`, until `--wait-timeout`. It
   fails early only on an answer that cannot change. `upload dir --wait` shares
   one deadline across its files, where twenty reports with the workers down
   used to hold a CI job for over three hours, and names every file that did not
-  finish.
+  finish. It waits at least a second between polls, even when a proxy answers
+  `Retry-After: 0`.
 
 ## 2026-09-10 — a finished run's AI analysis was queued and never sent
 
@@ -173,6 +187,10 @@ instance admin can now put failed entries back:
 `{"operation": "agent_pipeline", "last_error": "broker_TypeError"}` lists them,
 because it is a dry run unless `"dry_run": false` is sent, and the same call
 with `"dry_run": false` requeues them, at most 500 at a time, oldest first.
+`last_error` is required, so one call cannot re-run notifications or webhooks
+that failed for their own reasons. A pipeline the bug left `running` can be
+resumed only once the stale-pipeline reaper has failed it (it runs every ten
+minutes, and fails a pipeline after thirty).
 
 **Upgrade note:** each requeued `agent_pipeline` entry starts one AI pipeline.
 On a deployment with a long backlog, requeue in slices and watch the AI
@@ -232,7 +250,9 @@ What changes for project-key callers:
 - An optional `event_id` on any event makes a retried POST count once.
   Without one, `run_start` and `run_complete` are recognised by their content,
   so a retried close converges, even when the first attempt's commit failed.
-  A `test_result` without one is always a new result.
+  A `test_result` without one is always a new result, and a `run_start`
+  retried with its `event_id` after its run completed rejoins that run instead
+  of opening an empty one.
 - `test_case_id`, and a `test_result`'s `total_tests`, are not recorded: the
   SDK path's events carry neither. A failing result therefore no longer queues
   the immediate per-test analysis; the run's analysis once it completes is
@@ -630,7 +650,9 @@ while its state is still kept (an hour), is starting a new run, which no longer
 inherits the previous run's counts or its completed status. A run still in
 progress is left alone, so a retried `run_start`, or a second shard opening the
 same id, keeps its counts, and the reset replaces the old state in one
-transaction. A result
+transaction. The check that the run has completed is made before that
+transaction, so two run_starts racing on a finished id can still both reset it;
+making the check atomic is recorded for a later change. A result
 is counted only once it has been published, so a failed publish, and the
 client's retry of it, no longer count it twice.
 
