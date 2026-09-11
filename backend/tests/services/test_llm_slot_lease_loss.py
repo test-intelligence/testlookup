@@ -153,6 +153,30 @@ async def test_a_renew_that_stalls_cannot_keep_a_holder_past_its_lease(hang):
 
 
 @pytest.mark.asyncio
+async def test_a_renew_whose_reply_is_slow_times_the_lease_from_the_send():
+    """Redis extends the lease when the renew RUNS; a slow reply must not
+    push the local deadline later. Renew #1 extends at once and replies
+    0.15 s late; every renew after it fails. Timed from the reply, A would
+    keep calling 0.15 s past the moment its lease lapses and B enters."""
+
+    class SlowReplyThenDown(_MemorySemaphore):
+        calls = 0
+
+        async def renew(self, token):
+            SlowReplyThenDown.calls += 1
+            if SlowReplyThenDown.calls == 1:
+                renewed = await super().renew(token)  # the server extends it now
+                await asyncio.sleep(0.15)             # ...and the reply is slow
+                return renewed
+            raise ConnectionError("redis down")
+
+    outcome, peak, order = await _race(a_class=SlowReplyThenDown)
+    assert ("A", "lost") in outcome
+    assert peak == 1, order
+    assert order.index("A out") < order.index("B in"), order
+
+
+@pytest.mark.asyncio
 async def test_a_slow_renew_that_lands_in_time_keeps_the_slot():
     leases = _Leases()
     async with _stalling(LEASE / 10)(leases).slot(timeout=1) as held:
