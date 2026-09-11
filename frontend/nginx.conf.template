@@ -3,6 +3,14 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # Request body cap (re-audit M26). nginx's default is 1 MB, so a report
+    # upload through this proxy failed with nginx's own HTML 413 long before
+    # the backend's 50 MiB limit (MAX_FILE_SIZE, backend/app/routers/ingest.py).
+    # 55m = that 50 MiB cap + 5 MiB for multipart framing and form fields, so
+    # the backend stays the authority and answers an oversize file with its
+    # JSON 413. Pinned by backend/tests/regression/test_nginx_configs.py.
+    client_max_body_size 55m;
+
     # ── Security headers ────────────────────────────────────────────────────
     # index.html carries a CSP <meta> tag, but browsers IGNORE frame-ancestors
     # when it arrives that way ("The Content Security Policy directive
@@ -14,10 +22,35 @@ server {
     # NO add_header of its own. Any location below that sets its own headers
     # must therefore REPEAT these, or it silently loses them — including
     # `location = /index.html`, the one document that actually matters here.
+    #
+    # HSTS (re-audit L1): TLS terminates in front of this container (the
+    # cluster ingress / router); the header passes through to the browser over
+    # HTTPS. Browsers ignore it on plain http:// (RFC 6797 §8.1), so Compose on
+    # http://localhost is unaffected. One year; no includeSubDomains, because
+    # the hosts BELOW an operator's TestLookup hostname are not ours to pin to
+    # HTTPS.
     add_header Content-Security-Policy "frame-ancestors 'none'" always;
     add_header X-Frame-Options "DENY" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    # index.html must NEVER be cached (re-audit M26): Vite hashes asset
+    # filenames, so a new build emits new index-<hash>.js URLs and a fresh
+    # index.html referencing them. A cached old index.html keeps loading the
+    # old (and, after a redeploy, 404ing) asset hashes. The SPA fallback below
+    # (`try_files ... /index.html`) is an internal redirect, so every client
+    # route is served through this block too. Hashed assets stay long-cached.
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        expires -1;
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+    }
 
     # SPA routing - send all requests to index.html
     location / {
@@ -79,5 +112,6 @@ server {
         add_header X-Frame-Options "DENY" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Strict-Transport-Security "max-age=31536000" always;
     }
 }
