@@ -156,61 +156,362 @@ async def test_email_refuses_a_public_relay_offline(offline, resolves, monkeypat
 
 
 # ── The gate must not be skippable by adding a sender ────────────────────
+#
+# Per call site, by the AST (code review + QA of H10). The first ratchets
+# passed a module whose text named the gate anywhere, and saw only attribute
+# calls, so an ungated smtplib.SMTP("smtp.gmail.com") function appended to a
+# gated module left every test green. Now every connection needs a gate call
+# earlier in its own enclosing function, in AST order, and import aliases are
+# resolved. Out of reach, and not attempted: dynamic imports, getattr, a
+# connector bound to a variable first, and dominance (a gate inside an `if`
+# before the connection counts).
+
+# The gate, by the names the code uses. assert_delivery_allowed[_async] raise
+# OfflineEgressBlocked; _assert_smtp_allowed (email_service) wraps the async
+# one; _offline_refusal (the probes) returns a result its caller must return,
+# so a discarded result gates nothing. An async gate that is not awaited
+# never runs.
+_REAL_GATES = {"assert_delivery_allowed", "assert_delivery_allowed_async"}
+_WRAPPER_GATES = {"_assert_smtp_allowed", "_offline_refusal"}
+_RETURNING_GATES = {"_offline_refusal"}
+_ASYNC_GATES = {"assert_delivery_allowed_async", "_assert_smtp_allowed", "_offline_refusal"}
+
+_SMTP_MODULES = {"aiosmtplib", "smtplib"}
+_SMTP_OPENERS = {"send", "SMTP", "SMTP_SSL", "LMTP"}
+_HTTP_METHODS = {"post", "put", "patch", "delete", "request", "stream"}
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 
 
-def _send_sites(path: pathlib.Path) -> list[str]:
-    """Every outbound call in a module, by the AST rather than a grep."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    found = []
+def _aliases(tree: ast.AST) -> dict[str, set[str]]:
+    """Each local name an import binds, with the dotted names it may stand for."""
+    names: dict[str, set[str]] = {}
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        name = getattr(func, "attr", None) or getattr(func, "id", None)
-        if name in {"send", "post"}:
-            owner = getattr(getattr(func, "value", None), "id", "")
-            if owner in {"aiosmtplib", "client", "httpx"} or name == "post":
-                found.append(f"{owner}.{name}")
-    return found
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                local = alias.asname or alias.name.split(".")[0]
+                names.setdefault(local, set()).add(alias.name if alias.asname else local)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                target = f"{node.module or ''}.{alias.name}".lstrip(".")
+                names.setdefault(alias.asname or alias.name, set()).add(target)
+    return names
 
 
-def test_the_send_site_scan_finds_something():
-    """A scan that matched nothing would pass forever."""
-    total = sum(
-        len(_send_sites(p))
-        for p in NOTIFICATION_DIR.glob("*.py")
-        if p.name != "egress.py"
+def _dotted(expr: ast.AST, aliases: dict[str, set[str]]) -> set[str]:
+    """Every dotted name a callee may refer to, with aliases resolved."""
+    parts: list[str] = []
+    while isinstance(expr, ast.Attribute):
+        parts.append(expr.attr)
+        expr = expr.value
+    if not isinstance(expr, ast.Name):
+        return set()
+    tail = ".".join(reversed(parts))
+    return {f"{base}.{tail}" if tail else base for base in aliases.get(expr.id, {expr.id})}
+
+
+def _opens_smtp(call: ast.Call, aliases: dict[str, set[str]]) -> bool:
+    return any(
+        "." in name
+        and name.split(".")[0] in _SMTP_MODULES
+        and name.rsplit(".", 1)[1] in _SMTP_OPENERS
+        for name in _dotted(call.func, aliases)
     )
-    assert total >= 3, (
-        f"found {total} outbound call sites under {NOTIFICATION_DIR.name}/ — "
-        "the extractor is probably broken"
+
+
+def _sends_notification(call: ast.Call, aliases: dict[str, set[str]]) -> bool:
+    """An SMTP connection, or an HTTP request: an httpx function, or a client's
+    post/put/patch/delete/request/stream (get is left out: it is mostly dict.get)."""
+    if _opens_smtp(call, aliases):
+        return True
+    if isinstance(call.func, ast.Attribute) and call.func.attr in _HTTP_METHODS:
+        return True
+    return any(
+        name.startswith("httpx.") and name.rsplit(".", 1)[1] in _HTTP_METHODS | {"get"}
+        for name in _dotted(call.func, aliases)
     )
 
 
-def test_every_notification_sender_consults_the_egress_gate():
-    """A new channel must not be able to skip the ceiling silently.
+def _is_gate(call: ast.Call, aliases, parents) -> bool:
+    names = {name.rsplit(".", 1)[-1] for name in _dotted(call.func, aliases)}
+    gate = next(iter(sorted(names & (_REAL_GATES | _WRAPPER_GATES))), None)
+    if gate is None:
+        return False
+    value = call
+    if gate in _ASYNC_GATES:
+        value = parents.get(call)
+        if not isinstance(value, ast.Await):
+            return False  # a coroutine that is never awaited checks nothing
+    if gate in _RETURNING_GATES and isinstance(parents.get(value), ast.Expr):
+        return False  # the refusal was computed and thrown away
+    return True
 
-    Checks the module, not each function: the gate is applied per outbound
-    call site in email_service (three of them) and at the entry point in the
-    webhook senders, and either shape is fine so long as the module cannot
-    reach the network without asking.
-    """
+
+def _in_order(scope: ast.AST):
+    """A scope's nodes in source order, without entering nested functions."""
+    stack = list(reversed(list(ast.iter_child_nodes(scope))))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, _SCOPES):
+            stack.extend(reversed(list(ast.iter_child_nodes(node))))
+
+
+def ungated_connections(source: str, is_connection=_opens_smtp) -> list[int]:
+    """Lines of each connection with no gate call before it in its own function."""
+    tree = ast.parse(source)
+    aliases = _aliases(tree)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     offenders = []
-    for path in sorted(NOTIFICATION_DIR.glob("*.py")):
-        if path.name == "egress.py":
-            continue
-        if not _send_sites(path):
-            continue
-        source = path.read_text(encoding="utf-8")
-        if "assert_delivery_allowed" not in source:
-            offenders.append(path.name)
+    for scope in [tree, *(node for node in ast.walk(tree) if isinstance(node, _SCOPES))]:
+        gated = False
+        for node in _in_order(scope):
+            if not isinstance(node, ast.Call):
+                continue
+            if _is_gate(node, aliases, parents):
+                gated = True
+            elif is_connection(node, aliases) and not gated:
+                offenders.append(node.lineno)
+    return sorted(offenders)
 
-    assert not offenders, (
-        "these notification senders reach the network without consulting the "
-        "offline egress gate, so AI_OFFLINE_MODE does not apply to them and "
-        "THREAT_MODEL.md's 'zero application-level egress' claim is false: "
-        + ", ".join(offenders)
+
+def connection_sites(source: str, is_connection=_opens_smtp) -> list[int]:
+    """Lines of every connection, gated or not: proof the scan sees something."""
+    tree = ast.parse(source)
+    aliases = _aliases(tree)
+    return sorted(
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and is_connection(node, aliases)
     )
+
+
+def _line_of(source: str, needle: str) -> int:
+    return next(number for number, line in enumerate(source.splitlines(), 1) if needle in line)
+
+
+def test_the_request_scan_finds_the_notification_senders():
+    """A scan that matched nothing would pass forever."""
+    found = {
+        path.name: connection_sites(path.read_text(encoding="utf-8"), _sends_notification)
+        for path in NOTIFICATION_DIR.glob("*.py")
+    }
+    for sender in ("slack_service.py", "teams_service.py", "email_service.py"):
+        assert found.get(sender), f"the scan no longer finds {sender}'s send: {found}"
+
+
+def test_every_notification_send_is_gated_where_it_is_made():
+    """The first ratchet checked the module: a second, ungated sender in a
+    module that is gated elsewhere passed. The same per-call-site rule as the
+    SMTP ratchet, over the notification package's HTTP requests too."""
+    offenders = {}
+    for path in sorted(NOTIFICATION_DIR.glob("*.py")):
+        lines = ungated_connections(path.read_text(encoding="utf-8"), _sends_notification)
+        if lines:
+            offenders[path.name] = lines
+    assert not offenders, (
+        "these notification sends reach the network with no offline gate call "
+        f"before them in their own function: {offenders}"
+    )
+
+
+# The checker, on sources written to fool it.
+
+_QA_LEAK = '''
+
+def leak(recipient):
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        server.sendmail("noreply@example.com", recipient, "failure text")
+'''
+
+_GATED_ELSEWHERE = '''
+import smtplib
+
+from app.services.notification.egress import assert_delivery_allowed
+
+
+def send_email(host):
+    assert_delivery_allowed("SMTP", host, deployment_wide=True)
+    with smtplib.SMTP(host, 587) as server:
+        server.noop()
+''' + _QA_LEAK
+
+_ALIASED = {
+    "import-as": '''
+import smtplib as mail
+
+
+def f():
+    mail.SMTP("smtp.gmail.com", 587)
+''',
+    "from-import-as": '''
+from smtplib import SMTP as S
+
+
+def f():
+    S("smtp.gmail.com", 587)
+''',
+    "from-import": '''
+from aiosmtplib import send
+
+
+async def f(msg):
+    await send(msg, hostname="smtp.gmail.com")
+''',
+    "submodule": '''
+import aiosmtplib.smtp
+
+
+def f():
+    return aiosmtplib.smtp.SMTP(hostname="smtp.gmail.com")
+''',
+    "ssl": '''
+from smtplib import SMTP_SSL
+
+
+def f():
+    SMTP_SSL("smtp.gmail.com")
+''',
+}
+
+_GATED = '''
+import aiosmtplib
+from app.services.notification import egress
+from app.services.notification.egress import assert_delivery_allowed_async as check
+
+
+async def by_alias(msg, host):
+    await check("SMTP", host, deployment_wide=True)
+    await aiosmtplib.send(msg, hostname=host)
+
+
+def by_attribute(host):
+    egress.assert_delivery_allowed("SMTP", host, deployment_wide=True)
+    return aiosmtplib.SMTP(hostname=host)
+
+
+async def by_wrapper(msg, host):
+    await _assert_smtp_allowed(host)
+    await aiosmtplib.send(msg, hostname=host)
+
+
+async def by_probe_refusal(host):
+    refused = await _offline_refusal("SMTP", host)
+    if refused:
+        return refused
+    return aiosmtplib.SMTP(hostname=host)
+'''
+
+_DOES_NOT_GATE = {
+    "gate-after-the-connection": '''
+import aiosmtplib
+from app.services.notification.egress import assert_delivery_allowed_async
+
+
+async def f(msg, host):
+    await aiosmtplib.send(msg, hostname="smtp.gmail.com")
+    await assert_delivery_allowed_async("SMTP", host, deployment_wide=True)
+''',
+    "gate-not-awaited": '''
+import aiosmtplib
+from app.services.notification.egress import assert_delivery_allowed_async
+
+
+async def f(msg, host):
+    assert_delivery_allowed_async("SMTP", host, deployment_wide=True)
+    await aiosmtplib.send(msg, hostname="smtp.gmail.com")
+''',
+    "refusal-discarded": '''
+import aiosmtplib
+
+
+async def probe(host):
+    await _offline_refusal("SMTP", host)
+    return aiosmtplib.SMTP(hostname="smtp.gmail.com")
+''',
+    "gate-in-the-enclosing-function": '''
+import aiosmtplib
+from app.services.notification.egress import assert_delivery_allowed_async
+
+
+async def outer(msg, host):
+    await assert_delivery_allowed_async("SMTP", host, deployment_wide=True)
+
+    async def inner():
+        await aiosmtplib.send(msg, hostname="smtp.gmail.com")
+
+    await inner()
+''',
+}
+
+_WEBHOOK_LEAK = '''
+from app.core.http_client import get_public_http_client
+from app.services.notification.egress import assert_delivery_allowed_async
+
+
+async def gated(url):
+    await assert_delivery_allowed_async("Slack", url)
+    await get_public_http_client().post(url, json={})
+
+
+async def leak(url):
+    await get_public_http_client().post("https://hooks.slack.com/x", json={})
+'''
+
+
+def test_an_ungated_function_fails_in_a_module_gated_elsewhere():
+    """QA's H10-4 shape: the module names the gate, the new function skips it."""
+    assert ungated_connections(_GATED_ELSEWHERE) == [_line_of(_GATED_ELSEWHERE, "smtp.gmail.com")]
+
+
+def test_the_qa_mutation_is_caught_in_the_real_report_module():
+    """QA appended this function to report_service.py and all 37 tests stayed green."""
+    source = (NOTIFICATION_DIR.parent / "report_service.py").read_text(encoding="utf-8") + _QA_LEAK
+    assert ungated_connections(source) == [_line_of(source, "smtp.gmail.com")]
+
+
+@pytest.mark.parametrize("shape", sorted(_ALIASED))
+def test_an_aliased_smtp_connection_fails(shape):
+    source = _ALIASED[shape]
+    assert ungated_connections(source) == [_line_of(source, "smtp.gmail.com")]
+
+
+def test_a_gated_function_passes():
+    assert connection_sites(_GATED) != [], "the fixture no longer opens a connection"
+    assert ungated_connections(_GATED) == []
+
+
+@pytest.mark.parametrize("shape", sorted(_DOES_NOT_GATE))
+def test_a_gate_that_does_not_gate_fails(shape):
+    source = _DOES_NOT_GATE[shape]
+    assert ungated_connections(source) == [_line_of(source, "smtp.gmail.com")]
+
+
+def test_an_ungated_webhook_post_fails_beside_a_gated_one():
+    source = _WEBHOOK_LEAK
+    assert ungated_connections(source, _sends_notification) == [_line_of(source, "hooks.slack.com")]
+
+
+def test_the_gate_wrappers_the_ratchet_trusts_call_the_gate():
+    """The ratchet trusts _assert_smtp_allowed and _offline_refusal by name;
+    each must itself call a real gate, awaited, or trusting it proves nothing."""
+    verdicts: dict[str, list[bool]] = {}
+    for path in sorted(NOTIFICATION_DIR.parents[1].rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        aliases = _aliases(tree)
+        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        for function in ast.walk(tree):
+            if not (isinstance(function, _SCOPES[:2]) and function.name in _WRAPPER_GATES):
+                continue
+            verdicts.setdefault(function.name, []).append(
+                any(
+                    isinstance(node, ast.Call)
+                    and _is_gate(node, aliases, parents)
+                    and {name.rsplit(".", 1)[-1] for name in _dotted(node.func, aliases)} & _REAL_GATES
+                    for node in ast.walk(function)
+                )
+            )
+    assert set(verdicts) == _WRAPPER_GATES, f"a trusted wrapper no longer exists: {verdicts}"
+    assert all(all(calls) for calls in verdicts.values()), f"a wrapper stopped calling the gate: {verdicts}"
 
 
 def test_the_threat_model_documents_these_channels():
@@ -227,60 +528,38 @@ def test_the_threat_model_documents_these_channels():
 # ── Code review + QA of H10: every path, an allow-list, off the loop ──────
 
 APP_DIR = NOTIFICATION_DIR.parents[1]
-_SMTP_CALLS = {
-    ("aiosmtplib", "send"),
-    ("aiosmtplib", "SMTP"),
-    ("smtplib", "SMTP"),
-    ("smtplib", "SMTP_SSL"),
-}
 _PUBLIC_RELAY = {"enabled": True, "host": "smtp.gmail.com", "port": 587}
 
 
-def _smtp_connection_sites(path: pathlib.Path) -> list[int]:
-    """Lines where a module opens an SMTP connection, by the AST."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    return [
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and isinstance(node.func.value, ast.Name)
-        and (node.func.value.id, node.func.attr) in _SMTP_CALLS
-    ]
-
-
-def _modules_opening_smtp() -> dict[str, list[int]]:
+def _smtp_lines_in_app(check=connection_sites) -> dict[str, list[int]]:
     found = {}
     for path in sorted(APP_DIR.rglob("*.py")):
-        sites = _smtp_connection_sites(path)
-        if sites:
-            found[path.relative_to(APP_DIR).as_posix()] = sites
+        lines = check(path.read_text(encoding="utf-8"), _opens_smtp)
+        if lines:
+            found[path.relative_to(APP_DIR).as_posix()] = lines
     return found
 
 
 def test_the_smtp_scan_sees_every_known_connection():
     """A scan that matched nothing would pass forever."""
-    found = _modules_opening_smtp()
-    for module in (
-        "services/notification/email_service.py",
-        "services/report_service.py",
-        "routers/app_settings.py",
-        "services/integration_probe_service.py",
+    found = _smtp_lines_in_app()
+    for module, known in (
+        ("services/notification/email_service.py", 3),
+        ("services/report_service.py", 1),
+        ("routers/app_settings.py", 1),
+        ("services/integration_probe_service.py", 1),
     ):
-        assert module in found, f"the scan no longer finds {module}: {sorted(found)}"
+        assert len(found.get(module, [])) >= known, f"the scan no longer finds {module}: {found}"
 
 
-def test_every_smtp_connection_in_the_app_consults_the_egress_gate():
-    """The first ratchet walked one package. The report email, the SMTP test
-    email and the health probe were outside it, and none of them asked."""
-    offenders = [
-        f"{module} (lines {sites})"
-        for module, sites in _modules_opening_smtp().items()
-        if "assert_delivery_allowed" not in (APP_DIR / module).read_text(encoding="utf-8")
-    ]
+def test_every_smtp_connection_in_the_app_is_gated_where_it_opens():
+    """The first ratchet walked one package; the second walked all of app/ but
+    passed a module that named the gate anywhere. Each connection now needs
+    its own gate call, earlier in its own function."""
+    offenders = _smtp_lines_in_app(ungated_connections)
     assert not offenders, (
-        "these modules open an SMTP connection without consulting the offline "
-        "egress gate: " + ", ".join(offenders)
+        "these SMTP connections have no offline gate call before them in their "
+        f"own function: {offenders}"
     )
 
 
