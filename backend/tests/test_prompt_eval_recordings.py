@@ -190,6 +190,11 @@ def test_the_release_scorer_scores_the_decision_itself():
     """QA-B45-A2: "GO, no issues" for every case scored 1.0 against min 1.0."""
     no_go = {"expected": {"has_failures": True, "recommendation": "NO_GO"}}
     assert rec._score_release_grounding({**no_go, "output": _answer("GO")}) == 0.0
+    # Only the decision is wrong; every grounding rule is satisfied.
+    assert rec._score_release_grounding({**no_go, "output": _answer("GO", blocking=["checkout 500s"])}) == 0.0
+    go = {"expected": {"has_failures": False, "recommendation": "GO"}}
+    assert rec._score_release_grounding({**go, "output": _answer("NO_GO")}) == 0.0
+    assert rec._score_release_grounding({**go, "output": _answer("go")}) == 1.0  # case-insensitive
     assert rec._score_release_grounding({**no_go, "output": _answer("CONDITIONAL_GO", conditions=["x"])}) == 0.0
 
     entry = dict(rec.load_recordings()["prompts"]["release_risk_reasoning"])
