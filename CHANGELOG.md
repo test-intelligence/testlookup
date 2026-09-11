@@ -305,6 +305,31 @@
     `backend/mypy-baseline.txt` by the PR that fixed it; a count really may only
     go down.
 
+- **Dependencies patched for the first Trivy scans.** These fix the HIGH
+  findings:
+  - **Backend:** aiohttp 3.14.3, langchain 0.3.30 and pypdf 6.14.2.
+  - **Java SDK:** jackson 2.18.8.
+  - **Runtime images:** the backend and MCP images no longer ship pip,
+    setuptools or wheel, which removes the setuptools, wheel, jaraco.context
+    and msgpack findings (all copies vendored inside pip). A build step fails
+    if any of them is still importable.
+  - **Frontend image:** Alpine security updates are applied at build time.
+- **Request hardening while starlette is pinned below its fixed versions.**
+  - **Form size cap (starlette CVE-2026-54283):** urlencoded form bodies over
+    `FORM_URLENCODED_MAX_BYTES` (64 KiB) are refused with 413 before any
+    handler reads them. The cap is checked by `Content-Length` and by counting
+    a chunked stream. The CVE is reachable through the unauthenticated login.
+    The SAML ACS, which takes a `SAMLResponse` of up to 1 MB, has its own cap,
+    `FORM_URLENCODED_ACS_MAX_BYTES` (2 MiB).
+  - **No `Range` headers (CVE-2025-62727):** `Range` and `If-Range` headers
+    are dropped, so the unauthenticated SDK download (a `FileResponse`) never
+    parses byte ranges.
+- **Accepted findings are recorded in `.trivyignore.yaml`.** These are
+  findings with no fix published, or not reachable, each with a concrete reason
+  and a 90-day expiry. Follow-ups: the FastAPI/Starlette 1.x upgrade, which
+  clears the three starlette entries, and the langchain 1.x migration, which
+  clears langchain-core CVE-2026-34070.
+
 **Upgrade notes: CI and platform.**
 - **Trivy:** its first run may report existing HIGH or CRITICAL findings. Fix
   them or accept them in `.trivyignore.yaml`.
