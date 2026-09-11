@@ -3689,9 +3689,17 @@ def _shell_flags(shell: Optional[str]) -> tuple[bool, bool]:
         return True, True
     if value == "sh":
         return True, False
-    if "{0}" in value:
+    program = value.split()[0].rsplit("/", 1)[-1] if value.split() else ""
+    if program in ("bash", "sh"):
+        # A custom command line runs exactly what it says (QA-B45-R3-2):
+        # `bash -l {0}` (the conda idiom) has neither -e nor pipefail.
         flags = "".join(re.findall(r"(?:^|\s)-([A-Za-z]+)", value))
-        return ("e" in flags or "errexit" in value), "pipefail" in value
+        errexit = "e" in flags or bool(re.search(r"-o\s+errexit\b", value))
+        return errexit, "pipefail" in value
+    if program in ("pwsh", "powershell", "cmd"):
+        # A native command's failure does not stop the script; the step exits
+        # with the LAST command's code. No shell pipelines of this kind.
+        return False, False
     return True, False
 
 
@@ -3904,7 +3912,11 @@ def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
                     cwd = f"{cwd}/{target}".strip("/") if cwd else target
                     continue
                 if _TEST_RUNNER.search(command) and not (
-                    step_disabled or not errexit or _swallows_failure(command)
+                    # Without errexit a runner's failure is dropped unless it
+                    # is the script's LAST command, whose status is the
+                    # step's (QA-B45-R3-2).
+                    step_disabled or (not errexit and position != len(joined) - 1)
+                    or _swallows_failure(command)
                     or _masked_by_pipe_or_list(command, pipefail, position == len(joined) - 1)
                     or _NO_TEST_RUN.search(_QUOTED.sub("''", command))
                 ):

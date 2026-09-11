@@ -278,6 +278,22 @@ async def jira_resolution_webhook(
     # already applied would be re-sent for no reason.
     outside = _delivery_outside_window(payload)
     if outside:
+        # R-B45-R3-4: a sender whose deliveries never apply must be diagnosable.
+        # The digest prefix identifies the delivery; the body is never logged.
+        import structlog
+
+        stamp = payload.get("timestamp")
+        kind = (
+            "missing" if stamp is None
+            else "invalid" if ("numeric" in outside or "finite" in outside)
+            else "outside_window"
+        )
+        structlog.get_logger("routers.feedback").warning(
+            "jira_webhook_delivery_refused",
+            reason=kind,
+            detail=outside,
+            delivery=hashlib.sha256(raw_body).hexdigest()[:12],
+        )
         return {"message": outside, "applied": False}
     first_time, key = await _claim_delivery(raw_body)
     if not first_time:

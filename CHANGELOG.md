@@ -74,7 +74,9 @@
     milliseconds, which Jira Cloud puts on every signed webhook) bounds a
     replay. A body older than 7 days, one stamped more than 15 minutes ahead
     of the server's clock, and one with no valid numeric `timestamp`
-    (missing, null, a string, NaN) all get 200 `"applied": false`. If Redis is
+    (missing, null, a string, NaN) all get 200 `"applied": false`, and a
+    warning (`jira_webhook_delivery_refused`) names the reason and the
+    delivery's digest prefix, never the body. If Redis is
     down the delivery gets 503 and Jira retries it; a delivery that fails to
     apply is released so the retry applies it.
 
@@ -103,11 +105,14 @@
     its chain, the offline pin, no LLM slot, or the cap itself). A read
     timeout, a reset, a cancellation or a 5xx can come after the provider did
     the work, so it is charged at the worst case. A client that retries
-    inside the call (the provider SDKs' own `max_retries`) is never
+    inside the call (the provider SDKs' own `max_retries`, found through
+    `.bind`, `with_structured_output` and `.with_retry` wrappers) is never
     refunded, because its error describes only the last attempt. Such
     charges, and every call made outside a pipeline stage, are written to
     the PostgreSQL meter as well; calls inside a stage are metered by the
-    stage, against the project the reservation was charged to.
+    stage, against the project the reservation was charged to. Each call is
+    metered once: a call already written at settle (failed, or with no
+    reported usage) is not metered again by its stage, in dollars or calls.
   - **Not charged in full:** when an SDK retries after a read timeout and the
     retry succeeds, the call is settled at the successful attempt's reported
     usage. The earlier attempt may also have been billed; the SDKs do not
@@ -278,8 +283,10 @@
     - a workflow that no push or pull request triggers (a
       `workflow_dispatch`-only one, say);
     - a command whose exit status is lost: `|| true`, `|| :`, `; true`,
-      `set +e`, a pipe without `pipefail`, or an `&&` list with more commands
-      after it;
+      a runner with more commands after it while errexit is off (`set +e`,
+      or a custom `shell:` such as `bash -l {0}` or `pwsh`), a pipe without
+      `pipefail`, or an `&&` list with more commands after it (as the
+      script's last command a runner always gates);
     - `--collect-only`.
   - Out of reach of a static read: an `if:` over env, matrix or step
     outputs (counted as run), and a runner hidden inside a script.

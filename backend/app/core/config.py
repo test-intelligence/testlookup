@@ -591,7 +591,7 @@ class Settings(BaseSettings):
         minimum = 2 * REDIS_SOCKET_TIMEOUT_SECONDS + 5
         if v and v < minimum:
             raise ValueError(
-                f"LLM_CLUSTER_SLOT_LEASE_SECONDS must be 0 (default) or at least {minimum} "
+                f"LLM_CLUSTER_SLOT_LEASE_SECONDS must be 0 (use the built-in 60) or at least {minimum} "
                 f"(2 x the {REDIS_SOCKET_TIMEOUT_SECONDS}s Redis socket timeout + 5s); got {v}"
             )
         return v

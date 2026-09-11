@@ -34,8 +34,18 @@ class _HealthyRedis:
         return True
 
 
+async def _durable_unreachable(statement, params):
+    raise ConnectionError("durable revocation store not under test")
+
+
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
+    # Pin the durable (Postgres) revocation store: left real, it answered
+    # only when an app engine could reach a migrated database (CI's backend
+    # step), and then decided the verdict instead of the Redis store these
+    # tests set up. Unreachable = the Redis-only behaviour they were written
+    # for; the durable path has its own tests (test_durable_token_revocation).
+    monkeypatch.setattr(token_revocation, "_durable_execute", _durable_unreachable)
     monkeypatch.setattr(token_revocation.settings, "AUTH_REVOCATION_FAIL_OPEN", False)
     monkeypatch.setattr(deps, "decode_token", lambda _t: dict(_PAYLOAD))
     redis = _HealthyRedis()

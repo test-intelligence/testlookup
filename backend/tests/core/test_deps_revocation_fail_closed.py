@@ -51,9 +51,21 @@ def _fake_db(user=None):
     return db
 
 
+async def _durable_unreachable(statement, params):
+    raise ConnectionError("durable revocation store not under test")
+
+
 @pytest.fixture(autouse=True)
 def _decode(monkeypatch):
-    """Every test below presents a structurally valid access token."""
+    """Every test below presents a structurally valid access token.
+
+    The durable (Postgres) revocation store is pinned unreachable: left real,
+    it answered whenever an app engine could reach a migrated database (CI's
+    backend step, or after another file set the engine up), and a missing
+    Redis then meant "not revoked" instead of the outage these tests assert.
+    The durable path has its own tests (test_durable_token_revocation).
+    """
+    monkeypatch.setattr(token_revocation, "_durable_execute", _durable_unreachable)
     monkeypatch.setattr(deps, "decode_token", lambda _t: dict(_PAYLOAD))
     monkeypatch.setattr(token_revocation.settings, "AUTH_REVOCATION_FAIL_OPEN", False)
 
