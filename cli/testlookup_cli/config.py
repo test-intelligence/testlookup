@@ -1,6 +1,7 @@
 """CLI configuration — profiles, config dir, and environment resolution."""
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -11,9 +12,47 @@ CONFIG_DIR = Path(user_config_dir(APP_NAME))
 PROFILES_FILE = CONFIG_DIR / "profiles.json"
 ACTIVE_FILE = CONFIG_DIR / "active_profile"
 
+# profiles.json holds API keys and refresh tokens (re-audit L5). On POSIX it is
+# written owner-only; Windows has no POSIX mode bits (os.chmod only toggles the
+# read-only flag), and the per-user %APPDATA% ACL is what protects it there.
+_IS_POSIX = os.name == "posix"
+_FILE_MODE = 0o600
+_DIR_MODE = 0o700
+
 
 def _ensure_config_dir() -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=_DIR_MODE)
+    if _IS_POSIX:
+        # mkdir's mode is filtered by the umask and ignored for a directory
+        # that already exists, so set it explicitly.
+        os.chmod(CONFIG_DIR, _DIR_MODE)
+
+
+def _write_private(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` atomically, owner-only on POSIX.
+
+    The temp file comes from ``mkstemp`` (mode 0600 from creation, so the
+    secret is never readable by others, not even briefly), is fsynced, then
+    renamed over the target: a crash leaves the old file or the new one, never
+    a truncated one, and a pre-existing 0644 file is REPLACED by a 0600 one
+    rather than rewritten in place with its old mode.
+    """
+    _ensure_config_dir()
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            if _IS_POSIX:
+                os.chmod(tmp, _FILE_MODE)
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def _load_profiles() -> dict:
@@ -23,8 +62,7 @@ def _load_profiles() -> dict:
 
 
 def _save_profiles(profiles: dict) -> None:
-    _ensure_config_dir()
-    PROFILES_FILE.write_text(json.dumps(profiles, indent=2))
+    _write_private(PROFILES_FILE, json.dumps(profiles, indent=2))
 
 
 def get_active_profile_name() -> str:
@@ -38,8 +76,7 @@ def get_active_profile_name() -> str:
 
 
 def set_active_profile(name: str) -> None:
-    _ensure_config_dir()
-    ACTIVE_FILE.write_text(name)
+    _write_private(ACTIVE_FILE, name)
 
 
 def get_profile(name: Optional[str] = None) -> dict:
