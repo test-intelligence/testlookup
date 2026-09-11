@@ -18,6 +18,7 @@ POST /api/v1/projects/{project_id}/fix-outcomes — record a merged/reverted fix
 import hashlib
 import hmac
 import json
+import time
 import uuid
 from datetime import datetime
 from typing import Literal, Optional
@@ -72,8 +73,67 @@ def _verify_jira_signature(raw_body: bytes, signature: Optional[str]) -> None:
     if _is_placeholder_secret(secret):
         raise HTTPException(status_code=403, detail=JIRA_SECRET_UNSET_DETAIL)
     expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
-    if not signature or not hmac.compare_digest(expected, signature.strip()):
+    try:
+        # Starlette decodes a header as latin-1, so a hostile byte arrives as
+        # a non-ASCII str, which compare_digest refuses with a TypeError (a
+        # public 500). A signature is ASCII hex: anything else is simply not
+        # a valid one (QA-B45-1).
+        presented = (signature or "").strip().encode("ascii")
+    except UnicodeEncodeError:
+        presented = b""
+    if not presented or not hmac.compare_digest(expected.encode("ascii"), presented):
         raise HTTPException(status_code=401, detail="Invalid or missing Jira webhook signature")
+
+
+#: How long a delivery is remembered, and so the oldest delivery accepted.
+JIRA_REPLAY_WINDOW_SECONDS = 7 * 24 * 3600
+_JIRA_DELIVERY_KEY = "jira:webhook:delivery:"
+
+
+def _delivery_is_too_old(payload: dict) -> bool:
+    """Jira puts the event time in the body (``timestamp``, epoch ms), inside
+    the signature. A delivery older than the replay window can no longer be
+    matched against the dedupe record, so it is not applied."""
+    stamp = payload.get("timestamp")
+    if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
+        return False
+    return (time.time() - stamp / 1000.0) > JIRA_REPLAY_WINDOW_SECONDS
+
+
+async def _claim_delivery(raw_body: bytes) -> tuple[bool, str]:
+    """Record a signed delivery once (QA-B45-2). Returns ``(first_time, key)``.
+
+    Jira's HMAC carries no timestamp or nonce, so a captured delivery stays
+    validly signed forever. The identifier is the sha256 of the raw body: it
+    is covered by the signature (``X-Atlassian-Webhook-Identifier`` is not,
+    so an attacker could vary it) and it is stable across Jira's own retries
+    of one delivery. Jira's bodies carry the event ``timestamp``, so two real
+    events do not share a body. SET NX with a TTL of the replay window.
+
+    Redis unavailable: FAIL CLOSED with 503. A resolution event is not urgent,
+    and Jira retries a failed delivery, so it is applied once Redis is back;
+    applying it without the record would reopen the replay.
+    """
+    from app.db import redis_client
+
+    key = _JIRA_DELIVERY_KEY + hashlib.sha256(raw_body).hexdigest()
+    try:
+        first = await redis_client.get_redis().set(key, "1", nx=True, ex=JIRA_REPLAY_WINDOW_SECONDS)
+    except Exception as exc:  # noqa: BLE001 -- any Redis failure refuses the delivery
+        raise HTTPException(
+            status_code=503, detail="The Jira webhook cannot record deliveries right now; retry later"
+        ) from exc
+    return bool(first), key
+
+
+async def _release_delivery(key: str) -> None:
+    """The delivery was not applied: let Jira's retry apply it."""
+    from app.db import redis_client
+
+    try:
+        await redis_client.get_redis().delete(key)
+    except Exception:  # noqa: BLE001 -- the TTL still bounds it
+        pass
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -182,8 +242,20 @@ async def jira_resolution_webhook(
         raise HTTPException(status_code=422, detail="The body is not JSON") from exc
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="The body must be a JSON object")
-    result = await feedback_service.jira_resolution_webhook(db, payload)
-    await db.commit()
+    # A replayed delivery is acknowledged with 200 and changes nothing. Not a
+    # 409: Jira retries any non-2xx, so a genuine retry of a delivery that was
+    # already applied would be re-sent for no reason.
+    if _delivery_is_too_old(payload):
+        return {"message": "ignored: delivery is older than the replay window", "applied": False}
+    first_time, key = await _claim_delivery(raw_body)
+    if not first_time:
+        return {"message": "ignored: this delivery was already received", "applied": False}
+    try:
+        result = await feedback_service.jira_resolution_webhook(db, payload)
+        await db.commit()
+    except BaseException:
+        await _release_delivery(key)
+        raise
     return result
 
 

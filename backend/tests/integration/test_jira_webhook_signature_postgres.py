@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import json
 import os
+import time
 import uuid
 from types import SimpleNamespace
 
@@ -93,7 +94,7 @@ async def world(monkeypatch):
     world = SimpleNamespace(
         client=client, sessions=sessions, settings=settings, defect_id=defect_id, body=body,
         admin_jwt={"Authorization": f"Bearer {create_access_token(str(admin))}"},
-        Defect=Defect,
+        Defect=Defect, redis=redis, issue_key=issue_key, sent=[],
     )
     try:
         yield world
@@ -109,6 +110,8 @@ async def world(monkeypatch):
                     await db.execute(statement)
             except Exception as exc:  # noqa: BLE001 -- report, keep cleaning
                 print(f"n34 teardown: {type(exc).__name__}: {str(exc)[:160]}")
+        for sent in world.sent:
+            await redis.delete("jira:webhook:delivery:" + hashlib.sha256(sent).hexdigest())
         await redis.aclose()
         await engine.dispose()
         await app_postgres.dispose_engine_for_loop()
@@ -122,8 +125,10 @@ async def _status(world) -> str:
 
 
 def _post(world, headers, body=None):
+    body = world.body if body is None else body
+    world.sent.append(body)
     return world.client.post(
-        _PATH, content=world.body if body is None else body,
+        _PATH, content=body,
         headers={"Content-Type": "application/json", **headers},
     )
 
@@ -214,3 +219,118 @@ def test_the_route_takes_no_session():
         return out
 
     assert not {"get_current_user_or_api_key", "get_current_active_user"} & set(names(route.dependant))
+
+
+# ── QA-B45-1: a hostile header is a bad signature, not a 500 ────────────────
+
+
+@pytest.mark.parametrize("raw", [b"sha256=" + bytes([0xFF, 0xFE]), b"sha256=" + bytes([0xE9]), bytes([0xFF])])
+async def test_a_non_ascii_signature_header_is_a_401(world, raw):
+    resp = await _post(world, {"X-Hub-Signature": raw})
+
+    assert resp.status_code == 401, resp.text
+    assert await _status(world) == "OPEN"
+
+
+# ── QA-B45-2: a captured delivery cannot be replayed ─────────────────────────
+
+
+async def _reopen(world) -> None:
+    async with world.sessions.begin() as db:
+        defect = await db.get(world.Defect, world.defect_id)
+        defect.resolution_status = "OPEN"
+
+
+async def test_a_replayed_delivery_changes_nothing_and_a_new_one_applies(world):
+    headers = {"X-Hub-Signature": _sign(world.body)}
+    first = await _post(world, headers)
+    assert first.status_code == 200, first.text
+    assert await _status(world) == "RESOLVED"
+
+    await _reopen(world)
+    replay = await _post(world, headers)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["applied"] is False
+    assert await _status(world) == "OPEN"
+
+    # A different (new) delivery for the same issue still applies.
+    other = json.dumps({
+        "timestamp": int(time.time() * 1000),
+        "issue": {"key": world.issue_key, "fields": {"status": {"name": "Done"}, "resolution": None}},
+    }).encode()
+    fresh = await _post(world, {"X-Hub-Signature": _sign(other)}, body=other)
+    assert fresh.status_code == 200, fresh.text
+    assert await _status(world) == "RESOLVED"
+
+
+async def test_a_delivery_older_than_the_replay_window_is_not_applied(world):
+    from app.routers.feedback import JIRA_REPLAY_WINDOW_SECONDS
+
+    old = json.dumps({
+        "timestamp": int((time.time() - JIRA_REPLAY_WINDOW_SECONDS - 60) * 1000),
+        "issue": {"key": world.issue_key, "fields": {"status": {"name": "Done"}, "resolution": None}},
+    }).encode()
+
+    resp = await _post(world, {"X-Hub-Signature": _sign(old)}, body=old)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["applied"] is False
+    assert await _status(world) == "OPEN"
+
+
+async def test_the_dedupe_record_expires_with_the_replay_window(world):
+    from app.routers.feedback import JIRA_REPLAY_WINDOW_SECONDS
+
+    resp = await _post(world, {"X-Hub-Signature": _sign(world.body)})
+    assert resp.status_code == 200, resp.text
+    ttl = await world.redis.ttl("jira:webhook:delivery:" + hashlib.sha256(world.body).hexdigest())
+    assert JIRA_REPLAY_WINDOW_SECONDS - 60 < ttl <= JIRA_REPLAY_WINDOW_SECONDS
+
+
+async def test_redis_down_refuses_the_delivery_so_jira_retries(world, monkeypatch):
+    class Down:
+        async def set(self, *args, **kwargs):
+            raise ConnectionError("redis down")
+
+        async def delete(self, *args, **kwargs):
+            raise ConnectionError("redis down")
+
+    monkeypatch.setattr("app.db.redis_client.get_redis", lambda: Down())
+
+    resp = await _post(world, {"X-Hub-Signature": _sign(world.body)})
+
+    assert resp.status_code == 503, resp.text
+    assert await _status(world) == "OPEN"
+
+
+async def test_a_delivery_that_failed_to_apply_can_be_retried(world, monkeypatch):
+    from app.services import feedback_service
+
+    real = feedback_service.jira_resolution_webhook
+    calls: list[int] = []
+
+    async def fails_once(db, payload):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("database blip")
+        return await real(db, payload)
+
+    monkeypatch.setattr(feedback_service, "jira_resolution_webhook", fails_once)
+    headers = {"X-Hub-Signature": _sign(world.body)}
+    with pytest.raises(RuntimeError):
+        await _post(world, headers)
+    assert await _status(world) == "OPEN"
+
+    retry = await _post(world, headers)
+    assert retry.status_code == 200, retry.text
+    assert await _status(world) == "RESOLVED"
+
+
+@pytest.mark.parametrize("issue", [None, {"key": None, "fields": None}, {"fields": {"status": None}}])
+async def test_signed_bodies_with_explicit_nulls_are_not_a_500(world, issue):
+    body = json.dumps({"issue": issue, "tag": world.issue_key}).encode()
+
+    resp = await _post(world, {"X-Hub-Signature": _sign(body)}, body=body)
+
+    assert resp.status_code == 200, resp.text
+    assert await _status(world) == "OPEN"
