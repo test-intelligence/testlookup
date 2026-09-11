@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-09-11 — production-readiness re-audit, batches 4 and 5
+
+### Frontend
+
+- **A tab coming back from the background refreshes at once (M19).** SWR
+  already skipped polling in a hidden tab, but about 80 hooks turn off focus
+  revalidation, so a returning tab showed stale data for up to one more
+  interval. The root SWR config now pins the hidden-tab pause and refetches
+  polling hooks as soon as the tab is visible. The unused
+  `useVisibilityAwareInterval` hook is removed.
+- **Overview makes one `/runs` request per poll instead of three (M22).** The
+  two lifetime probes run only when the selected window comes back empty, and
+  are answered from the windowed list otherwise. Measured live: 3 requests per
+  35 s instead of 6.
+- **Modal dialogs are keyboard-accessible (M20).** They trap Tab and Shift+Tab,
+  close on Escape (not while submitting), and return focus to the control that
+  opened them, through one shared `useModalFocus` hook. It is applied to seven
+  modals. About 19 dialogs written inline in page files are not converted yet.
+- **Failed fetches say so (M21).** Runs, Intelligence hub, Releases and Summary
+  report show "data unavailable" with Retry instead of an empty state, and the
+  Intelligence hub no longer searches further back after a failure. A new
+  guard requires every routed page to declare how it shows a failed fetch; the
+  backlog of pages that still render a failure as empty is capped at 29 and
+  can only shrink.
+- **The unconfirmed-retirements panel pages through every orphaned case
+  (N16)** ("Showing 26–50 of 60", Previous/Next) instead of listing the first
+  25 under the full total.
+- Three vacuous `as unknown as string` casts in My Failures are removed (L4).
+- **Tests:** the role-based-access e2e spec no longer lands on /login in a
+  full run (E1). The sign-out test revoked the shared admin session, and the
+  spec trusted a mocked `/auth/me`. Sign-out now uses its own session, and the
+  spec verifies a real session before mocking the role.
+
 ## 2026-09-10 — a streaming-only API key could administer its project, and anyone could subscribe to another project's failures
 
 - **Notification preferences.** `POST/PUT /api/v1/notifications/preferences`
