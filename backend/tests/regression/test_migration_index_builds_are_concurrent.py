@@ -26,6 +26,13 @@ Every way of writing a build counts:
   INDEX CONCURRENTLY`` and then ``ALTER TABLE ... ADD CONSTRAINT ... UNIQUE
   USING INDEX``, which only attaches the finished index, so that passes.
 
+Dropping counts too. A plain ``DROP INDEX`` takes ACCESS EXCLUSIVE on the
+index's table: brief, but it queues behind every open transaction, and every
+write queues behind it. 0166 and 0167 dropped an INVALID leftover that way,
+from inside a ``DO`` block, which cannot run anything else; they now decide
+from Python and drop CONCURRENTLY. The table of a dropped index is the one
+this migration built it on, else unknown -- an existing table.
+
 The scan reads the AST, not the text: a migration's docstring discusses SQL it
 does not run, and SQL is assembled -- implicitly concatenated literals,
 f-strings, ``.format()``, ``+``, ``%``, ``str.join`` -- from constants (0166
@@ -79,6 +86,11 @@ _INDEXED_CONSTRAINT = re.compile(
 _CREATE_TABLE = re.compile(
     r"\bCREATE\s+(?:(?:GLOBAL\s+|LOCAL\s+)?TEMP(?:ORARY)?\s+|UNLOGGED\s+)?"
     r"(?:TABLE|MATERIALIZED\s+VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?(?P<table>" + _IDENT + r")",
+    re.IGNORECASE,
+)
+_DROP_INDEX = re.compile(
+    r"\bDROP\s+INDEX\b(?P<concurrently>\s+CONCURRENTLY\b)?(?:\s+IF\s+EXISTS\b)?"
+    r"\s+(?P<names>" + _IDENT + r"(?:\s*,\s*" + _IDENT + r")*)",
     re.IGNORECASE,
 )
 _CONCURRENTLY = re.compile(r"\bCONCURRENTLY\b", re.IGNORECASE)
@@ -424,6 +436,7 @@ def _operations(source: str) -> list[Operation]:
     batches = _batches(tree, env)
     found: list[Operation] = []
     index_tables: dict[str, str] = {}  # index name -> its table, from this migration's builds
+    drop_calls: list[tuple[ast.Call, str | None, str]] = []
 
     for line, text in strings:
         for match in _CREATE_INDEX.finditer(text):
@@ -461,6 +474,27 @@ def _operations(source: str) -> list[Operation]:
                     found.append(Operation(node.lineno, "index", table, False, shown))
                 if _is_true(column, "unique", env):
                     found.append(Operation(node.lineno, "constraint", table, False, shown))
+        elif name == "drop_index":
+            drop_calls.append((node, batch, shown))
+
+    # Drops last: an index's table may be known only from this migration's build.
+    for node, batch, shown in drop_calls:
+        if batch is not None:
+            table = batch
+        elif _arg(node, 1, "table_name") is not None:
+            table = _table(_arg_text(node, 1, "table_name", env))
+        else:
+            table = index_tables.get(_table(_arg_text(node, 0, "index_name", env)), UNKNOWN)
+        concurrent = _is_true(node, "postgresql_concurrently", env)
+        found.append(Operation(node.lineno, "drop", table, concurrent, shown))
+    for line, text in strings:
+        for match in _DROP_INDEX.finditer(text):
+            concurrent = bool(match.group("concurrently"))
+            found.extend(
+                Operation(line, "drop", index_tables.get(_table(name.strip()), UNKNOWN), concurrent,
+                          _shown(match.group(0)))
+                for name in match.group("names").split(",")
+            )
 
     for line, text in strings:
         for match in _REINDEX.finditer(text):
@@ -478,7 +512,11 @@ def _operations(source: str) -> list[Operation]:
 
 
 def _builds(source: str) -> list[Operation]:
-    return _operations(source)
+    return [op for op in _operations(source) if op.kind != "drop"]
+
+
+def _drops(source: str) -> list[Operation]:
+    return [op for op in _operations(source) if op.kind == "drop"]
 
 
 def _created_tables(source: str) -> set[str]:
@@ -504,6 +542,12 @@ def _blocking(source: str) -> list[Operation]:
 
 
 def _explain(op: Operation) -> str:
+    if op.kind == "drop":
+        return (
+            f"line {op.line}: `{op.statement}` takes ACCESS EXCLUSIVE on {op.table}, queued "
+            "behind every open transaction with every ingest queued behind it; use DROP "
+            "INDEX CONCURRENTLY inside autocommit_block()"
+        )
     if op.kind == "constraint":
         return (
             f"line {op.line}: `{op.statement}` builds its index on {op.table} under ACCESS "
@@ -578,14 +622,35 @@ def test_a_concurrent_build_runs_outside_the_migration_transaction():
     )
 
 
+def test_an_index_on_an_existing_table_is_dropped_concurrently():
+    offenders = [
+        f"{path.name} {_explain(op)}"
+        for path in _guarded_migrations()
+        for op in _blocking(path.read_text(encoding="utf-8"))
+        if op.kind == "drop"
+    ]
+    assert not offenders, "; ".join(offenders)
+
+
 def test_the_scan_sees_the_builds_it_guards():
-    """A scan that found nothing would pass forever."""
+    """A scan that found nothing would pass forever.
+
+    Each migration builds its index CONCURRENTLY on the real table, and once
+    plainly on the empty copy it creates to learn how the server renders the
+    definition; it drops a leftover and, on downgrade, its index, CONCURRENTLY.
+    """
     found = {
-        path.name[:4]: [(op.kind, op.table, op.concurrent) for op in _builds(path.read_text(encoding="utf-8"))]
+        path.name[:4]: [(op.kind, op.table, op.concurrent) for op in _operations(path.read_text(encoding="utf-8"))]
         for path in _guarded_migrations()
     }
-    assert found.get("0166") == [("index", "test_cases", True)], found.get("0166")
-    assert found.get("0167") == [("index", "test_runs", True)], found.get("0167")
+    assert sorted(found.get("0166", [])) == sorted([
+        ("index", "test_cases", True), ("index", "_alembic_0166_probe", False),
+        ("drop", UNKNOWN, True), ("drop", "test_cases", True),
+    ]), found.get("0166")
+    assert sorted(found.get("0167", [])) == sorted([
+        ("index", "test_runs", True), ("index", "_alembic_0167_probe", False),
+        ("drop", UNKNOWN, True), ("drop", "test_runs", True),
+    ]), found.get("0167")
 
 
 # ── The checker itself ───────────────────────────────────────────────────
@@ -837,3 +902,106 @@ def downgrade():
 def test_a_statement_held_in_a_constant_is_checked_where_it_runs():
     """Line 4 defines it; line 9 runs it inside the block, line 13 outside."""
     assert _concurrent_outside_autocommit(CONSTANT_STATEMENT) == [13]
+
+
+# ── Dropping an index ────────────────────────────────────────────────────
+# A plain DROP INDEX takes ACCESS EXCLUSIVE on the index's table. Brief, but it
+# queues behind every open transaction, and every write queues behind it.
+
+# Each is one blocking drop, on the table named.
+BLOCKING_DROPS = {
+    "a plain DROP INDEX, table unknown": (UNKNOWN, '''
+        op.execute("DROP INDEX ix_test_cases_name_trgm")
+    '''),
+    "a drop of an index this migration builds on an existing table": ("test_cases", '''
+        with op.get_context().autocommit_block():
+            op.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {NAME} ON {TABLE} (name)")
+        op.execute(f"DROP INDEX IF EXISTS {NAME}")
+    '''),
+    "a drop inside a DO block (0166 and 0167 before this rule)": ("test_cases", '''
+        op.execute(
+            "DO $$ BEGIN IF EXISTS (SELECT 1) THEN "
+            f"EXECUTE 'DROP INDEX {NAME}'; END IF; END $$"
+        )
+        with op.get_context().autocommit_block():
+            op.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {NAME} ON {TABLE} (name)")
+    '''),
+    "op.drop_index": ("test_runs", '''
+        op.drop_index("ix_g", table_name="test_runs")
+    '''),
+    "batch_op.drop_index": ("test_runs", '''
+        with op.batch_alter_table("test_runs") as batch_op:
+            batch_op.drop_index("ix_h")
+    '''),
+}
+
+
+@pytest.mark.parametrize("table, body", list(BLOCKING_DROPS.values()), ids=list(BLOCKING_DROPS))
+def test_every_shape_of_blocking_drop_is_flagged(table, body):
+    source = _migration(body)
+    assert [(op.kind, op.table) for op in _blocking(source)] == [("drop", table)], _operations(source)
+
+
+ALLOWED_DROPS = {
+    "DROP INDEX CONCURRENTLY inside autocommit_block": '''
+        stale = table
+        with op.get_context().autocommit_block():
+            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {stale}")
+            op.drop_index("ix_g", table_name="test_runs", postgresql_concurrently=True, if_exists=True)
+    ''',
+    "a drop on a table the migration creates": '''
+        op.create_table(NEW, sa.Column("id", sa.Integer))
+        op.create_index("ix_widgets_id", NEW, ["id"])
+        op.drop_index("ix_widgets_id")
+        op.execute("DROP INDEX ix_widgets_id")
+    ''',
+}
+
+
+@pytest.mark.parametrize("body", list(ALLOWED_DROPS.values()), ids=list(ALLOWED_DROPS))
+def test_the_allowed_drops_pass(body):
+    source = _migration(body)
+    assert len(_drops(source)) == 2, _operations(source)
+    assert _blocking(source) == []
+    assert _concurrent_outside_autocommit(source) == []
+
+
+DROP_IN_TRANSACTION = '''
+from alembic import op
+
+
+def downgrade():
+    op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_x")
+'''
+
+
+def test_a_concurrent_drop_inside_the_transaction_is_flagged():
+    assert _concurrent_outside_autocommit(DROP_IN_TRANSACTION) == [6]
+
+
+@pytest.mark.parametrize("filename", [
+    "0166_test_case_tags_trgm_index.py", "0167_test_runs_natural_build_index.py",
+])
+def test_the_offline_script_drops_and_builds_concurrently(filename):
+    """``alembic upgrade --sql`` has no catalog to read, so the leftover check
+    cannot run; the script must still work, and drop and build CONCURRENTLY."""
+    import importlib.util
+    import io
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    spec = importlib.util.spec_from_file_location(filename[:-3], VERSIONS / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    buffer = io.StringIO()
+    context = MigrationContext.configure(
+        dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buffer}
+    )
+    with Operations.context(context):
+        module.upgrade()
+    script = buffer.getvalue()
+    drop = script.index(f"DROP INDEX CONCURRENTLY IF EXISTS {module.INDEX};")
+    build = script.index(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {module.INDEX} ")
+    assert drop < build, script
+    assert re.search(r"\bDROP\s+INDEX\s+(?!CONCURRENTLY)", script) is None, script
