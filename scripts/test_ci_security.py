@@ -113,3 +113,58 @@ def test_every_accepted_finding_says_why_and_expires() -> None:
         assert expires <= today + dt.timedelta(days=MAX_ACCEPTANCE_DAYS), (
             f"{entry['id']}: acceptance longer than {MAX_ACCEPTANCE_DAYS} days"
         )
+
+
+# ── remediation of the first PR scans (PR #26) ───────────────────────────────
+
+
+ACCEPTED = {
+    "CVE-2026-54283", "CVE-2025-62727", "CVE-2026-48818", "CVE-2026-34070",
+    "CVE-2026-53613", "CVE-2026-53614", "CVE-2026-76642", "CVE-2026-78410",
+}
+
+
+def test_the_accepted_findings_are_exactly_the_triaged_ones() -> None:
+    doc = yaml.safe_load(IGNORE.read_text(encoding="utf-8"))
+    ids = {entry["id"] for entry in doc["vulnerabilities"]}
+    assert ids == ACCEPTED, ids ^ ACCEPTED
+    for entry in doc["vulnerabilities"]:
+        assert entry["statement"].startswith(("MITIGATED.", "NOT REACHABLE.")), entry["id"]
+
+
+def _final_stage(dockerfile: str) -> list[str]:
+    lines = (ROOT / dockerfile).read_text(encoding="utf-8").splitlines()
+    last_from = max(i for i, line in enumerate(lines) if line.startswith("FROM "))
+    return lines[last_from:]
+
+
+def _joined(lines: list[str]) -> list[str]:
+    out, current = [], ""
+    for line in lines:
+        current += line.rstrip("\\").rstrip() + " " if line.rstrip().endswith("\\") else line
+        if not line.rstrip().endswith("\\"):
+            out.append(current.strip())
+            current = ""
+    return out
+
+
+def test_python_runtime_images_carry_no_packaging_toolchain() -> None:
+    for dockerfile in ("backend/Dockerfile", "mcp/Dockerfile"):
+        steps = _joined(_final_stage(dockerfile))
+        strip = [i for i, s in enumerate(steps) if s.startswith("RUN rm -rf") and "site-packages/setuptools" in s]
+        assert len(strip) == 1, dockerfile
+        step = steps[strip[0]]
+        for target in ("site-packages/pip ", "site-packages/setuptools ", "site-packages/pkg_resources",
+                       "site-packages/wheel ", "/usr/local/bin/pip "):
+            assert target in step, (dockerfile, target)
+        assert "importlib.util.find_spec" in step and "sys.exit" in step, dockerfile
+        installs = [i for i, s in enumerate(steps) if "pip install" in s or s.startswith("COPY --from=base")]
+        assert all(i < strip[0] for i in installs), f"{dockerfile}: something installs after the strip"
+        assert not any("pip " in s for s in steps[strip[0] + 1:]), dockerfile
+
+
+def test_the_nginx_image_takes_alpine_security_updates() -> None:
+    steps = _joined(_final_stage("frontend/Dockerfile"))
+    assert steps[0].startswith("FROM nginx:alpine")
+    upgrade = [i for i, s in enumerate(steps) if s == "RUN apk upgrade --no-cache"]
+    assert upgrade and upgrade[0] < next(i for i, s in enumerate(steps) if s.startswith("CMD"))

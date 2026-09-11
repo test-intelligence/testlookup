@@ -236,6 +236,14 @@ class Settings(BaseSettings):
     MAX_ARCHIVE_ENTRIES: int = 5_000
     MAX_ARCHIVE_ENTRY_BYTES: int = 50 * 1024 * 1024          # 50 MB per entry
     MAX_ARCHIVE_RATIO: int = 100                             # uncompressed/compressed
+    # Cap on an application/x-www-form-urlencoded request body (starlette
+    # CVE-2026-54283: request.form() ignores its limits for this type, and
+    # POST /api/v1/auth/login takes one unauthenticated). The only forms are
+    # login/token exchanges, a few hundred bytes. middleware/request_hardening.py
+    FORM_URLENCODED_MAX_BYTES: int = 64 * 1024
+    # ...except the SAML ACS (POST binding), whose SAMLResponse may reach the
+    # route's own 1,000,000-char limit (routers/sso.py) plus urlencoding growth.
+    FORM_URLENCODED_ACS_MAX_BYTES: int = 2 * 1024 * 1024
     # Re-audit M5. The most test results one uploaded report may carry: the
     # same cap as a JSON batch, so a file is not a way around it. The 50MB
     # size limit bounds bytes, not rows -- 50MB of minimal JUnit elements is

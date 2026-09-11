@@ -42,6 +42,11 @@ RUN npm run build
 
 # Production stage
 FROM nginx:alpine AS production
+# Take Alpine's security updates at build time (Trivy on PR #26): util-linux
+# fixes CVE-2026-53612/78409 (2.42.3-r0) and CVE-2026-78408 (2.42.3-r1)
+# shipped after the nginx:alpine tag was built. The four util-linux CVEs with
+# no fix yet are in mount(8), accepted in .trivyignore.yaml.
+RUN apk upgrade --no-cache
 COPY --from=builder /app/dist /usr/share/nginx/html
 # nginx:alpine runs envsubst on /etc/nginx/templates/*.template at container
 # start, writing the result to /etc/nginx/conf.d/. This lets the same image
