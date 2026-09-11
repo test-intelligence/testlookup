@@ -3,7 +3,9 @@
 Used immediately after a deploy when the operator doesn't want to wait
 for the next scheduled tick. The endpoints are thin shims around the
 existing Celery tasks: same code path, same idempotency guarantees,
-just triggered on demand.
+just triggered on demand. It also holds the operator's readers and repair
+tools for work that failed for good: the dead letters, the AI cache's
+leftovers, and failed intents in the run outbox.
 
 All endpoints require an instance admin (``require_instance_admin``):
 ``UserRole.ADMIN``, and not through an API key bound to one project. Project-
@@ -11,10 +13,15 @@ scoped admins are NOT sufficient — these tasks walk every project.
 """
 from __future__ import annotations
 
+import uuid
+
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, require_instance_admin
+from app.db.postgres import get_db
 from app.models.postgres import User
 
 logger = structlog.get_logger(__name__)
@@ -256,3 +263,74 @@ async def read_ai_cache_stats(
         legacy_unscoped_documents=stats.get("legacy_unscoped_documents"),
     )
     return stats
+
+
+class OutboxRequeueRequest(BaseModel):
+    """Which failed run-outbox intents to put back."""
+
+    operation: str = Field(
+        ..., description="The post-ingestion operation, for example agent_pipeline."
+    )
+    last_error: str | None = Field(
+        None,
+        max_length=200,
+        description="Only intents that failed with exactly this error, for example broker_TypeError.",
+    )
+    run_id: uuid.UUID | None = Field(None, description="Only this run's intents.")
+    limit: int = Field(100, ge=1, le=500, description="At most this many, oldest first.")
+    dry_run: bool = Field(
+        True, description="List what would be requeued, and change nothing. The default."
+    )
+
+
+@router.post(
+    "/outbox/requeue",
+    dependencies=[Depends(require_instance_admin())],
+)
+async def requeue_failed_outbox_operations(
+    body: OutboxRequeueRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Put failed post-ingestion work back in the run outbox (re-audit N23).
+
+    A finished run's follow-up work -- notifications, the completion webhook,
+    suite comparisons, the AI pipeline -- is published from a durable outbox,
+    and an intent that keeps failing is marked ``failed`` and never retried.
+    Until N23 every ``agent_pipeline`` intent failed that way with
+    ``broker_TypeError``, so the fix alone would not have analysed one of those
+    runs. List them with this call (it is a dry run unless ``dry_run`` is
+    false), then requeue them in slices of at most 500, oldest first. Each
+    requeued ``agent_pipeline`` intent starts one AI pipeline.
+    """
+    from app.services.run_downstream_outbox import (
+        requeue_failed_downstream_operations as _requeue,
+    )
+
+    try:
+        rows = await _requeue(
+            db,
+            operation=body.operation,
+            last_error=body.last_error,
+            run_id=body.run_id,
+            limit=body.limit,
+            dry_run=body.dry_run,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    logger.info(
+        "admin_requeued_outbox_operations",
+        actor_user_id=str(current_user.id),
+        operation=body.operation,
+        last_error=body.last_error,
+        dry_run=body.dry_run,
+        count=len(rows),
+        outbox_ids=[row["id"] for row in rows],
+    )
+    return {
+        "operation": body.operation,
+        "dry_run": body.dry_run,
+        "matched": len(rows),
+        "requeued": 0 if body.dry_run else len(rows),
+        "rows": rows,
+    }

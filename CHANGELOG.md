@@ -14,10 +14,22 @@ whose error read `broker_TypeError`.
 It surfaced on the homelab, on the first run to reach that code there: a run
 streamed through `/ws/events`, whose every other follow-up completed within a
 second. The entry now uses the task's own parameter, and an entry written before
-the fix is translated when it is published, so a stuck run's analysis starts
-after the upgrade. A test now checks every operation the outbox publishes
-against its task's real signature; the existing tests replaced `apply_async`,
-which is exactly where Celery's check lives.
+the fix is translated when it is next published. A test now checks every
+operation the outbox publishes against its task's real signature; the existing
+tests replaced `apply_async`, which is exactly where Celery's check lives.
+
+Translating an old entry only helps one that is still retrying. The outbox
+marks an entry failed after eight attempts and never retries it, so a run whose
+pipeline had already given up would stay unanalysed after the upgrade. An
+instance admin can now put failed entries back:
+`POST /api/v1/admin/maintenance/outbox/requeue` with
+`{"operation": "agent_pipeline", "last_error": "broker_TypeError"}` lists them,
+because it is a dry run unless `"dry_run": false` is sent, and the same call
+with `"dry_run": false` requeues them, at most 500 at a time, oldest first.
+
+**Upgrade note:** each requeued `agent_pipeline` entry starts one AI pipeline.
+On a deployment with a long backlog, requeue in slices and watch the AI
+workers, rather than all at once.
 
 ## 2026-09-10 — worker database connections now outlive a single task
 

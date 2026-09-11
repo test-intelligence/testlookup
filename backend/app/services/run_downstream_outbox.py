@@ -847,6 +847,81 @@ async def defer_downstream_execution(
         return True
 
 
+#: How many failed intents one requeue may put back. The relay publishes at its
+#: own pace, but a backlog should go back in slices an operator can watch, not
+#: as one burst onto the workers.
+REQUEUE_MAX_ROWS = 500
+
+
+async def requeue_failed_downstream_operations(
+    db: AsyncSession,
+    *,
+    operation: str,
+    last_error: str | None = None,
+    run_id: uuid.UUID | None = None,
+    limit: int = 100,
+    dry_run: bool = True,
+) -> list[dict[str, Any]]:
+    """Put permanently failed intents back in the queue, oldest first. Never commits.
+
+    An intent is marked ``failed`` after MAX_DISPATCH_ATTEMPTS publish failures
+    or MAX_EXECUTION_ATTEMPTS executions, and nothing retries it after that.
+    That is right while the cause is unknown, and wrong once it is fixed: until
+    re-audit N23 every finished run's ``agent_pipeline`` intent failed with
+    ``broker_TypeError``, and no upgrade would ever have published one of them.
+    This is the operator's way back. ``dry_run`` lists what would be requeued
+    and changes nothing.
+
+    Returns each matched row as it was before the requeue.
+    """
+    if operation not in _OPERATIONS:
+        raise ValueError(f"unknown downstream operation: {operation!r}")
+    query = (
+        select(RunDownstreamOutbox)
+        .where(
+            RunDownstreamOutbox.status == "failed",
+            RunDownstreamOutbox.operation == operation,
+        )
+        .order_by(RunDownstreamOutbox.created_at, RunDownstreamOutbox.id)
+        .limit(max(1, min(int(limit), REQUEUE_MAX_ROWS)))
+    )
+    if last_error is not None:
+        query = query.where(RunDownstreamOutbox.last_error == last_error)
+    if run_id is not None:
+        query = query.where(RunDownstreamOutbox.run_id == run_id)
+    if not dry_run:
+        # Rows another admin is requeueing at this moment are skipped rather
+        # than waited on: the second caller gets fewer rows, never the same one.
+        query = query.with_for_update(skip_locked=True)
+    rows = list((await db.execute(query)).scalars().all())
+    before = [
+        {
+            "id": str(row.id),
+            "run_id": str(row.run_id),
+            "project_id": str(row.project_id),
+            "last_error": row.last_error,
+            "dispatch_failures": int(row.dispatch_failures or 0),
+            "execution_attempts": int(row.execution_attempts or 0),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+    if not dry_run:
+        for row in rows:
+            row.status = "pending"
+            row.attempts = 0
+            row.dispatch_failures = 0
+            row.execution_attempts = 0
+            row.next_attempt_at = None
+            row.lease_expires_at = None
+            row.processing_task_id = None
+            # The claim mints a fresh token, which fences any copy of the
+            # failed publication still sitting in a queue.
+            row.dispatch_token = None
+            row.last_error = None
+    return before
+
+
 def downstream_tasks() -> dict[str, Any]:
     """The Celery task each whitelisted operation is published to."""
     from app.worker import tasks
