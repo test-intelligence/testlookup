@@ -445,7 +445,12 @@ async def list_project_runs(
     if (
         not project_id
         and accessible_project_ids
-        and len(accessible_project_ids) <= _PER_PROJECT_BRANCH_CAP
+        # A member of ONE project takes the plain path below (QA-B45-D-4): its
+        # membership filter is `project_id IN (x)`, an equality that 0167's
+        # index serves with a LIMIT. As a one-branch join it planned, under a
+        # generic plan, as a hash join over a Seq Scan of every run (59 ms at
+        # 400k runs, against 0.15 ms).
+        and 1 < len(accessible_project_ids) <= _PER_PROJECT_BRANCH_CAP
     ):
         # A member of several projects (re-audit N18). Walking a global
         # natural-order index and filtering membership passes every other
@@ -455,7 +460,12 @@ async def list_project_runs(
         # need, so the outer sort sees at most projects x page*size rows.
         from sqlalchemy import union_all  # noqa: PLC0415
 
-        deepest = page * size
+        # A literal, not a bind parameter (QA-B45-D-4): under a generic plan a
+        # bound LIMIT is `$n`, and the planner, unable to see how small it is,
+        # estimated thousands of candidates per branch. int() keeps it a
+        # number whatever the caller passed; page and size are the router's
+        # validated integers.
+        deepest = literal_column(str(int(page) * int(size)))
         branches = [
             select(TestRun.id.label("id"))
             .where(*filters, TestRun.project_id == member)

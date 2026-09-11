@@ -320,6 +320,36 @@ async def test_a_members_list_is_one_ordered_branch_per_project(engine, seeded):
         assert limit_depth < scan_depth, rendered
 
 
+async def test_a_member_of_one_project_takes_the_single_project_index(engine, seeded):
+    """QA-B45-D-4. As a one-branch join under a generic plan, a member of one
+    project hash-joined its candidates against a Seq Scan of every run (59 ms
+    at 400k runs, QA). It takes the plain path: `project_id IN (x)` is an
+    equality, and 0167's index serves it with the LIMIT."""
+    statements, _ = await _captured(engine, lambda db: runs_service.list_project_runs(
+        db, project_id=None, page=1, size=20, days=0, accessible_project_ids={seeded[0]},
+    ))
+    statement = _items_statement(statements)
+    sql = str(statement.compile(dialect=pg_asyncpg.dialect()))
+    assert "page_candidates" not in sql and "UNION" not in sql.upper(), sql
+    plan = await _generic_plan(engine, statement)
+    rendered = json.dumps(plan)[:4000]
+    assert not any(n["Node Type"] == "Seq Scan" and n.get("Relation Name") == "test_runs"
+                   for n in _nodes(plan)), rendered
+    assert not any(n["Node Type"] == "Sort" for n in _nodes(plan)), rendered
+    assert [n.get("Index Name") for n in _run_scans(plan)] == [PROJECT_INDEX], rendered
+
+
+async def test_each_branch_limit_is_a_literal(engine, seeded):
+    """QA-B45-D-4. A bound LIMIT is `$n` under a generic plan, and the planner
+    cannot see how small it is. Each branch's LIMIT is page * size, rendered."""
+    statements, _ = await _captured(engine, lambda db: runs_service.list_project_runs(
+        db, project_id=None, page=2, size=20, days=0, accessible_project_ids=set(seeded),
+    ))
+    compiled = _items_statement(statements).compile(dialect=pg_asyncpg.dialect())
+    sql = " ".join(str(compiled).split())
+    assert sql.count("LIMIT 40") == len(seeded), sql
+
+
 @pytest.mark.parametrize("page", [1, 2, 3])
 async def test_a_members_pages_are_the_global_order(engine, seeded, page):
     async with AsyncSession(engine) as db:
