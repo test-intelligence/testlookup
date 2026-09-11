@@ -2324,8 +2324,15 @@ def _backend_managed_test_case_status_single_writer() -> list[Violation]:
 # them would be guesswork that fails noisily on correct code.
 
 
-def _status_enum_vocabularies() -> tuple[dict[str, str], dict[str, set[str]]]:
-    """``(model name -> status-enum name, enum name -> its string values)``.
+def _enum_column_vocabularies() -> tuple[dict[tuple[str, str], str], dict[str, set[str]]]:
+    """``((model, column) -> enum name, enum name -> its string values)``.
+
+    A column is enum-backed when its ``Mapped[...]`` annotation names an
+    enum, or its value references one (``default=SomeEnum.X.value``,
+    ``Enum(SomeEnum)``). Re-audit L3: this recognised only columns named
+    ``status``, so ``role``, ``sync_status``, ``classification``,
+    ``provider_type``, ``schedule`` and ``channel`` could be compared with
+    any hand-written string and nothing checked it.
 
     Parsed, never imported — importing ``app.models.postgres`` builds the
     SQLAlchemy engine and needs ``DATABASE_URL``, so an import-based check
@@ -2356,28 +2363,33 @@ def _status_enum_vocabularies() -> tuple[dict[str, str], dict[str, set[str]]]:
         if values:
             enums[node.name] = values
 
-    model_enum: dict[str, str] = {}
+    columns: dict[tuple[str, str], str] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
         for stmt in node.body:
             if not (isinstance(stmt, ast.AnnAssign)
-                    and getattr(stmt.target, "id", "") == "status"
+                    and isinstance(stmt.target, ast.Name)
                     and stmt.value is not None):
                 continue
-            # ``default=FlakyQuarantineStatus.PROPOSED.value`` — walk to the
-            # root Name of any attribute chain and keep the one that names an
-            # enum we parsed.
-            for sub in ast.walk(stmt.value):
-                if not isinstance(sub, ast.Attribute):
-                    continue
-                root = sub
-                while isinstance(root, ast.Attribute):
-                    root = root.value
-                if isinstance(root, ast.Name) and root.id in enums:
-                    model_enum[node.name] = root.id
-                    break
-    return model_enum, enums
+            enum_name = _enum_named_in(stmt.annotation, enums) or _enum_named_in(
+                stmt.value, enums
+            )
+            if enum_name:
+                columns[(node.name, stmt.target.id)] = enum_name
+    return columns, enums
+
+
+def _enum_named_in(expr: ast.AST, enums: dict[str, set[str]]) -> str | None:
+    """The first parsed enum that ``expr`` names: ``Mapped[SomeEnum]``,
+    ``Enum(SomeEnum)``, or the root of ``SomeEnum.X.value``."""
+    for sub in ast.walk(expr):
+        root = sub
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if isinstance(root, ast.Name) and root.id in enums:
+            return root.id
+    return None
 
 
 def _module_level_string_sequences(tree: ast.Module) -> dict[str, list[tuple[str, int]]]:
@@ -2408,8 +2420,8 @@ def _module_level_string_sequences(tree: ast.Module) -> dict[str, list[tuple[str
 
 
 def _backend_status_enum_vocab() -> list[Violation]:
-    """Status literals compared against an enum-backed ``status`` column must
-    be values of that enum.
+    """Literals compared against an enum-backed string column (``status``,
+    ``role``, ``channel``, ...) must be values of that enum.
 
     Catches the producer/consumer vocabulary drift that made the Fixer inert:
     a filter whose terms the column can never hold returns nothing forever,
@@ -2417,8 +2429,8 @@ def _backend_status_enum_vocab() -> list[Violation]:
     Nothing errors, so nothing surfaces.
     """
     models_path = REPO_ROOT / "backend" / "app" / "models" / "postgres.py"
-    model_enum, enums = _status_enum_vocabularies()
-    if not model_enum:
+    columns, enums = _enum_column_vocabularies()
+    if not columns:
         # Fail LOUD rather than open. A guard that reports OK because it could
         # not read its own reference data is the same shape as the defect it
         # exists to catch: silence that reads as success.
@@ -2427,7 +2439,7 @@ def _backend_status_enum_vocab() -> list[Violation]:
         return [Violation(
             models_path,
             1,
-            "no status column could be tied to a status enum — this guard "
+            "no model column could be tied to an enum — this guard "
             "checked nothing. Either the model module moved, or a status "
             "column stopped declaring its enum default.",
         )]
@@ -2445,13 +2457,14 @@ def _backend_status_enum_vocab() -> list[Violation]:
             owner: Optional[ast.AST] = None
             literals: list[tuple[str, int]] = []
 
-            # ``Model.status.in_([...])`` / ``.in_(_SOME_CONSTANT)``
+            column: str | None = None
+            # ``Model.<column>.in_([...])`` / ``.notin_(...)`` / ``.in_(_CONST)``
             if (isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "in_"
-                    and isinstance(node.func.value, ast.Attribute)
-                    and node.func.value.attr == "status"):
+                    and node.func.attr in ("in_", "notin_", "not_in")
+                    and isinstance(node.func.value, ast.Attribute)):
                 owner = node.func.value.value
+                column = node.func.value.attr
                 for arg in node.args:
                     if isinstance(arg, (ast.List, ast.Tuple, ast.Set)):
                         literals += [
@@ -2461,21 +2474,21 @@ def _backend_status_enum_vocab() -> list[Violation]:
                     elif isinstance(arg, ast.Name) and arg.id in consts:
                         literals += consts[arg.id]
 
-            # ``Model.status == "..."`` / ``!=``
+            # ``Model.<column> == "..."`` / ``!=``
             elif (isinstance(node, ast.Compare)
                     and isinstance(node.left, ast.Attribute)
-                    and node.left.attr == "status"
                     and len(node.ops) == 1
                     and isinstance(node.ops[0], (ast.Eq, ast.NotEq))
                     and isinstance(node.comparators[0], ast.Constant)
                     and isinstance(node.comparators[0].value, str)):
                 owner = node.left.value
+                column = node.left.attr
                 literals = [(node.comparators[0].value, node.lineno)]
 
             model = getattr(owner, "id", None)
-            if model not in model_enum or not literals:
+            if (model, column) not in columns or not literals:
                 continue
-            enum_name = model_enum[model]
+            enum_name = columns[(model, column)]
             vocabulary = enums[enum_name]
             for value, lineno in literals:
                 if value in vocabulary:
@@ -2488,7 +2501,7 @@ def _backend_status_enum_vocab() -> list[Violation]:
                 violations.append(Violation(
                     path,
                     lineno,
-                    f"{model}.status compared to {value!r}, which is not a "
+                    f"{model}.{column} compared to {value!r}, which is not a "
                     f"{enum_name} value{hint} — this filter matches nothing",
                 ))
     return violations
@@ -3890,8 +3903,8 @@ GUARDS: list[Guard] = [
     Guard(
         name="backend.status-enum-vocab",
         description=(
-            "Status literals filtered against an enum-backed status "
-            "column must be values of that enum — a mismatched "
+            "Literals filtered against an enum-backed string column "
+            "(status, role, channel, ...) must be values of that enum — a mismatched "
             "vocabulary makes the query match nothing, silently and "
             "forever."
         ),

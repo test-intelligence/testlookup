@@ -1778,3 +1778,93 @@ def test_a_parser_that_finds_no_commands_fails_loud(monkeypatch: pytest.MonkeyPa
     violations = qg._ci_every_test_suite_runs()
     assert len(violations) == 1
     assert "cannot have looked properly" in violations[0].message
+
+
+# ── backend.status-enum-vocab, generalised (re-audit L3) ────────────────────
+#
+# The guard used to recognise only columns literally named `status`. Any
+# column whose Mapped[...] annotation or default names an enum carries the
+# same trap: `User.role == "admin"` against stored "ADMIN" matches nothing.
+
+_ENUM_MODELS = """
+    from enum import Enum
+    class UserRole(str, Enum):
+        ADMIN = "ADMIN"
+        VIEWER = "VIEWER"
+    class Channel(Enum):
+        EMAIL = "email"
+        SLACK = "slack"
+    class Status(str, Enum):
+        OPEN = "OPEN"
+        CLOSED = "CLOSED"
+    class User(Base):
+        role: Mapped[UserRole] = mapped_column(String(20), default=UserRole.VIEWER.value)
+        name: Mapped[str] = mapped_column(String(20), default="x")
+    class Org(Base):
+        default_role: Mapped[UserRole] = mapped_column(String(20))
+    class Digest(Base):
+        channel: Mapped[str] = mapped_column(String(20), default=Channel.EMAIL.value)
+        status: Mapped[str] = mapped_column(String(20), default=Status.OPEN.value)
+"""
+
+
+def _enum_repo(tmp_path: Path, service: str) -> None:
+    _write(tmp_path / "backend" / "app" / "models" / "postgres.py", _ENUM_MODELS)
+    _write(tmp_path / "backend" / "app" / "services" / "svc.py", service)
+
+
+def test_enum_backed_columns_are_found_by_annotation_or_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _enum_repo(tmp_path, "x = 1\n")
+    columns, enums = qg._enum_column_vocabularies()
+    assert columns == {
+        ("User", "role"): "UserRole",
+        ("Org", "default_role"): "UserRole",      # annotation only, no default
+        ("Digest", "channel"): "Channel",          # default only, Mapped[str]
+        ("Digest", "status"): "Status",
+    }
+    assert enums["Channel"] == {"email", "slack"}
+
+
+def test_every_enum_backed_column_is_checked_not_only_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _enum_repo(tmp_path, """
+        def q():
+            select(User).where(User.role == "admin")
+            select(User).where(User.role == "ADMIN")
+            select(Org).where(Org.default_role != "Viewer")
+            select(Digest).where(Digest.channel.in_(["email", "sms"]))
+            select(Digest).where(Digest.channel.notin_(("pager",)))
+            select(Digest).where(Digest.status != "closed")
+            select(User).where(User.name == "anything at all")
+    """)
+    messages = sorted(v.message for v in qg._backend_status_enum_vocab())
+    assert len(messages) == 5, messages
+    assert any("User.role compared to 'admin'" in m and "did you mean 'ADMIN'" in m for m in messages)
+    assert any("Org.default_role compared to 'Viewer'" in m for m in messages)
+    assert any("Digest.channel compared to 'sms'" in m for m in messages)
+    assert any("Digest.channel compared to 'pager'" in m for m in messages)
+    assert any("Digest.status compared to 'closed'" in m and "did you mean 'CLOSED'" in m for m in messages)
+    assert not any("User.name" in m for m in messages)
+
+
+def test_enum_vocab_fails_loud_when_no_column_is_enum_backed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "models" / "postgres.py", """
+        class User(Base):
+            name: Mapped[str] = mapped_column(String(20))
+    """)
+    violations = qg._backend_status_enum_vocab()
+    assert len(violations) == 1
+    assert "checked nothing" in violations[0].message
+
+
+def test_enum_vocab_real_models_cover_more_than_status() -> None:
+    columns, _ = qg._enum_column_vocabularies()
+    assert {c for (_, c) in columns} - {"status"}, "only status columns found: the L3 widening regressed"
