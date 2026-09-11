@@ -59,6 +59,66 @@
   - **Scheduled digests** check a project-scoped subscription's owner the same
     way; previously only workspace-wide digests were checked.
 
+- **The Jira webhook must be signed.** `POST /api/v1/feedback/jira-webhook`
+  now requires Jira's `X-Hub-Signature: sha256=<HMAC-SHA256 of the raw body>`,
+  keyed with the new `JIRA_WEBHOOK_SECRET` and compared in constant time.
+  - A missing or wrong signature gets 401. An unset or placeholder secret gets
+    403 in every environment.
+  - The route no longer needs a signed-in account; Jira sends none. Before
+    this, any signed-in user or API key could send forged "resolved" events and
+    close any project's defects.
+
+### AI layer and offline mode
+
+- **The monthly LLM cost cap cannot be overshot (M13).** Each LLM call reserves
+  its worst-case cost before the provider is called, in one atomic Redis step
+  that takes the larger of the Redis counter and the PostgreSQL meter. After
+  the call it settles the actual cost (zero on failure). It fails closed when
+  the flag, the quota or Redis cannot be read.
+- **LLM concurrency is bounded across the cluster (M12).** Each in-flight call
+  holds a Redis lease, stamped by the Redis server's clock and renewed by a
+  heartbeat, so a crashed holder frees its slot. If Redis is down, the
+  per-process bound still applies. New settings:
+  `LLM_CLUSTER_MAX_CONCURRENT` (default 4) and
+  `LLM_CLUSTER_SLOT_LEASE_SECONDS` (default 60).
+- **Retrained models reach every pod (M14).** The object store (`ml-models/`)
+  is the source of truth: trainers publish, pods pull missing versions (only
+  model and metadata names, so nothing else is loaded as a pickle), and
+  Kubernetes pods mount a per-pod cache. A ReadWriteMany volume is not
+  portable across the supported clusters.
+- **Changing a gated prompt needs scored outputs (M16).**
+  `prompt_eval_recordings.json` pins each gated prompt's hash to the outputs
+  recorded and scored under it, and the check fails when the hash changes
+  without new scored outputs. Three prompts start unmeasured: the next edit to
+  any of them needs outputs recorded on a model host.
+- **`AI_MAX_RETRIES` governs every LLM provider (L2),** not only Jira.
+- **Offline connections dial the address that was checked (N8).** Under
+  `AI_OFFLINE_MODE`, LLM and notification-webhook connections are pinned to
+  the on-box address validated at connect time, so a DNS answer that changes
+  in between can no longer send prompts or messages off the box. SMTP relays,
+  which admins configure, still connect by name; `architecture/SECURITY.md`
+  documents this as accepted.
+- **The residency DNS lookup no longer blocks the event loop (N11).**
+- **Splunk log search and OpenShift pod lookups do not run offline (N19),**
+  matching the probes.
+- **Release-risk consistency checks replay the gate's own rules (N34).** A
+  third of all release decisions were flagged as inconsistent with their
+  score, although each was the gate's correct answer from the pass-rate floor
+  and minimum-pass-rate rules. The check and the gate now share one mapping.
+- **Summaries cite flaky tests by this run's test ids (N29).** The model
+  answered with test names, so 46% of summaries failed their own consistency
+  check; the ids now come from the analyses marked flaky.
+
+**Upgrade notes: AI layer and offline mode.**
+- **BREAKING (offline):** mail sent through a relay named in
+  `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` now requires
+  `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS`. With it set, every recipient's
+  domain must match. An on-box relay still delivers without it (N25).
+- **Jira webhook:** set `JIRA_WEBHOOK_SECRET` and configure the same secret on
+  the Jira webhook. Until then Jira deliveries get 403.
+- **LLM concurrency:** size `LLM_CLUSTER_MAX_CONCURRENT` to your model
+  server's capacity.
+
 **Upgrade notes: API keys.**
 - **Bound keys:** a key bound to one project now gets 403 on the instance-wide
   QA_LEAD routes. Use an unbound admin key for instance-wide automation.
