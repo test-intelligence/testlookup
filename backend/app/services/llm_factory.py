@@ -167,19 +167,60 @@ class BudgetedLLM:
         # budget decision taken here.
         self._check()
         args, kwargs = self._prepare_invocation(args, kwargs)
-        started = time.perf_counter()
+        from app.services import llm_cost_reservation as cost
+        from app.services.llm_cluster_semaphore import cluster_llm_slot
+
+        # Re-audit M13: reserve this call's worst case against the project's
+        # monthly cap atomically, BEFORE the provider is called. Raises
+        # CostCapExceeded (no request made) when the cap cannot absorb it.
+        input_tokens = cost.estimate_input_tokens(args, kwargs)
+        reservation = await cost.reserve(
+            self._provider,
+            self._model,
+            input_tokens=input_tokens,
+            max_output_tokens=cost.output_ceiling(self._inner, settings.LLM_MAX_TOKENS),
+        )
+        actual_usd = 0.0
         try:
-            result = await self._call_async(args, kwargs)
-        except BaseException as exc:
-            self._observe(self._status_for(exc), time.perf_counter() - started)
-            raise
-        self._observe("success", time.perf_counter() - started)
-        self._record_usage(result)
-        return result
+            # Re-audit M12: one cluster-wide slot per in-flight call.
+            async with cluster_llm_slot(self._provider):
+                started = time.perf_counter()
+                try:
+                    result = await self._call_async(args, kwargs)
+                except BaseException as exc:
+                    self._observe(self._status_for(exc), time.perf_counter() - started)
+                    raise
+                self._observe("success", time.perf_counter() - started)
+                self._record_usage(result)
+                if reservation is not None:
+                    tokens = cost.usage_tokens(result)
+                    actual_usd = (
+                        cost.price(self._provider, self._model, *tokens)
+                        if tokens is not None
+                        # Unreported usage: keep the worst case rather than guess low.
+                        else reservation.estimated_usd
+                    )
+                return result
+        finally:
+            await cost.settle(reservation, actual_usd)
 
     def invoke(self, *args, **kwargs):
         self._check()
         args, kwargs = self._prepare_invocation(args, kwargs)
+        from app.services import llm_cost_reservation as cost
+
+        # The reservation store is async. A synchronous call charged to a
+        # capped-eligible project cannot reserve, so it is refused rather than
+        # let through unchecked (re-audit M13). No app code path uses it today.
+        if cost.current_cost_scope() and cost.price(
+            self._provider,
+            self._model,
+            cost.estimate_input_tokens(args, kwargs),
+            cost.output_ceiling(self._inner, settings.LLM_MAX_TOKENS),
+        ) > 0:
+            raise cost.CostCapExceeded(
+                "synchronous invoke cannot reserve against the LLM cost cap; use ainvoke"
+            )
         started = time.perf_counter()
         try:
             result = self._call_sync(args, kwargs)

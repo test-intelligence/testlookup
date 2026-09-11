@@ -419,6 +419,12 @@ class Settings(BaseSettings):
     # tenant on it (any Slack workspace), so a webhook set per user or per team
     # never uses this list. Empty: every off-box destination is refused.
     OFFLINE_NOTIFICATION_ALLOWED_HOSTS: str = ""
+    # Re-audit N25: recipient domains email may reach while AI_OFFLINE_MODE is
+    # on (comma-separated; "corp.example" exactly, ".corp.example" subdomains).
+    # Set: every recipient must match, whatever the relay. Empty: an on-box
+    # relay may deliver (its own MTA policy governs onward routing); an
+    # off-box relay admitted by OFFLINE_NOTIFICATION_ALLOWED_HOSTS is refused.
+    OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS: str = ""
     AGENT_MEMORY_RETENTION_DAYS: int = 365
     AI_CONFIDENCE_THRESHOLD: int = 80
     AIQ_GAP_REFINEMENT_ENABLED: bool = False         # AIQ-P4: gap_detection + report_refinement deep stages (default off)
@@ -435,6 +441,13 @@ class Settings(BaseSettings):
     # A read timeout is not retried for Ollama: it would multiply wall clock.
     AI_MAX_RETRIES: int = 3
     AI_TIMEOUT_SECONDS: int = 300
+    # Re-audit M12: cluster-wide cap on concurrent LLM calls per provider,
+    # held as Redis leases so a crashed holder frees its slot when its lease
+    # lapses. 0 disables the cluster bound; the per-process bound
+    # (LLM_MAX_CONCURRENT_ANALYSES, the analysis stage's own semaphore) applies
+    # either way. A waiter gives up after AI_TIMEOUT_SECONDS.
+    LLM_CLUSTER_MAX_CONCURRENT: int = 4
+    LLM_CLUSTER_SLOT_LEASE_SECONDS: int = 60
     AI_ANALYSIS_CACHE_TTL: int = 3600                # seconds — Redis cache TTL for analysis results
     SEMANTIC_SIMILARITY_THRESHOLD: float = 0.85      # min cosine similarity for semantic cache hit
     PROMPT_OVERHEAD_TOKENS: int = 1500               # reserved tokens for system prompt + reasoning
