@@ -598,6 +598,7 @@ jobs:
           tests/integration/test_purge_executor_against_real_postgres.py
           tests/integration/test_run_deletion_postgres_mongo.py
           tests/integration/test_project_bound_admin_key_postgres.py
+          tests/integration/test_key_revoke_cascade_postgres.py
           tests/integration/test_notification_preference_authz_postgres.py
           tests/integration/test_scoped_key_limits_postgres.py
           tests/integration/test_live_evidence_crash_replay_postgres_redis.py
