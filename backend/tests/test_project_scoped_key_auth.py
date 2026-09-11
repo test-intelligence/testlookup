@@ -42,7 +42,7 @@ async def test_project_bound_key_rejects_other_project_path():
     bound_project_id = uuid.uuid4()
     other_project_id = uuid.uuid4()
     user = _bind_api_key_project(_user(UserRole.ADMIN), bound_project_id)
-    request = SimpleNamespace(path_params={"project_id": str(other_project_id)})
+    request = SimpleNamespace(method="GET", path_params={"project_id": str(other_project_id)})
     guard = require_project_access()
 
     with pytest.raises(HTTPException) as exc:

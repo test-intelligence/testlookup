@@ -48,8 +48,10 @@ def _user(role: UserRole = UserRole.QA_ENGINEER, user_id: uuid.UUID | None = Non
     return SimpleNamespace(id=user_id or uuid.uuid4(), role=role)
 
 
-def _request(**path_params):
-    return SimpleNamespace(path_params=path_params)
+def _request(method="GET", **path_params):
+    # A real Starlette request always carries a method; the guards read it
+    # (a scoped key's writes need project:admin, QA-R4-1).
+    return SimpleNamespace(method=method, path_params=path_params)
 
 
 def _db_returning(*results):

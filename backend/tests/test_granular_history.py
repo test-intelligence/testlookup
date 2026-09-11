@@ -422,7 +422,7 @@ async def test_require_run_access_rejects_inaccessible_run():
         SimpleNamespace(scalar_one_or_none=lambda: foreign_project),  # run → project
         SimpleNamespace(scalar_one_or_none=lambda: None),             # membership: none
     ])
-    request = SimpleNamespace(path_params={"run_id": str(run_id)})
+    request = SimpleNamespace(method="GET", path_params={"run_id": str(run_id)})
     user = SimpleNamespace(id=uuid.uuid4(), role="VIEWER", api_key_project_id=None)
 
     with pytest.raises(HTTPException) as ei:

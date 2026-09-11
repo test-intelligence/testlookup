@@ -195,7 +195,7 @@ async def test_require_project_access_rejects_non_member():
         async def execute(self, stmt):
             return _MembershipDenyResult()
 
-    request = SimpleNamespace(path_params={"project_id": str(other_project)})
+    request = SimpleNamespace(method="GET", path_params={"project_id": str(other_project)})
     check = require_project_access()
 
     with pytest.raises(HTTPException) as exc:
@@ -219,7 +219,7 @@ async def test_require_project_access_allows_member():
         async def execute(self, stmt):
             return _MembershipAllowResult()
 
-    request = SimpleNamespace(path_params={"project_id": str(project)})
+    request = SimpleNamespace(method="GET", path_params={"project_id": str(project)})
     check = require_project_access()
     result = await check(request=request, db=_DB(), current_user=user)
     assert result is user

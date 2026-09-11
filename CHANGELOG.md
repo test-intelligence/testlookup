@@ -11,14 +11,32 @@
   its own project's preferences, and at send time the recipient must still be
   an active admin or member of the project -- "all projects" preferences
   included, which used to match every tenant's notifications.
-- **API-key scopes now limit the project-administration routes.** A key with a
-  non-empty scope list needs the new `project:admin` scope for the
-  project-administration routes a bound key may use. Elsewhere a scoped key
-  still acts with its owner's role; a per-route scope model is recorded as the
-  next step (N32). A `stream:write` CI key could delete runs, reset
-  its project, and mint itself a full-access, never-expiring replacement. A key
-  that creates a key grants only scopes it holds and an expiry no later than
-  its own.
+- **A scoped API key without `project:admin` can stream, upload and read, and
+  not administer.** A `["stream:write"]` CI key could delete runs, reset its
+  project, and mint itself a full-access, never-expiring replacement. After a
+  first fix that covered only the 22 routes opting a bound key into ADMIN, the
+  same key still set its project's team Slack webhook, added an outsider as
+  QA_LEAD, and updated and deleted the project; unbound, it created instance
+  administrators through `POST /api/v1/users` (QA-R4-1, QA-R4-2). What is
+  enforced now, for a key with a non-empty scope list that lacks
+  `project:admin`, bound or not:
+  - every route needing QA_LEAD or ADMIN (`require_role`) refuses it, reads
+    included (e.g. `GET /api/v1/users`);
+  - every route behind a project, run, release, knowledge-source,
+    generation-batch or live-session guard refuses it on any method except
+    GET, HEAD and OPTIONS;
+  - streaming (`/api/v1/stream/*`, `/ws/events`) needs `stream:write`, and
+    uploads (`/api/v1/ingest*`) and `POST /api/v1/keys` are unaffected.
+    None of these go through the guards above (a test walks their
+    dependencies), so there is no ingest allow-list.
+
+  NOT enforced: other scope names (`test:read`, `report:write`...) mean
+  nothing; writes gated only by `require_role(QA_ENGINEER)` or a plain
+  signed-in check, whose handlers scope the project themselves, still act with
+  the owner's role, as do reads. A per-route scope model is still the next
+  step (N32). An empty scope list (legacy) is full access and JWTs are
+  unchanged. A key that creates a key grants only scopes it holds, each once,
+  and an expiry no later than its own, legacy keys with an expiry included.
 - `POST /api/v1/onboarding/track` files a usage event under a named project only
   if the caller can access it.
 - The authorization test gate reads real calls rather than searching source
