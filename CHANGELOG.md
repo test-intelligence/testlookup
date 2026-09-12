@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-11 — MinIO images move to quay.io
+
+`minio/minio` and `minio/mc` no longer exist on Docker Hub: the repositories
+return 404, so `docker pull` reports "pull access denied" and the offline
+bundle failed on `main` while building. The same three pinned tags are served
+by MinIO's other official registry, quay.io, so every reference now names it:
+the compose files, the air-gap compose, the Kubernetes overlays, the
+Artifactory image mapping and `deploy/images.manifest.txt`. No tag changed.
+
+Air-gap note: the bundle's naming contract is `<your registry>/<manifest
+ref>`, so the imported paths gain the `quay.io/` segment
+(`<registry>/quay.io/minio/minio:...`), which is what the air-gap compose now
+expects.
+
 ## 2026-09-11 — Trivy remediation review fixes
 
 Findings from the review of the Trivy remediation shipped in the re-audit

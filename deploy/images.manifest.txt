@@ -66,12 +66,12 @@ mongo:7                                      infra  compose,k8s   core
 #
 # The offline bundle therefore ships BOTH tags (they are both `core`) and the
 # drift guard pins both — if either moves, this comment must be revisited.
-minio/minio:RELEASE.2024-11-07T00-52-20Z     infra  compose       core
-minio/minio:RELEASE.2025-09-07T16-13-09Z     infra  k8s           core
+quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z     infra  compose       core
+quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z     infra  k8s           core
 # mc is the MinIO client used by the one-shot `minio-setup` compose service
 # (bucket creation). k8s creates buckets via `mc` inside the minio server pod,
 # so it is compose-only.
-minio/mc:RELEASE.2024-11-05T11-29-45Z        infra  compose       core
+quay.io/minio/mc:RELEASE.2024-11-05T11-29-45Z        infra  compose       core
 
 # ── Kubernetes-only helpers ─────────────────────────────────────────────────
 # busybox runs the `wait-for-backend` init container in every worker Deployment

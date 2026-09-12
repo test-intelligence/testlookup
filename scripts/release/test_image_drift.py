@@ -86,7 +86,7 @@ def test_manifest_shape():
     assert "postgres:16-alpine" in core
     assert "busybox:1.36" in core
     # The deliberate MinIO skew: both server tags ship in the bundle.
-    minio = sorted(r.ref for r in rows if r.name == "minio/minio")
+    minio = sorted(r.ref for r in rows if r.name == "quay.io/minio/minio")
     assert len(minio) == 2, "the compose/k8s MinIO skew must stay explicit in the manifest"
     # The optional LLM images are opt-in, never core.
     llm = {r.ref for r in rows if r.bundle == "llm"}

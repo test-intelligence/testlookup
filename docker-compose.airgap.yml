@@ -48,10 +48,10 @@ services:
     image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/redis:7-alpine
 
   minio:
-    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/minio/minio:RELEASE.2024-11-07T00-52-20Z
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
 
   minio-setup:
-    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/minio/mc:RELEASE.2024-11-05T11-29-45Z
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/quay.io/minio/mc:RELEASE.2024-11-05T11-29-45Z
 
   # Optional local-LLM profile. These images are only in the bundle when it was
   # built with `--with-llm`; the services stay behind the `local-llm` profile
