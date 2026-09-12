@@ -116,7 +116,21 @@ def harness(monkeypatch):
     jira = AsyncMock(return_value=({"key": "QA-1", "ticket_url": "u"}, "u"))
     monkeypatch.setattr("app.agents.defect_commander._create_jira_ticket", jira)
 
-    return SimpleNamespace(jira=jira, persist=persist)
+    # E7.6 put the Jira call behind the tool-call guard, which needs a database.
+    # The guard's own behaviour is proven in
+    # tests/services/test_tool_call_idempotency.py; here it hands the call
+    # straight through, so the approval gate is still what these tests measure.
+    guard_calls: list[dict] = []
+
+    async def _pass_through(**kwargs):
+        from app.services.tool_call_idempotency import ToolCallOutcome
+
+        guard_calls.append(kwargs)
+        return ToolCallOutcome(status="executed", key="k", result=dict(await kwargs["call"]()))
+
+    monkeypatch.setattr("app.agents.defect_commander.run_once", _pass_through)
+
+    return SimpleNamespace(jira=jira, persist=persist, guard_calls=guard_calls)
 
 
 STATE = {
@@ -279,3 +293,97 @@ def test_policy_always_requires_approval_for_jira_creation():
 
     assert requires_approval(ActionType.JIRA_TICKET_CREATION) is True
     assert requires_approval(ActionType.JIRA_TICKET_CREATION, confidence_score=100) is True
+
+
+# ── E7.6: the approved Jira write goes through the tool-call guard ───────────
+
+
+def _approve(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
+    monkeypatch.setattr(
+        "app.agents.defect_commander.check_jira_ticket_creation_policy",
+        AsyncMock(
+            return_value={
+                "requires_approval": False,
+                "initial_status": ActionStatus.APPROVED,
+                "policy_reasons": [],
+            }
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_approved_write_is_keyed_on_cluster_and_test_run(harness, monkeypatch):
+    _approve(monkeypatch)
+
+    await DefectCommander()._promote(dict(STATE))
+
+    (call,) = harness.guard_calls
+    assert call["tool"] == "jira_ticket_creation"
+    assert call["subject_id"] == STATE["cluster_id"]
+    assert call["scope_id"] == STATE["test_run_id"]
+    assert "attempt" not in call, "the key must never include the attempt number"
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_ticket_is_returned_without_filing_again(harness, monkeypatch):
+    from app.services.tool_call_idempotency import ToolCallOutcome
+
+    _approve(monkeypatch)
+    monkeypatch.setattr(
+        "app.agents.defect_commander.run_once",
+        AsyncMock(return_value=ToolCallOutcome(status="replayed", key="k", result={"key": "QA-1"})),
+    )
+
+    result = await DefectCommander()._promote(dict(STATE))
+
+    harness.jira.assert_not_awaited()
+    assert result["jira_ticket"] == {"key": "QA-1"}
+    assert result["jira_blocked_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_prior_outcome_files_nothing_and_says_so(harness, monkeypatch):
+    from app.services.tool_call_idempotency import ToolCallOutcome
+
+    _approve(monkeypatch)
+    monkeypatch.setattr(
+        "app.agents.defect_commander.run_once",
+        AsyncMock(return_value=ToolCallOutcome(status="outcome_unknown", key="k")),
+    )
+
+    result = await DefectCommander()._promote(dict(STATE))
+
+    harness.jira.assert_not_awaited()
+    assert result["jira_ticket"] is None
+    assert result["jira_blocked_reason"] == "tool_call_outcome_unknown"
+
+
+@pytest.mark.asyncio
+async def test_a_swallowed_jira_failure_is_not_recorded_as_executed(harness, monkeypatch):
+    """_create_jira_ticket returns (None, None) instead of raising. The adapter
+    must turn that into a failure, or the ledger would replay an empty ticket."""
+    _approve(monkeypatch)
+    harness.jira.return_value = (None, None)
+
+    result = await DefectCommander()._promote(dict(STATE))
+
+    assert result["jira_ticket"] is None
+    assert result["jira_blocked_reason"] == "jira_create_failed"
+
+
+@pytest.mark.asyncio
+async def test_a_reclaimed_lease_is_not_swallowed_as_a_promotion_failure(monkeypatch):
+    from app.services.pipeline_lease import LeaseLost
+
+    agent = DefectCommander()
+    monkeypatch.setattr(agent, "mark_stage_running", AsyncMock())
+    monkeypatch.setattr(agent, "broadcast_progress", AsyncMock())
+    monkeypatch.setattr(agent, "log_decision", AsyncMock())
+    monkeypatch.setattr(agent, "mark_stage_done", AsyncMock())
+    monkeypatch.setattr(agent, "_promote", AsyncMock(side_effect=LeaseLost("p1", "tok")))
+
+    with pytest.raises(LeaseLost):
+        await agent.run({**STATE, "pipeline_run_id": "p1"})

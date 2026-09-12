@@ -30,6 +30,8 @@ from app.models.postgres import (
     AIAnalysis, Defect, FailureCluster, TestCase,
 )
 from app.services.criticality_service import get_scoring_model_info, score_cluster
+from app.services.pipeline_lease import LeaseLost
+from app.services.tool_call_idempotency import JIRA_TICKET_TOOL, ToolCallFailed, run_once
 from app.services.defect_promotion_service import (
     _build_evidence_bundle,
     _composite_to_severity,
@@ -148,6 +150,10 @@ class DefectCommander(BaseAgent):
 
         try:
             result = await self._promote({**state, "cluster_id": cluster_id})
+        except LeaseLost:
+            # The ticket guard fences its claim; a reclaimed attempt stops here
+            # instead of being recorded as an ordinary promotion failure.
+            raise
         except Exception as exc:
             logger.error(
                 "defect_commander_failed", error=str(exc), exc_info=True,
@@ -305,14 +311,48 @@ class DefectCommander(BaseAgent):
             jira_blocked_reason = "pending_review"
         else:
             jira_blocked_reason = None
-            jira_ticket_result, _ = await _create_jira_ticket(
-                project_key=project_key,
-                title=jira_content.get("title", cluster.label),
-                description=jira_content.get("description", ""),
-                severity=severity,
-                labels=jira_content.get("labels", []),
-            )
-            jira_ticket = jira_ticket_result
+
+            async def _file_ticket() -> dict:
+                ticket, _url = await _create_jira_ticket(
+                    project_key=project_key,
+                    title=jira_content.get("title", cluster.label),
+                    description=jira_content.get("description", ""),
+                    severity=severity,
+                    labels=jira_content.get("labels", []),
+                )
+                if not ticket:
+                    # _create_jira_ticket swallows its own errors. Without this
+                    # the ledger would record "executed" for a ticket that was
+                    # never filed, and a retry would replay nothing forever.
+                    raise ToolCallFailed("jira_ticket_not_created")
+                return dict(ticket)
+
+            # E7.6: at most one ticket per (cluster, test run), however many
+            # times this stage is re-run after a crash.
+            try:
+                outcome = await run_once(
+                    project_id=project_id,
+                    tool=JIRA_TICKET_TOOL,
+                    scope_id=test_run_id,
+                    subject_id=cluster_id,
+                    target_type="failure_cluster",
+                    request_payload={
+                        "project_key": project_key,
+                        "cluster_id": cluster_id,
+                        "severity": severity,
+                    },
+                    call=_file_ticket,
+                    pipeline_run_id=state.get("pipeline_run_id"),
+                    test_run_id=test_run_id,
+                    fencing_token=state.get("_fencing_token"),
+                )
+            except ToolCallFailed:
+                outcome = None
+                jira_blocked_reason = "jira_create_failed"
+            if outcome is not None and outcome.status == "outcome_unknown":
+                jira_blocked_reason = "tool_call_outcome_unknown"
+            elif outcome is not None:
+                jira_ticket = outcome.result
 
         return {
             "defect_id": str(defect_id),

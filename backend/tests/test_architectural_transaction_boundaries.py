@@ -95,6 +95,17 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "Celery-task-owned: pipeline memory persist runs in an isolated "
         "AsyncSessionLocal from the worker, no HTTP request to hand off to.",
     ),
+    "tool_call_idempotency.py": (
+        1,
+        "Independent-session BY DESIGN (E7.6). A mutating tool call must be "
+        "claimed durably BEFORE the external request -- an 'executing' row "
+        "committed ahead of filing a Jira ticket is the only thing that lets a "
+        "re-run after a crash tell 'never filed' from 'filed and the answer was "
+        "lost'. Its caller is a graph node mid-stage with no request transaction "
+        "to borrow, and borrowing one would defer the claim until after the "
+        "irreversible call. One helper holds the single commit; claim and finish "
+        "each open their own session.",
+    ),
     "pipeline_lease.py": (
         1,
         "Independent-session BY DESIGN, and it must outlive nothing. The "
@@ -609,7 +620,8 @@ def test_allowlist_total_is_bounded() -> None:
     # worker. It cannot borrow the caller's transaction either: its caller is
     # a LangGraph node mid-model-call, whose half-finished writes would be
     # committed with it.
-    assert total <= 85, (
+    # 2026-09-12: 85 -> 86 for tool_call_idempotency.py (E7.6 claim-before-call).
+    assert total <= 86, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )
