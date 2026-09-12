@@ -48,6 +48,35 @@ Tests: `backend/tests/test_reviews_api.py` covers the refusal checks, both
 transitions, redaction, the router's commit and audit behaviour, and the access
 guard. `backend/tests/test_architectural_authorization.py` gains the
 `review_id` scan.
+## 2026-09-12 - backend test files pass when run on their own
+
+`pytest "tests/test_epic2_intelligence_front_door.py::TestRegressionGuards::test_run_intelligence_router_exists"`
+failed alone with `ImportError: cannot import name 'require_run_access' from
+'app.core.deps' (unknown location)` and passed only inside the full suite. It
+failed the same way on unmodified main at 349f78fb.
+
+- **Cause.** 34 test files carried a copy-pasted autouse fixture that replaced
+  `app.core.deps`, `app.core.security`, `app.db.postgres`, `app.db.mongo` and
+  `app.db.redis_client` in `sys.modules` with stubs built from a fixed list of
+  names. When a router gained a dependency the list went stale. Run alone, the
+  router was imported fresh under the stub and failed. In the full suite an
+  earlier test had already imported it with the real module, so the stub was
+  never consulted. 9 files (40 tests) failed in isolation; earlier fixes had
+  only added names to individual lists.
+- **Fix.** The stubs are gone. The real modules import with no env vars and no
+  running services, so they bought nothing. The guarded `bcrypt`/`jose` stubs,
+  which apply only when those packages are not installed, stay.
+  `test_app_settings.py` read `sys.modules["app.db.mongo"]`, which existed only
+  because of the stub. It now monkeypatches the dotted path, which imports the
+  real module. The deps stub had also been hiding a Redis call in
+  `test_user_management.py`. The real `invalidate_membership_cache` waited out
+  a ~4s connect timeout in two membership tests, so that one attribute is now
+  patched on the real module.
+- **Guard.** `backend/tests/test_no_stubbed_app_modules.py` fails on any
+  `setitem(sys.modules, ...)` or `sys.modules[...] =` write of those five
+  modules under `tests/`. It includes a self-test of the detector and checks
+  that each real module imports. Mutation-checked: putting the epic2 `deps`
+  stub back fails the guard at that line, and the original test fails again.
 
 ## 2026-09-12 - every AI report gets a human review request (E8.1)
 
@@ -455,8 +484,8 @@ batches 4 and 5 (PR #26).
 - **The form-body cap could be bypassed (HIGH).** `FormBodyLimitMiddleware`
   decided what was a form with `bytes.strip()`, which removes only ASCII
   whitespace, while starlette's own `parse_options_header` also strips the
-  latin-1 bytes ` ` and `…`. A `Content-Type` of
-  `application/x-www-form-urlencoded ` was therefore not a form to the
+  latin-1 bytes `ï¿½` and `ï¿½`. A `Content-Type` of
+  `application/x-www-form-urlencodedï¿½` was therefore not a form to the
   middleware and still parsed as one by starlette, so a 1 MiB body reached
   `POST /api/v1/auth/login` and ran its handler. The middleware now asks
   starlette's own classifier as well, and a body is a form if either says so.

@@ -2,9 +2,9 @@
 Unit tests for user management endpoints.
 All DB calls and heavy dependencies (bcrypt, jose) are mocked.
 
-Strategy: stub only the uninstalled native deps (bcrypt, jose) and the
-app.core.security / app.core.deps modules at the sys.modules level so
-the full import chain can resolve without Docker.
+Strategy: stub only native deps (bcrypt, jose) when they are not installed.
+The real app.core / app.db modules import without Docker or env vars, so
+they are never stubbed (see tests/test_no_stubbed_app_modules.py).
 """
 from __future__ import annotations
 
@@ -65,72 +65,10 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
                 _make_stub("jose", jwt=jose_jwt_stub, JWTError=Exception),
             )
 
-        # Always stub app.core modules that pull in bcrypt/jose — monkeypatch
-        # restores sys.modules after each test, so these never leak.
-        m.setitem(
-            sys.modules,
-            "app.core.security",
-            _make_stub(
-                "app.core.security",
-                verify_password=MagicMock(return_value=True),
-                get_password_hash=MagicMock(return_value="hashed_pw"),
-                create_access_token=MagicMock(return_value="access_token"),
-                create_refresh_token=MagicMock(return_value="refresh_token"),
-                decode_token=MagicMock(
-                    return_value={"sub": str(uuid.uuid4()), "type": "access"}
-                ),
-            ),
-        )
-
-        m.setitem(
-            sys.modules,
-            "app.core.deps",
-            _make_stub(
-                "app.core.deps",
-                require_role=MagicMock(return_value=MagicMock()),
-                get_current_active_user=MagicMock(),
-                verify_webhook_secret=MagicMock(),
-                require_project_role=MagicMock(return_value=MagicMock()),
-                invalidate_membership_cache=AsyncMock(),
-            ),
-        )
-
-        # Always stub DB connection factories (no real DB in unit tests)
-        from sqlalchemy.orm import DeclarativeBase
-
-        class _Base(DeclarativeBase):
-            pass
-
-        m.setitem(
-            sys.modules,
-            "app.db.postgres",
-            _make_stub(
-                "app.db.postgres",
-                get_db=MagicMock(),
-                AsyncSession=MagicMock(),
-                Base=_Base,
-            ),
-        )
-
-        m.setitem(
-            sys.modules,
-            "app.db.mongo",
-            _make_stub(
-                "app.db.mongo",
-                get_mongo_db=MagicMock(),
-                close_mongo=MagicMock(),
-            ),
-        )
-
-        m.setitem(
-            sys.modules,
-            "app.db.redis_client",
-            _make_stub(
-                "app.db.redis_client",
-                get_redis=MagicMock(),
-                close_redis=MagicMock(),
-            ),
-        )
+        # The membership routes invalidate a Redis cache after a write. The
+        # real function waits out a Redis connect timeout (~4s) before it
+        # swallows the error, so patch that one attribute on the real module.
+        m.setattr("app.core.deps.invalidate_membership_cache", AsyncMock())
 
         # Yield control to the test; monkeypatch will restore sys.modules after.
         yield
