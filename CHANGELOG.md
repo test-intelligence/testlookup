@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-09-11 â€” Trivy remediation review fixes
+
+Findings from the review of the Trivy remediation shipped in the re-audit
+batches 4 and 5 (PR #26).
+
+- **The form-body cap could be bypassed (HIGH).** `FormBodyLimitMiddleware`
+  decided what was a form with `bytes.strip()`, which removes only ASCII
+  whitespace, while starlette's own `parse_options_header` also strips the
+  latin-1 bytes ` ` and `…`. A `Content-Type` of
+  `application/x-www-form-urlencoded ` was therefore not a form to the
+  middleware and still parsed as one by starlette, so a 1 MiB body reached
+  `POST /api/v1/auth/login` and ran its handler. The middleware now asks
+  starlette's own classifier as well, and a body is a form if either says so.
+- **The frontend image's security updates could not reach the mirror behind a
+  TLS-intercepting proxy.** `apk upgrade` in the nginx stage now trusts the
+  staged interception CA the same way the node stage does
+  (`INSTALL_EXTRA_CA`). The three util-linux CVEs whose fix had not yet
+  reached the Alpine mirror are accepted in `.trivyignore.yaml` with an
+  expiry; the upgrade step picks them up once they land.
+- **A 413 from the new middlewares is now observable.** They are registered
+  innermost, so the refusal is logged and counted like any other response and
+  a browser receives it with CORS headers instead of a CORS failure.
+- **Acceptance wording.** The CVE-2026-54283 reason no longer implies only the
+  SAML ACS is unauthenticated: every `Form(...)` route parses its body before
+  authentication.
+
 ## 2026-09-11 â€” production-readiness re-audit, batches 4 and 5
 
 ### Authorization and API keys
