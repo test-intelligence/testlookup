@@ -70,7 +70,7 @@ def captured(monkeypatch):
     """Capture backfill calls made by the wrapper."""
     calls: list[dict] = []
 
-    async def _record(pipeline_run_id, stage_name, *, started_at):
+    async def _record(pipeline_run_id, stage_name, *, started_at, fencing_token=None):
         calls.append({
             "pipeline_run_id": pipeline_run_id,
             "stage_name": stage_name,
@@ -109,7 +109,7 @@ async def test_the_backfill_precedes_the_checkpoint(monkeypatch, quiet_workflow)
     """_checkpoint_stage only writes a row that already reads completed."""
     order: list[str] = []
 
-    async def _mark(pipeline_run_id, stage_name, *, started_at):
+    async def _mark(pipeline_run_id, stage_name, *, started_at, fencing_token=None):
         order.append("mark")
 
     async def _checkpoint(*_a, **_k):

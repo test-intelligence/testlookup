@@ -3,7 +3,7 @@
 The `/agents` (AI Pipelines) list showed only a workflow type per pipeline —
 users couldn't tell which run or suite a pipeline analysed. ``_attach_run_context``
 now decorates each ``AgentPipelineRun`` (read path, in place, like
-``_apply_effective_status``) with the owning TestRun's ``build_number`` +
+``_attach_public_status``) with the owning TestRun's ``build_number`` +
 ``primary_suite_name`` and the shared per-(project, suite) ``run_seq`` ("Run #N").
 
 This pins: the attach maps each pipeline to its run, leaves legacy rows (no

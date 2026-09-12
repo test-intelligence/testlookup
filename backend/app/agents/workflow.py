@@ -10,6 +10,8 @@ Improvements over v1:
   5. Stage-level checkpointing — each stage's output is persisted to DB after completion,
      enabling resume from last successful stage on pipeline retry
 """
+import asyncio
+import contextlib
 import hashlib
 import importlib.metadata
 import json
@@ -22,6 +24,13 @@ from typing import Any, Optional, cast
 from langgraph.graph import END, StateGraph
 
 from app.models.enums import PipelineRunStatus
+from app.services.pipeline_lease import (
+    LeaseLost,
+    acquire_lease_fields,
+    fence_or_raise,
+    held_lease,
+    release_lease_fields,
+)
 from app.services.workflow_run_state import DEGRADED, apply_transition, is_resumable
 
 from app.agents.analysis_agent import AnalysisAgent
@@ -134,7 +143,11 @@ def _stage_input_checksum(state: Any) -> str:
     hash exists to rule out.
     """
     if isinstance(state, dict):
-        state = {k: v for k, v in state.items() if k != "pipeline_deadline_ts"}
+        state = {
+            k: v
+            for k, v in state.items()
+            if k not in ("pipeline_deadline_ts", "_fencing_token")
+        }
     return _canonical_checksum(state)
 
 
@@ -976,16 +989,23 @@ async def _checkpoint_stage(
     stage_output: dict,
     *,
     input_checksum_sha256: str | None = None,
+    fencing_token: str | None = None,
 ) -> None:
     """
     Persist a stage's output dict to the AgentStageResult row so the pipeline
     can resume from this point if a later stage fails.
+
+    Fenced (E7.3): if this worker's lease was reclaimed the write is refused,
+    so a slow-but-alive attempt cannot overwrite the checkpoints of the
+    attempt that replaced it.
     """
     if not pipeline_run_id:
         return
     try:
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select as sa_select  # noqa: PLC0415
+
+            await fence_or_raise(db, pipeline_run_id, fencing_token)
 
             result = await db.execute(
                 sa_select(AgentStageResult).where(
@@ -1022,6 +1042,9 @@ async def _checkpoint_stage(
                 }
                 stage.idempotency_key = attempt_key
                 await db.commit()
+    except LeaseLost:
+        # Never swallowed: the caller must stop, not carry on writing.
+        raise
     except Exception as exc:
         logger.warning(
             "checkpoint_write_failed",
@@ -1277,6 +1300,12 @@ async def _claim_pipeline_resume(
         # in metadata predates it and stays for the replay breadcrumbs.
         pipeline.attempt = current_row_attempt + 1
         pipeline.next_retry_at = None
+        # E7.3: a fresh lease and a NEW fencing token. The token rotation is
+        # what stops a previous holder that is still alive: its next write is
+        # refused rather than landing underneath this attempt.
+        resume_token, lease_fields = acquire_lease_fields()
+        for _field, _value in lease_fields.items():
+            setattr(pipeline, _field, _value)
 
         stage_result = await db.execute(
             sa_select(AgentStageResult)
@@ -1309,6 +1338,7 @@ async def _claim_pipeline_resume(
 
         await db.commit()
         return {
+            "fencing_token": resume_token,
             "test_run_id": str(pipeline.test_run_id),
             "project_id": str(project_id),
             "workflow_type": pipeline.workflow_type,
@@ -1650,8 +1680,37 @@ def _make_checkpointed_node(original_node, stage_name: str):
             return {"completed_stages": [stage_name], "current_stage": stage_name}
 
         stage_started_at = datetime.now(timezone.utc)
+        fencing_token = cast(Optional[str], state.get("_fencing_token") or None)
         try:
-            result = cast(dict[str, Any], await original_node(state))
+            # E7.3: renew the lease from INSIDE the stage. A single long model
+            # call must not look dead to the reaper, and a stage that never
+            # calls the BaseAgent lifecycle hooks must still hold its lease.
+            async with held_lease(pipeline_run_id, fencing_token) as lease_lost:
+                node = asyncio.ensure_future(original_node(state))
+                if lease_lost is None:
+                    result = cast(dict[str, Any], await node)
+                else:
+                    watcher = asyncio.ensure_future(lease_lost.wait())
+                    done, _pending = await asyncio.wait(
+                        {node, watcher}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if node in done:
+                        watcher.cancel()
+                        result = cast(dict[str, Any], node.result())
+                    else:
+                        # The row was reclaimed while this stage ran. Stop now
+                        # rather than finishing work that will be fenced out.
+                        node.cancel()
+                        with contextlib.suppress(asyncio.CancelledError, Exception):
+                            await node
+                        raise LeaseLost(pipeline_run_id, fencing_token)
+        except LeaseLost:
+            logger.warning(
+                "stage_abandoned_lease_lost",
+                stage_name=stage_name,
+                pipeline_run_id=pipeline_run_id,
+            )
+            raise
         except Exception as exc:
             # Mark the individual stage as failed so it doesn't stay stuck in "running"
             error_msg = f"{stage_name} failed: {_safe_workflow_error(exc)}"
@@ -1663,6 +1722,8 @@ def _make_checkpointed_node(original_node, stage_name: str):
             )
             try:
                 await _mark_stage_failed(pipeline_run_id, stage_name, error_msg)
+            except LeaseLost:
+                logger.warning("mark_stage_failed_fenced_out", stage_name=stage_name)
             except Exception:
                 logger.warning("mark_stage_failed_db_error", stage_name=stage_name)
             raise
@@ -1679,7 +1740,10 @@ def _make_checkpointed_node(original_node, stage_name: str):
         # dropping their checkpoint data too.
         if pipeline_run_id and stage_name not in (result.get("skipped_stages") or []):
             await _mark_stage_executed(
-                pipeline_run_id, stage_name, started_at=stage_started_at
+                pipeline_run_id,
+                stage_name,
+                started_at=stage_started_at,
+                fencing_token=fencing_token,
             )
 
         # Persist checkpoint
@@ -1689,6 +1753,7 @@ def _make_checkpointed_node(original_node, stage_name: str):
                 stage_name,
                 result,
                 input_checksum_sha256=input_checksum,
+                fencing_token=fencing_token,
             )
 
         return result
@@ -1804,6 +1869,7 @@ async def run_offline_pipeline(
             "build_number":       build_number,
             "workflow_type":      workflow_type,
             "pipeline_deadline_ts": _pipeline_deadline(),
+            "_fencing_token": pipeline_setup.get("fencing_token"),
             # Stage outputs (initialised empty — agents populate these)
             "test_run_data":      None,
             "branch":             None,
@@ -2038,6 +2104,7 @@ async def run_deep_pipeline(
             "build_number":       build_number,
             "workflow_type":      "deep",
             "pipeline_deadline_ts": _pipeline_deadline(),
+            "_fencing_token": pipeline_setup.get("fencing_token"),
             "test_run_data":      None,
             "branch":             None,
             "failed_test_ids":    [],
@@ -2252,6 +2319,7 @@ async def _mark_stage_executed(
     stage_name: str,
     *,
     started_at: datetime,
+    fencing_token: str | None = None,
 ) -> None:
     """Backfill the row for a node that ran but wrote no stage record.
 
@@ -2265,6 +2333,7 @@ async def _mark_stage_executed(
         return
     try:
         async with AsyncSessionLocal() as db:
+            await fence_or_raise(db, pipeline_run_id, fencing_token)
             from sqlalchemy import select as sa_select  # noqa: PLC0415
 
             result = await db.execute(
@@ -2509,8 +2578,10 @@ async def _create_pipeline_run(
             change_ownership_enabled=change_ownership_enabled,
             defect_commander_enabled=defect_commander_enabled,
         )
+        _lease_token, _lease_fields = acquire_lease_fields()
         db.add(AgentPipelineRun(
             id=pipeline_run_id,
+            **_lease_fields,
             test_run_id=test_run_id,
             workflow_type=workflow_type,
             status="running",
@@ -2632,6 +2703,11 @@ async def _mark_pipeline_done(
             else:
                 apply_transition(run, PipelineRunStatus.FAILED, error=error)
             has_degraded_stages = bool(success and has_failed_stages)
+            # E7.3: a terminal row holds no lease. Leaving one set would make
+            # the reaper's "running past its lease" predicate meaningless and
+            # would keep a dead worker's token fencing out later writers.
+            for _field, _value in release_lease_fields().items():
+                setattr(run, _field, _value)
             if final_state:
                 prior_metadata = dict(run.execution_metadata or {})
                 # Materialize report recommendations as approval-gated action
