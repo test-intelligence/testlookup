@@ -610,7 +610,10 @@ async def test_finalize_is_idempotent_and_cancellation_updates_pipeline_atomical
     await workflow_mod._finalize(investigation_id, **kwargs)
 
     assert row.status == "cancelled"
-    assert pipeline.status == "cancelled"
+    # E7.1: the pipeline vocabulary has no ``cancelled``; the state machine maps
+    # it onto ``failed`` and keeps the reason in the error (public: failed).
+    assert pipeline.status == "failed"
+    assert pipeline.error.startswith("cancelled: ")
     assert recorded == ["recorded"]
     assert policy.shadow_runs_completed == 0
 

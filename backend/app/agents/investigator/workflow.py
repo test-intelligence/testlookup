@@ -37,6 +37,8 @@ import structlog
 from langgraph.graph import END, StateGraph
 from sqlalchemy import select, update
 
+from app.models.enums import PipelineRunStatus
+from app.services.workflow_run_state import apply_transition
 from app.agents.investigator.hypotheses import (
     CommitHypothesisAgent,
     EnvironmentHypothesisAgent,
@@ -714,9 +716,11 @@ async def _finalize(
                 )
             ).scalar_one_or_none()
             if existing_pipeline is not None:
-                existing_pipeline.status = row.status
-                existing_pipeline.completed_at = row.completed_at
-                existing_pipeline.error = row.error
+                # Idempotent reconcile: the investigation's terminal vocabulary
+                # (completed|failed|cancelled) maps onto the pipeline's through
+                # the state machine (cancelled -> failed with a prefix).
+                apply_transition(existing_pipeline, row.status, error=row.error)
+                existing_pipeline.completed_at = row.completed_at or existing_pipeline.completed_at
                 existing_pipeline.execution_metadata = {
                     **dict(existing_pipeline.execution_metadata or {}),
                     "investigation_id": investigation_id,
@@ -833,9 +837,8 @@ async def _finalize(
             )
         ).scalar_one_or_none()
         if pipeline is not None:
-            pipeline.status = status
+            apply_transition(pipeline, status, error=error)
             pipeline.completed_at = row.completed_at
-            pipeline.error = error[:2000] if error else None
             pipeline.execution_metadata = {
                 **dict(pipeline.execution_metadata or {}),
                 "investigation_id": investigation_id,
@@ -970,9 +973,8 @@ async def resume_investigation(investigation_id: str) -> dict[str, Any]:
         )).scalar_one_or_none()
         if pipeline is None:
             return {"skipped": "pipeline_not_found"}
-        pipeline.status = "pending"
+        apply_transition(pipeline, PipelineRunStatus.PENDING)
         pipeline.started_at = None
-        pipeline.completed_at = None
         pipeline.error = None
         await db.commit()
 
@@ -1070,10 +1072,8 @@ async def run_investigation(
                 ).with_for_update()
             )).scalar_one_or_none()
             if pipeline is not None:
-                pipeline.status = "running"
+                apply_transition(pipeline, PipelineRunStatus.RUNNING)
                 pipeline.started_at = started_at
-                pipeline.completed_at = None
-                pipeline.error = None
         budget = dict(investigation.budget or {})
         mode = investigation.mode
         triggered_by = investigation.triggered_by

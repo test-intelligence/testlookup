@@ -370,8 +370,8 @@ function StatusPill({ status }: { status: string | null }) {
       ? 'text-[var(--status-passed)] border-[var(--status-passed-bd)]/40'
       : status === 'failed'
       ? 'text-[var(--status-failed)] border-[var(--status-failed-bd)]/40'
-      : status === 'partial'
-      ? 'text-[var(--status-broken)] border-[var(--status-broken-bd)]/40'
+      : status === 'passed'
+      ? 'text-[var(--status-passed)] border-[var(--status-passed-bd)]/40'
       : 'text-[var(--color-text-muted)] border-[var(--color-border)]'
   return (
     <span

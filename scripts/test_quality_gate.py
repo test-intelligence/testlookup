@@ -2304,3 +2304,78 @@ def test_every_manifest_kind_dependabot_updates_is_enumerated(manifest: str, eco
     assert qg._dependabot_gaps([manifest], text) == [(manifest, ecosystem, directory)]
     covered = text + f'  - package-ecosystem: "{ecosystem}"\n    directories: ["{directory}"]\n'
     assert qg._dependabot_gaps([manifest], covered) == []
+
+
+# ── Guard: agents.pipeline-status-writes-via-state-machine (E7.1) ─────────────
+
+
+def test_pipeline_status_direct_assignment_is_flagged(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "agents" / "leaky.py", """
+        from app.models.postgres import AgentPipelineRun
+        async def finish(db, pipeline_id):
+            pipeline = (await db.execute(select(AgentPipelineRun))).scalar_one()
+            pipeline.status = "failed"
+    """)
+    violations = qg._agents_pipeline_status_writes_via_state_machine()
+    assert len(violations) == 1
+    assert "pipeline.status assigned directly" in violations[0].message
+
+
+def test_pipeline_status_write_inside_state_machine_is_allowed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "services" / "workflow_run_state.py", """
+        from app.models.postgres import AgentPipelineRun
+        def apply_transition(pipeline, to):
+            pipeline.status = to
+    """)
+    assert qg._agents_pipeline_status_writes_via_state_machine() == []
+
+
+def test_unrelated_status_assignment_is_not_flagged(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "services" / "outbox.py", """
+        from app.models.postgres import RunDownstreamOutbox
+        def fail(row):
+            row.status = "failed"
+    """)
+    assert qg._agents_pipeline_status_writes_via_state_machine() == []
+
+
+def test_apply_transition_call_is_not_flagged(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "agents" / "ok.py", """
+        from app.models.postgres import AgentPipelineRun
+        from app.services.workflow_run_state import apply_transition
+        async def finish(db):
+            pipeline = (await db.execute(select(AgentPipelineRun))).scalar_one()
+            apply_transition(pipeline, "failed", error="x")
+            pipeline.completed_at = None
+    """)
+    assert qg._agents_pipeline_status_writes_via_state_machine() == []
+
+
+# ── Guard: agents.no-partial-pipeline-status (E7.1) ───────────────────────────
+
+
+@pytest.mark.parametrize("snippet", [
+    'q = select(AgentPipelineRun).where(AgentPipelineRun.status == "partial")',
+    'q = select(AgentPipelineRun).where(AgentPipelineRun.status.in_(["failed", "partial"]))',
+    'q = select(AgentPipelineRun).where(AgentPipelineRun.status.in_({"completed", "cancelled"}))',
+    'TERMINAL = ("completed", "partial")\nq = select(AgentPipelineRun).where(AgentPipelineRun.status.in_(TERMINAL))',
+])
+def test_partial_pipeline_status_literal_is_flagged(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, snippet: str) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "services" / "stale.py", "from sqlalchemy import select\n" + snippet + "\n")
+    violations = qg._agents_no_partial_pipeline_status()
+    assert len(violations) == 1, [v.message for v in violations]
+
+
+def test_partial_on_other_models_is_not_flagged(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "services" / "other.py", """
+        from sqlalchemy import select
+        q = select(DeletionJob).where(DeletionJob.status == "partial")
+        r = select(AgentPipelineRun).where(AgentPipelineRun.status.in_(["completed", "passed"]))
+    """)
+    assert qg._agents_no_partial_pipeline_status() == []

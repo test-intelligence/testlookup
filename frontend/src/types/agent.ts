@@ -1,4 +1,15 @@
-export type PipelineStatus = 'pending' | 'running' | 'completed' | 'failed' | 'partial'
+// Internal vocabulary of agent_pipeline_runs.status (E7.1, migration 0173).
+// `partial` is retired: a finished run with failed stages is `completed` with
+// execution_metadata.stage_quality === 'degraded' (see isDegradedPipeline).
+export type PipelineStatus = 'pending' | 'running' | 'retry_wait' | 'completed' | 'passed' | 'failed'
+// Four-value public projection carried as `public_status` on pipeline responses.
+export type PublicPipelineStatus = 'in_progress' | 'completed' | 'failed' | 'passed'
+
+export function isDegradedPipeline(p: { status?: string | null; execution_metadata?: unknown } | null | undefined): boolean {
+  if (!p) return false
+  const meta = p.execution_metadata as { stage_quality?: unknown } | null | undefined
+  return (p.status ?? '').toLowerCase() === 'completed' && meta?.stage_quality === 'degraded'
+}
 export type StageStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
 
 export interface AgentStageResult {

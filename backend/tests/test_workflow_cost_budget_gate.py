@@ -280,7 +280,10 @@ async def test_partial_resume_preserves_original_budget_downgrade(monkeypatch):
         str(pipeline_id), success=True, final_state=final_state
     )
 
-    assert pipeline.status == "partial"
+    # E7.1: a graph that finished with failed stages is completed+degraded,
+    # not ``partial``; it stays resumable through is_resumable().
+    assert pipeline.status == "completed"
+    assert pipeline.execution_metadata["stage_quality"] == "degraded"
     assert pipeline.execution_metadata["cost_budget_decision"] == budget_snapshot
 
     replay_setup = await workflow._claim_pipeline_resume(str(pipeline_id))

@@ -31,6 +31,7 @@ from app.models.enums import (  # noqa: F401
     CriticalityLevel,
     ExecutionPath,
     InvestigationDepth,
+    PipelineRunStatus,
     RegressionClassification,
     SearchType,
     WorkflowType,
@@ -1996,6 +1997,10 @@ class AgentPipelineRun(Base):
             "spawn_depth >= 0 AND spawn_depth <= 8",
             name="ck_agent_pipeline_spawn_depth",
         ),
+        CheckConstraint(
+            "status IN ('pending', 'running', 'retry_wait', 'completed', 'passed', 'failed')",
+            name="ck_agent_pipeline_status",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -2008,11 +2013,29 @@ class AgentPipelineRun(Base):
         Integer, nullable=False, default=0, server_default="0"
     )
     workflow_type: Mapped[str] = mapped_column(String(20), default="offline")  # offline | live | deep
-    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|running|completed|failed|partial
+    # Closed vocabulary (migration 0173, CHECK ck_agent_pipeline_status):
+    # pending | running | retry_wait | completed | passed | failed.
+    # Written ONLY through app/services/workflow_run_state.py. ``partial`` is
+    # gone: a finished run with failed/skipped stages is ``completed`` with
+    # execution_metadata.stage_quality == "degraded".
+    status: Mapped[str] = mapped_column(String(20), default=PipelineRunStatus.PENDING.value)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     error: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Retry / lease / review columns (migration 0173). E7.1 adds them; E7.2
+    # (retry), E7.3 (lease + fencing) and E7.5 (review -> passed) fill them.
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5, server_default="5")
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_owner: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    fencing_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    review_policy: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="human_required", server_default="human_required"
+    )
     # Pipeline-level provenance (added in migration 0017)
     execution_metadata: Mapped[Optional[dict]] = mapped_column(JSON)    # {tools_used, schema_version, fallback_used, run_budget, budget_spend}
     provenance_metadata: Mapped[Optional[dict]] = mapped_column(JSON)   # {generated_by, tools_used_count, generated_at}

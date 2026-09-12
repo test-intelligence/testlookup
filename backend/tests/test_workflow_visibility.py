@@ -36,7 +36,7 @@ class TestPipelineModels:
         assert "fallback_used" in columns
 
     def test_pipeline_status_column_width(self):
-        """Status column must be wide enough for 'partial' (7 chars)."""
+        """Status column must be wide enough for 'retry_wait' (10 chars)."""
         col = AgentPipelineRun.__table__.c.status
         assert col.type.length >= 20
 
@@ -87,12 +87,16 @@ class TestDeepStageClassification:
         for stage in ["triage", "flaky_sentinel", "test_health", "release_risk"]:
             assert stage in content, f"Optional stage '{stage}' not found in workflow.py"
 
-    def test_partial_status_in_mark_pipeline_done(self):
-        """Verify _mark_pipeline_done writes 'partial' status."""
+    def test_mark_pipeline_done_never_writes_partial(self):
+        """E7.1: a graph that finished with failed stages is ``completed`` with
+        ``execution_metadata.stage_quality == "degraded"``; the literal
+        ``partial`` must not be written anywhere in workflow.py."""
         from pathlib import Path
         workflow_path = Path(__file__).parent.parent / "app" / "agents" / "workflow.py"
         content = workflow_path.read_text(encoding="utf-8")
-        assert '"partial"' in content, "Pipeline 'partial' status not found in workflow.py"
+        assert '"partial"' not in content, "workflow.py still writes the retired 'partial' status"
+        assert "apply_transition(run, PipelineRunStatus.COMPLETED" in content
+        assert "apply_transition(run, PipelineRunStatus.FAILED" in content
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -128,18 +132,24 @@ class TestPipelineStatusStates:
         assert resp["status"] == "completed"
         assert resp["stage_summary"]["completed"] == 9
 
-    def test_partial_response_shape(self):
+    def test_degraded_completion_response_shape(self):
+        """What used to be ``partial``: completed, with failed stages visible in
+        the summary and ``stage_quality`` degraded."""
+        from app.services.workflow_run_state import public_status
         resp = {
             "pipeline_run_id": "uuid-2",
             "workflow_type": "deep",
-            "status": "partial",
+            "status": "completed",
             "started_at": "2026-04-06T10:00:00Z",
             "completed_at": "2026-04-06T10:03:00Z",
             "error": None,
             "stage_summary": {"completed": 7, "failed": 2, "skipped": 0, "pending": 0},
+            "execution_metadata": {"stage_quality": "degraded"},
         }
-        assert resp["status"] == "partial"
+        assert resp["status"] == "completed"
+        assert public_status(resp["status"]) == "completed"
         assert resp["stage_summary"]["failed"] == 2
+        assert resp["execution_metadata"]["stage_quality"] == "degraded"
 
     def test_failed_response_shape(self):
         resp = {

@@ -160,7 +160,8 @@ async def repair_terminal_ai_summary_operation(
                 AgentPipelineRun.id == pipeline_run_id,
                 AgentPipelineRun.test_run_id == run_id,
                 TestRun.project_id == project_id,
-                AgentPipelineRun.status.in_({"completed", "partial"}),
+                # E7.1: ``partial`` no longer exists; degraded runs are ``completed``.
+                AgentPipelineRun.status.in_({"completed", "passed"}),
             )
         )
     ).scalar_one_or_none()

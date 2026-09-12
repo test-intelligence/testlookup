@@ -1566,6 +1566,10 @@ class AgentPipelineResponse(BaseModel):
     test_run_id: uuid.UUID
     workflow_type: str
     status: str
+    # E7.1: four-value public projection of ``status``
+    # (in_progress | completed | failed | passed). ``status`` keeps the internal
+    # vocabulary for one release so existing clients are not broken.
+    public_status: Optional[str] = None
     started_at: Optional[Any] = None
     completed_at: Optional[Any] = None
     error: Optional[str] = None

@@ -1,53 +1,52 @@
 /**
- * Regression: /agents page must render `partial` pipelines/stages.
+ * Regression: /agents must render DEGRADED pipelines visibly.
  *
- * Bug pinned (BUG-004, S2 — live homelab run 493d5c1f, 2026-06-06):
- * the AI pipeline ran and PERSISTED (`agent_pipeline_runs` row
- * `5c378cde`, status='partial', workflow_type='offline') and JOINs
- * to its `test_runs` row, so `GET /api/v1/agents/pipelines` returns
- * it. But the page showed NO pipeline. Root cause was FRONTEND: the
- * status maps `STATUS_COLOUR` / `STATUS_BG` and the `StatusIcon`
- * component had cases for running/completed/failed/skipped but NOT
- * `partial`. A `partial` pipeline (what a pipeline gets when a stage
- * errors, e.g. errors>=1 — very common) rendered with blank styling
- * and no icon, so it looked "missing".
+ * History (BUG-004, S2 — live homelab run 493d5c1f, 2026-06-06): a pipeline
+ * that finished with an errored stage was stored as status='partial', and the
+ * page's status maps and StatusIcon had no case for it, so the row rendered
+ * with blank styling and no icon and looked "missing".
  *
- * Fix: treat `partial` as a visible broken/degraded state everywhere
- * status is rendered for pipelines AND stages. The degraded tone is the
- * per-theme `--status-broken` token (was raw `amber-400` before the
- * palette-token ratchet) so it stays legible on the light themes too.
+ * E7.1 (2026-09-11) retired `partial`: such a run is now `completed` with
+ * `execution_metadata.stage_quality === 'degraded'`. The failure mode is the
+ * same, so the regression test moves with the vocabulary: the page must derive
+ * degradation through `isDegradedPipeline()` and render the broken tone, and
+ * it must not fall back to the retired literal.
  *
- * Strategy: pull the page source via Vite's `?raw` import (no Node
- * built-ins so the production `tsc` build doesn't trip on this test)
- * and assert `partial` is handled in the status maps and StatusIcon.
- * Catches an accidental revert.
+ * Strategy: pull the page source via Vite's `?raw` import (no Node built-ins
+ * so the production `tsc` build doesn't trip on this test).
  */
 import { describe, expect, it } from 'vitest'
 
-// Vite `?raw` query imports the file as a string at build time.
 import pageSource from './AgentStatusPage.tsx?raw'
+import { isDegradedPipeline } from '@/types/agent'
 
-describe('AgentStatusPage — partial status rendering (BUG-004 regression)', () => {
-  it('STATUS_COLOUR maps `partial` to the broken (degraded) token', () => {
-    // e.g.  partial: 'text-[var(--status-broken)]',
-    expect(pageSource).toMatch(/partial:\s*'text-\[var\(--status-broken\)\]'/)
+describe('AgentStatusPage — degraded pipeline rendering (BUG-004 regression, E7.1 vocabulary)', () => {
+  it('never keys rendering on the retired `partial` literal', () => {
+    expect(pageSource).not.toMatch(/['"]partial['"]/)
   })
 
-  it('STATUS_BG maps `partial` to the broken background token', () => {
-    // e.g.  partial: 'bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)]',
-    expect(pageSource).toMatch(/partial:\s*'bg-\[var\(--status-broken-bg\)\][^']*'/)
+  it('derives degradation through isDegradedPipeline for the pipeline card icon', () => {
+    expect(pageSource).toMatch(/StatusIcon\s+status=\{pipeline\.status\}\s+degraded=\{isDegradedPipeline\(pipeline\)\}/)
   })
 
-  it('StatusIcon has an explicit `partial` branch (not the neutral fallback)', () => {
-    // e.g.  if (status === 'partial') return <AlertTriangle ... />
-    expect(pageSource).toMatch(/status\s*===\s*'partial'/)
+  it('the degraded icon uses the broken warning tone, ahead of the completed check', () => {
+    const degraded = pageSource.search(/if \(degraded\) return <AlertTriangle[^>]*text-\[var\(--status-broken\)\]/)
+    const completed = pageSource.search(/status === 'completed' \|\| status === 'passed'/)
+    expect(degraded).toBeGreaterThan(-1)
+    expect(completed).toBeGreaterThan(degraded)
   })
 
-  it('the `partial` icon uses the broken (degraded) warning tone', () => {
-    // Lock in the degraded colour on the partial icon so it stays visibly
-    // degraded rather than reverting to a muted/neutral colour.
-    expect(pageSource).toMatch(
-      /status\s*===\s*'partial'\)\s*return\s*<AlertTriangle[^>]*text-\[var\(--status-broken\)\]/,
-    )
+  it('STATUS_COLOUR / STATUS_BG cover every internal status the API can return', () => {
+    for (const status of ['pending', 'running', 'retry_wait', 'completed', 'passed', 'failed']) {
+      expect(pageSource, `STATUS_COLOUR.${status}`).toMatch(new RegExp(`${status}:\\s*'text-\\[var\\(--`))
+      expect(pageSource, `STATUS_BG.${status}`).toMatch(new RegExp(`${status}:\\s*'bg-\\[var\\(--`))
+    }
+  })
+
+  it('a completed run with degraded stages is degraded; a clean one is not', () => {
+    expect(isDegradedPipeline({ status: 'completed', execution_metadata: { stage_quality: 'degraded' } })).toBe(true)
+    expect(isDegradedPipeline({ status: 'completed', execution_metadata: {} })).toBe(false)
+    expect(isDegradedPipeline({ status: 'failed', execution_metadata: { stage_quality: 'degraded' } })).toBe(false)
+    expect(isDegradedPipeline(null)).toBe(false)
   })
 })

@@ -4213,6 +4213,122 @@ def _ci_dependabot_covers_every_manifest() -> list[Violation]:
     ]
 
 
+
+# ── agents.pipeline-status-writes-via-state-machine (E7.1) ────────────────────
+#
+# ``agent_pipeline_runs.status`` has exactly one legal writer,
+# app/services/workflow_run_state.py. Five modules used to assign the column
+# directly and the vocabulary drifted (``partial``, ``cancelled``, a read-time
+# rewrite to ``failed``). This guard finds ``<row>.status = <expr>`` where
+# <row> is a name bound to an AgentPipelineRun in the same function body.
+
+_PIPELINE_ROW_NAMES = frozenset({"pipeline", "existing_pipeline", "prev_run", "pipeline_run", "agent_pipeline"})
+_STATE_MACHINE_PATH = ("backend", "app", "services", "workflow_run_state.py")
+
+
+def _binds_pipeline_run(func: ast.AST) -> set[str]:
+    """Names in ``func`` bound from an expression that mentions AgentPipelineRun,
+    plus the conventional pipeline-row names when the function mentions the model
+    at all."""
+    mentions = any(
+        isinstance(n, ast.Name) and n.id == "AgentPipelineRun" for n in ast.walk(func)
+    )
+    names: set[str] = set()
+    if not mentions:
+        return names
+    names |= _PIPELINE_ROW_NAMES
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            if any(isinstance(n, ast.Name) and n.id == "AgentPipelineRun" for n in ast.walk(node.value)):
+                names.add(node.targets[0].id)
+    return names
+
+
+def _agents_pipeline_status_writes_via_state_machine() -> list[Violation]:
+    root = REPO_ROOT / "backend" / "app"
+    allowed = REPO_ROOT.joinpath(*_STATE_MACHINE_PATH)
+    violations: list[Violation] = []
+    for path in iter_files(root, (".py",)):
+        if path == allowed:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for func in ast.walk(tree):
+            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            rows = _binds_pipeline_run(func)
+            if not rows:
+                continue
+            for node in ast.walk(func):
+                if not isinstance(node, ast.Assign):
+                    continue
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and target.attr == "status"
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id in rows
+                    ):
+                        violations.append(Violation(
+                            path,
+                            node.lineno,
+                            f"{target.value.id}.status assigned directly; use "
+                            "workflow_run_state.apply_transition / guarded_transition",
+                        ))
+    return violations
+
+
+# ── agents.no-partial-pipeline-status (E7.1) ──────────────────────────────────
+
+_RETIRED_PIPELINE_STATUSES = frozenset({"partial", "cancelled", "canceled"})
+
+
+def _agents_no_partial_pipeline_status() -> list[Violation]:
+    """``AgentPipelineRun.status`` compared with / filtered by / assigned a
+    retired literal. Migration 0173 backfilled the rows; a comparison against a
+    value the column can never hold again matches nothing forever."""
+    root = REPO_ROOT / "backend" / "app"
+    violations: list[Violation] = []
+    for path in iter_files(root, (".py",)):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        consts = _module_level_string_sequences(tree)
+        for node in ast.walk(tree):
+            literals: list[tuple[str, int]] = []
+            owner: Optional[ast.AST] = None
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("in_", "notin_", "not_in")
+                    and isinstance(node.func.value, ast.Attribute)
+                    and node.func.value.attr == "status"):
+                owner = node.func.value.value
+                for arg in node.args:
+                    if isinstance(arg, (ast.List, ast.Tuple, ast.Set)):
+                        literals += [(e.value, e.lineno) for e in arg.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+                    elif isinstance(arg, ast.Name) and arg.id in consts:
+                        literals += consts[arg.id]
+            elif isinstance(node, ast.Compare) and isinstance(node.left, ast.Attribute) and node.left.attr == "status":
+                owner = node.left.value
+                for comp in node.comparators:
+                    if isinstance(comp, ast.Constant) and isinstance(comp.value, str):
+                        literals.append((comp.value, comp.lineno))
+                    elif isinstance(comp, (ast.List, ast.Tuple, ast.Set)):
+                        literals += [(e.value, e.lineno) for e in comp.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            if owner is None or not (isinstance(owner, ast.Name) and owner.id == "AgentPipelineRun"):
+                continue
+            for value, lineno in literals:
+                if value.lower() in _RETIRED_PIPELINE_STATUSES:
+                    violations.append(Violation(
+                        path, lineno,
+                        f"AgentPipelineRun.status compared with retired literal {value!r}; "
+                        "rows are completed(+stage_quality=degraded) or failed(cancelled: ...) since 0173",
+                    ))
+    return violations
+
+
 GUARDS: list[Guard] = [
     Guard(
         name="backend.no-print",
@@ -4527,6 +4643,36 @@ GUARDS: list[Guard] = [
             "`await self.log_decision(...)`. A subclass that only extends "
             "behaviour can delegate with `await super().run(state)` instead — "
             "the parent's decisions still fire."
+        ),
+    ),
+    Guard(
+        name="agents.pipeline-status-writes-via-state-machine",
+        description=(
+            "agent_pipeline_runs.status is written only through "
+            "app/services/workflow_run_state.py (E7.1). Direct assignment "
+            "re-opens the vocabulary drift that produced 'partial', "
+            "'cancelled' and the read-time 30-minute 'failed' rewrite."
+        ),
+        check=_agents_pipeline_status_writes_via_state_machine,
+        fix_hint=(
+            "Replace `pipeline.status = ...` with "
+            "`apply_transition(pipeline, PipelineRunStatus.X, error=...)`, or "
+            "`await guarded_transition(db, id, expected=..., to=...)` where two "
+            "writers can race."
+        ),
+    ),
+    Guard(
+        name="agents.no-partial-pipeline-status",
+        description=(
+            "AgentPipelineRun.status is never compared with or filtered by the "
+            "retired literals 'partial' / 'cancelled' (E7.1, migration 0173)."
+        ),
+        check=_agents_no_partial_pipeline_status,
+        fix_hint=(
+            "Degraded runs are status='completed' with "
+            "execution_metadata.stage_quality='degraded' (use "
+            "workflow_run_state.is_resumable); cancelled runs are "
+            "status='failed' with error 'cancelled: ...'."
         ),
     ),
     Guard(

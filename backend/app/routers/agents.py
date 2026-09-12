@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.workflow_run_state import PUBLIC_STATUS, normalize_status, public_status
 from app.core.deps import (
     get_accessible_project_ids,
     get_current_active_user,
@@ -79,6 +80,25 @@ async def _failed_stage_pipeline_ids(
         .distinct()
     )
     return {row[0] for row in rows.all()}
+
+
+def _status_filter_values(status: str) -> list[str]:
+    """Map a ``?status=`` filter to stored values. Public names expand to
+    their internal set; internal (and legacy ``partial``) names pass through
+    normalisation so a stale client keeps getting rows, not an empty page."""
+    wanted = str(status or "").strip().lower()
+    public = [s.value for s, pub in PUBLIC_STATUS.items() if pub == wanted]
+    if public:
+        return public
+    return [normalize_status(wanted).value]
+
+
+def _attach_public_status(pipelines: list[AgentPipelineRun]) -> None:
+    """Stamp the four-value public projection onto each ORM row so the
+    response serialiser (``from_attributes``) picks it up. Runs AFTER the
+    effective-status derivation so a derived ``failed`` projects as failed."""
+    for p in pipelines:
+        p.public_status = public_status(p.status)  # type: ignore[attr-defined]
 
 
 def _is_stale_running(pipeline: AgentPipelineRun, *, now: datetime) -> bool:
@@ -242,7 +262,9 @@ async def list_pipelines(
     # callers that want every-derived-failed should poll without a status
     # filter and look at the response.
     if status:
-        q = q.where(AgentPipelineRun.status == status)
+        # Accept both the internal vocabulary and the public one (E7.1):
+        # ``?status=in_progress`` is every non-terminal internal state.
+        q = q.where(AgentPipelineRun.status.in_(_status_filter_values(status)))
     q = q.order_by(AgentPipelineRun.created_at.desc()).limit(limit)
 
     result = await db.execute(q)
@@ -256,6 +278,7 @@ async def list_pipelines(
     _apply_effective_status(
         pipelines, failed_stage_ids, now=datetime.now(timezone.utc),
     )
+    _attach_public_status(pipelines)
     await _attach_run_context(db, pipelines)
     return pipelines
 
@@ -274,6 +297,7 @@ async def get_pipeline(
     _apply_effective_status(
         [pipeline], failed_stage_ids, now=datetime.now(timezone.utc),
     )
+    _attach_public_status([pipeline])
     await _attach_run_context(db, [pipeline])
     return pipeline
 
@@ -829,6 +853,8 @@ async def get_pipeline_status(
         "pipeline_run_id": str(pipeline.id),
         "workflow_type": pipeline.workflow_type,
         "status": pipeline.status or "pending",
+        "public_status": public_status(pipeline.status or "pending"),
+        "degraded": (pipeline.execution_metadata or {}).get("stage_quality") == "degraded",
         "started_at": pipeline.created_at.isoformat() if pipeline.created_at else None,
         "completed_at": pipeline.completed_at.isoformat() if pipeline.completed_at else None,
         "error": pipeline.error,

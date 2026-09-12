@@ -12,6 +12,25 @@ class WorkflowType(str, PyEnum):
     LIVE    = "live"
 
 
+class PipelineRunStatus(str, PyEnum):
+    """Internal vocabulary of ``agent_pipeline_runs.status`` (architecture E7.1).
+
+    Exactly these six values are allowed by the DB CHECK constraint from
+    migration 0173. The public API projects them onto four:
+    ``in_progress | completed | failed | passed`` (see
+    ``app.services.workflow_run_state.public_status``). ``partial`` and
+    ``cancelled`` are legacy inputs that normalise to ``completed`` (with
+    ``stage_quality=degraded``) and ``failed`` (with a ``cancelled:`` error)
+    respectively; nothing may write them.
+    """
+    PENDING    = "pending"
+    RUNNING    = "running"
+    RETRY_WAIT = "retry_wait"
+    COMPLETED  = "completed"
+    PASSED     = "passed"
+    FAILED     = "failed"
+
+
 class InvestigationDepth(str, PyEnum):
     SHALLOW  = "shallow"
     STANDARD = "standard"
