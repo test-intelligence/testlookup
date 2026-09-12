@@ -1,7 +1,6 @@
 """Celery background tasks for ingestion and AI analysis."""
 import logging
 from datetime import datetime, timezone
-import random
 import time
 import uuid
 from typing import Any, cast
@@ -153,10 +152,17 @@ def _bind_task_context(task, **extra):
 
 
 def _exponential_backoff(attempt: int, base: int = 30, cap: int = 600) -> int:
-    """Return jittered exponential backoff seconds: min(base * 2^attempt, cap) ± 20%."""
-    delay = min(base * (2 ** attempt), cap)
-    jitter = delay * 0.2 * random.random()
-    return int(delay + jitter)
+    """Jittered exponential backoff seconds for a Celery retry (E7.2).
+
+    ``attempt`` here is Celery's 0-based ``self.request.retries``; the shared
+    :class:`app.services.retry_policy.RetryPolicy` is 1-based, so ``attempt + 1``.
+    Delegating keeps one implementation for every task; the jitter is now
+    symmetric (the old helper only ever added 0..20%).
+    """
+    from app.services.retry_policy import RetryPolicy  # noqa: PLC0415
+
+    policy = RetryPolicy(base_seconds=float(base), cap_seconds=float(cap))
+    return max(1, int(round(policy.delay(int(attempt) + 1))))
 
 
 def _live_run_completion_time(
@@ -1888,7 +1894,12 @@ def dispatch_transition_notifications(self, run_id: str):
     name="app.worker.tasks.run_agent_pipeline",
     base=DownstreamTrackedTask,
     bind=True,
-    max_retries=2,
+    # E7.2: Celery does not retry this task. A retryable failure moves the
+    # pipeline row to ``retry_wait`` and schedules a same-id resume under the
+    # shared RetryPolicy (see _schedule_pipeline_retry), so the attempt count
+    # and the next retry time live on the row a user can see. Outbox-driven
+    # deliveries keep PostgreSQL-owned retries (DownstreamTrackedTask).
+    max_retries=0,
     queue="ai_analysis",
     time_limit=1800,
 )
@@ -2037,6 +2048,36 @@ def run_agent_pipeline(
             self.request.id,
             type(exc).__name__,
         )
+        if source_outbox_id:
+            # Outbox deliveries: PostgreSQL owns the retry (DownstreamTrackedTask
+            # defers the row); a Celery-side reschedule would race the relay.
+            raise RuntimeError(safe_error) from None
+
+        scheduled = _run_async(
+            _schedule_pipeline_retry(
+                test_run_id=test_run_id,
+                workflow_type=workflow_type,
+                build_number=build_number,
+                pipeline_run_id=getattr(exc, "pipeline_run_id", None),
+                dedup_key=dedup_key,
+                dedup_owner=dedup_owner,
+                error=safe_error,
+            )
+        )
+        if scheduled is not None:
+            # The row is in retry_wait with next_retry_at set; the resume task
+            # is queued. This attempt is over, but the RUN is not failed, so the
+            # task returns instead of raising (a raise would count as a second
+            # failure and mislead Celery's result store).
+            return {
+                "completed_stages": [],
+                "error_count": 1,
+                "retry_scheduled": True,
+                **scheduled,
+            }
+        # Retries exhausted (or nothing to retry): release the admission lock so
+        # a manual re-trigger can start a fresh run, park the failure in the
+        # DLQ, and let the exception propagate as a real task failure.
         try:
             _run_async(_release_duplicate_lock(dedup_key, dedup_owner))
         except Exception as release_exc:
@@ -2045,16 +2086,119 @@ def run_agent_pipeline(
                 self.request.id,
                 type(release_exc).__name__,
             )
-        if self.request.retries >= self.max_retries:
-            # Move to DLQ before the final exception propagates
-            _run_async(_send_to_dlq(
-                task_name=self.name,
-                task_id=self.request.id,
-                kwargs={"test_run_id": test_run_id, "build_number": build_number},
-                error=safe_error,
-            ))
-        countdown = _exponential_backoff(self.request.retries)
-        raise self.retry(exc=RuntimeError(safe_error), countdown=countdown)
+        _run_async(_send_to_dlq(
+            task_name=self.name,
+            task_id=self.request.id,
+            kwargs={"test_run_id": test_run_id, "build_number": build_number},
+            error=safe_error,
+        ))
+        raise RuntimeError(safe_error) from None
+
+
+async def _schedule_pipeline_retry(
+    *,
+    test_run_id: str,
+    workflow_type: str,
+    build_number: str,
+    pipeline_run_id: str | None,
+    dedup_key: str,
+    dedup_owner: str,
+    error: str,
+) -> dict | None:
+    """Move a just-failed pipeline to ``retry_wait`` and queue its same-id resume.
+
+    Returns the scheduling facts (``pipeline_run_id``, ``attempt``,
+    ``next_retry_at``, ``delay_seconds``) or ``None`` when no further attempt is
+    allowed (attempt ceiling reached, row not found, or already moved on by
+    another writer). The caller then treats the run as failed.
+
+    The dedup lock is EXTENDED to cover the wait, not released: releasing it
+    would let a manual trigger or a webhook redelivery start a second
+    concurrent run in the gap before the scheduled resume fires (the mirror
+    image of the "dedup lock silences its own retry" defect). The state
+    machine, not the lock, is what refuses a new trigger while a run is
+    in progress; the lock is a belt for the case where that check races.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from app.db.postgres import AsyncSessionLocal
+    from app.db.redis_client import get_redis
+    from app.models.postgres import AgentPipelineRun
+    from app.services.retry_policy import pipeline_retry_policy
+    from app.services.workflow_run_state import (
+        IllegalTransition,
+        PipelineRunStatus,
+        apply_transition,
+        normalize_status,
+    )
+
+    async with AsyncSessionLocal() as db:
+        if pipeline_run_id:
+            stmt = select(AgentPipelineRun).where(
+                AgentPipelineRun.id == uuid.UUID(str(pipeline_run_id))
+            )
+        else:
+            stmt = (
+                select(AgentPipelineRun)
+                .where(
+                    AgentPipelineRun.test_run_id == uuid.UUID(str(test_run_id)),
+                    AgentPipelineRun.workflow_type == workflow_type,
+                    AgentPipelineRun.status == PipelineRunStatus.FAILED.value,
+                )
+                .order_by(AgentPipelineRun.created_at.desc())
+                .limit(1)
+            )
+        row = (await db.execute(stmt.with_for_update())).scalar_one_or_none()
+        if row is None or normalize_status(row.status) is not PipelineRunStatus.FAILED:
+            return None
+
+        attempt = int(row.attempt or 1)
+        policy = pipeline_retry_policy(max_attempts=row.max_attempts)
+        if not policy.can_retry(attempt):
+            return None
+
+        delay = policy.delay(attempt)
+        next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+        try:
+            apply_transition(row, PipelineRunStatus.RETRY_WAIT, error=error)
+        except IllegalTransition:
+            return None
+        row.next_retry_at = next_retry_at
+        await db.commit()
+        row_id = str(row.id)
+
+    # Keep the admission lock alive until the resume has had its chance.
+    try:
+        redis = get_redis()
+        await redis.expire(dedup_key, int(delay) + 300)
+    except Exception as exc:  # noqa: BLE001 -- the schedule is the truth, not the lock
+        logger.warning(
+            "[pipeline %s] dedup lock extend failed (%s)", row_id, type(exc).__name__
+        )
+
+    resume_agent_pipeline.apply_async(
+        kwargs={
+            "pipeline_run_id": row_id,
+            "build_number": build_number,
+            "expected_attempt": attempt + 1,
+        },
+        countdown=int(delay),
+        queue="ai_analysis",
+    )
+    logger.info(
+        "[pipeline %s] attempt %d failed; retry %d/%d scheduled in %ds",
+        row_id, attempt, attempt + 1, policy.max_attempts, int(delay),
+    )
+    return {
+        "pipeline_run_id": row_id,
+        "attempt": attempt,
+        "next_attempt": attempt + 1,
+        "max_attempts": policy.max_attempts,
+        "delay_seconds": int(delay),
+        "next_retry_at": next_retry_at.isoformat(),
+    }
 
 
 @celery_app.task(
@@ -2064,19 +2208,31 @@ def run_agent_pipeline(
     queue="ai_analysis",
     time_limit=1800,
 )
-def resume_agent_pipeline(self, pipeline_run_id: str, build_number: str = "resume"):
-    """Resume a failed/partial pipeline under its existing pipeline identity.
+def resume_agent_pipeline(
+    self,
+    pipeline_run_id: str,
+    build_number: str = "resume",
+    expected_attempt: int | None = None,
+):
+    """Resume a failed / retry_wait / degraded pipeline under its existing id.
 
-    The workflow atomically claims the terminal row, preserves the immutable
-    initial plan, and replays only checksum-authorized completed checkpoints.
+    The workflow atomically claims the row, preserves the immutable initial
+    plan, and replays only checksum-authorized completed checkpoints.
     Duplicate deliveries return ``pipeline_not_resumable`` without spending
     another model call.
+
+    ``expected_attempt`` (E7.2) is set by the scheduled retry: the claim
+    succeeds only if the row's next attempt number is exactly this one, so a
+    stale scheduled resume (the run was cancelled, or a manual retry already
+    ran) exits without side effects instead of resurrecting the run.
     """
     _bind_task_context(self, pipeline_run_id=pipeline_run_id)
     from app.agents.workflow import resume_pipeline
 
     try:
-        return _run_async(resume_pipeline(pipeline_run_id, build_number))
+        return _run_async(
+            resume_pipeline(pipeline_run_id, build_number, expected_attempt=expected_attempt)
+        )
     except Exception as exc:
         logger.error(
             "[Task %s] Pipeline resume failed (%s)",
