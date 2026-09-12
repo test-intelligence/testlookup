@@ -76,6 +76,7 @@ from app.routers import (
     suites,
     summary_report,
     test_execution_reviews,
+    reviews,
     test_health,
     test_management,
     users,
@@ -198,6 +199,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     defect_jira.router,                # PMF US-6.1/6.3: one-click Jira defects (project-scoped)
     agent_investigations.router,       # AI-1/AI-3: Investigator + agent policies + agent-runs ledger
     agent_actions.router,               # Generic typed action proposal review ledger
+    reviews.router,                    # E8.2: human review gate for AI reports
     fixer.router,                      # AI-2: the Fixer — config + run + fix-attempts
 )
 

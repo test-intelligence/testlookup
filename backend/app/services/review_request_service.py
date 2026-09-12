@@ -48,9 +48,12 @@ logger = structlog.get_logger("services.review_request")
 __all__ = [
     "AI_DISCLAIMER",
     "AI_DISCLAIMER_VERSION",
+    "REVIEW_REJECTED_ERROR_PREFIX",
+    "ReviewDecisionRefused",
     "create_run_review_request",
     "evidence_hash_from",
     "report_stages",
+    "settle_review",
     "stage_run_review_request",
 ]
 
@@ -223,3 +226,126 @@ async def stage_run_review_request(db: Any, **kwargs: Any) -> Optional[ReviewReq
         return await create_run_review_request(db, **kwargs)
     async with begin_nested():
         return await create_run_review_request(db, **kwargs)
+
+
+# ── Settling a review (architecture E8.2, section 8.3) ───────────────────────
+
+
+class ReviewDecisionRefused(Exception):
+    """A review decision the gate refuses. ``status_code`` is the HTTP status the
+    router returns; ``code`` is stable for clients to branch on."""
+
+    def __init__(self, status_code: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+
+
+#: Prefix of ``agent_pipeline_runs.error`` when a human rejects the run's report
+#: (section 7.2: ``completed -> failed`` with ``error.code = review_rejected``).
+REVIEW_REJECTED_ERROR_PREFIX = "review_rejected"
+
+_NOTES_MAX = 4000
+
+
+async def settle_review(
+    db: Any,
+    *,
+    review: ReviewRequest,
+    reviewer: Any,
+    decision: str,
+    reason_code: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> ReviewRequest:
+    """Accept or reject a pending review, moving its run through the state machine.
+
+    Refusals, in the order they are checked -- the cheapest proof that the
+    caller may not decide comes first, and nothing is written before all pass:
+
+    1. **Interactive login only.** An API key is refused whatever its owner's
+       role: the MCP server and CI both hold keys, and an agent acting through a
+       QA lead's key could otherwise approve its own output (section 8.3).
+    2. **No synthetic accounts.** Nobody logs in as them (``users.is_synthetic``).
+    3. **A rejection needs a reason code** from the closed vocabulary; it is the
+       only part of a rejection that becomes an eval label.
+    4. **Only a pending review can be settled.** An accepted, rejected or
+       superseded one is history.
+    5. **Separation of duties.** The person who requested the run cannot review
+       it. Enforced whenever the requester is recorded.
+    6. **The run must still be awaiting review.** One guarded UPDATE moves it
+       ``completed -> passed`` (accept) or ``completed -> failed`` (reject); if
+       the run moved first -- re-run, resumed -- the decision is refused rather
+       than recorded against a run it no longer describes.
+
+    ``notes`` is redacted before it is stored and is never exported. The caller
+    owns the commit.
+    """
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from app.core.deps import CREDENTIAL_KIND_JWT, credential_kind  # noqa: PLC0415
+    from app.models.postgres import REVIEW_REASON_CODES  # noqa: PLC0415
+    from app.services.privacy_service import sanitize_for_llm  # noqa: PLC0415
+    from app.services.workflow_run_state import (  # noqa: PLC0415
+        PipelineRunStatus,
+        TransitionLost,
+        guarded_transition,
+    )
+
+    if decision not in ("accepted", "rejected"):
+        raise ValueError(f"unknown review decision: {decision!r}")
+    if credential_kind(reviewer) != CREDENTIAL_KIND_JWT:
+        raise ReviewDecisionRefused(
+            403, "interactive_login_required",
+            "Review decisions require an interactive login; API keys are refused.",
+        )
+    if bool(getattr(reviewer, "is_synthetic", False)):
+        raise ReviewDecisionRefused(
+            403, "synthetic_account", "Synthetic accounts cannot review AI reports.",
+        )
+    if decision == "rejected" and reason_code not in REVIEW_REASON_CODES:
+        raise ReviewDecisionRefused(
+            422, "reason_code_required",
+            "A rejection needs a reason_code: " + ", ".join(REVIEW_REASON_CODES) + ".",
+        )
+    if review.state != "pending_review":
+        raise ReviewDecisionRefused(
+            409, "review_not_pending", f"This review is already {review.state}.",
+        )
+    if review.requested_by is not None and review.requested_by == getattr(reviewer, "id", None):
+        raise ReviewDecisionRefused(
+            403, "separation_of_duties",
+            "The person who requested this run cannot review its report.",
+        )
+
+    if review.pipeline_run_id is not None:
+        target = PipelineRunStatus.PASSED if decision == "accepted" else PipelineRunStatus.FAILED
+        run_error = None if decision == "accepted" else f"{REVIEW_REJECTED_ERROR_PREFIX}: {reason_code}"
+        try:
+            await guarded_transition(
+                db,
+                review.pipeline_run_id,
+                expected=PipelineRunStatus.COMPLETED,
+                to=target,
+                error=run_error,
+            )
+        except TransitionLost as exc:
+            raise ReviewDecisionRefused(
+                409, "run_not_awaiting_review",
+                "The run this review describes is no longer awaiting review.",
+            ) from exc
+
+    cleaned = (notes or "").strip()
+    review.state = decision
+    review.reviewed_by = getattr(reviewer, "id", None)
+    review.reviewed_at = datetime.now(timezone.utc)
+    review.reason_code = reason_code if decision == "rejected" else None
+    review.notes = sanitize_for_llm(cleaned)[:_NOTES_MAX] if cleaned else None
+    await db.flush()
+    logger.info(
+        "review_settled",
+        review_id=str(review.id),
+        decision=decision,
+        reason_code=review.reason_code,
+    )
+    return review
