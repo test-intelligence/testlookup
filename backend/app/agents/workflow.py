@@ -2772,6 +2772,35 @@ async def _mark_pipeline_done(
             ):
                 apply_transition(run, PipelineRunStatus.PASSED)
                 run.review_policy = REVIEW_NOT_APPLICABLE
+            # E8.1: a report-producing run that finished is a draft until a human
+            # accepts it. The request is staged in THIS transaction, so a
+            # completed report never exists without one and a request never
+            # exists for a run that did not finish. A failure here is contained
+            # by the service's savepoint and must not strand the run as running.
+            if success and run.status == PipelineRunStatus.COMPLETED.value:
+                from app.services import review_request_service  # noqa: PLC0415
+
+                produced = review_request_service.report_stages(stages)
+                if produced:
+                    try:
+                        review_project_id = (final_state or {}).get("project_id") or (
+                            await db.execute(
+                                sa_select(TestRun.project_id).where(TestRun.id == run.test_run_id)
+                            )
+                        ).scalar_one_or_none()
+                        await review_request_service.stage_run_review_request(
+                            db,
+                            run=run,
+                            project_id=review_project_id,
+                            report_stage_names=produced,
+                            evidence_bundle_sha256=review_request_service.evidence_hash_from(final_state),
+                        )
+                    except Exception as review_exc:  # noqa: BLE001
+                        logger.warning(
+                            "review_request_stage_failed",
+                            pipeline_run_id=pipeline_run_id,
+                            error_type=type(review_exc).__name__,
+                        )
             # E7.3: a terminal row holds no lease. Leaving one set would make
             # the reaper's "running past its lease" predicate meaningless and
             # would keep a dead worker's token fencing out later writers.

@@ -128,6 +128,9 @@ async def ensure_default_qa_lead(
             # Defence in depth. It does not block login on its own, but if an
             # operator later resets this account the UI prompts them.
             must_change_password=True,
+            # Nobody logs in as this account, so the review gate must refuse it
+            # (migration 0175, architecture section 8.3).
+            is_synthetic=True,
         )
         db.add(found)
         await db.flush()
@@ -137,6 +140,10 @@ async def ensure_default_qa_lead(
             user_id=str(found.id),
             email=target_email,
         )
+    elif not found.is_synthetic:
+        # Provisioned before migration 0175 and missed by its email-domain
+        # backfill (an address changed since, say): repair it here.
+        found.is_synthetic = True
 
     # Ensure the synthetic user is a project member at QA_LEAD.
     member_row = (

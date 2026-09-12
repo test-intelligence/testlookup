@@ -262,6 +262,14 @@ async def test_partial_resume_preserves_original_budget_downgrade(monkeypatch):
         "stage_ai_summary_notification_operation",
         AsyncMock(),
     )
+    # E8.1: Finalize also stages a review request for a report-producing run.
+    # This test is about the budget snapshot; its scripted session has no row
+    # for that query, so the review step is stubbed rather than allowed to
+    # consume a result meant for a later statement.
+    monkeypatch.setattr(
+        "app.services.review_request_service.stage_run_review_request",
+        AsyncMock(return_value=None),
+    )
 
     final_state = {
         "project_id": str(project_id),

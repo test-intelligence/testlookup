@@ -82,6 +82,30 @@ async def test_ensure_default_qa_lead_creates_user_when_missing():
     assert project.default_qa_lead_user_id == user.id
     assert user.role == UserRole.QA_LEAD.value
     assert user.is_active is True
+    # E8.1: nobody logs in as this account, so the review gate must be able to
+    # refuse it by a column, not by an email domain an admin could type.
+    assert user.is_synthetic is True
+
+
+@pytest.mark.asyncio
+async def test_an_existing_synthetic_user_missed_by_the_backfill_is_repaired():
+    """Migration 0175 marks synthetic accounts by email domain once; an account
+    it missed is flagged the next time the service touches it."""
+    from app.services.default_qa_lead_service import ensure_default_qa_lead
+
+    project = _project()
+    found = SimpleNamespace(id=uuid.uuid4(), role=UserRole.QA_LEAD.value, is_synthetic=False)
+    db = AsyncMock()
+    # 1: SELECT existing User by email (found, unflagged); 2: SELECT ProjectMember (none).
+    db.execute = AsyncMock(side_effect=[_scalar(found), _scalar(None)])
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.get = AsyncMock()
+
+    user = await ensure_default_qa_lead(db, project)
+
+    assert user is found
+    assert found.is_synthetic is True
 
 
 @pytest.mark.asyncio

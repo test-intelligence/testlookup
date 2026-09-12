@@ -174,6 +174,13 @@ class User(Base):
     is_service_account: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default=text("false")
     )
+    # An account no human logs in as (migration 0175): today the per-project
+    # default QA lead. The review gate refuses these (architecture section 8.3).
+    # Backfilled from the qa-lead.testlookup.local email domain; a column rather
+    # than the domain because any admin can type that domain into a new user.
+    is_synthetic: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=text("false")
+    )
     # True for self-registered users until they complete their first-time password reset
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     # Avatar colour slug chosen by the user (e.g. "blue", "emerald"); null = default slate
@@ -262,6 +269,11 @@ class Project(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+    # Whether AI reports still awaiting human review may be exported or notified
+    # (migration 0175, architecture section 8.2). Default off; enforced in E8.4.
+    allow_unreviewed_distribution: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=text("false")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
@@ -5059,6 +5071,109 @@ class AgentActionLedger(Base):
     error_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ── Human review gate (migration 0175, architecture E8.1) ────────────────────
+REVIEW_KINDS: tuple[str, ...] = ("report", "eval_drift")
+REVIEW_SUBJECT_TYPES: tuple[str, ...] = (
+    "pipeline_run", "invocation", "decision_report", "summary", "capability",
+)
+REVIEW_STATES: tuple[str, ...] = ("pending_review", "accepted", "rejected", "superseded")
+REVIEW_REASON_CODES: tuple[str, ...] = (
+    "wrong_category", "unsupported_claim", "missing_evidence",
+    "contradiction", "stale_data", "other",
+)
+
+
+def _review_in(values: tuple[str, ...]) -> str:
+    return ", ".join(f"'{value}'" for value in values)
+
+
+class ReviewRequest(Base):
+    """One human review for one AI report-producing run (architecture section 8.1).
+
+    Every AI-generated report is a proposal until a human accepts it. There is
+    one LIVE request per subject -- the reports a run produced inherit its review
+    state -- enforced by a partial unique index; superseded rows are kept, so
+    the history of who accepted what survives a re-run.
+
+    ``notes`` is free text and is never exported (section 8.1); ``reason_code``
+    is the closed vocabulary that becomes an eval label.
+    """
+
+    __tablename__ = "review_requests"
+    __table_args__ = (
+        CheckConstraint(f"kind IN ({_review_in(REVIEW_KINDS)})", name="ck_review_requests_kind"),
+        CheckConstraint(
+            f"subject_type IN ({_review_in(REVIEW_SUBJECT_TYPES)})",
+            name="ck_review_requests_subject_type",
+        ),
+        CheckConstraint(f"state IN ({_review_in(REVIEW_STATES)})", name="ck_review_requests_state"),
+        CheckConstraint(
+            f"reason_code IS NULL OR reason_code IN ({_review_in(REVIEW_REASON_CODES)})",
+            name="ck_review_requests_reason_code",
+        ),
+        CheckConstraint(
+            "state <> 'rejected' OR reason_code IS NOT NULL",
+            name="ck_review_requests_rejection_has_reason",
+        ),
+        CheckConstraint(
+            "state NOT IN ('accepted', 'rejected') OR reviewed_at IS NOT NULL",
+            name="ck_review_requests_settled_has_time",
+        ),
+        CheckConstraint(
+            "evidence_bundle_sha256 IS NULL OR evidence_bundle_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_review_requests_evidence_hash",
+        ),
+        Index("ix_review_requests_project_state", "project_id", "state", "created_at"),
+        Index(
+            "uq_review_requests_live_subject",
+            "kind", "subject_type", "subject_id",
+            unique=True,
+            postgresql_where=text("state <> 'superseded'"),
+        ),
+        Index(
+            "ix_review_requests_pending_scope",
+            "project_id", "test_run_id", "workflow_type",
+            postgresql_where=text("state = 'pending_review'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="report", server_default="report")
+    subject_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    pipeline_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("agent_pipeline_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    test_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    workflow_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    capability_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    state: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending_review", server_default="pending_review"
+    )
+    requested_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by: Mapped[str] = mapped_column(String(40), nullable=False, default="system", server_default="system")
+    reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason_code: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence_bundle_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    ai_disclaimer_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    superseded_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("review_requests.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 class AgentActionDispatchOutbox(Base):
