@@ -42,11 +42,24 @@ RUN npm run build
 
 # Production stage
 FROM nginx:alpine AS production
-# Take Alpine's security updates at build time (Trivy on PR #26): util-linux
-# fixes CVE-2026-53612/78409 (2.42.3-r0) and CVE-2026-78408 (2.42.3-r1)
-# shipped after the nginx:alpine tag was built. The four util-linux CVEs with
-# no fix yet are in mount(8), accepted in .trivyignore.yaml.
-RUN apk upgrade --no-cache
+# Take Alpine's security updates at build time (Trivy on PR #26). The
+# util-linux fixes (CVE-2026-53612/78409 2.42.3-r0, CVE-2026-78408 2.42.3-r1)
+# were not on the Alpine mirror yet at the c9fe5d71 homelab build, so those
+# three are accepted in .trivyignore.yaml alongside the four with no fix; this
+# step picks the fixes up when they land.
+#
+# apk reaches the mirror over HTTPS, so behind a TLS-intercepting middlebox it
+# needs the staged interception CA exactly like the node stage above
+# (R-B45-T-2): deploy-homelab.sh stages it in certs/*.crt with
+# INSTALL_EXTRA_CA=1. It is appended to the system bundle apk verifies
+# against, BEFORE apk touches the network. Empty certs/ (CI) = no-op.
+ARG INSTALL_EXTRA_CA=0
+COPY certs/ /opt/extra-ca/
+RUN if [ "$INSTALL_EXTRA_CA" = "1" ] && ls /opt/extra-ca/*.crt >/dev/null 2>&1; then \
+      cat /opt/extra-ca/*.crt >> /etc/ssl/certs/ca-certificates.crt; \
+      echo "[frontend] trusting interception CA for apk"; \
+    fi; \
+    apk upgrade --no-cache
 COPY --from=builder /app/dist /usr/share/nginx/html
 # nginx:alpine runs envsubst on /etc/nginx/templates/*.template at container
 # start, writing the result to /etc/nginx/conf.d/. This lets the same image
