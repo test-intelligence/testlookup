@@ -24,6 +24,8 @@ from app.services.action_policy import (
     check_jira_ticket_creation_policy,
 )
 from app.services.jira_client import create_jira_issue
+from app.services.pipeline_lease import LeaseLost
+from app.services.tool_call_idempotency import JIRA_TICKET_TOOL, prior_tool_calls, run_once
 
 logger = structlog.get_logger("agents.triage")
 
@@ -31,8 +33,18 @@ logger = structlog.get_logger("agents.triage")
 _AUTO_TRIAGE_CONFIDENCE = settings.AI_CONFIDENCE_THRESHOLD
 # Categories that always get a ticket (even at lower confidence)
 _HIGH_PRIORITY_CATEGORIES = {"PRODUCT_BUG", "INFRASTRUCTURE"}
-# Jira idempotency label prefix — prevents duplicate external tickets
-_JIRA_IDEMPOTENCY_PREFIX = "testlookup-triage"
+
+
+def _outcome_unknown_result(tc_id: object) -> dict:
+    """A ticket call an earlier attempt started and never recorded (E7.6)."""
+    return {
+        "test_case_id": tc_id,
+        "action": "jira_outcome_unknown",
+        "reason": (
+            "An earlier attempt started filing this ticket and never recorded the "
+            "result, so it may already exist. Not filing again; verify in Jira."
+        ),
+    }
 
 
 class DefectTriageAgent(BaseAgent):
@@ -53,7 +65,34 @@ class DefectTriageAgent(BaseAgent):
         triage_results: list[dict] = []
         errors: list[str] = []
 
+        # E7.6 (section 7.5): read the ledger before planning any work. A subject
+        # whose ticket call is still ``executing`` was started by an attempt that
+        # never recorded how it ended -- it may already have a ticket -- so it is
+        # taken off the work list rather than filed again. ``executed`` subjects
+        # stay on it: their call replays from the ledger without reaching Jira,
+        # which also repairs a defect row the crashed attempt never linked.
+        # Gated by the same flag as the call itself; a failed read falls back to
+        # the per-call guard, which enforces the same rule.
+        prior_calls: dict = {}
+        if settings.JIRA_ENABLED and analyses:
+            try:
+                prior_calls = await prior_tool_calls(
+                    project_id=project_id,
+                    tool=JIRA_TICKET_TOOL,
+                    scope_id=state.get("test_run_id"),
+                    subject_ids=list(analyses),
+                )
+            except Exception as lookup_exc:  # noqa: BLE001
+                logger.warning(
+                    "triage_prior_tool_calls_unavailable",
+                    error_type=type(lookup_exc).__name__,
+                )
+
         for tc_id, analysis in analyses.items():
+            prior = prior_calls.get(str(tc_id))
+            if prior is not None and prior.status == "executing":
+                triage_results.append(_outcome_unknown_result(tc_id))
+                continue
             confidence = analysis.get("confidence_score", 0)
             category = analysis.get("failure_category", "UNKNOWN")
 
@@ -74,6 +113,10 @@ class DefectTriageAgent(BaseAgent):
             try:
                 result = await self._triage_one(tc_id, analysis, project_id, test_run_data, state)
                 triage_results.append(result)
+            except LeaseLost:
+                # The row was reclaimed: stop, never carry on writing under a
+                # lease another attempt now holds.
+                raise
             except Exception as exc:
                 err = f"Triage failed for {tc_id}: {exc}"
                 logger.error("Triage failed", test_case_id=tc_id, error=str(exc), exc_info=True)
@@ -227,7 +270,6 @@ class DefectTriageAgent(BaseAgent):
         # transient Jira failure.
         ticket_key = ticket_url = ticket_id = None
         jira_error = None
-        idempotency_key = f"{_JIRA_IDEMPOTENCY_PREFIX}:{tc_id}:{state['test_run_id']}"
         if settings.JIRA_ENABLED:
             policy_result = await check_jira_ticket_creation_policy(
                 project_id=project_id,
@@ -248,19 +290,49 @@ class DefectTriageAgent(BaseAgent):
                 }
             try:
                 jira_project_key = await self._get_jira_key(project_id)
-                ticket = await create_jira_issue(
-                    project_key=jira_project_key or settings.JIRA_DEFAULT_PROJECT_KEY,
-                    test_name=test_name,
-                    run_id=state["test_run_id"],
-                    ai_summary=analysis.get("root_cause_summary", ""),
-                    recommended_action=", ".join(analysis.get("recommended_actions", [])[:2]),
-                    stack_trace="",
-                    dashboard_link=f"{settings.public_base_url}/runs/{state['test_run_id']}",
-                    labels=[idempotency_key],
+                resolved_project_key = jira_project_key or settings.JIRA_DEFAULT_PROJECT_KEY
+
+                async def _file_ticket() -> dict:
+                    # No ``labels=``: create_jira_issue has never accepted one.
+                    # The idempotency label this call used to pass raised
+                    # TypeError, which the except below logged as "skipped", so
+                    # the label never reached Jira. The ledger key is the guard.
+                    return await create_jira_issue(
+                        project_key=resolved_project_key,
+                        test_name=test_name,
+                        run_id=state["test_run_id"],
+                        ai_summary=analysis.get("root_cause_summary", ""),
+                        recommended_action=", ".join(analysis.get("recommended_actions", [])[:2]),
+                        stack_trace="",
+                        dashboard_link=f"{settings.public_base_url}/runs/{state['test_run_id']}",
+                    )
+
+                # E7.6: at most one ticket per (test case, test run), however
+                # many times this stage re-runs after a crash.
+                outcome = await run_once(
+                    project_id=project_id,
+                    tool=JIRA_TICKET_TOOL,
+                    scope_id=state["test_run_id"],
+                    subject_id=tc_id,
+                    target_type="test_case",
+                    request_payload={
+                        "project_key": resolved_project_key,
+                        "test_case_id": str(tc_id),
+                        "test_run_id": str(state["test_run_id"]),
+                    },
+                    call=_file_ticket,
+                    pipeline_run_id=state.get("pipeline_run_id"),
+                    test_run_id=state.get("test_run_id"),
+                    fencing_token=state.get("_fencing_token"),
                 )
+                if outcome.status == "outcome_unknown":
+                    return _outcome_unknown_result(tc_id)
+                ticket = outcome.result
                 ticket_id = ticket.get("ticket_id")
                 ticket_key = ticket.get("ticket_key")
                 ticket_url = ticket.get("ticket_url")
+            except LeaseLost:
+                raise
             except Exception as jira_exc:
                 jira_error = str(jira_exc)
                 logger.warning(

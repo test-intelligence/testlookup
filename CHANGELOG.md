@@ -1,5 +1,59 @@
 # Changelog
 
+## 2026-09-12 - agent tool calls happen at most once; triage's Jira call could never succeed (E7.6)
+
+A mutating stage that files a Jira ticket and then fails before recording it
+re-runs from the start, because checkpoints are written only at the end of a
+successful stage. Nothing let the re-run tell "never filed" from "filed and the
+answer was lost", so it filed again, and an external ticket cannot be rolled
+back.
+
+- **`app/services/tool_call_idempotency.py`** guards every mutating agent call
+  with a row in `agent_action_ledger`, keyed on `(tool, test run, subject)`
+  and never on the attempt number (architecture section 7.5). It commits an
+  `executing` row *before* the external call and records `executed` with the
+  result (or `failed`) after. A later attempt replays an `executed` result
+  without calling again, and retries a `failed` one. It never repeats an
+  `executing` one: that attempt may already have filed the ticket, and a
+  missing ticket is visible where a duplicate is permanent. Two attempts
+  racing for one key are decided by the ledger's unique constraint. The claim
+  is fenced by the pipeline lease; the finish is not, because recording a call
+  that already happened is true whoever holds the lease.
+- **Scope is the test run, not the pipeline run.** Section 7.5 names `run_id`,
+  but a manual retry under changed config starts a new pipeline (E7.4), and the
+  offline and deep pipelines both triage the same run. A ticket for one failure
+  in one test run is one external mutation however many pipelines ask for it.
+- **Triage** reads the ledger at stage entry and takes subjects with an unknown
+  outcome off its work list; its Jira call goes through the guard, so the
+  `jira_retry` branch that used to file a second ticket now replays the first
+  and repairs the defect link. **Defect commander**'s call goes through the
+  same guard, and a `_create_jira_ticket` that swallows its own error is
+  recorded as failed rather than executed.
+- **Triage's Jira call raised `TypeError` every time.** It passed `labels=[...]`
+  to `create_jira_issue`, which has never accepted `labels`. The `except` below
+  logged it as "Jira ticket creation skipped", so the "idempotency label" never
+  reached Jira and a policy-approved triage could not file a ticket. mypy had
+  been reporting it inside the ratchet baseline; the baseline drops by one. The
+  new test builds the client with `create_autospec` from the real function, so
+  the old call fails it.
+- A reclaimed lease (`LeaseLost`) raised from the guard is no longer swallowed
+  by either agent's broad `except` and logged as an ordinary failure.
+
+**No live path reaches these calls today.** `requires_approval` is
+unconditionally true for Jira ticket creation, so both agents stop at
+`pending_review` before the call, and approving a defect defers ticket creation
+to a manual step. The guard is in place for when approved actions execute
+(E8). The one path that does file tickets today, the one-click
+`POST /projects/{id}/defects/jira`, has its own duplicate-on-retry race; that
+is tracked separately because resolving an unknown outcome there is a product
+decision.
+
+Tests: `backend/tests/services/test_tool_call_idempotency.py`,
+`backend/tests/test_triage_tool_call_idempotency.py`, new cases in
+`backend/tests/regression/test_defect_commander_jira_approval.py`, and
+`backend/tests/integration/test_tool_call_idempotency_postgres.py` (real
+unique-constraint race and claim-before-call durability, added to CI).
+
 ## 2026-09-12 - four public pipeline statuses, and `passed` becomes reachable (E7.5)
 
 E7.1 closed the stored vocabulary to six internal states and added a
