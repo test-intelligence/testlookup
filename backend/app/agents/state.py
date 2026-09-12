@@ -170,6 +170,12 @@ class WorkflowState(TypedDict):
     workflow_verification: dict  # verifier checks comparing final state to plan
     agent_contracts: Annotated[dict[str, dict], _merge_dicts]  # agent_name -> versioned output contract metadata
     schema_version: int            # pipeline state schema version (increment on breaking changes)
+    # E7.3: this attempt's fencing token. Every stage write carries it and is
+    # refused once the pipeline row holds a different one, so a slow-but-alive
+    # worker cannot write underneath the attempt that replaced it. Excluded
+    # from checkpoints (see _serialisable_state): it belongs to the attempt,
+    # not to the work.
+    _fencing_token: Optional[str]
 
     # ── Phase 6: Per-Stage Observability ─────────────────────────
     # Accumulated by BaseAgent.mark_stage_done() — keyed by stage_name

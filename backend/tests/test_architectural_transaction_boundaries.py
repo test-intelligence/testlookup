@@ -95,6 +95,24 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "Celery-task-owned: pipeline memory persist runs in an isolated "
         "AsyncSessionLocal from the worker, no HTTP request to hand off to.",
     ),
+    "pipeline_lease.py": (
+        1,
+        "Independent-session BY DESIGN, and it must outlive nothing. The "
+        "lease heartbeat (E7.3) renews a pipeline's claim every 30s from "
+        "inside the stage that is running, so its caller is a LangGraph node "
+        "part-way through a model call -- there is no request, and no "
+        "transaction of the caller's that could be committed without also "
+        "committing that half-finished stage's writes. The renew therefore "
+        "opens its own AsyncSessionLocal and commits it (1 commit). It must "
+        "also be DURABLE the instant it succeeds: the whole point is that the "
+        "reaper, in another process, can see this worker is alive. A renew "
+        "staged on someone else's uncommitted transaction is invisible to the "
+        "reaper and the row gets reclaimed out from under a healthy worker. "
+        "Every other function here is read-only (verify_lease) or returns "
+        "column values for the CALLER to set inside its own transaction "
+        "(acquire_lease_fields, release_lease_fields), which is why acquiring "
+        "and releasing a lease add no commits.",
+    ),
     "activity/service.py": (
         1,
         "Independent-session BY DESIGN, for the 'attempt' half of the activity "
@@ -584,7 +602,14 @@ def test_allowlist_total_is_bounded() -> None:
     # Raised 73 -> 84 on 2026-09-08 for H12's durable run/webhook relays and
     # the finalization readiness commit. These are worker-owned recovery
     # boundaries with no request transaction to own their state transitions.
-    assert total <= 84, (
+    # Raised 84 -> 85 on 2026-09-12 for the E7.3 pipeline lease heartbeat
+    # (pipeline_lease.py, 1 commit). A lease renew is only useful once it is
+    # DURABLE -- the reaper is another process, and an uncommitted renew is
+    # invisible to it, so the row would be reclaimed out from under a healthy
+    # worker. It cannot borrow the caller's transaction either: its caller is
+    # a LangGraph node mid-model-call, whose half-finished writes would be
+    # committed with it.
+    assert total <= 85, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )

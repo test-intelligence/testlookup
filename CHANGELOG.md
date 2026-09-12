@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-09-12 - pipeline staleness becomes exact: leases, in-stage heartbeats, fencing tokens (E7.3)
+
+A `running` pipeline was declared dead by a fixed 30-minute age - in the
+reaper, and again as a read-time rewrite in the /agents router. That guess is
+wrong both ways: a legitimately long deep run was reported failed while it was
+still working, and a worker that died in its first minute kept its row
+`running` for half an hour. In between, the same row read as running in SQL
+and failed in the API.
+
+- **A lease, renewed from inside the stage.** `app/services/pipeline_lease.py`
+  takes a lease when the row goes `running` and renews it every 30 seconds for
+  a 60-second term. The heartbeat runs for the duration of the node, not at
+  stage boundaries: a single long model call no longer looks dead, and a stage
+  that never calls the BaseAgent lifecycle hooks (three specialists and the
+  two cluster-investigation nodes) still holds its lease. Timing follows the
+  M12 cluster-semaphore discipline - the deadline is measured from when the
+  renew was sent, each renew is bounded by the time left, and a renew that
+  stalls stops the holder before the lease can lapse.
+- **A fencing token, because a lease alone is not enough.** A slow-but-alive
+  worker can have its lease expire, be reaped, and keep writing. Every stage
+  write - checkpoints, executed/failed stage rows - now carries the token its
+  holder acquired and is refused (`LeaseLost`) once the row holds a different
+  one. The reaper rotates the token when it reclaims a row, so the previous
+  holder's next write fails instead of landing underneath the next attempt.
+  When the lease is lost mid-stage the node is cancelled rather than left to
+  finish work that will be rejected.
+- **The reaper reads lease expiry.** A lapsed lease counts as a failed attempt:
+  the run goes to `retry_wait` and is rescheduled under its own id, or to
+  `failed` at the attempt ceiling. Rows that predate the lease columns still
+  fall back to the age rule.
+- **The read-time derivation is deleted.** `RUNNING_STALE_THRESHOLD`,
+  `_apply_effective_status`, `_is_stale_running` and `_failed_stage_pipeline_ids`
+  are gone; the stored status is the status, and `?status=running` now returns
+  exactly the rows stored as running.
+
+`tests/test_agents_effective_status.py` pinned the deleted guess and is
+replaced by `tests/services/test_pipeline_lease.py` (fencing, renew, the
+stall and reclaim paths) and `tests/test_pipeline_reaper_lease.py` (lapsed
+lease reschedules, token rotation, the ceiling, and source assertions that the
+predicate and the router no longer use an age).
+
 ## 2026-09-11 - pipeline retries move onto the row: retry_wait, backoff, a visible attempt count (E7.2)
 
 `run_agent_pipeline` retried through Celery's own `self.retry` with

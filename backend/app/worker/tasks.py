@@ -4371,31 +4371,45 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
     time_limit=300,
 )
 def reap_stuck_agent_pipelines(self, stale_minutes: int = 30) -> dict:
-    """Periodic cleanup for agent_pipeline_runs that got stuck in
-    ``status='running'`` because a stage crashed before the outer
-    ``_mark_pipeline_done`` could record the failure.
+    """Reclaim pipelines whose worker stopped renewing its lease (E7.3).
 
-    The /agents read-time derivation already shows the right status to
-    end users; this task updates the DB rows so historical filters
-    (``?status=failed``) and metrics queries don't have to special-case
-    the running-but-actually-failed state.
+    Before leases this task declared a run dead by a fixed 30-minute age, and
+    the /agents router applied the same guess at read time. That is wrong both
+    ways: a legitimately long deep run was reported failed while it was still
+    working, and a worker that died in its first minute kept its row
+    ``running`` for half an hour.
 
-    A pipeline is reaped if EITHER:
-      * Any of its stage rows is ``status='failed'`` (downstream stages
-        couldn't continue, so the run is definitionally done).
-      * It has been ``running`` for longer than ``stale_minutes`` with
-        no ``completed_at`` (matches the Celery task time_limit on
-        ``run_agent_pipeline``).
+    Now a holder renews ``lease_expires_at`` every 30 seconds from inside the
+    stage it is running. A row whose lease has lapsed has no live holder, so:
+
+    * the fencing token is ROTATED, which makes every subsequent write from
+      the old holder fail (``LeaseLost``) instead of landing underneath the
+      next attempt;
+    * the row moves to ``retry_wait`` when attempts remain -- the lapse counts
+      as a failed attempt and the run is rescheduled under its own id -- or to
+      ``failed`` at the ceiling.
+
+    ``stale_minutes`` is retained for callers and for rows that predate the
+    lease columns (no ``lease_expires_at``), which still fall back to age.
     """
     from datetime import datetime, timezone, timedelta
-    from sqlalchemy import select, exists
+    from sqlalchemy import or_, select
     from app.db.postgres import AsyncSessionLocal
-    from app.models.postgres import AgentPipelineRun, AgentStageResult
+    from app.models.postgres import AgentPipelineRun
 
     async def _sweep() -> dict:
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
-        failed_due_to_stage = 0
-        failed_due_to_age = 0
+        from app.services.pipeline_lease import acquire_lease_fields
+        from app.services.retry_policy import pipeline_retry_policy
+        from app.services.workflow_run_state import (
+            IllegalTransition,
+            PipelineRunStatus,
+            apply_transition,
+        )
+
+        now = datetime.now(timezone.utc)
+        legacy_cutoff = now - timedelta(minutes=stale_minutes)
+        reaped_to_retry = 0
+        reaped_to_failed = 0
         errors = 0
         investigator_recovery = {"checked": 0, "reaped": 0}
 
@@ -4411,51 +4425,60 @@ def reap_stuck_agent_pipelines(self, stale_minutes: int = 30) -> dict:
             )
 
         async with AsyncSessionLocal() as db:
-            running = (
+            expired = (
                 await db.execute(
-                    select(AgentPipelineRun).where(
-                        AgentPipelineRun.status == "running"
+                    select(AgentPipelineRun)
+                    .where(
+                        AgentPipelineRun.status == PipelineRunStatus.RUNNING.value,
+                        or_(
+                            AgentPipelineRun.lease_expires_at < now,
+                            # Legacy rows: running, never leased, and older than
+                            # the age fallback.
+                            (AgentPipelineRun.lease_expires_at.is_(None))
+                            & (AgentPipelineRun.started_at.is_not(None))
+                            & (AgentPipelineRun.started_at < legacy_cutoff),
+                        ),
                     )
+                    .with_for_update(skip_locked=True)
                 )
             ).scalars().all()
 
-            for pipeline in running:
+            for pipeline in expired:
                 try:
-                    has_failed_stage = (
-                        await db.execute(
-                            select(
-                                exists().where(
-                                    AgentStageResult.pipeline_run_id == pipeline.id,
-                                    AgentStageResult.status == "failed",
-                                )
-                            )
+                    attempt = int(pipeline.attempt or 1)
+                    policy = pipeline_retry_policy(max_attempts=pipeline.max_attempts)
+                    lapsed = (
+                        "lease lapsed at "
+                        f"{pipeline.lease_expires_at.isoformat()}"
+                        if pipeline.lease_expires_at
+                        else f"no heartbeat within {stale_minutes}m"
+                    )
+                    error = f"Worker stopped heartbeating ({lapsed})"
+
+                    # Rotate the token FIRST: from here the old holder's writes
+                    # are refused even if the transition below is contended.
+                    _token, lease_fields = acquire_lease_fields(now=now)
+                    pipeline.fencing_token = lease_fields["fencing_token"]
+                    pipeline.lease_owner = None
+                    pipeline.lease_expires_at = None
+
+                    if policy.can_retry(attempt):
+                        apply_transition(pipeline, PipelineRunStatus.RETRY_WAIT, error=error)
+                        delay = policy.delay(attempt)
+                        pipeline.next_retry_at = now + timedelta(seconds=delay)
+                        resume_agent_pipeline.apply_async(
+                            kwargs={
+                                "pipeline_run_id": str(pipeline.id),
+                                "build_number": "reaper",
+                                "expected_attempt": attempt + 1,
+                            },
+                            countdown=int(delay),
+                            queue="ai_analysis",
                         )
-                    ).scalar()
-
-                    is_age_stale = (
-                        pipeline.started_at is not None
-                        and pipeline.completed_at is None
-                        and pipeline.started_at < cutoff
-                    )
-
-                    if not has_failed_stage and not is_age_stale:
-                        continue
-
-                    from app.services.workflow_run_state import apply_transition  # noqa: PLC0415
-
-                    apply_transition(
-                        pipeline,
-                        "failed",
-                        error=None if pipeline.error else (
-                            "Stage failure detected by reaper" if has_failed_stage
-                            else f"Pipeline exceeded {stale_minutes}m without completion"
-                        ),
-                    )
-
-                    if has_failed_stage:
-                        failed_due_to_stage += 1
+                        reaped_to_retry += 1
                     else:
-                        failed_due_to_age += 1
+                        apply_transition(pipeline, PipelineRunStatus.FAILED, error=error)
+                        reaped_to_failed += 1
 
                     # A worker can die after reserving a graph budget but before
                     # _mark_pipeline_done. Reconcile the durable receipt while
@@ -4465,6 +4488,9 @@ def reap_stuck_agent_pipelines(self, stale_minutes: int = 30) -> dict:
                     pipeline.execution_metadata = reconcile_reaped_pipeline_metadata(
                         dict(pipeline.execution_metadata or {})
                     )
+                except IllegalTransition:
+                    # Someone else moved it while we held the row: not an error.
+                    continue
                 except Exception as exc:
                     errors += 1
                     logger.warning(
@@ -4482,25 +4508,21 @@ def reap_stuck_agent_pipelines(self, stale_minutes: int = 30) -> dict:
                 await db.rollback()
                 errors += 1
 
-        return {
-            "checked": len(running),
-            "failed_due_to_stage": failed_due_to_stage,
-            "failed_due_to_age": failed_due_to_age,
+        result = {
+            "reaped_to_retry": reaped_to_retry,
+            "reaped_to_failed": reaped_to_failed,
             "errors": errors,
-            "stale_minutes": stale_minutes,
-            "investigator_recovery": investigator_recovery,
+            "investigator": investigator_recovery,
         }
+        if reaped_to_retry or reaped_to_failed:
+            logger.info(
+                "reap_stuck_agent_pipelines: %d rescheduled, %d failed at the ceiling",
+                reaped_to_retry, reaped_to_failed,
+            )
+        return result
 
-    logger.info(
-        "[Task %s] reap_stuck_agent_pipelines starting (stale>%dm)",
-        self.request.id, stale_minutes,
-    )
-    result = cast(dict[str, Any], _run_async(_sweep()))
-    logger.info(
-        "[Task %s] reap_stuck_agent_pipelines done: %s",
-        self.request.id, result,
-    )
-    return result
+    swept: dict = _run_async(_sweep())
+    return swept
 
 
 @celery_app.task(
