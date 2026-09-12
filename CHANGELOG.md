@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-09-11 - agentic architecture doc re-scanned against the re-audit merges (revision 3)
+
+`architecture/AGENTIC_OPENAPI_ARCHITECTURE.md` was written against `bb4d848b`;
+five re-audit merges (#24, #25, #26, #50) landed afterwards and moved four of
+its facts. Revision 3 marks each change "(rev 3)" inline:
+
+- Migrations 0166-0172 are now taken; the backlog's planning reservations move
+  to 0173-0180 and stay labels only (re-pick `down_revision` at merge).
+- `prompt_eval_recordings.py` (M16) runs gated prompts through the live model
+  and pins outputs to the prompt hash, so "nothing runs the candidate model" is
+  now true only for models, tiers and routing under an unchanged prompt, and
+  for prose prompts. E9.1 is re-scoped to generalise recordings rather than add
+  a new inference step.
+- `llm_cluster_semaphore.py` (M12) is a worked lease/renew/stop precedent the
+  run-lease design (E7.3) reuses; `llm_cost_reservation.py` (M13) makes the
+  hard cost cap atomic at the invocation boundary, so the model router only
+  makes the soft tier choice.
+- Enforced API-key scopes (N31/N32) are folded into the route role table;
+  `agent_runs.mode` is noted as ledger provenance, not a third policy home.
+
+Documentation only.
+
 ## 2026-09-11 — MinIO images move to quay.io
 
 `minio/minio` and `minio/mc` no longer exist on Docker Hub: the repositories
