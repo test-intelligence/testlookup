@@ -1640,6 +1640,94 @@ def test_activity_coverage_ignores_read_endpoints(
     assert qg._backend_activity_coverage() == []
 
 
+def test_activity_coverage_is_per_endpoint_not_per_module(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """One recording handler must not cover its unrecorded siblings.
+
+    The guard used to ask "does this router record anywhere?". Adding the
+    first event to routers/agents.py (E7.4 retry/cancel) answered yes for the
+    whole file, and four tracked gaps in the same router went stale with
+    nothing left tracking them.
+    """
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _router(tmp_path, "widgets.py", """
+        from app.services.activity.service import record as record_activity
+
+        @router.post("/{project_id}/widgets")
+        async def create_widget(project_id, db):
+            await record_activity(db, project_id=project_id, event_type="policy.updated")
+
+        @router.delete("/{project_id}/widgets/{widget_id}")
+        async def delete_widget(project_id, widget_id, db):
+            await db.delete(widget_id)
+    """)
+    violations = qg._backend_activity_coverage()
+    assert [v.line for v in violations] == [7], [v.format() for v in violations]
+
+
+def test_activity_coverage_accepts_a_handler_that_calls_a_recording_helper(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A module-level helper that records covers the handlers that call it."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _router(tmp_path, "widgets.py", """
+        from app.services.activity.service import record as record_activity
+
+        async def _emit(db, project_id):
+            await record_activity(db, project_id=project_id, event_type="policy.updated")
+
+        @router.post("/{project_id}/widgets")
+        async def create_widget(project_id, db):
+            await _emit(db, project_id)
+    """)
+    assert qg._backend_activity_coverage() == []
+
+
+def test_activity_coverage_flags_a_handler_that_never_calls_the_recording_service(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Importing a recording service covers only the handlers that call it."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "services" / "widget_service.py", """
+        from app.services.activity.service import record
+        async def approve(db):
+            await record(db, event_type="policy.updated")
+    """)
+    _router(tmp_path, "widgets.py", """
+        from app.services import widget_service as svc
+
+        @router.post("/{project_id}/widgets/approve")
+        async def approve_widget(project_id, db):
+            await svc.approve(db)
+
+        @router.post("/{project_id}/widgets/archive")
+        async def archive_widget(project_id, db):
+            await db.commit()
+    """)
+    violations = qg._backend_activity_coverage()
+    assert [v.line for v in violations] == [7], [v.format() for v in violations]
+
+
+def test_activity_coverage_follows_an_import_made_inside_the_handler(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Routers import services lazily inside the handler to dodge cycles."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "services" / "widget_service.py", """
+        from app.services.activity.service import record
+        async def do_it(db):
+            await record(db, event_type="policy.updated")
+    """)
+    _router(tmp_path, "widgets.py", """
+        @router.post("/{project_id}/widgets")
+        async def create_widget(project_id, db):
+            from app.services.widget_service import do_it
+            await do_it(db)
+    """)
+    assert qg._backend_activity_coverage() == []
+
+
 def test_activity_coverage_reports_every_uncovered_mutation_not_just_the_first(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
