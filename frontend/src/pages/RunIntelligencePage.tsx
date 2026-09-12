@@ -205,7 +205,7 @@ function stageStatus(s: PipelineStage): StageDisplayStatus {
   if (x === 'skipped')                                         return 'skipped'
   if (x === 'failed' || x === 'error')                         return 'failed'
   if (x === 'running' || x === 'in_progress')                  return 'running'
-  if (x === 'partial' || x === 'warning' || s.fallback_used)   return 'warn'
+  if (x === 'warning' || s.fallback_used)                      return 'warn'
   return 'pending'
 }
 

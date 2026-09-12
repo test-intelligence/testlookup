@@ -4285,13 +4285,16 @@ def reap_stuck_agent_pipelines(self, stale_minutes: int = 30) -> dict:
                     if not has_failed_stage and not is_age_stale:
                         continue
 
-                    pipeline.status = "failed"
-                    pipeline.completed_at = datetime.now(timezone.utc)
-                    if not pipeline.error:
-                        pipeline.error = (
+                    from app.services.workflow_run_state import apply_transition  # noqa: PLC0415
+
+                    apply_transition(
+                        pipeline,
+                        "failed",
+                        error=None if pipeline.error else (
                             "Stage failure detected by reaper" if has_failed_stage
                             else f"Pipeline exceeded {stale_minutes}m without completion"
-                        )
+                        ),
+                    )
 
                     if has_failed_stage:
                         failed_due_to_stage += 1

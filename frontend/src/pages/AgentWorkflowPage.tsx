@@ -191,8 +191,7 @@ function pipelineDot(status?: string | null): string {
   const normalized = (status ?? '').toLowerCase()
   if (normalized === 'running') return 'var(--color-accent)'
   if (normalized === 'failed') return 'var(--status-failed)'
-  if (normalized === 'partial') return 'var(--status-broken)'
-  if (normalized === 'completed' || normalized === 'success') return 'var(--status-passed)'
+  if (normalized === 'completed' || normalized === 'passed' || normalized === 'success') return 'var(--status-passed)'
   return 'var(--color-text-faint)'
 }
 

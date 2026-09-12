@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-09-11 - agent pipeline runs get a state machine; 'partial' is retired (E7.1)
+
+`agent_pipeline_runs.status` had five documented values and two undocumented
+writers. `_mark_pipeline_done` wrote `partial` (neither a success nor a
+failure), the Investigator wrote `cancelled` (which no reader listed), and
+the /agents router rewrote 30-minute-old `running` rows to `failed` at read
+time. Five modules assigned the column directly.
+
+- **One writer.** `app/services/workflow_run_state.py` owns the transition
+  table (`pending running retry_wait completed passed failed`), maps the
+  Investigator's `cancelled` onto `failed` with a `cancelled:` error prefix,
+  stamps `completed_at` on every terminal edge, and offers a race-safe
+  `guarded_transition` (`UPDATE ... WHERE status = :expected RETURNING`) that
+  raises instead of clobbering when another writer moved the row first.
+- **`partial` is gone.** A graph that finished with failed stages is
+  `completed` with `execution_metadata.stage_quality = "degraded"`; it stays
+  resumable through `is_resumable()`. Migration 0173 backfills existing rows,
+  adds the retry/lease/review columns E7.2-E7.5 will fill (`attempt`,
+  `max_attempts`, `next_retry_at`, `lease_owner`, `lease_expires_at`,
+  `fencing_token`, `heartbeat_at`, `cancel_requested`, `review_policy`), and
+  adds `ck_agent_pipeline_status` so the database refuses anything outside
+  the vocabulary. A real-PostgreSQL test proves the constraint rejects
+  `partial`, `cancelled` and an unknown value, and that the second of two
+  racing writers loses.
+- **Public projection.** Pipeline responses carry `public_status`
+  (`in_progress | completed | failed | passed`); `?status=in_progress` expands
+  to every non-terminal internal state. `status` keeps the internal
+  vocabulary for one release.
+- **Two new quality gates.** `agents.pipeline-status-writes-via-state-machine`
+  fails on any direct `pipeline.status = ...` outside the state machine;
+  `agents.no-partial-pipeline-status` fails on `AgentPipelineRun.status`
+  compared with a retired literal. Both ship with self-tests.
+- Frontend drops the `partial` branches; degraded completion renders from
+  `isDegradedPipeline()` (completed + stage_quality) instead.
+
+Not in this slice: the 30-minute reaper heuristic and the read-time rewrite
+still exist (E7.3 replaces them with leases and fencing); `passed` is only
+reachable once the review gate lands (E7.5/E8).
+
 ## 2026-09-11 - agentic architecture doc re-scanned against the re-audit merges (revision 3)
 
 `architecture/AGENTIC_OPENAPI_ARCHITECTURE.md` was written against `bb4d848b`;

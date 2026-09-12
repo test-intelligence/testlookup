@@ -5,7 +5,7 @@ import { getData, postData } from './http'
 export interface PipelineStatus {
   pipeline_run_id: string | null
   workflow_type: string
-  status: 'never_run' | 'pending' | 'running' | 'completed' | 'partial' | 'failed'
+  status: 'never_run' | 'pending' | 'running' | 'retry_wait' | 'completed' | 'passed' | 'failed'
   started_at: string | null
   completed_at: string | null
   error: string | null

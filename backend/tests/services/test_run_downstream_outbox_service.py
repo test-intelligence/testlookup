@@ -1672,7 +1672,7 @@ def test_terminal_pipeline_retry_repairs_ai_child_before_parent_completion(monke
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal_status", ["completed", "partial"])
+@pytest.mark.parametrize("terminal_status", ["completed", "passed"])
 async def test_terminal_success_repair_uses_completed_summary_stage(
     monkeypatch,
     terminal_status,

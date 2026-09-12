@@ -21,6 +21,9 @@ from typing import Any, Optional, cast
 
 from langgraph.graph import END, StateGraph
 
+from app.models.enums import PipelineRunStatus
+from app.services.workflow_run_state import DEGRADED, apply_transition, is_resumable
+
 from app.agents.analysis_agent import AnalysisAgent
 from app.agents.anomaly_agent import AnomalyDetectionAgent
 from app.agents.cluster_agent import ClusterAgent
@@ -1120,13 +1123,24 @@ async def _load_checkpoint(
                     .where(
                         AgentPipelineRun.test_run_id == test_run_id,
                         AgentPipelineRun.workflow_type == workflow_type,
-                        AgentPipelineRun.status.in_(["failed", "partial"]),
+                        # Resumable = failed, or completed with degraded stages
+                        # (the rows that used to be ``partial``); the metadata
+                        # half of that test is applied in Python below.
+                        AgentPipelineRun.status.in_(
+                            [PipelineRunStatus.FAILED.value, PipelineRunStatus.COMPLETED.value]
+                        ),
                     )
                     .order_by(AgentPipelineRun.started_at.desc())
                     .limit(1)
                 )
             prev_run = result.scalar_one_or_none()
             if not prev_run:
+                return None
+            prev_status = getattr(prev_run, "status", None)
+            if prev_status is not None and not is_resumable(
+                prev_status, getattr(prev_run, "execution_metadata", None)
+            ):
+                # completed but NOT degraded: nothing failed, nothing to resume.
                 return None
 
             # Load completed stage checkpoints
@@ -1201,7 +1215,7 @@ async def _claim_pipeline_resume(pipeline_run_id: str) -> dict[str, Any] | None:
             .with_for_update()
         )
         pipeline = result.scalar_one_or_none()
-        if pipeline is None or pipeline.status not in {"failed", "partial"}:
+        if pipeline is None or not is_resumable(pipeline.status, pipeline.execution_metadata):
             return None
 
         ownership = await db.execute(
@@ -1249,10 +1263,8 @@ async def _claim_pipeline_resume(pipeline_run_id: str) -> dict[str, Any] | None:
         metadata["resume_started_at"] = datetime.now(timezone.utc).isoformat()
         metadata["resume_source_pipeline_run_id"] = str(pipeline.id)
         pipeline.execution_metadata = metadata
-        pipeline.status = "running"
+        apply_transition(pipeline, PipelineRunStatus.RUNNING)
         pipeline.started_at = datetime.now(timezone.utc)
-        pipeline.completed_at = None
-        pipeline.error = None
 
         stage_result = await db.execute(
             sa_select(AgentStageResult)
@@ -2573,12 +2585,14 @@ async def _mark_pipeline_done(
                     s.stage_name == "summary" and s.status == "completed"
                     for s in stages
                 )
-                run.status = "partial" if has_failed_stages else "completed"
+                # E7.1: no more ``partial``. A graph that finished with failed
+                # stages is ``completed`` and carries stage_quality=degraded in
+                # execution_metadata (stamped inside the metadata rebuild below
+                # so the rebuild cannot drop it).
+                apply_transition(run, PipelineRunStatus.COMPLETED, error=error)
             else:
-                run.status = "failed"
-            run.completed_at = datetime.now(timezone.utc)
-            if error:
-                run.error = error[:2000]
+                apply_transition(run, PipelineRunStatus.FAILED, error=error)
+            has_degraded_stages = bool(success and has_failed_stages)
             if final_state:
                 prior_metadata = dict(run.execution_metadata or {})
                 # Materialize report recommendations as approval-gated action
@@ -2660,6 +2674,7 @@ async def _mark_pipeline_done(
                     "cluster_investigation_results": sanitize_persistence_payload(
                         final_state.get("cluster_investigation_results")
                     )[0],
+                    **({"stage_quality": DEGRADED} if has_degraded_stages else {}),
                     "final_state_checksum_sha256": _canonical_checksum(final_state),
                     "runtime_versions": _runtime_version_snapshot(),
                     "prompt_versions": _prompt_registry_versions(),

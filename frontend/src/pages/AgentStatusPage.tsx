@@ -15,6 +15,7 @@ import { useAIConfig } from '@/hooks/useAIConfig'
 import { useRuns } from '@/hooks/useRuns'
 import { usePermissions } from '@/hooks/usePermissions'
 import agentService from '@/services/agentService'
+import { isDegradedPipeline } from '@/types/agent'
 import type { ActiveLiveRun, AgentPipelineRun, AgentStageResult, PipelineTimeline } from '@/types/agent'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import ComputeCanvas from '@/components/agents/computeGraph/ComputeCanvas'
@@ -77,11 +78,14 @@ const STAGE_META: Record<string, { label: string; icon: React.ElementType; descr
 const STATUS_COLOUR: Record<string, string> = {
   pending: 'text-[var(--color-text-muted)]',
   running: 'text-[var(--color-text)]',
+  retry_wait: 'text-[var(--color-text)]',
   completed: 'text-[var(--status-passed)]',
-  // `partial` is a degraded-but-finished pipeline/stage (e.g. a stage errored,
-  // errors>=1). Render it as a visible amber warning state so the row never
-  // looks "missing" — see BUG-004.
-  partial: 'text-[var(--status-broken)]',
+  passed: 'text-[var(--status-passed)]',
+  // A degraded-but-finished pipeline (a stage errored) is `completed` with
+  // execution_metadata.stage_quality === 'degraded' since E7.1; it renders
+  // with this amber tone via the `degraded` key so the row never looks
+  // "missing" — see BUG-004.
+  degraded: 'text-[var(--status-broken)]',
   failed: 'text-[var(--status-failed)]',
   skipped: 'text-[var(--color-text-muted)]',
 }
@@ -89,8 +93,10 @@ const STATUS_COLOUR: Record<string, string> = {
 const STATUS_BG: Record<string, string> = {
   pending: 'bg-[var(--color-bg-hover)]',
   running: 'bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border-light)]',
+  retry_wait: 'bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border-light)]',
   completed: 'bg-[var(--status-passed-bg)] border border-[var(--status-passed-bd)]',
-  partial: 'bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)]',
+  passed: 'bg-[var(--status-passed-bg)] border border-[var(--status-passed-bd)]',
+  degraded: 'bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)]',
   failed: 'bg-[var(--status-failed-bg)] border border-[var(--status-failed-bd)]',
   skipped: 'bg-[var(--color-bg-secondary)]/80',
 }
@@ -160,12 +166,12 @@ function StructuredReportDetail({ markdown, hasPanel }: { markdown: string; hasP
   )
 }
 
-function StatusIcon({ status }: { status: string }) {
-  if (status === 'completed') return <CheckCircle className="w-4 h-4 text-[var(--status-passed)]" />
-  // `partial` = finished with errors (degraded). Amber warning triangle so the
-  // pipeline/stage stays visible instead of falling through to the neutral
-  // Clock fallback and looking "missing" — see BUG-004.
-  if (status === 'partial') return <AlertTriangle className="w-4 h-4 text-[var(--status-broken)]" />
+function StatusIcon({ status, degraded = false }: { status: string; degraded?: boolean }) {
+  // Degraded = finished with failed stages (what used to be `partial`). Amber
+  // warning triangle so the pipeline stays visible instead of falling through
+  // to the neutral Clock fallback and looking "missing" — see BUG-004.
+  if (degraded) return <AlertTriangle className="w-4 h-4 text-[var(--status-broken)]" />
+  if (status === 'completed' || status === 'passed') return <CheckCircle className="w-4 h-4 text-[var(--status-passed)]" />
   if (status === 'failed') return <XCircle className="w-4 h-4 text-[var(--status-failed)]" />
   if (status === 'running') return <RefreshCw className="w-4 h-4 text-[var(--color-text)] animate-spin" />
   if (status === 'skipped') return <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)]" />
@@ -325,12 +331,16 @@ function PipelineCard({
       }`}
     >
       <div className="flex items-center gap-2 mb-1">
-        <StatusIcon status={pipeline.status} />
+        <StatusIcon status={pipeline.status} degraded={isDegradedPipeline(pipeline)} />
         <span className="text-sm font-medium text-[var(--color-text)] capitalize">
           {pipeline.workflow_type} pipeline
         </span>
-        <span className={`ml-auto text-xs font-mono ${STATUS_COLOUR[pipeline.status]}`}>
-          {pipeline.status.toUpperCase()}
+        <span
+          className={`ml-auto text-xs font-mono ${
+            isDegradedPipeline(pipeline) ? STATUS_COLOUR.degraded : STATUS_COLOUR[pipeline.status]
+          }`}
+        >
+          {isDegradedPipeline(pipeline) ? 'DEGRADED' : pipeline.status.toUpperCase()}
         </span>
       </div>
       {/* Run context: which run / suite this pipeline analysed. ``run_seq`` is
