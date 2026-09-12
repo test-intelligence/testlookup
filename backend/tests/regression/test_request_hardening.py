@@ -105,7 +105,11 @@ async def test_a_chunked_urlencoded_body_with_no_content_length_is_refused(db_ca
 
     async def receive():
         reads["n"] += 1
-        return messages.pop(0) if messages else {"type": "http.disconnect"}
+        if messages:
+            return messages.pop(0)
+        # The body has ENDED (what a real client sends). Neither a disconnect
+        # loop nor an endless await: both hang a mutant instead of failing it.
+        return {"type": "http.request", "body": b"", "more_body": False}
 
     sent = []
 
@@ -206,7 +210,9 @@ async def test_a_declared_oversize_body_is_refused_without_reading_it(db_calls) 
 
     async def receive():
         reads["n"] += 1
-        return {"type": "http.request", "body": b"a" * 1024, "more_body": True}
+        # More than the cap, then a clean end of body.
+        more = reads["n"] < 200
+        return {"type": "http.request", "body": b"a" * 1024, "more_body": more}
 
     sent = []
 
@@ -249,4 +255,83 @@ async def test_the_saml_acs_is_still_bounded(db_calls) -> None:
     async with _client() as client:
         response = await client.post("/api/v1/sso/acs", content=body, headers=FORM)
     assert response.status_code == 413
+    assert db_calls["opened"] == 0
+
+
+# ── R-B45-T-1: latin-1 whitespace in the Content-Type ────────────────────────
+#
+# bytes.strip() leaves \xa0 / \x85; starlette's parse_options_header strips
+# them and parses the body as a form anyway. Every variant must still be 413,
+# with the handler never reached.
+
+_BYPASS = [
+    b"application/x-www-form-urlencoded\xa0",
+    b"\xa0application/x-www-form-urlencoded",
+    b"application/x-www-form-urlencoded\x85",
+    b"application/x-www-form-urlencoded\xa0;charset=utf-8",
+]
+
+
+async def _raw_post(path: str, headers: list, body: bytes) -> tuple[int, dict]:
+    import asyncio
+
+    step = 64 * 1024
+    chunks = [body[i:i + step] for i in range(0, len(body), step)] or [b""]
+    messages = [{"type": "http.request", "body": c, "more_body": True} for c in chunks]
+    messages[-1]["more_body"] = False
+
+    async def receive():
+        if messages:
+            return messages.pop(0)
+        # The body has ENDED (what a real client sends). Neither a disconnect
+        # loop nor an endless await: both hang a mutant instead of failing it.
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+        "method": "POST", "scheme": "http", "path": path, "raw_path": path.encode(),
+        "query_string": b"", "root_path": "", "headers": [(b"host", b"test"), *headers],
+        "client": ("127.0.0.1", 1234), "server": ("test", 80),
+    }
+    await asyncio.wait_for(app(scope, receive, send), timeout=20)
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    return start["status"], dict(start["headers"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("declared", [True, False], ids=["content-length", "chunked"])
+@pytest.mark.parametrize("content_type", _BYPASS,
+                         ids=["nbsp-trailing", "nbsp-leading", "nel-trailing", "nbsp-before-charset"])
+async def test_latin1_whitespace_in_the_content_type_is_still_a_form(db_calls, content_type, declared) -> None:
+    from starlette.requests import parse_options_header
+
+    # Premise: starlette would parse this body as an urlencoded form.
+    assert parse_options_header(content_type.decode("latin-1"))[0] == b"application/x-www-form-urlencoded"
+    body = b"username=" + b"a" * (1024 * 1024) + b"&password=x"
+    headers = [(b"content-type", content_type)]
+    if declared:
+        headers.append((b"content-length", str(len(body)).encode()))
+    status, _ = await _raw_post("/api/v1/auth/login", headers, body)
+    assert status == 413
+    assert db_calls["opened"] == 0, "the login handler ran"
+
+
+# ── R-B45-T-3: the 413 is seen by CORS and Telemetry ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_cross_origin_413_carries_cors_headers_and_is_seen_by_telemetry(db_calls) -> None:
+    origin = settings.CORS_ORIGINS[0]
+    body = b"username=" + b"a" * (1024 * 1024)
+    async with _client() as client:
+        response = await client.post("/api/v1/auth/login", content=body,
+                                     headers={**FORM, "Origin": origin})
+    assert response.status_code == 413
+    assert response.headers.get("access-control-allow-origin") == origin
+    assert response.headers.get("x-request-id"), "Telemetry did not see the 413"
     assert db_calls["opened"] == 0

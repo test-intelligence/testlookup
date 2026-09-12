@@ -22,6 +22,11 @@ starlette releases need a FastAPI major upgrade, tracked as a follow-up):
 from __future__ import annotations
 
 from starlette.responses import JSONResponse
+
+# The exact binding starlette's Request.form() uses to pick the urlencoded
+# parser (None when python-multipart is absent, and then starlette parses no
+# forms either).
+from starlette.requests import parse_options_header
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 FORM_MEDIA_TYPE = b"application/x-www-form-urlencoded"
@@ -100,7 +105,17 @@ class FormBodyLimitMiddleware:
     def _is_form(scope: Scope) -> bool:
         content_type = _header(scope, b"content-type") or b""
         media = content_type.split(b";", 1)[0].strip().lower()
-        return media == FORM_MEDIA_TYPE
+        if media == FORM_MEDIA_TYPE:
+            return True
+        # Also ask starlette's own classifier (R-B45-T-1). bytes.strip() only
+        # removes ASCII whitespace, but parse_options_header also strips the
+        # latin-1 bytes \xa0 and \x85: 'application/x-www-form-urlencoded\xa0'
+        # was not a form here yet starlette parsed the whole body as one --
+        # 1 MiB reached POST /api/v1/auth/login and its handler ran.
+        if parse_options_header is not None:
+            parsed, _ = parse_options_header(content_type.decode("latin-1"))
+            return bool(parsed == FORM_MEDIA_TYPE)
+        return False
 
     @staticmethod
     async def _reject(limit: int, scope: Scope, receive: Receive, send: Send) -> None:

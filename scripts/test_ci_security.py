@@ -121,6 +121,8 @@ def test_every_accepted_finding_says_why_and_expires() -> None:
 ACCEPTED = {
     "CVE-2026-54283", "CVE-2025-62727", "CVE-2026-48818", "CVE-2026-34070",
     "CVE-2026-53613", "CVE-2026-53614", "CVE-2026-76642", "CVE-2026-78410",
+    # util-linux fixes not yet on the Alpine mirror (c9fe5d71 homelab build)
+    "CVE-2026-53612", "CVE-2026-78408", "CVE-2026-78409",
 }
 
 
@@ -166,5 +168,21 @@ def test_python_runtime_images_carry_no_packaging_toolchain() -> None:
 def test_the_nginx_image_takes_alpine_security_updates() -> None:
     steps = _joined(_final_stage("frontend/Dockerfile"))
     assert steps[0].startswith("FROM nginx:alpine")
-    upgrade = [i for i, s in enumerate(steps) if s == "RUN apk upgrade --no-cache"]
+    upgrade = [i for i, s in enumerate(steps) if s.startswith("RUN ") and "apk upgrade --no-cache" in s]
     assert upgrade and upgrade[0] < next(i for i, s in enumerate(steps) if s.startswith("CMD"))
+
+
+def test_the_nginx_stage_trusts_the_staged_ca_before_apk_goes_online() -> None:
+    """R-B45-T-2: apk upgrade reaches the Alpine mirror over HTTPS; behind a TLS
+    interceptor (INSTALL_EXTRA_CA=1) the staged CA must be trusted first."""
+    steps = _joined(_final_stage("frontend/Dockerfile"))
+    [run] = [s for s in steps if "apk upgrade --no-cache" in s]
+    at = steps.index(run)
+    assert steps.index("ARG INSTALL_EXTRA_CA=0") < at
+    assert steps.index("COPY certs/ /opt/extra-ca/") < at
+    gate = run.index('"$INSTALL_EXTRA_CA" = "1"')
+    trust = run.index("cat /opt/extra-ca/*.crt >> /etc/ssl/certs/ca-certificates.crt")
+    assert gate < trust < run.index("apk upgrade --no-cache")
+    assert not any(s.startswith("RUN ") and "apk " in s for s in steps[:at]), (
+        "apk goes online before the CA step"
+    )

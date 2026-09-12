@@ -26,9 +26,13 @@ vulnerabilities:
   #    Follow-up: FastAPI/Starlette 1.x upgrade (needs a validated dependency move).
   - id: CVE-2026-54283
     statement: >-
-      MITIGATED. request.form() ignores its limits for urlencoded bodies; the one
-      unauthenticated form route is POST /api/v1/auth/login. FormBodyLimitMiddleware
-      (backend/app/middleware/request_hardening.py) refuses any urlencoded body over
+      MITIGATED. request.form() ignores its limits for urlencoded bodies, and such a
+      body is parsed before any auth runs: POST /api/v1/auth/login and the SAML ACS
+      POST /api/v1/sso/acs are unauthenticated, and every Form(...) route parses its
+      body before its auth dependency. FormBodyLimitMiddleware
+      (backend/app/middleware/request_hardening.py; classifies the Content-Type with
+      starlette's own parse_options_header, so latin-1 whitespace cannot slip past)
+      refuses any urlencoded body over
       FORM_URLENCODED_MAX_BYTES (64 KiB; 2 MiB for the SAML ACS, whose route also caps
       SAMLResponse at 1 MB) with 413, by Content-Length and by counting a chunked stream,
       before any handler or request.form() reads it.
@@ -52,6 +56,27 @@ vulnerabilities:
       Follow-up: langchain 1.x migration.
     expired_at: 2026-12-09
   # ── frontend image: util-linux in nginx:alpine, no fixed version published yet.
+  # ── frontend image: util-linux fixes not yet on the Alpine mirror (the c9fe5d71
+  #    homelab build upgraded only apk-tools); apk upgrade takes them when they land.
+  - id: CVE-2026-53612
+    statement: >-
+      NOT REACHABLE. util-linux flaw (fixed in 2.42.3-r0, not yet on the Alpine mirror
+      at build time) in the mount(8) path, per the PR #26 triage; the nginx container
+      never runs mount and has no privilege to mount (non-privileged pod, no CAP_SYS_ADMIN).
+    expired_at: 2026-12-09
+  - id: CVE-2026-78408
+    statement: >-
+      NOT REACHABLE. util-linux flaw (fixed in 2.42.3-r1, not yet on the Alpine mirror
+      at build time) in the mount(8) path, per the PR #26 triage; the nginx container
+      never runs mount and has no privilege to mount (non-privileged pod, no CAP_SYS_ADMIN).
+    expired_at: 2026-12-09
+  - id: CVE-2026-78409
+    statement: >-
+      NOT REACHABLE. util-linux flaw (fixed in 2.42.3-r0, not yet on the Alpine mirror
+      at build time) in the mount(8) path, per the PR #26 triage; the nginx container
+      never runs mount and has no privilege to mount (non-privileged pod, no CAP_SYS_ADMIN).
+    expired_at: 2026-12-09
+  # ── frontend image: util-linux, no fixed version published yet.
   - id: CVE-2026-53613
     statement: >-
       NOT REACHABLE. util-linux mount(8) TOCTOU; the nginx container never runs mount

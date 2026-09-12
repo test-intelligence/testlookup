@@ -202,7 +202,32 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
 )
 
 
+def _add_request_hardening(app: FastAPI) -> None:
+    """starlette CVE-2026-54283 / CVE-2025-62727 until the FastAPI/Starlette
+    upgrade: see middleware/request_hardening.py.
+
+    Registered FIRST in configure_middlewares on purpose (R-B45-T-3):
+    ``add_middleware`` makes each new middleware the outermost, so these sit
+    INSIDE Telemetry and CORS. A 413 is then logged and counted like any other
+    response, and a browser receives it with CORS headers instead of seeing a
+    CORS failure. The proxy trust boundary (install_proxy_boundary) stays
+    outermost.
+    """
+    from app.middleware.request_hardening import (
+        FormBodyLimitMiddleware,
+        RangeHeaderStripMiddleware,
+    )
+
+    app.add_middleware(
+        FormBodyLimitMiddleware,
+        max_bytes=settings.FORM_URLENCODED_MAX_BYTES,
+        path_limits={"/api/v1/sso/acs": settings.FORM_URLENCODED_ACS_MAX_BYTES},
+    )
+    app.add_middleware(RangeHeaderStripMiddleware)
+
+
 def configure_middlewares(app: FastAPI) -> None:
+    _add_request_hardening(app)  # innermost: inside Telemetry and CORS
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
@@ -218,20 +243,6 @@ def configure_middlewares(app: FastAPI) -> None:
 
     app.add_middleware(TelemetryMiddleware)
     app.add_middleware(SCIMRequestBodyLimitMiddleware)
-
-    # starlette CVE-2026-54283 / CVE-2025-62727 until the FastAPI/Starlette
-    # upgrade: see middleware/request_hardening.py.
-    from app.middleware.request_hardening import (
-        FormBodyLimitMiddleware,
-        RangeHeaderStripMiddleware,
-    )
-
-    app.add_middleware(
-        FormBodyLimitMiddleware,
-        max_bytes=settings.FORM_URLENCODED_MAX_BYTES,
-        path_limits={"/api/v1/sso/acs": settings.FORM_URLENCODED_ACS_MAX_BYTES},
-    )
-    app.add_middleware(RangeHeaderStripMiddleware)
 
     # NOTE: the proxy trust boundary is NOT installed here. It must be the
     # OUTERMOST middleware, and main.py registers more middleware after this
