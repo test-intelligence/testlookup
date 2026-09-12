@@ -36,7 +36,7 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 `make quality-gate` runs `scripts/quality_gate.py`, which enforces **38 guards**.
 16 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 20 ship at zero with **no baseline file at all** — those are
+fail CI. The other 22 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
