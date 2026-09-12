@@ -316,6 +316,7 @@ async def delete_attribution_rule(
     await db.commit()
 
 
+# activity: none - dry-run of a rule against recent runs; persists nothing
 @router.post("/preview")
 async def preview_attribution_rule(
     project_id: uuid.UUID,

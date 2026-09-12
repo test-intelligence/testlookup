@@ -51,6 +51,36 @@ Tests: `tests/services/test_pipeline_retry_config.py`,
 `tests/integration/test_pipeline_cancel_retry_postgres.py`, which proves the
 race against real row locks - the resolution is entirely a locking argument
 and a mocked session cannot see a lock.
+## 2026-09-12 - agent dispatch endpoints reach the activity feed; the coverage guard goes per-endpoint
+
+Branch `feat/agents-activity-events`.
+
+`backend.activity-coverage` treated a router as covered if it recorded an
+activity event anywhere. E7.4 added the first event to `routers/agents.py`
+(retry/cancel), which silently retired the four tracked gaps in the same
+router - trigger, bulk-trigger, defect-command and regression-watch - as
+stale baseline entries that nothing tracked any more.
+
+- **Four new events, all attempt-mode.** `analysis.triggered`,
+  `analysis.bulk_triggered` (one row per project with the queued count, not
+  one per run), `defect.commander_run` and `analysis.regression_watch_run`.
+  Attempt mode because none of these handlers commits the request session:
+  an outcome event staged on it would be dropped. Trigger records only when
+  a pipeline was actually queued, not when an in-progress one is returned;
+  the two command endpoints record only after the agent returns.
+- **The guard is per-endpoint.** A handler is covered when its own body
+  records, it calls through a service that records, or it calls a
+  module-level helper that does (one level each). Baseline keys did not
+  change, so the regeneration only adds what the module rule was hiding: 9
+  handlers in `releases.py` (phase add/update/delete, activate, gate
+  evaluations, sync, run link/unlink - several have registered events that
+  are never emitted) and 3 in `projects.py` (delete, reset, QA-lead password
+  reset). They are baselined, not fixed. `POST /release-attribution-rules/preview`
+  is opted out as a preview.
+
+Regression tests: `backend/tests/regression/test_agents_activity_events.py`
+and four new `test_activity_coverage_*` self-tests in
+`scripts/test_quality_gate.py`.
 
 ## 2026-09-12 - pipeline staleness becomes exact: leases, in-stage heartbeats, fencing tokens (E7.3)
 

@@ -1027,8 +1027,42 @@ _ACTIVITY_RECORDS = re.compile(
 )
 
 
-def _activity_module_records(path: Path, cache: dict) -> bool:
-    """Does this module - or a service it imports - record activity?
+def _activity_service_records(module: str, cache: dict) -> bool:
+    """Does ``app/services/<module>`` record activity itself?"""
+    key = "service:" + module
+    if key in cache:
+        return cache[key]
+    services_dir = REPO_ROOT / "backend" / "app" / "services"
+    rel = module.replace(".", "/")
+    found = False
+    for candidate in (services_dir / (rel + ".py"), services_dir / rel / "__init__.py"):
+        if not candidate.exists():
+            continue
+        body = candidate.read_text(encoding="utf-8", errors="ignore")
+        if _ACTIVITY_RECORDS.search(body):
+            found = True
+            break
+    cache[key] = found
+    return found
+
+
+def _activity_import_names(raw: str) -> list[tuple[str, str]]:
+    """``a, b as c`` (optionally parenthesised) -> [(a, a), (b, c)]."""
+    raw = raw.replace("(", "").replace(")", "")
+    out: list[tuple[str, str]] = []
+    for part in raw.split(","):
+        part = part.split("#")[0].strip()
+        if not part:
+            continue
+        original, _, alias = part.partition(" as ")
+        original, alias = original.strip(), alias.strip()
+        if original.isidentifier():
+            out.append((original, alias if alias.isidentifier() else original))
+    return out
+
+
+def _activity_recording_bindings(text: str, cache: dict) -> set[str]:
+    """Local names bound, by an import in ``text``, to a recording service.
 
     Follows ONE level of service import, which is the shape the real call sites
     take: a router delegates to ``services/foo_service.py`` and the service
@@ -1036,49 +1070,55 @@ def _activity_module_records(path: Path, cache: dict) -> bool:
     rather than discovered later: resolving them properly needs a call graph,
     and the behavioural tests in ``tests/test_activity_producers.py`` are what
     actually prove a row lands.
+
+    A binding is a module alias (``svc`` in ``from app.services import
+    foo_service as svc``) or a name imported from one (``do_it`` in ``from
+    app.services.foo_service import do_it``). Calling ANY function through a
+    recording service counts; which of its functions records is the service's
+    business and, again, the behavioural tests'.
     """
-    key = str(path)
-    if key in cache:
-        return cache[key]
-    cache[key] = False  # break import cycles
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return False
+    bound: set[str] = set()
 
-    if _ACTIVITY_RECORDS.search(text):
-        cache[key] = True
-        return True
-
-    services_dir = REPO_ROOT / "backend" / "app" / "services"
-    modules: set = set()
-
-    # ``from app.services.foo_service import bar`` / ``import app.services.foo``
-    dotted = r"from app\.services\.([\w.]+) import|import app\.services\.([\w.]+)"
-    for match in re.finditer(dotted, text):
-        modules.add((match.group(1) or match.group(2)).replace(".", "/"))
+    # ``from app.services.foo_service import bar, baz as qux``
+    for match in re.finditer(r"from app\.services\.([\w.]+) import ([^\n(]+|\([^)]*\))", text):
+        if _activity_service_records(match.group(1), cache):
+            bound.update(alias for _, alias in _activity_import_names(match.group(2)))
 
     # ``from app.services import foo_service as svc, bar_service``
     # Missing this second form reported flaky_quarantine.py as uncovered while
     # its service records on its behalf. A false entry in the baseline is worse
     # than no guard at all: it teaches the reader to ignore the list.
-    grouped = r"from app\.services import ([^\n(]+|\([^)]*\))"
-    for match in re.finditer(grouped, text):
-        raw = match.group(1).replace("(", "").replace(")", "")
-        for part in raw.split(","):
-            name = part.strip().split(" as ")[0].strip()
-            if name and name.isidentifier():
-                modules.add(name)
+    for match in re.finditer(r"from app\.services import ([^\n(]+|\([^)]*\))", text):
+        for original, alias in _activity_import_names(match.group(1)):
+            if _activity_service_records(original, cache):
+                bound.add(alias)
 
-    for mod in modules:
-        for candidate in (services_dir / (mod + ".py"), services_dir / mod / "__init__.py"):
-            if not candidate.exists():
-                continue
-            body = candidate.read_text(encoding="utf-8", errors="ignore")
-            if _ACTIVITY_RECORDS.search(body):
-                cache[key] = True
-                return True
-    return False
+    # ``import app.services.foo_service [as svc]``
+    for match in re.finditer(r"import (app\.services\.([\w.]+))(?: as (\w+))?", text):
+        if _activity_service_records(match.group(2), cache):
+            bound.add(match.group(3) or match.group(1))
+    return bound
+
+
+def _activity_called_names(node: ast.AST) -> set[str]:
+    """Every callee in ``node`` as dotted text: ``do_it``, ``svc.approve``."""
+    called: set[str] = set()
+    for sub in ast.walk(node):
+        if not isinstance(sub, ast.Call):
+            continue
+        parts: list[str] = []
+        func = sub.func
+        while isinstance(func, ast.Attribute):
+            parts.append(func.attr)
+            func = func.value
+        if isinstance(func, ast.Name):
+            parts.append(func.id)
+            called.add(".".join(reversed(parts)))
+    return called
+
+
+def _activity_calls_binding(called: set[str], bound: set[str]) -> bool:
+    return any(name == b or name.startswith(b + ".") for name in called for b in bound)
 
 
 def _backend_activity_coverage() -> list[Violation]:
@@ -1089,6 +1129,14 @@ def _backend_activity_coverage() -> list[Violation]:
     surfaces only as a feed that mysteriously omits the thing a user just did.
     That is exactly how the old audit dashboard decayed - 21 of 26 surveyed
     routers wrote no audit call at all, and nothing ever failed to say so.
+
+    PER ENDPOINT, not per module. This guard used to treat a router that
+    recorded anywhere as covered, so the first instrumented handler in a router
+    silently retired every other gap in it: adding retry/cancel events to
+    ``routers/agents.py`` (E7.4) turned four tracked, unrecorded mutations into
+    stale baseline entries that nothing tracked any more. A handler now counts
+    as covered only when ITS OWN body records, calls through a service that
+    records, or calls a module-level helper that does (one level each).
 
     A RATCHET, not a wall. The existing gap is baselined, so only NEW
     uncovered mutations break CI; clearing the baseline is the remaining
@@ -1102,20 +1150,45 @@ def _backend_activity_coverage() -> list[Violation]:
         if path.name.startswith("__") or path.name in _ACTIVITY_UNSCOPED_ROUTERS:
             continue
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
+        lines = text.splitlines()
+        try:
+            tree: Optional[ast.Module] = ast.parse(text)
+        except (SyntaxError, ValueError):
+            tree = None
 
-        # A router that records anywhere is treated as covered. Per-endpoint
-        # precision is the behavioural tests' job, not a regex's.
-        if _activity_module_records(path, cache):
-            continue
+        module_bound = _activity_recording_bindings(text, cache)
+        handlers: dict[int, ast.AST] = {}
+        recorders: set[str] = set()
+        for node in tree.body if tree is not None else []:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for dec in node.decorator_list:
+                handlers[dec.lineno] = node
+            # The function's own text, so an import made inside the body
+            # (``from app.services.x import y`` in the handler) is seen too.
+            body = "\n".join(lines[node.lineno - 1:node.end_lineno])
+            bound = module_bound | _activity_recording_bindings(body, cache)
+            if _ACTIVITY_RECORDS.search(body) or _activity_calls_binding(
+                _activity_called_names(node), bound
+            ):
+                recorders.add(node.name)
 
         for idx, line in enumerate(lines):
             if not _ACTIVITY_MUTATION.search(line):
                 continue
             window = lines[max(0, idx - 3):idx + 1]
             if any(_ACTIVITY_OPT_OUT.search(w) for w in window):
+                continue
+            handler = handlers.get(idx + 1)
+            if handler is None:
+                # Unparseable module, or a decorator we cannot tie to a def:
+                # fall back to the coarse module-wide question.
+                if _ACTIVITY_RECORDS.search(text) or module_bound:
+                    continue
+            elif handler.name in recorders or _activity_called_names(handler) & recorders:
                 continue
             violations.append(Violation(
                 path, idx + 1,
