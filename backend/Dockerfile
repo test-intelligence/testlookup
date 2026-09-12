@@ -102,7 +102,12 @@ FROM python:3.11-slim AS production
 WORKDIR /app
 
 # procps provides `pgrep`, used by the Celery beat liveness probe (k8s/base/worker-deployments.yaml)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# apt-get upgrade takes Debian's security fixes for packages the base image
+# already carries; installing alone never upgrades them (see mcp/Dockerfile and
+# scripts/test_ci_security.py::test_the_debian_runtime_images_take_security_updates).
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     libpq-dev \

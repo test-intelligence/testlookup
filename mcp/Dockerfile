@@ -14,7 +14,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # through the middlebox. deploy-homelab.sh drops the CA into mcp/certs/*.crt
 # and builds with INSTALL_EXTRA_CA=1. certs/ always exists (committed .keep);
 # empty on CI → no-op and pip uses the public roots unchanged.
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+#
+# apt-get upgrade takes Debian's security fixes for packages the base image
+# already carries. Installing ca-certificates alone never upgrades them, so a
+# fix Debian has published (gzip, pcre2, sqlite, perl-base: 12 HIGH/CRITICAL on
+# PR #56) stays out of the image until python:3.11-slim is rebuilt upstream.
+# The Debian sources are plain http:// with signed Release files, so unlike the
+# frontend's apk step this does not need the staged interception CA first.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 ARG INSTALL_EXTRA_CA=0
 COPY certs/ /usr/local/share/ca-certificates/

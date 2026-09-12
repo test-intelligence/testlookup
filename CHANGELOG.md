@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-12 - the Python runtime images take Debian security updates
+
+The backend and MCP image scans failed on PR #56 with the same 12 HIGH/CRITICAL
+findings (gzip, pcre2, sqlite, perl-base), every one with a fixed Debian
+version already published. Both images are `python:3.11-slim` and installed a
+few packages without upgrading the ones the base already carries, so a fix
+Debian ships stayed out of the image until the upstream tag was rebuilt - and
+every PR touching an image input failed its scan in the meantime. E7.4 did not
+introduce the packages; its `ci.yml` change is what put the images in scope.
+
+- **Both runtime stages run `apt-get upgrade -y`** in the same layer as their
+  install, before `rm -rf /var/lib/apt/lists/*`. Verified on a local build of
+  the MCP image: gzip `1.13-1+deb13u1`, libpcre2-8-0 `10.46-1~deb13u2`,
+  libsqlite3-0 `3.46.1-7+deb13u2`, perl-base `5.40.1-6+deb13u1` - exactly the
+  fixed versions Trivy named.
+- **No interception-CA ordering needed.** Unlike the frontend's `apk upgrade`,
+  the Debian sources in this base are plain `http://` with signed Release
+  files, so a TLS-intercepting proxy cannot break the upgrade.
+- **Nothing is suppressed.** No `.trivyignore.yaml` entries: every finding had
+  a fix, so the fix is the right answer.
+- `scripts/test_ci_security.py::test_the_debian_runtime_images_take_security_updates`
+  pins it, mirroring the existing Alpine test: exactly one upgrade in each
+  runtime stage, after `apt-get update`, lists removed, and no later install
+  that would pull packages the upgrade never saw.
+
 ## 2026-09-12 - manual retry and cancel, and the race between them (E7.4)
 
 Retrying or stopping a pipeline meant going to the database. The row carried a
