@@ -188,6 +188,9 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("analysis.report_superseded", "analysis", "run", "Decision report for {entity_label} was superseded"),
     _spec("investigation.started", "analysis", "run", "Deep investigation started for {entity_label}"),
     _spec("investigation.completed", "analysis", "run", "Deep investigation completed for {entity_label}"),
+    _spec("analysis.triggered", "analysis", "run", "AI analysis was requested for {entity_label}", "attempt"),
+    _spec("analysis.bulk_triggered", "analysis", "project", "AI analysis was requested for {count} runs", "attempt"),
+    _spec("analysis.regression_watch_run", "analysis", "run", "Regression Watchman classified the failures in {entity_label}", "attempt"),
     # ── release ─────────────────────────────────────────────────────────────
     _spec("release.created", "release", "release", "Release {entity_label} was created"),
     _spec("release.activated", "release", "release", "Release {entity_label} was activated"),
@@ -217,6 +220,7 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("defect.promoted", "quality", "defect", "Failure cluster promoted to defect {entity_label}"),
     _spec("defect.create_requested", "quality", "defect", "Defect ticket requested for {entity_label}"),
     _spec("defect.ticket_created", "quality", "defect", "Ticket {ticket_key} created for {entity_label}"),
+    _spec("defect.commander_run", "quality", "run", "Defect Commander drafted a defect from a failure cluster in {entity_label}", "attempt"),
     _spec("flaky.detected", "quality", "test", "{entity_label} was detected as flaky"),
     _spec("test.newly_failing", "quality", "test", "{entity_label} started failing"),
     _spec("test.recovered", "quality", "test", "{entity_label} recovered"),

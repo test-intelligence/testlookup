@@ -45,6 +45,7 @@ from app.models.schemas import (
 )
 from app.models.agentic_runtime import AgenticRunV1
 from app.services import runs_service
+from app.services.activity.service import ActorRef, record as record_activity
 from app.services.run_summary_service import build_fallback_summary, normalize_summary_doc
 
 logger = logging.getLogger(__name__)
@@ -257,6 +258,17 @@ async def trigger_pipeline(
         workflow_type="offline",
     )
 
+    # Attempt mode: this handler never commits the request session, and the
+    # thing worth recording is that a dispatch was issued, whatever it does.
+    await record_activity(
+        db,
+        project_id=run.project_id,
+        event_type="analysis.triggered",
+        actor=ActorRef.from_user(current_user),
+        entity_id=run.id,
+        entity_label=f"Build {run.build_number}",
+        context={"workflow_type": "offline", "task_id": task.id},
+    )
     return {"message": "Pipeline queued", "task_id": task.id, "run_id": str(run.id)}
 
 
@@ -334,6 +346,7 @@ async def bulk_trigger_pipelines(
     BATCH_SIZE = 25
     INTER_BATCH_SLEEP_S = 0.05  # 50ms between bursts; barely noticeable, gentle on broker
     queued = 0
+    queued_per_project: dict[uuid.UUID, int] = {}
 
     for i in range(0, len(found), BATCH_SIZE):
         batch = found[i : i + BATCH_SIZE]
@@ -349,6 +362,7 @@ async def bulk_trigger_pipelines(
                     queue="ai_analysis",
                 )
                 queued += 1
+                queued_per_project[project_id] = queued_per_project.get(project_id, 0) + 1
             except Exception as exc:  # pragma: no cover - broker errors are exceptional
                 logger.warning(
                     "bulk_trigger: queue failed for run %s: %s", run_id, exc,
@@ -360,6 +374,19 @@ async def bulk_trigger_pipelines(
         "bulk_trigger_pipelines: queued=%d not_found=%d workflow=%s",
         queued, len(not_found_ids), payload.workflow_type,
     )
+
+    # One row per project, not per run: a 2000-run trigger would otherwise
+    # bury the feed. Counted from what actually queued, not what was asked.
+    actor = ActorRef.from_user(current_user)
+    for project_id, count in queued_per_project.items():
+        await record_activity(
+            db,
+            project_id=project_id,
+            event_type="analysis.bulk_triggered",
+            actor=actor,
+            entity_id=project_id,
+            context={"count": count, "workflow_type": payload.workflow_type},
+        )
 
     return BulkTriggerResponse(
         queued=queued,
@@ -883,6 +910,13 @@ async def _authorize_run_and_project(
     return owning_project_id
 
 
+async def _run_label(db: AsyncSession, run_id: uuid.UUID) -> str:
+    """``Build <n>``, the label every other run event in the feed uses."""
+    result = await db.execute(select(TestRun.build_number).where(TestRun.id == run_id))
+    build_number = result.scalar_one_or_none()
+    return f"Build {build_number}" if build_number is not None else str(run_id)
+
+
 @router.post("/defect-command", status_code=200)
 async def defect_command(
     cluster_id: str,
@@ -909,6 +943,18 @@ async def defect_command(
         project_id=str(scoped_project_id),
         project_key=project_key,
     )
+    await record_activity(
+        db,
+        project_id=scoped_project_id,
+        event_type="defect.commander_run",
+        actor=ActorRef.from_user(current_user),
+        entity_id=run_id,
+        entity_label=await _run_label(db, run_id),
+        context={
+            "cluster_id": cluster_id,
+            "defect_id": result.get("defect_id") if isinstance(result, dict) else None,
+        },
+    )
     return result
 
 
@@ -933,5 +979,13 @@ async def regression_watch(
     result = await run_regression_watchman(
         test_run_id=str(run_id),
         project_id=str(scoped_project_id),
+    )
+    await record_activity(
+        db,
+        project_id=scoped_project_id,
+        event_type="analysis.regression_watch_run",
+        actor=ActorRef.from_user(current_user),
+        entity_id=run_id,
+        entity_label=await _run_label(db, run_id),
     )
     return {"run_id": str(run_id), "classifications": result}
