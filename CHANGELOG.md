@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-09-11 - pipeline retries move onto the row: retry_wait, backoff, a visible attempt count (E7.2)
+
+`run_agent_pipeline` retried through Celery's own `self.retry` with
+`max_retries=2` fixed on the decorator, a jitter helper that only ever added
+0-20%, and no record on the pipeline of how many attempts had been spent. A
+user saw a run flip to failed and could not tell whether anything would try
+again.
+
+- **One `RetryPolicy`** (`app/services/retry_policy.py`): exponential backoff
+  30s * 2^(n-1) capped at 600s with symmetric +/-20% jitter, `max_attempts`
+  from `AGENT_PIPELINE_MAX_ATTEMPTS` (default 5) clamped by
+  `AGENT_MAX_ATTEMPTS_CEILING` (default 10), and a retryable/non-retryable
+  error-code split. The old `_exponential_backoff` helper now delegates to it,
+  so every Celery task shares the implementation.
+- **The pipeline task no longer uses Celery retries** (`max_retries=0`). A
+  failed attempt moves the row `failed -> retry_wait`, stamps `next_retry_at`
+  and `attempt`, and queues `resume_agent_pipeline` under the same pipeline id
+  with `expected_attempt`; the claim refuses a stale resume (the run was
+  cancelled or manually retried in the meantime). When the ceiling is reached
+  the run stays failed, the admission lock is released and the failure goes to
+  the DLQ. Outbox-driven pipelines are unchanged: PostgreSQL owns their retries.
+- **The dedup lock is extended, not released, while a retry is pending.**
+  Releasing it would let a manual trigger or a webhook redelivery start a
+  second concurrent run in the gap before the scheduled resume fires.
+- **A trigger while a run is in progress returns that run (200)** with its
+  `public_status`, `attempt` and `next_retry_at`, instead of queueing a second
+  pipeline. The state machine, not the Redis lock, is what refuses the
+  duplicate.
+- Failure exceptions carry `pipeline_run_id` so the task schedules the retry
+  for the right row when two pipelines for one run overlap.
+
+Not in this slice: leases, intra-stage heartbeats and fencing (E7.3); the
+manual `POST .../retry` and `.../cancel` endpoints (E7.4).
+
 ## 2026-09-11 - agent pipeline runs get a state machine; 'partial' is retired (E7.1)
 
 `agent_pipeline_runs.status` had five documented values and two undocumented

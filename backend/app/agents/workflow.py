@@ -1198,8 +1198,10 @@ async def _load_checkpoint(
     return None
 
 
-async def _claim_pipeline_resume(pipeline_run_id: str) -> dict[str, Any] | None:
-    """Atomically claim a failed/partial pipeline for same-ID replay.
+async def _claim_pipeline_resume(
+    pipeline_run_id: str, *, expected_attempt: int | None = None
+) -> dict[str, Any] | None:
+    """Atomically claim a failed / retry_wait / degraded pipeline for same-ID replay.
 
     The row lock is the idempotency boundary: only one worker can transition a
     terminal pipeline back to ``running``. Completed stages remain immutable;
@@ -1216,6 +1218,12 @@ async def _claim_pipeline_resume(pipeline_run_id: str) -> dict[str, Any] | None:
         )
         pipeline = result.scalar_one_or_none()
         if pipeline is None or not is_resumable(pipeline.status, pipeline.execution_metadata):
+            return None
+        # E7.2: a scheduled retry names the attempt it was queued for. If the
+        # row has moved on (cancelled, or a manual retry already consumed that
+        # attempt), this claim is stale and must do nothing.
+        current_row_attempt = int(getattr(pipeline, "attempt", None) or 1)
+        if expected_attempt is not None and current_row_attempt + 1 != int(expected_attempt):
             return None
 
         ownership = await db.execute(
@@ -1265,6 +1273,10 @@ async def _claim_pipeline_resume(pipeline_run_id: str) -> dict[str, Any] | None:
         pipeline.execution_metadata = metadata
         apply_transition(pipeline, PipelineRunStatus.RUNNING)
         pipeline.started_at = datetime.now(timezone.utc)
+        # E7.2: the row-level attempt counter (migration 0173). ``resume_attempt``
+        # in metadata predates it and stays for the replay breadcrumbs.
+        pipeline.attempt = current_row_attempt + 1
+        pipeline.next_retry_at = None
 
         stage_result = await db.execute(
             sa_select(AgentStageResult)
@@ -1315,8 +1327,13 @@ async def _claim_pipeline_resume(pipeline_run_id: str) -> dict[str, Any] | None:
         }
 
 
-async def resume_pipeline(pipeline_run_id: str, build_number: str = "resume") -> dict:
-    """Resume a failed/partial pipeline under its existing pipeline identity."""
+async def resume_pipeline(
+    pipeline_run_id: str,
+    build_number: str = "resume",
+    *,
+    expected_attempt: int | None = None,
+) -> dict:
+    """Resume a failed / retry_wait / degraded pipeline under its existing identity."""
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select as sa_select  # noqa: PLC0415
 
@@ -1332,11 +1349,13 @@ async def resume_pipeline(pipeline_run_id: str, build_number: str = "resume") ->
         return await run_deep_pipeline(
             build_number=build_number,
             pipeline_run_id=pipeline_run_id,
+            expected_attempt=expected_attempt,
         )
     return await run_offline_pipeline(
         build_number=build_number,
         workflow_type=workflow_type,
         pipeline_run_id=pipeline_run_id,
+        expected_attempt=expected_attempt,
     )
 async def _persist_execution_context(
     pipeline_run_id: str,
@@ -1721,6 +1740,7 @@ async def run_offline_pipeline(
     pipeline_run_id: str | None = None,
     create_if_missing: bool = False,
     cost_budget_mode_override: str | None = None,
+    expected_attempt: int | None = None,
 ) -> dict:
     """
     Execute the full offline analysis pipeline for a completed test run.
@@ -1730,7 +1750,7 @@ async def run_offline_pipeline(
     - Returns the final LangGraph state dict
     """
     if pipeline_run_id is not None:
-        pipeline_setup = await _claim_pipeline_resume(pipeline_run_id)
+        pipeline_setup = await _claim_pipeline_resume(pipeline_run_id, expected_attempt=expected_attempt)
         if pipeline_setup is None:
             async with AsyncSessionLocal() as db:
                 existing = await db.get(AgentPipelineRun, pipeline_run_id)
@@ -1884,6 +1904,7 @@ async def run_offline_pipeline(
         # Marked first: a log call that raises (QA reproduced one with a
         # non-UTF-8 stdout) must not leave the pipeline 'running' again.
         await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)
+        _tag_failure_with_pipeline(exc, pipeline_run_id)
         try:
             logger.error("pipeline_setup_failed", error_type=type(exc).__name__, exc_info=True)
         except Exception:  # noqa: BLE001 -- the original error is what propagates
@@ -1959,6 +1980,7 @@ async def run_offline_pipeline(
                     error_type=type(cancel_exc).__name__,
                 )
         await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)
+        _tag_failure_with_pipeline(exc, pipeline_run_id)
         await emit_event(pipeline_run_id, "error_occurred", detail={
             "workflow_type": workflow_type,
             "error": error_msg[:500],
@@ -1973,13 +1995,14 @@ async def run_deep_pipeline(
     *,
     pipeline_run_id: str | None = None,
     cost_budget_mode_override: str | None = None,
+    expected_attempt: int | None = None,
 ) -> dict:
     """
     Execute the deep investigation pipeline with clustering, flaky sentinel,
     test health analysis, and release risk assessment.
     """
     if pipeline_run_id is not None:
-        pipeline_setup = await _claim_pipeline_resume(pipeline_run_id)
+        pipeline_setup = await _claim_pipeline_resume(pipeline_run_id, expected_attempt=expected_attempt)
         if pipeline_setup is None:
             raise ValueError("pipeline_not_resumable")
         test_run_id = pipeline_setup["test_run_id"]
@@ -2102,6 +2125,7 @@ async def run_deep_pipeline(
         # (QA of N27, on the deep path).
         error_msg = f"Pipeline setup error: {_safe_workflow_error(exc)}"
         await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)
+        _tag_failure_with_pipeline(exc, pipeline_run_id)
         try:
             logger.error("pipeline_setup_failed", error_type=type(exc).__name__, exc_info=True)
         except Exception:  # noqa: BLE001 -- the original error is what propagates
@@ -2173,6 +2197,7 @@ async def run_deep_pipeline(
                 error_type=type(cancel_exc).__name__,
             )
         await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)
+        _tag_failure_with_pipeline(exc, pipeline_run_id)
         await emit_event(pipeline_run_id, "error_occurred", detail={
             "workflow_type": "deep",
             "error": error_msg[:500],
@@ -2546,6 +2571,20 @@ async def _create_pipeline_run(
                 "change_ownership_settings": {"enabled": change_ownership_enabled},
                 "defect_commander_settings": {"enabled": defect_commander_enabled},
         }
+
+
+def _tag_failure_with_pipeline(exc: BaseException, pipeline_run_id: str | None) -> None:
+    """Attach the pipeline id to an exception about to propagate (E7.2).
+
+    The Celery task that catches it needs the row to schedule a retry; a
+    lookup by (test_run_id, workflow_type) would work but can pick the wrong
+    row when two pipelines for one run overlap. Attribute assignment can fail
+    on exotic exception types; that is not worth failing the failure over.
+    """
+    try:
+        exc.pipeline_run_id = str(pipeline_run_id) if pipeline_run_id else None  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def _mark_pipeline_done(

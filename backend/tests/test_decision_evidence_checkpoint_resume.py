@@ -279,7 +279,7 @@ async def test_resume_pipeline_dispatches_by_authoritative_workflow(monkeypatch)
     result = await resume_pipeline("pipeline-1", "build-42")
 
     assert result == {"resumed": True}
-    assert observed == {"build_number": "build-42", "pipeline_run_id": "pipeline-1"}
+    assert observed == {"build_number": "build-42", "pipeline_run_id": "pipeline-1", "expected_attempt": None}
 @pytest.mark.asyncio
 async def test_checkpoint_without_replay_metadata_is_not_restored(monkeypatch):
     previous = SimpleNamespace(id="old-pipeline")

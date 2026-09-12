@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -324,6 +325,24 @@ async def trigger_pipeline(
         raise HTTPException(404, detail="TestRun not found")
     await resolve_project_scope(db, current_user, str(run.project_id))
 
+    # E7.2: the state machine, not the Redis admission lock, decides whether a
+    # new trigger is accepted. A run that is pending / running / retry_wait is
+    # returned as-is (200) instead of queueing a second concurrent pipeline.
+    existing = await _latest_in_progress_pipeline(db, run.id, "offline")
+    if existing is not None:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "message": "Pipeline already in progress",
+                "pipeline_run_id": str(existing.id),
+                "status": existing.status,
+                "public_status": public_status(existing.status),
+                "attempt": existing.attempt,
+                "next_retry_at": existing.next_retry_at.isoformat() if existing.next_retry_at else None,
+                "run_id": str(run.id),
+            },
+        )
+
     from app.worker.tasks import run_agent_pipeline
     task = run_agent_pipeline.delay(
         test_run_id=str(run.id),
@@ -333,6 +352,24 @@ async def trigger_pipeline(
     )
 
     return {"message": "Pipeline queued", "task_id": task.id, "run_id": str(run.id)}
+
+
+async def _latest_in_progress_pipeline(
+    db: AsyncSession, test_run_id: uuid.UUID, workflow_type: str
+) -> Optional[AgentPipelineRun]:
+    """The newest non-terminal pipeline for (run, workflow), or None."""
+    in_progress = [s.value for s, pub in PUBLIC_STATUS.items() if pub == "in_progress"]
+    result = await db.execute(
+        select(AgentPipelineRun)
+        .where(
+            AgentPipelineRun.test_run_id == test_run_id,
+            AgentPipelineRun.workflow_type == workflow_type,
+            AgentPipelineRun.status.in_(in_progress),
+        )
+        .order_by(AgentPipelineRun.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 # ── Bulk trigger ────────────────────────────────────────────────────────────

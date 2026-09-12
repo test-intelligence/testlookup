@@ -453,6 +453,15 @@ class Settings(BaseSettings):
     # A read timeout is not retried for Ollama: it would multiply wall clock.
     AI_MAX_RETRIES: int = 3
     AI_TIMEOUT_SECONDS: int = 300
+    # E7.2: run-level retry policy for agent pipelines (requirement 8). A failed
+    # attempt moves the row to retry_wait and schedules a same-id resume with
+    # exponential backoff; the count lives on agent_pipeline_runs.attempt.
+    # AGENT_PIPELINE_MAX_ATTEMPTS is the default (5); AGENT_MAX_ATTEMPTS_CEILING
+    # is the environment ceiling no project or row may exceed.
+    AGENT_PIPELINE_MAX_ATTEMPTS: int = 5
+    AGENT_MAX_ATTEMPTS_CEILING: int = 10
+    AGENT_RETRY_BASE_SECONDS: int = 30
+    AGENT_RETRY_CAP_SECONDS: int = 600
     # Re-audit M12: cluster-wide cap on concurrent LLM calls per provider,
     # held as Redis leases so a crashed holder frees its slot when its lease
     # lapses. 0 disables the cluster bound; the per-process bound

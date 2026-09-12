@@ -64,12 +64,15 @@ _S = PipelineRunStatus
 # ``passed`` is terminal. ``completed -> running`` and ``failed -> running`` are
 # the same-id resume path (E7.4 adds the attempt ceiling on top of them);
 # ``* -> pending`` is the Investigator's requeue-before-claim reset.
+# ``failed -> retry_wait`` (E7.2): the pipeline marks itself failed inside the
+# graph's own error handler before the Celery task sees the exception, so the
+# task parks an already-failed row for its scheduled retry.
 TRANSITIONS: Mapping[PipelineRunStatus, frozenset[PipelineRunStatus]] = {
     _S.PENDING: frozenset({_S.RUNNING, _S.FAILED}),
     _S.RUNNING: frozenset({_S.COMPLETED, _S.FAILED, _S.RETRY_WAIT, _S.PENDING}),
     _S.RETRY_WAIT: frozenset({_S.RUNNING, _S.FAILED, _S.PENDING}),
     _S.COMPLETED: frozenset({_S.PASSED, _S.FAILED, _S.RUNNING}),
-    _S.FAILED: frozenset({_S.RUNNING, _S.PENDING}),
+    _S.FAILED: frozenset({_S.RUNNING, _S.PENDING, _S.RETRY_WAIT}),
     _S.PASSED: frozenset(),
 }
 
@@ -136,7 +139,7 @@ def is_resumable(status: Any, execution_metadata: Optional[Mapping[str, Any]] = 
         # itself says "finished with failed stages", metadata or not.
         return True
     normalized = normalize_status(status)
-    if normalized is _S.FAILED:
+    if normalized in (_S.FAILED, _S.RETRY_WAIT):
         return True
     if normalized is _S.COMPLETED:
         metadata = execution_metadata or {}
