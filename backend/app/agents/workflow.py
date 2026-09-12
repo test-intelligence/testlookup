@@ -31,6 +31,7 @@ from app.services.pipeline_lease import (
     held_lease,
     release_lease_fields,
 )
+from app.services.pipeline_cancellation import PipelineCancelled, is_cancel_requested
 from app.services.workflow_run_state import DEGRADED, apply_transition, is_resumable
 
 from app.agents.analysis_agent import AnalysisAgent
@@ -256,6 +257,12 @@ async def _resolve_analysis_mode_snapshot() -> dict[str, Any]:
         "resolution_reason": resolution_reason,
         "provider": settings.LLM_PROVIDER,
         "model": settings.LLM_MODEL,
+        # E7.4: recorded so a manual retry can SEE an AI_OFFLINE_MODE flip.
+        # Without it, ``pipeline_retry_config`` compares the frozen snapshot
+        # against the live setting for this field and they trivially agree --
+        # the one config change most likely to motivate a retry would be the
+        # one change it could not detect.
+        "offline": bool(settings.AI_OFFLINE_MODE),
         "analysis_mode_env": settings.ANALYSIS_MODE,
         "resolved_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1242,6 +1249,11 @@ async def _claim_pipeline_resume(
         pipeline = result.scalar_one_or_none()
         if pipeline is None or not is_resumable(pipeline.status, pipeline.execution_metadata):
             return None
+        # E7.4: a cancelled run is never resumable, by any path. Without this a
+        # resume queued before the cancel (or a manual retry racing one) would
+        # restart a run the operator was told had stopped.
+        if bool(getattr(pipeline, "cancel_requested", False)):
+            return None
         # E7.2: a scheduled retry names the attempt it was queued for. If the
         # row has moved on (cancelled, or a manual retry already consumed that
         # attempt), this claim is stale and must do nothing.
@@ -1587,11 +1599,44 @@ def _deadline_exhausted(state: WorkflowState, stage_name: str) -> bool:
     return time.monotonic() >= deadline_ts
 
 
+async def _raise_if_pipeline_cancelled(pipeline_run_id: str) -> None:
+    """Raise :class:`PipelineCancelled` when this run has been asked to stop.
+
+    Its own read-only session: the caller is a graph node, not a request
+    handler, and there is no ambient transaction to borrow. A database error
+    here must not fail the stage -- an unreadable flag means "not cancelled",
+    which is the same outcome as before cancellation existed.
+    """
+    if not pipeline_run_id:
+        return
+    try:
+        async with AsyncSessionLocal() as db:
+            cancelled = await is_cancel_requested(db, pipeline_run_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "cancel_flag_read_failed",
+            pipeline_run_id=str(pipeline_run_id),
+            error_type=type(exc).__name__,
+        )
+        return
+    if cancelled:
+        logger.info("stage_stopped_run_cancelled", pipeline_run_id=str(pipeline_run_id))
+        raise PipelineCancelled(str(pipeline_run_id))
+
+
 def _make_checkpointed_node(original_node, stage_name: str):
     """Wrap a node function so its output is checkpointed after successful execution."""
     async def wrapper(state: WorkflowState) -> dict[str, Any]:
         pipeline_run_id = state.get("pipeline_run_id", "")
         input_checksum = _stage_input_checksum(state)
+
+        # E7.4: a cancelled run stops at its next stage boundary. Checked here,
+        # before any of the skip paths, so cancellation costs at most the stage
+        # already in flight -- and so a run whose remaining stages would all be
+        # deadline-skipped still terminalises as cancelled rather than grinding
+        # through them. Read-only; the raise is caught by the pipeline's own
+        # error handler, which owns terminalising the row.
+        await _raise_if_pipeline_cancelled(pipeline_run_id)
 
         # Wall-clock budget. Checked BEFORE the stage starts so the pipeline
         # stops taking on new work rather than being killed part-way through
@@ -1806,6 +1851,7 @@ async def run_offline_pipeline(
     create_if_missing: bool = False,
     cost_budget_mode_override: str | None = None,
     expected_attempt: int | None = None,
+    rerun_of: str | None = None,
 ) -> dict:
     """
     Execute the full offline analysis pipeline for a completed test run.
@@ -1840,7 +1886,7 @@ async def run_offline_pipeline(
             raise ValueError("test_run_and_project_required")
         pipeline_run_id = str(uuid.uuid4())
         pipeline_setup = await _create_pipeline_run(
-            pipeline_run_id, test_run_id, project_id, workflow_type
+            pipeline_run_id, test_run_id, project_id, workflow_type, rerun_of=rerun_of
         )
 
     try:
@@ -2062,6 +2108,7 @@ async def run_deep_pipeline(
     pipeline_run_id: str | None = None,
     cost_budget_mode_override: str | None = None,
     expected_attempt: int | None = None,
+    rerun_of: str | None = None,
 ) -> dict:
     """
     Execute the deep investigation pipeline with clustering, flaky sentinel,
@@ -2078,7 +2125,7 @@ async def run_deep_pipeline(
             raise ValueError("test_run_and_project_required")
         pipeline_run_id = str(uuid.uuid4())
         pipeline_setup = await _create_pipeline_run(
-            pipeline_run_id, test_run_id, project_id, "deep"
+            pipeline_run_id, test_run_id, project_id, "deep", rerun_of=rerun_of
         )
 
     try:
@@ -2513,6 +2560,8 @@ async def _create_pipeline_run(
     test_run_id: str,
     project_id: str,
     workflow_type: str,
+    *,
+    rerun_of: str | None = None,
 ) -> dict[str, Any]:
     if workflow_type == "deep":
         stages = _DEEP_PIPELINE_STAGES
@@ -2584,6 +2633,9 @@ async def _create_pipeline_run(
             **_lease_fields,
             test_run_id=test_run_id,
             workflow_type=workflow_type,
+            # E7.4: set when a manual retry could not resume the previous run
+            # (its frozen config no longer matches the live one).
+            rerun_of=uuid.UUID(str(rerun_of)) if rerun_of else None,
             status="running",
             started_at=datetime.now(timezone.utc),
             execution_metadata={

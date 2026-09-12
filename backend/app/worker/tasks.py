@@ -1909,6 +1909,7 @@ def run_agent_pipeline(
     project_id: str,
     build_number: str,
     workflow_type: str = "offline",
+    rerun_of: str | None = None,
 ):
     """
     Background task: run the full multi-agent LangGraph pipeline for a completed test run.
@@ -1982,6 +1983,7 @@ def run_agent_pipeline(
                 project_id=project_id,
                 build_number=build_number,
                 cost_budget_mode_override=cost_budget_mode_override,
+                rerun_of=rerun_of,
             )
         return await run_offline_pipeline(
             test_run_id=test_run_id,
@@ -1991,6 +1993,7 @@ def run_agent_pipeline(
             pipeline_run_id=durable_pipeline_id,
             create_if_missing=durable_pipeline_id is not None,
             cost_budget_mode_override=cost_budget_mode_override,
+            rerun_of=rerun_of,
         )
 
     logger.info(
@@ -2152,6 +2155,19 @@ async def _schedule_pipeline_retry(
             )
         row = (await db.execute(stmt.with_for_update())).scalar_one_or_none()
         if row is None or normalize_status(row.status) is not PipelineRunStatus.FAILED:
+            return None
+
+        # E7.4: cancellation is sticky and wins the race. We hold the row
+        # FOR UPDATE, so a cancel that committed before us is visible here and a
+        # cancel arriving after us waits and then terminalises the retry_wait row
+        # itself. Either ordering ends ``failed``; what must never happen is a
+        # cancelled run quietly coming back to life when its retry fires.
+        if bool(getattr(row, "cancel_requested", False)):
+            row.next_retry_at = None
+            await db.commit()
+            logger.info(
+                "[pipeline %s] retry suppressed: run was cancelled", row.id
+            )
             return None
 
         attempt = int(row.attempt or 1)

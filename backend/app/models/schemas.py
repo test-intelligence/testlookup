@@ -1583,6 +1583,16 @@ class AgentPipelineResponse(BaseModel):
     build_number: Optional[str] = None
     run_seq: Optional[int] = None
     suite_name: Optional[str] = None
+    # Retry/cancel state (E7.2, E7.4). ``attempt``/``max_attempts`` let a client
+    # show "attempt 3 of 5" and grey out retry at the ceiling instead of
+    # discovering it via a 409; ``rerun_of`` links a fresh run to the one it
+    # replaces, and ``cancel_requested`` distinguishes "still running" from
+    # "running, but stopping".
+    attempt: Optional[int] = None
+    max_attempts: Optional[int] = None
+    next_retry_at: Optional[Any] = None
+    cancel_requested: Optional[bool] = None
+    rerun_of: Optional[uuid.UUID] = None
 
     model_config = ConfigDict(from_attributes=True)
 

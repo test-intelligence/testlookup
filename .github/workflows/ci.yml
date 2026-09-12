@@ -593,6 +593,7 @@ jobs:
           tests/integration/test_investigator_budget_postgres.py
           tests/integration/test_investigator_claim_provider_postgres.py
           tests/integration/test_investigator_resume_postgres.py
+          tests/integration/test_pipeline_cancel_retry_postgres.py
           tests/integration/test_pipeline_resume_postgres.py
           tests/integration/test_pipeline_state_machine_postgres.py
           tests/integration/test_report_eval_cycle_postgres.py

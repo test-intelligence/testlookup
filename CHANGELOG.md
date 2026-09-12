@@ -1,5 +1,81 @@
 # Changelog
 
+## 2026-09-12 - the Python runtime images take Debian security updates
+
+The backend and MCP image scans failed on PR #56 with the same 12 HIGH/CRITICAL
+findings (gzip, pcre2, sqlite, perl-base), every one with a fixed Debian
+version already published. Both images are `python:3.11-slim` and installed a
+few packages without upgrading the ones the base already carries, so a fix
+Debian ships stayed out of the image until the upstream tag was rebuilt - and
+every PR touching an image input failed its scan in the meantime. E7.4 did not
+introduce the packages; its `ci.yml` change is what put the images in scope.
+
+- **Both runtime stages run `apt-get upgrade -y`** in the same layer as their
+  install, before `rm -rf /var/lib/apt/lists/*`. Verified on a local build of
+  the MCP image: gzip `1.13-1+deb13u1`, libpcre2-8-0 `10.46-1~deb13u2`,
+  libsqlite3-0 `3.46.1-7+deb13u2`, perl-base `5.40.1-6+deb13u1` - exactly the
+  fixed versions Trivy named.
+- **No interception-CA ordering needed.** Unlike the frontend's `apk upgrade`,
+  the Debian sources in this base are plain `http://` with signed Release
+  files, so a TLS-intercepting proxy cannot break the upgrade.
+- **Nothing is suppressed.** No `.trivyignore.yaml` entries: every finding had
+  a fix, so the fix is the right answer.
+- `scripts/test_ci_security.py::test_the_debian_runtime_images_take_security_updates`
+  pins it, mirroring the existing Alpine test: exactly one upgrade in each
+  runtime stage, after `apt-get update`, lists removed, and no later install
+  that would pull packages the upgrade never saw.
+
+## 2026-09-12 - manual retry and cancel, and the race between them (E7.4)
+
+Retrying or stopping a pipeline meant going to the database. The row carried a
+`cancel_requested` column nothing read, and the only way to re-run an analysis
+was to trigger a fresh one and lose everything the failed attempt had already
+completed.
+
+- **`POST /api/v1/agents/pipelines/{id}/retry`** decides between two outcomes
+  rather than making the caller choose. When the configuration the run froze
+  at start still matches the live one, it **resumes** the same id and keeps the
+  completed stages. When it changed - a different model, a different analysis
+  mode, an `AI_OFFLINE_MODE` flip - it starts a **new** run with `rerun_of`
+  pointing at the one it replaces. That split matters: an automatic retry is
+  one attempt continuing and must replay the frozen plan for stability, but a
+  person clicking retry is doing so *because* something changed, and replaying
+  checkpoints authorised under the old configuration can re-enter a tool the
+  new one forbids. `app/services/pipeline_retry_config.py` owns the comparison
+  and deliberately excludes `resolved_at` and the provenance fields, so a
+  retry is not forced into a full rerun by a timestamp.
+- **`AI_OFFLINE_MODE` is now recorded in the frozen snapshot.** It was not,
+  so the one configuration change most likely to motivate a retry was the one
+  change the comparison could not have detected.
+- **`POST /api/v1/agents/pipelines/{id}/cancel`** terminalises a `pending` or
+  `retry_wait` run outright and *asks* a `running` one to stop, because a
+  worker mid-model-call holds the lease and its in-flight writes must land
+  coherently. The stage wrapper reads the flag at each boundary, so a
+  cancellation costs at most the stage already running.
+- **Cancel racing a retryable failure always lands `failed`.** Both writers
+  take the row `FOR UPDATE`: a cancel that commits first is seen by the retry
+  scheduler, which then parks nothing; a retry that commits first leaves a
+  `retry_wait` row that cancel legally terminalises, and the queued resume's
+  `expected_attempt` guard makes it a no-op when it fires. A cancelled run is
+  also refused by `_claim_pipeline_resume`, so no path can resurrect it.
+- **Refusals say what to do next.** Retry at the attempt ceiling, on a run
+  that succeeded, or while another pipeline for the run is in flight returns
+  409 with `links.rerun` rather than only a rejection. `attempt`,
+  `max_attempts`, `next_retry_at`, `cancel_requested` and `rerun_of` are on
+  the pipeline response, so a client can show "attempt 3 of 5" instead of
+  discovering the ceiling by being refused.
+- Migration `0174` adds `rerun_of` (self-FK, `ON DELETE SET NULL`, partial
+  index built `CONCURRENTLY`). Two new activity events, `analysis.retried` and
+  `analysis.cancelled`, both `attempt` writes so a cancel leaves a trace
+  precisely when it did not tidily succeed.
+
+Tests: `tests/services/test_pipeline_retry_config.py`,
+`tests/services/test_pipeline_cancellation.py`,
+`tests/test_pipeline_cancel_retry_race.py`,
+`tests/test_agents_retry_cancel_endpoints.py`, and
+`tests/integration/test_pipeline_cancel_retry_postgres.py`, which proves the
+race against real row locks - the resolution is entirely a locking argument
+and a mocked session cannot see a lock.
 ## 2026-09-12 - agent dispatch endpoints reach the activity feed; the coverage guard goes per-endpoint
 
 Branch `feat/agents-activity-events`.

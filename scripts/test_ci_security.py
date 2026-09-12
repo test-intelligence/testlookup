@@ -165,6 +165,30 @@ def test_python_runtime_images_carry_no_packaging_toolchain() -> None:
         assert not any("pip " in s for s in steps[strip[0] + 1:]), dockerfile
 
 
+def test_the_debian_runtime_images_take_security_updates() -> None:
+    """The backend and MCP images are python:3.11-slim (Debian). Installing a
+    few packages does not upgrade the ones the base already carries, so a fix
+    Debian publishes for gzip / pcre2 / sqlite / perl-base never reaches the
+    image until the base tag is rebuilt upstream -- and Trivy fails every PR
+    that touches an image input in the meantime (PR #56: 12 HIGH/CRITICAL, all
+    with a fixed version). The frontend already takes Alpine's updates; this is
+    the same rule for Debian."""
+    for dockerfile in ("backend/Dockerfile", "mcp/Dockerfile"):
+        steps = _joined(_final_stage(dockerfile))
+        assert steps[0].startswith("FROM python:3.11-slim"), dockerfile
+        runs = [s for s in steps if s.startswith("RUN ") and "apt-get upgrade -y" in s]
+        assert len(runs) == 1, f"{dockerfile}: the runtime stage must run apt-get upgrade once"
+        run = runs[0]
+        at = steps.index(run)
+        assert run.index("apt-get update") < run.index("apt-get upgrade -y"), dockerfile
+        assert "rm -rf /var/lib/apt/lists/*" in run, f"{dockerfile}: apt lists left in the image"
+        assert not any(
+            s.startswith("RUN ") and "apt-get install" in s for s in steps[at + 1:]
+        ), f"{dockerfile}: a later install would pull packages the upgrade never saw"
+        end = next(i for i, s in enumerate(steps) if s.startswith(("CMD", "ENTRYPOINT")))
+        assert at < end, dockerfile
+
+
 def test_the_nginx_image_takes_alpine_security_updates() -> None:
     steps = _joined(_final_stage("frontend/Dockerfile"))
     assert steps[0].startswith("FROM nginx:alpine")

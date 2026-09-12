@@ -15,7 +15,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.workflow_run_state import PUBLIC_STATUS, normalize_status, public_status
+from app.services.pipeline_cancellation import request_cancel
+from app.services.pipeline_retry_config import decide_retry_mode
+from app.services.workflow_run_state import (
+    PUBLIC_STATUS,
+    PipelineRunStatus,
+    is_resumable,
+    is_terminal,
+    normalize_status,
+    public_status,
+)
 from app.core.deps import (
     get_accessible_project_ids,
     get_current_active_user,
@@ -288,6 +297,257 @@ async def _latest_in_progress_pipeline(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+# ── Manual retry / cancel (E7.4) ─────────────────────────────────────────────
+
+
+class RetryPipelineResponse(BaseModel):
+    """What a manual retry did. ``mode`` is ``resume`` or ``rerun``."""
+
+    mode: str
+    # ``None`` for a rerun: the new run's id is minted by the worker when it
+    # creates the row, so the caller follows ``links.poll`` to find it rather
+    # than being handed a placeholder that looks like an id.
+    pipeline_run_id: Optional[str] = None
+    rerun_of: Optional[str] = None
+    attempt: int
+    max_attempts: int
+    reason: str
+    status: str
+    public_status: str
+    links: dict = Field(default_factory=dict)
+
+
+async def _record_retry_activity(db, run, current_user, pipeline, plan, *, mode: str) -> None:
+    """One ledger row per manual retry, naming whether it resumed or reran.
+
+    ``mode`` is in the summary because the two are materially different to a
+    reader of the feed: a resume keeps the run's completed stages, a rerun
+    throws them away and spends a whole new pipeline.
+    """
+    await record_activity(
+        db,
+        project_id=run.project_id,
+        event_type="analysis.retried",
+        actor=ActorRef.from_user(current_user),
+        entity_id=run.id,
+        entity_label=run.build_number,
+        context={
+            "pipeline_run_id": str(pipeline.id),
+            "workflow_type": pipeline.workflow_type,
+            "mode": mode,
+            "reason": plan.reason,
+            "attempt": int(pipeline.attempt or 1),
+        },
+    )
+
+
+@router.post("/pipelines/{pipeline_id}/retry", status_code=202)
+async def retry_pipeline(
+    pipeline_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    _: Any = Depends(require_role(UserRole.QA_ENGINEER)),
+):
+    """Retry a finished-but-unsuccessful pipeline run (E7.4).
+
+    Two outcomes, decided by configuration rather than by the caller:
+
+    * **resume** — the configuration this run froze at start still matches the
+      live one, so the same row is replayed and its completed stages are kept.
+    * **rerun** — the configuration changed (a narrowed tool allowlist, a
+      different model, an ``AI_OFFLINE_MODE`` flip), so a NEW run starts with
+      ``rerun_of`` pointing here. Replaying checkpoints authorised under the old
+      configuration could re-enter a tool the new one forbids, and the operator
+      who changed the config is retrying precisely because they want the change
+      to take effect.
+
+    Refuses (409) when the run is still in progress, when it finished
+    successfully, or when it is at its attempt ceiling. The ceiling response
+    carries ``links.rerun`` so the caller can deliberately start a fresh run
+    rather than being told only "no".
+    """
+    pipeline = await _load_pipeline_or_404(db, pipeline_id)
+    await _require_pipeline_access(db, current_user, pipeline)
+
+    current = normalize_status(pipeline.status)
+    if not is_terminal(current):
+        raise HTTPException(
+            409,
+            detail={
+                "message": "Pipeline is still in progress",
+                "pipeline_run_id": str(pipeline.id),
+                "status": current.value,
+                "public_status": public_status(current),
+            },
+        )
+    if not is_resumable(pipeline.status, pipeline.execution_metadata):
+        # A clean ``completed``/``passed`` run. Retrying it would silently
+        # discard a good result; the caller wants a fresh trigger instead.
+        raise HTTPException(
+            409,
+            detail={
+                "message": "Pipeline finished successfully; nothing to retry",
+                "pipeline_run_id": str(pipeline.id),
+                "status": current.value,
+                "public_status": public_status(current),
+                "links": {"rerun": "/api/v1/agents/pipelines/trigger"},
+            },
+        )
+
+    attempt = int(pipeline.attempt or 1)
+    max_attempts = int(pipeline.max_attempts or 5)
+    if attempt >= max_attempts:
+        raise HTTPException(
+            409,
+            detail={
+                "message": (
+                    f"Pipeline reached its attempt ceiling ({attempt}/{max_attempts}). "
+                    "Start a new run instead."
+                ),
+                "pipeline_run_id": str(pipeline.id),
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "status": current.value,
+                "public_status": public_status(current),
+                "links": {"rerun": "/api/v1/agents/pipelines/trigger"},
+            },
+        )
+
+    # Another pipeline for the same (run, workflow) may already be in flight --
+    # an automatic retry that fired between the read above and this click.
+    in_flight = await _latest_in_progress_pipeline(
+        db, pipeline.test_run_id, pipeline.workflow_type
+    )
+    if in_flight is not None:
+        raise HTTPException(
+            409,
+            detail={
+                "message": "Another pipeline for this run is already in progress",
+                "pipeline_run_id": str(in_flight.id),
+                "status": in_flight.status,
+                "public_status": public_status(in_flight.status),
+            },
+        )
+
+    from app.agents.workflow import _resolve_analysis_mode_snapshot
+
+    plan = decide_retry_mode(
+        pipeline.execution_metadata, await _resolve_analysis_mode_snapshot()
+    )
+
+    run = await db.get(TestRun, pipeline.test_run_id)
+    if run is None:
+        raise HTTPException(404, detail="TestRun not found for this pipeline")
+
+    if plan.is_rerun:
+        from app.worker.tasks import run_agent_pipeline
+
+        run_agent_pipeline.delay(
+            test_run_id=str(run.id),
+            project_id=str(run.project_id),
+            build_number=run.build_number,
+            workflow_type=pipeline.workflow_type,
+            rerun_of=str(pipeline.id),
+        )
+        logger.info(
+            "pipeline retry -> rerun (%s) for %s", plan.reason, pipeline.id
+        )
+        await _record_retry_activity(db, run, current_user, pipeline, plan, mode="rerun")
+        return RetryPipelineResponse(
+            mode="rerun",
+            pipeline_run_id=None,
+            rerun_of=str(pipeline.id),
+            attempt=1,
+            max_attempts=max_attempts,
+            reason=plan.reason,
+            status=PipelineRunStatus.PENDING.value,
+            public_status=public_status(PipelineRunStatus.PENDING),
+            links={
+                "poll": f"/api/v1/agents/pipelines?run_id={run.id}",
+                "replaces": f"/api/v1/agents/pipelines/{pipeline.id}",
+            },
+        )
+
+    from app.worker.tasks import resume_agent_pipeline
+
+    # No ``expected_attempt``: that guard exists so a STALE scheduled retry
+    # cannot resurrect a run. This resume is being asked for now, by a person,
+    # against the row they just read.
+    resume_agent_pipeline.apply_async(
+        kwargs={"pipeline_run_id": str(pipeline.id), "build_number": "manual-retry"},
+        queue="ai_analysis",
+    )
+    logger.info("pipeline retry -> resume for %s", pipeline.id)
+    await _record_retry_activity(db, run, current_user, pipeline, plan, mode="resume")
+    return RetryPipelineResponse(
+        mode="resume",
+        pipeline_run_id=str(pipeline.id),
+        rerun_of=None,
+        attempt=attempt + 1,
+        max_attempts=max_attempts,
+        reason=plan.reason,
+        status=current.value,
+        public_status=public_status(current),
+        links={"poll": f"/api/v1/agents/pipelines/{pipeline.id}"},
+    )
+
+
+@router.post("/pipelines/{pipeline_id}/cancel", status_code=200)
+async def cancel_pipeline(
+    pipeline_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    _: Any = Depends(require_role(UserRole.QA_ENGINEER)),
+):
+    """Cancel a pipeline run (E7.4).
+
+    A ``pending`` or ``retry_wait`` run has no live worker and stops here and
+    now. A ``running`` run is *asked* to stop: the flag is set and the worker
+    terminalises itself at its next stage boundary, so its in-flight writes
+    land coherently instead of being orphaned under a row the API already
+    declared dead.
+
+    Cancellation is sticky either way — an automatic retry can never bring a
+    cancelled run back. See ``app/services/pipeline_cancellation.py`` for why
+    both orderings of the cancel-vs-retry race end ``failed``.
+    """
+    pipeline = await _load_pipeline_or_404(db, pipeline_id)
+    await _require_pipeline_access(db, current_user, pipeline)
+
+    outcome = await request_cancel(
+        db, pipeline.id, requested_by=getattr(current_user, "email", None)
+    )
+    if not outcome.accepted:
+        raise HTTPException(
+            409,
+            detail={
+                "message": "Pipeline has already finished",
+                "pipeline_run_id": str(pipeline.id),
+                **outcome.as_dict(),
+            },
+        )
+    run = await db.get(TestRun, pipeline.test_run_id)
+    if run is not None:
+        await record_activity(
+            db,
+            project_id=run.project_id,
+            event_type="analysis.cancelled",
+            actor=ActorRef.from_user(current_user),
+            entity_id=run.id,
+            entity_label=run.build_number,
+            context={
+                "pipeline_run_id": str(pipeline.id),
+                "workflow_type": pipeline.workflow_type,
+                "from_status": outcome.status,
+                "terminal": outcome.terminal,
+                "reason": outcome.reason,
+            },
+        )
+    # The router owns the commit (transaction-boundary discipline).
+    await db.commit()
+    return {"pipeline_run_id": str(pipeline.id), **outcome.as_dict()}
 
 
 # ── Bulk trigger ────────────────────────────────────────────────────────────

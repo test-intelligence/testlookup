@@ -191,6 +191,12 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("analysis.triggered", "analysis", "run", "AI analysis was requested for {entity_label}", "attempt"),
     _spec("analysis.bulk_triggered", "analysis", "project", "AI analysis was requested for {count} runs", "attempt"),
     _spec("analysis.regression_watch_run", "analysis", "run", "Regression Watchman classified the failures in {entity_label}", "attempt"),
+    # E7.4. Both are "attempt" writes: the operator asked, and the ask is the
+    # thing worth recording even if the dispatch or the worker's own stop later
+    # fails. A cancel in particular must leave a trace precisely when it did
+    # NOT tidily succeed.
+    _spec("analysis.retried", "analysis", "run", "AI analysis for {entity_label} was retried ({mode})", "attempt"),
+    _spec("analysis.cancelled", "analysis", "run", "AI analysis for {entity_label} was cancelled", "attempt"),
     # ── release ─────────────────────────────────────────────────────────────
     _spec("release.created", "release", "release", "Release {entity_label} was created"),
     _spec("release.activated", "release", "release", "Release {entity_label} was activated"),

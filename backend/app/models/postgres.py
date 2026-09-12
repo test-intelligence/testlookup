@@ -2036,6 +2036,12 @@ class AgentPipelineRun(Base):
     review_policy: Mapped[str] = mapped_column(
         String(40), nullable=False, default="human_required", server_default="human_required"
     )
+    # E7.4: set when a manual retry could not resume this run's id (its frozen
+    # config no longer matches the live one) and started a fresh run instead.
+    # Points at the run being replaced, so a lineage is followable.
+    rerun_of: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("agent_pipeline_runs.id", ondelete="SET NULL"), nullable=True
+    )
     # Pipeline-level provenance (added in migration 0017)
     execution_metadata: Mapped[Optional[dict]] = mapped_column(JSON)    # {tools_used, schema_version, fallback_used, run_budget, budget_spend}
     provenance_metadata: Mapped[Optional[dict]] = mapped_column(JSON)   # {generated_by, tools_used_count, generated_at}
