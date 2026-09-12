@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-09-12 - every AI report gets a human review request (E8.1)
+
+Requirement 10 of the agentic architecture is that an AI-generated report is a
+proposal until a human accepts it. This is the storage and the producer half;
+the review API (E8.2) and the distribution gates (E8.4) build on it.
+
+- **`review_requests`** (migration 0175). Finalize stages one for every run that
+  finished `completed` having produced a report, meaning a completed stage whose
+  capability output is a report contract. It is staged in the same transaction
+  as the run's terminal state, so a completed report never exists without one.
+  A run with no report settled `passed` in E7.5 and gets none; a failed run gets
+  none. The write sits in a savepoint, so a failure there is logged and cannot
+  abort Finalize and leave the run `running`.
+- **One live request per run**, enforced by a partial unique index. Re-finalizing
+  the same run (a same-id resume) refreshes its pending request rather than
+  adding one. If a run's report changes after its review settled, meaning the
+  evidence bundle hash differs, that review is superseded and a new pending
+  request replaces it (section 8.3). A newer run over the same test run and
+  workflow type supersedes the older run's *pending* request. An accepted review
+  is history and is never overwritten. Superseded rows keep `superseded_by`.
+- **The vocabulary is closed in the database.** `state` is `pending_review |
+  accepted | rejected | superseded`. A rejection must carry a `reason_code` from
+  `wrong_category | unsupported_claim | missing_evidence | contradiction |
+  stale_data | other` (the only part of a rejection that becomes an eval
+  label), and a settled request must carry `reviewed_at`.
+- **`users.is_synthetic`.** The review gate must refuse accounts no human logs in
+  as. The only marker was the `qa-lead.testlookup.local` email domain, which any
+  admin can type into a new user. The migration backfills from that domain once,
+  the default QA-lead service sets the flag directly, and it repairs an account
+  the backfill missed.
+- **`projects.allow_unreviewed_distribution`**, default off: whether drafts may
+  be exported or notified. Stored now; E8.4 enforces it.
+
+`requested_by` is left empty. Pipeline runs do not record who triggered them yet,
+and a guessed requester would make separation of duties (section 8.3) enforce
+against the wrong person.
+
+Tests: `backend/tests/test_migration_0175_review_requests.py`, which holds the
+migration's frozen vocabulary in step with the model;
+`backend/tests/services/test_review_request_service.py`, whose fake session
+enforces the one-live index at every flush;
+`backend/tests/test_finalize_creates_review_request.py`; and
+`backend/tests/integration/test_review_requests_postgres.py` (real CHECKs,
+partial unique index and supersede-through-the-index, added to CI).
+
 ## 2026-09-12 - agent tool calls happen at most once; triage's Jira call could never succeed (E7.6)
 
 A mutating stage that files a Jira ticket and then fails before recording it

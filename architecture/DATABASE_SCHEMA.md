@@ -1799,6 +1799,34 @@ _Constraints:_ Index(`ix_evidence_run_id`, `run_id`); Index(`ix_evidence_cluster
 | `created_at` | `DateTime` |  | NN def |  |
 | `completed_at` | `DateTime` |  |  |  |
 
+#### `review_requests`  <sub>(model `ReviewRequest`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `ForeignKey` | FK | NN | `projects.id` |
+| `kind` | `String(20)` |  | NN def |  |
+| `subject_type` | `String(30)` |  | NN |  |
+| `subject_id` | `String(128)` |  | NN |  |
+| `pipeline_run_id` | `ForeignKey` | FK |  | `agent_pipeline_runs.id` |
+| `test_run_id` | `ForeignKey` | FK |  | `test_runs.id` |
+| `workflow_type` | `String(20)` |  |  |  |
+| `capability_id` | `String(160)` |  |  |  |
+| `state` | `String(20)` |  | NN def |  |
+| `requested_by` | `ForeignKey` | FK |  | `users.id` |
+| `created_by` | `String(40)` |  | NN def |  |
+| `reviewed_by` | `ForeignKey` | FK |  | `users.id` |
+| `reviewed_at` | `DateTime` |  |  |  |
+| `reason_code` | `String(40)` |  |  |  |
+| `notes` | `Text` |  |  |  |
+| `evidence_bundle_sha256` | `String(64)` |  |  |  |
+| `ai_disclaimer_version` | `String(40)` |  | NN |  |
+| `superseded_by` | `ForeignKey` | FK |  | `review_requests.id` |
+| `created_at` | `DateTime` |  | NN def |  |
+| `updated_at` | `DateTime` |  | NN def |  |
+
+One live row per report-producing run (partial unique index on `kind, subject_type, subject_id WHERE state <> 'superseded'`); superseded rows are kept as history. `state` is `pending_review | accepted | rejected | superseded`; a rejection must carry `reason_code`. Added by migration 0175 (architecture E8.1).
+
 ### AI Evaluation & Models
 
 #### `model_versions`  <sub>(model `ModelVersion`)</sub>
