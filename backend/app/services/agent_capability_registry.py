@@ -99,3 +99,33 @@ def get_capability(stage_name: str) -> CapabilitySpecV1:
 
 def capability_registry_snapshot() -> list[dict]:
     return [CAPABILITY_REGISTRY[name].model_dump(mode="json") for name in sorted(CAPABILITY_REGISTRY)]
+
+
+# ── Report-producing capabilities (architecture E7.5, section 7.1) ───────────
+# A pipeline run that produced a report must be reviewed by a human before it
+# can be ``passed`` (E8); one that produced none has nothing to review and
+# settles ``completed -> passed`` at finalize. "Report" is decided by the
+# capability's OUTPUT CONTRACT, not by its stage name, so a new stage that
+# emits one of these schemas is reviewed without anyone remembering to add it
+# to a list of names.
+REPORT_OUTPUT_SCHEMAS: frozenset[str] = frozenset({
+    "PreliminarySummary",   # summary
+    "AnalysisAgentOutput",  # root_cause_analysis
+    "DecisionReportV1",     # decision_report
+    "RefinedReport",        # report_refinement
+})
+
+
+def is_report_producing(stage_name: str) -> bool:
+    """True when ``stage_name``'s declared output is a report contract.
+
+    An unregistered stage is treated as report-producing. That is the
+    fail-closed direction: a run wrongly held for review is visible and a
+    human can settle it, while a report wrongly auto-passed would reach
+    distribution never having been looked at.
+    """
+    try:
+        spec = get_capability(stage_name)
+    except Exception:  # noqa: BLE001 -- unknown stage: require review
+        return True
+    return spec.output_schema in REPORT_OUTPUT_SCHEMAS

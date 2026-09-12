@@ -168,7 +168,10 @@ class AgentTaskV1(RuntimeContract):
 
 
 class TerminalOutcomeV1(RuntimeContract):
-    status: Literal["pending", "running", "completed", "failed", "partial", "cancelled"]
+    # E7.5: the closed internal vocabulary (migration 0173). ``partial`` and
+    # ``cancelled`` are retired; ``retry_wait`` and ``passed`` were missing, so
+    # the projection had been reporting both as ``failed``.
+    status: Literal["pending", "running", "retry_wait", "completed", "passed", "failed"]
     error: str | None = None
     workflow_verification: Mapping[str, Any] | None = None
     decision_report_verification: Mapping[str, Any] | None = None
@@ -191,7 +194,9 @@ class AgenticRunV1(RuntimeContract):
     source_pipeline_run_id: str
     test_run_id: str
     workflow_type: str
-    status: Literal["pending", "running", "completed", "failed", "partial", "cancelled"]
+    status: Literal["pending", "running", "retry_wait", "completed", "passed", "failed"]
+    # E7.5: the four-value projection clients should branch on.
+    public_status: Literal["in_progress", "completed", "failed", "passed"]
     root_task_id: str
     plan_id: str
     plan_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")

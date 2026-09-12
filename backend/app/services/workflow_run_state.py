@@ -42,6 +42,7 @@ from app.models.enums import PipelineRunStatus
 __all__ = [
     "CANCELLED_ERROR_PREFIX",
     "DEGRADED",
+    "IN_PROGRESS_STATUSES",
     "IllegalTransition",
     "PUBLIC_STATUS",
     "TRANSITIONS",
@@ -52,7 +53,9 @@ __all__ = [
     "is_terminal",
     "mark_degraded",
     "normalize_status",
+    "passes_without_review",
     "public_status",
+    "REVIEW_NOT_APPLICABLE",
 ]
 
 CANCELLED_ERROR_PREFIX = "cancelled: "
@@ -84,6 +87,17 @@ PUBLIC_STATUS: Mapping[PipelineRunStatus, str] = {
     _S.PASSED: "passed",
     _S.FAILED: "failed",
 }
+
+# Internal states that project to public ``in_progress``. One definition, so a
+# query that means "a run is still going" cannot drift back to ``== "running"``
+# and silently miss ``pending`` and ``retry_wait`` (E7.5).
+IN_PROGRESS_STATUSES: tuple[str, ...] = tuple(
+    s.value for s, pub in PUBLIC_STATUS.items() if pub == "in_progress"
+)
+
+# ``review_policy`` for a run that produced no report (architecture section 7.1):
+# there is nothing for a human to accept, so ``passed`` needs no ReviewRequest.
+REVIEW_NOT_APPLICABLE = "not_applicable"
 
 # Legacy values a row or a caller may still present. ``partial`` rows were
 # backfilled by migration 0173; the mapping stays so an un-migrated read (or a
@@ -260,3 +274,33 @@ async def guarded_transition(
             f"agent_pipeline_runs {run_id}: expected {expected_s.value}, another writer moved it"
         )
     return target
+
+
+def passes_without_review(
+    execution_metadata: Optional[Mapping[str, Any]],
+    executed_stage_names: Any,
+) -> bool:
+    """Whether a just-``completed`` run settles straight to ``passed`` (E7.5).
+
+    Section 7.1: a report-producing run rests at ``completed`` until a human
+    accepts its review (E8); a run that produced no report has nothing to
+    review and moves ``completed -> passed`` in the finalize transaction, so a
+    client can always wait for ``passed | failed``.
+
+    Three things keep a run at ``completed``:
+
+    * it is degraded -- a stage failed, so the result is not settled positively
+      whether or not it contains a report;
+    * any stage that actually ran is report-producing (by its capability's
+      output contract, see ``agent_capability_registry.is_report_producing``);
+    * nothing ran at all. An empty run proves nothing, and reporting it as
+      ``passed`` is the "absence is not health" mistake.
+    """
+    if (execution_metadata or {}).get("stage_quality") == DEGRADED:
+        return False
+    names = [str(n) for n in (executed_stage_names or ()) if n]
+    if not names:
+        return False
+    from app.services.agent_capability_registry import is_report_producing  # noqa: PLC0415
+
+    return not any(is_report_producing(name) for name in names)

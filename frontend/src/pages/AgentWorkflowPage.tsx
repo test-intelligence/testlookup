@@ -30,6 +30,7 @@ import { useRunIntelligence } from '@/hooks/useRunIntelligence'
 import agentService from '@/services/agentService'
 import type { AgentPipelineRun, AgentStageResult } from '@/types/agent'
 import type { TestRun } from '@/types/runs'
+import { isPipelineInProgress } from '@/types/agent'
 
 // ── Canonical deep-pipeline stage layout ────────────────────────────────────
 
@@ -189,7 +190,8 @@ const RUN_PICKER_PAGE_SIZE = 100
 
 function pipelineDot(status?: string | null): string {
   const normalized = (status ?? '').toLowerCase()
-  if (normalized === 'running') return 'var(--color-accent)'
+  // E7.5: pending and retry_wait are still going, not idle.
+  if (isPipelineInProgress(normalized)) return 'var(--color-accent)'
   if (normalized === 'failed') return 'var(--status-failed)'
   if (normalized === 'completed' || normalized === 'passed' || normalized === 'success') return 'var(--status-passed)'
   return 'var(--color-text-faint)'
@@ -261,8 +263,8 @@ function RunPicker({
                   height: 6,
                   border: pipeline ? 'none' : '1px dashed var(--color-text-faint)',
                   background: pipeline ? pipelineDot(pipelineStatus) : 'transparent',
-                  boxShadow: pipelineStatus === 'running' ? '0 0 0 2px var(--color-accent-muted)' : 'none',
-                  animation: pipelineStatus === 'running' ? 'pulse 1.6s infinite' : 'none',
+                  boxShadow: isPipelineInProgress(pipelineStatus) ? '0 0 0 2px var(--color-accent-muted)' : 'none',
+                  animation: isPipelineInProgress(pipelineStatus) ? 'pulse 1.6s infinite' : 'none',
                 }}
               />
               <span className="font-mono">{String(run.build_number || run.id.slice(0, 8))}</span>

@@ -26,7 +26,16 @@ describe('AgentStatusPage — degraded pipeline rendering (BUG-004 regression, E
   })
 
   it('derives degradation through isDegradedPipeline for the pipeline card icon', () => {
-    expect(pageSource).toMatch(/StatusIcon\s+status=\{pipeline\.status\}\s+degraded=\{isDegradedPipeline\(pipeline\)\}/)
+    expect(pageSource).toMatch(/StatusIcon\s+status=\{publicPipelineStatus\(pipeline\)\}\s+degraded=\{isDegradedPipeline\(pipeline\)\}/)
+  })
+
+  it('keeps the degraded marker as its own tag with the broken tone (E7.5)', () => {
+    expect(pageSource).toMatch(/data-testid="pipeline-quality-tag"[\s\S]{0,120}STATUS_COLOUR\.degraded[\s\S]{0,40}DEGRADED/)
+  })
+
+  it('the card chip renders only the four-value public label, never the raw status (E7.5)', () => {
+    expect(pageSource).toMatch(/\{PUBLIC_PIPELINE_STATUS_LABEL\[publicPipelineStatus\(pipeline\)\]\}/)
+    expect(pageSource).not.toMatch(/pipeline\.status\.toUpperCase\(\)/)
   })
 
   it('the degraded icon uses the broken warning tone, ahead of the completed check', () => {
@@ -36,8 +45,8 @@ describe('AgentStatusPage — degraded pipeline rendering (BUG-004 regression, E
     expect(completed).toBeGreaterThan(degraded)
   })
 
-  it('STATUS_COLOUR / STATUS_BG cover every internal status the API can return', () => {
-    for (const status of ['pending', 'running', 'retry_wait', 'completed', 'passed', 'failed']) {
+  it('STATUS_COLOUR / STATUS_BG cover every internal status and the public in_progress', () => {
+    for (const status of ['pending', 'running', 'retry_wait', 'in_progress', 'completed', 'passed', 'failed']) {
       expect(pageSource, `STATUS_COLOUR.${status}`).toMatch(new RegExp(`${status}:\\s*'text-\\[var\\(--`))
       expect(pageSource, `STATUS_BG.${status}`).toMatch(new RegExp(`${status}:\\s*'bg-\\[var\\(--`))
     }

@@ -70,6 +70,7 @@ import type { LlmQuotaRead, LlmUsageRead } from '@/services/llmBudgetService'
 import type { TestRun } from '@/types/runs'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { formatRunWhen, shortAgo } from '@/utils/formatters'
+import { isPipelineInProgress } from '@/types/agent'
 
 // ── Verdict ──────────────────────────────────────────────────────────────
 type Verdict = 'READY' | 'NO_FAILURES' | 'NO_SOURCES' | 'RUNNING' | 'FAILED' | 'PENDING'
@@ -492,7 +493,7 @@ function buildModel({
       : `${Math.floor(ageH / 24)}d ago`
     const isFocus = focusedRun && r.id === focusedRun.id
     const status: PastRun['status'] = isFocus && pipelineStatus
-      ? (pipelineStatus.status === 'running' ? 'running'
+      ? (isPipelineInProgress(pipelineStatus.status) ? 'running'
          : pipelineStatus.status === 'failed' ? 'failed'
          : 'complete')
       : i % 6 === 4
@@ -584,7 +585,7 @@ function buildModel({
 }
 
 function pickVerdict(model: DeepModel, pipelineStatus: { status: string } | null): Verdict {
-  if (pipelineStatus?.status === 'running') return 'RUNNING'
+  if (isPipelineInProgress(pipelineStatus?.status)) return 'RUNNING'
   if (pipelineStatus?.status === 'failed')  return 'FAILED'
   // NO_FAILURES before NO_SOURCES: with real integration-health data an
   // install with zero external integrations AND zero runs would otherwise
@@ -822,7 +823,7 @@ interface RibbonStage {
 }
 
 function buildRibbon(model: DeepModel, pipelineStatus: { status: string; stage_summary?: { completed: number; failed: number; skipped: number; pending: number } } | null): RibbonStage[] {
-  const running = pipelineStatus?.status === 'running'
+  const running = isPipelineInProgress(pipelineStatus?.status)
   const failed  = pipelineStatus?.status === 'failed'
   const stageStatus = (idx: number): StageStatus => {
     if (failed) return idx === 0 ? 'failed' : 'pending'

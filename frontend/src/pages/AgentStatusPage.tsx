@@ -15,7 +15,7 @@ import { useAIConfig } from '@/hooks/useAIConfig'
 import { useRuns } from '@/hooks/useRuns'
 import { usePermissions } from '@/hooks/usePermissions'
 import agentService from '@/services/agentService'
-import { isDegradedPipeline } from '@/types/agent'
+import { isDegradedPipeline, PUBLIC_PIPELINE_STATUS_LABEL, isPipelineInProgress, publicPipelineStatus } from '@/types/agent'
 import type { ActiveLiveRun, AgentPipelineRun, AgentStageResult, PipelineTimeline } from '@/types/agent'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import ComputeCanvas from '@/components/agents/computeGraph/ComputeCanvas'
@@ -79,6 +79,8 @@ const STATUS_COLOUR: Record<string, string> = {
   pending: 'text-[var(--color-text-muted)]',
   running: 'text-[var(--color-text)]',
   retry_wait: 'text-[var(--color-text)]',
+  // E7.5: the card chip is keyed on the public projection.
+  in_progress: 'text-[var(--color-text)]',
   completed: 'text-[var(--status-passed)]',
   passed: 'text-[var(--status-passed)]',
   // A degraded-but-finished pipeline (a stage errored) is `completed` with
@@ -94,6 +96,7 @@ const STATUS_BG: Record<string, string> = {
   pending: 'bg-[var(--color-bg-hover)]',
   running: 'bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border-light)]',
   retry_wait: 'bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border-light)]',
+  in_progress: 'bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border-light)]',
   completed: 'bg-[var(--status-passed-bg)] border border-[var(--status-passed-bd)]',
   passed: 'bg-[var(--status-passed-bg)] border border-[var(--status-passed-bd)]',
   degraded: 'bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)]',
@@ -173,7 +176,7 @@ function StatusIcon({ status, degraded = false }: { status: string; degraded?: b
   if (degraded) return <AlertTriangle className="w-4 h-4 text-[var(--status-broken)]" />
   if (status === 'completed' || status === 'passed') return <CheckCircle className="w-4 h-4 text-[var(--status-passed)]" />
   if (status === 'failed') return <XCircle className="w-4 h-4 text-[var(--status-failed)]" />
-  if (status === 'running') return <RefreshCw className="w-4 h-4 text-[var(--color-text)] animate-spin" />
+  if (status === 'running' || status === 'in_progress') return <RefreshCw className="w-4 h-4 text-[var(--color-text)] animate-spin" />
   if (status === 'skipped') return <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)]" />
   return <Clock className="w-4 h-4 text-[var(--color-text-muted)]" />
 }
@@ -331,17 +334,39 @@ function PipelineCard({
       }`}
     >
       <div className="flex items-center gap-2 mb-1">
-        <StatusIcon status={pipeline.status} degraded={isDegradedPipeline(pipeline)} />
+        <StatusIcon status={publicPipelineStatus(pipeline)} degraded={isDegradedPipeline(pipeline)} />
         <span className="text-sm font-medium text-[var(--color-text)] capitalize">
           {pipeline.workflow_type} pipeline
         </span>
+        {/* E7.5: the chip only ever shows one of the four public statuses.
+            Degradation is a quality qualifier, not a fifth status, so it gets
+            its own tag and keeps the amber tone that BUG-004 needed. */}
+        {isDegradedPipeline(pipeline) && (
+          <span
+            data-testid="pipeline-quality-tag"
+            className={`ml-auto text-[10px] font-mono ${STATUS_COLOUR.degraded}`}
+          >
+            DEGRADED
+          </span>
+        )}
         <span
-          className={`ml-auto text-xs font-mono ${
-            isDegradedPipeline(pipeline) ? STATUS_COLOUR.degraded : STATUS_COLOUR[pipeline.status]
+          data-testid="pipeline-status-chip"
+          className={`${isDegradedPipeline(pipeline) ? '' : 'ml-auto '}text-xs font-mono ${
+            isDegradedPipeline(pipeline) ? STATUS_COLOUR.degraded : STATUS_COLOUR[publicPipelineStatus(pipeline)]
           }`}
         >
-          {isDegradedPipeline(pipeline) ? 'DEGRADED' : pipeline.status.toUpperCase()}
+          {PUBLIC_PIPELINE_STATUS_LABEL[publicPipelineStatus(pipeline)]}
         </span>
+        {pipeline.status === 'retry_wait' && pipeline.attempt != null && (
+          <span data-testid="pipeline-retry-detail" className="text-[10px] font-mono text-[var(--color-text-muted)]">
+            retrying · {pipeline.attempt}/{pipeline.max_attempts ?? '?'}
+          </span>
+        )}
+        {pipeline.cancel_requested && isPipelineInProgress(pipeline.status) && (
+          <span data-testid="pipeline-stopping" className="text-[10px] font-mono text-[var(--color-text-muted)]">
+            stopping
+          </span>
+        )}
       </div>
       {/* Run context: which run / suite this pipeline analysed. ``run_seq`` is
           the same per-(project, suite) "Run #N" shown on /runs + /live; falls
