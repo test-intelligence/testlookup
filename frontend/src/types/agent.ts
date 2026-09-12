@@ -5,6 +5,50 @@ export type PipelineStatus = 'pending' | 'running' | 'retry_wait' | 'completed' 
 // Four-value public projection carried as `public_status` on pipeline responses.
 export type PublicPipelineStatus = 'in_progress' | 'completed' | 'failed' | 'passed'
 
+// Mirror of backend workflow_run_state.PUBLIC_STATUS (+ its legacy map), used
+// when a payload predates `public_status` (a cached response, an older API).
+const PUBLIC_BY_INTERNAL: Record<string, PublicPipelineStatus> = {
+  pending: 'in_progress',
+  running: 'in_progress',
+  retry_wait: 'in_progress',
+  in_progress: 'in_progress',
+  completed: 'completed',
+  partial: 'completed',
+  passed: 'passed',
+  failed: 'failed',
+  cancelled: 'failed',
+  canceled: 'failed',
+}
+
+export const PUBLIC_PIPELINE_STATUS_LABEL: Record<PublicPipelineStatus, string> = {
+  in_progress: 'IN PROGRESS',
+  completed: 'COMPLETED',
+  failed: 'FAILED',
+  passed: 'PASSED',
+}
+
+/**
+ * The four-value status a user should see (E7.5). Prefers the server's
+ * `public_status`; otherwise projects `status` the way the backend does. An
+ * empty status is in progress (the backend reads a missing one as `pending`);
+ * an unrecognised one is `failed`, never a spinner that spins forever.
+ */
+export function publicPipelineStatus(
+  p: { status?: string | null; public_status?: string | null } | null | undefined,
+): PublicPipelineStatus {
+  const explicit = (p?.public_status ?? '').toLowerCase()
+  if (explicit in PUBLIC_PIPELINE_STATUS_LABEL) return explicit as PublicPipelineStatus
+  const raw = (p?.status ?? '').toLowerCase()
+  if (!raw) return 'in_progress'
+  return PUBLIC_BY_INTERNAL[raw] ?? 'failed'
+}
+
+/** True for every internal state that projects to `in_progress`, not just `running`. */
+export function isPipelineInProgress(status: string | null | undefined): boolean {
+  if (!status) return false
+  return PUBLIC_BY_INTERNAL[status.toLowerCase()] === 'in_progress'
+}
+
 export function isDegradedPipeline(p: { status?: string | null; execution_metadata?: unknown } | null | undefined): boolean {
   if (!p) return false
   const meta = p.execution_metadata as { stage_quality?: unknown } | null | undefined
@@ -40,6 +84,7 @@ export interface PipelineTimeline {
   pipeline_run_id: string
   workflow_type: string
   status: string
+  public_status?: PublicPipelineStatus | null
   started_at: string | null
   completed_at: string | null
   duration_seconds: number | null
@@ -154,6 +199,15 @@ export interface AgentPipelineRun {
   test_run_id: string
   workflow_type: 'offline' | 'deep' | 'live'
   status: PipelineStatus
+  // E7.1/E7.5: render this, not `status`. Optional so a cached or older
+  // payload still type-checks; publicPipelineStatus() falls back to `status`.
+  public_status?: PublicPipelineStatus | null
+  // E7.2/E7.4 retry and cancel state.
+  attempt?: number | null
+  max_attempts?: number | null
+  next_retry_at?: string | null
+  cancel_requested?: boolean | null
+  rerun_of?: string | null
   started_at: string | null
   completed_at: string | null
   error: string | null

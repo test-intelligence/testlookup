@@ -32,7 +32,13 @@ from app.services.pipeline_lease import (
     release_lease_fields,
 )
 from app.services.pipeline_cancellation import PipelineCancelled, is_cancel_requested
-from app.services.workflow_run_state import DEGRADED, apply_transition, is_resumable
+from app.services.workflow_run_state import (
+    DEGRADED,
+    REVIEW_NOT_APPLICABLE,
+    apply_transition,
+    is_resumable,
+    passes_without_review,
+)
 
 from app.agents.analysis_agent import AnalysisAgent
 from app.agents.anomaly_agent import AnomalyDetectionAgent
@@ -2755,6 +2761,17 @@ async def _mark_pipeline_done(
             else:
                 apply_transition(run, PipelineRunStatus.FAILED, error=error)
             has_degraded_stages = bool(success and has_failed_stages)
+            # E7.5: a clean run that produced no report has nothing for a human
+            # to accept, so it settles ``completed -> passed`` in this same
+            # transaction (architecture section 7.1) and a client can wait for
+            # ``passed | failed``. A report-producing run rests at ``completed``
+            # until its review is accepted (E8). "Ran" means the stage row
+            # reached completed -- skipped and failed stages produced nothing.
+            if success and not has_degraded_stages and passes_without_review(
+                None, [s.stage_name for s in stages if s.status == "completed"]
+            ):
+                apply_transition(run, PipelineRunStatus.PASSED)
+                run.review_policy = REVIEW_NOT_APPLICABLE
             # E7.3: a terminal row holds no lease. Leaving one set would make
             # the reaper's "running past its lease" predicate meaningless and
             # would keep a dead worker's token fencing out later writers.

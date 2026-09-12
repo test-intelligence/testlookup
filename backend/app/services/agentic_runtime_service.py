@@ -4,8 +4,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Any, Iterable, Sequence
+from typing import Any, cast, Iterable, Literal, Sequence
 
+from app.services.workflow_run_state import normalize_status, public_status
 from app.models.agentic_runtime import (
     AgentEvidenceV1,
     AgentFindingV1,
@@ -24,8 +25,16 @@ MAX_RECURSIVE_TASKS = 1_000
 MAX_RUNTIME_FINDINGS = 100
 MAX_RUNTIME_EVIDENCE = 200
 _STAGE_ALIASES = {"analysis": "root_cause_analysis", "anomaly": "anomaly_detection"}
+# Task (stage / investigation-child) vocabulary. Deliberately NOT the pipeline
+# run vocabulary: a run's status goes through workflow_run_state.normalize_status
+# (E7.5), because this allowlist predates retry_wait and passed and mapped both
+# to "failed".
 _RUN_STATUSES = {"pending", "running", "completed", "failed", "partial", "cancelled"}
 _TASK_STATUSES = _RUN_STATUSES | {"skipped"}
+
+# The root task mirrors the run, but tasks have no retry_wait or passed. A run
+# waiting to retry has no live work (pending); a passed run's work completed.
+_ROOT_TASK_STATUS = {"retry_wait": "pending", "passed": "completed"}
 
 
 def _status(value: Any, *, task: bool = False) -> str:
@@ -168,18 +177,22 @@ def build_agentic_run_projection(pipeline: Any, stages: Iterable[Any]) -> Agenti
     }
     root_task_id = f"pipeline:{pipeline.id}"
     pipeline_error = _safe_error(pipeline.error)
-    pipeline_status = _status(pipeline.status)
+    pipeline_status = normalize_status(pipeline.status).value
+    root_task_status = _ROOT_TASK_STATUS.get(pipeline_status, pipeline_status)
+    run_public_status = cast(
+        Literal["in_progress", "completed", "failed", "passed"], public_status(pipeline_status)
+    )
     tasks: list[AgentTaskV1] = [AgentTaskV1(
         task_id=root_task_id,
         source_pipeline_run_id=str(pipeline.id),
         capability_id="runtime.pipeline.v1",
         stage_name="pipeline",
-        status=pipeline_status,
+        status=root_task_status,
         selected=True,
         required=True,
         selection_reason="root task for the persisted pipeline execution",
         usage=TaskUsageV1(duration_ms=_duration_ms(pipeline.started_at, pipeline.completed_at)),
-        stop_reason=_stop_reason(pipeline_status, error=pipeline_error, skipped_reason=None),
+        stop_reason=_stop_reason(root_task_status, error=pipeline_error, skipped_reason=None),
         started_at=pipeline.started_at,
         completed_at=pipeline.completed_at,
         error=pipeline_error,
@@ -317,6 +330,7 @@ def build_agentic_run_projection(pipeline: Any, stages: Iterable[Any]) -> Agenti
         test_run_id=str(pipeline.test_run_id),
         workflow_type=pipeline.workflow_type,
         status=pipeline_status,
+        public_status=run_public_status,
         root_task_id=root_task_id,
         plan_id=str(plan.get("plan_id") or f"legacy:{pipeline.id}"),
         plan_sha256=actual_plan_hash,

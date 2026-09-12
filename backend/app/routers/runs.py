@@ -188,10 +188,16 @@ async def list_failed_run_ids(
         # a pipeline created in the last 2h or currently running are
         # filtered out.
         dedup_cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+        # E7.5: "currently running" is every in-progress state. ``== "running"``
+        # missed ``pending`` and ``retry_wait`` (E7.2), so a run whose pipeline
+        # was parked for a scheduled retry more than 2h after creation was
+        # offered for a second, concurrent pipeline.
+        from app.services.workflow_run_state import IN_PROGRESS_STATUSES
+
         recent_pipelines = (
             select(AgentPipelineRun.test_run_id)
             .where(
-                (AgentPipelineRun.status == "running")
+                AgentPipelineRun.status.in_(IN_PROGRESS_STATUSES)
                 | (AgentPipelineRun.created_at >= dedup_cutoff)
             )
             .scalar_subquery()

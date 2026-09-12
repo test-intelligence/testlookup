@@ -1,6 +1,7 @@
 """Deterministic replay reconstruction for agent pipeline audit trails."""
 from __future__ import annotations
 
+from app.services.workflow_run_state import public_status
 import hashlib
 import json
 import uuid
@@ -271,6 +272,8 @@ async def build_pipeline_replay(
         "test_run_id": str(pipeline.test_run_id),
         "workflow_type": pipeline.workflow_type,
         "status": pipeline.status,
+        # E7.5: the four-value projection clients should branch on.
+        "public_status": public_status(pipeline.status),
         "started_at": _iso(pipeline.started_at),
         "completed_at": _iso(pipeline.completed_at),
         "analysis_mode_requested": metadata.get("analysis_mode_requested"),

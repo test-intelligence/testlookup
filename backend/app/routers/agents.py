@@ -755,6 +755,8 @@ async def get_pipeline_timeline(
         "pipeline_run_id": str(pipeline_id),
         "workflow_type": pipeline.workflow_type,
         "status": pipeline.status,
+        # E7.5: the four-value projection clients should branch on.
+        "public_status": public_status(pipeline.status),
         "started_at": pipeline.started_at.isoformat() if pipeline.started_at else None,
         "completed_at": pipeline.completed_at.isoformat() if pipeline.completed_at else None,
         "duration_seconds": pipeline_duration,

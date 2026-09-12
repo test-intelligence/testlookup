@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-09-12 - four public pipeline statuses, and `passed` becomes reachable (E7.5)
+
+E7.1 closed the stored vocabulary to six internal states and added a
+four-value `public_status`, but nothing ever wrote `passed`, the UI kept
+printing the raw status, and several readers still assumed the old set.
+
+- **`passed` for runs with nothing to review.** Finalize now moves a clean run
+  that produced no report straight `completed -> passed` in the same
+  transaction and sets `review_policy = not_applicable` (architecture section
+  7.1), so a client can wait for `passed | failed`. "Report" is decided by the
+  capability's output contract (`PreliminarySummary`, `AnalysisAgentOutput`,
+  `DecisionReportV1`, `RefinedReport`), not by stage name, and an unregistered
+  stage requires review. A degraded run, a run where any report stage
+  completed, and a run where nothing ran all stay `completed`. Every current
+  pipeline type runs `summary`, so today's pipelines still rest at
+  `completed`; single-agent invocations (E1.2) are what this is for.
+- **The agentic-runtime projection reported retry_wait and passed as
+  `failed`.** Its allowlist predated both, so a run waiting on a scheduled
+  retry read as dead on `GET /pipelines/{id}/agentic-runtime`. The run status
+  now goes through the state machine's normaliser and `AgenticRunV1` carries
+  `public_status`.
+- **`/runs?only_pending=true` offered runs for a second, concurrent pipeline**
+  when their pipeline was `pending` or `retry_wait`: it matched only
+  `status == "running"`. It now uses `IN_PROGRESS_STATUSES`, the one shared
+  definition.
+- **The UI shows exactly four statuses.** `/agents` cards render the public
+  label (`IN PROGRESS`, `COMPLETED`, `FAILED`, `PASSED`) instead of
+  `RETRY_WAIT` / `PENDING`; degradation is its own tag rather than a fifth
+  status; a waiting retry shows `retrying · n/m` and a run asked to stop shows
+  `stopping`. `publicPipelineStatus()` falls back to projecting `status` for a
+  payload without `public_status`. `/agents` workflow dots and the Deep
+  Investigation verdict and ribbon now treat `pending` and `retry_wait` as in
+  progress; both previously showed a waiting retry as idle.
+- The timeline and replay responses carry `public_status`.
+
+Tests: `backend/tests/services/test_pipeline_public_status.py`,
+`frontend/src/types/agent.publicStatus.test.ts`,
+`frontend/src/pages/AgentStatusPage.publicStatus.test.tsx`, and the updated
+BUG-004 regression test. `frontend/tests/e2e/agents-public-status.spec.ts`
+asserts no `/agents` row shows another value with every internal state mocked;
+like the rest of `tests/e2e` it runs against a live stack and is not part of CI.
+
 ## 2026-09-12 - the Python runtime images take Debian security updates
 
 The backend and MCP image scans failed on PR #56 with the same 12 HIGH/CRITICAL
