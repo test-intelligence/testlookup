@@ -68,7 +68,10 @@ class RetryPolicy:
     def raw_delay(self, attempt: int) -> float:
         """Un-jittered delay after ``attempt`` (1-based): ``min(base * 2**(n-1), cap)``."""
         n = max(1, int(attempt))
-        return min(self.base_seconds * (2 ** (n - 1)), self.cap_seconds)
+        # ``2 ** (n - 1)`` is Any to mypy (int.__pow__ overloads), which would
+        # make the whole expression Any and silently widen the return type.
+        growth = float(2 ** (n - 1))
+        return float(min(self.base_seconds * growth, self.cap_seconds))
 
     def delay(self, attempt: int, *, rng: Optional[random.Random] = None) -> float:
         """Jittered delay in seconds after ``attempt`` (1-based)."""
