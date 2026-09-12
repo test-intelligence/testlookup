@@ -33,7 +33,7 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **36 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **38 guards**.
 16 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
 fail CI. The other 20 ship at zero with **no baseline file at all** — those are
@@ -112,6 +112,8 @@ fails if a *second* deleter appears.
 | `agents.log-decision-present` | every agent that **implements `run()`** calls `self.log_decision(...)` — resolved through the inheritance graph, so a subclass overriding `run()` owes its own trail | Log every non-trivial route/fallback/skip; a subclass that only extends behaviour may delegate with `await super().run(state)` |
 | `agents.routing-metadata` | `classify_test()` populates `_routing` | Set `result['_routing'] = {...}` before returning |
 | `agents.capability-has-executor` † | a capability in `agent_capability_registry` that no workflow plans, or one that contradicts the planner | Add the stage to the right `_*_STAGES` tuple in `services/agent_planner.py`, or declare how it really runs: `_capability("name", execution="on_demand"/"child_spawned"/"runtime", ...)`. `defect_commander` read as a mutating pipeline stage depending on `root_cause_analysis` while having no executor at all — zero `agent_stage_results` rows in the deployment's entire history |
+| `agents.pipeline-status-writes-via-state-machine` † | assigning `AgentPipelineRun.status` anywhere but `services/workflow_run_state.py` | Call `apply_transition(pipeline, PipelineRunStatus.X, error=...)`, or `await guarded_transition(db, id, expected=..., to=...)` where two writers can race. Five modules used to assign the column directly and the vocabulary drifted into `partial`, `cancelled` and a read-time 30-minute `failed` rewrite (E7.1) |
+| `agents.no-partial-pipeline-status` † | `AgentPipelineRun.status` compared with, filtered by, or assigned the retired literals `partial` / `cancelled` | Degraded runs are `completed` with `execution_metadata.stage_quality = 'degraded'` (use `workflow_run_state.is_resumable`); cancelled runs are `failed` with an error prefixed `cancelled:`. Migration 0173 backfilled the rows, so a comparison against a retired value matches nothing forever |
 
 ### Repo
 
