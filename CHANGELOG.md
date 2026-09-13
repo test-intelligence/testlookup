@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-13 - Codacy workflow starts instead of failing validation (T23 / K7)
+
+The Codacy workflow referenced `secrets.CODACY_PROJECT_TOKEN` directly in a
+step `if` expression. GitHub rejects that syntax before creating any job, so
+every branch and main push showed an immediate red workflow with no logs.
+
+The workflow now evaluates token availability in job-level `env` and gates the
+scan through that value. Repositories without the optional token still check
+out successfully and skip the scan; configured repositories continue passing
+the token directly to the pinned Codacy action. A regression test prevents
+direct secret references from returning to workflow conditions.
+
 ## 2026-09-13 - Agentic architecture handover to the next implementer
 
 `architecture/AGENTIC_HANDOVER_2026-09-13.md` hands the agentic architecture

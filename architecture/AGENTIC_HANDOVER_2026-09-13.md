@@ -508,7 +508,7 @@ Non-programme merges in the same window: #61 (test fixtures stop stubbing app mo
 | K4 | P1 | `mode=act` half of mutating-call invariant not wired | `execute_agent_action` checks accepted review only; no check that the proposing agent's resolved config is `mode=act` | In `agent_action_ledger_service`, resolve the capability's config (`resolve_for_project`) and fail `policy_denied` unless `mode == "act"` |
 | K5 | P2 | 13 capability inputs are labels (SubjectRef only) | `GET /api/v1/agents/catalog/agent.summary.v1` → `input_schema_resolved` per baseline | Define models in `CATALOG_SCHEMA_MODULES`; shrink baseline |
 | K6 | P3 | Idempotency key never expires in DB | Invoke with key K; after 24 h, same key with different body → 422 (lock expired, row remains) | Documented deviation; decide with owner whether keys should expire (partial index on `created_at` or cleanup job) |
-| K7 | P3 | Codacy push workflow fails in 0 s on every branch (pre-existing) | `gh run list --branch <any>` shows `.github/workflows/codacy.yml` failure | Investigate workflow config/secrets; not programme work |
+| K7 | P3 | Codacy push workflow failed in 0 s on every branch (pre-existing) | GitHub rejected a step `if` that referenced `secrets.CODACY_PROJECT_TOKEN` directly | **Fixed by T23:** compute token availability in job-level `env`, then check that value in the step condition; regression test pins the workflow shape |
 | K8 | P2 | E7.5 e2e (`frontend/tests/e2e/agents-public-status.spec.ts`) not in CI | CI job list | Run against a CI stack or document live-probe procedure |
 | K9 | P1 (live) | Programme DoD never verified on a running stack | — | See §8.5 |
 
@@ -633,7 +633,7 @@ Priority: **P0** = blocks correctness/safety or other epics · **P1** = needed f
 | T20 | P2 | S | K3 chip review time | `routers/agents.py` list response, `AgentStatusPage.tsx` | — | tests | — |
 | T21 | P2 | M | K5 label-only catalog inputs → models | `models/*contracts*.py` | — | catalog tests; baseline shrink | — |
 | T22 | P2 | S | Live DoD verification (§8.5) | — | — | live probes | record results in §12 |
-| T23 | P3 | S | K7 Codacy workflow | `.github/workflows/codacy.yml` | — | — | — |
+| T23 | P3 | S | K7 Codacy workflow **(shipped early as a prerequisite)** | `.github/workflows/codacy.yml` | — | workflow syntax regression test | CHANGELOG; §12 E2.4 |
 
 ### 6.2 Recommended order
 
