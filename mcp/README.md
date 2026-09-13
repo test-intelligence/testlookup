@@ -215,6 +215,17 @@ List open quarantine proposals and approve the one with the highest flip rate
 | `get_investigation` | `investigation_id` | Full detail: status, budget vs spend, five hypothesis boards, verdict (primary cause, confidence, narrative, recommended actions) — long prose compact-rendered |
 | `list_investigations` | `project_id`, `limit?` | Recent investigations newest-first with primary cause + confidence |
 
+### Agents (E1.5)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `list_agents` | none | The agent catalog: permission, whether each agent is invocable on its own, sync-eligible, report-producing |
+| `get_agent` | `agent_id` | One catalog entry: input/output contracts, dependencies, how to invoke it |
+| `invoke_agent` | `agent_id`, `project_id`, `test_run_id`, `mode?`, `idempotency_key?` | **Write (side effect).** Runs one invocable agent on a stored test run. Always sends an `Idempotency-Key` (yours, or a new one it returns), so a retry with the same key cannot run the agent twice |
+| `get_agent_invocation` | `invocation_id` | Status, attempts, output, and `review_state` of an invocation |
+
+`INVOKABLE_AGENT_IDS` in `tools/agents.py` mirrors the backend registry; `backend/tests/test_mcp_agent_catalog_parity.py` fails when they drift.
+
 ### Human review (E8.4)
 
 | Tool | Parameters | Description |

@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-13 - The agent catalog as MCP tools (E1.5)
+
+MCP clients (AI desktop apps, IDEs) can now discover TestLookup's agents and run
+one, through the same catalog and invocation API the REST clients use: one
+registry, two transports.
+
+**New MCP tools**
+
+- **`list_agents`:** the catalog, marking which agents can be invoked on their
+  own, which can run synchronously, and which produce a report that needs
+  human review.
+- **`get_agent`:** one agent's input and output contracts, its dependencies, and
+  how to invoke it. Malformed ids are refused before any API call.
+- **`invoke_agent`:** runs one invocable agent on a stored test run.
+  - It is a side effect: it spends the project's AI budget, and its docstring
+    tells the calling agent to confirm with the user first.
+  - Input is validated first: agent id, invocability, UUIDs and mode.
+  - It always sends an `Idempotency-Key`: the caller's, or a new one it
+    returns so a retry can reuse it and never run the agent twice.
+  - Errors come back structured (`status_code`, `detail`).
+- **`get_agent_invocation`:** status, attempts, output, and the review state
+  plus AI disclaimer, like the other report tools.
+- As before, no MCP tool can accept or reject a review.
+
+**Keeping MCP and the backend in step.** The MCP package cannot import the
+backend, so it keeps a literal `INVOKABLE_AGENT_IDS`. The new
+`backend/tests/test_mcp_agent_catalog_parity.py` checks that:
+
+- that set equals the backend registry's invocable agents, and fails when a
+  capability is added or changed without updating MCP;
+- every catalog id matches the agent-id shape `get_agent` accepts;
+- all four tools are registered;
+- no MCP tool reaches review accept or reject.
+
+The MCP client's `post` now accepts `extra_headers`. They are sent along, but
+can never override the auth headers.
+
+Tests: `mcp/tests/test_mcp_agent_catalog.py`,
+`backend/tests/test_mcp_agent_catalog_parity.py`.
+
 ## 2026-09-13 - Postman collection and curl reference for the agent API (E1.4)
 
 The agent API (catalog, invocations and human review) now ships with a Postman
