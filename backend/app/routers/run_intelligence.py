@@ -259,6 +259,7 @@ async def get_run_baseline_diff(
 @router.post("/{run_id}/intelligence/refresh")
 async def refresh_intelligence(
     run_id: uuid.UUID,
+    response: Response,
     db: Any = Depends(get_db),
     _: Any = Depends(require_run_access()),
 ):
@@ -289,7 +290,8 @@ async def refresh_intelligence(
             logger.warning("Failed to save intelligence snapshot on refresh: %s", cache_err)
         if isinstance(result, dict):
             result["_snapshot"] = {"cached": False, "stale": False, "just_refreshed": True}
-        return result
+        # E8.6: the refreshed payload is the same AI report the GET returns.
+        return await _with_review(db, response, run_id, result)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -338,6 +340,11 @@ async def export_intelligence_report(
         "decision_report_verification": intelligence.get("structured_summary", {}).get("decision_report_verification"),
         "category_breakdown": intelligence.get("category_breakdown", {}),
     }
+
+    # E8.6: the export is a downloadable copy of AI report content, so it says
+    # whether a person has accepted that content (review envelope, E8.3).
+    envelope = await review_envelope_for_run(db, run_id)
+    report.update(envelope.fields())
 
     report_exports_total.labels(format="json", type="intelligence").inc()
 

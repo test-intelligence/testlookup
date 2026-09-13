@@ -3024,6 +3024,225 @@ def _declared_capabilities(tree: ast.Module) -> dict[str, str]:
     return found
 
 
+# -- Human review gate (architecture E8.6, section 8.3) ------------------------
+_WORKFLOW_REL = "backend/app/agents/workflow.py"
+_REVIEW_REQUEST_SERVICE_REL = "backend/app/services/review_request_service.py"
+#: The report contracts section 8.1 names. REPORT_OUTPUT_SCHEMAS may grow; it
+#: may not lose one of these, or runs producing it would pass unreviewed.
+_REQUIRED_REPORT_CONTRACTS = frozenset({
+    "PreliminarySummary", "AnalysisAgentOutput", "DecisionReportV1", "RefinedReport",
+})
+#: Calls that read AI report data in a route handler.
+_REPORT_SOURCE_CALLS = frozenset({
+    "get_run_intelligence", "get_run_mode_summary", "list_decision_report_versions",
+    "normalize_summary_doc",
+})
+#: Calls that attach the review envelope (E8.3) or the release gate (E8.4).
+_REVIEW_ENVELOPE_CALLS = frozenset({
+    "review_envelope_for_run", "envelope_from_review", "_with_review",
+    "_with_review_envelope", "apply_release_review_gate",
+})
+#: Backend report routes an MCP tool can call. `/intelligence/refresh` is not one.
+_MCP_REPORT_PATH = re.compile(
+    r"/api/v1/(?:runs/\{[^}]+\}/(?:intelligence|summary|decision-reports)"
+    r"|release-readiness/\{[^}]+\}|agents/runs/\{[^}]+\}/summary)[\"']"
+)
+_ROUTE_DECORATORS = frozenset({"get", "post", "put", "patch", "delete", "api_route"})
+
+
+def _capability_outputs(tree: ast.Module) -> dict[str, tuple[str, str]]:
+    """{stage_name: (output, execution)} for every ``_capability("name", ...)`` call."""
+    found: dict[str, tuple[str, str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+        if name != "_capability" or not node.args:
+            continue
+        first = node.args[0]
+        if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+            continue
+        output, execution = "", "planned"
+        for kw in node.keywords:
+            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                if kw.arg == "output":
+                    output = kw.value.value
+                elif kw.arg == "execution":
+                    execution = kw.value.value
+        found[first.value] = (output, execution)
+    return found
+
+
+def _frozenset_strings(tree: ast.Module, name: str) -> set[str] | None:
+    """String members of ``NAME = frozenset({...})`` (annotated or not), or None."""
+    for node in ast.walk(tree):
+        target: ast.AST | None = None
+        value: ast.AST | None = None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign):
+            target, value = node.target, node.value
+        if not (isinstance(target, ast.Name) and target.id == name and value is not None):
+            continue
+        if isinstance(value, ast.Call) and value.args:
+            value = value.args[0]
+        if isinstance(value, (ast.Set, ast.Tuple, ast.List)):
+            return {
+                e.value for e in value.elts
+                if isinstance(e, ast.Constant) and isinstance(e.value, str)
+            }
+    return None
+
+
+def _reviews_report_producers_create_review_request() -> list[Violation]:
+    """Every report-producing capability reaches Finalize, which stages its review.
+
+    A ReviewRequest exists only because Finalize stages one for the stages that
+    completed and produced a report (E8.1). A capability that emits a report
+    contract but is not planned in a workflow stage order never passes through
+    Finalize, so its report would be distributed without anyone looking at it.
+    Four things keep that chain intact, and each is checked:
+
+    * REPORT_OUTPUT_SCHEMAS still names every report contract of section 8.1;
+    * every capability whose output is one of them is planned in a stage order;
+    * Finalize still asks ``report_stages`` and calls ``stage_run_review_request``;
+    * ``report_stages`` still decides by the output contract (``is_report_producing``).
+    """
+    registry_path = REPO_ROOT / _CAPABILITY_REGISTRY_REL
+    planner_path = REPO_ROOT / _AGENT_PLANNER_REL
+    if not registry_path.exists():
+        return []
+    try:
+        registry_tree = ast.parse(registry_path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    schemas = _frozenset_strings(registry_tree, "REPORT_OUTPUT_SCHEMAS")
+    if schemas is None:
+        return [Violation(
+            registry_path, 0,
+            "REPORT_OUTPUT_SCHEMAS not found -- this guard can no longer tell which "
+            "capabilities produce reports",
+        )]
+    violations: list[Violation] = []
+    for missing in sorted(_REQUIRED_REPORT_CONTRACTS - schemas):
+        violations.append(Violation(
+            registry_path, 0,
+            f"report contract '{missing}' is missing from REPORT_OUTPUT_SCHEMAS -- runs "
+            "producing it would pass without human review",
+        ))
+
+    planned: set[str] = set()
+    if planner_path.exists():
+        try:
+            tuples = _string_tuple_assignments(ast.parse(planner_path.read_text(encoding="utf-8")))
+        except SyntaxError:
+            tuples = {}
+        for name in _PLANNER_STAGE_TUPLES:
+            planned |= tuples.get(name, set())
+    for stage, (output, execution) in sorted(_capability_outputs(registry_tree).items()):
+        if output in schemas and (execution != "planned" or stage not in planned):
+            violations.append(Violation(
+                registry_path, 0,
+                f"capability '{stage}' produces report contract '{output}' but is not planned "
+                f"in a workflow stage order (execution='{execution}') -- it never reaches "
+                "Finalize, so no ReviewRequest is created for its report",
+            ))
+
+    required = (
+        (REPO_ROOT / _WORKFLOW_REL, "review_request_service.report_stages(",
+         "Finalize no longer asks which completed stages produced a report"),
+        (REPO_ROOT / _WORKFLOW_REL, "review_request_service.stage_run_review_request(",
+         "Finalize no longer stages a ReviewRequest for a report-producing run"),
+        (REPO_ROOT / _REVIEW_REQUEST_SERVICE_REL, "is_report_producing(",
+         "report_stages no longer decides by the capability's output contract"),
+    )
+    for path, needle, why in required:
+        if not path.exists() or needle not in path.read_text(encoding="utf-8"):
+            violations.append(Violation(path, 0, f"'{needle}' not found: {why}"))
+    return violations
+
+
+def _called_names(node: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call):
+            func = sub.func
+            if isinstance(func, ast.Name):
+                names.add(func.id)
+            elif isinstance(func, ast.Attribute):
+                names.add(func.attr)
+    return names
+
+
+def _decorated_with(fn: ast.AST, attrs: frozenset[str], owner: str | None = None) -> bool:
+    for dec in getattr(fn, "decorator_list", []):
+        target = dec.func if isinstance(dec, ast.Call) else dec
+        if (
+            isinstance(target, ast.Attribute)
+            and target.attr in attrs
+            and (owner is None or (isinstance(target.value, ast.Name) and target.value.id == owner))
+        ):
+            return True
+    return False
+
+
+def _reviews_report_consumers_carry_review_block() -> list[Violation]:
+    """Every surface that hands out an AI report also hands out its review state.
+
+    E8.3 added the review envelope to the report routes and E8.4 to the MCP
+    tools, by hand. A route or tool added later against the same data would ship
+    the report without saying it is an unreviewed draft. Two directions:
+
+    * a FastAPI route handler that reads report data (``get_run_intelligence``,
+      ``get_run_mode_summary``, decision-report versions, run summaries) must
+      attach the envelope;
+    * an MCP tool that calls a backend report route must append
+      ``review_notice.review_lines``.
+    """
+    violations: list[Violation] = []
+    routers = REPO_ROOT / "backend" / "app" / "routers"
+    for path in sorted(routers.glob("*.py")) if routers.exists() else []:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                continue
+            if not _decorated_with(fn, _ROUTE_DECORATORS):
+                continue
+            called = _called_names(fn)
+            sources = called & _REPORT_SOURCE_CALLS
+            if sources and not called & _REVIEW_ENVELOPE_CALLS:
+                violations.append(Violation(
+                    path, fn.lineno,
+                    f"route '{fn.name}' returns AI report data ({', '.join(sorted(sources))}) "
+                    "without the review envelope",
+                ))
+
+    tools = REPO_ROOT / "mcp" / "tools"
+    for path in sorted(tools.glob("*.py")) if tools.exists() else []:
+        text = path.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                continue
+            if not _decorated_with(fn, frozenset({"tool"}), owner="mcp"):
+                continue
+            body = ast.get_source_segment(text, fn) or ""
+            if _MCP_REPORT_PATH.search(body) and "review_notice.review_lines(" not in body:
+                violations.append(Violation(
+                    path, fn.lineno,
+                    f"MCP tool '{fn.name}' returns an AI report without review_state",
+                ))
+    return violations
+
+
 def _agents_capability_has_executor() -> list[Violation]:
     """Every declared capability has something that actually runs it.
 
@@ -4746,6 +4965,35 @@ GUARDS: list[Guard] = [
             "execution_metadata.stage_quality='degraded' (use "
             "workflow_run_state.is_resumable); cancelled runs are "
             "status='failed' with error 'cancelled: ...'."
+        ),
+    ),
+    Guard(
+        name="reviews.report-producers-create-review-request",
+        description=(
+            "Every capability whose output is a report contract is planned in a "
+            "workflow stage order, so it reaches Finalize, which stages its "
+            "ReviewRequest (architecture E8.6)."
+        ),
+        check=_reviews_report_producers_create_review_request,
+        fix_hint=(
+            "Plan the stage in an agent_planner _*_STAGES tuple, keep its output "
+            "schema in REPORT_OUTPUT_SCHEMAS, and keep Finalize's report_stages / "
+            "stage_run_review_request calls. A report that skips Finalize is "
+            "distributed without anyone looking at it."
+        ),
+    ),
+    Guard(
+        name="reviews.report-consumers-carry-review-block",
+        description=(
+            "Every API route that returns AI report data attaches the review "
+            "envelope, and every MCP tool that returns one appends review_state "
+            "(architecture E8.6)."
+        ),
+        check=_reviews_report_consumers_carry_review_block,
+        fix_hint=(
+            "In a router: envelope = await review_envelope_for_run(db, run_id); "
+            "merge envelope.fields() into the payload and envelope.apply_headers(response). "
+            "In an MCP tool: end the result with review_notice.review_lines(data)."
         ),
     ),
     Guard(

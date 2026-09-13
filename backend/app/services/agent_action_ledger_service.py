@@ -267,6 +267,27 @@ async def mark_action_dispatch_failed(
     return True
 
 
+async def _proposing_run_review_accepted(db: AsyncSession, action: AgentActionLedger) -> bool:
+    """True when the action has no proposing run, or that run's review is accepted.
+
+    Architecture section 7.5: a mutating call runs only on behalf of an AI run a
+    person has accepted. An action a human created directly has no proposing
+    run and no report to review.
+    """
+    pipeline_run_id = getattr(action, "pipeline_run_id", None)
+    if pipeline_run_id is None:
+        return True
+    from app.models.postgres import ReviewRequest  # noqa: PLC0415
+
+    result = await db.execute(
+        select(ReviewRequest.id).where(
+            ReviewRequest.pipeline_run_id == pipeline_run_id,
+            ReviewRequest.state == "accepted",
+        ).limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def execute_agent_action(
     *, project_id: uuid.UUID, action_id: uuid.UUID
 ) -> dict[str, Any]:
@@ -297,6 +318,16 @@ async def execute_agent_action(
                 "reason": "action_not_approved",
             }
         now = datetime.now(timezone.utc)
+        # E8.6 (section 7.5): approving the action is not enough. The AI run
+        # that proposed it must itself have been accepted by a person, or the
+        # mutation would act on a report nobody has vouched for.
+        if not await _proposing_run_review_accepted(db, action):
+            action.status = "failed"
+            action.execution_started_at = now
+            action.execution_completed_at = now
+            action.error_code = "policy_denied"
+            await db.commit()
+            return {"status": "failed", "action_id": str(action_id), "reason": "policy_denied"}
         action.status = "failed"
         action.execution_started_at = now
         action.execution_completed_at = now
