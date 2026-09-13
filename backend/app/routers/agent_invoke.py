@@ -1,8 +1,11 @@
-"""Invoke one agent through the public API (architecture E1.2, slice 1).
+"""Invoke one agent through the public API (architecture E1.2).
 
 * ``POST /api/v1/agents/{agent_id}/invoke`` -- run one agent from the catalog
   (E1.1) on a stored test run.
-* ``GET  /api/v1/agents/invocations/{invocation_id}`` -- poll it.
+* ``GET  /api/v1/agents/invocations/{invocation_id}`` -- poll it, including the
+  agent's stored output once its stage has completed.
+* ``POST /api/v1/agents/invocations/{invocation_id}/retry`` and ``.../cancel`` --
+  the pipeline retry and cancel rules, applied to the invocation's run.
 
 An invocation is not a second execution engine. It is an ordinary pipeline run
 whose frozen plan selects only the agent and the stages it declares as
@@ -11,9 +14,8 @@ leases, fencing, row-owned retries, cancellation and Finalize -- including the
 human review request for a report-producing agent -- apply exactly as they do
 to a pipeline. The status is read from that run and never stored twice.
 
-Not in this slice: ``mode=sync`` (refused with 422 for now), payloads other than
-a stored subject, SSE progress, and invocation-level retry/cancel routes. The
-pipeline routes behind ``links.pipeline`` work meanwhile.
+Not yet: ``mode=sync`` (refused with 422 for now), payloads other than a stored
+subject, and SSE progress.
 """
 from __future__ import annotations
 
@@ -36,6 +38,7 @@ from app.db.postgres import get_db
 from app.models.postgres import (
     AgentInvocation,
     AgentPipelineRun,
+    AgentStageResult,
     ProjectMember,
     ReviewRequest,
     TestRun,
@@ -46,14 +49,22 @@ from app.models.schemas import ReviewBlock
 from app.services import agent_catalog, agent_planner
 from app.services.activity.service import ActorRef, record as record_activity
 from app.services.agent_capability_registry import is_report_producing
+from app.services.pipeline_cancellation import request_cancel
+from app.services.pipeline_retry_config import decide_retry_mode
 from app.services.review_envelope import ReviewEnvelope, envelope_from_review
-from app.services.workflow_run_state import REVIEW_NOT_APPLICABLE, public_status
+from app.services.workflow_run_state import (
+    REVIEW_NOT_APPLICABLE,
+    is_resumable,
+    is_terminal,
+    normalize_status,
+    public_status,
+)
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agent Invocations"])
 
 #: An invocation whose pipeline run has not appeared this long after it was
-#: accepted was lost in dispatch (broker down, worker gone). It reads ``failed``
-#: so a caller stops polling and the same agent can be invoked again.
+#: dispatched was lost (broker down, worker gone). It reads ``failed`` so a
+#: caller stops polling, and a retry dispatches it again.
 DISPATCH_GRACE = timedelta(minutes=10)
 #: ``agent_pipeline_runs.max_attempts`` default, reported until the run exists.
 _DEFAULT_MAX_ATTEMPTS = 5
@@ -84,6 +95,10 @@ class AgentInvocationResponse(BaseModel):
     max_attempts: int
     next_retry_at: Optional[datetime] = None
     error: Optional[str] = None
+    output: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="The invoked agent's stored stage output, once that stage has completed.",
+    )
     requires_human_review: bool
     review: ReviewBlock
     created_at: Optional[datetime] = None
@@ -141,21 +156,30 @@ def require_invocation_access():
 # -- projection -----------------------------------------------------------------
 
 
+def _stage_output(stage: Any) -> Optional[dict[str, Any]]:
+    """The invoked stage's stored output, only once that stage has completed."""
+    if stage is None or getattr(stage, "status", None) != "completed":
+        return None
+    data = getattr(stage, "checkpoint_data", None) or getattr(stage, "result_data", None)
+    return data if isinstance(data, dict) else None
+
+
 def project_invocation(
     invocation: Any,
     pipeline: Any,
     review: Any,
     *,
+    stage: Any = None,
     now: Optional[datetime] = None,
 ) -> dict[str, Any]:
-    """The public view of an invocation, read from its pipeline run and review."""
+    """The public view of an invocation, read from its pipeline run, review and stage."""
     now = now or datetime.now(timezone.utc)
     links = {"self": f"/api/v1/agents/invocations/{invocation.id}"}
     if pipeline is None:
-        created = invocation.created_at or now
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
-        lost = now - created > DISPATCH_GRACE
+        dispatched = getattr(invocation, "dispatched_at", None) or invocation.created_at or now
+        if dispatched.tzinfo is None:
+            dispatched = dispatched.replace(tzinfo=timezone.utc)
+        lost = now - dispatched > DISPATCH_GRACE
         run_state: dict[str, Any] = {
             "status": "failed" if lost else "in_progress",
             "attempt": 1,
@@ -201,6 +225,7 @@ def project_invocation(
         "pipeline_run_id": invocation.pipeline_run_id,
         "mode": invocation.mode,
         **run_state,
+        "output": _stage_output(stage),
         "requires_human_review": envelope.ai_generated,
         "review": envelope.block(),
         "created_at": invocation.created_at,
@@ -208,11 +233,24 @@ def project_invocation(
     }
 
 
-async def _invocation_view(db: AsyncSession, invocation: AgentInvocation) -> dict[str, Any]:
-    pipeline = (
+async def _load_invocation_or_404(db: AsyncSession, invocation_id: uuid.UUID) -> Any:
+    invocation = (
+        await db.execute(select(AgentInvocation).where(AgentInvocation.id == invocation_id))
+    ).scalar_one_or_none()
+    if invocation is None:
+        raise HTTPException(status_code=404, detail="Invocation not found")
+    return invocation
+
+
+async def _load_pipeline(db: AsyncSession, invocation: Any) -> Any:
+    return (
         await db.execute(select(AgentPipelineRun).where(AgentPipelineRun.id == invocation.pipeline_run_id))
     ).scalar_one_or_none()
-    review = None
+
+
+async def _invocation_view(db: AsyncSession, invocation: Any) -> dict[str, Any]:
+    pipeline = await _load_pipeline(db, invocation)
+    review = stage = None
     if pipeline is not None:
         review = (
             await db.execute(
@@ -222,7 +260,31 @@ async def _invocation_view(db: AsyncSession, invocation: AgentInvocation) -> dic
                 .limit(1)
             )
         ).scalars().first()
-    return project_invocation(invocation, pipeline, review)
+        stage = (
+            await db.execute(
+                select(AgentStageResult)
+                .where(
+                    AgentStageResult.pipeline_run_id == invocation.pipeline_run_id,
+                    AgentStageResult.stage_name == invocation.stage_name,
+                )
+                .order_by(AgentStageResult.attempt.desc())
+                .limit(1)
+            )
+        ).scalars().first()
+    return project_invocation(invocation, pipeline, review, stage=stage)
+
+
+async def _run_label(db: AsyncSession, test_run_id: Any) -> str:
+    build = (
+        await db.execute(select(TestRun.build_number).where(TestRun.id == test_run_id))
+    ).scalar_one_or_none()
+    return f"Build {build}" if build else str(test_run_id)
+
+
+async def _current_mode_snapshot() -> dict[str, Any]:
+    from app.agents.workflow import _resolve_analysis_mode_snapshot  # noqa: PLC0415
+
+    return await _resolve_analysis_mode_snapshot()
 
 
 def _validate_invocation(agent_id: str, body: AgentInvokeRequest) -> tuple[str, str, uuid.UUID]:
@@ -292,12 +354,166 @@ async def get_invocation(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_invocation_access()),
 ):
-    """Poll one invocation: status, attempts and review state, read from its run."""
-    invocation = (
-        await db.execute(select(AgentInvocation).where(AgentInvocation.id == invocation_id))
-    ).scalar_one_or_none()
-    if invocation is None:
-        raise HTTPException(status_code=404, detail="Invocation not found")
+    """Poll one invocation: status, attempts, output and review state, read from its run."""
+    invocation = await _load_invocation_or_404(db, invocation_id)
+    return await _invocation_view(db, invocation)
+
+
+@router.post("/invocations/{invocation_id}/retry", response_model=AgentInvocationResponse, status_code=202)
+async def retry_invocation(
+    invocation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
+    _: User = Depends(require_invocation_access()),
+):
+    """Retry a failed invocation: a new attempt of the same invocation (E1.2).
+
+    The pipeline retry rules apply to the invocation's run. It is refused with
+    409 while the run is in progress, after a clean finish, or at the attempt
+    ceiling; the last two carry ``links.rerun`` to invoke the agent again.
+
+    A retry resumes the SAME run, so the frozen plan (this agent and its
+    dependencies only) is kept. When the agent configuration changed since the
+    run started, resuming would replay work authorised under the old
+    configuration, and a rerun needs a new run -- which is a new invocation --
+    so that is 409 with ``links.rerun`` too. An invocation whose run never
+    started is dispatched again.
+    """
+    invocation = await _load_invocation_or_404(db, invocation_id)
+    pipeline = await _load_pipeline(db, invocation)
+    base = {"invocation_id": str(invocation.id)}
+    rerun = {"rerun": f"/api/v1/agents/{invocation.agent_id}/invoke"}
+
+    if pipeline is None:
+        if project_invocation(invocation, None, None)["status"] != "failed":
+            raise HTTPException(status_code=409, detail={**base, "message": "Invocation has not started yet"})
+        mode = "redispatch"
+        # Restart the dispatch clock; created_at keeps the original request time.
+        invocation.dispatched_at = datetime.now(timezone.utc)
+    else:
+        current = normalize_status(pipeline.status)
+        if not is_terminal(current):
+            raise HTTPException(
+                status_code=409,
+                detail={**base, "message": "Invocation is still in progress", "status": public_status(current)},
+            )
+        if not is_resumable(pipeline.status, pipeline.execution_metadata):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    **base,
+                    "message": "Invocation finished successfully; nothing to retry",
+                    "status": public_status(current),
+                    "links": rerun,
+                },
+            )
+        attempt = int(pipeline.attempt or 1)
+        max_attempts = int(pipeline.max_attempts or _DEFAULT_MAX_ATTEMPTS)
+        if attempt >= max_attempts:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    **base,
+                    "message": (
+                        f"Invocation reached its attempt ceiling ({attempt}/{max_attempts}); "
+                        "invoke the agent again instead"
+                    ),
+                    "attempt": attempt,
+                    "max_attempts": max_attempts,
+                    "links": rerun,
+                },
+            )
+        plan = decide_retry_mode(pipeline.execution_metadata, await _current_mode_snapshot())
+        if plan.is_rerun:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    **base,
+                    "message": (
+                        "The agent configuration changed since this invocation ran; invoke the "
+                        "agent again to run under the current configuration"
+                    ),
+                    "reason": plan.reason,
+                    "links": rerun,
+                },
+            )
+        mode = "resume"
+
+    await record_activity(
+        db,
+        project_id=invocation.project_id,
+        event_type="analysis.retried",
+        actor=ActorRef.from_user(current_user),
+        entity_id=invocation.test_run_id,
+        entity_label=await _run_label(db, invocation.test_run_id),
+        context={
+            "mode": mode,
+            "invocation_id": str(invocation.id),
+            "agent_id": invocation.agent_id,
+            "pipeline_run_id": str(invocation.pipeline_run_id),
+        },
+    )
+    # Commit BEFORE dispatch: the worker reads what this request wrote.
+    await db.commit()
+    if mode == "resume":
+        from app.worker.tasks import resume_agent_pipeline
+
+        resume_agent_pipeline.apply_async(
+            kwargs={"pipeline_run_id": str(invocation.pipeline_run_id), "build_number": "manual-retry"},
+            queue="ai_analysis",
+        )
+    else:
+        from app.worker.tasks import run_agent_invocation
+
+        run_agent_invocation.apply_async(kwargs={"invocation_id": str(invocation.id)}, queue="ai_analysis")
+    return await _invocation_view(db, invocation)
+
+
+@router.post("/invocations/{invocation_id}/cancel", response_model=AgentInvocationResponse, status_code=202)
+async def cancel_invocation(
+    invocation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
+    _: User = Depends(require_invocation_access()),
+):
+    """Cancel an invocation cooperatively, exactly as its pipeline run is cancelled.
+
+    A run with no live worker stops now; a running one is asked to stop and
+    terminalises at its next stage boundary. Cancellation is sticky: an
+    automatic retry never brings it back. An invocation whose run has not been
+    created yet has nothing to cancel (409).
+    """
+    invocation = await _load_invocation_or_404(db, invocation_id)
+    pipeline = await _load_pipeline(db, invocation)
+    base = {"invocation_id": str(invocation.id)}
+    if pipeline is None:
+        raise HTTPException(
+            status_code=409,
+            detail={**base, "message": "Invocation has not started yet; there is no run to cancel"},
+        )
+    outcome = await request_cancel(db, pipeline.id, requested_by=getattr(current_user, "email", None))
+    if not outcome.accepted:
+        raise HTTPException(
+            status_code=409,
+            detail={**base, "message": "Invocation has already finished", **outcome.as_dict()},
+        )
+    await record_activity(
+        db,
+        project_id=invocation.project_id,
+        event_type="analysis.cancelled",
+        actor=ActorRef.from_user(current_user),
+        entity_id=invocation.test_run_id,
+        entity_label=await _run_label(db, invocation.test_run_id),
+        context={
+            "invocation_id": str(invocation.id),
+            "agent_id": invocation.agent_id,
+            "pipeline_run_id": str(pipeline.id),
+            "from_status": outcome.status,
+            "terminal": outcome.terminal,
+            "reason": outcome.reason,
+        },
+    )
+    await db.commit()
     return await _invocation_view(db, invocation)
 
 
@@ -328,6 +544,7 @@ async def invoke_agent(
         response.status_code = 200
         return existing
 
+    now = datetime.now(timezone.utc)
     invocation = AgentInvocation(
         id=uuid.uuid4(),
         project_id=run.project_id,
@@ -339,7 +556,8 @@ async def invoke_agent(
         mode=body.mode,
         requested_by=getattr(current_user, "id", None),
         correlation_id=body.correlation_id,
-        created_at=datetime.now(timezone.utc),
+        created_at=now,
+        dispatched_at=now,
     )
     db.add(invocation)
     await record_activity(
