@@ -134,7 +134,6 @@ def _body(**overrides):
             422,
             "cannot be invoked on its own",
         ),
-        ("agent.summary.v1", {"mode": "sync"}, 422, "mode=sync"),
         (
             "agent.summary.v1",
             {"input": {"agent_id": "agent.triage.v1", "payload": {"test_run_id": str(uuid.uuid4())}}},

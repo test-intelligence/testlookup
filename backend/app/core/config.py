@@ -213,6 +213,14 @@ class Settings(BaseSettings):
     # AI analysis concurrency
     LLM_MAX_CONCURRENT_ANALYSES: int = 3        # max parallel LLM root-cause calls
 
+    # Agent invocations over the public API (architecture E1.2, section 3.1).
+    # mode=sync requests waiting at once, per process; a full pool is 503 + Retry-After.
+    AGENT_INVOKE_SYNC_CONCURRENCY: int = 4
+    # How long a mode=sync request waits for its run before answering 202.
+    AGENT_INVOKE_SYNC_WAIT_SECONDS: int = 25
+    # Lifetime of a single-use invocation event-stream ticket.
+    AGENT_INVOKE_STREAM_TICKET_SECONDS: int = 60
+
     # WebSocket limits
     WS_MAX_CONNECTIONS_PER_PROJECT: int = 500
     WS_MAX_TOTAL_CONNECTIONS: int = 5000
