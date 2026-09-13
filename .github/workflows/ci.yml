@@ -310,6 +310,17 @@ jobs:
         working-directory: backend
         run: python -m app.services.prompt_eval_recordings --check
 
+      # E1.4: the agent API Postman collection and curl reference under
+      # architecture/api/ are generated from the OpenAPI schema. A route change
+      # that is not regenerated fails here instead of shipping stale docs.
+      - name: Agent API docs match the OpenAPI schema (E1.4)
+        working-directory: backend
+        env:
+          APP_SECRET_KEY: test-secret-key-for-ci
+          JWT_SECRET_KEY: test-jwt-key-for-ci
+          AI_OFFLINE_MODE: "true"
+        run: python -m app.services.agent_api_docs --check
+
       - name: Run tests
         env:
           DATABASE_URL: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
