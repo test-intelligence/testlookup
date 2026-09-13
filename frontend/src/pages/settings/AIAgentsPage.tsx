@@ -21,6 +21,7 @@ import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import type { AgentMode, AgentPolicy, AgentPolicyBudgets } from '@/types/investigator'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import FixerConfigCard from '@/components/fixer/FixerConfigCard'
+import AgentConfigPanel from '@/components/agents/AgentConfigPanel'
 
 const AGENT_LABEL: Record<string, { title: string; desc: string }> = {
   investigator: {
@@ -268,6 +269,8 @@ export default function AIAgentsPage() {
           {/* Fixer (AI-2) has its own config resource — it renders regardless
               of the agent-policies list state. */}
           <FixerConfigCard projectId={scopedProjectId} />
+          {/* E4.3: per-agent configuration (agent-configs), one tab per agent. */}
+          <AgentConfigPanel projectId={scopedProjectId} />
         </>
       )}
     </div>

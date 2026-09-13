@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-09-13 - Settings: edit each agent's configuration per project (E4.3)
+
+**Settings → AI Agents** now has an **Agent configuration** panel, with one
+tab per configurable agent. A QA lead can set, for the active project:
+
+- whether the agent is enabled, and its mode (shadow, suggest or act);
+- the model tier;
+- max attempts and timeout, with the worst case (attempts × timeout) shown
+  as it is edited;
+- the budget, the tool allowlist and the review policy;
+- which narrowings a request override may make.
+
+The panel saves the whole configuration with `PUT
+/api/v1/projects/{project_id}/agent-configs/{agent_id}` (E4.1).
+
+**The server decides what is valid.** The deployment's limits, the pipeline
+deadline and the mode rules live on the server, so a refused save lists the
+server's reasons under the form and keeps the edits in place. A toast alone
+would disappear. A stored configuration that no longer validates, for
+example after a limit was lowered, is shown with its errors and marked in
+red on its tab.
+
+**Other changes:**
+
+- Each tab shows whether the agent still runs on defaults or which saved
+  version it is on.
+- Switching tabs re-seeds the form, so unsaved edits to one agent cannot be
+  saved under another.
+- `GET /api/v1/projects/{project_id}/agent-configs` now also returns
+  `tools`, a map from every agent tool to the permission it needs. The
+  panel can then offer tools that are not currently in an agent's allowlist.
+
+The existing agent policy cards stay on the page until E4.4 migrates them
+into agent configs.
+
 ## 2026-09-13 - Agent configs resolve through four layers, and a disabled agent cannot be invoked (E4.2)
 
 `app/services/agent_config_resolver.py` works out an agent's effective
