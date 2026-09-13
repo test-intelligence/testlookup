@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026-09-13 - Review Queue page and review banners (E8.5)
+
+The web app now lets a person work through the human review gate
+(architecture section 8.3). The backend API already existed (E8.2, E8.3), so
+this change is frontend-only.
+
+- **Review Queue page** at `/reviews`, listed under AI Reports in the sidebar:
+  - Shows a project's AI-report reviews, pending ones by default. Tabs switch to
+    accepted, rejected, superseded or all reviews.
+  - Each row links to the run's intelligence report.
+  - QA leads can accept a report (optional notes) or reject it. Rejecting needs
+    a reason code, and the confirm button stays disabled until one is chosen.
+  - Everyone else sees the queue read-only, with a note saying why.
+  - The server still enforces the rest: API keys and synthetic accounts are
+    refused, and separation of duties applies. Its reasons appear through the
+    shared error toast, and the queue refreshes afterwards.
+  - Reviews are listed per project, so in All Projects mode the page shows the
+    project picker. `/reviews` is declared in the route-scope registry.
+  - A failed fetch shows `DataUnavailable` rather than an empty queue.
+- **Review banners on AI report surfaces**, driven by the review envelope the
+  responses already carry:
+  - the run intelligence page (summary and decision report);
+  - the AI summary panel on `/agents`.
+  - Wording by state:
+    - **Pending:** "Draft: awaiting human review", with the AI disclaimer and a
+      link to the queue.
+    - **Accepted:** "Reviewed and accepted", with the review time.
+    - **Rejected:** "Rejected by a reviewer".
+    - **Superseded:** "Superseded by a newer report".
+  - Deterministic content, and a payload without a review block, get no banner.
+    A banner never implies a review happened.
+- **Pipeline cards on `/agents`**: a `COMPLETED` card gains an
+  "awaiting review" tag. A finished report pipeline rests at `completed` until
+  its report is accepted; accepting moves it to `PASSED`.
+
+Tests:
+- `src/pages/ReviewsPage.test.tsx`
+- `src/components/reviews/ReviewBanner.test.tsx`
+- The Playwright spec `tests/e2e/reviews-accept.spec.ts`: accepting a pending
+  report moves its pipeline chip from COMPLETED (awaiting review) to PASSED.
+- The route-scope list and the routed-page error-state ratchet now include the
+  new page.
+
 ## 2026-09-13 - MCP and CLI show the review state of AI reports (E8.4, slice 4)
 
 Agents and terminals see AI reports as well as the UI does. This slice makes

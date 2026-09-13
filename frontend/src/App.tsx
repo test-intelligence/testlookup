@@ -111,6 +111,7 @@ const SeedDataPage = lazy(() => import('@/pages/settings/SeedDataPage'))
 const FeatureFlagsPage = lazy(() => import('@/pages/settings/FeatureFlagsPage'))
 const BillingPage = lazy(() => import('@/pages/settings/BillingPage'))
 const QuarantinePage = lazy(() => import('@/pages/QuarantinePage'))
+const ReviewsPage = lazy(() => import('@/pages/ReviewsPage'))
 const GitHubIntegrationPage = lazy(() => import('@/pages/settings/GitHubIntegrationPage'))
 const GitLabIntegrationPage = lazy(() => import('@/pages/settings/GitLabIntegrationPage'))
 const OutboundWebhooksPage = lazy(() => import('@/pages/settings/OutboundWebhooksPage'))
@@ -166,6 +167,7 @@ const appRoutes: AppRoute[] = [
   { path: 'release-gate/:runId', component: ReleaseGatePage },
   { path: 'flaky-coach', component: FlakyCoachPage },
   { path: 'quarantine', component: QuarantinePage },
+  { path: 'reviews', component: ReviewsPage },
   { path: 'test-management', component: TestManagementPage },
   { path: 'live', component: LiveExecutionPage },
   { path: 'my-failures', component: MyFailuresPage },

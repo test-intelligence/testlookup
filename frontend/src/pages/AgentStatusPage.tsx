@@ -12,6 +12,7 @@ import ExecutiveSummaryPanel from '@/components/ai/ExecutiveSummaryPanel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } from '@/hooks/useAgentRuns'
 import { useAIConfig } from '@/hooks/useAIConfig'
+import ReviewBanner from '@/components/reviews/ReviewBanner'
 import { useRuns } from '@/hooks/useRuns'
 import { usePermissions } from '@/hooks/usePermissions'
 import agentService from '@/services/agentService'
@@ -357,6 +358,13 @@ function PipelineCard({
         >
           {PUBLIC_PIPELINE_STATUS_LABEL[publicPipelineStatus(pipeline)]}
         </span>
+        {/* E8.5: a finished report pipeline rests at `completed` until a person
+            accepts its report (section 7.2); accepting moves it to `passed`. */}
+        {publicPipelineStatus(pipeline) === 'completed' && (
+          <span data-testid="pipeline-awaiting-review" className="text-[10px] font-mono text-[var(--color-text-muted)]">
+            awaiting review
+          </span>
+        )}
         {pipeline.status === 'retry_wait' && pipeline.attempt != null && (
           <span data-testid="pipeline-retry-detail" className="text-[10px] font-mono text-[var(--color-text-muted)]">
             retrying · {pipeline.attempt}/{pipeline.max_attempts ?? '?'}
@@ -931,6 +939,8 @@ export default function AgentStatusPage() {
                     </div>
                   ) : (
                     <div className="space-y-4">
+                      {/* E8.5: the report's human-review status (E8.3 envelope). */}
+                      <ReviewBanner envelope={summary} />
                       {summary.executive_panel ? (
                         <ExecutiveSummaryPanel panel={summary.executive_panel as unknown as import('@/services/runIntelligenceService').ExecutivePanel} />
                       ) : (

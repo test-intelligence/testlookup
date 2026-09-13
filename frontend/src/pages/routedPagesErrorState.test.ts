@@ -79,6 +79,7 @@ const REVIEWED: Record<string, ErrorState> = {
   RunIntelligencePage: 'own-error-ui',
   OwnershipEditorPage: 'own-error-ui',
   QuarantinePage: 'own-error-ui',
+  ReviewsPage: 'data-unavailable',
   MyFailuresPage: 'own-error-ui',
   'settings/AIConfigPage': 'own-error-ui',
   'settings/DigestsPage': 'own-error-ui',

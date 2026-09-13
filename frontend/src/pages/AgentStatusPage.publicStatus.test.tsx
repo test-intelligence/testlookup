@@ -131,4 +131,18 @@ describe('AgentStatusPage — four-value status chips (E7.5)', () => {
     expect(await screen.findByTestId('pipeline-quality-tag')).toHaveTextContent('DEGRADED')
     expect(screen.getByTestId('pipeline-status-chip')).toHaveTextContent('COMPLETED')
   })
+
+  it('tags only a COMPLETED card as awaiting review (E8.5)', async () => {
+    // A finished report pipeline rests at `completed` until a person accepts its
+    // report; accepting moves it to `passed`, which carries no tag.
+    await renderWith([
+      pipeline(0, { status: 'completed', public_status: 'completed' }),
+      pipeline(1, { status: 'passed', public_status: 'passed' }),
+      pipeline(2, { status: 'running', public_status: 'in_progress' }),
+      pipeline(3, { status: 'failed', public_status: 'failed' }),
+    ])
+    const tags = await screen.findAllByTestId('pipeline-awaiting-review')
+    expect(tags).toHaveLength(1)
+    expect(tags[0]).toHaveTextContent('awaiting review')
+  })
 })
