@@ -83,6 +83,7 @@ from tools import assignments, feedback, notifications
 # Agentic plan AI-5 — Investigator over MCP.
 from tools import investigations
 from tools import reviews
+from tools import agents
 from resources import registry
 from prompts import templates
 
@@ -144,6 +145,10 @@ mcp = FastMCP(
         "`record_fix_outcome` once a fix informed by a diagnosis merges (or is "
         "reverted) — it lands as a human-indirect training signal for the classifier. "
         "The `fix_this_flaky_test` prompt packages the whole flaky-fix workflow.\n\n"
+        "Agents (E1.5): `list_agents` and `get_agent` show the agent catalog; "
+        "`invoke_agent` runs one invocable agent on a stored test run (a SIDE EFFECT that "
+        "spends the project AI budget, so confirm with the user first; reuse the returned "
+        "idempotency_key to retry safely) and `get_agent_invocation` polls it.\n\n"
         "Human review (E8.4): AI reports are drafts until a person accepts them. "
         "Report tools end with `review_state` and the AI disclaimer; pass both on to "
         "the user and never present a `pending_review` or `unknown` report as settled. "
@@ -193,6 +198,7 @@ notifications.register(mcp)    # transition-notification policy get/set
 # Agentic plan AI-5 — Investigator agent over MCP (shadow-mode).
 investigations.register(mcp)   # start/poll/list investigations
 reviews.register(mcp)          # E8.4 review queue (read-only)
+agents.register(mcp)           # E1.5 agent catalog + single-agent invocations
 
 # ── Register Resources ────────────────────────────────────────────────────────
 registry.register(mcp)
