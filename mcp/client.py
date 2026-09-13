@@ -148,11 +148,14 @@ async def post(
     path: str,
     json_body: Optional[dict] = None,
     params: Optional[dict] = None,
+    extra_headers: Optional[dict] = None,
 ) -> Any:
+    """POST with the caller's auth. ``extra_headers`` (e.g. Idempotency-Key)
+    are sent too, but can never override the auth headers."""
     client = _get_client()
     headers, caller_scoped = await _auth_context()
     resp = await client.post(
-        path, json=json_body, params=_clean_params(params), headers=headers,
+        path, json=json_body, params=_clean_params(params), headers={**(extra_headers or {}), **headers},
     )
 
     if resp.status_code == 401 and not caller_scoped and settings.username:
@@ -160,7 +163,7 @@ async def post(
         _stdio_access_token = None
         headers, _ = await _auth_context()
         resp = await client.post(
-            path, json=json_body, params=_clean_params(params), headers=headers,
+            path, json=json_body, params=_clean_params(params), headers={**(extra_headers or {}), **headers},
         )
 
     resp.raise_for_status()
