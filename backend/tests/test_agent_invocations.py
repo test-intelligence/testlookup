@@ -168,6 +168,10 @@ def _router_harness(monkeypatch, *results):
     db.commit = AsyncMock(side_effect=lambda: order.append("commit"))
     dispatch = MagicMock(side_effect=lambda **_kw: order.append("dispatch"))
     monkeypatch.setattr(router, "resolve_project_scope", AsyncMock())
+    from app.services import agent_config_resolver
+    monkeypatch.setattr(router, "resolve_for_project", AsyncMock(
+        side_effect=lambda _db, _project, agent, **_kw: agent_config_resolver.resolve(agent, global_ai_config={})
+    ))
     monkeypatch.setattr(router, "record_activity", AsyncMock())
     monkeypatch.setattr(router, "ActorRef", SimpleNamespace(from_user=lambda _u: "actor"))
     monkeypatch.setattr(tasks.run_agent_invocation, "apply_async", dispatch)

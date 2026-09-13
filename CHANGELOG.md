@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-09-13 - Agent configs resolve through four layers, and a disabled agent cannot be invoked (E4.2)
+
+`app/services/agent_config_resolver.py` works out an agent's effective
+configuration from four layers. Each layer may only tighten the one above
+it:
+
+1. the environment: offline mode, the provider allowlist, the attempt and
+   timeout ceilings, and the pipeline deadline;
+2. the global AI settings: provider, model, endpoint, and an offline
+   override that can only turn egress off;
+3. the project's stored agent config, or the defaults;
+4. a request override, which may only tighten (E4.1 rules).
+
+**The offline clamp runs when a config is resolved, not only when it is
+written.** A project that saved a cloud provider before the environment
+switched to offline does not get that provider back. The tier falls back
+to the global model when current policy permits it, and otherwise has no
+model at all. The provider allowlist works the same way. When an endpoint
+has a URL, the project resolver also checks that it resolves to a local
+address while offline. Every change the resolver makes is listed in
+`clamps`, with the layer that forced it.
+
+**Lowered ceilings apply to stored configs.** A row written when the
+attempt or timeout ceiling was higher is clamped to today's limits and
+the pipeline deadline. A row that no longer validates for a reason a clamp
+cannot fix, such as a tool that has been removed, is not guessed at: the
+caller refuses to run it.
+
+**The endpoint URL follows the provider.** A project's own model block gets
+the global endpoint URL only when it names the same provider, so a project
+block can never borrow another provider's URL. The resolved object carries
+no API keys.
+
+**Invoking an agent now checks its config.**
+`POST /api/v1/agents/{agent_id}/invoke` answers:
+
+- **403** when the project has disabled the agent, naming the `PUT` that
+  enables it. Defect Commander, the one mutating agent, is disabled by
+  default, so invoking it now needs a QA lead to enable it with mode `act`
+  first;
+- **409** when the stored config no longer validates, with the errors.
+
+Both refusals happen before anything is recorded or dispatched. Request
+overrides are not accepted on the invoke body yet: nothing at run time
+applies a resolved config until tier routing (E5) reads it.
+
 ## 2026-09-13 - Per-project agent configuration with tighten-only overrides (E4.1)
 
 A project can now configure each agent: its mode, model tier, retry policy,
