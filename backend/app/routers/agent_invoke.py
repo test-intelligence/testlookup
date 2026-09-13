@@ -60,6 +60,7 @@ from app.models.schemas import ReviewBlock
 from app.services import agent_catalog, agent_planner, invocation_idempotency, invocation_stream
 from app.services.activity.service import ActorRef, record as record_activity
 from app.services.agent_capability_registry import is_report_producing, is_sync_eligible
+from app.services.agent_config_resolver import AgentConfigInvalid, invocation_refusal, resolve_for_project
 from app.services.pipeline_cancellation import request_cancel
 from app.services.pipeline_retry_config import decide_retry_mode
 from app.services.review_envelope import ReviewEnvelope, envelope_from_review
@@ -768,6 +769,23 @@ async def invoke_agent(
     await resolve_project_scope(db, current_user, str(run.project_id))
     if body.project_id != run.project_id:
         raise HTTPException(status_code=400, detail="project_id does not match the test run's project")
+    # E4.2: the project's resolved agent config decides whether this agent may run.
+    try:
+        resolved = await resolve_for_project(db, run.project_id, agent_id)
+    except AgentConfigInvalid as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    f"The stored configuration of {agent_id} no longer validates. Fix it with "
+                    f"PUT /api/v1/projects/{run.project_id}/agent-configs/{agent_id}"
+                ),
+                "errors": exc.errors,
+            },
+        ) from None
+    refusal = invocation_refusal(resolved, project_id=run.project_id)
+    if refusal is not None:
+        raise HTTPException(status_code=403, detail=refusal)
 
     user_id = getattr(current_user, "id", None)
     fingerprint: Optional[str] = None
