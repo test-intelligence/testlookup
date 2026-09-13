@@ -115,4 +115,13 @@ async def override_release_decision(
         except Exception:
             pass  # Non-blocking
         await db.commit()
-        return council
+    # Outbound ``release.decided`` for the override. It runs after the commit,
+    # never before: a rolled-back override must not reach a subscriber. It
+    # opens its own session and never raises.
+    from app.services.release_decision_webhook import (  # noqa: PLC0415
+        TRIGGER_OVERRIDE,
+        emit_release_decided,
+    )
+
+    await emit_release_decided(run_id, trigger=TRIGGER_OVERRIDE)
+    return council
