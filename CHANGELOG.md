@@ -1,41 +1,5 @@
 # Changelog
 
-## 2026-09-13 - AI failure-kind labels in PR and MR comments obey the review gate (E8.4, slice 3)
-
-The sticky GitHub PR comment and the GitLab MR note label each failing test
-with an AI classification (the AI-4 kind labels). This slice puts those labels
-behind the human-review gate. It stays behind `REVIEW_GATE_ENFORCED`, which is
-still off by default.
-
-- **Labels are stripped, never the comment.** A comment without labels still
-  reports what failed, so:
-  - **Enforced and unreviewed:** the labels are removed.
-  - **Project allows drafts:** the labels stay, and the comment gains a line
-    marking them as AI-generated and not yet reviewed.
-  - **Reviewed, or gate not enforced:** unchanged. When not enforced, the
-    would-be refusal is audited.
-  - **The gate itself fails:** labels are stripped while enforced and unchanged
-    otherwise. Nothing about the gate can stop a comment from posting.
-- **One change covers both providers.** The MR note reuses the PR comment's
-  renderer, so both context builders gate the labels before the failures are
-  partitioned into rows.
-- **The audit row gets its own session.** These context builders only read, so
-  `record_distribution_detached` commits the audit row independently and never
-  raises. That is one allowlisted commit, raising the transaction-boundary cap
-  from 86 to 87.
-- **Not gated:** the one-line attribution summary. It is a deterministic vote
-  over flaky scores, clusters and commit ranges, not model output.
-
-Known timing gap: these comments post right after ingestion, before the AI
-pipeline runs, and are not re-posted when a review is later accepted. While the
-gate is enforced, a comment therefore shows labels only under a project draft
-opt-in.
-
-Found while mapping: the `release.decided` webhook is advertised in the webhook
-catalog but never emitted, so subscribers never receive a delivery. It is
-tracked separately.
-
-Tests: `backend/tests/test_comment_distribution_gates.py`.
 ## 2026-09-13 - `release.decided` webhooks are actually sent
 
 `release.decided` was listed in the outbound webhook catalog, and the UI and API
@@ -81,6 +45,42 @@ override path runs through the route handler. The gate projection is checked
 while enforced. A guard checks that every catalog event has a producer. Publishes
 are bound to the real `deliver_webhook` signature.
 
+## 2026-09-13 - AI failure-kind labels in PR and MR comments obey the review gate (E8.4, slice 3)
+
+The sticky GitHub PR comment and the GitLab MR note label each failing test
+with an AI classification (the AI-4 kind labels). This slice puts those labels
+behind the human-review gate. It stays behind `REVIEW_GATE_ENFORCED`, which is
+still off by default.
+
+- **Labels are stripped, never the comment.** A comment without labels still
+  reports what failed, so:
+  - **Enforced and unreviewed:** the labels are removed.
+  - **Project allows drafts:** the labels stay, and the comment gains a line
+    marking them as AI-generated and not yet reviewed.
+  - **Reviewed, or gate not enforced:** unchanged. When not enforced, the
+    would-be refusal is audited.
+  - **The gate itself fails:** labels are stripped while enforced and unchanged
+    otherwise. Nothing about the gate can stop a comment from posting.
+- **One change covers both providers.** The MR note reuses the PR comment's
+  renderer, so both context builders gate the labels before the failures are
+  partitioned into rows.
+- **The audit row gets its own session.** These context builders only read, so
+  `record_distribution_detached` commits the audit row independently and never
+  raises. That is one allowlisted commit, raising the transaction-boundary cap
+  from 86 to 87.
+- **Not gated:** the one-line attribution summary. It is a deterministic vote
+  over flaky scores, clusters and commit ranges, not model output.
+
+Known timing gap: these comments post right after ingestion, before the AI
+pipeline runs, and are not re-posted when a review is later accepted. While the
+gate is enforced, a comment therefore shows labels only under a project draft
+opt-in.
+
+Found while mapping: the `release.decided` webhook is advertised in the webhook
+catalog but never emitted, so subscribers never receive a delivery. It is
+tracked separately.
+
+Tests: `backend/tests/test_comment_distribution_gates.py`.
 ## 2026-09-13 - AI summaries in notifications and digests obey the review gate (E8.4, slice 2)
 
 Slice 1 gated report files, share links and the release-readiness value. This
