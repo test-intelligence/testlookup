@@ -95,6 +95,16 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "Celery-task-owned: pipeline memory persist runs in an isolated "
         "AsyncSessionLocal from the worker, no HTTP request to hand off to.",
     ),
+    "report_distribution_policy.py": (
+        1,
+        "Independent-session BY DESIGN (E8.4). record_distribution_detached "
+        "commits the audit row that says an unreviewed AI report left the "
+        "system, or would have, from worker paths whose own session only reads "
+        "(the PR-comment and MR-note context builders). Borrowing their session "
+        "would give a read-only phase a commit, and tying the row to the later "
+        "external post would lose the record whenever the post fails. One "
+        "commit, and it never raises.",
+    ),
     "tool_call_idempotency.py": (
         1,
         "Independent-session BY DESIGN (E7.6). A mutating tool call must be "
@@ -621,7 +631,8 @@ def test_allowlist_total_is_bounded() -> None:
     # a LangGraph node mid-model-call, whose half-finished writes would be
     # committed with it.
     # 2026-09-12: 85 -> 86 for tool_call_idempotency.py (E7.6 claim-before-call).
-    assert total <= 86, (
+    # 2026-09-13: 86 -> 87 for report_distribution_policy.py (E8.4 detached audit).
+    assert total <= 87, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )

@@ -405,13 +405,16 @@ def _build_mr_note_body(
     project_name: Optional[str],
     part: Any,
     baseline: Optional[Any],
+    draft_note: Optional[str] = None,
 ) -> str:
     """Render the sticky MR note markdown by REUSING the GitHub PR-comment
     renderer, then swapping its first line (the GitHub marker) for the GitLab
     marker so re-runs upsert against the right key. Zero classification /
     rendering fork — same sections, kind labels, overflow, and footer."""
     from app.services import github_pr_comment_service as gh
-    gh_body = gh._build_comment_body(run, project_id, project_name, part, baseline)
+    gh_body = gh._build_comment_body(
+        run, project_id, project_name, part, baseline, draft_note=draft_note,
+    )
     newline = gh_body.find("\n")
     tail = gh_body[newline:] if newline != -1 else ""
     return _marker(project_id) + tail
@@ -509,6 +512,13 @@ async def _gather_mr_context(run_id: uuid.UUID) -> Optional[_MRNoteContext]:
             and getattr(tc, "id", None) is not None
         ]
         kind_labels = await kind_labels_for_test_cases(db, failing_ids)
+        # E8.4: same human-review gate on AI kind labels as the GitHub comment.
+        from app.services.report_distribution_policy import gate_kind_labels
+
+        kind_labels, draft_note, label_decision = await gate_kind_labels(
+            db, run_id=run.id, project_id=run.project_id,
+            kind_labels=kind_labels, channel="gitlab_mr_note",
+        )
 
         part = gh._partition_tests(
             right_tests, left_tests, flaky_fps, has_baseline=has_baseline,
@@ -517,8 +527,15 @@ async def _gather_mr_context(run_id: uuid.UUID) -> Optional[_MRNoteContext]:
         body = _build_mr_note_body(
             run, run.project_id, project_name, part,
             baseline if has_baseline else None,
+            draft_note=draft_note,
         )
         has_failures = (int(run.failed_tests or 0) + int(run.broken_tests or 0)) > 0
+
+        from app.services.report_distribution_policy import record_distribution_detached
+
+        await record_distribution_detached(
+            label_decision, channel="gitlab_mr_note", run_id=run.id, project_id=run.project_id,
+        )
 
         return _MRNoteContext(
             integration_id=integration.id,

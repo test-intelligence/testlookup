@@ -30,6 +30,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Optional
 
+import structlog
 from sqlalchemy import select
 
 from app.models.postgres import Project
@@ -41,16 +42,21 @@ from app.services.review_envelope import (
 
 __all__ = [
     "DRAFT_WATERMARK",
+    "KIND_LABELS_DRAFT_NOTE",
     "REVIEW_PENDING_NOTICE",
     "DistributionDecision",
     "apply_release_review_gate",
     "decide_run_distribution",
     "gate_ai_summary_text",
     "gate_enforced",
+    "gate_kind_labels",
     "gate_release_verdict",
     "record_distribution",
+    "record_distribution_detached",
     "refusal_detail",
 ]
+
+logger = structlog.get_logger("services.report_distribution_policy")
 
 DRAFT_WATERMARK = "DRAFT - AI-generated, not human-reviewed"
 
@@ -306,3 +312,78 @@ async def gate_release_verdict(
         projected["draft_recommendation"] = projected.get("recommendation")
         projected["recommendation"] = "PENDING_REVIEW"
     return projected
+
+
+# ── AI kind labels in PR / MR comments (E8.4 slice 3) ────────────────────────
+
+#: Leads a PR/MR comment whose failure-kind labels go out as an unreviewed draft.
+KIND_LABELS_DRAFT_NOTE = (
+    "_DRAFT: the failure-kind labels below are AI-generated and not yet "
+    "human-reviewed._"
+)
+
+
+async def gate_kind_labels(
+    db: Any,
+    *,
+    run_id: Any,
+    project_id: Any,
+    kind_labels: dict[str, str],
+    channel: str,
+) -> tuple[dict[str, str], Optional[str], Optional[DistributionDecision]]:
+    """Return the kind labels a PR/MR comment may carry, its draft note, and
+    the decision.
+
+    The labels are AI classifications of each failing test. They are
+    decoration -- a comment without them still says what failed -- so the gate
+    strips them rather than holding back the comment:
+
+    * refused (enforced, unreviewed) -- no labels;
+    * a draft under the project opt-in -- the labels, with
+      :data:`KIND_LABELS_DRAFT_NOTE`;
+    * reviewed, or not enforced -- unchanged;
+    * the gate itself fails -- no labels while enforced (fail closed),
+      unchanged otherwise. It never stops the comment from posting.
+    """
+    if not kind_labels:
+        return kind_labels, None, None
+    try:
+        decision = await decide_run_distribution(
+            db, run_id=run_id, project_id=project_id, channel=channel
+        )
+    except Exception as exc:  # noqa: BLE001 -- labels must never block the comment
+        logger.warning("kind_label_gate_unavailable", channel=channel, error_type=type(exc).__name__)
+        return ({} if gate_enforced() else kind_labels), None, None
+    if not decision.allowed:
+        return {}, None, decision
+    if decision.watermark:
+        return kind_labels, KIND_LABELS_DRAFT_NOTE, decision
+    return kind_labels, None, decision
+
+
+async def record_distribution_detached(
+    decision: Optional[DistributionDecision],
+    *,
+    channel: str,
+    run_id: Any,
+    project_id: Any,
+) -> None:
+    """Commit a decision's audit row in its own session. Never raises.
+
+    For worker paths whose session only reads (the PR/MR comment context
+    builders) and must not grow a commit of their own. The audit row is the
+    record that an unreviewed report left the system -- or would have -- so it
+    is committed independently of whether the external post later succeeds.
+    """
+    if decision is None or decision.audit_action is None:
+        return
+    try:
+        from app.db.postgres import AsyncSessionLocal  # noqa: PLC0415
+
+        async with AsyncSessionLocal() as db:
+            await record_distribution(
+                db, decision, channel=channel, run_id=run_id, project_id=project_id
+            )
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001 -- an audit write must not block delivery
+        logger.warning("distribution_audit_not_recorded", channel=channel, error_type=type(exc).__name__)

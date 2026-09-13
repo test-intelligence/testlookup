@@ -290,6 +290,7 @@ def _build_comment_body(
     part: _Partition,
     baseline: Optional[Any],
     attribution_summary: Optional[str] = None,
+    draft_note: Optional[str] = None,
 ) -> str:
     """Render the sticky comment markdown. First line is ALWAYS the
     hidden marker — it is the upsert key."""
@@ -318,6 +319,10 @@ def _build_comment_body(
     if deep_link:
         counts_line += f" · [Open run in TestLookup]({deep_link})"
     lines.extend([counts_line, ""])
+
+    # E8.4: the kind labels below are AI classifications going out as a draft.
+    if draft_note:
+        lines.extend([draft_note, ""])
 
     # Phase 5 (P5-A). A bare failure count is mostly noise — roughly 84% of
     # pass->fail transitions involve a flaky test — and the surveyed adoption
@@ -566,6 +571,15 @@ async def _gather_context(run_id: uuid.UUID) -> Optional[_PRCommentContext]:
             and getattr(tc, "id", None) is not None
         ]
         kind_labels = await kind_labels_for_test_cases(db, failing_ids)
+        # E8.4: kind labels are AI classifications. They reach the PR only under
+        # the human-review gate (stripped when refused, marked DRAFT under a
+        # project opt-in). The comment itself always posts.
+        from app.services.report_distribution_policy import gate_kind_labels
+
+        kind_labels, draft_note, label_decision = await gate_kind_labels(
+            db, run_id=run.id, project_id=run.project_id,
+            kind_labels=kind_labels, channel="github_pr_comment",
+        )
 
         part = _partition_tests(
             right_tests, left_tests, flaky_fps, has_baseline=has_baseline,
@@ -592,9 +606,16 @@ async def _gather_context(run_id: uuid.UUID) -> Optional[_PRCommentContext]:
             run, run.project_id, project_name, part,
             baseline if has_baseline else None,
             attribution_summary=attribution_summary,
+            draft_note=draft_note,
         )
 
         has_failures = (int(run.failed_tests or 0) + int(run.broken_tests or 0)) > 0
+
+        from app.services.report_distribution_policy import record_distribution_detached
+
+        await record_distribution_detached(
+            label_decision, channel="github_pr_comment", run_id=run.id, project_id=run.project_id,
+        )
 
         return _PRCommentContext(
             integration_id=integration.id,
