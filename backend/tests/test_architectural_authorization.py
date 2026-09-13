@@ -1002,6 +1002,191 @@ def test_binding_confinement_is_not_scope_evidence() -> None:
     assert "bound_project_id" not in _SCOPE_EVIDENCE
 
 
+# ── Every id in a path is classified (architecture E1.6) ────────────────────
+#
+# The path scan checks only the params ``GUARDED_PARAMS`` and
+# ``UNGUARDED_SCOPED_PARAMS`` list. A router that adds ``/widgets/{widget_id}``
+# passes it as "no scoped param at all": the vacuous pass this file exists to
+# prevent. ``review_id`` (E8.2) and ``invocation_id`` (E1.2) were covered only
+# because someone remembered to add them by hand. This scan makes a new path id
+# fail until it is classified.
+
+#: Path ids that name nothing tenant-owned, with the reason.
+GLOBAL_PATH_PARAMS: dict[str, str] = {
+    "agent_id": "a capability id from the global agent registry (agent.<name>.v<n>), not tenant data",
+}
+
+#: Path ids in use when this scan was added that neither list classifies. Their
+#: routers check access inline or are admin-only, which the dependency scan
+#: cannot see. A backlog: it may only shrink, and a NEW id must be classified
+#: (a guard in GUARDED_PARAMS / UNGUARDED_SCOPED_PARAMS, or GLOBAL_PATH_PARAMS).
+UNCLASSIFIED_PATH_PARAMS_BACKLOG: frozenset[str] = frozenset({
+    "action_id", "analysis_id", "attempt_id", "candidate_id", "cluster_id",
+    "config_id", "dataset_id", "defect_id", "delivery_id", "entity_id",
+    "event_id", "investigation_id", "item_id", "job_id", "log_id", "pack_id",
+    "phase_id", "pipeline_id", "plan_id", "policy_id", "pref_id", "report_id",
+    "request_id", "strategy_id", "sub_id", "subscription_id", "suite_id",
+    "task_id", "test_case_id", "test_id", "test_run_id", "token_id", "user_id",
+    "view_id",
+})
+
+#: Routers written against the agentic architecture (E1, E8). No backlog and no
+#: exemption: every id in their paths is a known, guarded param, the guard is a
+#: dependency, and any id in a body or query string is scope-checked.
+STRICT_ROUTER_MODULES: frozenset[str] = frozenset({
+    "app.routers.agent_invoke",
+    "app.routers.reviews",
+})
+
+import re  # noqa: E402
+
+_PATH_ID = re.compile(r"\{(\w+_id)\}")
+
+
+def _unclassified_path_params(routes) -> dict[str, list[str]]:
+    """``{param: [paths]}`` for every ``{*_id}`` path param no list classifies."""
+    classified = set(GUARDED_PARAMS) | set(UNGUARDED_SCOPED_PARAMS) | set(GLOBAL_PATH_PARAMS)
+    found: dict[str, list[str]] = {}
+    for route in routes:
+        for name in _PATH_ID.findall(route.path):
+            if name not in classified:
+                found.setdefault(name, []).append(route.path)
+    return found
+
+
+def _strict_router_violations(routes, modules) -> list[str]:
+    """Every gap in a strict router, as a readable line."""
+    known = set(GUARDED_PARAMS) | set(UNGUARDED_SCOPED_PARAMS)
+    exempt_paths = {path for _method, path in KNOWN_EXEMPT | NONPATH_KNOWN_EXEMPT}
+    problems: list[str] = []
+    for route in routes:
+        if getattr(route.endpoint, "__module__", None) not in modules:
+            continue
+        ids = [n for n in _PATH_ID.findall(route.path) if n not in GLOBAL_PATH_PARAMS]
+        unknown = [n for n in ids if n not in known]
+        if unknown:
+            problems.append(f"{route.path}: unclassified path id(s) {unknown}")
+        elif ids and not _route_is_protected(route):
+            problems.append(f"{route.path}: no access-guard dependency for {ids}")
+        if route.path in exempt_paths:
+            problems.append(f"{route.path}: exempted, but strict routers take no exemptions")
+        scoped = _non_path_scoped_ids(route)
+        if scoped and not _route_shows_scope_check(route):
+            problems.append(f"{route.path}: body/query id(s) {sorted(scoped)} with no scope check")
+    return problems
+
+
+def test_every_path_id_is_classified() -> None:
+    found = _unclassified_path_params(list(_collect_api_routes()))
+    new = sorted(set(found) - UNCLASSIFIED_PATH_PARAMS_BACKLOG)
+    stale = sorted(UNCLASSIFIED_PATH_PARAMS_BACKLOG - set(found))
+    errors: list[str] = []
+    if new:
+        errors.append(
+            "A path id no list classifies. If it names a tenant-owned object, add a "
+            "require_<object>_access() dependency and list the param (GUARDED_PARAMS / "
+            "UNGUARDED_SCOPED_PARAMS plus a clause in _route_is_protected); if it names "
+            "nothing tenant-owned, add it to GLOBAL_PATH_PARAMS with the reason:\n  "
+            + "\n  ".join(f"{name}: {found[name][0]}" for name in new)
+        )
+    if stale:
+        errors.append(
+            "These backlog ids are gone or now classified. Delete them from "
+            "UNCLASSIFIED_PATH_PARAMS_BACKLOG -- the backlog only shrinks:\n  " + "\n  ".join(stale)
+        )
+    assert not errors, "\n\n".join(errors)
+
+
+def test_the_unclassified_path_id_backlog_only_shrinks() -> None:
+    assert len(UNCLASSIFIED_PATH_PARAMS_BACKLOG) <= 34, (
+        "UNCLASSIFIED_PATH_PARAMS_BACKLOG grew. Classify the new id instead."
+    )
+
+
+def test_the_strict_routers_have_no_authorization_gaps() -> None:
+    routes = list(_collect_api_routes())
+    strict = [r for r in routes if getattr(r.endpoint, "__module__", None) in STRICT_ROUTER_MODULES]
+    # Six invocation routes and four review routes; fewer means a router moved.
+    assert len(strict) >= 10, f"expected the invocation and review routes, found {len(strict)}"
+    problems = _strict_router_violations(routes, STRICT_ROUTER_MODULES)
+    assert not problems, "Strict router gaps:\n  " + "\n  ".join(problems)
+
+
+# Self-tests of the two scans above, on routes written for them.
+
+from fastapi import Depends as _Depends  # noqa: E402
+
+from app.routers.agent_invoke import require_invocation_access as _require_invocation_access  # noqa: E402
+
+
+async def _widget_handler(widget_id: str):
+    return widget_id
+
+
+async def _agent_handler(agent_id: str):
+    return agent_id
+
+
+async def _unguarded_invocation(invocation_id: str):
+    return invocation_id
+
+
+async def _guarded_invocation(invocation_id: str, _user=_Depends(_require_invocation_access())):
+    return invocation_id
+
+
+async def _project_in_body_without_a_check(project_id: str):
+    return project_id
+
+
+def _route(path: str, handler, method: str = "GET") -> APIRoute:
+    return APIRoute(path, endpoint=handler, methods=[method])
+
+
+def test_a_new_unclassified_path_id_is_reported() -> None:
+    found = _unclassified_path_params([_route("/api/v1/widgets/{widget_id}", _widget_handler)])
+    assert found == {"widget_id": ["/api/v1/widgets/{widget_id}"]}
+
+
+def test_a_global_path_id_is_not_reported() -> None:
+    assert _unclassified_path_params([_route("/api/v1/agents/catalog/{agent_id}", _agent_handler)]) == {}
+
+
+def test_a_strict_route_without_a_guard_dependency_is_reported() -> None:
+    route = _route("/api/v1/agents/invocations/{invocation_id}", _unguarded_invocation)
+    problems = _strict_router_violations([route], {__name__})
+    assert problems and "no access-guard dependency" in problems[0]
+
+
+def test_a_strict_route_with_its_guard_dependency_passes() -> None:
+    route = _route("/api/v1/agents/invocations/{invocation_id}", _guarded_invocation)
+    assert _strict_router_violations([route], {__name__}) == []
+
+
+def test_an_unknown_id_in_a_strict_route_is_reported() -> None:
+    route = _route("/api/v1/agents/{widget_id}/thing", _widget_handler)
+    problems = _strict_router_violations([route], {__name__})
+    assert problems and "unclassified path id" in problems[0]
+
+
+def test_a_strict_route_taking_a_body_project_without_a_check_is_reported() -> None:
+    route = _route("/api/v1/agents/things", _project_in_body_without_a_check, method="POST")
+    problems = _strict_router_violations([route], {__name__})
+    assert problems and "no scope check" in problems[0]
+
+
+async def _exempt_path_handler(project_id: str, _user=_Depends(_require_invocation_access())):
+    return project_id
+
+
+def test_a_strict_route_on_an_exempted_path_is_reported() -> None:
+    # The path of a real KNOWN_EXEMPT entry, served from a strict module.
+    method, path = sorted(KNOWN_EXEMPT)[0]
+    route = _route(path, _exempt_path_handler, method=method)
+    problems = _strict_router_violations([route], {__name__})
+    assert any("strict routers take no exemptions" in p for p in problems), problems
+
+
 def test_the_nonpath_backlog_only_shrinks() -> None:
     """Every remaining entry has been read and is genuinely fine. The cap keeps
     it that way: a new entry means someone chose exemption over a check."""

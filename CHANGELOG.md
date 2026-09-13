@@ -1,5 +1,55 @@
 # Changelog
 
+## 2026-09-13 - Authorization ratchet: every path id is classified, and the agent routers get no exemptions (E1.6)
+
+`tests/test_architectural_authorization.py` checks that a route taking a
+tenant-owned id also checks who is asking. Its path scan only looked at the
+path parameters it listed, so a router adding `/widgets/{widget_id}` passed
+without being checked at all. `review_id` (E8.2) and `invocation_id` (E1.2)
+were covered only because they were added to the list by hand. This change
+closes that gap and holds the agentic routers to a stricter standard.
+
+**Every `{..._id}` path parameter must now be classified.** It has to be one
+of:
+
+- a guarded parameter, with an access-guard dependency;
+- a global id, with the reason recorded. `agent_id` is the first: it names a
+  capability in the global agent registry, not tenant data.
+
+The 34 path ids already in use that neither list classifies are a backlog.
+Their routers check access inline or are admin-only. The backlog may only
+shrink: a new id fails until it is classified, and an id that disappears
+fails until it is deleted from the list.
+
+**Strict routers.** The routers built for the agentic architecture
+(`agent_invoke` for invocations, `reviews` for the review gate) take no
+backlog and no exemption:
+
+- every path id is a known parameter guarded by a dependency;
+- every tenant id in a request body or query string is scope-checked;
+- none of their routes may appear in an exemption list.
+
+**Self-tests.** Routes written for the scans prove the checks fire:
+
+- a new unclassified id is reported, and a global one is not;
+- a strict route with no guard dependency is reported, and the same route
+  with its guard passes;
+- an unknown id in a strict route is reported;
+- a strict route taking `project_id` in its body without a scope check is
+  reported.
+
+**Already in place.** The rest of the E1.6 story shipped with the routes
+themselves:
+
+- `require_invocation_access` (E1.2) and `require_review_access` (E8.2);
+- deriving the project from the subject, with the body `project_id` as an
+  assertion (E1.2);
+- API-key project binding on invoke: `resolve_project_scope` restricts a
+  project-bound key to its own project;
+- the ratchet already inspected request body models for scoped ids.
+
+`require_workflow_access` waits for the workflow routes in E4.
+
 ## 2026-09-13 - The agent catalog as MCP tools (E1.5)
 
 MCP clients (AI desktop apps, IDEs) can now discover TestLookup's agents and run
