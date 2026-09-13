@@ -1,0 +1,475 @@
+{
+  "info": {
+    "_postman_id": "5aeac116-4cd0-5b5c-ba8a-2c0d5a858f01",
+    "name": "TestLookup - Agents API",
+    "description": "Agent catalog, invocations and human review. Generated from the OpenAPI schema by `python -m app.services.agent_api_docs`; do not edit by hand. Set `baseUrl` and `token` (a JWT), or enable the X-API-Key header on each request.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "api_key",
+      "value": ""
+    },
+    {
+      "key": "agent_id",
+      "value": "agent.summary.v1"
+    },
+    {
+      "key": "invocation_id",
+      "value": ""
+    },
+    {
+      "key": "ticket",
+      "value": ""
+    },
+    {
+      "key": "project_id",
+      "value": ""
+    },
+    {
+      "key": "test_run_id",
+      "value": ""
+    },
+    {
+      "key": "review_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Catalog",
+      "item": [
+        {
+          "name": "List Agent Catalog",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "disabled": true,
+                "description": "Instead of the bearer token: a project API key."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/agents/catalog",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "catalog"
+              ]
+            },
+            "description": "Discover the agents (E1.1): every capability in the registry.\n\nClients read agent ids here instead of hard-coding stage names. Declared\nfirst in this router: the planned ``/agents/{agent_id}/invoke`` route must\ncome after every literal ``/agents/...`` path (architecture section 3.5)."
+          }
+        },
+        {
+          "name": "Get Agent Catalog Entry",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "disabled": true,
+                "description": "Instead of the bearer token: a project API key."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/agents/catalog/{{agent_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "catalog",
+                "{{agent_id}}"
+              ]
+            },
+            "description": "One agent, with its generated input wrapper and JSON Schemas (E1.1)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Invocations",
+      "item": [
+        {
+          "name": "Get Invocation",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "disabled": true,
+                "description": "Instead of the bearer token: a project API key."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/agents/invocations/{{invocation_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "invocations",
+                "{{invocation_id}}"
+              ]
+            },
+            "description": "Poll one invocation: status, attempts, output and review state, read from its run."
+          }
+        },
+        {
+          "name": "Cancel Invocation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "disabled": true,
+                "description": "Instead of the bearer token: a project API key."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/agents/invocations/{{invocation_id}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "invocations",
+                "{{invocation_id}}",
+                "cancel"
+              ]
+            },
+            "description": "Cancel an invocation cooperatively, exactly as its pipeline run is cancelled.\n\nA run with no live worker stops now; a running one is asked to stop and\nterminalises at its next stage boundary. Cancellation is sticky: an\nautomatic retry never brings it back. An invocation whose run has not been\ncreated yet has nothing to cancel (409)."
+          }
+        },
+        {
+          "name": "Stream Invocation Events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "disabled": true,
+                "description": "Instead of the bearer token: a project API key."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/agents/invocations/{{invocation_id}}/events?ticket={{ticket}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "invocations",
+                "{{invocation_id}}",
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "ticket",
+                  "value": "{{ticket}}",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Progress of one invocation as server-sent events, until its run finishes."
+          }
+        },
+        {
+          "name": "Issue Invocation Stream Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "disabled": true,
+                "description": "Instead of the bearer token: a project API key."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/agents/invocations/{{invocation_id}}/events/ticket",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "invocations",
+                "{{invocation_id}}",
+                "events",
+                "ticket"
+              ]
+            },
+            "description": "A single-use ticket for ``GET .../events`` (EventSource cannot send Authorization)."
+          }
+        },
+        {
+          "name": "Retry Invocation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "disabled": true,
+                "description": "Instead of the bearer token: a project API key."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/agents/invocations/{{invocation_id}}/retry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "invocations",
+                "{{invocation_id}}",
+                "retry"
+              ]
+            },
+            "description": "Retry a failed invocation: a new attempt of the same invocation (E1.2).\n\nThe pipeline retry rules apply to the invocation's run. It is refused with\n409 while the run is in progress, after a clean finish, or at the attempt\nceiling; the last two carry ``links.rerun`` to invoke the agent again.\n\nA retry resumes the SAME run, so the frozen plan (this agent and its\ndependencies only) is kept. When the agent configuration changed since the\nrun started, resuming would replay work authorised under the old\nconfiguration, and a rerun needs a new run -- which is a new invocation --\nso that is 409 with ``links.rerun`` too. An invocation whose run never\nstarted is dispatched again."
+          }
+        },
+        {
+          "name": "Invoke Agent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Client-generated key (UUID or ULID). The same key with the same request returns the invocation it created (200); with a different request, 422; while the first request is still being handled, 409. Scoped to your user and project."
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "disabled": true,
+                "description": "Instead of the bearer token: a project API key."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/agents/{{agent_id}}/invoke",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "{{agent_id}}",
+                "invoke"
+              ]
+            },
+            "description": "Invoke one agent on a stored test run.\n\n``mode=async`` (the default) answers 202 with a poll link. ``mode=sync`` on a\nsync-eligible agent waits up to ``AGENT_INVOKE_SYNC_WAIT_SECONDS`` for the run\nto finish: 200 with the result if it did, 202 if it is still going. A full\npool of sync slots is 503 with ``Retry-After``. ``mode=sync`` on any other\nagent runs async.\n\nThe project is derived from the test run; ``project_id`` in the body is an\nassertion that must match it. An invocation of the same agent on the same\nrun that is still in progress is returned as-is with 200. With an\n``Idempotency-Key``, a repeated request returns the invocation it created\n(E1.3).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_id\": \"{{project_id}}\",\n  \"input\": {\n    \"agent_id\": \"{{agent_id}}\",\n    \"payload\": {\n      \"test_run_id\": \"{{test_run_id}}\"\n    }\n  },\n  \"mode\": \"async\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reviews",
+      "item": [
+        {
+          "name": "List Reviews",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "disabled": true,
+                "description": "Instead of the bearer token: a project API key."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/projects/{{project_id}}/reviews",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "projects",
+                "{{project_id}}",
+                "reviews"
+              ],
+              "query": [
+                {
+                  "key": "state",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "The project's review queue, newest first. ``?state=pending_review`` for the open queue."
+          }
+        },
+        {
+          "name": "Get Review",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "disabled": true,
+                "description": "Instead of the bearer token: a project API key."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reviews/{{review_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reviews",
+                "{{review_id}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Accept Review",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "disabled": true,
+                "description": "Instead of the bearer token: a project API key."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reviews/{{review_id}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reviews",
+                "{{review_id}}",
+                "accept"
+              ]
+            },
+            "description": "Accept an AI report. Its run becomes ``passed``.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"Checked against the failing test logs.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Reject Review",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "disabled": true,
+                "description": "Instead of the bearer token: a project API key."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reviews/{{review_id}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reviews",
+                "{{review_id}}",
+                "reject"
+              ]
+            },
+            "description": "Reject an AI report with a reason code. Its run becomes ``failed``.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason_code\": \"unsupported_claim\",\n  \"notes\": \"The cited stack trace belongs to another test.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
