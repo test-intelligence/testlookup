@@ -44,6 +44,49 @@ exactly one delivery after the commit, and a failed commit sends nothing. The
 override path runs through the route handler. The gate projection is checked
 while enforced. A guard checks that every catalog event has a producer. Publishes
 are bound to the real `deliver_webhook` signature.
+## 2026-09-13 - Synchronous agent invocation and live progress over SSE (E1.2, slice 3)
+
+This is the last slice of E1.2. Invocations can now wait for their result, and
+a browser can follow their progress live.
+
+**`mode=sync`**
+
+- A sync call only waits for the result; a worker still runs the invocation,
+  so leases, retries, cancellation and review apply exactly as for async.
+- It applies only to sync-eligible agents: deterministic ones expected to
+  finish within 5 seconds (see the catalog). The request waits up to
+  `AGENT_INVOKE_SYNC_WAIT_SECONDS` (default 25).
+  - It returns `200` with the result if the run finished.
+  - It returns `202` with a poll link if the run is still going.
+- Waiting requests are capped per process at `AGENT_INVOKE_SYNC_CONCURRENCY`
+  (default 4). A full pool returns `503` with `Retry-After`.
+- `mode=sync` on any other agent runs async and answers `202`, as architecture
+  section 3.2 describes. Before this slice it was refused with `422`.
+
+**Progress as server-sent events**
+
+- `POST /api/v1/agents/invocations/{invocation_id}/events/ticket` issues a
+  ticket, since a browser `EventSource` cannot send an `Authorization` header.
+  - Only callers who may see the invocation can request one.
+  - The ticket lasts 60 seconds (`AGENT_INVOKE_STREAM_TICKET_SECONDS`).
+  - It is single-use and bound to that invocation.
+  - Only a SHA-256 of it is stored in Redis.
+- `GET /api/v1/agents/invocations/{invocation_id}/events?ticket=...` streams an
+  `invocation` event whenever status, attempt, review state, retry time or
+  output changes.
+  - An invalid, used or expired ticket gets `401`.
+  - The stream ends when the run finishes, the client disconnects, or after
+    30 minutes.
+  - Heartbeats keep proxies from closing the connection.
+- A Redis outage makes ticket issue answer `503` and redemption refuse, so the
+  stream fails closed and polling still works.
+
+The authorization ratchet now accepts the ticket guard on the events route
+(architecture section 3.2); the ticket itself is only issued behind the
+invocation access guard.
+
+Tests: `backend/tests/test_agent_invocation_sync_sse.py`.
+
 ## 2026-09-13 - Retry, cancel and read the output of an agent invocation (E1.2, slice 2)
 
 Slice 1 let an API client invoke one agent and poll it. This slice adds retry,
