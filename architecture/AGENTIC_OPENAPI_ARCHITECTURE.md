@@ -898,7 +898,7 @@ class EvalGateResult(BaseModel):
 - **E2.1 (S)** OTel spans per step with `gen_ai.*` attributes; Grafana panels.
 - **E2.2 (S)** New counters from §10 with emission tests.
 - **E2.3 (S)** DLQ list/replay endpoints; alert rules (`in_progress` age beyond deadline + grace, DLQ depth, `pending_review` age); each alert has a **positive** test that injects the condition and asserts it fires and clears.
-- **E2.4 (S)** Keep this document (`architecture/AGENTIC_OPENAPI_ARCHITECTURE.md`, tracked) current as epics land: mark each EXISTS/NEW row as it flips, and add CHANGELOG entries. Covers requirements 11 and 12, which are document-only.
+- **E2.4 (S)** Keep this document (`architecture/AGENTIC_OPENAPI_ARCHITECTURE.md`, tracked) current as epics land: mark each EXISTS/NEW row as it flips, and add CHANGELOG entries. Covers requirements 11 and 12, which are document-only. **(T23 shipped early)** The pre-existing Codacy workflow failed validation before creating a job because a step `if` read `secrets.CODACY_PROJECT_TOKEN` directly. Token availability now flows through job-level `env`; a regression test pins the valid shape. This operational prerequisite was brought forward because the programme requires every story PR to merge only with green CI. No agent runtime behavior changed.
 
 ### Sequencing (four engineers)
 
@@ -923,4 +923,3 @@ Dependencies called out: E1.2 needs E7 (leases); E9.3 needs E4.1 (config hook) a
 - Killing a worker mid-run yields `retry_wait → running → completed` with `attempt=2`, and a paused worker's late writes affect zero rows, both verified live (memory: verify in the running app).
 - A `pending_review` decision report cannot be exported, notified, or read as `GO`; accepting it flips the run to `passed` with the reviewer recorded in the audit log and absent from the API payload.
 - **Evals:** the attestation guard blocks a PR that edits a prompt, `llm_factory.py`, or a `default_tier` without a fresh inference-backed attestation; AnalysisAgent has n ≥ 100 and every other capability n ≥ 20 or an `eval_exempt` reason; the SLM summary is non-inferior to the LLM on the summary golden set (built in E9.2) by the G2 rule; reviewer recall per semantic mutation class is reported with n; every run in the last week resolves its `eval_manifest_checksum`; publishing a workflow that regresses the replay corpus is refused without a recorded reason.
-
