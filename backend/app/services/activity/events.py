@@ -197,6 +197,11 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # NOT tidily succeed.
     _spec("analysis.retried", "analysis", "run", "AI analysis for {entity_label} was retried ({mode})", "attempt"),
     _spec("analysis.cancelled", "analysis", "run", "AI analysis for {entity_label} was cancelled", "attempt"),
+    # E8.2: a human settled the review of an AI report. Outcome writes: the row
+    # commits with the review itself, and a decision that rolled back never
+    # happened. Humans only -- the API refuses keys and synthetic accounts.
+    _spec("review.accepted", "analysis", "run", "{actor_name} accepted the AI report for {entity_label}", "outcome", _HUMAN_OR_KEY),
+    _spec("review.rejected", "analysis", "run", "{actor_name} rejected the AI report for {entity_label} ({reason_code})", "outcome", _HUMAN_OR_KEY),
     # ── release ─────────────────────────────────────────────────────────────
     _spec("release.created", "release", "release", "Release {entity_label} was created"),
     _spec("release.activated", "release", "release", "Release {entity_label} was activated"),

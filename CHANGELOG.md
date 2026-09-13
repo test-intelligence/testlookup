@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-09-12 - the review API: a human accepts or rejects an AI report (E8.2)
+
+E8.1 made every report-producing run open a review request. This is where a
+person settles it.
+
+- **`GET /api/v1/projects/{project_id}/reviews`** is the project's queue, with
+  `?state=pending_review` for what is still open. **`GET /api/v1/reviews/{review_id}`**
+  returns one review.
+- **`POST /api/v1/reviews/{review_id}/accept`** moves the run
+  `completed -> passed`. **`POST .../reject`** requires a `reason_code` and moves
+  it `completed -> failed` with `review_rejected: <reason_code>` (architecture
+  section 7.2). Both transitions are a single guarded UPDATE, so a run that was
+  re-run or resumed in the meantime refuses the decision (409) instead of
+  recording it against a run it no longer describes.
+- **Enforcement, per section 8.3**, checked in this order before anything is
+  written:
+  - Accept and reject need an interactive login. An API key is refused
+    whatever its owner's role, and so is a credential of unknown kind; the MCP
+    server and CI hold keys, and an agent acting through one could otherwise
+    approve its own output.
+  - Synthetic accounts are refused (`users.is_synthetic`, E8.1).
+  - A rejection needs a reason code from the closed vocabulary.
+  - Only a pending review can be settled.
+  - The run's requester cannot review it.
+  - Both routes also require QA_LEAD.
+- **Access returns 404, not 403**, to a non-member of the review's project, so
+  a UUID-only route does not confirm that someone else's review exists.
+- **Recorded three ways.** An access-audit row and an activity event
+  (`review.accepted` / `review.rejected`) commit with the decision. A
+  pipeline event-log entry is written best-effort after the commit.
+- **Notes** are redacted before storage and never reach the audit trail.
+  **Reviewer identity** is kept out of the API response, which carries
+  `reviewed` and a timestamp (section 8.2).
+- **The authorization ratchet scans `{review_id}`.** Before this, a
+  `/reviews/{review_id}` route would have passed the scan as "no scoped
+  parameter", the vacuous pass that ratchet exists to prevent. A new test
+  requires every such route to carry `require_review_access`.
+
+Known gaps, recorded in the architecture doc:
+- Separation of duties has nothing to compare against until pipeline runs
+  record who triggered them (`requested_by` is still null).
+- The E7.4 retry endpoint can still retry a review-rejected run, which section
+  7.2 marks terminal.
+
+Tests: `backend/tests/test_reviews_api.py` covers the refusal checks, both
+transitions, redaction, the router's commit and audit behaviour, and the access
+guard. `backend/tests/test_architectural_authorization.py` gains the
+`review_id` scan.
+
 ## 2026-09-12 - every AI report gets a human review request (E8.1)
 
 Requirement 10 of the agentic architecture is that an AI-generated report is a

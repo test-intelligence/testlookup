@@ -53,6 +53,10 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     "session_id",
     "link_id",
     "release_id",
+    # E8.2: a review is a tenant-owned object reached by id alone. Without this
+    # entry every /reviews/{review_id} route passed the scan as "no scoped
+    # param" -- the vacuous pass this file exists to prevent.
+    "review_id",
     "key_id",
     "rule_id",
     "source_id",
@@ -155,6 +159,9 @@ def _route_is_protected(route: APIRoute) -> bool:
         return True
     # Run scope covers nested cluster/finding/test IDs under a run.
     if "{run_id}" in path and any("require_run_access" in n for n in dep_names):
+        return True
+    # AI report review -> project (router-local guard, E8.2).
+    if "{review_id}" in path and any("require_review_access" in n for n in dep_names):
         return True
     # Release → project.
     if "{release_id}" in path and any("require_release_access" in n for n in dep_names):
@@ -1265,3 +1272,13 @@ def test_the_public_prefix_exemptions_are_not_stale() -> None:
         "these PUBLIC_PREFIX_KNOWN_EXEMPT entries match no mounted route — "
         "delete them:\n  " + "\n  ".join(f"{m} {p}" for m, p in stale)
     )
+
+
+def test_review_ids_are_scanned_and_every_review_route_is_guarded() -> None:
+    """E8.2: accept/reject settle another person's AI report. A {review_id} route
+    missing its guard must fail here, not pass as unscoped."""
+    assert "review_id" in UNGUARDED_SCOPED_PARAMS
+    scoped = [route for route in _collect_api_routes() if "{review_id}" in route.path]
+    assert len(scoped) >= 3, "expected the review get/accept/reject routes to be mounted"
+    assert [route.path for route in scoped if not _route_is_protected(route)] == []
+    assert not any("{review_id}" in path for _method, path in KNOWN_EXEMPT)
