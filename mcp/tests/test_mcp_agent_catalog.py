@@ -169,7 +169,12 @@ def test_the_invocation_view_carries_output_and_ends_with_review_state(monkeypat
 
 
 def test_the_agents_module_is_registered_in_the_server():
+    import ast
+
     content = (MCP_DIR / "server.py").read_text(encoding="utf-8")
+    # Parse it: these tests read server.py as text, so a syntax error in the
+    # instructions string passed them and failed only CI's syntax check.
+    ast.parse(content)
     assert "agents.register(mcp)" in content and "invoke_agent" in content
 
 

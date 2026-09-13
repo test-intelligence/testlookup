@@ -148,9 +148,7 @@ mcp = FastMCP(
         "Agents (E1.5): `list_agents` and `get_agent` show the agent catalog; "
         "`invoke_agent` runs one invocable agent on a stored test run (a SIDE EFFECT that "
         "spends the project AI budget, so confirm with the user first; reuse the returned "
-        "idempotency_key to retry safely) and `get_agent_invocation` polls it.
-
-"
+        "idempotency_key to retry safely) and `get_agent_invocation` polls it.\n\n"
         "Human review (E8.4): AI reports are drafts until a person accepts them. "
         "Report tools end with `review_state` and the AI disclaimer; pass both on to "
         "the user and never present a `pending_review` or `unknown` report as settled. "
