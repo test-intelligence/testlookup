@@ -239,4 +239,60 @@ describe('CreateJiraIssueModal', () => {
     fireEvent.click(submit)
     expect(defectJiraService.create).not.toHaveBeenCalled()
   })
+
+  it('on an unknown earlier outcome shows the label and files only after the user confirms', async () => {
+    await mockHooks()
+    const { defectJiraService } = await import('@/services/defectJiraService')
+    const create = defectJiraService.create as ReturnType<typeof vi.fn>
+    create
+      .mockRejectedValueOnce({
+        response: {
+          status: 409,
+          data: {
+            detail: {
+              code: 'jira_outcome_unknown',
+              message: 'An earlier request may have filed this issue.',
+              jira_label: 'testlookup-sig-abc123',
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        target: 'jira',
+        deduplicated: false,
+        defect_id: 'd-2',
+        jira_key: 'QA-43',
+        jira_url: 'https://example.atlassian.net/browse/QA-43',
+        external_status: 'Open',
+        recurrence_count: 0,
+        recurrence_comment_posted: false,
+        subscriptions_notified: null,
+        message: 'Created QA-43.',
+      })
+    const onClose = vi.fn()
+
+    render(
+      <CreateJiraIssueModal
+        projectId="proj-1"
+        fingerprint={'f'.repeat(16)}
+        testName="checkout_flow_test"
+        onClose={onClose}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create issue' }))
+
+    const notice = await screen.findByRole('alert')
+    expect(notice.textContent).toContain('testlookup-sig-abc123')
+    expect(notice.textContent).toContain('An earlier request may have filed this issue.')
+    expect(onClose).not.toHaveBeenCalled()
+    // The plain CTA never sends the confirmation.
+    expect(create.mock.calls[0][1]).not.toHaveProperty('confirm_not_filed')
+
+    fireEvent.click(screen.getByRole('button', { name: 'I checked Jira, file it' }))
+
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2))
+    expect(create.mock.calls[1][1]).toMatchObject({ confirm_not_filed: true, target: 'jira' })
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+  })
 })

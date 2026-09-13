@@ -609,6 +609,7 @@ jobs:
           tests/integration/test_pipeline_state_machine_postgres.py
           tests/integration/test_review_requests_postgres.py
           tests/integration/test_tool_call_idempotency_postgres.py
+          tests/integration/test_defect_jira_exactly_once_postgres.py
           tests/integration/test_report_eval_cycle_postgres.py
           tests/integration/test_run_downstream_outbox_postgres.py
           tests/integration/test_webhook_delivery_backfill_postgres.py

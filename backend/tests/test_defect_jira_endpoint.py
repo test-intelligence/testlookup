@@ -32,6 +32,7 @@ import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 pytest.importorskip("sqlalchemy")
@@ -39,6 +40,7 @@ pytest.importorskip("sqlalchemy")
 from fastapi import HTTPException  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
+from app.models.postgres import AccessAuditLog  # noqa: E402
 from app.routers import defect_jira as defect_jira_router  # noqa: E402
 from app.services import defect_jira_service as svc  # noqa: E402
 
@@ -133,9 +135,46 @@ def _prefill(signature: str = "f" * 16) -> dict:
     }
 
 
+class _MemLedger:
+    """In-memory stand-in for the E7.6 claim/finish sessions: same state
+    machine (executed replays, executing is unknown, failed re-claims)."""
+
+    def __init__(self):
+        self.rows: dict[str, dict] = {}
+
+    async def claim(self, *, key, **_kw):
+        row = self.rows.get(key)
+        if row is not None:
+            if row["status"] == "executed":
+                return "executed", dict(row["result"])
+            if row["status"] != "failed":
+                return "executing", {}
+        self.rows[key] = {"status": "executing", "result": {}}
+        return "claimed", {}
+
+    async def finish(self, *, key, status, result_payload=None, error_code=None, **_kw):
+        row = self.rows.setdefault(key, {"status": status, "result": {}})
+        row["status"] = status
+        if result_payload is not None:
+            row["result"] = dict(result_payload)
+
+    def statuses(self):
+        return [row["status"] for row in self.rows.values()]
+
+
 @pytest.fixture()
-def online(monkeypatch):
-    """Jira reachable + offline mode off + prefill stubbed."""
+def ledger(monkeypatch):
+    from app.services import tool_call_idempotency as tci
+
+    store = _MemLedger()
+    monkeypatch.setattr(tci, "_claim", store.claim)
+    monkeypatch.setattr(tci, "_finish", store.finish)
+    return store
+
+
+@pytest.fixture()
+def online(monkeypatch, ledger):
+    """Jira reachable + offline mode off + prefill stubbed + in-memory ledger."""
     monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
 
     async def _cfg(db):
@@ -677,3 +716,271 @@ def test_cluster_signature_is_stable_and_fingerprint_shaped():
     assert a != c
     assert len(a) == 64
     assert all(ch in "0123456789abcdef" for ch in a)
+
+
+# ── 8. Exactly-once filing: lost outcomes, ambiguous POSTs, reconciliation ──
+#
+# The lock and the ledger's own transactions are proven against real Postgres
+# in tests/integration/test_defect_jira_exactly_once_postgres.py. These pin the
+# decisions made on top of them, over the in-memory ledger.
+
+_PID = uuid.uuid4()
+
+
+class _JiraFake:
+    """Scripted issue POSTs (a response or an exception each) + label search."""
+
+    def __init__(self):
+        self.responses: list = []
+        self.posts: list[dict] = []
+        self.searches: list[dict] = []
+        self.search_keys: list[str] = []
+        self.search_error: Exception | None = None
+
+    async def post(self, cfg, path, json):
+        self.posts.append(json)
+        outcome = (
+            self.responses.pop(0) if self.responses
+            else _FakeResp(201, {"key": f"QA-{len(self.posts)}"})
+        )
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def get(self, cfg, path, params=None):
+        self.searches.append({"path": path, **(params or {})})
+        if self.search_error is not None:
+            raise self.search_error
+        return _FakeResp(200, {"issues": [{"key": k} for k in self.search_keys]})
+
+
+@pytest.fixture()
+def jira(online, monkeypatch):
+    async def _find(db, project_id, signature):
+        return None  # nothing committed: every request passes the dedup read
+
+    fake = _JiraFake()
+    monkeypatch.setattr(svc, "find_open_linked_defect", _find)
+    monkeypatch.setattr(svc, "_jira_post", fake.post)
+    monkeypatch.setattr(svc, "_jira_get", fake.get)
+    return fake
+
+
+async def _submit(db=None, **kwargs):
+    return await svc.create_or_link_issue(
+        db if db is not None else _FakeDB(), str(_PID),
+        SimpleNamespace(id=uuid.uuid4(), username="qa"),
+        cluster_id="cl_001", **kwargs,
+    )
+
+
+def _sig_label(post: dict) -> str:
+    (label,) = [x for x in post["fields"]["labels"] if x.startswith("testlookup-sig-")]
+    return label
+
+
+@pytest.mark.asyncio
+async def test_a_commit_lost_after_jira_accepted_is_not_filed_again(jira, ledger):
+    """Failure mode 1: Jira created the issue, the router's commit failed, the
+    user retried. The retry finds no Defect row, but must not POST again."""
+    first = await _submit()
+    db = _FakeDB()  # a fresh request: nothing from the first one was persisted
+    retry = await _submit(db)
+
+    assert len(jira.posts) == 1, "the retry filed a second Jira issue"
+    assert retry["jira_key"] == first["jira_key"]
+    assert retry["deduplicated"] is True
+    assert "whose result was not saved" in retry["message"]
+    (defect,) = db.added  # the lost Defect row is rebuilt from the ledger
+    assert defect.jira_ticket_id == first["jira_key"]
+    assert defect.jira_ticket_url == first["jira_url"]
+    assert ledger.statuses() == ["executed"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.ReadTimeout("read timed out"),
+        httpx.RemoteProtocolError("server disconnected"),
+        _FakeResp(503, text="unavailable"),
+        _FakeResp(201, {"id": "10001"}),
+    ],
+    ids=["read-timeout", "dropped-connection", "jira-5xx", "2xx-without-key"],
+)
+async def test_an_ambiguous_post_leaves_the_claim_executing_and_returns_409(jira, ledger, response):
+    jira.responses = [response]
+
+    with pytest.raises(HTTPException) as exc:
+        await _submit()
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "jira_outcome_unknown"
+    assert exc.value.detail["jira_label"] == _sig_label(jira.posts[0])
+    assert ledger.statuses() == ["executing"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.ConnectError("connection refused"),
+        httpx.ConnectTimeout("connect timed out"),
+        _FakeResp(400, text="field error"),
+    ],
+    ids=["connect-error", "connect-timeout", "jira-4xx"],
+)
+async def test_a_post_jira_never_accepted_is_recorded_failed_and_retried(jira, ledger, response):
+    jira.responses = [response]
+
+    with pytest.raises(HTTPException) as exc:
+        await _submit()
+    assert exc.value.status_code == 502
+    assert ledger.statuses() == ["failed"]
+
+    out = await _submit()
+    assert len(jira.posts) == 2
+    assert out["deduplicated"] is False
+    assert jira.searches == []  # a failed claim is simply tried again
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_claim_is_linked_when_jira_has_the_labelled_issue(jira, ledger):
+    jira.responses = [httpx.ReadTimeout("read timed out")]
+    with pytest.raises(HTTPException):
+        await _submit()
+    label = _sig_label(jira.posts[0])
+
+    jira.search_keys = ["QA-7"]
+    db = _FakeDB()
+    out = await _submit(db)
+
+    assert len(jira.posts) == 1
+    (search,) = jira.searches
+    assert search["path"] == "/rest/api/3/search/jql"
+    assert search["jql"] == f'labels = "{label}" ORDER BY created ASC'
+    assert out["jira_key"] == "QA-7"
+    assert out["deduplicated"] is True
+    (defect,) = db.added
+    assert defect.jira_ticket_id == "QA-7"
+    assert ledger.statuses() == ["executed"]
+
+
+@pytest.mark.asyncio
+async def test_several_labelled_issues_link_the_oldest_and_name_the_rest(jira):
+    jira.responses = [httpx.ReadTimeout("read timed out")]
+    with pytest.raises(HTTPException):
+        await _submit()
+
+    jira.search_keys = ["QA-7", "QA-8"]
+    out = await _submit()
+
+    assert len(jira.posts) == 1
+    assert out["jira_key"] == "QA-7"
+    assert "QA-8" in out["message"]
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_claim_with_no_labelled_issue_is_409_until_confirmed(jira, ledger):
+    jira.responses = [httpx.ReadTimeout("read timed out")]
+    with pytest.raises(HTTPException):
+        await _submit()
+
+    # Jira search lags behind creation: "not found" alone never files.
+    with pytest.raises(HTTPException) as exc:
+        await _submit()
+    assert exc.value.status_code == 409
+    assert "confirm_not_filed" in exc.value.detail["message"]
+    assert len(jira.posts) == 1
+
+    db = _FakeDB()
+    out = await _submit(db, confirm_not_filed=True)
+
+    assert len(jira.posts) == 2
+    assert len(jira.searches) == 2  # the confirmed retry still searched first
+    assert out["deduplicated"] is False
+    (audit,) = [o for o in db.added if isinstance(o, AccessAuditLog)]
+    assert audit.action == "jira_defect_confirm_not_filed"
+    assert audit.after_value["jira_label"] == _sig_label(jira.posts[0])
+    assert ledger.statuses() == ["executed"]
+
+
+@pytest.mark.asyncio
+async def test_confirm_not_filed_still_links_an_issue_jira_does_have(jira):
+    jira.responses = [httpx.ReadTimeout("read timed out")]
+    with pytest.raises(HTTPException):
+        await _submit()
+
+    jira.search_keys = ["QA-7"]
+    db = _FakeDB()
+    out = await _submit(db, confirm_not_filed=True)
+
+    assert len(jira.posts) == 1
+    assert out["jira_key"] == "QA-7"
+    assert not [o for o in db.added if isinstance(o, AccessAuditLog)]
+
+
+@pytest.mark.asyncio
+async def test_confirm_not_filed_is_ignored_without_an_unknown_claim(jira):
+    db = _FakeDB()
+    out = await _submit(db, confirm_not_filed=True)
+
+    assert len(jira.posts) == 1
+    assert jira.searches == []
+    assert out["deduplicated"] is False
+    assert not [o for o in db.added if isinstance(o, AccessAuditLog)]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_label_search_is_502_and_never_files(jira, ledger):
+    jira.responses = [httpx.ReadTimeout("read timed out")]
+    with pytest.raises(HTTPException):
+        await _submit()
+
+    jira.search_error = httpx.ConnectError("jira down")
+    with pytest.raises(HTTPException) as exc:
+        await _submit(confirm_not_filed=True)
+
+    assert exc.value.status_code == 502
+    assert len(jira.posts) == 1
+    assert ledger.statuses() == ["executing"]
+
+
+@pytest.mark.asyncio
+async def test_a_closed_defect_starts_a_new_generation(jira, ledger):
+    """Once the linked defect closes, a recurring failure is a new filing: it
+    must not replay the closed issue's claim."""
+    await _submit()
+    # Results pop in execute order: the advisory lock, then the generation read.
+    db = _FakeDB(results=[_FakeResult(None), _FakeResult((uuid.uuid4(),))])
+    second = await _submit(db)
+
+    assert len(jira.posts) == 2
+    assert second["deduplicated"] is False
+    assert _sig_label(jira.posts[0]) != _sig_label(jira.posts[1])
+    assert len(ledger.rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_signature_lock_is_taken_before_the_dedup_read(online, monkeypatch):
+    """Failure mode 2 hinges on ordering: a lock taken after the dedup read
+    lets two requests both see "no defect" before either commits."""
+    seen: list[list[str]] = []
+
+    async def _find(db, project_id, signature):
+        seen.append([str(s) for s in db.stmts])
+        return SimpleNamespace(
+            id=uuid.uuid4(), jira_ticket_id="QA-17", jira_ticket_url=None,
+            jira_status=None, recurrence_count=0, last_recurrence_at=None,
+        )
+
+    async def _comment(cfg, issue_key, prefill, recurrence_count):
+        return True
+
+    monkeypatch.setattr(svc, "find_open_linked_defect", _find)
+    monkeypatch.setattr(svc, "_post_recurrence_comment", _comment)
+
+    await _submit()
+
+    (before_read,) = seen
+    assert len(before_read) == 1 and "pg_advisory_xact_lock" in before_read[0]

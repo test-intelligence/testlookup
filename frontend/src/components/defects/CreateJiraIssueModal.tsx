@@ -22,8 +22,16 @@ import { useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import { useJiraDefectMetadata, useJiraDefectPreview } from '@/hooks/useJiraDefects'
-import { defectJiraService } from '@/services/defectJiraService'
+import { defectJiraService, type JiraOutcomeUnknownDetail } from '@/services/defectJiraService'
 import { useModalFocus } from '@/hooks/useModalFocus'
+
+/** The 409 an earlier request whose outcome is unknown produces, or null. */
+function jiraOutcomeUnknownDetail(err: unknown): JiraOutcomeUnknownDetail | null {
+  const response = (err as { response?: { status?: number; data?: { detail?: unknown } } })?.response
+  const detail = response?.data?.detail as Partial<JiraOutcomeUnknownDetail> | undefined
+  if (response?.status !== 409 || !detail || detail.code !== 'jira_outcome_unknown') return null
+  return detail as JiraOutcomeUnknownDetail
+}
 
 const REASON_COPY: Record<string, string> = {
   offline_mode: 'AI_OFFLINE_MODE is on — outbound Jira calls are blocked.',
@@ -69,6 +77,8 @@ export default function CreateJiraIssueModal({
   const [issueTypeChoice, setIssueTypeChoice] = useState<string | null>(null)
   const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // Set by a 409: an earlier request may already have filed this issue.
+  const [outcomeUnknown, setOutcomeUnknown] = useState<JiraOutcomeUnknownDetail | null>(null)
   const dialogRef = useModalFocus({ onClose, canClose: !submitting })
 
   const target:'jira' | 'webhook' =
@@ -87,7 +97,7 @@ export default function CreateJiraIssueModal({
     return webhookAvailable
   }, [submitting, preview, target, jiraAvailable, webhookAvailable])
 
-  async function handleSubmit() {
+  async function handleSubmit(confirmNotFiled = false) {
     if (!canSubmit || !preview) return
     setSubmitting(true)
     try {
@@ -98,7 +108,9 @@ export default function CreateJiraIssueModal({
         ...(target === 'jira' && projectKey ? { jira_project_key: projectKey } : {}),
         ...(comment.trim() ? { extra_comment: comment.trim() } : {}),
         target,
+        ...(confirmNotFiled ? { confirm_not_filed: true } : {}),
       })
+      setOutcomeUnknown(null)
       if (result.target === 'webhook') {
         toast.success(
           result.subscriptions_notified
@@ -117,7 +129,7 @@ export default function CreateJiraIssueModal({
             ) : (
               <strong>{result.jira_key}</strong>
             )}{' '}
-            (recurrence noted).
+            {result.recurrence_count > 0 ? '(recurrence noted).' : '(filed by an earlier request).'}
           </span>,
           { duration: 8000 },
         )
@@ -140,10 +152,14 @@ export default function CreateJiraIssueModal({
       onCreated?.()
       onClose()
     } catch (err: unknown) {
+      const unknownOutcome = jiraOutcomeUnknownDetail(err)
+      if (unknownOutcome) {
+        setOutcomeUnknown(unknownOutcome)
+        return
+      }
+      const raw = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
       const detail =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-        (err as Error)?.message ??
-        'Failed to create the Jira issue'
+        typeof raw === 'string' ? raw : (err as Error)?.message ?? 'Failed to create the Jira issue'
       toast.error(detail, { duration: 8000 })
     } finally {
       setSubmitting(false)
@@ -323,6 +339,29 @@ export default function CreateJiraIssueModal({
           </>
         )}
 
+        {outcomeUnknown ? (
+          <div
+            role="alert"
+            className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2.5 text-[12.5px] text-[var(--color-text)]"
+          >
+            <p className="m-0 font-medium">Jira may already have this issue</p>
+            <p className="mt-1 mb-0 text-[var(--color-text-muted)]">{outcomeUnknown.message}</p>
+            <p className="mt-1.5 mb-0">
+              Label: <code className="font-mono text-[11.5px] select-all">{outcomeUnknown.jira_label}</code>
+            </p>
+            <div className="mt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => handleSubmit(true)}
+                disabled={!canSubmit}
+                className="text-[12px] font-medium rounded-md border border-[var(--color-border)] px-2.5 py-1 disabled:opacity-50"
+              >
+                I checked Jira, file it
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
@@ -334,7 +373,7 @@ export default function CreateJiraIssueModal({
           </button>
           <button
             type="button"
-            onClick={handleSubmit}
+            onClick={() => handleSubmit()}
             disabled={!canSubmit}
             title={
               !preview

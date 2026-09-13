@@ -64,10 +64,12 @@ logger = structlog.get_logger("services.tool_call_idempotency")
 __all__ = [
     "JIRA_TICKET_TOOL",
     "KEY_PREFIX",
+    "OutcomeUnknown",
     "PriorToolCall",
     "ToolCallFailed",
     "ToolCallOutcome",
     "prior_tool_calls",
+    "record_outcome",
     "run_once",
     "tool_call_key",
 ]
@@ -81,6 +83,16 @@ JIRA_TICKET_TOOL = "jira_ticket_creation"
 KEY_PREFIX = "toolcall:"
 
 ClaimState = Literal["claimed", "executed", "executing"]
+
+
+class OutcomeUnknown(RuntimeError):
+    """An adapter's way to say the call may have happened.
+
+    A read timeout, a dropped connection or a 5xx after the request was sent
+    all leave the external system in an unknown state. Recording ``failed``
+    would let the next attempt call again and file a duplicate, so the row is
+    left ``executing`` and the exception is re-raised.
+    """
 
 
 class ToolCallFailed(RuntimeError):
@@ -312,6 +324,26 @@ async def _finish(
         await _commit(db)
 
 
+async def record_outcome(
+    *,
+    project_id: Any,
+    key: str,
+    status: Literal["executed", "failed"],
+    result_payload: Optional[Mapping[str, Any]] = None,
+    error_code: Optional[str] = None,
+) -> None:
+    """Settle a claim that ``run_once`` reported as ``outcome_unknown``.
+
+    For callers that can find out what happened: ``executed`` once the external
+    system shows the call landed, ``failed`` once a person has confirmed it did
+    not, which lets the next ``run_once`` claim and call again.
+    """
+    await _finish(
+        project_id=project_id, key=key, status=status,
+        result_payload=result_payload, error_code=error_code,
+    )
+
+
 async def run_once(
     *,
     project_id: Any,
@@ -352,6 +384,11 @@ async def run_once(
 
     try:
         result = await call()
+    except OutcomeUnknown:
+        # The call may have happened: leave the row ``executing`` so no later
+        # attempt repeats it. Reconciling is the caller's job (record_outcome).
+        logger.warning("tool_call_outcome_unknown_after_call", tool=tool, subject_id=str(subject_id))
+        raise
     except Exception as exc:
         try:
             await _finish(
