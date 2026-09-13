@@ -1,5 +1,53 @@
 # Changelog
 
+## 2026-09-13 - unreviewed AI reports stop leaving the system unmarked (E8.4, first slice)
+
+Inside the app, a report shows its review state (E8.3). A file, a share link or
+a CI gate value is different: once it leaves, nothing travels with it that says
+a human has not looked at it yet. This slice decides, per run and per channel,
+whether an AI report may go out.
+
+- **`app/services/report_distribution_policy.py`** gives each report one of
+  these outcomes:
+  - An **accepted** report, or one **not AI-generated**, goes out as before.
+  - A **pending** report goes out only when the project sets
+    `allow_unreviewed_distribution`, or when a QA lead explicitly passes
+    `include_unreviewed` on an interactive export. Either way it is
+    watermarked `DRAFT - AI-generated, not human-reviewed`, and the inclusion
+    writes an `access_audit_logs` row.
+  - A **rejected or superseded** report is never sent as a draft.
+- **Gated channels:**
+  - the report PDF export (`GET /api/v1/reports/runs/{run_id}/pdf`, which
+    gains `include_unreviewed` for QA_LEAD and above);
+  - the public share links (`GET /api/v1/shared/reports/{token}` and
+    `.../pdf`), the most exposed channel because anyone holding the token reads
+    it without logging in.
+
+  A refusal is a 409 carrying `code: report_pending_review` and a link to the
+  review, and its audit row is committed before the 409 is returned.
+- **The release-readiness value.** `GET /api/v1/release-readiness/{run_id}`
+  returns `PENDING_REVIEW` for an unreviewed AI decision, or
+  `ADVISORY_GO` / `ADVISORY_NO_GO` / `ADVISORY_CONDITIONAL_GO` with
+  `allow_advisory=true`. The model's value moves to `draft_recommendation`.
+  This changes the value CI consumers already read instead of adding a flag
+  they would ignore (architecture section 8.2). These are left unchanged: a
+  synthesised quick-look decision, a human override, and an accepted review.
+- **Renderers.** The HTML report gains a red banner and the PDF a leading red
+  line when a report is distributed as a draft.
+
+**Enforcement is off by default (`REVIEW_GATE_ENFORCED=false`).** Every run that
+finished before E8.1 has no accepted review. Enforcing on merge would stop
+report files and share links, and flip CI release gates from `GO` to
+`PENDING_REVIEW`, for every project at once. That timing is a product decision.
+With the flag off, nothing is refused and no value changes. Each refusal that
+would have happened is recorded as `ai_report.distribution_would_refuse`, so the
+impact can be measured before the switch is thrown.
+
+Later slices: notifications and digests, GitHub/GitLab comments and webhooks,
+and MCP and CLI.
+
+Tests: `backend/tests/test_distribution_gates.py`.
+
 ## 2026-09-12 - every AI report response says whether a human has reviewed it (E8.3)
 
 A report response has always said what the AI concluded. Since E8.1 there is

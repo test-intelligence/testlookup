@@ -62,10 +62,22 @@ async def email_trends_report(
 async def export_run_report_pdf(
     run_id: uuid.UUID,
     layout: str = Query(default="executive", pattern="^(executive|engineering)$"),
+    include_unreviewed: bool = Query(
+        default=False,
+        description=(
+            "Export an AI report still awaiting human review, watermarked DRAFT. "
+            "QA_LEAD or ADMIN only; audited."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_run_access()),
 ):
-    """Generate and download a PDF intelligence report for the given run."""
+    """Generate and download a PDF intelligence report for the given run.
+
+    E8.4: an AI report nobody has accepted is refused (409) once the review gate
+    is enforced, unless the project allows drafts or a QA lead passes
+    ``include_unreviewed``; either way it is watermarked and audited.
+    """
     from app.services.report_composition_service import compose_report
     from app.services.report_pdf_renderer import render_report_pdf
 
@@ -73,6 +85,36 @@ async def export_run_report_pdf(
         report = await compose_report(db, run_id, layout=layout)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    from sqlalchemy import select as _select
+
+    from app.services.report_distribution_policy import (
+        decide_run_distribution,
+        record_distribution,
+        refusal_detail,
+    )
+
+    role_value = str(getattr(current_user.role, "value", current_user.role))
+    if include_unreviewed and role_value not in ("QA_LEAD", "ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="include_unreviewed requires QA_LEAD or ADMIN",
+        )
+    report_project_id = (
+        await db.execute(_select(TestRun.project_id).where(TestRun.id == run_id))
+    ).scalar_one_or_none()
+    decision = await decide_run_distribution(
+        db, run_id=run_id, project_id=report_project_id, channel="report_pdf",
+        include_unreviewed=include_unreviewed,
+    )
+    await record_distribution(
+        db, decision, channel="report_pdf", run_id=run_id,
+        project_id=report_project_id, actor=current_user,
+    )
+    if not decision.allowed:
+        await db.commit()  # the refusal's audit row is the point; keep it
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal_detail(decision))
+    report.draft_watermark = decision.watermark or ""
 
     # ReportLab is synchronous and CPU-bound — run it off the event loop so
     # the request worker stays free to accept other connections.

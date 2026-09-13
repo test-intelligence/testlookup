@@ -35,6 +35,26 @@ async def view_shared_report(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
+    # E8.4: a share link is the most exposed channel -- anyone holding the token
+    # reads it, with no login. An unreviewed AI report is refused here once the
+    # gate is enforced, unless the project allows drafts (watermarked, audited).
+    from app.services.report_distribution_policy import (
+        decide_run_distribution,
+        record_distribution,
+        refusal_detail,
+    )
+
+    decision = await decide_run_distribution(
+        db, run_id=link.run_id, project_id=link.project_id, channel="share_link_html",
+    )
+    await record_distribution(
+        db, decision, channel="share_link_html", run_id=link.run_id, project_id=link.project_id,
+    )
+    if not decision.allowed:
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal_detail(decision))
+    report.draft_watermark = decision.watermark or ""
+
     html_content = await run_in_threadpool(
         render_report_html,
         report,
@@ -73,6 +93,26 @@ async def download_shared_report_pdf(
         report = await compose_report(db, link.run_id, layout=link.report_layout)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    # E8.4: a share link is the most exposed channel -- anyone holding the token
+    # reads it, with no login. An unreviewed AI report is refused here once the
+    # gate is enforced, unless the project allows drafts (watermarked, audited).
+    from app.services.report_distribution_policy import (
+        decide_run_distribution,
+        record_distribution,
+        refusal_detail,
+    )
+
+    decision = await decide_run_distribution(
+        db, run_id=link.run_id, project_id=link.project_id, channel="share_link_pdf",
+    )
+    await record_distribution(
+        db, decision, channel="share_link_pdf", run_id=link.run_id, project_id=link.project_id,
+    )
+    if not decision.allowed:
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal_detail(decision))
+    report.draft_watermark = decision.watermark or ""
 
     pdf_bytes = await run_in_threadpool(render_report_pdf, report)
 

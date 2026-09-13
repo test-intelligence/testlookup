@@ -8,7 +8,7 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.core.deps import require_role, require_run_access
@@ -42,6 +42,13 @@ class ReleaseDecisionResponse(BaseModel):
 @router.get("/{run_id}", response_model=ReleaseCouncilResponse)
 async def get_release_decision(
     run_id: uuid.UUID,
+    allow_advisory: bool = Query(
+        default=False,
+        description=(
+            "While the review gate is enforced, return ADVISORY_<value> for an "
+            "unreviewed AI decision instead of PENDING_REVIEW."
+        ),
+    ),
     current_user: User = Depends(require_run_access()),
 ):
     """
@@ -56,7 +63,11 @@ async def get_release_decision(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No release decision found. Trigger deep investigation first.",
             )
-        return council
+        from app.services.report_distribution_policy import apply_release_review_gate
+
+        return await apply_release_review_gate(
+            db, council, run_id=run_id, allow_advisory=allow_advisory
+        )
 
 
 @router.post("/{run_id}/override", response_model=ReleaseCouncilResponse)

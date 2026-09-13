@@ -66,6 +66,10 @@ class ReportData:
     defect_candidates: list[dict] = field(default_factory=list)
     evidence_artifacts: list[dict] = field(default_factory=list)
 
+    # E8.4: set when an unreviewed AI report is distributed under a project
+    # opt-in or an explicit include_unreviewed; renderers print it first.
+    draft_watermark: str = ""
+
 
 async def compose_report(
     db: AsyncSession,
