@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
-  Activity, BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList, FileText,
+  Activity, BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardCheck, ClipboardList, FileText,
   FolderTree, Gauge, GitBranch, HeartPulse, Inbox, Layers, LayoutDashboard,
   BookOpen, MessageSquare, Network, Package, Radio, Rocket, Search, Settings, Shield,
   ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, Upload, UsersRound, UserCircle2,
@@ -74,13 +74,14 @@ const GROUPS: NavGroup[] = [
     label: 'AI Reports',
     icon: Brain,
     to: '/intelligence',
-    activePrefixes: ['/intelligence', '/agents', '/deep-investigate', '/release-gate', '/flaky-coach', '/quarantine', '/chat'],
+    activePrefixes: ['/intelligence', '/agents', '/deep-investigate', '/release-gate', '/flaky-coach', '/quarantine', '/reviews', '/chat'],
     children: [
       { to: '/agents',           icon: Bot,           label: 'AI Pipeline'   },
       { to: '/deep-investigate', icon: Layers,         label: 'Deep Analysis' },
       { to: '/release-gate',     icon: Shield,         label: 'Release Gate'  },
       { to: '/flaky-coach',      icon: HeartPulse,     label: 'Flaky Coach'   },
       { to: '/quarantine',       icon: ShieldAlert,    label: 'Quarantine'    },
+      { to: '/reviews',          icon: ClipboardCheck, label: 'Review Queue'  },
       // Gated below: hidden unless the ask_ai_chat flag is on AND the AI
       // analysis mode can reach an LLM (rules mode has nothing to chat with).
       { to: '/chat',             icon: MessageSquare,  label: 'Ask AI'        },
