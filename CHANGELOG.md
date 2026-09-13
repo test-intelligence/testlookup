@@ -44,6 +44,41 @@ exactly one delivery after the commit, and a failed commit sends nothing. The
 override path runs through the route handler. The gate projection is checked
 while enforced. A guard checks that every catalog event has a producer. Publishes
 are bound to the real `deliver_webhook` signature.
+## 2026-09-13 - Postman collection and curl reference for the agent API (E1.4)
+
+The agent API (catalog, invocations and human review) now ships with a Postman
+collection and a curl reference. Both are generated from the OpenAPI schema,
+so they cannot drift from the routes.
+
+**Files, under `architecture/api/`**
+
+- `agents.postman_collection.json` is a Postman v2.1 collection with Catalog,
+  Invocations and Reviews folders.
+  - Bearer auth reads the `{{token}}` variable. Each request also carries a
+    disabled `X-API-Key` header for API-key callers.
+  - Every path, query and body variable is declared.
+  - The invoke request sends `Idempotency-Key: {{$guid}}` and an example body
+    in the catalog's input shape.
+- `AGENT_API_CURL.md` has one curl example per route, with the environment
+  variables it uses.
+  - Request bodies are passed through a heredoc, so shell variables expand.
+  - The event stream uses `curl -N` with its ticket rather than a bearer token.
+  - Optional query parameters are listed but not forced.
+
+**How the files stay in sync**
+
+- `cd backend && python -m app.services.agent_api_docs` regenerates both files.
+- A new CI step, **Agent API docs match the OpenAPI schema (E1.4)**, runs the
+  generator with `--check` and fails when either file is stale. A route change
+  therefore cannot merge with docs that describe a different API.
+- Output is deterministic: sorted routes, a fixed collection id, and no app
+  version.
+- A route that takes a request body but has no example in `EXAMPLE_BODIES`
+  fails generation, so a new body route cannot ship undocumented.
+
+Tests: `backend/tests/test_agent_api_docs.py`. It checks that the committed
+files match the live schema, which is the same comparison CI runs.
+
 ## 2026-09-13 - Idempotency-Key for agent invocations (E1.3)
 
 A client that retries `POST /api/v1/agents/{agent_id}/invoke`, for example after
