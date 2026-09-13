@@ -32,6 +32,8 @@ Tool Domains:
   # Agentic plan AI-5 — MCP-first agent workflows
   - Investigator agent (start/poll/list shadow-mode investigations)
   - Fix-outcome learning loop (record merged/reverted fix outcomes)
+  # Architecture E8.4 — human review gate
+  - Review queue (list AI reports awaiting review; read-only, no accept/reject)
 
 Transport: stdio (default) or SSE
 Auth:      stdio uses configured credentials; SSE requires each caller's bearer token
@@ -80,6 +82,7 @@ from tools import decision_trail, compliance_pack, quarantine, billing, defects,
 from tools import assignments, feedback, notifications
 # Agentic plan AI-5 — Investigator over MCP.
 from tools import investigations
+from tools import reviews
 from resources import registry
 from prompts import templates
 
@@ -140,7 +143,12 @@ mcp = FastMCP(
         "carries the latest investigation for a run. Close the learning loop with "
         "`record_fix_outcome` once a fix informed by a diagnosis merges (or is "
         "reverted) — it lands as a human-indirect training signal for the classifier. "
-        "The `fix_this_flaky_test` prompt packages the whole flaky-fix workflow."
+        "The `fix_this_flaky_test` prompt packages the whole flaky-fix workflow.\n\n"
+        "Human review (E8.4): AI reports are drafts until a person accepts them. "
+        "Report tools end with `review_state` and the AI disclaimer; pass both on to "
+        "the user and never present a `pending_review` or `unknown` report as settled. "
+        "`list_pending_reviews` shows a project's open queue. Accepting or rejecting "
+        "a review is deliberately not available through MCP."
     ),
 )
 
@@ -184,6 +192,7 @@ assignments.register(mcp)      # failure reassignment (my-failures inbox)
 notifications.register(mcp)    # transition-notification policy get/set
 # Agentic plan AI-5 — Investigator agent over MCP (shadow-mode).
 investigations.register(mcp)   # start/poll/list investigations
+reviews.register(mcp)          # E8.4 review queue (read-only)
 
 # ── Register Resources ────────────────────────────────────────────────────────
 registry.register(mcp)

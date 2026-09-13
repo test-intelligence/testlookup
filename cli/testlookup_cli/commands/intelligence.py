@@ -36,6 +36,8 @@ def show(
                 output.console.print(f"\n  Deep Analysis: {deep.get('status', '?')} ({deep.get('completed_at', 'in progress')})")
 
             output.console.print()
+        # E8.4: review state + AI disclaimer on stderr, so --output json stays pipeable.
+        output.print_review_notice(data)
     except Exception as e:
         output.print_error(str(e))
         raise typer.Exit(1)
