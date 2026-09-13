@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.pipeline_cancellation import request_cancel
 from app.services.pipeline_retry_config import decide_retry_mode
+from app.services.review_request_service import REVIEW_REJECTED_ERROR_PREFIX
 from app.services.workflow_run_state import (
     PUBLIC_STATUS,
     PipelineRunStatus,
@@ -395,14 +396,28 @@ async def retry_pipeline(
       to take effect.
 
     Refuses (409) when the run is still in progress, when it finished
-    successfully, or when it is at its attempt ceiling. The ceiling response
-    carries ``links.rerun`` so the caller can deliberately start a fresh run
+    successfully, was rejected in review, or is at its attempt ceiling. A
+    review rejection is terminal, even if configuration changed; start a new
+    run explicitly to produce a fresh proposal. The rejection and ceiling responses
+    carry ``links.rerun`` so the caller can deliberately start a fresh run
     rather than being told only "no".
     """
     pipeline = await _load_pipeline_or_404(db, pipeline_id)
     await _require_pipeline_access(db, current_user, pipeline)
 
     current = normalize_status(pipeline.status)
+    if (pipeline.error or "").startswith(REVIEW_REJECTED_ERROR_PREFIX):
+        raise HTTPException(
+            409,
+            detail={
+                "message": "Pipeline was rejected in review; start a new run instead",
+                "reason": "review_rejected",
+                "pipeline_run_id": str(pipeline.id),
+                "status": current.value,
+                "public_status": public_status(current),
+                "links": {"rerun": "/api/v1/agents/pipelines/trigger"},
+            },
+        )
     if not is_terminal(current):
         raise HTTPException(
             409,

@@ -64,6 +64,7 @@ from app.services.agent_config_resolver import AgentConfigInvalid, invocation_re
 from app.services.pipeline_cancellation import request_cancel
 from app.services.pipeline_retry_config import decide_retry_mode
 from app.services.review_envelope import ReviewEnvelope, envelope_from_review
+from app.services.review_request_service import REVIEW_REJECTED_ERROR_PREFIX
 from app.services.workflow_run_state import (
     REVIEW_NOT_APPLICABLE,
     is_resumable,
@@ -553,8 +554,9 @@ async def retry_invocation(
     """Retry a failed invocation: a new attempt of the same invocation (E1.2).
 
     The pipeline retry rules apply to the invocation's run. It is refused with
-    409 while the run is in progress, after a clean finish, or at the attempt
-    ceiling; the last two carry ``links.rerun`` to invoke the agent again.
+    409 while the run is in progress, after a clean finish or review rejection,
+    or at the attempt ceiling; the last three carry ``links.rerun`` to invoke
+    the agent again. Review rejection is terminal even if configuration changed.
 
     A retry resumes the SAME run, so the frozen plan (this agent and its
     dependencies only) is kept. When the agent configuration changed since the
@@ -576,6 +578,17 @@ async def retry_invocation(
         invocation.dispatched_at = datetime.now(timezone.utc)
     else:
         current = normalize_status(pipeline.status)
+        if (pipeline.error or "").startswith(REVIEW_REJECTED_ERROR_PREFIX):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    **base,
+                    "message": "Invocation was rejected in review; invoke the agent again instead",
+                    "reason": "review_rejected",
+                    "status": public_status(current),
+                    "links": rerun,
+                },
+            )
         if not is_terminal(current):
             raise HTTPException(
                 status_code=409,
