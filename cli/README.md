@@ -47,15 +47,24 @@ testlookup ci-verdict --run <run-id> --project my-project
 testlookup runs list --project my-project
 testlookup tests failing --project my-project
 testlookup search "connection reset"
+
+# Human review of AI reports (accept/reject need `auth login`; API keys are refused)
+testlookup reviews list <project-id>
+testlookup reviews accept <review-id> --notes "checked against the logs"
+testlookup reviews reject <review-id> --reason unsupported_claim
 ```
 
 Every command supports `--output json` for piping. JSON mode keeps stdout
 clean — diagnostics go to stderr — so `| jq` works without filtering.
 
+Commands that show AI-generated reports (`intelligence show`) print the report's
+review state and the AI disclaimer to stderr. `unknown` means the server sent
+no review status: treat the report as an unreviewed draft.
+
 ## Command groups
 
 `auth` · `doctor` · `health` · `projects` · `runs` · `tests` · `search` ·
-`intelligence` · `deep` · `reports` · `keys` · `upload`, plus the top-level
+`intelligence` · `deep` · `reports` · `reviews` · `keys` · `upload`, plus the top-level
 `ci-verdict`.
 
 Run `testlookup <group> --help` for details on any of them.

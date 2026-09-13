@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import client as api  # type: ignore[import]
+import review_notice  # type: ignore[import]
 
 
 def register(mcp) -> None:  # noqa: ANN001
@@ -40,6 +41,9 @@ def register(mcp) -> None:  # noqa: ANN001
         if data.get("reasoning"):
             lines.append(f"\n**Reasoning:** {data['reasoning'][:300]}")
 
+        # E8.4: while the review gate is enforced an unreviewed AI decision reads
+        # PENDING_REVIEW; the review state says why.
+        lines.extend(review_notice.review_lines(data))
         return "\n".join(lines)
 
     @mcp.tool()

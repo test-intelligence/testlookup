@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import client as api  # type: ignore[import]
+import review_notice  # type: ignore[import]
 
 
 def register(mcp) -> None:  # noqa: ANN001
@@ -43,6 +44,8 @@ def register(mcp) -> None:  # noqa: ANN001
             for c in clusters[:5]:
                 lines.append(f"- **{c.get('label', '?')}** — {c.get('size', 0)} tests, {c.get('criticality_level', '?')}")
 
+        # E8.4: the agent must see whether a person has accepted this AI content.
+        lines.extend(review_notice.review_lines(data))
         return "\n".join(lines)
 
     @mcp.tool()
@@ -59,4 +62,4 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         data = await api.get(f"/api/v1/runs/{run_id}/summary", params={"mode": mode})
         summary = data.get("executive_summary") or data.get("markdown_report", "No summary available.")
-        return f"## {mode.title()} Summary\n\n{summary}"
+        return "\n".join([f"## {mode.title()} Summary", "", str(summary), *review_notice.review_lines(data)])
