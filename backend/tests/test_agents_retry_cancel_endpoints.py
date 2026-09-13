@@ -127,6 +127,35 @@ async def _call_cancel(db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["wrong_category", "unsupported_claim", "missing_evidence", "contradiction", "stale_data", "other"])
+@pytest.mark.parametrize("scenario", ["unchanged", "changed", "no_plan", "ceiling"])
+async def test_retry_refuses_review_rejected_pipeline_without_side_effects(monkeypatch, reason, scenario):
+    from app.routers import agents as router
+    from app.worker import tasks
+
+    pipeline = _pipeline(attempt=5 if scenario == "ceiling" else 1, plan=scenario != "no_plan")
+    pipeline.error = f"review_rejected: {reason}"
+    before = vars(pipeline).copy()
+    db = _DB(pipeline)
+    resume, rerun, activity = MagicMock(), MagicMock(), AsyncMock()
+    monkeypatch.setattr(tasks.resume_agent_pipeline, "apply_async", resume)
+    monkeypatch.setattr(tasks.run_agent_pipeline, "delay", rerun)
+    monkeypatch.setattr(router, "_record_retry_activity", activity)
+
+    with pytest.raises(HTTPException) as exc:
+        await _call_retry(monkeypatch, db, snapshot=_snapshot(model="phi3") if scenario == "changed" else None)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "review_rejected"
+    assert exc.value.detail["links"]["rerun"] == "/api/v1/agents/pipelines/trigger"
+    assert vars(pipeline) == before
+    assert not db.committed
+    resume.assert_not_called()
+    rerun.assert_not_called()
+    activity.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["pending", "running", "retry_wait"])
 async def test_retry_refuses_a_run_still_in_progress(monkeypatch, status):
     db = _DB(_pipeline(status))

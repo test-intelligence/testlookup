@@ -266,7 +266,7 @@
                 "retry"
               ]
             },
-            "description": "Retry a failed invocation: a new attempt of the same invocation (E1.2).\n\nThe pipeline retry rules apply to the invocation's run. It is refused with\n409 while the run is in progress, after a clean finish, or at the attempt\nceiling; the last two carry ``links.rerun`` to invoke the agent again.\n\nA retry resumes the SAME run, so the frozen plan (this agent and its\ndependencies only) is kept. When the agent configuration changed since the\nrun started, resuming would replay work authorised under the old\nconfiguration, and a rerun needs a new run -- which is a new invocation --\nso that is 409 with ``links.rerun`` too. An invocation whose run never\nstarted is dispatched again."
+            "description": "Retry a failed invocation: a new attempt of the same invocation (E1.2).\n\nThe pipeline retry rules apply to the invocation's run. It is refused with\n409 while the run is in progress, after a clean finish or review rejection,\nor at the attempt ceiling; the last three carry ``links.rerun`` to invoke\nthe agent again. Review rejection is terminal even if configuration changed.\n\nA retry resumes the SAME run, so the frozen plan (this agent and its\ndependencies only) is kept. When the agent configuration changed since the\nrun started, resuming would replay work authorised under the old\nconfiguration, and a rerun needs a new run -- which is a new invocation --\nso that is 409 with ``links.rerun`` too. An invocation whose run never\nstarted is dispatched again."
           }
         },
         {

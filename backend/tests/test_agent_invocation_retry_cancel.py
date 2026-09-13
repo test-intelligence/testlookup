@@ -111,6 +111,32 @@ def _user():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["wrong_category", "unsupported_claim", "missing_evidence", "contradiction", "stale_data", "other"])
+@pytest.mark.parametrize("scenario", ["unchanged", "changed", "ceiling"])
+async def test_retry_refuses_review_rejected_invocation_without_side_effects(harness, monkeypatch, reason, scenario):
+    invocation = _invocation()
+    pipeline = _pipeline(invocation, error=f"review_rejected: {reason}", attempt=5 if scenario == "ceiling" else 1)
+    before = vars(pipeline).copy()
+    db = harness.use(_Db(invocation=invocation, pipeline=pipeline))
+    monkeypatch.setattr(
+        harness.router, "decide_retry_mode",
+        lambda _m, _s: SimpleNamespace(is_rerun=scenario == "changed", reason="config_changed"),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await harness.router.retry_invocation(invocation_id=invocation.id, db=db, current_user=_user(), _=None)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "review_rejected"
+    assert exc.value.detail["links"]["rerun"] == "/api/v1/agents/agent.summary.v1/invoke"
+    assert vars(pipeline) == before
+    assert db.order == []
+    harness.router.record_activity.assert_not_awaited()
+    harness.dispatched["resume"].assert_not_called()
+    harness.dispatched["invocation"].assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "pipeline_fields, rerun_link, fragment",
     [

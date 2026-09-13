@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-13 - Review-rejected runs cannot be retried (T2 / K1)
+
+Pipeline and invocation retry endpoints now return HTTP 409 with
+`reason=review_rejected` when the proposing run was rejected in review.
+The refusal happens before configuration comparison, attempt-ceiling handling,
+audit writes, or worker dispatch, so changing configuration cannot silently
+turn a retry into a new proposal. `links.rerun` lets the caller explicitly
+start a fresh run. Other unsuccessful runs keep their existing retry behavior.
+
+Regression tests cover all six review reason codes, changed configuration,
+missing frozen plans, and exhausted attempts, and assert no side effects.
 ## 2026-09-13 - Codacy workflow starts instead of failing validation (T23 / K7)
 
 The Codacy workflow referenced `secrets.CODACY_PROJECT_TOKEN` directly in a
