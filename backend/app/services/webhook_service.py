@@ -20,7 +20,10 @@ Supported event types (the authoritative list — keep in sync with the
 * ``defect.create_requested``   — a user asked for a defect with target="webhook"
                                   (US-6.3 Jira-less fallback; payload carries the
                                   full prefilled ticket)
-* ``release.decided``           — a ReleaseDecision was written (GO/NO_GO/CONDITIONAL)
+* ``release.decided``           — a ReleaseDecision was written by the release-risk
+                                  agent or overridden by a QA lead (emitted after
+                                  commit by ``release_decision_webhook``; obeys
+                                  the E8.4 review gate)
 * ``flaky.quarantined``         — a QA Lead approved a quarantine request
 * ``quota.exceeded``            — the LLM cost budget hit its hard cap
 
@@ -75,7 +78,16 @@ SUPPORTED_EVENTS: dict[str, str] = {
         "extra_comment, requested_by. Point a receiver at it to open tickets "
         "in GitHub Issues, Azure Boards, or anything else."
     ),
-    "release.decided": "Fired when a ReleaseDecision is written (GO/NO_GO/CONDITIONAL_GO).",
+    "release.decided": (
+        "Fired when a release decision is written: by the release-risk agent at "
+        "the end of a deep investigation, or by a QA lead's override. data: "
+        "run_id, project_id, trigger (agent|override), recommendation (GO, "
+        "NO_GO or CONDITIONAL_GO; PENDING_REVIEW while the human-review gate is "
+        "enforced and no human has accepted the AI decision), "
+        "draft_recommendation, risk_score, blocking_issues, conditions_for_go, "
+        "synthesized, overridden, requires_human_review, review {state, "
+        "review_id, reviewed_at}, review_gate_enforced, created_at, updated_at."
+    ),
     "flaky.quarantined": "Fired when a QA Lead approves a flaky-test quarantine.",
     "quota.exceeded": "Fired when the LLM cost budget hits its hard cap for a project.",
 }
