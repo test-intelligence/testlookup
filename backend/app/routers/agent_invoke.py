@@ -29,12 +29,13 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -56,7 +57,7 @@ from app.models.postgres import (
     UserRole,
 )
 from app.models.schemas import ReviewBlock
-from app.services import agent_catalog, agent_planner, invocation_stream
+from app.services import agent_catalog, agent_planner, invocation_idempotency, invocation_stream
 from app.services.activity.service import ActorRef, record as record_activity
 from app.services.agent_capability_registry import is_report_producing, is_sync_eligible
 from app.services.pipeline_cancellation import request_cancel
@@ -699,6 +700,30 @@ async def cancel_invocation(
     return await _invocation_view(db, invocation)
 
 
+async def _idempotent_replay(
+    db: AsyncSession, user_id: Any, idempotency_key: str, fingerprint: str,
+) -> Optional[dict[str, Any]]:
+    """The invocation this user's key already created, or None. 422 when the request differs."""
+    if user_id is None:
+        return None
+    existing = (
+        await db.execute(
+            select(AgentInvocation).where(
+                AgentInvocation.requested_by == user_id,
+                AgentInvocation.idempotency_key == idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        return None
+    if existing.request_sha256 != fingerprint:
+        raise HTTPException(status_code=422, detail=_KEY_REUSED)
+    return await _invocation_view(db, existing)
+
+
+_KEY_REUSED = "Idempotency-Key was already used for a different request; send a new key"
+
+
 @router.post("/{agent_id}/invoke", response_model=AgentInvocationResponse, status_code=202)
 async def invoke_agent(
     agent_id: str,
@@ -706,6 +731,20 @@ async def invoke_agent(
     response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
+    idempotency_key: Annotated[
+        Optional[str],
+        Header(
+            alias="Idempotency-Key",
+            min_length=8,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9._:-]+$",
+            description=(
+                "Client-generated key (UUID or ULID). The same key with the same request returns "
+                "the invocation it created (200); with a different request, 422; while the first "
+                "request is still being handled, 409. Scoped to your user and project."
+            ),
+        ),
+    ] = None,
 ):
     """Invoke one agent on a stored test run.
 
@@ -717,7 +756,9 @@ async def invoke_agent(
 
     The project is derived from the test run; ``project_id`` in the body is an
     assertion that must match it. An invocation of the same agent on the same
-    run that is still in progress is returned as-is with 200.
+    run that is still in progress is returned as-is with 200. With an
+    ``Idempotency-Key``, a repeated request returns the invocation it created
+    (E1.3).
     """
     stage_name, workflow_type, test_run_id = _validate_invocation(agent_id, body)
     sync = body.mode == "sync" and is_sync_eligible(stage_name)
@@ -728,18 +769,47 @@ async def invoke_agent(
     if body.project_id != run.project_id:
         raise HTTPException(status_code=400, detail="project_id does not match the test run's project")
 
-    existing = await _in_progress_invocation(db, run.id, agent_id)
-    if existing is not None:
-        response.status_code = 200
-        return existing
+    user_id = getattr(current_user, "id", None)
+    fingerprint: Optional[str] = None
+    claimed = False
+    if idempotency_key is not None:
+        fingerprint = invocation_idempotency.request_fingerprint(agent_id, body.model_dump(mode="json"))
+        replay = await _idempotent_replay(db, user_id, idempotency_key, fingerprint)
+        if replay is not None:
+            response.status_code = 200
+            return replay
+        claim = await invocation_idempotency.claim(user_id, run.project_id, agent_id, idempotency_key, fingerprint)
+        if claim == "conflict":
+            raise HTTPException(status_code=422, detail=_KEY_REUSED)
+        if claim in ("in_flight", "done"):
+            # ``done``: the first request committed after the lookup above; read it back.
+            replay = await _idempotent_replay(db, user_id, idempotency_key, fingerprint) if claim == "done" else None
+            if replay is not None:
+                response.status_code = 200
+                return replay
+            raise HTTPException(
+                status_code=409,
+                detail="A request with this Idempotency-Key is still being handled; retry shortly",
+                headers={"Retry-After": "1"},
+            )
+        claimed = claim == "claimed"
 
-    if sync and not SYNC_SLOTS.try_acquire():
-        raise HTTPException(
-            status_code=503,
-            detail="All synchronous invocation slots are busy; retry shortly or invoke with mode=async",
-            headers={"Retry-After": "2"},
-        )
+    holds_slot = False
     try:
+        existing = await _in_progress_invocation(db, run.id, agent_id)
+        if existing is not None:
+            response.status_code = 200
+            return existing
+
+        if sync:
+            if not SYNC_SLOTS.try_acquire():
+                raise HTTPException(
+                    status_code=503,
+                    detail="All synchronous invocation slots are busy; retry shortly or invoke with mode=async",
+                    headers={"Retry-After": "2"},
+                )
+            holds_slot = True
+
         now = datetime.now(timezone.utc)
         invocation = AgentInvocation(
             id=uuid.uuid4(),
@@ -750,10 +820,12 @@ async def invoke_agent(
             pipeline_run_id=uuid.uuid4(),
             workflow_type=workflow_type,
             mode="sync" if sync else "async",
-            requested_by=getattr(current_user, "id", None),
+            requested_by=user_id,
             correlation_id=body.correlation_id,
             created_at=now,
             dispatched_at=now,
+            idempotency_key=idempotency_key,
+            request_sha256=fingerprint,
         )
         db.add(invocation)
         await record_activity(
@@ -766,7 +838,26 @@ async def invoke_agent(
             context={"agent_id": agent_id, "invocation_id": str(invocation.id)},
         )
         # Commit BEFORE dispatch: the worker loads the row by id.
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            # The unique (requested_by, idempotency_key) index: a concurrent request
+            # with the same key committed first (the Redis lock was unavailable).
+            await db.rollback()
+            replay = (
+                await _idempotent_replay(db, user_id, idempotency_key, fingerprint)
+                if idempotency_key is not None and fingerprint is not None
+                else None
+            )
+            if replay is None:
+                raise
+            response.status_code = 200
+            return replay
+        if claimed and idempotency_key is not None and fingerprint is not None:
+            await invocation_idempotency.complete(
+                user_id, run.project_id, agent_id, idempotency_key, fingerprint, invocation.id,
+            )
+            claimed = False
 
         from app.worker.tasks import run_agent_invocation
 
@@ -780,5 +871,8 @@ async def invoke_agent(
             response.status_code = 200
         return view
     finally:
-        if sync:
+        if holds_slot:
             SYNC_SLOTS.release()
+        if claimed and idempotency_key is not None and fingerprint is not None:
+            # Nothing was committed under this key: free it so the client can retry.
+            await invocation_idempotency.release(user_id, run.project_id, agent_id, idempotency_key, fingerprint)

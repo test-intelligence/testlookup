@@ -407,7 +407,11 @@ def test_the_migration_and_model_agree():
     assert tuple(constants["MODES"]) == INVOCATION_MODES
     assert constants["down_revision"] == "0175"
     migrated: set[str] = set()
-    for path in (MIGRATION, MIGRATION.with_name("0177_agent_invocation_dispatched_at.py")):
+    for path in (
+        MIGRATION,
+        MIGRATION.with_name("0177_agent_invocation_dispatched_at.py"),
+        MIGRATION.with_name("0178_agent_invocation_idempotency.py"),
+    ):
         migrated |= {
             call.args[0].value
             for call in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
