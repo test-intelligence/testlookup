@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-09-13 - Idempotency-Key for agent invocations (E1.3)
+
+A client that retries `POST /api/v1/agents/{agent_id}/invoke`, for example after
+a timeout, can no longer start the agent twice. Send an `Idempotency-Key`
+header: a client-generated UUID or ULID, 8 to 128 characters.
+
+**How the key behaves**
+
+- **Same key, same request:** returns the invocation that key created, with
+  `200`. That holds even if the invocation has since failed: failures are
+  returned, not re-run, and the retry route is the way to try again.
+- **Same key, different request:** `422`.
+- **Same key while the first request is still being handled:** `409` with
+  `Retry-After`.
+
+**Scope:** a key is scoped to the calling user, the project and the route, and
+the request fingerprint (SHA-256 of the canonical body) includes `project_id`.
+A key therefore never resolves across users or projects, so one copied into a
+shared Postman collection cannot read another tenant's invocation.
+
+**Mechanics**
+
+- **Redis lock:** a lock scoped to user, project, route and a hash of the key
+  provides the in-flight `409`. It is released when a request fails before
+  committing, so the client can retry.
+- **Unique index:** a unique partial index on
+  `agent_invocations (requested_by, idempotency_key)` is the authority. If Redis
+  is unavailable the lock is skipped; a racing duplicate then loses at the index
+  and is answered with the invocation that won.
+- **Migration 0178:** adds `idempotency_key` and `request_sha256` and builds
+  the index `CONCURRENTLY`, because the table already exists.
+
+**Deviation from architecture section 3.1:** the lock lives 24 hours, but the
+stored invocation keeps answering for its key after that, because the unique
+index does not expire. A key is never reusable for a different request.
+
+Tests: `backend/tests/test_agent_invocation_idempotency.py`.
+
 ## 2026-09-13 - Synchronous agent invocation and live progress over SSE (E1.2, slice 3)
 
 This is the last slice of E1.2. Invocations can now wait for their result, and
