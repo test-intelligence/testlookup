@@ -57,6 +57,40 @@ Tests: `backend/tests/test_defect_jira_endpoint.py` covers:
 proves the lock and the claim against real Postgres: two concurrent
 submits POST exactly once, and a rolled-back commit followed by a retry
 never posts again.
+## 2026-09-13 - Quality gate: only the agent config service may change an agent's mode (E4.4, part 1)
+
+Architecture section 4.1 gives an agent's autonomy mode (shadow, suggest or
+act) exactly one writable home: `agent_configs.mode`. The new quality-gate
+guard `agents.agent-mode-single-writer` fails CI when code anywhere else
+writes it:
+
+- `<row>.mode = ...` on an agent config or agent policy row;
+- a `mode=` keyword on either model's constructor;
+- `.values(mode=...)` on either table;
+- raw SQL that updates or inserts the column.
+
+`services/agent_config_service.py` is the only module allowed to write it.
+
+The guard is a ratchet. The two writers of the older `agent_policies.mode`
+are baselined, and the list may only shrink:
+
+- the Investigator policy `PUT`;
+- the Fixer config `PUT`.
+
+`agent_runs.mode` records the mode one run executed under. It is not a
+policy, so the guard ignores it.
+
+**Not in this change.** The rest of E4.4, moving `agent_policies` rows into
+`agent_configs`, waits on a product decision. The table holds two agents that
+are not in the capability registry, and their rows carry more than a mode:
+
+- `investigator`, whose budgets also set every deep pipeline's run budget
+  and the cluster-child limits;
+- `fixer`, which keeps its runner, test globs and schedule in the same row
+  behind its own API.
+
+The gate now has 42 guards, 18 of them ratchets.
+
 ## 2026-09-13 - Settings: edit each agent's configuration per project (E4.3)
 
 **Settings → AI Agents** now has an **Agent configuration** panel, with one
