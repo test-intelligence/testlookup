@@ -116,12 +116,17 @@ async def override_release_decision(
             pass  # Non-blocking
         await db.commit()
     # Outbound ``release.decided`` for the override. It runs after the commit,
-    # never before: a rolled-back override must not reach a subscriber. It
-    # opens its own session and never raises.
-    from app.services.release_decision_webhook import (  # noqa: PLC0415
-        TRIGGER_OVERRIDE,
-        emit_release_decided,
-    )
+    # never before: a rolled-back override must not reach a subscriber. The
+    # emitter opens its own session and never raises. The guard also covers a
+    # failed import: once the override has committed, a 500 would invite a retry
+    # that records a second override.
+    try:
+        from app.services.release_decision_webhook import (  # noqa: PLC0415
+            TRIGGER_OVERRIDE,
+            emit_release_decided,
+        )
 
-    await emit_release_decided(run_id, trigger=TRIGGER_OVERRIDE)
+        await emit_release_decided(run_id, trigger=TRIGGER_OVERRIDE)
+    except Exception as exc:  # noqa: BLE001 — the committed override stands
+        logger.warning("release.decided webhook hook failed for run %s: %s", run_id, exc)
     return council
