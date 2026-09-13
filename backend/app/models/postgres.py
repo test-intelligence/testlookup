@@ -5194,6 +5194,14 @@ class AgentInvocation(Base):
         Index("ix_agent_invocations_project_created", "project_id", "created_at"),
         Index("ix_agent_invocations_run_agent", "test_run_id", "agent_id", "created_at"),
         Index("ux_agent_invocations_pipeline_run", "pipeline_run_id", unique=True),
+        # E1.3: a client Idempotency-Key belongs to one user (migration 0178).
+        Index(
+            "ux_agent_invocations_user_idempotency_key",
+            "requested_by",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -5212,6 +5220,10 @@ class AgentInvocation(Base):
     # When the invocation was last handed to a worker (migration 0177); a retry of a
     # lost dispatch restarts this clock and leaves created_at alone.
     dispatched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # E1.3 (migration 0178): the client's Idempotency-Key and the fingerprint of the
+    # request it created; a replay with a different request is refused.
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    request_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 
 class AgentActionDispatchOutbox(Base):
