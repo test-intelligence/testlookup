@@ -15,6 +15,7 @@ def _row(**overrides):
         "target_id": "release.blocker.1",
         "request_sha256": "a" * 64,
         "status": "pending_review",
+        "pipeline_run_id": None,
         "request_payload": {"title": "Investigate"},
     }
     base.update(overrides)
@@ -157,6 +158,7 @@ async def test_report_proposals_are_bounded_and_approval_gated():
     assert proposal.approval_required is True
     assert proposal.status == "pending_review"
     assert proposal.action_type == "decision_report_action"
+    assert proposal.request_payload["proposing_agent_id"] == "decision_report"
 
 
 @pytest.mark.asyncio
@@ -309,6 +311,10 @@ def _executor_harness(monkeypatch, action, review_row):
             return False
 
     monkeypatch.setattr(service, "AsyncSessionLocal", lambda: _Session())
+    resolve = AsyncMock(
+        return_value=MagicMock(config=MagicMock(mode="act"))
+    )
+    monkeypatch.setattr(service, "resolve_for_project", resolve)
     return service, db
 
 
@@ -332,12 +338,62 @@ async def test_executor_denies_an_action_whose_proposing_run_is_not_accepted(mon
 
 @pytest.mark.asyncio
 async def test_executor_proceeds_when_the_proposing_run_was_accepted(monkeypatch):
-    action = _row(status="approved", pipeline_run_id=uuid.uuid4())
+    action = _row(
+        status="approved",
+        pipeline_run_id=uuid.uuid4(),
+        request_payload={"proposing_agent_id": "decision_report"},
+    )
     service, _ = _executor_harness(monkeypatch, action, review_row=uuid.uuid4())
 
     outcome = await service.execute_agent_action(project_id=action.project_id, action_id=action.id)
 
     assert outcome["reason"] == "action_executor_not_configured"
+
+
+@pytest.mark.asyncio
+async def test_executor_denies_an_accepted_action_unless_proposer_mode_is_act(monkeypatch):
+    action = _row(
+        status="approved",
+        pipeline_run_id=uuid.uuid4(),
+        request_payload={"proposing_agent_id": "decision_report"},
+    )
+    service, db = _executor_harness(monkeypatch, action, review_row=uuid.uuid4())
+    service.resolve_for_project.return_value.config.mode = "suggest"
+
+    outcome = await service.execute_agent_action(
+        project_id=action.project_id,
+        action_id=action.id,
+    )
+
+    assert outcome == {
+        "status": "failed",
+        "action_id": str(action.id),
+        "reason": "policy_denied",
+    }
+    assert action.status == "failed"
+    assert action.error_code == "policy_denied"
+    service.resolve_for_project.assert_awaited_once_with(
+        db, action.project_id, "decision_report"
+    )
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_executor_denies_pipeline_action_without_proposer_identity(monkeypatch):
+    action = _row(
+        status="approved",
+        pipeline_run_id=uuid.uuid4(),
+        request_payload={"title": "legacy proposal"},
+    )
+    service, _ = _executor_harness(monkeypatch, action, review_row=uuid.uuid4())
+
+    outcome = await service.execute_agent_action(
+        project_id=action.project_id,
+        action_id=action.id,
+    )
+
+    assert outcome["reason"] == "policy_denied"
+    service.resolve_for_project.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import AgentActionDispatchOutbox, AgentActionLedger
+from app.services.agent_config_resolver import resolve_for_project
 from app.services.canonical_json import stable_json_sha256
 from app.services.evidence_sanitizer import sanitize_persistence_payload
 
@@ -288,6 +289,41 @@ async def _proposing_run_review_accepted(db: AsyncSession, action: AgentActionLe
     return result.scalar_one_or_none() is not None
 
 
+async def _proposing_agent_mode_is_act(
+    db: AsyncSession, action: AgentActionLedger
+) -> bool:
+    """Require the live project config to authorize an AI-originated mutation.
+
+    Directly created human actions have no proposing pipeline and retain their
+    existing approval path. Pipeline actions must carry the immutable agent id
+    that was hashed into their request payload when proposed. Missing identity
+    on a legacy row fails closed because no capability config can be proven.
+    """
+    if getattr(action, "pipeline_run_id", None) is None:
+        return True
+    payload = getattr(action, "request_payload", None)
+    agent_id = payload.get("proposing_agent_id") if isinstance(payload, dict) else None
+    if not isinstance(agent_id, str) or not agent_id:
+        return False
+    resolved = await resolve_for_project(db, action.project_id, agent_id)
+    return resolved.config.mode == "act"
+
+
+async def _fail_policy_denied(
+    db: AsyncSession,
+    action: AgentActionLedger,
+    *,
+    action_id: uuid.UUID,
+    now: datetime,
+) -> dict[str, Any]:
+    action.status = "failed"
+    action.execution_started_at = now
+    action.execution_completed_at = now
+    action.error_code = "policy_denied"
+    await db.commit()
+    return {"status": "failed", "action_id": str(action_id), "reason": "policy_denied"}
+
+
 async def execute_agent_action(
     *, project_id: uuid.UUID, action_id: uuid.UUID
 ) -> dict[str, Any]:
@@ -322,12 +358,12 @@ async def execute_agent_action(
         # that proposed it must itself have been accepted by a person, or the
         # mutation would act on a report nobody has vouched for.
         if not await _proposing_run_review_accepted(db, action):
-            action.status = "failed"
-            action.execution_started_at = now
-            action.execution_completed_at = now
-            action.error_code = "policy_denied"
-            await db.commit()
-            return {"status": "failed", "action_id": str(action_id), "reason": "policy_denied"}
+            return await _fail_policy_denied(db, action, action_id=action_id, now=now)
+        # E8.6 (section 7.5): human acceptance does not widen the proposing
+        # capability's project policy. Only a config resolved in act mode may
+        # cross the mutation boundary.
+        if not await _proposing_agent_mode_is_act(db, action):
+            return await _fail_policy_denied(db, action, action_id=action_id, now=now)
         action.status = "failed"
         action.execution_started_at = now
         action.execution_completed_at = now
@@ -410,6 +446,7 @@ async def persist_report_action_proposals(
             target_id=action_id,
             idempotency_key=idempotency_key,
             request_payload={
+                "proposing_agent_id": "decision_report",
                 "action_id": action_id,
                 "title": action.get("title"),
                 "owner": action.get("owner"),

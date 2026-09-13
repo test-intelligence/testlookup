@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-13 - Mutating agent actions require act mode (T4 / K4)
+
+Approved actions proposed by an agent pipeline now resolve the proposing
+capability's current project configuration immediately before execution and
+fail with `policy_denied` unless its mode is `act`. Human review therefore
+cannot widen a capability configured for `shadow` or `suggest`.
+
+New decision-report proposals persist `proposing_agent_id` inside the hashed,
+sanitized request payload. Legacy pipeline proposals without that identity
+fail closed; directly created human actions keep their existing approval path.
+Regression and mutation coverage pins both halves of the invariant: accepted
+review and `mode=act`.
+
 ## 2026-09-13 - Review-rejected runs cannot be retried (T2 / K1)
 
 Pipeline and invocation retry endpoints now return HTTP 409 with
