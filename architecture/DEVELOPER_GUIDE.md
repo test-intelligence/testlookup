@@ -33,8 +33,8 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **41 guards**.
-17 are *ratchets*: pre-existing violations are baselined in
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **42 guards**.
+18 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
 fail CI. The other 24 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
@@ -113,6 +113,7 @@ fails if a *second* deleter appears.
 | `agents.routing-metadata` | `classify_test()` populates `_routing` | Set `result['_routing'] = {...}` before returning |
 | `agents.capability-has-executor` † | a capability in `agent_capability_registry` that no workflow plans, or one that contradicts the planner | Add the stage to the right `_*_STAGES` tuple in `services/agent_planner.py`, or declare how it really runs: `_capability("name", execution="on_demand"/"child_spawned"/"runtime", ...)`. `defect_commander` read as a mutating pipeline stage depending on `root_cause_analysis` while having no executor at all — zero `agent_stage_results` rows in the deployment's entire history |
 | `agents.catalog-schema-complete` | a registered capability whose input schema names no model defined in `agent_catalog.CATALOG_SCHEMA_MODULES` | Define the Pydantic input model in one of those modules, or add its module to the tuple. Without it, `GET /api/v1/agents/catalog/{agent_id}` publishes no input schema and the generated invoke wrapper accepts only a `SubjectRef`. A ratchet: the capabilities whose inputs are only labels today (`TestRun`, `InvestigationPlanV1`, and others) are baselined, so a new capability must name a real model |
+| `agents.agent-mode-single-writer` | an agent's `mode` written anywhere but `services/agent_config_service.py`: `<row>.mode =` on an `AgentConfig`/`AgentPolicy` row, a `mode=` keyword on either constructor, `.values(mode=...)`, or raw SQL updating the column | Change mode through `agent_config_service.put_config`. `mode` has one writable home, `agent_configs.mode` (architecture section 4.1). A ratchet: the two `agent_policies` writers that predate it (the Investigator policy PUT and the Fixer config PUT) are baselined until E4.4 migrates those rows. `agent_runs.mode` is a per-run record, not a policy, and is not watched |
 | `agents.pipeline-status-writes-via-state-machine` † | assigning `AgentPipelineRun.status` anywhere but `services/workflow_run_state.py` | Call `apply_transition(pipeline, PipelineRunStatus.X, error=...)`, or `await guarded_transition(db, id, expected=..., to=...)` where two writers can race. Five modules used to assign the column directly and the vocabulary drifted into `partial`, `cancelled` and a read-time 30-minute `failed` rewrite (E7.1) |
 | `agents.no-partial-pipeline-status` † | `AgentPipelineRun.status` compared with, filtered by, or assigned the retired literals `partial` / `cancelled` | Degraded runs are `completed` with `execution_metadata.stage_quality = 'degraded'` (use `workflow_run_state.is_resumable`); cancelled runs are `failed` with an error prefixed `cancelled:`. Migration 0173 backfilled the rows, so a comparison against a retired value matches nothing forever |
 

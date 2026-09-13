@@ -2675,3 +2675,77 @@ def test_catalog_schema_guard_flags_a_missing_module_list(monkeypatch: pytest.Mo
     _catalog_repo(tmp_path, capabilities='    _capability("summary", inputs="RunEvidenceBundleV1", output="X"),\n', modules="()")
     messages = [v.message for v in qg._agents_catalog_schema_complete()]
     assert messages and "CATALOG_SCHEMA_MODULES not found" in messages[0]
+
+
+# -- agents.agent-mode-single-writer (architecture E4.4) --------------------------
+
+
+def test_mode_writer_guard_flags_a_policy_row_mode_assignment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "services" / "policy_service.py", """
+        from app.models.postgres import AgentPolicy
+
+        async def upsert(db, project_id, mode):
+            row = AgentPolicy(project_id=project_id)
+            row.mode = mode
+            fetched = await load(db, AgentPolicy)
+            fetched.mode = "act"
+    """)
+    violations = qg._agents_agent_mode_single_writer()
+    assert [(v.line, v.message) for v in violations] == [
+        (5, "row.mode assigned outside agent_config_service"),
+        (7, "fetched.mode assigned outside agent_config_service"),
+    ]
+
+
+def test_mode_writer_guard_flags_constructor_values_and_raw_sql(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "agents" / "sneaky.py", """
+        from sqlalchemy import update
+        from app.models.postgres import AgentConfig
+
+        def build(project_id):
+            return AgentConfig(project_id=project_id, mode="act")
+
+        async def promote(db):
+            await db.execute(update(AgentConfig).values(mode="act"))
+            await db.execute(update(AgentConfig).values({"mode": "act"}))
+
+        SQL = "UPDATE agent_policies SET mode = 'act' WHERE agent_id = 'fixer'"
+    """)
+    by_line = {v.line: v.message for v in qg._agents_agent_mode_single_writer()}
+    assert sorted(by_line) == [5, 8, 9, 11]
+    assert "AgentConfig(mode=...)" in by_line[5]
+    assert ".values(mode=...)" in by_line[8] and ".values(mode=...)" in by_line[9]
+    assert "raw SQL" in by_line[11]
+
+
+def test_mode_writer_guard_allows_the_config_service_and_ignores_other_modes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "services" / "agent_config_service.py", """
+        from app.models.postgres import AgentConfig
+
+        def put(row, mode):
+            row.mode = mode
+            return AgentConfig(mode=mode)
+    """)
+    _write(tmp_path / "backend" / "app" / "services" / "unrelated.py", """
+        from app.models.postgres import AgentRun
+
+        class RetryPlan:
+            def __init__(self, mode):
+                self.mode = mode
+
+        def ledger(row, mode):
+            row.mode = mode
+            return AgentRun(mode=mode)
+    """)
+    assert qg._agents_agent_mode_single_writer() == []
+
+
+def test_mode_writer_guard_on_the_real_repo_finds_only_the_two_policy_writers() -> None:
+    files = sorted({v.relpath for v in qg._agents_agent_mode_single_writer()})
+    assert files == [
+        "backend/app/services/agent_investigation_service.py",
+        "backend/app/services/fixer_service.py",
+    ]

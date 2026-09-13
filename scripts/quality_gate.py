@@ -4701,6 +4701,99 @@ def _agents_no_partial_pipeline_status() -> list[Violation]:
     return violations
 
 
+# ── agents.agent-mode-single-writer (architecture E4.4, section 4.1) ─────────
+#
+# An agent's autonomy ``mode`` has exactly one writable home:
+# ``agent_configs.mode``, written only by app/services/agent_config_service.py.
+# ``agent_policies.mode`` is the older copy that E4.4 migrates away; its two
+# writers today (the Investigator policy PUT and the Fixer config PUT) are the
+# baseline, and the list may only shrink. ``agent_runs.mode`` is a per-run
+# ledger record of the mode a run executed under, not a policy, so AgentRun is
+# not one of the models this guard watches.
+
+_MODE_MODELS = frozenset({"AgentConfig", "AgentPolicy"})
+_MODE_ROW_NAMES = frozenset({"row", "policy", "config", "agent_config", "agent_policy", "existing"})
+_MODE_WRITER_PATH = ("backend", "app", "services", "agent_config_service.py")
+_MODE_SQL_RE = re.compile(
+    r"\b(?:update|insert\s+into)\s+(?:agent_configs|agent_policies)\b.*\bmode\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _mentions_mode_model(node: ast.AST) -> bool:
+    return any(isinstance(n, ast.Name) and n.id in _MODE_MODELS for n in ast.walk(node))
+
+
+def _mode_row_names(func: ast.AST) -> set[str]:
+    """Names in ``func`` that hold an AgentConfig/AgentPolicy row."""
+    if not _mentions_mode_model(func):
+        return set()
+    names = set(_MODE_ROW_NAMES)
+    for node in ast.walk(func):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and _mentions_mode_model(node.value)
+        ):
+            names.add(node.targets[0].id)
+    return names
+
+
+def _agents_agent_mode_single_writer() -> list[Violation]:
+    root = REPO_ROOT / "backend" / "app"
+    allowed = REPO_ROOT.joinpath(*_MODE_WRITER_PATH)
+    violations: list[Violation] = []
+    for path in iter_files(root, (".py",)):
+        if path == allowed:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        # First message per line wins; one line is one violation.
+        found: dict[int, str] = {}
+        for node in ast.walk(tree):
+            # AgentConfig(..., mode=...) / AgentPolicy(..., mode=...)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in _MODE_MODELS
+                and any(kw.arg == "mode" for kw in node.keywords)
+            ):
+                found.setdefault(node.lineno, f"{node.func.id}(mode=...) outside agent_config_service")
+            # Raw SQL that writes the column.
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and _MODE_SQL_RE.search(node.value):
+                found.setdefault(node.lineno, "raw SQL writes agent mode outside agent_config_service")
+        for func in ast.walk(tree):
+            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            rows = _mode_row_names(func)
+            if not rows:
+                continue
+            for node in ast.walk(func):
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if (
+                            isinstance(target, ast.Attribute)
+                            and target.attr == "mode"
+                            and isinstance(target.value, ast.Name)
+                            and target.value.id in rows
+                        ):
+                            found.setdefault(node.lineno, f"{target.value.id}.mode assigned outside agent_config_service")
+                # insert(...)/update(...).values(mode=...) or .values({"mode": ...})
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "values":
+                    keyed = any(kw.arg == "mode" for kw in node.keywords) or any(
+                        isinstance(arg, ast.Dict)
+                        and any(isinstance(k, ast.Constant) and k.value == "mode" for k in arg.keys)
+                        for arg in node.args
+                    )
+                    if keyed:
+                        found.setdefault(node.lineno, ".values(mode=...) on an agent config/policy table outside agent_config_service")
+        violations.extend(Violation(path, line, message) for line, message in found.items())
+    return violations
+
+
 GUARDS: list[Guard] = [
     Guard(
         name="backend.no-print",
@@ -5060,6 +5153,20 @@ GUARDS: list[Guard] = [
             "lists (or add its module there). Without it the catalog entry reads "
             "input_schema_resolved=false and the invoke wrapper accepts only a "
             "SubjectRef."
+        ),
+    ),
+    Guard(
+        name="agents.agent-mode-single-writer",
+        description=(
+            "An agent's mode has one writable home, agent_configs.mode, written "
+            "only by services/agent_config_service.py (architecture section 4.1, E4.4)."
+        ),
+        check=_agents_agent_mode_single_writer,
+        fix_hint=(
+            "Change an agent's mode through agent_config_service.put_config. A "
+            "ratchet: the two agent_policies writers that predate agent_configs "
+            "(the Investigator policy PUT and the Fixer config PUT) are "
+            "baselined until E4.4 migrates those rows."
         ),
     ),
     Guard(
