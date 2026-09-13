@@ -15,7 +15,6 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
-import uuid
 from unittest.mock import MagicMock
 
 import pytest
@@ -37,18 +36,6 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
             jose_jwt_stub = _make_stub("jose.jwt", encode=MagicMock(return_value="tok"), decode=MagicMock(return_value={}))
             m.setitem(sys.modules, "jose.jwt", jose_jwt_stub)
             m.setitem(sys.modules, "jose", _make_stub("jose", jwt=jose_jwt_stub, JWTError=Exception))
-
-        m.setitem(sys.modules, "app.core.security", _make_stub("app.core.security", verify_password=MagicMock(return_value=True), get_password_hash=MagicMock(return_value="hashed_pw"), create_access_token=MagicMock(return_value="access_token"), create_refresh_token=MagicMock(return_value="refresh_token"), decode_token=MagicMock(return_value={"sub": str(uuid.uuid4()), "type": "access"})))
-        m.setitem(sys.modules, "app.core.deps", _make_stub("app.core.deps", require_role=MagicMock(return_value=MagicMock()), get_current_active_user=MagicMock(), verify_webhook_secret=MagicMock(), require_project_role=MagicMock(return_value=MagicMock()), require_project_access=MagicMock(return_value=MagicMock()), require_run_access=MagicMock(return_value=MagicMock()), get_accessible_project_ids=MagicMock(return_value=None)))
-
-        from sqlalchemy.orm import DeclarativeBase
-
-        class _Base(DeclarativeBase):
-            pass
-
-        m.setitem(sys.modules, "app.db.postgres", _make_stub("app.db.postgres", get_db=MagicMock(), AsyncSession=MagicMock(), AsyncSessionLocal=MagicMock(), Base=_Base))
-        m.setitem(sys.modules, "app.db.mongo", _make_stub("app.db.mongo", get_mongo_db=MagicMock(), close_mongo=MagicMock(), Collections=MagicMock()))
-        m.setitem(sys.modules, "app.db.redis_client", _make_stub("app.db.redis_client", get_redis=MagicMock(), close_redis=MagicMock()))
 
         yield
 

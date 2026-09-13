@@ -36,18 +36,6 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
             m.setitem(sys.modules, "jose.jwt", jose_jwt_stub)
             m.setitem(sys.modules, "jose", _make_stub("jose", jwt=jose_jwt_stub, JWTError=Exception))
 
-        m.setitem(sys.modules, "app.core.security", _make_stub("app.core.security", verify_password=MagicMock(return_value=True), get_password_hash=MagicMock(return_value="hashed_pw"), create_access_token=MagicMock(return_value="access_token"), create_refresh_token=MagicMock(return_value="refresh_token"), decode_token=MagicMock(return_value={"sub": str(uuid.uuid4()), "type": "access"})))
-        m.setitem(sys.modules, "app.core.deps", _make_stub("app.core.deps", require_role=MagicMock(return_value=MagicMock()), get_current_active_user=MagicMock(), verify_webhook_secret=MagicMock(), require_project_role=MagicMock(return_value=MagicMock()), get_accessible_project_ids=MagicMock(return_value=None)))
-
-        from sqlalchemy.orm import DeclarativeBase
-
-        class _Base(DeclarativeBase):
-            pass
-
-        m.setitem(sys.modules, "app.db.postgres", _make_stub("app.db.postgres", get_db=MagicMock(), AsyncSession=MagicMock(), AsyncSessionLocal=MagicMock(), Base=_Base))
-        m.setitem(sys.modules, "app.db.mongo", _make_stub("app.db.mongo", get_mongo_db=MagicMock(), close_mongo=MagicMock(), Collections=MagicMock()))
-        m.setitem(sys.modules, "app.db.redis_client", _make_stub("app.db.redis_client", get_redis=MagicMock(), close_redis=MagicMock()))
-
         yield
 
 
@@ -220,8 +208,10 @@ async def test_storage_connection_status_reports_failed_probes(monkeypatch: pyte
     mongo.command = AsyncMock(side_effect=ConnectionError("mongo unavailable"))
     redis = MagicMock()
     redis.ping = AsyncMock(return_value=True)
-    monkeypatch.setattr(sys.modules["app.db.mongo"], "get_mongo_db", lambda: mongo)
-    monkeypatch.setattr(sys.modules["app.db.redis_client"], "get_redis", lambda: redis)
+    # Dotted targets import the real module; ``sys.modules[...]`` only held
+    # these names while a stub fixture put them there.
+    monkeypatch.setattr("app.db.mongo.get_mongo_db", lambda: mongo)
+    monkeypatch.setattr("app.db.redis_client.get_redis", lambda: redis)
 
     status = await app_settings._get_storage_connection_status()
 
