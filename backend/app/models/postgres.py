@@ -5226,6 +5226,40 @@ class AgentInvocation(Base):
     request_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 
+#: Agent configuration modes, loosest last (architecture section 4.1). Migration
+#: 0179 holds a frozen copy; tests/test_agent_configs.py keeps them in step.
+AGENT_CONFIG_MODES: tuple[str, ...] = ("shadow", "suggest", "act")
+
+
+class AgentConfig(Base):
+    """A project's configuration of one agent (architecture E4.1, section 4.2).
+
+    ``mode`` and ``enabled`` are columns; ``config`` holds the rest of the
+    validated ``AgentConfigV1`` document. A missing row means the defaults.
+    Every write bumps ``config_version``.
+    """
+
+    __tablename__ = "agent_configs"
+    __table_args__ = (
+        UniqueConstraint("project_id", "agent_id", name="uq_agent_configs_project_agent"),
+        CheckConstraint(f"mode IN ({_review_in(AGENT_CONFIG_MODES)})", name="ck_agent_configs_mode"),
+        CheckConstraint("config_version >= 1", name="ck_agent_configs_version_positive"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
+    mode: Mapped[str] = mapped_column(String(10), nullable=False, default="shadow", server_default="shadow")
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    config_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class AgentActionDispatchOutbox(Base):
     """Durable delivery intent for approved actions; never contains prompts."""
 

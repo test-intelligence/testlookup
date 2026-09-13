@@ -1,5 +1,59 @@
 # Changelog
 
+## 2026-09-13 - Per-project agent configuration with tighten-only overrides (E4.1)
+
+A project can now configure each agent: its mode, model tier, retry policy,
+timeout, tool allowlist, budget, shadow sampling and review policy
+(architecture section 4.2). Nothing reads the configuration at run time yet;
+the resolver that applies it is E4.2.
+
+**API.** `GET /api/v1/projects/{project_id}/agent-configs` lists every
+configurable agent. `GET` and `PUT .../agent-configs/{agent_id}` read and
+replace one; `PUT` needs QA_LEAD. An agent nobody configured returns its
+defaults with `source: "default"` and `config_version: 0`. Every `PUT` bumps
+`config_version`, in one `INSERT ... ON CONFLICT DO UPDATE` so concurrent
+writes get distinct versions. Each write records an `agent_config.updated`
+activity event.
+
+**What the schema refuses** (`app/services/agent_config_service.py`):
+
+- unknown keys anywhere. The `model.slm` and `model.llm` blocks hold only
+  provider, model, temperature and max tokens, so a stored config cannot
+  carry a `base_url` or `api_key` that would route prompts around the
+  offline ceiling;
+- `retry.max_attempts` above `AGENT_MAX_ATTEMPTS_CEILING`, and
+  `timeout_seconds` above the new `AGENT_MAX_TIMEOUT_CEILING` (default 600);
+- attempts times timeout that does not fit `AI_PIPELINE_DEADLINE_SECONDS`.
+  The error shows the arithmetic, for example `10 x 300 = 3000 s`;
+- a tool the mode does not permit, and an enabled agent whose own
+  permission needs a higher mode (a mutating agent needs `act`);
+- a cloud provider while offline mode is on, or a provider outside
+  `AI_LLM_PROVIDER_ALLOWLIST`. This PUT-time check is a courtesy; the
+  resolver clamps again at run time (E4.2).
+
+**Defaults.** Each agent gets the lowest mode that lets it run, except that
+a mutating agent (Defect Commander) starts disabled in `shadow` rather than
+being granted `act`. Defaults are clamped to the environment ceilings, so
+lowering a ceiling cannot make an unconfigured agent fail validation. A
+stored row that stops validating after a ceiling change is returned as
+stored with `valid: false` and its errors, not silently replaced with
+defaults.
+
+**Request overrides.** `AgentConfigPatch` and `apply_patch` implement the
+monotonicity table for E4.2 to use: a request may lower the tier, attempts,
+timeout, budgets and failures analyzed, narrow the tool list, or add the
+auto reviewer. Anything looser, and any field outside the table (mode,
+temperature, provider), is refused. `override_policy` can forbid each
+narrowing.
+
+**Runs freeze the versions.** A pipeline run stores the project's
+`{agent_id: config_version}` map in `execution_metadata`, so a later config
+change does not alter how a past run is read.
+
+Migration 0179 adds the `agent_configs` table. A test holds
+`AGENT_TOOL_PERMISSIONS` equal to the `@tool` functions under `app/tools`,
+so a new tool must declare the permission it needs.
+
 ## 2026-09-13 - Authorization ratchet: every path id is classified, and the agent routers get no exemptions (E1.6)
 
 `tests/test_architectural_authorization.py` checks that a route taking a
