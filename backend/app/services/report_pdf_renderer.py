@@ -56,6 +56,16 @@ def render_report_pdf(report: Any) -> bytes:
 
     story: list = []
 
+    # E8.4: an unreviewed AI report distributed by opt-in says so before
+    # anything else on the page (section 8.2).
+    watermark = str(getattr(report, "draft_watermark", "") or "")
+    if watermark:
+        draft_style = ParagraphStyle(
+            "Draft", parent=styles["Normal"], fontSize=11, leading=14,
+            textColor=colors.HexColor(_NO_GO_RED), spaceAfter=6,
+        )
+        story.append(Paragraph(f"<b>{_safe(watermark, 200)}</b>", draft_style))
+
     # ── Header ──────────────────────────────────────────────────────────
     story.append(Paragraph("TestLookup — Release Report", title_style))
     meta_text = (

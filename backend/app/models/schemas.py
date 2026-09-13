@@ -3447,6 +3447,13 @@ class ReleaseCouncilResponse(BaseModel):
     # e.g. ``["p0_defects:2>0"]``.
     release_readiness_band: Optional[str] = None
     band_downgrades: List[str] = []
+    # E8.4: the human-review gate on the value CI reads (section 8.2). While
+    # the gate is enforced, an unreviewed AI decision reads PENDING_REVIEW (or
+    # ADVISORY_<value> with allow_advisory) and the model's value moves here.
+    requires_human_review: bool = False
+    review: Optional[ReviewBlock] = None
+    review_gate_enforced: bool = False
+    draft_recommendation: Optional[str] = None
 
 
 class ReleaseCouncilOverrideRequest(BaseModel):

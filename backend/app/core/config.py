@@ -419,6 +419,15 @@ class Settings(BaseSettings):
 
     # ── AI Agent ─────────────────────────────────────────────
     AI_OFFLINE_MODE: bool = True
+    # E8.4: enforce the human-review gate on AI report distribution (report PDF
+    # export, share links, the release-readiness value). OFF (default): nothing
+    # is refused or changed; every would-be refusal is recorded in
+    # access_audit_logs, so the impact is visible before anything stops being
+    # sent. ON: an unreviewed AI report is refused (409) unless the project sets
+    # allow_unreviewed_distribution (watermarked, audited), and the release gate
+    # reads PENDING_REVIEW. Existing runs have no accepted reviews, which is why
+    # this is not simply on.
+    REVIEW_GATE_ENFORCED: bool = False
     # Optional defense-in-depth provider allowlist. Empty preserves the
     # configured provider set; when populated, every get_llm() construction
     # and invocation must use one of these normalized provider ids.

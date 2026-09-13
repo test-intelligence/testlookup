@@ -39,6 +39,14 @@ def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -
             Shared by <b>{_e(shared_by)}</b>{f' · Expires: {_e(expires_at)}' if expires_at else ''}
         </div>""")
 
+    # E8.4: draft banner for an unreviewed AI report distributed by opt-in.
+    watermark = str(getattr(report, "draft_watermark", "") or "")
+    if watermark:
+        sections.append(f"""
+        <div role="alert" style="background:#FEE2E2;border:2px solid #DC2626;border-radius:8px;padding:12px;margin-bottom:20px;font-size:14px;font-weight:bold;color:#991B1B">
+            {_e(watermark, 200)}
+        </div>""")
+
     # Test summary
     sections.append(f"""
     <div style="display:flex;gap:16px;margin-bottom:20px">
