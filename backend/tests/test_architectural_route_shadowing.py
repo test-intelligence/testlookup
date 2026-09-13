@@ -123,6 +123,32 @@ def test_the_two_endpoints_that_were_dead_are_reachable():
         assert path not in shadowed_paths, f"{path} is unreachable again"
 
 
+def test_agent_catalog_routes_are_reachable_and_param_routes_follow_the_literals():
+    """E1.1 (architecture section 3.5).
+
+    ``/api/v1/agents/{agent_id}/invoke`` is coming (E1.2). Starlette would match
+    ``{agent_id}`` against ``pipelines``, ``catalog``, ``runs`` or ``active-runs``
+    if it were registered first, so every ``/agents/{param}/...`` route must come
+    after every literal ``/agents/...`` route it could swallow.
+    """
+    routes = _collect_routes()
+    paths = [p for p, _ in routes]
+    assert "/api/v1/agents/catalog" in paths
+    assert "/api/v1/agents/catalog/{agent_id}" in paths
+    assert "/api/v1/agents/catalog" not in {p for p, _m, _q in _find_shadowed()}
+
+    # The detector sees the hazard: an agent-id route of the same shape
+    # (a future GET /agents/{agent_id}) would swallow the catalog.
+    assert _shadows("/api/v1/agents/{agent_id}", "/api/v1/agents/catalog")
+
+    agent_routes = [(i, p, m) for i, (p, m) in enumerate(routes) if p.startswith("/api/v1/agents/")]
+    for i, path, methods in agent_routes:
+        if not _is_param(_segments(path)[3]):
+            continue
+        swallowed = [q for j, q, n in agent_routes if j > i and methods & n and _shadows(path, q)]
+        assert not swallowed, f"{path} is registered before literal routes it swallows: {swallowed}"
+
+
 # ── The detector must actually detect ────────────────────────────────────────
 #
 # A structural check that quietly matches nothing is the failure mode that made

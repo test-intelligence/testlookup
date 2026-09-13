@@ -44,6 +44,64 @@ exactly one delivery after the commit, and a failed commit sends nothing. The
 override path runs through the route handler. The gate projection is checked
 while enforced. A guard checks that every catalog event has a producer. Publishes
 are bound to the real `deliver_webhook` signature.
+## 2026-09-13 - Agent catalog: discover agents over the API (E1.1)
+
+First story of E1 (OpenAPI agent exposure). API clients can now discover
+TestLookup's agents instead of hard-coding stage names. The catalog is a
+read-only projection of the capability registry, so adding a capability
+publishes it. Invoking agents over the API arrives in E1.2.
+
+**New endpoints.** Both need a signed-in user; nothing here is project data.
+
+- `GET /api/v1/agents/catalog` lists every capability with its:
+  - agent id and version, stage name, permission and execution mode;
+  - input and output schema names, and whether each resolves to a real model;
+  - dependencies, required evidence, expected latency and cost, timeout,
+    retries and fallback;
+  - `sync_eligible` and `produces_report` flags.
+- `GET /api/v1/agents/catalog/{agent_id}` returns one capability plus its
+  generated input wrapper (`<StageName>InvokeInput`) and the JSON Schemas for
+  its input and output.
+  - A malformed id returns 422 with the expected shape
+    (`agent.<name>.v<version>`); an unknown id returns 404.
+
+**What the flags mean**
+
+- **`sync_eligible`** is a new explicit registry flag. It is set only on
+  deterministic, cheap capabilities (`ingestion`, `flaky_sentinel`,
+  `test_health`, `release_risk` and the two cluster-orchestration nodes). It is
+  declared rather than derived from cost, because most capabilities inherit
+  the registry's default cost whether or not they call a model.
+- **`produces_report`** comes from the output contract (E8), so a client can
+  tell which agents' results need human review.
+
+**Input wrappers**
+
+- Each capability gets its own wrapper: `agent_id` fixed to that agent, plus a
+  `payload` that is either the input model or a `SubjectRef`
+  (`{test_run_id}`, resolved server-side).
+- Several capabilities share an input contract, so one union over them would
+  not be injective (architecture section 3.3).
+
+**Found while building:** 20 of the 31 schema names in the registry have no
+model behind them (for example `TestRun`, an ORM row, and
+`InvestigationPlanV1`, which is defined nowhere).
+
+- Those catalog entries say `input_schema_resolved: false` / `output_schema_resolved: false`.
+- Their input wrapper accepts only a `SubjectRef`, and they publish no output schema.
+- A new quality-gate ratchet, `agents.catalog-schema-complete`, baselines the 13
+  capabilities whose inputs are labels today. A new capability must name a model
+  defined in `agent_catalog.CATALOG_SCHEMA_MODULES`.
+
+**Route order.** A test pins that every `/agents/{param}/...` route comes
+after every literal `/agents/...` route it could swallow, ahead of the invoke
+route in E1.2.
+
+Tests:
+- `backend/tests/test_agent_catalog.py`
+- the E1.1 case in `backend/tests/test_architectural_route_shadowing.py`
+- the guard self-tests in `scripts/test_quality_gate.py`
+
 ## 2026-09-13 - Review-gate guards and the mutating-call invariant (E8.6)
 
 This closes the E8 human review gate (architecture section 8.3). Two quality-gate

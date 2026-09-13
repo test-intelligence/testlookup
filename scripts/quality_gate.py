@@ -3243,6 +3243,86 @@ def _reviews_report_consumers_carry_review_block() -> list[Violation]:
     return violations
 
 
+_AGENT_CATALOG_REL = "backend/app/services/agent_catalog.py"
+
+
+def _agents_catalog_schema_complete() -> list[Violation]:
+    """Every registered capability's input schema names a real model.
+
+    The agent catalog (E1.1) publishes each capability's input JSON Schema and
+    generates its invoke wrapper from the model the registry names. Many of
+    those names were labels with nothing behind them -- ``TestRun`` is an ORM
+    row, ``InvestigationPlanV1`` exists nowhere -- so the catalog could only
+    offer a ``SubjectRef`` for them. A ratchet: the labels that exist today are
+    baselined; a new capability must name a model defined in one of the
+    modules ``agent_catalog.CATALOG_SCHEMA_MODULES`` lists.
+    """
+    registry_path = REPO_ROOT / _CAPABILITY_REGISTRY_REL
+    catalog_path = REPO_ROOT / _AGENT_CATALOG_REL
+    if not registry_path.exists():
+        return []
+    if not catalog_path.exists():
+        return [Violation(
+            registry_path, 0,
+            f"{_AGENT_CATALOG_REL} is missing -- registered capabilities have no "
+            "catalog entry and no invoke wrapper",
+        )]
+    try:
+        registry_tree = ast.parse(registry_path.read_text(encoding="utf-8"))
+        catalog_tree = ast.parse(catalog_path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    modules = _string_tuple_assignments(catalog_tree).get("CATALOG_SCHEMA_MODULES")
+    if not modules:
+        return [Violation(
+            catalog_path, 0,
+            "CATALOG_SCHEMA_MODULES not found -- this guard cannot tell where input models live",
+        )]
+    violations: list[Violation] = []
+    models: set[str] = set()
+    for module in sorted(modules):
+        module_path = REPO_ROOT / "backend" / (module.replace(".", "/") + ".py")
+        if not module_path.exists():
+            violations.append(Violation(
+                catalog_path, 0, f"CATALOG_SCHEMA_MODULES names '{module}', which does not exist",
+            ))
+            continue
+        try:
+            module_tree = ast.parse(module_path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        models |= {node.name for node in module_tree.body if isinstance(node, ast.ClassDef)}
+
+    calls: list[ast.Call] = []
+    for node in ast.walk(registry_tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+        first = node.args[0]
+        if name == "_capability" and isinstance(first, ast.Constant) and isinstance(first.value, str):
+            calls.append(node)
+    for call in sorted(calls, key=lambda c: c.lineno):
+        stage = call.args[0].value  # type: ignore[attr-defined]
+        inputs = next(
+            (
+                kw.value.value for kw in call.keywords
+                if kw.arg == "inputs" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)
+            ),
+            "",
+        )
+        model = inputs[:-2] if inputs.endswith("[]") else inputs
+        if model not in models:
+            violations.append(Violation(
+                registry_path, call.lineno,
+                f"capability '{stage}' declares input schema '{inputs}' but no model of that "
+                "name is defined in CATALOG_SCHEMA_MODULES -- its catalog entry publishes no "
+                "input schema and its invoke wrapper accepts only a SubjectRef",
+            ))
+    return violations
+
+
 def _agents_capability_has_executor() -> list[Violation]:
     """Every declared capability has something that actually runs it.
 
@@ -4965,6 +5045,21 @@ GUARDS: list[Guard] = [
             "execution_metadata.stage_quality='degraded' (use "
             "workflow_run_state.is_resumable); cancelled runs are "
             "status='failed' with error 'cancelled: ...'."
+        ),
+    ),
+    Guard(
+        name="agents.catalog-schema-complete",
+        description=(
+            "Every registered capability's input schema names a Pydantic model "
+            "defined in agent_catalog.CATALOG_SCHEMA_MODULES, so the catalog can "
+            "publish its input JSON Schema and invoke wrapper (architecture E1.1)."
+        ),
+        check=_agents_catalog_schema_complete,
+        fix_hint=(
+            "Define the input model in one of the modules CATALOG_SCHEMA_MODULES "
+            "lists (or add its module there). Without it the catalog entry reads "
+            "input_schema_resolved=false and the invoke wrapper accepts only a "
+            "SubjectRef."
         ),
     ),
     Guard(

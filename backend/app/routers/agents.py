@@ -54,7 +54,7 @@ from app.models.schemas import (
     TriggerPipelineRequest,
 )
 from app.models.agentic_runtime import AgenticRunV1
-from app.services import runs_service
+from app.services import agent_catalog, runs_service
 from app.services.activity.service import ActorRef, record as record_activity
 from app.services.run_summary_service import build_fallback_summary, normalize_summary_doc
 
@@ -149,6 +149,36 @@ async def _require_pipeline_access(
         raise HTTPException(
             403, detail="You do not have access to this pipeline run"
         )
+
+
+@router.get("/catalog", response_model=list[agent_catalog.AgentCatalogEntry])
+async def list_agent_catalog(
+    _: Any = Depends(get_current_active_user),
+):
+    """Discover the agents (E1.1): every capability in the registry.
+
+    Clients read agent ids here instead of hard-coding stage names. Declared
+    first in this router: the planned ``/agents/{agent_id}/invoke`` route must
+    come after every literal ``/agents/...`` path (architecture section 3.5).
+    """
+    return agent_catalog.list_catalog()
+
+
+@router.get("/catalog/{agent_id}", response_model=agent_catalog.AgentCatalogDetail)
+async def get_agent_catalog_entry(
+    agent_id: str,
+    _: Any = Depends(get_current_active_user),
+):
+    """One agent, with its generated input wrapper and JSON Schemas (E1.1)."""
+    if not agent_catalog.AGENT_ID_PATTERN.match(agent_id):
+        raise HTTPException(
+            status_code=422,
+            detail="agent_id must look like agent.<name>.v<version>, for example agent.summary.v1",
+        )
+    detail = agent_catalog.get_catalog_detail(agent_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Unknown agent")
+    return detail
 
 
 @router.get("/pipelines", response_model=list[AgentPipelineResponse])
