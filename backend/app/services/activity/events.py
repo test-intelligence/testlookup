@@ -246,6 +246,7 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("policy.updated", "configuration", "policy", "Release gate policy {entity_label} changed: {changed}"),
     _spec("policy.deleted", "configuration", "policy", "Release gate policy {entity_label} was deleted"),
     _spec("policy.activated", "configuration", "policy", "Release gate policy {entity_label} was activated"),
+    _spec("agent_config.updated", "configuration", "project", "Agent {entity_label} configuration changed to version {config_version}: {changed}", "outcome", _HUMAN_OR_KEY),
     _spec("attribution_rule.created", "configuration", "attribution_rule", "Attribution rule {entity_label} was created"),
     _spec("attribution_rule.updated", "configuration", "attribution_rule", "Attribution rule {entity_label} changed: {changed}"),
     _spec("attribution_rule.deleted", "configuration", "attribution_rule", "Attribution rule {entity_label} was deleted"),

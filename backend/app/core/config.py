@@ -477,6 +477,8 @@ class Settings(BaseSettings):
     # is the environment ceiling no project or row may exceed.
     AGENT_PIPELINE_MAX_ATTEMPTS: int = 5
     AGENT_MAX_ATTEMPTS_CEILING: int = 10
+    # E4.1: no project may configure an agent timeout above this (section 4.3).
+    AGENT_MAX_TIMEOUT_CEILING: int = 600
     AGENT_RETRY_BASE_SECONDS: int = 30
     AGENT_RETRY_CAP_SECONDS: int = 600
     # Re-audit M12: cluster-wide cap on concurrent LLM calls per provider,

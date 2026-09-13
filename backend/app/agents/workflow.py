@@ -2639,6 +2639,11 @@ async def _create_pipeline_run(
 
         policy = await get_effective_policy(db, uuid.UUID(str(project_id)))
         run_budget = run_budget_from_policy(policy)
+        from app.services.agent_config_service import config_versions as _agent_config_versions
+
+        # E4.1: freeze each configured agent's config_version, so a later
+        # config change never alters how this run is interpreted.
+        agent_config_versions = await _agent_config_versions(db, uuid.UUID(str(project_id)))
         initial_plan = build_workflow_plan(
             workflow_type=workflow_type,
             cluster_children_enabled=bool(cluster_settings["enabled"]),
@@ -2674,6 +2679,7 @@ async def _create_pipeline_run(
                 "change_ownership_settings": {"enabled": change_ownership_enabled},
                 "defect_commander_settings": {"enabled": defect_commander_enabled},
                 "run_budget": run_budget,
+                "agent_config_versions": agent_config_versions,
                 "budget_spend": {
                     "llm_calls": 0,
                     "tokens": 0,
