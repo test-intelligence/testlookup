@@ -165,6 +165,11 @@ def _route_is_protected(route: APIRoute) -> bool:
     # Agent invocation -> project (router-local guard, E1.2).
     if "{invocation_id}" in path and any("require_invocation_access" in n for n in dep_names):
         return True
+    # Invocation event stream: EventSource cannot send Authorization, so the
+    # credential is a single-use ticket bound to the invocation, issued only
+    # behind require_invocation_access (E1.2).
+    if "{invocation_id}" in path and any("require_invocation_stream_ticket" in n for n in dep_names):
+        return True
     # AI report review -> project (router-local guard, E8.2).
     if "{review_id}" in path and any("require_review_access" in n for n in dep_names):
         return True

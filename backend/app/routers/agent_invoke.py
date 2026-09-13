@@ -1,33 +1,43 @@
 """Invoke one agent through the public API (architecture E1.2).
 
 * ``POST /api/v1/agents/{agent_id}/invoke`` -- run one agent from the catalog
-  (E1.1) on a stored test run.
+  (E1.1) on a stored test run, asynchronously (202) or, for a sync-eligible
+  agent, waiting a bounded time for the result.
 * ``GET  /api/v1/agents/invocations/{invocation_id}`` -- poll it, including the
   agent's stored output once its stage has completed.
 * ``POST /api/v1/agents/invocations/{invocation_id}/retry`` and ``.../cancel`` --
   the pipeline retry and cancel rules, applied to the invocation's run.
+* ``POST /api/v1/agents/invocations/{invocation_id}/events/ticket`` then
+  ``GET .../events?ticket=`` -- progress as server-sent events.
 
 An invocation is not a second execution engine. It is an ordinary pipeline run
 whose frozen plan selects only the agent and the stages it declares as
 dependencies (``agent_planner.build_workflow_plan(invocation_stage=...)``), so
 leases, fencing, row-owned retries, cancellation and Finalize -- including the
 human review request for a report-producing agent -- apply exactly as they do
-to a pipeline. The status is read from that run and never stored twice.
+to a pipeline. The status is read from that run and never stored twice. That
+holds for ``mode=sync`` too: the worker still runs it, and the request only
+waits for it.
 
-Not yet: ``mode=sync`` (refused with 422 for now), payloads other than a stored
-subject, and SSE progress.
+Not yet: payloads other than a stored subject.
 """
 from __future__ import annotations
 
+import asyncio
+import json
+import time
 import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import (
     _enforce_api_key_project_binding,
     get_current_active_user,
@@ -46,9 +56,9 @@ from app.models.postgres import (
     UserRole,
 )
 from app.models.schemas import ReviewBlock
-from app.services import agent_catalog, agent_planner
+from app.services import agent_catalog, agent_planner, invocation_stream
 from app.services.activity.service import ActorRef, record as record_activity
-from app.services.agent_capability_registry import is_report_producing
+from app.services.agent_capability_registry import is_report_producing, is_sync_eligible
 from app.services.pipeline_cancellation import request_cancel
 from app.services.pipeline_retry_config import decide_retry_mode
 from app.services.review_envelope import ReviewEnvelope, envelope_from_review
@@ -79,7 +89,13 @@ class AgentInvokeRequest(BaseModel):
     input: dict[str, Any] = Field(
         description="The agent's <StageName>InvokeInput, as published by GET /api/v1/agents/catalog/{agent_id}.",
     )
-    mode: Literal["async", "sync"] = "async"
+    mode: Literal["async", "sync"] = Field(
+        default="async",
+        description=(
+            "sync waits for the result, and only for sync-eligible agents (see the catalog); "
+            "any other agent runs async and answers 202."
+        ),
+    )
     correlation_id: Optional[str] = Field(default=None, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
 
 
@@ -105,7 +121,40 @@ class AgentInvocationResponse(BaseModel):
     links: dict[str, str]
 
 
-# -- access guard ---------------------------------------------------------------
+class StreamTicketResponse(BaseModel):
+    ticket: str
+    expires_in: int
+    links: dict[str, str]
+
+
+# -- sync slots -----------------------------------------------------------------
+
+
+class _SyncSlots:
+    """Process-wide bound on requests waiting for a sync invocation (section 3.1).
+
+    A counter, not an ``asyncio.Semaphore``: acquiring never waits (a full pool
+    is a 503, not a queue), and the check and increment have no await between
+    them, so they are atomic on the event loop.
+    """
+
+    def __init__(self) -> None:
+        self.in_flight = 0
+
+    def try_acquire(self) -> bool:
+        if self.in_flight >= max(1, int(settings.AGENT_INVOKE_SYNC_CONCURRENCY)):
+            return False
+        self.in_flight += 1
+        return True
+
+    def release(self) -> None:
+        self.in_flight = max(0, self.in_flight - 1)
+
+
+SYNC_SLOTS = _SyncSlots()
+
+
+# -- access guards ----------------------------------------------------------------
 
 
 def require_invocation_access():
@@ -149,6 +198,30 @@ def require_invocation_access():
         if member is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invocation not found")
         return current_user
+
+    return _check
+
+
+def require_invocation_stream_ticket():
+    """Authorise an invocation event stream by its single-use ticket.
+
+    ``EventSource`` cannot send ``Authorization``, so the stream's credential is
+    a ticket that ``require_invocation_access`` already gated at issue time. It
+    is bound to the invocation in the path and consumed on use. Anything else is
+    401.
+    """
+
+    async def _check(
+        request: Request,
+        ticket: str = Query(..., min_length=16, max_length=128),
+    ) -> uuid.UUID:
+        try:
+            invocation_uuid = uuid.UUID(str(request.path_params.get("invocation_id")))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired stream ticket")
+        if not await invocation_stream.redeem_stream_ticket(ticket, invocation_uuid):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired stream ticket")
+        return invocation_uuid
 
     return _check
 
@@ -243,8 +316,14 @@ async def _load_invocation_or_404(db: AsyncSession, invocation_id: uuid.UUID) ->
 
 
 async def _load_pipeline(db: AsyncSession, invocation: Any) -> Any:
+    # populate_existing: a sync wait re-reads the same row in one session, and
+    # the identity map would otherwise keep answering with the first read.
     return (
-        await db.execute(select(AgentPipelineRun).where(AgentPipelineRun.id == invocation.pipeline_run_id))
+        await db.execute(
+            select(AgentPipelineRun)
+            .where(AgentPipelineRun.id == invocation.pipeline_run_id)
+            .execution_options(populate_existing=True)
+        )
     ).scalar_one_or_none()
 
 
@@ -258,6 +337,7 @@ async def _invocation_view(db: AsyncSession, invocation: Any) -> dict[str, Any]:
                 .where(ReviewRequest.pipeline_run_id == invocation.pipeline_run_id)
                 .order_by(ReviewRequest.created_at.desc())
                 .limit(1)
+                .execution_options(populate_existing=True)
             )
         ).scalars().first()
         stage = (
@@ -269,6 +349,7 @@ async def _invocation_view(db: AsyncSession, invocation: Any) -> dict[str, Any]:
                 )
                 .order_by(AgentStageResult.attempt.desc())
                 .limit(1)
+                .execution_options(populate_existing=True)
             )
         ).scalars().first()
     return project_invocation(invocation, pipeline, review, stage=stage)
@@ -285,6 +366,24 @@ async def _current_mode_snapshot() -> dict[str, Any]:
     from app.agents.workflow import _resolve_analysis_mode_snapshot  # noqa: PLC0415
 
     return await _resolve_analysis_mode_snapshot()
+
+
+async def _wait_for_terminal(
+    db: AsyncSession,
+    invocation: Any,
+    *,
+    wait_seconds: float,
+    poll_interval: float = 0.5,
+    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, Any]:
+    """Re-read the invocation until its run leaves ``in_progress`` or the wait ends."""
+    deadline = clock() + max(0.0, float(wait_seconds))
+    while True:
+        await sleep(poll_interval)
+        view = await _invocation_view(db, invocation)
+        if view["status"] != "in_progress" or clock() >= deadline:
+            return view
 
 
 def _validate_invocation(agent_id: str, body: AgentInvokeRequest) -> tuple[str, str, uuid.UUID]:
@@ -305,11 +404,6 @@ def _validate_invocation(agent_id: str, body: AgentInvokeRequest) -> tuple[str, 
                 f"{agent_id} cannot be invoked on its own yet: it runs only inside a workflow "
                 "(a cluster child, runtime or investigation stage)"
             ),
-        )
-    if body.mode == "sync":
-        raise HTTPException(
-            status_code=422,
-            detail="mode=sync is not available yet; invoke with mode=async and poll links.self",
         )
     try:
         parsed = agent_catalog.input_wrapper(agent_id).model_validate(body.input)
@@ -345,6 +439,60 @@ async def _in_progress_invocation(
     return view if view["status"] == "in_progress" else None
 
 
+def _sse(event: str, data: Any) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+async def invocation_event_stream(
+    invocation_id: uuid.UUID,
+    request: Any,
+    *,
+    poll_interval: float = 1.0,
+    heartbeat_every: float = 15.0,
+    max_seconds: float = 1800.0,
+    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> AsyncIterator[str]:
+    """Server-sent events for one invocation: one ``invocation`` event per change.
+
+    Each read uses its own session: a request-scoped session would be closed
+    before a streamed body is sent. The stream ends when the run leaves
+    ``in_progress``, when the client disconnects, or after ``max_seconds``.
+    """
+    from app.db.postgres import AsyncSessionLocal  # noqa: PLC0415
+
+    started = last_sent = clock()
+    last_key: Optional[tuple] = None
+    while True:
+        if await request.is_disconnected():
+            return
+        async with AsyncSessionLocal() as db:
+            invocation = (
+                await db.execute(select(AgentInvocation).where(AgentInvocation.id == invocation_id))
+            ).scalar_one_or_none()
+            if invocation is None:
+                yield _sse("gone", {"invocation_id": str(invocation_id)})
+                return
+            view = await _invocation_view(db, invocation)
+        key = (
+            view["status"], view["attempt"], view["review"]["state"],
+            str(view["next_retry_at"]), view["output"] is not None,
+        )
+        if key != last_key:
+            last_key = key
+            last_sent = clock()
+            yield _sse("invocation", AgentInvocationResponse(**view).model_dump(mode="json"))
+        if view["status"] != "in_progress":
+            return
+        if clock() - started >= max_seconds:
+            yield _sse("timeout", {"invocation_id": str(invocation_id), "poll": view["links"]["self"]})
+            return
+        if clock() - last_sent >= heartbeat_every:
+            last_sent = clock()
+            yield ": heartbeat\n\n"
+        await sleep(poll_interval)
+
+
 # -- routes (literal paths first: /invocations/... before /{agent_id}/invoke) -----
 
 
@@ -357,6 +505,40 @@ async def get_invocation(
     """Poll one invocation: status, attempts, output and review state, read from its run."""
     invocation = await _load_invocation_or_404(db, invocation_id)
     return await _invocation_view(db, invocation)
+
+
+# activity: none -- issues a 60-second read credential for the caller's own event stream; nothing in the project changes.
+@router.post("/invocations/{invocation_id}/events/ticket", response_model=StreamTicketResponse)
+async def issue_invocation_stream_ticket(
+    invocation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_invocation_access()),
+):
+    """A single-use ticket for ``GET .../events`` (EventSource cannot send Authorization)."""
+    await _load_invocation_or_404(db, invocation_id)
+    try:
+        ticket, ttl = await invocation_stream.issue_stream_ticket(invocation_id, getattr(current_user, "id", None))
+    except Exception:  # noqa: BLE001 -- the ticket store is down: say so, do not 500
+        raise HTTPException(status_code=503, detail="Stream tickets are unavailable; poll links.self instead") from None
+    return {
+        "ticket": ticket,
+        "expires_in": ttl,
+        "links": {"events": f"/api/v1/agents/invocations/{invocation_id}/events?ticket={ticket}"},
+    }
+
+
+@router.get("/invocations/{invocation_id}/events")
+async def stream_invocation_events(
+    invocation_id: uuid.UUID,
+    request: Request,
+    _: uuid.UUID = Depends(require_invocation_stream_ticket()),
+):
+    """Progress of one invocation as server-sent events, until its run finishes."""
+    return StreamingResponse(
+        invocation_event_stream(invocation_id, request),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
 
 
 @router.post("/invocations/{invocation_id}/retry", response_model=AgentInvocationResponse, status_code=202)
@@ -525,13 +707,20 @@ async def invoke_agent(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
-    """Invoke one agent on a stored test run. Returns 202 and a poll link.
+    """Invoke one agent on a stored test run.
+
+    ``mode=async`` (the default) answers 202 with a poll link. ``mode=sync`` on a
+    sync-eligible agent waits up to ``AGENT_INVOKE_SYNC_WAIT_SECONDS`` for the run
+    to finish: 200 with the result if it did, 202 if it is still going. A full
+    pool of sync slots is 503 with ``Retry-After``. ``mode=sync`` on any other
+    agent runs async.
 
     The project is derived from the test run; ``project_id`` in the body is an
     assertion that must match it. An invocation of the same agent on the same
     run that is still in progress is returned as-is with 200.
     """
     stage_name, workflow_type, test_run_id = _validate_invocation(agent_id, body)
+    sync = body.mode == "sync" and is_sync_eligible(stage_name)
     run = (await db.execute(select(TestRun).where(TestRun.id == test_run_id))).scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=404, detail="TestRun not found")
@@ -544,35 +733,52 @@ async def invoke_agent(
         response.status_code = 200
         return existing
 
-    now = datetime.now(timezone.utc)
-    invocation = AgentInvocation(
-        id=uuid.uuid4(),
-        project_id=run.project_id,
-        agent_id=agent_id,
-        stage_name=stage_name,
-        test_run_id=run.id,
-        pipeline_run_id=uuid.uuid4(),
-        workflow_type=workflow_type,
-        mode=body.mode,
-        requested_by=getattr(current_user, "id", None),
-        correlation_id=body.correlation_id,
-        created_at=now,
-        dispatched_at=now,
-    )
-    db.add(invocation)
-    await record_activity(
-        db,
-        project_id=run.project_id,
-        event_type="agent.invoked",
-        actor=ActorRef.from_user(current_user),
-        entity_id=run.id,
-        entity_label=f"Build {run.build_number}",
-        context={"agent_id": agent_id, "invocation_id": str(invocation.id)},
-    )
-    # Commit BEFORE dispatch: the worker loads the row by id.
-    await db.commit()
+    if sync and not SYNC_SLOTS.try_acquire():
+        raise HTTPException(
+            status_code=503,
+            detail="All synchronous invocation slots are busy; retry shortly or invoke with mode=async",
+            headers={"Retry-After": "2"},
+        )
+    try:
+        now = datetime.now(timezone.utc)
+        invocation = AgentInvocation(
+            id=uuid.uuid4(),
+            project_id=run.project_id,
+            agent_id=agent_id,
+            stage_name=stage_name,
+            test_run_id=run.id,
+            pipeline_run_id=uuid.uuid4(),
+            workflow_type=workflow_type,
+            mode="sync" if sync else "async",
+            requested_by=getattr(current_user, "id", None),
+            correlation_id=body.correlation_id,
+            created_at=now,
+            dispatched_at=now,
+        )
+        db.add(invocation)
+        await record_activity(
+            db,
+            project_id=run.project_id,
+            event_type="agent.invoked",
+            actor=ActorRef.from_user(current_user),
+            entity_id=run.id,
+            entity_label=f"Build {run.build_number}",
+            context={"agent_id": agent_id, "invocation_id": str(invocation.id)},
+        )
+        # Commit BEFORE dispatch: the worker loads the row by id.
+        await db.commit()
 
-    from app.worker.tasks import run_agent_invocation
+        from app.worker.tasks import run_agent_invocation
 
-    run_agent_invocation.apply_async(kwargs={"invocation_id": str(invocation.id)}, queue="ai_analysis")
-    return project_invocation(invocation, None, None)
+        run_agent_invocation.apply_async(kwargs={"invocation_id": str(invocation.id)}, queue="ai_analysis")
+        if not sync:
+            return project_invocation(invocation, None, None)
+        view = await _wait_for_terminal(
+            db, invocation, wait_seconds=float(settings.AGENT_INVOKE_SYNC_WAIT_SECONDS),
+        )
+        if view["status"] != "in_progress":
+            response.status_code = 200
+        return view
+    finally:
+        if sync:
+            SYNC_SLOTS.release()
