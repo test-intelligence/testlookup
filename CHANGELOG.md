@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-13 - Add budget-aware per-capability ModelRouter (T6 / E5.1)
+
+Added a pure ModelRouter that resolves deterministic, SLM, or LLM choices from
+the capability maps and effective project config. Initial calls and SLM-to-LLM
+escalations both check remaining pipeline cost; escalation also requires an
+allowed trigger, `auto` tier, an available LLM endpoint, remaining escalation
+and step-call budgets, and falls back deterministically when any check fails.
+
+The catalog now publishes additive `default_tier` and `escalation` fields.
+Routing maps remain module-level so `CapabilitySpecV1` and frozen workflow
+snapshots do not change. `flaky_sentinel` and `test_health` now correctly carry
+zero expected cost; `release_risk` stays budgeted because it calls an LLM for
+optional reasoning. Existing LLM defaults are not downgraded before E9.3.
+
 ## 2026-09-13 - Mutating agent actions require act mode (T4 / K4)
 
 Approved actions proposed by an agent pipeline now resolve the proposing

@@ -32,6 +32,8 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 from app.models.agentic_runtime import CapabilitySpecV1
 from app.services.agent_capability_registry import (
     CAPABILITY_REGISTRY,
+    DEFAULT_TIERS,
+    ESCALATION_TRIGGERS,
     is_report_producing,
     is_sync_eligible,
 )
@@ -66,6 +68,15 @@ class AgentCatalogEntry(BaseModel):
     stage_name: str
     permission: str
     execution: str
+    default_tier: Literal["deterministic", "slm", "llm"]
+    escalation: list[
+        Literal[
+            "validation_failure",
+            "low_confidence",
+            "not_enough_evidence",
+            "contradictions",
+        ]
+    ]
     sync_eligible: bool = Field(
         description="May be invoked synchronously: deterministic and expected to finish in 5 s or less.",
     )
@@ -159,6 +170,8 @@ def _entry_fields(spec: CapabilitySpecV1) -> dict[str, Any]:
         "stage_name": spec.stage_name,
         "permission": spec.permission,
         "execution": spec.execution,
+        "default_tier": DEFAULT_TIERS[spec.stage_name],
+        "escalation": sorted(ESCALATION_TRIGGERS[spec.stage_name]),
         "sync_eligible": is_sync_eligible(spec.stage_name),
         "produces_report": is_report_producing(spec.stage_name),
         "input_schema": spec.input_schema,

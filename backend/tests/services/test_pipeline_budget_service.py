@@ -9,6 +9,7 @@ from app.services.pipeline_budget_service import (
     get_pipeline_budget_context,
     reconcile_pipeline_budget,
     reconcile_reaped_pipeline_metadata,
+    remaining_cost_usd,
     reset_pipeline_budget_context,
     reserve_stage_in_metadata,
     set_pipeline_budget_context,
@@ -94,6 +95,18 @@ def _metadata():
             "budget_stop_reasons": [],
         },
     }
+
+
+def test_remaining_cost_subtracts_spent_and_reserved_dollars():
+    metadata = _metadata()
+    metadata["budget_spend"]["cost_usd"] = 0.2
+    metadata["budget_spend"]["reserved_cost_usd"] = 0.35
+
+    assert remaining_cost_usd(metadata) == 0.45
+    assert remaining_cost_usd({}) is None
+    assert remaining_cost_usd({"budget_authority": "investigator_ledger"}) is None
+    metadata["budget_spend"]["cost_usd"] = "invalid"
+    assert remaining_cost_usd(metadata) == 0.0
 
 
 def test_reservations_enforce_aggregate_cap_before_provider_calls():
