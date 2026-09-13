@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-13 - Agentic architecture handover to the next implementer
+
+`architecture/AGENTIC_HANDOVER_2026-09-13.md` hands the agentic architecture
+programme to its next implementer. It records what is true in the code on
+`main` today: 21 of 50 stories shipped (E7, E8 and E1 complete, E4 at 3½ of
+4), the three owner decisions that gate work, known defects with reproduction
+steps, a prioritized task list, what must not change, the E5.1 findings, and
+a ready-to-paste resume prompt. Documentation only.
+
 ## 2026-09-13 - One-click Jira defects file at most one issue per failure signature
 
 `POST /api/v1/projects/{project_id}/defects/jira` is the only path that
