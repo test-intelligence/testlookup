@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026-09-12 - every AI report response says whether a human has reviewed it (E8.3)
+
+A report response has always said what the AI concluded. Since E8.1 there is
+also a durable record of whether a person has reviewed it, and a client has to
+see that where it reads the report, not on a separate endpoint it may never
+call.
+
+- **The review envelope.** The AI run summary (`GET /api/v1/agents/runs/{run_id}/summary`),
+  the mode summary (`GET /api/v1/runs/{run_id}/summary`), the intelligence
+  snapshot (`GET /api/v1/runs/{run_id}/intelligence`) and the decision-report
+  versions (`GET /api/v1/runs/{run_id}/decision-reports`) now carry:
+  - `requires_human_review`
+  - `review: {state, message, review_id, reviewed_at}`
+  - `ai_disclaimer` and a versioned `ai_disclaimer_version`
+
+  They also send two headers: `X-TestLookup-AI-Generated: true|false` and
+  `X-TestLookup-Review-State`. Both are added to CORS `expose_headers`, without
+  which a browser cannot read them.
+- **Reviewer identity is never in the payload.** The block says whether and
+  when a report was reviewed, not by whom (architecture section 8.2).
+- **AI content with no review request is unreviewed, not settled.** A report
+  from before E8.1, or a run whose request failed to stage, is
+  `pending_review` with no `review_id`. A client that gates on `accepted` is
+  never handed something that reads as reviewed.
+- **A deterministic fallback is `not_applicable`**, and
+  `X-TestLookup-AI-Generated` is `false`. The summary built from PostgreSQL when
+  the AI pipeline has not run was written by no model, and labelling it AI would
+  send people to review something that needs no review.
+- **Applied per response, never cached.** The intelligence snapshot cache
+  stores the report; the envelope is added after the cache read and after the
+  snapshot write, so a review settled a minute ago is never masked by a cached
+  state.
+- **The decision-report list stays a list.** A top-level wrapper would break
+  every existing client, so each version carries the envelope. It looks up the
+  deep pipeline's review, because decision reports come from that workflow.
+
+Not covered yet, and recorded in the architecture doc:
+- the AI comparison report on `/runs/compare`, which has no review subject;
+- MCP tool results (`review_state` parity is E8.6);
+- the export and PDF paths, which are gated in E8.4.
+
+Tests: `backend/tests/test_review_envelope.py`, and the updated decision-report
+test in `backend/tests/services/test_run_intelligence_decision_projection.py`.
 ## 2026-09-12 - backend test files pass when run on their own
 
 `pytest "tests/test_epic2_intelligence_front_door.py::TestRegressionGuards::test_run_intelligence_router_exists"`

@@ -61,13 +61,23 @@ def test_stale_verified_report_and_rejected_latest_attempt_remain_distinct():
 async def test_decision_report_version_endpoint_returns_bounded_metadata(monkeypatch):
     from app.routers import run_intelligence
 
-    monkeypatch.setattr(run_intelligence, "get_mongo_db", lambda: _Mongo())
-    result = await run_intelligence.list_run_decision_reports("run-1", limit=1)
+    from fastapi import Response
 
-    assert result == [{
+    monkeypatch.setattr(run_intelligence, "get_mongo_db", lambda: _Mongo())
+    response = Response()
+    # "run-1" is not a UUID, so the E8.3 envelope reports unreviewed without a query.
+    result = await run_intelligence.list_run_decision_reports("run-1", response, limit=1, db=None)
+
+    assert len(result) == 1
+    metadata = {k: result[0][k] for k in ("report_id", "report_version", "supersedes_report_id", "generated_at", "status")}
+    assert metadata == {
         "report_id": "r2",
         "report_version": 2,
         "supersedes_report_id": None,
         "generated_at": None,
         "status": "published",
-    }]
+    }
+    # E8.3: each version carries the review envelope, failing closed to unreviewed.
+    assert result[0]["requires_human_review"] is True
+    assert result[0]["review"]["state"] == "pending_review"
+    assert response.headers["X-TestLookup-Review-State"] == "pending_review"

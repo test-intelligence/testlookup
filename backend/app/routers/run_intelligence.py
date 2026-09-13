@@ -37,8 +37,32 @@ from app.services.run_diff_service import get_baseline_diff
 from app.services.run_intelligence_service import get_run_intelligence, get_run_mode_summary
 from app.services.intelligence_snapshot_service import get_cached_snapshot, get_stale_snapshot, invalidate, save_snapshot
 from app.models.postgres import TestRun
+from app.services.review_envelope import review_envelope_for_run
 
 logger = logging.getLogger("routers.run_intelligence")
+
+
+async def _with_review(
+    db: Any,
+    response: Response,
+    run_id: Any,
+    payload: Any,
+    *,
+    ai_generated: bool = True,
+    workflow_type: str | None = None,
+) -> Any:
+    """Attach the E8.3 human-review envelope and headers to a report payload.
+
+    Applied at response time, never stored: a cached intelligence snapshot must
+    not freeze a review state that a person may settle a minute later.
+    """
+    envelope = await review_envelope_for_run(
+        db, run_id, workflow_type=workflow_type, ai_generated=ai_generated
+    )
+    envelope.apply_headers(response)
+    if isinstance(payload, dict):
+        return {**payload, **envelope.fields()}
+    return payload
 
 router = APIRouter(prefix="/api/v1/runs", tags=["Run Intelligence"])
 
@@ -46,6 +70,7 @@ router = APIRouter(prefix="/api/v1/runs", tags=["Run Intelligence"])
 @router.get("/{run_id}/intelligence")
 async def get_run_intelligence_endpoint(
     run_id: uuid.UUID,
+    response: Response,
     include: str = Query(
         default="",
         description="Comma-separated optional expansions: test_cases,evidence,history",
@@ -85,7 +110,7 @@ async def get_run_intelligence_endpoint(
             run_intelligence_requests_total.labels(status="cache_hit").inc()
             if isinstance(cached, dict):
                 cached["_snapshot"] = {"cached": True, "stale": False}
-            return cached
+            return await _with_review(db, response, run_id, cached)
 
         # Try stale snapshot (serves immediately while refresh is recommended)
         stale = (
@@ -97,7 +122,7 @@ async def get_run_intelligence_endpoint(
             run_intelligence_requests_total.labels(status="cache_stale").inc()
             if isinstance(stale, dict):
                 stale["_snapshot"] = {"cached": True, "stale": True}
-            return stale
+            return await _with_review(db, response, run_id, stale)
 
         # Cache miss — compute live
         result = await get_run_intelligence(
@@ -126,7 +151,8 @@ async def get_run_intelligence_endpoint(
 
         if isinstance(result, dict):
             result["_snapshot"] = {"cached": False, "stale": False}
-        return result
+        # After save_snapshot above: the envelope is never written into the cache.
+        return await _with_review(db, response, run_id, result)
     except ValueError as exc:
         run_intelligence_requests_total.labels(status="failure").inc()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -137,7 +163,9 @@ async def get_run_intelligence_endpoint(
 @router.get("/{run_id}/decision-reports")
 async def list_run_decision_reports(
     run_id: uuid.UUID,
+    response: Response,
     limit: int = Query(default=50, ge=1, le=100),
+    db: Any = Depends(get_db),
     _: Any = Depends(require_run_access()),
 ):
     """List immutable published DecisionReport versions for an authorized run."""
@@ -151,12 +179,19 @@ async def list_run_decision_reports(
         # Do not turn a transient Mongo outage into an unbounded error surface;
         # callers receive a truthful unavailable response.
         raise HTTPException(status_code=503, detail="decision_report_versions_unavailable") from None
-    return versions
+    # E8.3: decision reports come from the deep pipeline, and every version of
+    # the run's report inherits that run's one review (section 8.1). The list
+    # stays a list -- a top-level wrapper would break every existing client --
+    # so each version carries the envelope.
+    envelope = await review_envelope_for_run(db, run_id, workflow_type="deep")
+    envelope.apply_headers(response)
+    return [{**version, **envelope.fields()} for version in versions]
 
 
 @router.get("/{run_id}/summary")
 async def get_run_summary_by_mode(
     run_id: uuid.UUID,
+    response: Response,
     mode: str = Query(
         default="executive",
         description="Summary mode: executive | developer | manager",
@@ -179,7 +214,10 @@ async def get_run_summary_by_mode(
         result = await get_run_mode_summary(run_id, mode, db, mongo)
         source = "fallback" if result.get("fallback_used") else "llm"
         summary_requests_total.labels(mode=mode, source=source).inc()
-        return result
+        # A fallback summary is built deterministically: not AI-generated.
+        return await _with_review(
+            db, response, run_id, result, ai_generated=not bool(result.get("fallback_used"))
+        )
     except ValueError as exc:
         summary_requests_total.labels(mode=mode, source="error").inc()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
