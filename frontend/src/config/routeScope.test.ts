@@ -39,7 +39,7 @@ describe('routeScope', () => {
     expect(routeScope('/a-page-that-does-not-exist')).toBe('any')
   })
 
-  it('names the seven pages that gate on All Projects and no others', () => {
+  it('names the eight pages that gate on All Projects and no others', () => {
     // A literal list, so widening the registry is a decision someone makes
     // rather than a side effect. The ratchet test proves this list matches the
     // code; this one proves it matches intent.
@@ -49,6 +49,9 @@ describe('routeScope', () => {
       // project picker prompt in All Projects mode.
       '/activity',
       '/flaky-coach',
+      // /reviews joined in E8.5: the review queue is listed per project, so
+      // All Projects mode renders the picker prompt instead of a queue.
+      '/reviews',
       '/settings/api-keys',
       '/settings/github',
       '/settings/gitlab',

@@ -1,3 +1,4 @@
+import type { ReviewEnvelopeFields } from '@/types/review'
 import { api } from './api'
 
 export interface RunSummary {
@@ -386,7 +387,7 @@ export interface Provenance {
   deterministic_checks_used: string[]
 }
 
-export interface RunIntelligence {
+export interface RunIntelligence extends ReviewEnvelopeFields {
   run: RunSummary
   structured_summary: StructuredSummary | null
   failure_clusters: FailureClusterIntel[]

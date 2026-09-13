@@ -1,3 +1,4 @@
+import type { ReviewEnvelopeFields } from '@/types/review'
 // Internal vocabulary of agent_pipeline_runs.status (E7.1, migration 0173).
 // `partial` is retired: a finished run with failed stages is `completed` with
 // execution_metadata.stage_quality === 'degraded' (see isDegradedPipeline).
@@ -222,7 +223,7 @@ export interface AgentPipelineRun {
   suite_name?: string | null
 }
 
-export interface RunSummary {
+export interface RunSummary extends ReviewEnvelopeFields {
   test_run_id: string
   project_id: string
   build_number: string

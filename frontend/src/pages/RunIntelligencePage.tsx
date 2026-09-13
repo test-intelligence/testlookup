@@ -57,6 +57,7 @@ import { deriveDecisionTrustState } from '@/components/ai/decisionTrustState'
 import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
 import RunStepFlipCard from '@/components/runs/RunStepFlipCard'
 import { useDecisionReportVersions, useRunIntelligence, useRunModeSummary } from '@/hooks/useRunIntelligence'
+import ReviewBanner from '@/components/reviews/ReviewBanner'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { onboardingService } from '@/services/onboardingService'
@@ -1527,6 +1528,9 @@ export default function RunIntelligencePage() {
         onEvidence={handleEvidence}
         refreshing={refreshing}
       />
+
+      {/* E8.5: the AI report's human-review status (E8.3 envelope). */}
+      <ReviewBanner envelope={intelligence} className="mb-4" />
 
       <DecisionIntelligencePanel
         runId={run.id}
