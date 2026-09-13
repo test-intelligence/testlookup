@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026-09-13 - `release.decided` webhooks are actually sent
+
+`release.decided` was listed in the outbound webhook catalog, and the UI and API
+let customers subscribe to it, but nothing ever emitted it. A subscriber got a
+success response and then never received a delivery.
+
+- **Where it fires.** There are two writes of a release decision, and both emit
+  after their transaction commits, so a subscriber never hears about a decision
+  that rolled back:
+  - the release-risk agent persists a decision at the end of a deep run
+    (`trigger: "agent"`);
+  - a QA lead overrides it via `POST /api/v1/release-readiness/{run_id}/override`
+    (`trigger: "override"`, `overridden: true`).
+- **Why overrides emit (decision).** An override changes the value CI pipelines
+  gate on, and that value is exactly what a subscriber listens for. Every
+  override is its own delivery. A retried agent write for the same pipeline run
+  is deduplicated.
+- **Payload.** `run_id`, `project_id`, `trigger`, `recommendation`,
+  `draft_recommendation`, `risk_score`, `blocking_issues`, `conditions_for_go`,
+  `synthesized`, `overridden`, `requires_human_review`,
+  `review {state, review_id, reviewed_at}`, `review_gate_enforced`,
+  `created_at`, `updated_at`.
+  - The value matches `GET /api/v1/release-readiness/{run_id}`.
+  - No reviewer or overrider identity is included, and neither is the override
+    reason.
+- **Review gate (E8.4).** The webhook uses the same rule as the
+  release-readiness response; the rule is now one shared function,
+  `release_review_projection`. While `REVIEW_GATE_ENFORCED` is on, an
+  unreviewed AI decision is sent as `PENDING_REVIEW`, with the model's value in
+  `draft_recommendation`. Otherwise the value is unchanged.
+- **Delivery is best-effort,** like every other producer. If building the
+  payload fails, the event is dropped rather than sent ungated.
+
+Found while fixing, not fixed here:
+- `defect.promoted` has the same defect: it is offered, but nothing sends it.
+  The new guard lists it as a known gap.
+- An agent rewrite of a decision that a QA lead had overridden keeps the stale
+  override fields.
+
+Tests: `backend/tests/test_release_decided_webhook.py`. The agent path stages
+exactly one delivery after the commit, and a failed commit sends nothing. The
+override path runs through the route handler. The gate projection is checked
+while enforced. A guard checks that every catalog event has a producer. Publishes
+are bound to the real `deliver_webhook` signature.
 ## 2026-09-13 - Authorization ratchet: every path id is classified, and the agent routers get no exemptions (E1.6)
 
 `tests/test_architectural_authorization.py` checks that a route taking a
@@ -530,7 +574,6 @@ catalog but never emitted, so subscribers never receive a delivery. It is
 tracked separately.
 
 Tests: `backend/tests/test_comment_distribution_gates.py`.
-
 ## 2026-09-13 - AI summaries in notifications and digests obey the review gate (E8.4, slice 2)
 
 Slice 1 gated report files, share links and the release-readiness value. This

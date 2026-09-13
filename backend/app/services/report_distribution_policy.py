@@ -50,10 +50,12 @@ __all__ = [
     "gate_ai_summary_text",
     "gate_enforced",
     "gate_kind_labels",
+    "gate_release_decided_payload",
     "gate_release_verdict",
     "record_distribution",
     "record_distribution_detached",
     "refusal_detail",
+    "release_review_projection",
 ]
 
 logger = structlog.get_logger("services.report_distribution_policy")
@@ -215,30 +217,87 @@ async def apply_release_review_gate(
     """
     from app.models.schemas import ReviewBlock  # noqa: PLC0415
 
-    synthesized = bool(getattr(council, "synthesized", False))
-    envelope = (
-        not_ai_generated()
-        if synthesized
-        else await review_envelope_for_run(db, run_id, workflow_type="deep")
+    envelope, enforced, withhold = await release_review_projection(
+        db,
+        run_id=run_id,
+        synthesized=bool(getattr(council, "synthesized", False)),
+        human_override=getattr(council, "human_override", None),
     )
-    enforced = gate_enforced()
     update: dict[str, Any] = {
         "requires_human_review": envelope.ai_generated,
         "review": ReviewBlock(**envelope.block()),
         "review_gate_enforced": enforced,
     }
-    unreviewed = (
-        envelope.ai_generated
-        and envelope.state != "accepted"
-        and not getattr(council, "human_override", None)
-    )
-    if unreviewed and enforced:
+    if withhold:
         recommendation = str(council.recommendation)
         update["draft_recommendation"] = recommendation
         update["recommendation"] = (
             f"ADVISORY_{recommendation}" if allow_advisory else "PENDING_REVIEW"
         )
     return council.model_copy(update=update)
+
+
+async def release_review_projection(
+    db: Any,
+    *,
+    run_id: Any,
+    synthesized: bool,
+    human_override: Any,
+) -> tuple[ReviewEnvelope, bool, bool]:
+    """The one rule for a release value, shared by the release-readiness response
+    and the ``release.decided`` webhook so the two can never disagree.
+
+    Returns ``(envelope, enforced, withhold)``. ``withhold`` is true when the value
+    must not leave as-is: an AI decision no human accepted and no human overrode,
+    while the gate is enforced.
+    """
+    envelope = (
+        not_ai_generated()
+        if synthesized
+        else await review_envelope_for_run(db, run_id, workflow_type="deep")
+    )
+    enforced = gate_enforced()
+    unreviewed = (
+        envelope.ai_generated
+        and envelope.state != "accepted"
+        and not human_override
+    )
+    return envelope, enforced, bool(unreviewed and enforced)
+
+
+async def gate_release_decided_payload(
+    db: Any,
+    payload: dict[str, Any],
+    *,
+    run_id: Any,
+    synthesized: bool,
+    human_override: Any,
+) -> dict[str, Any]:
+    """Project the review gate onto a ``release.decided`` webhook payload.
+
+    Same rule as :func:`apply_release_review_gate`, without the advisory variant:
+    a webhook has no caller to ask for one. While enforced, an unreviewed AI
+    decision is sent as ``PENDING_REVIEW`` with the model's value in
+    ``draft_recommendation``; otherwise the value is unchanged. Either way the
+    payload gains ``review`` ``{state, review_id, reviewed_at}``, which says that
+    a human reviewed it and when, never who.
+    """
+    envelope, enforced, withhold = await release_review_projection(
+        db, run_id=run_id, synthesized=synthesized, human_override=human_override
+    )
+    projected = dict(payload)
+    projected["requires_human_review"] = envelope.ai_generated
+    projected["review"] = {
+        "state": envelope.state,
+        "review_id": envelope.review_id,
+        "reviewed_at": envelope.reviewed_at,
+    }
+    projected["review_gate_enforced"] = enforced
+    projected["draft_recommendation"] = None
+    if withhold:
+        projected["draft_recommendation"] = projected.get("recommendation")
+        projected["recommendation"] = "PENDING_REVIEW"
+    return projected
 
 
 # ── AI summary text in notifications and digests (E8.4 slice 2) ─────────────

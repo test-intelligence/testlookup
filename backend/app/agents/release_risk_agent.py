@@ -626,6 +626,23 @@ class ReleaseRiskAgent(BaseAgent):
                 ))
             await db.commit()
 
+        # Outbound ``release.decided``. It runs after the commit above so a
+        # subscriber never hears of a decision that rolled back. The emitter
+        # never raises; the guard also covers a failed import.
+        try:
+            from app.services.release_decision_webhook import (
+                TRIGGER_AGENT,
+                emit_release_decided,
+            )
+
+            await emit_release_decided(test_run_id, trigger=TRIGGER_AGENT)
+        except Exception as exc:  # noqa: BLE001 — host path isolation
+            self.logger.warning(
+                "release_decided_webhook_hook_failed",
+                test_run_id=str(test_run_id),
+                error=str(exc),
+            )
+
         # AI-1 auto-trigger (shadow): a recorded NO_GO gate decision enqueues
         # an investigation for the run. Own try/except — a broken
         # investigator must NEVER affect the release gate. The service
