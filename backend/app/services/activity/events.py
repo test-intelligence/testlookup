@@ -197,6 +197,9 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # NOT tidily succeed.
     _spec("analysis.retried", "analysis", "run", "AI analysis for {entity_label} was retried ({mode})", "attempt"),
     _spec("analysis.cancelled", "analysis", "run", "AI analysis for {entity_label} was cancelled", "attempt"),
+    # E1.2: one agent invoked through the public API. An attempt write, like a
+    # trigger: the request is worth recording whatever the worker does next.
+    _spec("agent.invoked", "analysis", "run", "Agent {agent_id} was invoked on {entity_label}", "attempt"),
     # E8.2: a human settled the review of an AI report. Outcome writes: the row
     # commits with the review itself, and a decision that rolled back never
     # happened. Humans only -- the API refuses keys and synthetic accounts.

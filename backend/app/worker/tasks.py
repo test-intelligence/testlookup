@@ -6347,3 +6347,92 @@ def reconcile_release_sort_keys(self) -> dict:
         }
 
     return _run_async(_run())
+
+
+
+@celery_app.task(
+    name="app.worker.tasks.run_agent_invocation",
+    bind=True,
+    max_retries=0,
+    queue="ai_analysis",
+    time_limit=1800,
+)
+def run_agent_invocation(self, invocation_id: str):
+    """Run one agent invoked through ``POST /api/v1/agents/{agent_id}/invoke`` (E1.2).
+
+    The invocation IS a pipeline run -- same leases, fencing, row-owned retries,
+    cancellation and Finalize (review staging) -- created under the id the API
+    minted, with a frozen plan that selects only the agent and its declared
+    dependencies. A failed attempt goes through the pipeline retry scheduler,
+    whose resume keeps that frozen plan.
+    """
+    _bind_task_context(self, invocation_id=invocation_id)
+    from sqlalchemy import select
+
+    from app.agents.workflow import run_deep_pipeline, run_offline_pipeline
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import AgentInvocation, TestRun
+
+    async def _load() -> dict | None:
+        async with AsyncSessionLocal() as db:
+            invocation = await db.get(AgentInvocation, uuid.UUID(str(invocation_id)))
+            if invocation is None:
+                return None
+            build_number = (
+                await db.execute(select(TestRun.build_number).where(TestRun.id == invocation.test_run_id))
+            ).scalar_one_or_none()
+            return {
+                "test_run_id": str(invocation.test_run_id),
+                "project_id": str(invocation.project_id),
+                "pipeline_run_id": str(invocation.pipeline_run_id),
+                "stage_name": str(invocation.stage_name),
+                "workflow_type": str(invocation.workflow_type),
+                "build_number": str(build_number or "invocation"),
+            }
+
+    loaded = _run_async(_load())
+    if loaded is None:
+        logger.warning("[Task %s] Invocation %s not found", self.request.id, invocation_id)
+        return {"invocation_id": invocation_id, "status": "not_found"}
+
+    dedup_key = f"testlookup:dedup:invocation:{invocation_id}"
+    dedup_owner = str(self.request.id)
+
+    async def _run() -> dict:
+        common = {
+            "test_run_id": loaded["test_run_id"],
+            "project_id": loaded["project_id"],
+            "build_number": loaded["build_number"],
+            "pipeline_run_id": loaded["pipeline_run_id"],
+            "create_if_missing": True,
+            "invocation_stage": loaded["stage_name"],
+        }
+        if loaded["workflow_type"] == "deep":
+            return await run_deep_pipeline(**common)
+        return await run_offline_pipeline(workflow_type=loaded["workflow_type"], **common)
+
+    try:
+        final_state = _run_async(_run())
+        return {
+            "invocation_id": invocation_id,
+            "completed_stages": list(final_state.get("completed_stages", [])),
+        }
+    except Exception as exc:
+        safe_error = f"{type(exc).__name__}: agent invocation failed"
+        logger.error(
+            "[Task %s] Invocation %s failed (%s)", self.request.id, invocation_id, type(exc).__name__,
+        )
+        scheduled = _run_async(
+            _schedule_pipeline_retry(
+                test_run_id=loaded["test_run_id"],
+                workflow_type=loaded["workflow_type"],
+                build_number=loaded["build_number"],
+                pipeline_run_id=loaded["pipeline_run_id"],
+                dedup_key=dedup_key,
+                dedup_owner=dedup_owner,
+                error=safe_error,
+            )
+        )
+        if scheduled is not None:
+            return {"invocation_id": invocation_id, "retry_scheduled": True, **scheduled}
+        raise RuntimeError(safe_error) from None

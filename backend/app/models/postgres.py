@@ -5176,6 +5176,41 @@ class ReviewRequest(Base):
     )
 
 
+#: ``agent_invocations.mode``. Frozen copy in migration 0176.
+INVOCATION_MODES = ("sync", "async")
+
+
+class AgentInvocation(Base):
+    """One call of a single agent through the public API (architecture E1.2).
+
+    Carries no status of its own: the invocation runs as the pipeline run named
+    by ``pipeline_run_id`` (minted here before the worker creates that run, so
+    it is not a foreign key), and status, attempts and review are read from it.
+    """
+
+    __tablename__ = "agent_invocations"
+    __table_args__ = (
+        CheckConstraint(f"mode IN ({_review_in(INVOCATION_MODES)})", name="ck_agent_invocations_mode"),
+        Index("ix_agent_invocations_project_created", "project_id", "created_at"),
+        Index("ix_agent_invocations_run_agent", "test_run_id", "agent_id", "created_at"),
+        Index("ux_agent_invocations_pipeline_run", "pipeline_run_id", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    stage_name: Mapped[str] = mapped_column(String(60), nullable=False)
+    test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
+    pipeline_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    workflow_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    mode: Mapped[str] = mapped_column(String(10), nullable=False, default="async", server_default="async")
+    requested_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class AgentActionDispatchOutbox(Base):
     """Durable delivery intent for approved actions; never contains prompts."""
 

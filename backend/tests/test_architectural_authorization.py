@@ -57,6 +57,8 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     # entry every /reviews/{review_id} route passed the scan as "no scoped
     # param" -- the vacuous pass this file exists to prevent.
     "review_id",
+    # E1.2: an agent invocation is reached by id alone, like a review.
+    "invocation_id",
     "key_id",
     "rule_id",
     "source_id",
@@ -159,6 +161,9 @@ def _route_is_protected(route: APIRoute) -> bool:
         return True
     # Run scope covers nested cluster/finding/test IDs under a run.
     if "{run_id}" in path and any("require_run_access" in n for n in dep_names):
+        return True
+    # Agent invocation -> project (router-local guard, E1.2).
+    if "{invocation_id}" in path and any("require_invocation_access" in n for n in dep_names):
         return True
     # AI report review -> project (router-local guard, E8.2).
     if "{review_id}" in path and any("require_review_access" in n for n in dep_names):
