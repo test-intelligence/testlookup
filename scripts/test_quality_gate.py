@@ -2613,3 +2613,65 @@ def test_report_consumers_guard_flags_an_mcp_tool_without_review_state(monkeypat
 
 def test_report_consumers_guard_passes_on_the_real_repo() -> None:
     assert qg._reviews_report_consumers_carry_review_block() == []
+
+
+# -- agents.catalog-schema-complete (architecture E1.1) ---------------------------
+
+
+def _catalog_repo(tmp_path: Path, *, capabilities: str, modules: str = '("app.models.evidence_contracts",)') -> None:
+    _write(
+        tmp_path / "backend" / "app" / "services" / "agent_capability_registry.py",
+        "_SPECS = (\n" + capabilities + ")\n",
+    )
+    _write(
+        tmp_path / "backend" / "app" / "services" / "agent_catalog.py",
+        f"CATALOG_SCHEMA_MODULES = {modules}\n",
+    )
+    _write(
+        tmp_path / "backend" / "app" / "models" / "evidence_contracts.py",
+        "class RunEvidenceBundleV1(BaseModel):\n    pass\n\n\nclass AgentFindingV1(BaseModel):\n    pass\n",
+    )
+
+
+def test_catalog_schema_guard_passes_capabilities_with_real_input_models(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _catalog_repo(
+        tmp_path,
+        capabilities=(
+            '    _capability("summary", inputs="RunEvidenceBundleV1", output="X"),\n'
+            '    _capability("synthesis", inputs="AgentFindingV1[]", output="Y"),\n'
+        ),
+    )
+    assert qg._agents_catalog_schema_complete() == []
+
+
+def test_catalog_schema_guard_flags_an_input_that_is_only_a_label(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _catalog_repo(
+        tmp_path,
+        capabilities=(
+            '    _capability("summary", inputs="RunEvidenceBundleV1", output="X"),\n'
+            '    _capability("ingestion", inputs="TestRun", output="RunEvidenceBundleV1"),\n'
+        ),
+    )
+    violations = qg._agents_catalog_schema_complete()
+    assert [(v.line, v.message.split("'")[1]) for v in violations] == [(3, "ingestion")]
+
+
+def test_catalog_schema_guard_ignores_models_outside_the_listed_modules(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _catalog_repo(
+        tmp_path,
+        capabilities='    _capability("summary", inputs="RunEvidenceBundleV1", output="X"),\n',
+        modules='("app.models.other",)',
+    )
+    messages = [v.message for v in qg._agents_catalog_schema_complete()]
+    assert any("app.models.other" in m for m in messages)
+    assert any("'summary'" in m for m in messages)
+
+
+def test_catalog_schema_guard_flags_a_missing_module_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _catalog_repo(tmp_path, capabilities='    _capability("summary", inputs="RunEvidenceBundleV1", output="X"),\n', modules="()")
+    messages = [v.message for v in qg._agents_catalog_schema_complete()]
+    assert messages and "CATALOG_SCHEMA_MODULES not found" in messages[0]

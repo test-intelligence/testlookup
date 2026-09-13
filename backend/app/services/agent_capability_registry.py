@@ -129,3 +129,24 @@ def is_report_producing(stage_name: str) -> bool:
     except Exception:  # noqa: BLE001 -- unknown stage: require review
         return True
     return spec.output_schema in REPORT_OUTPUT_SCHEMAS
+
+
+# -- Sync-eligible capabilities (architecture E1.1, section 3.1) -----------------
+# A capability may be invoked synchronously only when it is deterministic and
+# cheap: no model call and an expected latency of 5 s or less. Everything else
+# is async (202 plus a poll URL). Declared, not derived from ``cost_usd``: most
+# capabilities inherit the registry's 0.01 default whether or not they call a
+# model, so cost says nothing about it.
+SYNC_ELIGIBLE: frozenset[str] = frozenset({
+    "ingestion",
+    "flaky_sentinel",
+    "test_health",
+    "release_risk",
+    "cluster_investigation_dispatch",
+    "cluster_investigation_join",
+})
+
+
+def is_sync_eligible(stage_name: str) -> bool:
+    """True when ``stage_name`` may be invoked with ``mode=sync``."""
+    return stage_name in SYNC_ELIGIBLE
