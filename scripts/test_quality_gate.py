@@ -2749,3 +2749,17 @@ def test_mode_writer_guard_on_the_real_repo_finds_only_the_two_policy_writers() 
         "backend/app/services/agent_investigation_service.py",
         "backend/app/services/fixer_service.py",
     ]
+
+
+def test_codacy_workflow_does_not_reference_secrets_in_step_condition() -> None:
+    """GitHub rejects workflows that read ``secrets`` directly from ``if``."""
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/codacy.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "CODACY_TOKEN_AVAILABLE: ${{ secrets.CODACY_PROJECT_TOKEN != '' }}" in workflow
+    assert "if: env.CODACY_TOKEN_AVAILABLE == 'true'" in workflow
+    assert not any(
+        line.lstrip().startswith("if:") and "secrets." in line
+        for line in workflow.splitlines()
+    )
