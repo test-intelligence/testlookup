@@ -173,11 +173,15 @@ async def test_refresh_survives_a_failing_snapshot_write():
          patch("app.routers.run_intelligence.get_run_intelligence",
                new=AsyncMock(return_value=computed)), \
          patch("app.routers.run_intelligence.save_snapshot",
-               new=AsyncMock(side_effect=RuntimeError("flush blew up"))):
-        out = await refresh_intelligence(run_id=RUN_ID, db=MagicMock(), _=None)
+               new=AsyncMock(side_effect=RuntimeError("flush blew up"))), \
+         patch("app.routers.run_intelligence.review_envelope_for_run",
+               new=AsyncMock(return_value=_review_envelope())):
+        out = await refresh_intelligence(run_id=RUN_ID, response=None, db=MagicMock(), _=None)
 
     assert out["run"]["id"] == str(RUN_ID)
     assert out["_snapshot"]["just_refreshed"] is True
+    # E8.6: the refreshed report carries its review state like the GET does.
+    assert out["review"]["state"] == "pending_review"
 
 
 @pytest.mark.asyncio
@@ -197,11 +201,19 @@ async def test_the_cache_write_never_runs_on_the_callers_session():
          patch("app.routers.run_intelligence.invalidate", new=AsyncMock(return_value=True)), \
          patch("app.routers.run_intelligence.get_run_intelligence",
                new=AsyncMock(return_value={"provenance": {"fallback_used": False}})), \
-         patch("app.routers.run_intelligence.save_snapshot", new=_capture):
-        await refresh_intelligence(run_id=RUN_ID, db=request_session, _=None)
+         patch("app.routers.run_intelligence.save_snapshot", new=_capture), \
+         patch("app.routers.run_intelligence.review_envelope_for_run",
+               new=AsyncMock(return_value=_review_envelope())):
+        await refresh_intelligence(run_id=RUN_ID, response=None, db=request_session, _=None)
 
     assert "session" in seen, "save_snapshot was never called"
     assert seen["session"] is not request_session, (
         "the snapshot write ran on the injected request session — a failed "
         "flush there poisons the transaction and 500s the endpoint"
     )
+
+
+def _review_envelope():
+    from app.services.review_envelope import ReviewEnvelope
+
+    return ReviewEnvelope(ai_generated=True, state="pending_review", message="Human review required before use.")

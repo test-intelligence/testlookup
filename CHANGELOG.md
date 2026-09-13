@@ -44,6 +44,56 @@ exactly one delivery after the commit, and a failed commit sends nothing. The
 override path runs through the route handler. The gate projection is checked
 while enforced. A guard checks that every catalog event has a producer. Publishes
 are bound to the real `deliver_webhook` signature.
+## 2026-09-13 - Review-gate guards and the mutating-call invariant (E8.6)
+
+This closes the E8 human review gate (architecture section 8.3). Two quality-gate
+guards stop the gate from being bypassed by accident, and agent mutations now
+require a person to have accepted the AI run behind them.
+
+- **Guard `reviews.report-producers-create-review-request`** (absolute rule).
+  A review request exists only because Finalize stages one for a run that
+  produced a report. The guard fails when:
+  - a capability whose output is a report contract is not planned in a workflow
+    stage order, so it would never reach Finalize;
+  - one of the four report contracts is dropped from `REPORT_OUTPUT_SCHEMAS`;
+  - Finalize stops calling `report_stages` / `stage_run_review_request`;
+  - `report_stages` stops deciding by the output contract.
+- **Guard `reviews.report-consumers-carry-review-block`** (absolute rule). It
+  fails when:
+  - an API route handler reads AI report data without attaching the review
+    envelope;
+  - an MCP tool calls a report route without appending `review_state`.
+
+  It found two real gaps, both fixed here:
+  - `GET /runs/{id}/export`, the downloadable intelligence JSON, now carries
+    `requires_human_review`, `review` and the AI disclaimer.
+  - `POST /runs/{id}/intelligence/refresh`, which returns the same report as the
+    GET, now carries the envelope and review headers too.
+- **Mutating-call invariant** (section 7.5). `execute_agent_action` runs an
+  approved agent action only when the pipeline run that proposed it has an
+  accepted review.
+  - Otherwise the action fails with `policy_denied` before any executor runs.
+  - An action with no proposing run (created directly by a person) needs no
+    review.
+  - Approving an action is still allowed; the check sits where the mutation
+    would happen.
+  - The `mode='act'` half of the rule waits for E4, since agent configs do not
+    exist yet.
+- The MCP parity check (no tool can accept or reject a review) already shipped
+  with E8.4 slice 4.
+
+Also: `architecture/DEVELOPER_GUIDE.md` lists both guards (40 in total), and the
+transaction-boundary cap goes from 87 to 88 for the `policy_denied` write.
+
+Tests:
+- `scripts/test_quality_gate.py`: both guards against fixture repos and the
+  real repo.
+- `backend/tests/services/test_agent_action_ledger_service.py`: denied, accepted,
+  no proposing run.
+- `backend/tests/test_intelligence_export_review_envelope.py`.
+- The refresh assertion in
+  `backend/tests/regression/test_intelligence_snapshot_json_safe.py`.
+
 ## 2026-09-13 - Review Queue page and review banners (E8.5)
 
 The web app now lets a person work through the human review gate

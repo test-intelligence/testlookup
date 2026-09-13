@@ -285,3 +285,67 @@ def test_action_relay_is_scheduled_and_executor_is_registered():
 
     assert "relay-agent-action-dispatch-outbox" in celery_app.conf.beat_schedule
     assert "app.worker.tasks.execute_agent_action" in celery_app.tasks
+
+
+# -- E8.6: a mutating call needs an accepted review of the run that proposed it --
+
+
+def _executor_harness(monkeypatch, action, review_row):
+    import app.services.agent_action_ledger_service as service
+
+    action_result = MagicMock()
+    action_result.scalar_one_or_none.return_value = action
+    review_result = MagicMock()
+    review_result.scalar_one_or_none.return_value = review_row
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=[action_result, review_result])
+    db.commit = AsyncMock()
+
+    class _Session:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(service, "AsyncSessionLocal", lambda: _Session())
+    return service, db
+
+
+@pytest.mark.asyncio
+async def test_executor_denies_an_action_whose_proposing_run_is_not_accepted(monkeypatch):
+    action = _row(status="approved", pipeline_run_id=uuid.uuid4())
+    service, db = _executor_harness(monkeypatch, action, review_row=None)
+
+    outcome = await service.execute_agent_action(project_id=action.project_id, action_id=action.id)
+
+    assert outcome == {"status": "failed", "action_id": str(action.id), "reason": "policy_denied"}
+    assert action.status == "failed"
+    assert action.error_code == "policy_denied"
+    db.commit.assert_awaited_once()
+    review_query = str(db.execute.await_args_list[1].args[0])
+    assert "review_requests.pipeline_run_id" in review_query
+    assert "review_requests.state" in review_query
+    review_stmt = db.execute.await_args_list[1].args[0]
+    assert "accepted" in review_stmt.compile().params.values(), "only an ACCEPTED review permits the call"
+
+
+@pytest.mark.asyncio
+async def test_executor_proceeds_when_the_proposing_run_was_accepted(monkeypatch):
+    action = _row(status="approved", pipeline_run_id=uuid.uuid4())
+    service, _ = _executor_harness(monkeypatch, action, review_row=uuid.uuid4())
+
+    outcome = await service.execute_agent_action(project_id=action.project_id, action_id=action.id)
+
+    assert outcome["reason"] == "action_executor_not_configured"
+
+
+@pytest.mark.asyncio
+async def test_executor_needs_no_review_for_an_action_with_no_proposing_run(monkeypatch):
+    action = _row(status="approved", pipeline_run_id=None)
+    service, db = _executor_harness(monkeypatch, action, review_row=None)
+
+    outcome = await service.execute_agent_action(project_id=action.project_id, action_id=action.id)
+
+    assert outcome["reason"] == "action_executor_not_configured"
+    assert db.execute.await_count == 1, "no review lookup without a proposing run"

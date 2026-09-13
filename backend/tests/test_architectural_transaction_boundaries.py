@@ -246,10 +246,12 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "in isolated AsyncSessionLocal transactions with no request session.",
     ),
     "agent_action_ledger_service.py": (
-        4,
+        5,
         "Durable action-ledger/outbox owner: approval execution and broker "
         "relay use isolated worker sessions so action state and dispatch "
-        "retries remain atomic without a request-scoped transaction.",
+        "retries remain atomic without a request-scoped transaction. E8.6 adds "
+        "the policy_denied terminal write in execute_agent_action, on the same "
+        "worker session as the executor's own terminal write.",
     ),
     "decision_report_supersession_service.py": (
         6,
@@ -632,7 +634,8 @@ def test_allowlist_total_is_bounded() -> None:
     # committed with it.
     # 2026-09-12: 85 -> 86 for tool_call_idempotency.py (E7.6 claim-before-call).
     # 2026-09-13: 86 -> 87 for report_distribution_policy.py (E8.4 detached audit).
-    assert total <= 87, (
+    # 2026-09-13: 87 -> 88 for agent_action_ledger_service.py (E8.6 policy_denied write).
+    assert total <= 88, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )
