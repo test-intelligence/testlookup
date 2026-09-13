@@ -1,6 +1,7 @@
 import useSWR from 'swr'
 import { agentGovernanceService } from '@/services/agentGovernanceService'
 import type { AgentPolicy, AgentPolicyListResponse, AgentRunListResponse } from '@/types/investigator'
+import type { AgentConfigListResponse } from '@/types/agentConfig'
 
 /**
  * Agent-governance hooks (AI-3).
@@ -22,6 +23,20 @@ export function useAgentPolicies(projectId: string | null) {
     policies: swr.data?.policies ?? [],
     /** Convenience: the Investigator agent's policy, when loaded. */
     investigatorPolicy: swr.data?.policies.find((p): p is AgentPolicy => p.agent_id === 'investigator') ?? null,
+  }
+}
+
+/** Every configurable agent's configuration for a project (E4.3), defaults included. */
+export function useAgentConfigs(projectId: string | null) {
+  const swr = useSWR<AgentConfigListResponse>(
+    projectId ? `/projects/${projectId}/agent-configs` : null,
+    () => agentGovernanceService.listAgentConfigs(projectId ?? ''),
+    { revalidateOnFocus: false },
+  )
+  return {
+    ...swr,
+    configs: swr.data?.configs ?? [],
+    tools: swr.data?.tools ?? {},
   }
 }
 

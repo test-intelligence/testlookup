@@ -44,10 +44,15 @@ async def list_agent_configs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
 ) -> dict[str, Any]:
-    """Every configurable agent, with the defaults for agents nobody has configured."""
+    """Every configurable agent, with the defaults for agents nobody has configured.
+
+    ``tools`` maps every agent tool to the permission it needs (E4.3), so a
+    client can offer tools that are not in an allowlist today.
+    """
     rows = await svc.list_config_rows(db, project_id)
     return {
-        "configs": [svc.serialize(agent_id, rows.get(agent_id)) for agent_id in sorted(svc.configurable_capabilities())]
+        "configs": [svc.serialize(agent_id, rows.get(agent_id)) for agent_id in sorted(svc.configurable_capabilities())],
+        "tools": dict(sorted(svc.AGENT_TOOL_PERMISSIONS.items())),
     }
 
 
