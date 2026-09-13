@@ -228,7 +228,8 @@ async def test_an_invocation_still_in_progress_is_returned_instead_of_a_second_o
     run = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4(), build_number="42")
     existing = _invocation(test_run_id=run.id, project_id=run.project_id)
     pipeline = _pipeline(existing, status="running")
-    router, _tasks, db, dispatch, _order = _router_harness(monkeypatch, run, existing, pipeline, None)
+    # run, latest invocation, its pipeline, its review, its stage row
+    router, _tasks, db, dispatch, _order = _router_harness(monkeypatch, run, existing, pipeline, None, None)
     body = _body(
         project_id=str(run.project_id),
         input={"agent_id": "agent.summary.v1", "payload": {"test_run_id": str(run.id)}},
@@ -406,12 +407,14 @@ def test_the_migration_and_model_agree():
     }
     assert tuple(constants["MODES"]) == INVOCATION_MODES
     assert constants["down_revision"] == "0175"
-    migrated = {
-        call.args[0].value
-        for call in ast.walk(tree)
-        if isinstance(call, ast.Call) and getattr(call.func, "attr", "") == "Column"
-        and call.args and isinstance(call.args[0], ast.Constant)
-    }
+    migrated: set[str] = set()
+    for path in (MIGRATION, MIGRATION.with_name("0177_agent_invocation_dispatched_at.py")):
+        migrated |= {
+            call.args[0].value
+            for call in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(call, ast.Call) and getattr(call.func, "attr", "") == "Column"
+            and call.args and isinstance(call.args[0], ast.Constant)
+        }
     assert migrated == {c.name for c in AgentInvocation.__table__.columns}
 
 

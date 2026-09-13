@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-09-13 - Retry, cancel and read the output of an agent invocation (E1.2, slice 2)
+
+Slice 1 let an API client invoke one agent and poll it. This slice adds retry,
+cancel and the agent's output. An invocation still runs as its pipeline run,
+so the same rules apply.
+
+- **`POST /api/v1/agents/invocations/{invocation_id}/retry`** (QA engineer or
+  above, `202`). A retry is a new attempt of the same invocation: it resumes the
+  same run, so the restricted plan (the agent plus its dependencies only) is
+  kept. It is refused with `409` when:
+  - the run is still in progress;
+  - the run finished cleanly (response carries `links.rerun`);
+  - the run reached its attempt ceiling (response carries `links.rerun`);
+  - the agent configuration changed since the run started (response carries
+    `links.rerun`). Resuming would replay work authorised under the old
+    configuration, and a fresh run needs a new invocation.
+  - An invocation whose run never started (a lost dispatch) is sent to a worker
+    again.
+- **`POST /api/v1/agents/invocations/{invocation_id}/cancel`** (QA engineer or
+  above, `202`) cancels cooperatively, exactly as a pipeline run is cancelled.
+  - A running run stops at its next stage boundary.
+  - Cancellation is sticky.
+  - It returns `409` when the run does not exist yet or has already finished.
+- **Output:** the poll response gains `output`, the invoked stage's stored
+  output, filled once that stage has completed.
+- Both routes use the invocation access guard (404 outside the project) and
+  record `analysis.retried` / `analysis.cancelled` against the test run. They
+  commit before dispatching work.
+- **`agent_invocations.dispatched_at`** (migration 0177) records when the
+  invocation was last handed to a worker. A re-sent lost dispatch restarts that
+  clock and leaves `created_at` as the original request time.
+
+Still to come: `mode=sync` with its concurrency limit, and SSE progress.
+
+Tests: `backend/tests/test_agent_invocation_retry_cancel.py`.
+
 ## 2026-09-13 - Invoke one agent over the API (E1.2, slice 1)
 
 API clients can now run a single agent from the catalog (E1.1) on a stored test
