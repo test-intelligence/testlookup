@@ -202,6 +202,25 @@ def _ledger(metadata: dict[str, Any]) -> tuple[dict[str, int | float], dict[str,
     return budget, spend
 
 
+def remaining_cost_usd(metadata: dict[str, Any]) -> float | None:
+    """Pipeline dollars not spent or reserved, or ``None`` without a ledger.
+
+    ModelRouter uses this for its soft pre-call and escalation decisions. The
+    atomic reservation in BudgetedLLM remains authoritative if concurrent
+    calls consume the remaining amount after this snapshot.
+    """
+    if metadata.get("budget_authority") == "investigator_ledger":
+        return None
+    if not isinstance(metadata.get("run_budget"), dict):
+        return None
+    try:
+        budget, spend = _ledger(metadata)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    used = float(spend["cost_usd"]) + float(spend["reserved_cost_usd"])
+    return max(0.0, round(float(budget["max_cost_usd"]) - used, 6))
+
+
 def reserve_stage_in_metadata(
     metadata: dict[str, Any],
     *,

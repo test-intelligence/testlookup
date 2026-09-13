@@ -18,6 +18,8 @@ from pydantic import ValidationError
 from app.services import agent_catalog
 from app.services.agent_capability_registry import (
     CAPABILITY_REGISTRY,
+    DEFAULT_TIERS,
+    ESCALATION_TRIGGERS,
     REPORT_OUTPUT_SCHEMAS,
     SYNC_ELIGIBLE,
 )
@@ -27,6 +29,9 @@ AGENT_IDS = sorted(spec.capability_id for spec in CAPABILITY_REGISTRY.values())
 
 def test_every_registered_capability_is_published():
     assert [entry.agent_id for entry in agent_catalog.list_catalog()] == AGENT_IDS
+    for entry in agent_catalog.list_catalog():
+        assert entry.default_tier == DEFAULT_TIERS[entry.stage_name]
+        assert entry.escalation == sorted(ESCALATION_TRIGGERS[entry.stage_name])
 
 
 def test_sync_eligibility_is_the_explicit_registry_flag_and_only_cheap_agents_have_it():

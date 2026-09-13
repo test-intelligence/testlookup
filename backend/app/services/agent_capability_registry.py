@@ -69,8 +69,8 @@ _SPECS = (
     _capability("triage", inputs="AnalysisAgentOutput", output="TriageOutput", dependencies=("root_cause_analysis",), evidence=("analysis_findings",), permission="propose_action"),
     _capability("gap_detection", inputs="PreliminarySummary", output="GapReport", dependencies=("summary",), cost_usd=0.02),
     _capability("report_refinement", inputs="GapReport", output="RefinedReport", dependencies=("gap_detection",), cost_usd=0.02),
-    _capability("flaky_sentinel", inputs="RunEvidenceBundleV1", output="FlakySentinelOutput", dependencies=("ingestion",), evidence=("historical_results",)),
-    _capability("test_health", inputs="RunEvidenceBundleV1", output="TestHealthOutput", dependencies=("ingestion",), evidence=("test_history",)),
+    _capability("flaky_sentinel", inputs="RunEvidenceBundleV1", output="FlakySentinelOutput", dependencies=("ingestion",), evidence=("historical_results",), cost_usd=0),
+    _capability("test_health", inputs="RunEvidenceBundleV1", output="TestHealthOutput", dependencies=("ingestion",), evidence=("test_history",), cost_usd=0),
     _capability("release_risk", inputs="MetricSnapshotV1", output="ReleaseRiskOutput", dependencies=("flaky_sentinel", "test_health"), evidence=("metric_snapshot",), fallback="deterministic_release_policy"),
     _capability("decision_report", inputs="DecisionEvidenceSnapshotV3", output="DecisionReportV1", dependencies=("release_risk",), evidence=("decision_evidence_snapshot",), cost_usd=0.02),
     _capability("decision_report_critic", inputs="DecisionReportV1", output="DecisionReportVerificationV1", dependencies=("decision_report",), evidence=("signed_decision_snapshot",), cost_usd=0, fallback="reject_publication", concurrency_class="verification"),
@@ -144,6 +144,65 @@ SYNC_ELIGIBLE: frozenset[str] = frozenset({
     "release_risk",
     "cluster_investigation_dispatch",
     "cluster_investigation_join",
+})
+
+# Model routing metadata is deliberately kept out of CapabilitySpecV1. Frozen
+# workflow-plan snapshots serialize that public model, so adding these fields
+# there would change retry authority for every existing run (T6 / E5.1).
+#
+# Defaults reflect the implementation on main. Planned downgrades such as
+# summary llm -> slm require E9.3 non-inferiority evidence before this map may
+# change. Deterministic capabilities that optionally add an LLM narrative keep
+# a positive expected_cost_usd so their existing budget reservation remains.
+DEFAULT_TIERS: dict[str, str] = {
+    "ingestion": "deterministic",
+    "anomaly_detection": "deterministic",
+    "failure_clustering": "deterministic",
+    "cluster_investigation_dispatch": "deterministic",
+    "cluster_investigation_join": "deterministic",
+    "cluster_investigation": "llm",
+    "contract_validation": "deterministic",
+    "log_intelligence": "deterministic",
+    "root_cause_analysis": "llm",
+    "summary": "llm",
+    "triage": "llm",
+    "gap_detection": "deterministic",
+    "report_refinement": "deterministic",
+    "flaky_sentinel": "deterministic",
+    "test_health": "deterministic",
+    "release_risk": "deterministic",
+    "decision_report": "deterministic",
+    "decision_report_critic": "deterministic",
+    "regression_watchman": "deterministic",
+    "change_ownership": "deterministic",
+    "defect_commander": "llm",
+    "investigator_plan": "deterministic",
+    "hypothesis_infra": "llm",
+    "hypothesis_commit": "llm",
+    "hypothesis_environment": "llm",
+    "hypothesis_known_flaky": "llm",
+    "hypothesis_regression": "llm",
+    "investigator_synthesis": "llm",
+    "workflow": "deterministic",
+}
+
+ESCALATION_TRIGGERS: dict[str, frozenset[str]] = {
+    name: frozenset() for name in CAPABILITY_REGISTRY
+}
+ESCALATION_TRIGGERS.update({
+    "summary": frozenset({"validation_failure"}),
+    "root_cause_analysis": frozenset({"low_confidence"}),
+    "contract_validation": frozenset({"not_enough_evidence"}),
+    "log_intelligence": frozenset({"not_enough_evidence"}),
+    "change_ownership": frozenset({"not_enough_evidence"}),
+    "report_refinement": frozenset({"contradictions"}),
+})
+
+# Capabilities whose SLM endpoint may be replaced by a promoted classifier.
+# The map is separate because CapabilitySpecV1 has no stable `kind` field.
+CLASSIFY_CAPABILITIES: frozenset[str] = frozenset({
+    "root_cause_analysis",
+    "regression_watchman",
 })
 
 

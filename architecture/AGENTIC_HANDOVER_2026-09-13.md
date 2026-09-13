@@ -39,7 +39,7 @@ TestLookup (local-first test-failure intelligence) is being extended from "pipel
 | **E8** Human review gate | 10 | 6/6 | **Complete** (enforcement flag **off**) | #59 #60 #62 #63 #64 #65 #66 #68 #69 |
 | **E1** OpenAPI agent exposure | 1 | 6/6 | **Complete** | #70 #71 #72 #73 #74 #75 #76 #77 |
 | **E4** Per-agent configuration | 4 | 3½/4 | **In progress** — E4.4 migration **blocked on owner decision** | #78 #79 #80 #82 |
-| **E5** Model tiering, SLM summarization | 5, 6 | 0/5 | Not started (E5.1 investigation done, see §6.3) | — |
+| **E5** Model tiering, SLM summarization | 5, 6 | 1/5 | **In progress** — E5.1 ModelRouter shipped | T6 |
 | **E6** Generic reviewer | 7 | 0/4 | Not started | — |
 | **E3** User-customizable workflows | 3 | 0/5 | Not started | — |
 | **E9** Evals as the control loop | 13 | 0/10 | Not started | — |
@@ -131,13 +131,13 @@ Format per epic: **Title · Description · Business value · Technical scope · 
 - **Not implemented.** Request overrides on the invoke body (`config_overrides`) — deliberately deferred until a runtime consumer exists (E5). Runs record `agent_config_versions` but **no agent reads the resolved config at run time yet**.
 - **Re-evaluate.** The E4.4 premise (see §5.2 R9).
 
-### 2.5 E5 — Model tiering and SLM summarization  ⬜ Not started
+### 2.5 E5 — Model tiering and SLM summarization  🟡 In progress
 
 - **Description.** A `ModelRouter` that picks deterministic/SLM/LLM per capability, escalates SLM→LLM on validation failure or low confidence with a budget re-check, SLM summaries with repair/escalation/fallback, root-cause split, per-provider circuit breaker, dev tag pairs.
 - **Business value.** Lower cost/latency for summaries and classification; LLMs reserved for reasoning; graceful degradation.
 - **Dependencies.** E4.1/E4.2 (resolved config — done). **Promotion of any tier default is forbidden before E9.3** (tier comparison), which needs E9.2 golden sets and E9.1.
 - **Acceptance criteria.** SLM summary non-inferior to LLM on the summary golden set by the G2 rule (E9); provenance `tier_requested/tier_used/escalations/fallback_used`; escalation never exceeds budget.
-- **Investigation done for E5.1** (no code): §6.3.
+- **E5.1 implemented by T6.** The investigation and deviations are recorded in §6.3 and the architecture §12 shipped note.
 
 ### 2.6 E6 — Generic reviewer  ⬜ Not started
 
@@ -616,7 +616,7 @@ Priority: **P0** = blocks correctness/safety or other epics · **P1** = needed f
 | T3 | P1 | M | Fix K2: record trigger user on runs; wire `requested_by`; SoD for `mode=act` | `models/postgres.py`, new migration (0180+), `agents/workflow.py`, `routers/agents.py` trigger, `worker/tasks.py`, `review_request_service.py`, `routers/reviews.py` | migration | review SoD tests; migration test | DATABASE_SCHEMA.md; §12 |
 | T4 | P1 | S | **Shipped:** fix K4, the `mode=act` half of the mutating-call invariant | `services/agent_action_ledger_service.py` | — | `tests/services/test_agent_action_ledger_service.py` | §12 E8.6 note |
 | T5 | P1 | S–M | E4.4 remainder per D1 | `agent_investigation_service.py`, `fixer_service.py`, `agents/investigator/workflow.py`, `cluster_investigation_orchestrator.py`, `agents/workflow.py`, `routers/agent_investigations.py`, `routers/fixer.py`, `agent_config_service.py`, frontend `AIAgentsPage.tsx`, `InvestigatorCockpit.tsx`; shrink `agents__agent-mode-single-writer.txt` | data migration | policy alias tests; guard real-repo test update | §12 E4.4; CHANGELOG |
-| T6 | P1 | S | **E5.1** ModelRouter + registry `default_tier`/escalation maps (design in §6.3) | `agent_capability_registry.py`, `agent_catalog.py` (publish `default_tier`), `core/config.py` (if a cost-factor setting) | `services/model_router.py` | `test_model_router.py`, registry invariants, catalog test; `agent_api_docs --check` | §12 E5.1 note; E1.1 note |
+| T6 | P1 | S | **Shipped: E5.1** ModelRouter + registry `default_tier`/escalation maps (design in §6.3) | `agent_capability_registry.py`, `agent_catalog.py` | `services/model_router.py` | `test_model_router.py`, registry invariants, catalog test; `agent_api_docs --check` | §12 E5.1 note; E1.1 note |
 | T7 | P1 | M | **E5.2** Summary on SLM: validate → one SLM repair → LLM escalation → deterministic fallback; provenance | `agents/summary_agent.py`, `llm_factory.py` (endpoint-aware call) | — | summary escalation tests; mutation | §12 |
 | T8 | P1 | S | **E5.3** Root-cause split | `agents/analysis_agent.py`, `services/analysis_router.py` | — | tests | §12 |
 | T9 | P1 | S | **E5.4** Circuit breaker per provider+base_url | `services/llm_factory.py` | `services/llm_circuit_breaker.py` | breaker tests | OBSERVABILITY.md |
@@ -646,7 +646,7 @@ T0 → T1 (ask owner) ─┬─► T2, T4 (small correctness fixes, independent)
 then E6 (T15–T16) ─► E9.4 · E3 (T17) ─► E9.5 · E9.6/9.7/9.9/9.10 · E2 (T19) · T20–T23
 ```
 
-### 6.3 E5.1 — investigation results (no code written)
+### 6.3 E5.1 — investigation results (implemented by T6)
 
 Facts verified before stopping:
 
