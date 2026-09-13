@@ -44,6 +44,43 @@ exactly one delivery after the commit, and a failed commit sends nothing. The
 override path runs through the route handler. The gate projection is checked
 while enforced. A guard checks that every catalog event has a producer. Publishes
 are bound to the real `deliver_webhook` signature.
+## 2026-09-13 - MCP and CLI show the review state of AI reports (E8.4, slice 4)
+
+Agents and terminals see AI reports as well as the UI does. This slice makes
+both show whether a person has accepted a report yet (architecture section 8.3).
+It changes no backend behaviour.
+
+**MCP server**
+
+- `get_run_intelligence`, `get_run_summary` and `check_run_release_readiness`
+  now end with `review_state`, the review message and the AI disclaimer.
+- If the backend sends no review block, the state reads `unknown`, with a
+  warning to treat the content as a draft. A missing state never reads as
+  reviewed.
+- New read-only tool `list_pending_reviews` lists a project's open review
+  queue.
+- There is deliberately no accept or reject tool. The MCP server forwards the
+  caller's token, so such a tool would let an agent acting for a QA lead approve
+  its own output. Tests fail if any MCP tool reaches `/reviews/*/accept|reject`,
+  or if a tool name mentions settling a review.
+- The server instructions tell agents to pass the review state on and never to
+  present a `pending_review` or `unknown` report as settled.
+
+**CLI**
+
+- `testlookup reviews list <project-id>` shows the open queue (`--state all`
+  shows every review).
+- `testlookup reviews accept <review-id> [--notes]` and
+  `testlookup reviews reject <review-id> --reason <code>` settle a review.
+- Accept and reject are refused up front on an API-key profile, with a message
+  saying why, instead of relaying the server's 403. Unknown states and reason
+  codes are refused before any request is sent.
+- `intelligence show` prints the review state and AI disclaimer to stderr, so
+  `--output json` stays pipeable.
+- Not changed: `reports pdf`. The PDF already carries its own DRAFT watermark
+  (slice 1), and the download route sends no review headers to read.
+
+Tests: `mcp/tests/test_mcp_reviews.py`, `cli/tests/test_reviews_commands.py`.
 
 ## 2026-09-13 - AI failure-kind labels in PR and MR comments obey the review gate (E8.4, slice 3)
 

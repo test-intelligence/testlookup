@@ -215,6 +215,14 @@ List open quarantine proposals and approve the one with the highest flip rate
 | `get_investigation` | `investigation_id` | Full detail: status, budget vs spend, five hypothesis boards, verdict (primary cause, confidence, narrative, recommended actions) — long prose compact-rendered |
 | `list_investigations` | `project_id`, `limit?` | Recent investigations newest-first with primary cause + confidence |
 
+### Human review (E8.4)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `list_pending_reviews` | `project_id`, `limit?` | **Read-only.** AI reports in a project still awaiting human review. There is deliberately no accept or reject tool: the server forwards the caller's token, so an agent could otherwise approve its own output. |
+
+`get_run_intelligence`, `get_run_summary` and `check_run_release_readiness` end with `review_state` and the AI disclaimer. `review_state: unknown` means the backend sent no review status; treat the content as an unreviewed draft.
+
 ### Global search
 
 | Tool | Parameters | Description |

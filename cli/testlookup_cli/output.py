@@ -99,3 +99,25 @@ def print_error(message: str) -> None:
 
 def print_warning(message: str) -> None:
     error_console.print(f"[yellow]{_glyph('⚠', '[!]', sys.stderr)}[/] {message}")
+
+
+def print_review_notice(data: Any) -> None:
+    """Print an AI report's review state and disclaimer to stderr (E8.4).
+
+    Stderr keeps ``--output json`` pipeable while the caveat still reaches the
+    person at the terminal. A payload without a review block prints ``unknown``
+    and a warning: a missing state must never read as reviewed.
+    """
+    review = data.get("review") if isinstance(data, dict) else None
+    state = review.get("state") if isinstance(review, dict) else None
+    if not state:
+        error_console.print(
+            "Review state: unknown. Treat any AI content as an unreviewed draft.",
+            markup=False, highlight=False,
+        )
+        return
+    error_console.print(f"Review state: {state}", markup=False, highlight=False)
+    if review.get("message"):
+        error_console.print(str(review["message"]), markup=False, highlight=False)
+    if data.get("ai_disclaimer"):
+        error_console.print(str(data["ai_disclaimer"]), markup=False, highlight=False)
