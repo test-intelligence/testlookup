@@ -44,6 +44,69 @@ exactly one delivery after the commit, and a failed commit sends nothing. The
 override path runs through the route handler. The gate projection is checked
 while enforced. A guard checks that every catalog event has a producer. Publishes
 are bound to the real `deliver_webhook` signature.
+## 2026-09-13 - Invoke one agent over the API (E1.2, slice 1)
+
+API clients can now run a single agent from the catalog (E1.1) on a stored test
+run, then poll for the result.
+
+**New endpoints**
+
+- `POST /api/v1/agents/{agent_id}/invoke` (QA engineer or above) returns `202`
+  with a poll link.
+  - The body is `{project_id, input, mode, correlation_id}`. `input` is the
+    agent's `<StageName>InvokeInput` from the catalog, for now always
+    `{"agent_id": ..., "payload": {"test_run_id": ...}}`.
+  - The project is taken from the test run. `project_id` in the body is only
+    an assertion, and a mismatch returns `400`.
+  - If the same agent is already in progress on the same run, that invocation
+    is returned with `200` instead of starting a second one.
+- `GET /api/v1/agents/invocations/{invocation_id}` returns status (`in_progress`,
+  `completed`, `failed` or `passed`), attempt count, next retry time, error,
+  `requires_human_review`, the review block, and links to the run and review.
+  - A caller outside the project gets `404`, so the route does not reveal that
+    another tenant's invocation exists.
+
+**How it runs.** An invocation is not a second execution engine; it is an
+ordinary pipeline run.
+
+- The run's frozen plan keeps only the invoked agent and the stages it declares
+  as dependencies (for example `summary` runs with `ingestion`). Every other
+  stage is recorded as skipped.
+- Leases, fencing, row-owned retries, cancellation and Finalize therefore apply
+  unchanged. That includes the human review request for a report-producing
+  agent, so an invoked `summary` or `decision_report` is still a draft until
+  someone accepts it.
+- The invocation stores no status of its own; everything is read from its run.
+
+**Details**
+
+- New table `agent_invocations` (migration 0176).
+  - `pipeline_run_id` is created when the invocation is accepted, before the
+    worker creates that run, so it is a unique id rather than a foreign key.
+  - An invocation whose run never appears within 10 minutes reads `failed`
+    (`invocation_not_started`). Callers stop polling, and the agent can be
+    invoked again.
+- New Celery task `run_agent_invocation` (queue `ai_analysis`). It creates the
+  run under the pre-assigned id; the deep pipeline can now do this too, as the
+  offline pipeline already could. A failed attempt goes through the pipeline
+  retry scheduler, and resumes keep the restricted plan.
+- `build_workflow_plan(invocation_stage=...)` records the restriction in the
+  plan. The verifier's plan rebuild keeps it, and plans that are not
+  invocations hash exactly as before.
+- New activity event `agent.invoked`. The authorization ratchet now covers
+  `{invocation_id}` routes through `require_invocation_access`.
+
+**Not in this slice**
+
+- `mode=sync` (refused with `422` for now).
+- Payloads other than a stored test run.
+- Cluster-child, runtime and investigation agents (refused with `422`).
+- SSE progress, and invocation-level retry and cancel routes. Until those land,
+  the pipeline routes at `links.pipeline` work.
+- The idempotency key (E1.3).
+
+Tests: `backend/tests/test_agent_invocations.py`.
+
 ## 2026-09-13 - Agent catalog: discover agents over the API (E1.1)
 
 First story of E1 (OpenAPI agent exposure). API clients can now discover
