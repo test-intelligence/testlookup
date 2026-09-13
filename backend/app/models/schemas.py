@@ -1597,6 +1597,24 @@ class AgentPipelineResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ReviewBlock(BaseModel):
+    """Human-review status of an AI report (architecture section 8.2, E8.3).
+
+    Carries WHETHER and WHEN a report was reviewed, never WHO: reviewer identity
+    stays in-app, out of API and export payloads.
+    """
+
+    state: Literal["pending_review", "accepted", "rejected", "superseded", "not_applicable"] = Field(
+        description=(
+            "pending_review: a draft until a human accepts it (also used when no review "
+            "was ever recorded). not_applicable: the content was not AI-generated."
+        )
+    )
+    message: str
+    review_id: Optional[str] = None
+    reviewed_at: Optional[str] = None
+
+
 class AgentRunSummaryResponse(BaseModel):
     test_run_id: str
     project_id: Optional[str] = None
@@ -1608,6 +1626,14 @@ class AgentRunSummaryResponse(BaseModel):
     is_regression: bool = False
     analysis_count: int = 0
     generated_at: Optional[Any] = None
+    # E8.3: every AI report response says whether a human has reviewed it.
+    requires_human_review: bool = Field(
+        default=True,
+        description="True for AI-generated content: a draft until review.state == accepted.",
+    )
+    review: Optional[ReviewBlock] = None
+    ai_disclaimer: Optional[str] = None
+    ai_disclaimer_version: Optional[str] = None
 
 
 # ── Agent Workflow Timeline Schemas ─────────────────────────────────────────

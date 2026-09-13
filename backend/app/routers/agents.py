@@ -9,7 +9,7 @@ import logging
 import uuid
 from typing import Any, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -45,6 +45,7 @@ from app.models.postgres import (
 from app.models.schemas import (
     AgentPipelineResponse,
     AgentRunSummaryResponse,
+    ReviewBlock,
     PipelineEventLogHealthResponse,
     PipelineReplayResponse,
     PipelineTimelineResponse,
@@ -1097,10 +1098,16 @@ async def get_pipeline_status(
 @router.get("/runs/{run_id}/summary", response_model=AgentRunSummaryResponse)
 async def get_run_summary(
     run_id: str,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     _: Any = Depends(require_run_access()),
 ):
-    """Retrieve the AI-generated markdown summary for a test run (all 4 layers if available)."""
+    """Retrieve the AI-generated markdown summary for a test run (all 4 layers if available).
+
+    Carries the human-review envelope (E8.3): ``requires_human_review``,
+    ``review`` and the ``X-TestLookup-AI-Generated`` / ``X-TestLookup-Review-State``
+    headers. A deterministic fallback is ``not_applicable``: no AI wrote it.
+    """
     from app.db.mongo import Collections, get_mongo_db
 
     mongo_db = get_mongo_db()
@@ -1115,17 +1122,39 @@ async def get_run_summary(
         fallback = await build_fallback_summary(db, run_id)
         if not fallback:
             raise HTTPException(404, detail="No summary found for this run")
-        return fallback
+        return await _with_review_envelope(db, response, run_id, fallback, ai_generated=False)
 
     doc.pop("_id", None)
     summary = normalize_summary_doc(run_id, doc)
     if summary.executive_summary or summary.markdown_report:
-        return summary
+        return await _with_review_envelope(db, response, run_id, summary, ai_generated=True)
 
     fallback = await build_fallback_summary(db, run_id)
     if not fallback:
         raise HTTPException(404, detail="No summary found for this run")
-    return fallback
+    return await _with_review_envelope(db, response, run_id, fallback, ai_generated=False)
+
+
+async def _with_review_envelope(
+    db: AsyncSession,
+    response: Response,
+    run_id: str,
+    summary: AgentRunSummaryResponse,
+    *,
+    ai_generated: bool,
+) -> AgentRunSummaryResponse:
+    """Attach the E8.3 review envelope and headers to a run summary."""
+    from app.services.review_envelope import review_envelope_for_run
+
+    envelope = await review_envelope_for_run(db, run_id, ai_generated=ai_generated)
+    envelope.apply_headers(response)
+    fields = envelope.fields()
+    return summary.model_copy(update={
+        "requires_human_review": fields["requires_human_review"],
+        "review": ReviewBlock(**fields["review"]),
+        "ai_disclaimer": fields["ai_disclaimer"],
+        "ai_disclaimer_version": fields["ai_disclaimer_version"],
+    })
 
 
 async def _authorize_run_and_project(

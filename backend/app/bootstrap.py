@@ -236,7 +236,9 @@ def configure_middlewares(app: FastAPI) -> None:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Webhook-Secret", "X-Request-ID"],
-        expose_headers=["X-Refresh-Retry-Safe", "Retry-After"],
+        # E8.3: the two review headers must be exposed, or a browser cannot read
+        # them and the SPA would show an AI report with no review state.
+        expose_headers=["X-Refresh-Retry-Safe", "Retry-After", "X-TestLookup-AI-Generated", "X-TestLookup-Review-State"],
     )
 
     # Import locally so middleware setup stays close to other app wiring.
