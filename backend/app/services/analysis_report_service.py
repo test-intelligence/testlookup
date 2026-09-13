@@ -574,19 +574,30 @@ async def _collect_gate(
     if decision is None:
         return {"decision": None}
     evaluation = decision.policy_evaluation or {}
+    verdict = {
+        "recommendation": decision.recommendation,
+        "risk_score": decision.risk_score,
+        "conditions_for_go": decision.conditions_for_go or [],
+        "blocking_issues": decision.blocking_issues or [],
+        "kind_counterfactual": (
+            evaluation.get("kind_counterfactual")
+            if isinstance(evaluation, dict)
+            else None
+        ),
+        "created_at": decision.created_at.isoformat() if decision.created_at else None,
+        "project_id": str(project_id),
+    }
+    # E8.4: this report is downloaded and attached to digests, so the verdict
+    # it quotes gets the same human-review gate as the release-readiness value.
+    from app.services.report_distribution_policy import gate_release_verdict
+
     return {
-        "decision": {
-            "recommendation": decision.recommendation,
-            "risk_score": decision.risk_score,
-            "conditions_for_go": decision.conditions_for_go or [],
-            "blocking_issues": decision.blocking_issues or [],
-            "kind_counterfactual": (
-                evaluation.get("kind_counterfactual")
-                if isinstance(evaluation, dict)
-                else None
-            ),
-            "created_at": decision.created_at.isoformat() if decision.created_at else None,
-        }
+        "decision": await gate_release_verdict(
+            db,
+            verdict,
+            test_run_id=decision.test_run_id,
+            human_override=getattr(decision, "human_override", None),
+        )
     }
 
 
@@ -877,7 +888,8 @@ document.querySelectorAll('h2[data-toggle]').forEach(function(h){
 def _status_badge(status: str | None) -> str:
     s = str(status or "").upper()
     cls = {"PASSED": "green", "FAILED": "red", "BROKEN": "red", "GO": "green",
-           "NO_GO": "red", "CONDITIONAL_GO": "amber", "IN_PROGRESS": "amber"}.get(s, "gray")
+           "NO_GO": "red", "CONDITIONAL_GO": "amber", "IN_PROGRESS": "amber",
+           "PENDING_REVIEW": "amber"}.get(s, "gray")
     return f'<span class="badge {cls}">{_e(s or "—", 40)}</span>'
 
 
@@ -1152,10 +1164,19 @@ def render_analysis_report_html(data: dict) -> str:
     if gate_section and gate_section.get("ok"):
         decision = (gate_section.get("data") or {}).get("decision")
         if decision:
-            parts = [
+            parts = []
+            # E8.4: say so when the verdict is an unreviewed AI draft.
+            if decision.get("draft_watermark"):
+                parts.append(f'<p class="badge red">{_e(decision.get("draft_watermark"), 120)}</p>')
+            parts.append(
                 f"<p>Latest verdict in window: {_status_badge(decision.get('recommendation'))} "
                 f"· risk score <b>{int(decision.get('risk_score') or 0)}</b>/100</p>"
-            ]
+            )
+            if decision.get("draft_recommendation"):
+                parts.append(
+                    '<p class="muted">This AI verdict is awaiting human review; its draft value '
+                    "is withheld from this report until a reviewer accepts it.</p>"
+                )
             conditions = decision.get("conditions_for_go") or []
             if conditions:
                 items = "".join(f"<li>{_e(c, 300)}</li>" for c in conditions[:10])

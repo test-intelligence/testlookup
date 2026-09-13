@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-09-13 - AI summaries in notifications and digests obey the review gate (E8.4, slice 2)
+
+Slice 1 gated report files, share links and the release-readiness value. This
+slice covers the AI text that leaves in messages. It stays behind
+`REVIEW_GATE_ENFORCED`, which is still off by default.
+
+- **The AI summary email** (`dispatch_ai_summary_email`) fires as a pipeline
+  finishes, which is exactly when its review is still pending. The same summary
+  feeds both preference notifications and event-driven digests, so it is now
+  gated once, before both fan-outs:
+  - **Enforced and unreviewed:** the notification still goes out, so the event
+    is not lost, but the AI text is replaced with a notice that the summary
+    awaits review. The executive panel, which carries the AI verdict, is
+    dropped with it.
+  - **Project allows drafts:** the text is sent led by the
+    `DRAFT - AI-generated, not human-reviewed` line.
+  - **Reviewed, or gate not enforced:** the text is unchanged. When not
+    enforced, the would-be refusal is audited.
+  - **Deterministic fallback summary:** never gated, because no model wrote it.
+  - **The gate itself fails** (say the review lookup errors): the notification
+    is never blocked. While enforced it fails closed and sends the notice; while
+    not enforced, nothing changes.
+- **The window analysis report**, both downloaded and attached to digests,
+  quotes the latest release verdict. That verdict now gets the same projection
+  as the release-readiness value:
+  - While enforced, an unreviewed AI verdict reads `PENDING_REVIEW`, and the
+    report says it awaits review without printing the withheld value.
+  - A project that allows drafts sees the value marked DRAFT.
+  - A human override or an accepted review is unchanged.
+
+Not covered, and needing a decision: the report's Investigator narrative
+excerpts. Investigations never get review requests, so gating them would hide
+them permanently with no way to accept them.
+
+Tests: `backend/tests/test_notification_distribution_gates.py`, which drives
+the real Celery task body, so the gate is proven to sit before both the
+preference and the digest fan-out.
+
 ## 2026-09-13 - unreviewed AI reports stop leaving the system unmarked (E8.4, first slice)
 
 Inside the app, a report shows its review state (E8.3). A file, a share link or

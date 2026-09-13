@@ -3027,6 +3027,8 @@ def dispatch_ai_summary_email(
         if doc:
             executive_summary = doc.get("executive_summary") or doc.get("layer1_executive_summary") or ""
             executive_panel = doc.get("executive_panel")
+        # E8.4: only the Mongo summary is AI-written; the fallback below is not.
+        summary_is_ai = bool(executive_summary)
 
         if not executive_summary:
             # Fallback to deterministic summary
@@ -3048,6 +3050,54 @@ def dispatch_ai_summary_email(
         _pass_rate = float(run.pass_rate or 0) if run else 0.0
         _total_tests = int(run.total_tests or 0) if run else 0
         _failed_tests = int(run.failed_tests or 0) if run else 0
+
+        # E8.4: the AI summary goes out once here -- to preference subscribers
+        # and to event-driven digests -- so it is gated once, before both. A
+        # summary nobody has reviewed is withheld once the review gate is
+        # enforced (the event still reaches people, pointing at the review),
+        # drafted when the project allows drafts, and audited either way.
+        from app.services.report_distribution_policy import (
+            gate_ai_summary_text,
+            record_distribution,
+        )
+
+        summary_withheld = False
+        try:
+            async with AsyncSessionLocal() as db:
+                executive_summary, summary_decision = await gate_ai_summary_text(
+                    db,
+                    run_id=test_run_id,
+                    project_id=project_id,
+                    summary_text=executive_summary,
+                    ai_generated=summary_is_ai,
+                    channel="ai_summary_notification",
+                )
+                if summary_decision is not None:
+                    await record_distribution(
+                        db, summary_decision, channel="ai_summary_notification",
+                        run_id=test_run_id, project_id=project_id,
+                    )
+                    await db.commit()
+            summary_withheld = summary_decision is not None and not summary_decision.allowed
+        except Exception as gate_exc:
+            # The gate must never stop the notification itself. If it cannot
+            # decide: while enforced, fail CLOSED (send the review notice, not
+            # the AI text); while not enforced, behave exactly as before E8.4.
+            from app.services.report_distribution_policy import (
+                REVIEW_PENDING_NOTICE,
+                gate_enforced,
+            )
+
+            logger.warning(
+                "[AI Email] review gate unavailable for run %s (%s)",
+                test_run_id, type(gate_exc).__name__,
+            )
+            if summary_is_ai and gate_enforced():
+                executive_summary = REVIEW_PENDING_NOTICE
+                summary_withheld = True
+        if summary_withheld:
+            # The executive panel carries the AI verdict too; it goes with the text.
+            executive_panel = None
 
         # 1. Dispatch to notification-preference subscribers (AI_ANALYSIS_COMPLETE event)
         await dispatch_ai_summary_notifications(

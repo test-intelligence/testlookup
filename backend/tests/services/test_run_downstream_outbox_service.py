@@ -1787,7 +1787,11 @@ def test_ai_summary_consumer_stages_preference_and_digest_children(monkeypatch):
     digest_result.all.return_value = [(subscription, "qa@example.test")]
     digest_db = SimpleNamespace(execute=AsyncMock(return_value=digest_result), commit=AsyncMock())
     tag_db = SimpleNamespace(commit=AsyncMock())
-    sessions = iter([load_db, digest_db, tag_db])
+    # E8.4: the task now opens one session between load and digest to gate the
+    # AI summary on human review. This test is about staging the preference and
+    # digest children, so the gate is stubbed below and gets its own session.
+    gate_db = SimpleNamespace(commit=AsyncMock())
+    sessions = iter([load_db, gate_db, digest_db, tag_db])
 
     class _SessionContext:
         async def __aenter__(self):
@@ -1809,6 +1813,12 @@ def test_ai_summary_consumer_stages_preference_and_digest_children(monkeypatch):
     stage_digests = AsyncMock()
     monkeypatch.setattr(tasks, "_run_async", asyncio.run)
     monkeypatch.setattr(postgres, "AsyncSessionLocal", lambda: _SessionContext())
+    from app.services import report_distribution_policy
+
+    async def _no_gate(_db, **kwargs):
+        return kwargs["summary_text"], None
+
+    monkeypatch.setattr(report_distribution_policy, "gate_ai_summary_text", _no_gate)
     monkeypatch.setattr(
         mongo,
         "get_mongo_db",
