@@ -79,6 +79,43 @@ def _stage_order(workflow_type: str) -> tuple[str, ...]:
     raise ValueError(f"unsupported workflow_type: {workflow_type}")
 
 
+#: Workflow graphs an API invocation can run in, in preference order (E1.2).
+_INVOCATION_WORKFLOWS = ("offline", "deep")
+
+
+def invocation_workflow_type(stage_name: str) -> str | None:
+    """The workflow graph that can run ``stage_name`` on its own, or None.
+
+    A capability is invocable when it is a planned stage of the offline or deep
+    graph. Cluster-child coordinators and child-spawned, runtime and
+    investigation capabilities need a surrounding workflow, so they are not.
+    """
+    try:
+        capability = get_capability(stage_name)
+    except ValueError:
+        return None
+    if capability.execution != "planned" or stage_name in _CLUSTER_CHILD_STAGES:
+        return None
+    for workflow_type in _INVOCATION_WORKFLOWS:
+        if stage_name in _stage_order(workflow_type):
+            return workflow_type
+    return None
+
+
+def invocation_stage_closure(workflow_type: str, stage_name: str) -> list[str]:
+    """``stage_name`` and every stage it transitively depends on, in graph order."""
+    order = _stage_order(workflow_type)
+    needed: set[str] = set()
+    pending = [stage_name]
+    while pending:
+        stage = pending.pop()
+        if stage in needed or stage not in order:
+            continue
+        needed.add(stage)
+        pending.extend(get_capability(stage).dependencies)
+    return [stage for stage in order if stage in needed]
+
+
 def compute_workflow_plan_hash(plan: dict[str, Any]) -> str:
     """Hash the authoritative plan projection, excluding digest metadata."""
     projection = {key: value for key, value in plan.items() if key not in {"plan_id", "plan_sha256"}}
@@ -692,8 +729,11 @@ def build_workflow_plan(
     regression_watchman_enabled: bool = False,
     change_ownership_enabled: bool = False,
     defect_commander_enabled: bool = False,
+    invocation_stage: str | None = None,
 ) -> dict[str, Any]:
     """Build the minimal useful agent path for the currently known state."""
+    if invocation_stage is not None and invocation_stage not in _stage_order(workflow_type):
+        raise ValueError(f"invocation_stage {invocation_stage!r} is not a {workflow_type} stage")
     threshold = threshold if threshold is not None else settings.AI_CONFIDENCE_THRESHOLD
     if not isinstance(cluster_children_enabled, bool):
         raise ValueError("cluster_children_enabled must be a boolean")
@@ -890,6 +930,17 @@ def build_workflow_plan(
             "concurrency_class": capability.concurrency_class,
         })
 
+    if invocation_stage is not None:
+        # E1.2: an API invocation runs one agent and the stages it declares as
+        # dependencies. Everything else is unplanned, which the checkpointed
+        # node wrapper already honours as a recorded skip.
+        keep = set(invocation_stage_closure(workflow_type, invocation_stage))
+        invoked_id = get_capability(invocation_stage).capability_id
+        for item in stages:
+            if item["stage"] not in keep and item["planned"]:
+                item["planned"] = False
+                item["rationale"] = f"not needed for the invoked agent {invoked_id}"
+
     plan = {
         "schema_version": PLANNER_SCHEMA_VERSION,
         "planner_version": PLANNER_VERSION,
@@ -914,6 +965,9 @@ def build_workflow_plan(
         },
         "stages": stages,
     }
+    if invocation_stage is not None:
+        # Only on invocation plans, so every other plan's hash is unchanged.
+        plan["invocation_stage"] = invocation_stage
     digest = compute_workflow_plan_hash(plan)
     plan["plan_id"] = f"plan:{digest[:20]}"
     plan["plan_sha256"] = digest
@@ -1028,6 +1082,7 @@ def attach_workflow_plan_and_verification(
         regression_watchman_enabled=bool(specialist_flags.get("regression_watchman")),
         change_ownership_enabled=bool(specialist_flags.get("change_ownership")),
         defect_commander_enabled=bool(specialist_flags.get("defect_commander")),
+        invocation_stage=plan_inputs.get("invocation_stage"),
     )
     state["initial_workflow_plan"] = initial_plan
     state["workflow_plan"] = explained_plan

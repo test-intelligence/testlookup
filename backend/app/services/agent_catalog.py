@@ -114,6 +114,11 @@ def _spec(agent_id: str) -> Optional[CapabilitySpecV1]:
     return next((s for s in CAPABILITY_REGISTRY.values() if s.capability_id == agent_id), None)
 
 
+def capability_for(agent_id: str) -> Optional[CapabilitySpecV1]:
+    """The registry spec behind a catalog agent id, or None when unknown."""
+    return _spec(agent_id)
+
+
 def _wrapper_name(stage_name: str) -> str:
     return "".join(part.capitalize() for part in stage_name.split("_")) + "InvokeInput"
 

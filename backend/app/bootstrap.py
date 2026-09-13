@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.deps import get_current_user_or_api_key
 from app.routers import (
     agent_investigations,
+    agent_invoke,
     agent_actions,
     agent_memory,
     agents,
@@ -139,6 +140,9 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     notifications.router,
     app_settings.router,
     agents.router,
+    # E1.2: AFTER agents.router, so /agents/{agent_id}/invoke is matched only
+    # once every literal /agents/... route has had its chance.
+    agent_invoke.router,
     chat.router,
     feedback.router,
     feedback.lookup_router,            # US-2.4: fingerprint → analysis_id lookup (project-scoped)

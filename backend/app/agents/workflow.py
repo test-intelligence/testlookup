@@ -1858,6 +1858,7 @@ async def run_offline_pipeline(
     cost_budget_mode_override: str | None = None,
     expected_attempt: int | None = None,
     rerun_of: str | None = None,
+    invocation_stage: str | None = None,
 ) -> dict:
     """
     Execute the full offline analysis pipeline for a completed test run.
@@ -1883,7 +1884,8 @@ async def run_offline_pipeline(
             if not test_run_id or not project_id:
                 raise ValueError("test_run_and_project_required")
             pipeline_setup = await _create_pipeline_run(
-                pipeline_run_id, test_run_id, project_id, workflow_type
+                pipeline_run_id, test_run_id, project_id, workflow_type,
+                invocation_stage=invocation_stage,
             )
         test_run_id = pipeline_setup["test_run_id"]
         project_id = pipeline_setup["project_id"]
@@ -1892,7 +1894,8 @@ async def run_offline_pipeline(
             raise ValueError("test_run_and_project_required")
         pipeline_run_id = str(uuid.uuid4())
         pipeline_setup = await _create_pipeline_run(
-            pipeline_run_id, test_run_id, project_id, workflow_type, rerun_of=rerun_of
+            pipeline_run_id, test_run_id, project_id, workflow_type, rerun_of=rerun_of,
+            invocation_stage=invocation_stage,
         )
 
     try:
@@ -2115,6 +2118,8 @@ async def run_deep_pipeline(
     cost_budget_mode_override: str | None = None,
     expected_attempt: int | None = None,
     rerun_of: str | None = None,
+    create_if_missing: bool = False,
+    invocation_stage: str | None = None,
 ) -> dict:
     """
     Execute the deep investigation pipeline with clustering, flaky sentinel,
@@ -2123,7 +2128,19 @@ async def run_deep_pipeline(
     if pipeline_run_id is not None:
         pipeline_setup = await _claim_pipeline_resume(pipeline_run_id, expected_attempt=expected_attempt)
         if pipeline_setup is None:
-            raise ValueError("pipeline_not_resumable")
+            # E1.2: an API invocation mints its pipeline id up front, so its
+            # first delivery creates the row under that id, as the offline path
+            # already does for durable deliveries.
+            async with AsyncSessionLocal() as db:
+                existing = await db.get(AgentPipelineRun, pipeline_run_id)
+            if not create_if_missing or existing is not None:
+                raise ValueError("pipeline_not_resumable")
+            if not test_run_id or not project_id:
+                raise ValueError("test_run_and_project_required")
+            pipeline_setup = await _create_pipeline_run(
+                pipeline_run_id, test_run_id, project_id, "deep",
+                invocation_stage=invocation_stage,
+            )
         test_run_id = pipeline_setup["test_run_id"]
         project_id = pipeline_setup["project_id"]
     else:
@@ -2131,7 +2148,8 @@ async def run_deep_pipeline(
             raise ValueError("test_run_and_project_required")
         pipeline_run_id = str(uuid.uuid4())
         pipeline_setup = await _create_pipeline_run(
-            pipeline_run_id, test_run_id, project_id, "deep", rerun_of=rerun_of
+            pipeline_run_id, test_run_id, project_id, "deep", rerun_of=rerun_of,
+            invocation_stage=invocation_stage,
         )
 
     try:
@@ -2568,6 +2586,7 @@ async def _create_pipeline_run(
     workflow_type: str,
     *,
     rerun_of: str | None = None,
+    invocation_stage: str | None = None,
 ) -> dict[str, Any]:
     if workflow_type == "deep":
         stages = _DEEP_PIPELINE_STAGES
@@ -2632,6 +2651,7 @@ async def _create_pipeline_run(
             regression_watchman_enabled=regression_watchman_enabled,
             change_ownership_enabled=change_ownership_enabled,
             defect_commander_enabled=defect_commander_enabled,
+            invocation_stage=invocation_stage,
         )
         _lease_token, _lease_fields = acquire_lease_fields()
         db.add(AgentPipelineRun(
