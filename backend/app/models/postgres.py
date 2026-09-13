@@ -5209,6 +5209,9 @@ class AgentInvocation(Base):
     )
     correlation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # When the invocation was last handed to a worker (migration 0177); a retry of a
+    # lost dispatch restarts this clock and leaves created_at alone.
+    dispatched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AgentActionDispatchOutbox(Base):
