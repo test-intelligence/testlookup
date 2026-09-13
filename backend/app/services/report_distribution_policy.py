@@ -41,10 +41,13 @@ from app.services.review_envelope import (
 
 __all__ = [
     "DRAFT_WATERMARK",
+    "REVIEW_PENDING_NOTICE",
     "DistributionDecision",
     "apply_release_review_gate",
     "decide_run_distribution",
+    "gate_ai_summary_text",
     "gate_enforced",
+    "gate_release_verdict",
     "record_distribution",
     "refusal_detail",
 ]
@@ -230,3 +233,76 @@ async def apply_release_review_gate(
             f"ADVISORY_{recommendation}" if allow_advisory else "PENDING_REVIEW"
         )
     return council.model_copy(update=update)
+
+
+# ── AI summary text in notifications and digests (E8.4 slice 2) ─────────────
+
+#: What a notification says instead of an AI summary it may not distribute.
+#: The event still reaches people -- only the unreviewed AI prose is withheld.
+REVIEW_PENDING_NOTICE = (
+    "An AI summary for this run is ready and awaiting human review. "
+    "Open it in TestLookup to read and review it."
+)
+
+
+async def gate_ai_summary_text(
+    db: Any,
+    *,
+    run_id: Any,
+    project_id: Any,
+    summary_text: str,
+    ai_generated: bool,
+    channel: str,
+) -> tuple[str, Optional[DistributionDecision]]:
+    """Return the summary text a notification may carry, and the decision.
+
+    * not AI-generated (the deterministic fallback), or empty -- unchanged, no
+      decision: there is nothing to review;
+    * refused (enforced, unreviewed) -- :data:`REVIEW_PENDING_NOTICE`, never the
+      AI text;
+    * a draft under the project's opt-in -- the text, led by the DRAFT line, as
+      section 8.2 requires of a notification body;
+    * reviewed, or not enforced -- unchanged.
+    """
+    if not ai_generated or not summary_text:
+        return summary_text, None
+    decision = await decide_run_distribution(
+        db, run_id=run_id, project_id=project_id, channel=channel
+    )
+    if not decision.allowed:
+        return REVIEW_PENDING_NOTICE, decision
+    if decision.watermark:
+        return f"{decision.watermark}\n\n{summary_text}", decision
+    return summary_text, decision
+
+
+async def gate_release_verdict(
+    db: Any,
+    decision: dict[str, Any],
+    *,
+    test_run_id: Any,
+    human_override: Any = None,
+) -> dict[str, Any]:
+    """Project the review gate onto a release verdict embedded in a report.
+
+    The window analysis report (downloaded, and attached to digests) quotes the
+    latest release verdict. It gets the same treatment as the release-readiness
+    endpoint: while enforced, an unreviewed AI verdict reads ``PENDING_REVIEW``
+    with the model's value in ``draft_recommendation``; a project that allows
+    drafts sees the value with ``draft_watermark``. A human override is a
+    decision a person already made, and is left alone.
+    """
+    envelope = await review_envelope_for_run(db, test_run_id, workflow_type="deep")
+    projected = dict(decision)
+    projected["review_state"] = envelope.state
+    if human_override or envelope.state in ("accepted", "not_applicable"):
+        return projected
+    if envelope.state == "pending_review" and await _project_allows_drafts(
+        db, projected.get("project_id")
+    ):
+        projected["draft_watermark"] = DRAFT_WATERMARK
+        return projected
+    if gate_enforced():
+        projected["draft_recommendation"] = projected.get("recommendation")
+        projected["recommendation"] = "PENDING_REVIEW"
+    return projected
