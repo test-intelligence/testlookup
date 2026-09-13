@@ -33,10 +33,10 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **38 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **40 guards**.
 16 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 22 ship at zero with **no baseline file at all** — those are
+fail CI. The other 24 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -114,6 +114,13 @@ fails if a *second* deleter appears.
 | `agents.capability-has-executor` † | a capability in `agent_capability_registry` that no workflow plans, or one that contradicts the planner | Add the stage to the right `_*_STAGES` tuple in `services/agent_planner.py`, or declare how it really runs: `_capability("name", execution="on_demand"/"child_spawned"/"runtime", ...)`. `defect_commander` read as a mutating pipeline stage depending on `root_cause_analysis` while having no executor at all — zero `agent_stage_results` rows in the deployment's entire history |
 | `agents.pipeline-status-writes-via-state-machine` † | assigning `AgentPipelineRun.status` anywhere but `services/workflow_run_state.py` | Call `apply_transition(pipeline, PipelineRunStatus.X, error=...)`, or `await guarded_transition(db, id, expected=..., to=...)` where two writers can race. Five modules used to assign the column directly and the vocabulary drifted into `partial`, `cancelled` and a read-time 30-minute `failed` rewrite (E7.1) |
 | `agents.no-partial-pipeline-status` † | `AgentPipelineRun.status` compared with, filtered by, or assigned the retired literals `partial` / `cancelled` | Degraded runs are `completed` with `execution_metadata.stage_quality = 'degraded'` (use `workflow_run_state.is_resumable`); cancelled runs are `failed` with an error prefixed `cancelled:`. Migration 0173 backfilled the rows, so a comparison against a retired value matches nothing forever |
+
+### Reviews
+
+| Gate id | Requires | How to satisfy |
+|---|---|---|
+| `reviews.report-producers-create-review-request` † | every capability whose output is a report contract (`PreliminarySummary`, `AnalysisAgentOutput`, `DecisionReportV1`, `RefinedReport`) planned in a workflow stage order, and Finalize still calling `report_stages` and `stage_run_review_request` | Plan the stage in an `agent_planner` `_*_STAGES` tuple and keep its schema in `REPORT_OUTPUT_SCHEMAS`. A report that never reaches Finalize gets no `ReviewRequest`, so it is distributed without anyone looking at it |
+| `reviews.report-consumers-carry-review-block` † | a route handler that reads AI report data (`get_run_intelligence`, `get_run_mode_summary`, decision-report versions, run summaries) without the review envelope, or an MCP tool that calls a report route without `review_notice.review_lines` | Merge `review_envelope_for_run(...).fields()` into the payload and call `apply_headers(response)`; in an MCP tool, end the result with `review_notice.review_lines(data)`. Found on arrival: the intelligence JSON export and the refresh endpoint handed out the report with no review state |
 
 ### Repo
 

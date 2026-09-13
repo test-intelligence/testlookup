@@ -2467,3 +2467,149 @@ def test_partial_on_other_models_is_not_flagged(monkeypatch: pytest.MonkeyPatch,
         r = select(AgentPipelineRun).where(AgentPipelineRun.status.in_(["completed", "passed"]))
     """)
     assert qg._agents_no_partial_pipeline_status() == []
+
+
+# -- reviews.* guards (architecture E8.6) ---------------------------------------
+
+_REVIEW_PLANNER = (
+    '_OFFLINE_STAGES = ("summary", "triage")\n'
+    '_LIVE_STAGES = ("summary",)\n'
+    '_INVESTIGATION_STAGES = ("investigator_plan",)\n'
+    '_DEEP_STAGES = ("summary",)\n'
+)
+
+
+def _review_producer_repo(
+    tmp_path: Path,
+    *,
+    extra: str = "",
+    schemas: str = '"PreliminarySummary", "AnalysisAgentOutput", "DecisionReportV1", "RefinedReport"',
+    finalize: bool = True,
+) -> None:
+    _write(
+        tmp_path / "backend" / "app" / "services" / "agent_capability_registry.py",
+        f"REPORT_OUTPUT_SCHEMAS: frozenset[str] = frozenset({{{schemas}}})\n"
+        "_SPECS = (\n"
+        '    _capability("summary", inputs="X", output="PreliminarySummary"),\n'
+        '    _capability("triage", inputs="X", output="TriageOutput"),\n'
+        f"{extra}"
+        ")\n",
+    )
+    _write(tmp_path / "backend" / "app" / "services" / "agent_planner.py", _REVIEW_PLANNER)
+    _write(
+        tmp_path / "backend" / "app" / "agents" / "workflow.py",
+        (
+            "produced = review_request_service.report_stages(stages)\n"
+            "await review_request_service.stage_run_review_request(db, run=run)\n"
+        ) if finalize else "produced = []\n",
+    )
+    _write(
+        tmp_path / "backend" / "app" / "services" / "review_request_service.py",
+        "def report_stages(rows):\n    return [r for r in rows if is_report_producing(r)]\n",
+    )
+
+
+def test_report_producers_guard_passes_a_planned_report_stage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _review_producer_repo(tmp_path)
+    assert qg._reviews_report_producers_create_review_request() == []
+
+
+def test_report_producers_guard_flags_an_on_demand_report_capability(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _review_producer_repo(
+        tmp_path,
+        extra='    _capability("decision_report", execution="on_demand", inputs="X", output="DecisionReportV1"),\n',
+    )
+    messages = [v.message for v in qg._reviews_report_producers_create_review_request()]
+    assert len(messages) == 1 and "'decision_report'" in messages[0] and "on_demand" in messages[0]
+
+
+def test_report_producers_guard_flags_a_report_stage_no_workflow_plans(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _review_producer_repo(tmp_path, extra='    _capability("report_refinement", inputs="X", output="RefinedReport"),\n')
+    messages = [v.message for v in qg._reviews_report_producers_create_review_request()]
+    assert len(messages) == 1 and "'report_refinement'" in messages[0]
+
+
+def test_report_producers_guard_flags_a_contract_dropped_from_the_schema_set(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _review_producer_repo(tmp_path, schemas='"PreliminarySummary", "AnalysisAgentOutput", "RefinedReport"')
+    messages = [v.message for v in qg._reviews_report_producers_create_review_request()]
+    assert len(messages) == 1 and "'DecisionReportV1'" in messages[0]
+
+
+def test_report_producers_guard_flags_finalize_no_longer_staging_reviews(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _review_producer_repo(tmp_path, finalize=False)
+    messages = [v.message for v in qg._reviews_report_producers_create_review_request()]
+    assert any("report_stages(" in m for m in messages)
+    assert any("stage_run_review_request(" in m for m in messages)
+
+
+def test_report_producers_guard_passes_on_the_real_repo() -> None:
+    assert qg._reviews_report_producers_create_review_request() == []
+
+
+_ENVELOPED_ROUTE = '''
+@router.get("/{run_id}/summary")
+async def summary(run_id, response, db):
+    result = await get_run_mode_summary(run_id, "executive", db, None)
+    envelope = await review_envelope_for_run(db, run_id)
+    return {**result, **envelope.fields()}
+'''
+
+_BARE_ROUTE = '''
+@router.get("/{run_id}/export")
+async def export(run_id, db):
+    intelligence = await get_run_intelligence(run_id, db, None)
+    return {"summary": intelligence}
+
+
+async def helper(run_id, db):
+    return await get_run_intelligence(run_id, db, None)
+'''
+
+
+def test_report_consumers_guard_flags_a_route_without_the_envelope(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "routers" / "good.py", _ENVELOPED_ROUTE)
+    _write(tmp_path / "backend" / "app" / "routers" / "bad.py", _BARE_ROUTE)
+    violations = qg._reviews_report_consumers_carry_review_block()
+    assert [(v.file.name, v.message.split("'")[1]) for v in violations] == [("bad.py", "export")]
+
+
+_MCP_TOOLS = '''
+def register(mcp):
+    @mcp.tool()
+    async def get_run_summary(run_id):
+        data = await api.get(f"/api/v1/runs/{run_id}/summary")
+        return ", ".join([str(data), *review_notice.review_lines(data)])
+
+    @mcp.tool()
+    async def check_run_release_readiness(run_id):
+        data = await api.get(f"/api/v1/release-readiness/{run_id}")
+        return str(data)
+
+    @mcp.tool()
+    async def get_run_intelligence(run_id):
+        data = await api.get(f"/api/v1/runs/{run_id}/intelligence")
+        return "review: " + str(data.get("review"))
+
+    @mcp.tool()
+    async def refresh_intelligence(run_id):
+        await api.post(f"/api/v1/runs/{run_id}/intelligence/refresh")
+        return "ok"
+'''
+
+
+def test_report_consumers_guard_flags_an_mcp_tool_without_review_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "mcp" / "tools" / "reports.py", _MCP_TOOLS)
+    violations = qg._reviews_report_consumers_carry_review_block()
+    # Mentioning the review block is not appending review_state.
+    assert [v.message.split("'")[1] for v in violations] == ["check_run_release_readiness", "get_run_intelligence"]
+
+
+def test_report_consumers_guard_passes_on_the_real_repo() -> None:
+    assert qg._reviews_report_consumers_carry_review_block() == []

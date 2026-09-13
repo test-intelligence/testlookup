@@ -34,6 +34,11 @@ async def test_export_contains_immutable_report_identity(monkeypatch):
     monkeypatch.setattr(run_intelligence, "get_mongo_db", lambda: object())
     monkeypatch.setattr(run_intelligence, "get_run_intelligence", AsyncMock(return_value=intelligence))
     monkeypatch.setattr(run_intelligence, "get_run_mode_summary", AsyncMock(return_value=None))
+    from app.services.review_envelope import ReviewEnvelope
+
+    monkeypatch.setattr(run_intelligence, "review_envelope_for_run", AsyncMock(return_value=ReviewEnvelope(
+        ai_generated=True, state="accepted", message="Reviewed and accepted.",
+    )))
 
     response = await run_intelligence.export_intelligence_report(run_id, db=object())
     payload = json.loads(response.body)
