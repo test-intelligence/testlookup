@@ -42,16 +42,18 @@ import hashlib
 import time
 import uuid as _uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, NoReturn, Optional
 
+import httpx
 import structlog
 from fastapi import HTTPException
-from sqlalchemy import func as sa_func, select
+from sqlalchemy import func as sa_func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.http_client import get_http_client
 from app.models.postgres import (
+    AccessAuditLog,
     AIAnalysis,
     AppSetting,
     Defect,
@@ -60,6 +62,7 @@ from app.models.postgres import (
     TestRun,
     User,
 )
+from app.services import tool_call_idempotency as tci
 
 logger = structlog.get_logger("services.defect_jira")
 
@@ -581,6 +584,124 @@ async def _post_recurrence_comment(
         return False
 
 
+# ── Exactly-once filing ──────────────────────────────────────────────────────
+
+# Transport errors raised before the request left this process. Jira cannot
+# have created anything, so the claim is recorded failed and may be retried.
+# Every other error (read timeout, dropped connection) may follow a create.
+_NOT_SENT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+
+_LABEL_PREFIX = "testlookup-sig-"
+
+
+async def _lock_signature(db: AsyncSession, project_id: _uuid.UUID, signature: str) -> None:
+    """Serialize one-click creates for (project, signature) until the caller's
+    transaction ends. The router's commit (or the rollback on error) releases it."""
+    digest = hashlib.sha256(f"one-click-jira\x1f{project_id}\x1f{signature}".encode()).digest()
+    lock_id = int.from_bytes(digest[:8], "big", signed=True)
+    await db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
+
+
+async def _signature_generation(
+    db: AsyncSession, project_id: _uuid.UUID, signature: str,
+) -> str:
+    """Which filing of this signature a create belongs to.
+
+    The newest closed linked defect: once it closes, a recurring failure is a
+    new filing with a new claim, rather than a replay of the closed issue.
+    """
+    row = (
+        await db.execute(
+            select(Defect.id)
+            .where(
+                Defect.project_id == project_id,
+                Defect.signature_fingerprint == signature,
+                Defect.resolution_status != "OPEN",
+                Defect.jira_ticket_id.isnot(None),
+            )
+            .order_by(Defect.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    return str(row[0]) if row is not None else "first"
+
+
+def _signature_label(claim_key: str) -> str:
+    """Jira label that finds the issue a claim filed, when its answer was lost."""
+    return f"{_LABEL_PREFIX}{hashlib.sha256(claim_key.encode()).hexdigest()[:32]}"
+
+
+def _issue_result(cfg: dict[str, Any], issue_key: str) -> dict[str, Any]:
+    return {"jira_key": issue_key, "jira_url": f"{_base_url(cfg)}/browse/{issue_key}"}
+
+
+async def _post_issue(cfg: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
+    """POST the issue. Raises ``OutcomeUnknown`` whenever Jira may hold it."""
+    try:
+        resp = await _jira_post(cfg, "/rest/api/3/issue", {"fields": fields})
+    except _NOT_SENT_ERRORS as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Jira request failed: {str(exc)[:300]}",
+        )
+    except Exception as exc:
+        raise tci.OutcomeUnknown(f"{type(exc).__name__}: {str(exc)[:200]}") from exc
+    if resp.status_code >= 500:
+        raise tci.OutcomeUnknown(f"Jira answered HTTP {resp.status_code}")
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Jira rejected the issue (HTTP {resp.status_code}): {resp.text[:300]}",
+        )
+    try:
+        issue_key = str(resp.json()["key"])
+    except Exception as exc:
+        raise tci.OutcomeUnknown("Jira accepted the request but returned no issue key") from exc
+    return _issue_result(cfg, issue_key)
+
+
+async def _search_issue_keys_by_label(cfg: dict[str, Any], label: str) -> list[str]:
+    """Issue keys carrying ``label``, oldest first. 502 when Jira cannot answer:
+    an unanswered search is not evidence either way."""
+    detail = "Could not check Jira for an issue filed by an earlier request"
+    try:
+        resp = await _jira_get(
+            cfg, "/rest/api/3/search/jql",
+            params={
+                "jql": f'labels = "{label}" ORDER BY created ASC',
+                "fields": "created",
+                "maxResults": 10,
+            },
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"{detail}: {str(exc)[:300]}")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"{detail} (HTTP {resp.status_code}).")
+    try:
+        issues = (resp.json() or {}).get("issues") or []
+        return [str(issue["key"]) for issue in issues if issue.get("key")]
+    except Exception:
+        raise HTTPException(status_code=502, detail=f"{detail}: unreadable search response.")
+
+
+def _raise_outcome_unknown(label: str, *, cause: Optional[str] = None) -> NoReturn:
+    if cause:
+        message = (
+            f"Jira did not confirm whether it created the issue ({cause}). "
+            f"Search Jira for the label {label}. Retrying checks Jira for it again."
+        )
+    else:
+        message = (
+            "An earlier request to file this defect never recorded whether Jira "
+            f"created the issue, and no issue with the label {label} was found. "
+            "Jira search can lag, so search Jira for the label; if the issue is "
+            "not there, retry with confirm_not_filed."
+        )
+    raise HTTPException(
+        status_code=409,
+        detail={"code": "jira_outcome_unknown", "message": message, "jira_label": label},
+    )
+
+
 # ── Create-or-link (US-6.1 step 3 + US-6.3 webhook target) ──────────────────
 
 
@@ -596,12 +717,25 @@ async def create_or_link_issue(
     assignee: Optional[str] = None,
     extra_comment: Optional[str] = None,
     target: str = "jira",
+    confirm_not_filed: bool = False,
 ) -> dict[str, Any]:
     """One-click defect creation. Stage-only — the router handler commits.
 
     ``target="jira"``  → dedup-or-create against the Jira REST API.
     ``target="webhook"`` → emit ``defect.create_requested`` with the same
     prefilled payload through the customer-managed webhook subsystem.
+
+    At most one Jira issue per signature generation, however the request ends:
+
+    * a transaction-scoped advisory lock serializes requests for one
+      signature, so a double-submit waits and then deduplicates;
+    * the filing is claimed in ``agent_action_ledger`` (E7.6 ``run_once``)
+      before the POST, so a retry after a lost outcome replays the recorded
+      issue instead of filing again;
+    * a claim whose outcome is unknown is reconciled by searching Jira for
+      the issue's ``testlookup-sig-*`` label; when nothing is found the
+      request gets a 409 and files only when retried with
+      ``confirm_not_filed=True``.
     """
     pid = _uuid.UUID(str(project_id))
     prefill = await build_prefill(
@@ -620,6 +754,11 @@ async def create_or_link_issue(
         _raise_unavailable(reason)
 
     signature = prefill["signature"]
+
+    # Serialize creates for this signature. A double-submit waits here until
+    # the first request commits or rolls back, then finds its Defect row in the
+    # dedup read below instead of racing it to Jira.
+    await _lock_signature(db, pid, signature)
 
     # Dedup before create — never file a duplicate for a known-open defect.
     existing = await find_open_linked_defect(db, pid, signature)
@@ -644,31 +783,94 @@ async def create_or_link_issue(
             ),
         }
 
+    # The filing is claimed in the ledger before Jira is called, keyed on the
+    # signature and its generation, so a request whose outcome was lost (the
+    # commit failed, the worker died, the read timed out) is never filed twice.
+    generation = await _signature_generation(db, pid, signature)
+    scope_id = f"one-click:{pid}"
+    subject_id = f"{signature}:{generation}"
+    key = tci.tool_call_key(
+        tool=tci.JIRA_TICKET_TOOL, scope_id=scope_id, subject_id=subject_id,
+    )
+    label = _signature_label(key)
+
     project_key = jira_project_key or cfg["default_project_key"]
     fields: dict[str, Any] = {
         "project": {"key": project_key},
         "summary": prefill["summary"],
         "issuetype": {"name": issue_type or "Bug"},
         "description": _adf_from_prefill(prefill, extra_comment),
-        "labels": ["testlookup", "one-click-defect"],
+        "labels": ["testlookup", "one-click-defect", label],
     }
     if assignee:
         fields["assignee"] = {"accountId": assignee}
 
-    try:
-        resp = await _jira_post(cfg, "/rest/api/3/issue", {"fields": fields})
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Jira request failed: {str(exc)[:300]}",
-        )
-    if resp.status_code >= 400:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Jira rejected the issue (HTTP {resp.status_code}): {resp.text[:300]}",
-        )
-    data = resp.json()
-    issue_key = data["key"]
-    issue_url = f"{_base_url(cfg)}/browse/{issue_key}"
+    async def _file() -> dict[str, Any]:
+        return await _post_issue(cfg, fields)
+
+    async def _run_once() -> tci.ToolCallOutcome:
+        try:
+            return await tci.run_once(
+                project_id=pid,
+                tool=tci.JIRA_TICKET_TOOL,
+                scope_id=scope_id,
+                subject_id=subject_id,
+                target_type="failure_signature",
+                request_payload={
+                    "signature": signature,
+                    "generation": generation,
+                    "jira_project_key": project_key,
+                    "issue_type": issue_type or "Bug",
+                    "label": label,
+                },
+                call=_file,
+            )
+        except tci.OutcomeUnknown as exc:
+            _raise_outcome_unknown(label, cause=str(exc))
+
+    outcome = await _run_once()
+    other_keys: list[str] = []
+    if outcome.status == "outcome_unknown":
+        # An earlier request claimed this filing and never recorded how it
+        # ended. Look for the issue by its label before deciding anything.
+        found = await _search_issue_keys_by_label(cfg, label)
+        if found:
+            issue_key, other_keys = found[0], found[1:]
+            await tci.record_outcome(
+                project_id=pid, key=outcome.key, status="executed",
+                result_payload=_issue_result(cfg, issue_key),
+            )
+            outcome = tci.ToolCallOutcome(
+                status="replayed", key=outcome.key, result=_issue_result(cfg, issue_key),
+            )
+            how = "reconciled"
+        elif not confirm_not_filed:
+            # Jira search lags behind creation, so "not found" is not proof.
+            _raise_outcome_unknown(label)
+        else:
+            db.add(AccessAuditLog(
+                actor_user_id=actor.id,
+                actor_name=getattr(actor, "username", None),
+                project_id=pid,
+                action="jira_defect_confirm_not_filed",
+                after_value={"signature": signature, "jira_label": label},
+            ))
+            await tci.record_outcome(
+                project_id=pid, key=outcome.key, status="failed",
+                error_code="confirmed_not_filed",
+            )
+            outcome = await _run_once()
+            if outcome.status == "outcome_unknown":  # pragma: no cover — serialized by the lock
+                _raise_outcome_unknown(label)
+            how = "created" if outcome.status == "executed" else "replayed"
+    else:
+        how = "created" if outcome.status == "executed" else "replayed"
+
+    issue_key = str(outcome.result.get("jira_key") or "")
+    if not issue_key:
+        # A claim recorded executed without a key is not something to guess at.
+        _raise_outcome_unknown(label)
+    issue_url = str(outcome.result.get("jira_url") or f"{_base_url(cfg)}/browse/{issue_key}")
 
     # Attach to the newest failing TestCase when we have a fingerprint so
     # the defect shows up on /defects (its list JOINs test_cases).
@@ -726,20 +928,32 @@ async def create_or_link_issue(
     await db.flush()
 
     logger.info(
-        "jira_defect_created",
-        project_id=str(pid), issue_key=issue_key,
+        "jira_defect_created" if how == "created" else "jira_defect_recovered",
+        project_id=str(pid), issue_key=issue_key, how=how,
         signature=signature[:16], actor_id=str(actor.id),
     )
+    if how == "created":
+        message = f"Created {issue_key}."
+    elif how == "reconciled":
+        message = f"Linked to {issue_key}, filed by an earlier request and found in Jira by its label."
+        if other_keys:
+            logger.warning(
+                "jira_defect_label_duplicates",
+                project_id=str(pid), issue_key=issue_key, others=other_keys,
+            )
+            message += f" {', '.join(other_keys)} carry the same label; close them as duplicates."
+    else:
+        message = f"Linked to {issue_key}, filed by an earlier request whose result was not saved."
     return {
         "target": "jira",
-        "deduplicated": False,
+        "deduplicated": how != "created",
         "defect_id": str(defect.id),
         "jira_key": issue_key,
         "jira_url": issue_url,
         "external_status": "Open",
         "recurrence_count": 0,
         "recurrence_comment_posted": False,
-        "message": f"Created {issue_key}.",
+        "message": message,
     }
 
 

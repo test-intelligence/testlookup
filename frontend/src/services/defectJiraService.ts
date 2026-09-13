@@ -67,6 +67,18 @@ export interface JiraDefectCreatePayload {
   assignee?: string
   extra_comment?: string
   target?: 'jira' | 'webhook'
+  /** Sent only after a 409 `jira_outcome_unknown`, once the user has checked Jira. */
+  confirm_not_filed?: boolean
+}
+
+/**
+ * 409 detail when an earlier request may already have filed the issue. Search
+ * Jira for `jira_label`; if nothing carries it, retry with `confirm_not_filed`.
+ */
+export interface JiraOutcomeUnknownDetail {
+  code: 'jira_outcome_unknown'
+  message: string
+  jira_label: string
 }
 
 export interface JiraDefectCreateResult {

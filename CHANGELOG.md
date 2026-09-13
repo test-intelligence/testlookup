@@ -1,5 +1,63 @@
 # Changelog
 
+## 2026-09-13 - One-click Jira defects file at most one issue per failure signature
+
+`POST /api/v1/projects/{project_id}/defects/jira` is the only path that
+actually files a Jira issue. It could file a second issue for the same
+failure in two ways:
+
+1. **The outcome was lost after Jira accepted the issue.** The router's
+   commit failed, the worker died, or the POST timed out reading the
+   response. No Defect row existed, so the next request passed the dedup
+   read and filed again.
+2. **Two submits raced.** Both passed the unlocked dedup read before either
+   committed, and both posted.
+
+**Now:**
+
+- **Requests for one signature are serialized.** A transaction-scoped
+  Postgres advisory lock on (project, signature) is taken before the dedup
+  read. A double-submit waits for the first request to commit, then gets
+  `deduplicated=true` with that request's issue.
+- **The filing is claimed before Jira is called.** The E7.6 `run_once`
+  guard commits an `executing` row in `agent_action_ledger` first. The key
+  is the project, the signature and its *generation*: the most recently
+  closed linked defect. A signature that fails again after its defect
+  closes can still get a new issue.
+- **A retry never reposts once the ledger records the issue.** It rebuilds
+  the lost Defect row from the stored key.
+- **An ambiguous POST leaves the claim `executing`.** This covers a read
+  timeout, a dropped connection, a Jira 5xx, or a 2xx with no issue key.
+  The request gets a 409 `jira_outcome_unknown`. Only failures that
+  provably never sent the request (connect errors, pool timeouts) and Jira
+  4xx rejections are recorded `failed` and may be retried.
+- **Unknown claims are reconciled by label.** Every issue carries a
+  `testlookup-sig-<hash>` label derived from the claim key. A later request
+  that finds an `executing` claim searches Jira for that label.
+  - If an issue is found, it is linked. If several are found, the oldest is
+    linked and the rest are named as duplicates.
+  - If nothing is found, the request returns 409, because Jira search lags
+    behind creation.
+  - It files only when retried with `confirm_not_filed=true`. That retry is
+    written to `access_audit_logs` as `jira_defect_confirm_not_filed`. The
+    create dialog shows the label and an "I checked Jira, file it" button.
+
+`tool_call_idempotency` gains `OutcomeUnknown`, an exception an adapter
+raises when the call may have happened, which leaves the claim `executing`.
+It also gains `record_outcome`, which settles a reconciled claim.
+
+Tests: `backend/tests/test_defect_jira_endpoint.py` covers:
+
+- a commit lost after Jira accepted the issue, then a retry;
+- a read timeout, then a retry that finds the issue by label;
+- a retry that finds nothing (409), then the confirm flag;
+- 5xx and missing-key responses, and a closed defect's new generation.
+
+`backend/tests/integration/test_defect_jira_exactly_once_postgres.py`
+proves the lock and the claim against real Postgres: two concurrent
+submits POST exactly once, and a rolled-back commit followed by a retry
+never posts again.
+
 ## 2026-09-13 - Agent configs resolve through four layers, and a disabled agent cannot be invoked (E4.2)
 
 `app/services/agent_config_resolver.py` works out an agent's effective

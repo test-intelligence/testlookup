@@ -1926,6 +1926,10 @@ class JiraDefectCreateRequest(BaseModel):
     assignee: Optional[str] = Field(None, max_length=128)  # Jira accountId
     extra_comment: Optional[str] = Field(None, max_length=2000)
     target: str = Field("jira", pattern="^(jira|webhook)$")
+    # Set only after a 409 ``jira_outcome_unknown``: the user checked Jira,
+    # the issue an earlier request may have filed is not there, file it.
+    # Ignored unless an earlier attempt's outcome is actually unknown.
+    confirm_not_filed: bool = False
 
 
 class JiraDefectCreateResponse(BaseModel):

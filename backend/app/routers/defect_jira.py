@@ -105,6 +105,7 @@ async def create_jira_defect_one_click(
         assignee=payload.assignee,
         extra_comment=payload.extra_comment,
         target=payload.target,
+        confirm_not_filed=payload.confirm_not_filed,
     )
     # Router owns the unit of work: the dedup recurrence bump or the new
     # Defect row staged by the service commits here.

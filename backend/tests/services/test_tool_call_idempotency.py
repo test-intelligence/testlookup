@@ -285,3 +285,35 @@ async def test_a_reclaimed_attempt_cannot_start_a_call(ledger, monkeypatch):
         )
     call.assert_not_awaited()
     assert ledger.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_unknown_call_is_left_executing_and_re_raised(monkeypatch):
+    """A read timeout may follow a create. Recording ``failed`` would let the
+    next attempt call again, so no finish is written at all."""
+    finishes = _script(monkeypatch, "claimed")
+    call = AsyncMock(side_effect=tci.OutcomeUnknown("read timed out"))
+
+    with pytest.raises(tci.OutcomeUnknown):
+        await _run(call)
+    assert finishes == []
+
+
+@pytest.mark.asyncio
+async def test_record_outcome_settles_an_unknown_claim(ledger):
+    async def _file():
+        raise tci.OutcomeUnknown("read timed out")
+
+    with pytest.raises(tci.OutcomeUnknown):
+        await _run(_file)
+    (row,) = ledger.rows.values()
+    assert row.status == "executing"
+
+    await tci.record_outcome(
+        project_id=PROJECT, key=row.idempotency_key, status="executed",
+        result_payload={"ticket_key": "QA-5"},
+    )
+    replay = await _run(AsyncMock())
+
+    assert replay.status == "replayed"
+    assert replay.result == {"ticket_key": "QA-5"}
