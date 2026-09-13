@@ -364,7 +364,9 @@ async def test_get_unknown_agent_is_404_and_list_covers_every_agent(monkeypatch)
         await router_mod.get_agent_config(PROJECT_ID, "agent.nope.v1", db=None, current_user=_user())
     assert exc.value.status_code == 404
     monkeypatch.setattr(svc, "list_config_rows", AsyncMock(return_value={SUMMARY: _row()}))
-    listed = (await router_mod.list_agent_configs(PROJECT_ID, db=None, current_user=_user()))["configs"]
+    payload = await router_mod.list_agent_configs(PROJECT_ID, db=None, current_user=_user())
+    assert payload["tools"] == svc.AGENT_TOOL_PERMISSIONS and list(payload["tools"]) == sorted(payload["tools"])
+    listed = payload["configs"]
     assert [c["agent_id"] for c in listed] == sorted(svc.configurable_capabilities())
     by_id = {c["agent_id"]: c for c in listed}
     assert by_id[SUMMARY]["source"] == "project" and by_id[TRIAGE]["source"] == "default"

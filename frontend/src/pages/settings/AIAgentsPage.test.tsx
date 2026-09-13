@@ -33,6 +33,11 @@ vi.mock('@/components/fixer/FixerConfigCard', () => ({
   default: () => <div data-testid="fixer-config-card-stub" />,
 }))
 
+// The agent configuration panel (E4.3) has its own tests.
+vi.mock('@/components/agents/AgentConfigPanel', () => ({
+  default: ({ projectId }: { projectId: string }) => <div data-testid="agent-config-panel-stub">{projectId}</div>,
+}))
+
 const POLICY = {
   agent_id: 'investigator',
   enabled: true,
@@ -81,6 +86,7 @@ describe('AIAgentsPage', () => {
 
     // The Fixer card (AI-2) coexists alongside the Investigator card.
     expect(screen.getByTestId('fixer-config-card-stub')).toBeInTheDocument()
+    expect(screen.getByTestId('agent-config-panel-stub')).toHaveTextContent('proj-1')
   })
 
   it('PUTs the exact contract payload {enabled, mode, budgets} on save', async () => {
@@ -131,5 +137,6 @@ describe('AIAgentsPage', () => {
     expect(screen.getByText(/select a specific project/i)).toBeInTheDocument()
     expect(screen.queryByTestId('agent-policy-investigator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('fixer-config-card-stub')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('agent-config-panel-stub')).not.toBeInTheDocument()
   })
 })
