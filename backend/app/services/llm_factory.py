@@ -4,6 +4,7 @@ Switch between Ollama (offline), OpenAI, Gemini, or any compatible provider
 by changing the LLM_PROVIDER environment variable — no agent code changes needed.
 """
 import logging
+import os
 import time
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -71,11 +72,13 @@ class BudgetedLLM:
         *,
         provider: str = "unknown",
         model: str = "unknown",
+        base_url: str | None = None,
         connect_retries: int = 0,
     ):
         self._inner = inner
         self._provider = provider
         self._model = model
+        self._base_url = base_url
         # Re-audit L2: AI_MAX_RETRIES for a provider client with no retry of
         # its own (ChatOllama). Connect-phase failures only -- no request
         # reached the server, so a retry cannot double-bill or double-run it,
@@ -244,6 +247,15 @@ class BudgetedLLM:
         # counting it as a failed LLM call would blame the provider for a
         # budget decision taken here.
         self._check()
+        from app.services.llm_circuit_breaker import (
+            LLMCircuitBreaker,
+            require_available,
+        )
+
+        # E5.4: reject an OPEN provider endpoint before sanitisation, cost
+        # reservation, or a cluster slot. The caller's established exception
+        # path then produces its deterministic fallback immediately.
+        await require_available(self._provider, self._base_url)
         args, kwargs = self._prepare_invocation(args, kwargs)
         from app.services import llm_cost_reservation as cost
         from app.services.llm_cluster_semaphore import cluster_llm_slot
@@ -272,6 +284,9 @@ class BudgetedLLM:
                     result = await self._call_async(args, kwargs)
                 except BaseException as exc:
                     self._observe(self._status_for(exc), time.perf_counter() - started)
+                    await LLMCircuitBreaker.record_failure(
+                        self._provider, self._base_url, exc
+                    )
                     # QA-B45-A1: a failure after the request was sent (read
                     # timeout, cancellation, 5xx) may still be billed. Keep
                     # the worst case, and meter it: no stage records a
@@ -287,6 +302,7 @@ class BudgetedLLM:
                         record_meter = True
                     raise
                 self._observe("success", time.perf_counter() - started)
+                await LLMCircuitBreaker.record_success(self._provider, self._base_url)
                 metered_by_stage = self._record_usage(result)
                 if reservation is not None:
                     # Settled at the usage the provider reported for the
@@ -320,6 +336,19 @@ class BudgetedLLM:
 
     def invoke(self, *args, **kwargs):
         self._check()
+        from app.services.llm_circuit_breaker import (
+            CircuitBreakerOpen,
+            LLMCircuitBreaker,
+            scope_for,
+        )
+
+        if LLMCircuitBreaker.is_known_open(self._provider, self._base_url):
+            raise CircuitBreakerOpen(
+                scope_for(self._provider, self._base_url),
+                LLMCircuitBreaker.cached_retry_after_seconds(
+                    self._provider, self._base_url
+                ),
+            )
         args, kwargs = self._prepare_invocation(args, kwargs)
         from app.services import llm_cost_reservation as cost
 
@@ -350,6 +379,7 @@ class BudgetedLLM:
             self._inner.bind(*args, **kwargs),
             provider=self._provider,
             model=self._model,
+            base_url=self._base_url,
             connect_retries=self._connect_retries,
         )
 
@@ -358,6 +388,7 @@ class BudgetedLLM:
             self._inner.with_structured_output(*args, **kwargs),
             provider=self._provider,
             model=self._model,
+            base_url=self._base_url,
             connect_retries=self._connect_retries,
         )
 
@@ -366,9 +397,20 @@ class BudgetedLLM:
 
 
 def _budgeted(
-    model: BaseChatModel, *, provider: str, model_name: str, connect_retries: int = 0,
+    model: BaseChatModel,
+    *,
+    provider: str,
+    model_name: str,
+    base_url: str | None = None,
+    connect_retries: int = 0,
 ) -> BudgetedLLM:
-    return BudgetedLLM(model, provider=provider, model=model_name, connect_retries=connect_retries)
+    return BudgetedLLM(
+        model,
+        provider=provider,
+        model=model_name,
+        base_url=base_url,
+        connect_retries=connect_retries,
+    )
 
 
 def _pinned_http_clients(offline: bool) -> dict:
@@ -483,7 +525,13 @@ async def get_llm(
             pin_ollama_clients(chat)
         # ChatOllama has no retry of its own; BudgetedLLM applies AI_MAX_RETRIES
         # to connect-phase failures (re-audit L2).
-        return _budgeted(chat, provider=_provider, model_name=_model, connect_retries=_retries)
+        return _budgeted(
+            chat,
+            provider=_provider,
+            model_name=_model,
+            base_url=_base_url or settings.OLLAMA_BASE_URL,
+            connect_retries=_retries,
+        )
 
     elif _provider == "lmstudio":
         from langchain_openai import ChatOpenAI
@@ -495,7 +543,7 @@ async def get_llm(
             max_tokens=_max_tokens,
             max_retries=_retries,
             **_pinned_http_clients(bool(_offline)),
-        ), provider=_provider, model_name=_model)
+        ), provider=_provider, model_name=_model, base_url=_base_url or settings.LMSTUDIO_BASE_URL)
 
     elif _provider == "localai":
         from langchain_openai import ChatOpenAI
@@ -507,7 +555,7 @@ async def get_llm(
             max_tokens=_max_tokens,
             max_retries=_retries,
             **_pinned_http_clients(bool(_offline)),
-        ), provider=_provider, model_name=_model)
+        ), provider=_provider, model_name=_model, base_url=_base_url or settings.LOCALAI_BASE_URL)
 
     elif _provider == "vllm":
         from langchain_openai import ChatOpenAI
@@ -519,7 +567,7 @@ async def get_llm(
             max_tokens=_max_tokens,
             max_retries=_retries,
             **_pinned_http_clients(bool(_offline)),
-        ), provider=_provider, model_name=_model)
+        ), provider=_provider, model_name=_model, base_url=_base_url or settings.VLLM_BASE_URL)
 
     elif _provider == "openai":
         if _offline:
@@ -530,6 +578,11 @@ async def get_llm(
         # fallback still applies; typed so mypy does not match a narrowed
         # dict value against every keyword parameter.
         _openai_base: dict[str, Any] = {"base_url": _base_url} if _base_url else {}
+        _openai_breaker_url = (
+            _base_url
+            or os.getenv("OPENAI_API_BASE")
+            or os.getenv("OPENAI_BASE_URL")
+        )
         return _budgeted(ChatOpenAI(  # type: ignore
             model=_model,
             api_key=_api_key,  # type: ignore
@@ -537,7 +590,7 @@ async def get_llm(
             temperature=_temperature,
             max_tokens=_max_tokens,
             max_retries=_retries,
-        ), provider=_provider, model_name=_model)
+        ), provider=_provider, model_name=_model, base_url=_openai_breaker_url)
 
     elif _provider == "gemini":
         if _offline:
@@ -549,7 +602,7 @@ async def get_llm(
             google_api_key=_api_key,
             temperature=_temperature,
             max_retries=_retries,
-        ), provider=_provider, model_name=_model)
+        ), provider=_provider, model_name=_model, base_url=_base_url)
 
     elif _provider == "anthropic":
         if _offline:
@@ -564,7 +617,7 @@ async def get_llm(
             temperature=_temperature,
             max_tokens=_max_tokens,
             max_retries=_retries,
-        ), provider=_provider, model_name=_model)
+        ), provider=_provider, model_name=_model, base_url=_base_url)
 
     elif _provider == "openrouter":
         if _offline:
@@ -590,7 +643,7 @@ async def get_llm(
                 "HTTP-Referer": settings.OPENROUTER_SITE_URL,
                 "X-Title": settings.OPENROUTER_APP_NAME,
             },
-        ), provider=_provider, model_name=_model)
+        ), provider=_provider, model_name=_model, base_url=_base_url or settings.OPENROUTER_BASE_URL)
 
     else:
         raise ValueError(f"Unknown LLM provider: '{_provider}'. "

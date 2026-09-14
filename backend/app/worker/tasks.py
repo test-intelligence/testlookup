@@ -1637,20 +1637,11 @@ def run_live_test_analysis(
     """
     Immediate root-cause analysis for a single test that failed during live execution.
     Runs on the critical queue (priority=9) so results appear in the dashboard fast.
-    Protected by the LLM circuit breaker — skips silently if the provider is down.
+    Provider failures degrade through the endpoint-scoped breaker in llm_factory.
     """
     from app.services.analysis_router import classify_test
-    from app.streams.circuit_breaker import LLMCircuitBreaker
 
     async def _run():
-        if not await LLMCircuitBreaker.is_available():
-            retry_after = await LLMCircuitBreaker.retry_after_seconds()
-            logger.info(
-                "[Task %s] Circuit open — skipping live analysis for %s (retry in %ds)",
-                self.request.id, test_name, retry_after,
-            )
-            return None
-
         try:
             # Load the failure text. This task is handed only ids, but the
             # failure text IS the input to classification — passing just a name
@@ -1703,10 +1694,8 @@ def run_live_test_analysis(
                 },
                 run_context={"run_id": run_id, "project_id": project_id},
             )
-            await LLMCircuitBreaker.record_success()
             return result
         except Exception:
-            await LLMCircuitBreaker.record_failure()
             raise
 
     logger.info("[Task %s] Live analysis for test=%s run=%s", self.request.id, test_name, run_id)
@@ -1734,16 +1723,11 @@ def run_live_test_analysis(
 def run_ai_analysis(self, test_case_id: str, test_name: str, **kwargs):
     """
     Background task: run the LangChain ReAct agent for a single test case.
-    Used by the offline auto-analyzer. Protected by the LLM circuit breaker.
+    Used by the offline auto-analyzer. The LLM factory owns endpoint breaker state.
     """
     from app.services.analysis_router import classify_test
-    from app.streams.circuit_breaker import LLMCircuitBreaker
 
     async def _run():
-        if not await LLMCircuitBreaker.is_available():
-            retry_after = await LLMCircuitBreaker.retry_after_seconds()
-            raise RuntimeError(f"LLM circuit open — retry in {retry_after}s")
-
         try:
             test_case = {
                 "test_case_id": test_case_id,
@@ -1760,10 +1744,8 @@ def run_ai_analysis(self, test_case_id: str, test_name: str, **kwargs):
                 run_context=run_context,
                 mode=test_case.get("mode"),
             )
-            await LLMCircuitBreaker.record_success()
             return result
         except Exception:
-            await LLMCircuitBreaker.record_failure()
             raise
 
     logger.info("[Task %s] AI analysis for: %s", self.request.id, test_name)

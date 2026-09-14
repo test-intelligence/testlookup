@@ -415,16 +415,6 @@ async def run_triage_agent(
                         "LLM model '%s' not available (%s) — falling back to rules engine",
                         settings.LLM_MODEL, str(e)[:120],
                     )
-                    # Open the circuit breaker so subsequent tasks skip the LLM
-                    try:
-                        from app.streams.circuit_breaker import LLMCircuitBreaker
-                        await LLMCircuitBreaker.record_failure()
-                        await LLMCircuitBreaker.record_failure()
-                        await LLMCircuitBreaker.record_failure()
-                        await LLMCircuitBreaker.record_failure()
-                        await LLMCircuitBreaker.record_failure()  # 5 failures → OPEN
-                    except Exception:
-                        pass
                     try:
                         from app.services.rules_engine import RulesEngine
                         analysis = RulesEngine.classify_test(

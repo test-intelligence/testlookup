@@ -1,6 +1,6 @@
 {
-  "attested_at": "2026-09-14T05:51:08.397247+00:00",
-  "change_id": "T8-E5.3-root-cause-tier-split",
+  "attested_at": "2026-09-14T08:06:58.936722+00:00",
+  "change_id": "T9-E5.4-provider-endpoint-circuit-breaker",
   "eval_gate_run_id": null,
   "gate_results": [
     {
@@ -94,7 +94,7 @@
   ],
   "manifest_digest": "cfda795043edde047962fe0d734446bf238ff47f0e463c4b61cb88475fc7217d",
   "mode": "offline_golden",
-  "notes": "Watched routing sources changed; prompt hashes are unchanged. Offline rule gates passed; the five pre-existing unrecorded prompts remain grandfathered. E9.3 is shipped, and T8 regression and mutation tests pin the SLM verdict, both explanation triggers, resolved endpoints, budget refusal, provenance, cache/classifier bypass, and shadow pairing.",
+  "notes": "T9/E5.4 changes endpoint circuit admission and telemetry only; registered prompt texts and hashes are unchanged. Offline golden gates passed for classification, root-cause, and release-decision tasks. The five existing duplicate-detection golden cases remain grandfathered as insufficient samples. Six breaker mutations were applied exactly once and killed by focused regression tests.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -130,7 +130,7 @@
   "watched_sources": {
     "backend/app/agents/reviewer_agent.py": "missing",
     "backend/app/services/agent_capability_registry.py": "7bbf172b5d982e91ac373a9527fc6451b576b7bf16ff11b1ee5d66c761292df7",
-    "backend/app/services/llm_factory.py": "5baa337ed7ba18dc5fa192bdb16ef8845aa6d4590a601352e914fa8b53dd273c",
+    "backend/app/services/llm_factory.py": "b4676eaae9d54da9b8d6ac1437644f7a46b24cbdcbc111931dec1d3312a89058",
     "backend/app/services/model_router.py": "ec15d9a80e14121c2213ea9ed2c751eab2092a4f2df44d3082f0167af40d448d"
   }
 }

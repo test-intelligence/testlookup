@@ -234,6 +234,7 @@ def test_analysis_agent_uses_adaptive_concurrency_policy():
     run = _function_source("app/agents/analysis_agent.py", "run")
     resolver = _function_source("app/agents/analysis_agent.py", "_resolve_adaptive_concurrency")
     feedback = _function_source("app/agents/analysis_agent.py", "_record_latency_feedback")
+    llm_invoke = _function_source("app/services/llm_factory.py", "ainvoke")
 
     assert "_ANALYSIS_LATENCY_EWMA_BY_PROVIDER" in source
     assert "_REMOTE_LLM_PROVIDERS" in source
@@ -242,8 +243,11 @@ def test_analysis_agent_uses_adaptive_concurrency_policy():
     assert "asyncio.Semaphore(concurrency)" in run
     assert "analysis_concurrency_policy" in run
     assert '"adaptive_concurrency": concurrency_policy' in run
-    assert "LLMCircuitBreaker.get_status()" in resolver
-    assert 'circuit_state in {"OPEN", "HALF_OPEN"}' in resolver
+    # E5.4 moved the hard breaker to the endpoint-aware invocation boundary.
+    # A global preflight here can suppress a healthy endpoint before the
+    # project config has resolved which provider/base_url it will use.
+    assert "LLMCircuitBreaker" not in resolver
+    assert "await require_available(self._provider, self._base_url)" in llm_invoke
     assert "_HIGH_LATENCY_SECONDS" in resolver
     assert "_LOW_LATENCY_SECONDS" in resolver
     assert "_ANALYSIS_LATENCY_EWMA_BY_PROVIDER[provider]" in feedback

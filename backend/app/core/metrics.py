@@ -194,6 +194,13 @@ llm_circuit_breaker_trips_total = Counter(
     "Number of times the LLM circuit breaker transitioned to OPEN state",
 )
 
+llm_circuit_breaker_state = Gauge(
+    "testlookup_llm_circuit_breaker_state",
+    "LLM endpoint circuit state: 0=CLOSED, 0.5=HALF_OPEN, 1=OPEN",
+    ["provider", "endpoint"],
+    multiprocess_mode="mostrecent",
+)
+
 # ── Celery ────────────────────────────────────────────────────────────────────
 
 celery_tasks_total = Counter(

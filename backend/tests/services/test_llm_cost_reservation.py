@@ -41,8 +41,16 @@ class _Inner:
 @pytest.fixture(autouse=True)
 def no_cluster_bound(monkeypatch):
     from app.core.config import settings
+    from app.services import llm_circuit_breaker
+
+    async def _breaker_available(*_args, **_kwargs):
+        return None
 
     monkeypatch.setattr(settings, "LLM_CLUSTER_MAX_CONCURRENT", 0)
+    # This suite isolates cost reservation. Without the stub, the cancellation
+    # test can cancel while the newly preceding breaker-store read is in
+    # flight, so it never reaches the semaphore it claims to exercise.
+    monkeypatch.setattr(llm_circuit_breaker, "require_available", _breaker_available)
 
 
 class _Ledger(list):

@@ -534,11 +534,6 @@ async def _queue_live_analysis(
 ) -> None:
     """Queue immediate root-cause analysis for a failing test during live execution."""
     try:
-        from app.streams.circuit_breaker import LLMCircuitBreaker
-        if not await LLMCircuitBreaker.is_available():
-            logger.debug("Circuit open — skipping live analysis for %s", test_name)
-            return
-
         from app.worker.tasks import run_live_test_analysis
         # Publication is deliberately at-least-once. Claiming a dedupe key
         # before apply_async created a crash window that could lose analysis.

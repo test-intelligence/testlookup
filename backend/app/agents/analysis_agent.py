@@ -521,14 +521,6 @@ class AnalysisAgent(BaseAgent):
         if state.get("_cost_budget_mode_override") in ("ml", "rules"):
             mode = str(state["_cost_budget_mode_override"])
 
-        circuit_status: dict = {}
-        if mode not in _DETERMINISTIC_ANALYSIS_ENGINES:
-            try:
-                from app.streams.circuit_breaker import LLMCircuitBreaker
-                circuit_status = await LLMCircuitBreaker.get_status()
-            except Exception as exc:
-                circuit_status = {"state": "unknown", "error": str(exc)[:200]}
-
         concurrency = base
         reasons = [f"base={base}"]
         if mode in {"ml", "rules"}:
@@ -540,11 +532,6 @@ class AnalysisAgent(BaseAgent):
         elif provider in _LOCAL_LLM_PROVIDERS:
             concurrency = min(base, 3)
             reasons.append(f"local_provider={provider}")
-
-        circuit_state = str(circuit_status.get("state") or "").upper()
-        if circuit_state in {"OPEN", "HALF_OPEN"}:
-            concurrency = 1
-            reasons.append(f"circuit={circuit_state}")
 
         latency_ewma = _ANALYSIS_LATENCY_EWMA_BY_PROVIDER.get(provider)
         if latency_ewma is not None:
@@ -562,8 +549,6 @@ class AnalysisAgent(BaseAgent):
             "analysis_mode": mode,
             "provider": provider,
             "latency_ewma_seconds": latency_ewma,
-            "circuit_state": circuit_status.get("state"),
-            "circuit_failures": circuit_status.get("failure_count_in_window"),
             "rationale": "; ".join(reasons),
         }
 
