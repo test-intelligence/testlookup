@@ -130,13 +130,15 @@ class _Rel:
 
 
 class _Session:
-    def __init__(self, decisions: int):
+    def __init__(self, decisions: int, outcomes: int = 0):
         self._decisions = decisions
+        self._outcomes = outcomes
         self._rel = _Rel()
         self.deleted: list = []
 
     async def execute(self, stmt=None, *a, **kw):
-        rel, count = self._rel, self._decisions
+        rel = self._rel
+        count = self._outcomes if "release_outcomes" in str(stmt) else self._decisions
 
         class _R:
             def scalar_one_or_none(self_inner):
@@ -190,6 +192,18 @@ async def test_a_release_with_no_verdicts_still_deletes():
     db = _Session(decisions=0)
     await release_service.delete_release(db, str(db._rel.id))
     assert db.deleted, "a release with nothing to preserve could not be deleted"
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_release_with_production_outcomes_is_refused():
+    db = _Session(decisions=0, outcomes=2)
+    with pytest.raises(HTTPException) as exc:
+        await release_service.delete_release(db, str(db._rel.id))
+
+    assert exc.value.status_code == 409
+    assert "2 recorded production outcome" in str(exc.value.detail)
+    assert "archived" in str(exc.value.detail)
+    assert db.deleted == []
 
 
 def test_archived_is_declared_as_a_status():

@@ -27,6 +27,7 @@ from app.models.postgres import (
     Project,
     Release,
     ReleaseGateDecision,
+    ReleaseOutcome,
     ReleasePhase,
     ReleaseTestRunLink,
     TestRun,
@@ -315,6 +316,18 @@ async def serialize_created_release(db: AsyncSession, release: Release) -> dict:
     release = (await db.execute(stmt)).scalar_one()
     data = serialize_model(release)
     data["phases"] = [serialize_model(phase) for phase in release.phases]
+    outcomes = (
+        await db.execute(
+            select(ReleaseOutcome)
+            .where(
+                ReleaseOutcome.release_id == release.id,
+                ReleaseOutcome.project_id == release.project_id,
+            )
+            .order_by(ReleaseOutcome.marked_at.desc(), ReleaseOutcome.id.desc())
+            .limit(50)
+        )
+    ).scalars().all()
+    data["outcomes"] = [serialize_model(outcome) for outcome in outcomes]
     return data
 
 
@@ -331,6 +344,18 @@ async def get_release_details(db: AsyncSession, release_id: str) -> dict:
 
     data = serialize_model(release)
     data["phases"] = [serialize_model(phase) for phase in release.phases]
+    outcomes = (
+        await db.execute(
+            select(ReleaseOutcome)
+            .where(
+                ReleaseOutcome.release_id == release.id,
+                ReleaseOutcome.project_id == release.project_id,
+            )
+            .order_by(ReleaseOutcome.marked_at.desc(), ReleaseOutcome.id.desc())
+            .limit(50)
+        )
+    ).scalars().all()
+    data["outcomes"] = [serialize_model(outcome) for outcome in outcomes]
 
     if release.test_run_links:
         # ``tr.project_id = :proj_id`` is not redundant with the release
@@ -531,6 +556,23 @@ async def delete_release(db: AsyncSession, release_id: str) -> None:
                 f"This release has {decided} recorded gate decision(s). "
                 "Deleting it would erase that history — set its status to "
                 "'archived' instead."
+            ),
+        )
+
+    outcomes = (
+        await db.execute(
+            select(func.count(ReleaseOutcome.id)).where(
+                ReleaseOutcome.release_id == release.id
+            )
+        )
+    ).scalar() or 0
+    if outcomes:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This release has {outcomes} recorded production outcome(s). "
+                "Deleting it would erase incident or rollback history — set "
+                "its status to 'archived' instead."
             ),
         )
 

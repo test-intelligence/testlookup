@@ -1,5 +1,5 @@
 import type { PaginatedResponse } from '@/types/common'
-import type { LinkedRun, Release, ReleaseDetail, ReleasePhase } from '@/types/releases'
+import type { LinkedRun, Release, ReleaseDetail, ReleaseOutcome, ReleasePhase } from '@/types/releases'
 import { deleteData, getData, postData, putData } from './http'
 
 export const releasesService = {
@@ -48,5 +48,11 @@ export const releasesService = {
 
   unlinkRun: (releaseId: string, runId: string) =>
     deleteData(`/api/v1/releases/${releaseId}/test-runs/${runId}`),
+
+  markOutcome: (releaseId: string, outcome: 'incident' | 'rollback', reason: string) =>
+    postData<ReleaseOutcome, { outcome: 'incident' | 'rollback'; reason: string }>(
+      `/api/v1/releases/${releaseId}/outcomes`,
+      { outcome, reason },
+    ),
 }
-export type { LinkedRun, Release, ReleaseDetail, ReleasePhase }
+export type { LinkedRun, Release, ReleaseDetail, ReleaseOutcome, ReleasePhase }

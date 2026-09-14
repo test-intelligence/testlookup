@@ -3536,6 +3536,42 @@ class Release(Base):
     )
 
 
+class ReleaseOutcome(Base):
+    """A human-marked production incident or rollback for a release (E9.9)."""
+
+    __tablename__ = "release_outcomes"
+    __table_args__ = (
+        CheckConstraint(
+            "outcome_kind IN ('incident', 'rollback')",
+            name="ck_release_outcomes_kind",
+        ),
+        CheckConstraint(
+            "length(trim(reason)) >= 3",
+            name="ck_release_outcomes_reason",
+        ),
+        Index("ix_release_outcomes_release_marked", "release_id", "marked_at"),
+        Index("ix_release_outcomes_project_marked", "project_id", "marked_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    release_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("releases.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    outcome_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    marked_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    marked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class AttributionMatchField(str, PyEnum):
     """What a rule looks at on the run (migration 0154).
 

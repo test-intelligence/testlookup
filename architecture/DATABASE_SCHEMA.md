@@ -1,11 +1,12 @@
 # TestLookup — Database & Schema Design
 
-> Generated 2026-06-25 from the live implementation (`backend/app/models/postgres.py`,
-> `backend/migrations/versions/`). Regenerate the ER diagrams and the schema
+> Originally generated 2026-06-25 from the live implementation (`backend/app/models/postgres.py`,
+> `backend/migrations/versions/`) and updated incrementally through migration 0185.
+> Regenerate the ER diagrams and the schema
 > reference with the extractor in `architecture/` after model changes — see
 > [Keeping these docs current](#keeping-these-docs-current).
 
-PostgreSQL is the **system of record** (109 tables, Alembic head `0117`). MongoDB, Redis, MinIO and
+PostgreSQL is the **system of record** (140 declared tables, Alembic head `0185`). MongoDB, Redis, MinIO and
 ChromaDB hold derived, ephemeral, or large-blob data that does not belong in the
 relational store. This document covers all of them, but the relational schema is
 the focus.
@@ -48,7 +49,7 @@ Five tables anchor the whole schema. Reading the ER diagrams, trace everything b
 
 ## Domains
 
-The 109 tables group into nine functional domains:
+The curated domain map groups the documented core tables into nine functional domains:
 
 | Domain | Tables | What it covers |
 |--------|-------:|----------------|
@@ -56,7 +57,7 @@ The 109 tables group into nine functional domains:
 | Test Execution & Ingestion | 15 | Runs, per-run cases, suites, steps, attachments, canonical inventory, live sessions, reviews |
 | AI Analysis Pipeline | 15 | Agent pipeline runs + per-stage results, classifications, clusters, deep findings, provenance, agent memory |
 | AI Evaluation & Models | 6 | Model versions, eval datasets/runs/baselines, pre-release and tier gates, shadow pairs |
-| Defects, Releases & Gates | 10 | Defects + candidates, release decisions, releases/phases, gate policies, compliance packs, coverage |
+| Defects, Releases & Gates | 11 | Defects + candidates, release decisions and outcomes, releases/phases, gate policies, compliance packs, coverage |
 | Test Management (Authored Cases) | 10 | Managed cases, versions, reviews, comments, duplicate review, plans, strategies, case audit |
 | Knowledge, RAG & Generation | 6 | Knowledge sources, sync events, chunks, generation batches + sources, requirement coverage |
 | Analytics, Comparison & Health | 12 | Run baselines/diffs/compare reports, perf baselines, tenant metrics, onboarding, usage, flaky coach/quarantine, health recs |
@@ -89,9 +90,9 @@ flowchart TB
     D2 -->|4 FK| TEST_CASES
     D3["AI Evaluation  Models<br/>(6 tables)"]
     D3 -->|4 FK| USERS
-    D4["Defects Releases  Gates<br/>(10 tables)"]
-    D4 -->|6 FK| USERS
-    D4 -->|6 FK| PROJECTS
+    D4["Defects Releases  Gates<br/>(11 tables)"]
+    D4 -->|7 FK| USERS
+    D4 -->|7 FK| PROJECTS
     D4 -->|4 FK| TEST_RUNS
     D4 -->|1 FK| TEST_CASES
     D5["Test Management Authored Cas<br/>(10 tables)"]
@@ -479,6 +480,7 @@ erDiagram
     RELEASE_GATE_POLICIES ||--o{ RELEASE_DECISIONS : "policy_id"
     RELEASES ||--o{ RELEASE_PHASES : "release_id"
     RELEASES ||--o{ RELEASE_TEST_RUN_LINKS : "release_id"
+    RELEASES ||--o{ RELEASE_OUTCOMES : "release_id"
     RELEASE_PHASES ||--o{ RELEASE_TEST_RUN_LINKS : "phase_id"
     RELEASES ||--o{ COMPLIANCE_PACKS : "release_id"
     DEFECTS {
@@ -524,6 +526,14 @@ erDiagram
         UUID release_id FK
         UUID test_run_id FK
         UUID phase_id FK
+    }
+    RELEASE_OUTCOMES {
+        UUID id PK
+        UUID release_id FK
+        UUID project_id FK
+        UUID marked_by_user_id FK
+        String outcome_kind
+        DateTime marked_at
     }
     RELEASE_GATE_POLICIES {
         UUID id PK
@@ -972,7 +982,7 @@ After changing `models/postgres.py`:
 ---
 ## Full schema reference
 
-Generated from `backend/app/models/postgres.py` — **96 tables, 1,235 columns**. Types are the SQLAlchemy column types (PostgreSQL dialect). `PK`=primary key, `FK →`=foreign key target, `NN`=NOT NULL, `U`=unique, `IX`=indexed, `def`=has default/server_default.
+Generated incrementally from `backend/app/models/postgres.py` — **112 of 140 declared tables** are currently documented. The extractor reports the remaining historical gaps. Types are the SQLAlchemy column types (PostgreSQL dialect). `PK`=primary key, `FK →`=foreign key target, `NN`=NOT NULL, `U`=unique, `IX`=indexed, `def`=has default/server_default.
 
 ### Identity, Tenancy & Access
 
@@ -2084,6 +2094,20 @@ _Constraints:_ Index(`ix_defect_cand_run`, `run_id`); Index(`ix_defect_cand_stat
 | `updated_at` | `DateTime` |  | NN def |  |
 
 _Constraints:_ Index(`ix_releases_project_status`, `project_id`, `status`); Index(`ix_releases_project_default`, `project_id`)
+
+#### `release_outcomes`  <sub>(model `ReleaseOutcome`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `release_id` | `ForeignKey` | FK | NN | `releases.id` |
+| `project_id` | `ForeignKey` | FK | NN | `projects.id` |
+| `outcome_kind` | `String(20)` |  | NN |  |
+| `reason` | `Text` |  | NN |  |
+| `marked_by_user_id` | `ForeignKey` | FK |  | `users.id` |
+| `marked_at` | `DateTime` |  | NN def |  |
+
+_Constraints:_ CheckConstraint outcome is `incident | rollback`; CheckConstraint reason has at least 3 non-whitespace characters; Index(`ix_release_outcomes_release_marked`, `release_id`, `marked_at`); Index(`ix_release_outcomes_project_marked`, `project_id`, `marked_at`)
 
 #### `release_phases`  <sub>(model `ReleasePhase`)</sub>
 

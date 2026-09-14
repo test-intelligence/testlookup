@@ -32,6 +32,16 @@ export interface Release {
   test_run_count?: number
 }
 
+export interface ReleaseOutcome {
+  id: string
+  release_id: string
+  project_id: string
+  outcome_kind: 'incident' | 'rollback'
+  reason: string
+  marked_by_user_id: string | null
+  marked_at: string
+}
+
 export interface LinkedRun {
   id: string
   build_number: string | null
@@ -59,4 +69,5 @@ export interface ReleaseMetrics {
 export interface ReleaseDetail extends Release {
   linked_runs: LinkedRun[]
   metrics: ReleaseMetrics
+  outcomes: ReleaseOutcome[]
 }
