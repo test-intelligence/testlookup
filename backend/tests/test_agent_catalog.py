@@ -34,6 +34,13 @@ def test_every_registered_capability_is_published():
         assert entry.escalation == sorted(ESCALATION_TRIGGERS[entry.stage_name])
 
 
+def test_root_cause_catalog_publishes_multi_artifact_escalation():
+    entry = agent_catalog.get_catalog_detail("agent.root_cause_analysis.v1")
+
+    assert entry is not None
+    assert "multi_artifact_evidence" in entry.escalation
+
+
 def test_sync_eligibility_is_the_explicit_registry_flag_and_only_cheap_agents_have_it():
     entries = agent_catalog.list_catalog()
     assert {e.stage_name for e in entries if e.sync_eligible} == set(SYNC_ELIGIBLE)

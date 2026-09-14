@@ -26,6 +26,7 @@ from app.services.input_sanitizer import (
     sanitize_stack_trace,
 )
 from app.services.llm_factory import get_llm
+from app.services.agent_config_resolver import ResolvedEndpoint
 from app.services.pipeline_event_log import emit_event as _emit_event
 from app.services.prompt_registry import get_prompt_text
 from app.services.resilience import (
@@ -113,6 +114,9 @@ async def run_triage_agent(
     run_id: Optional[str] = None,
     project_id: Optional[str] = None,
     test_fingerprint: Optional[str] = None,
+    endpoint: ResolvedEndpoint | None = None,
+    skip_fast_classifier: bool = False,
+    skip_cache: bool = False,
 ) -> dict:
     """
     Execute the LangChain ReAct triage agent for a failed test case.
@@ -148,7 +152,7 @@ async def run_triage_agent(
         await _check_analysis_cache(
             test_name, error_message or "", stack_trace or "", project_id
         )
-        if project_id
+        if project_id and not skip_cache
         else None
     )
     if cached is not None:
@@ -171,7 +175,7 @@ async def run_triage_agent(
             await semantic_cache_lookup(
                 test_name, error_message or "", stack_trace or "", project_id=project_id
             )
-            if project_id
+            if project_id and not skip_cache
             else None
         )
         if sem_cached is not None:
@@ -196,7 +200,7 @@ async def run_triage_agent(
     # that emitted unreadable output must be distinguishable from one correctly
     # declining a hard case. Both used to return a bare None.
     classifier_outcome = "not_attempted"
-    if error_message or stack_trace:
+    if (error_message or stack_trace) and not skip_fast_classifier:
         try:
             from app.services.training.classifier import FastClassifier
             quick, classifier_outcome = await FastClassifier.classify_with_outcome(
@@ -260,7 +264,7 @@ async def run_triage_agent(
     create_react_agent = cast(Any, langchain_agents.create_react_agent)
     AgentExecutor = cast(Any, langchain_agents.AgentExecutor)
 
-    llm = await get_llm()
+    llm = await get_llm(endpoint=endpoint) if endpoint is not None else await get_llm()
     tools = _get_tools()
 
     prompt = PromptTemplate.from_template(SYSTEM_PROMPT)
@@ -510,7 +514,7 @@ async def run_triage_agent(
     await _store_audit_trail(test_case_id, user_question, analysis, intermediate_steps)
 
     # Cache successful analyses for future identical AND similar failures
-    if analysis.get("confidence_score", 0) > 0 and error_message:
+    if not skip_cache and analysis.get("confidence_score", 0) > 0 and error_message:
         await _store_analysis_cache(test_name, error_message or "", stack_trace or "", analysis, project_id)
         try:
             from app.services.semantic_cache import semantic_cache_store

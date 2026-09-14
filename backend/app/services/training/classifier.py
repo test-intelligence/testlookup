@@ -17,6 +17,7 @@ from typing import Any, Optional, cast
 
 from app.core.config import settings
 from app.services.llm_factory import get_llm
+from app.services.agent_config_resolver import ResolvedEndpoint
 from app.services.model_registry import ModelRegistry
 from app.services.prompt_registry import get_prompt_text
 
@@ -57,6 +58,9 @@ class FastClassifier:
         test_name: str,
         error_message: str,
         stack_trace: str = "",
+        *,
+        endpoint: ResolvedEndpoint | None = None,
+        accept_low_confidence: bool = False,
     ) -> tuple[Optional[dict], str]:
         """Classify, and say WHY when the answer is None.
 
@@ -74,10 +78,15 @@ class FastClassifier:
         because there were none, but because nothing ever recorded one.
         """
         # Determine which model to use
-        fine_tuned = await ModelRegistry.get_active_model("classifier")
-        model_name = fine_tuned or settings.CLASSIFIER_MODEL or settings.LLM_MODEL
-
-        llm = await get_llm(model=model_name, temperature=0.0)
+        if endpoint is None:
+            fine_tuned = await ModelRegistry.get_active_model("classifier")
+            model_name = fine_tuned or settings.CLASSIFIER_MODEL or settings.LLM_MODEL
+            llm = await get_llm(model=model_name, temperature=0.0)
+        else:
+            model_name = endpoint.model
+            llm = await get_llm(
+                endpoint=endpoint.model_copy(update={"temperature": 0.0})
+            )
 
         user_content = (
             f"Test: {test_name}\n"
@@ -107,7 +116,8 @@ class FastClassifier:
             return None, "parse_failed"
 
         confidence = result.get("confidence", 0)
-        if confidence < settings.CLASSIFIER_CONFIDENCE_THRESHOLD:
+        is_low_confidence = confidence < settings.CLASSIFIER_CONFIDENCE_THRESHOLD
+        if is_low_confidence and not accept_low_confidence:
             logger.debug(
                 "FastClassifier confidence too low (%d < %d) for %s — falling back to ReAct",
                 confidence, settings.CLASSIFIER_CONFIDENCE_THRESHOLD, test_name,
@@ -134,11 +144,11 @@ class FastClassifier:
             "confidence_score": confidence,
             "recommended_actions": _default_actions(category),
             "evidence_references": [],
-            "llm_provider": settings.LLM_PROVIDER,
+            "llm_provider": endpoint.provider if endpoint is not None else settings.LLM_PROVIDER,
             "llm_model": model_name,
             "requires_human_review": confidence < 90,
             "classified_by": "fast_classifier",
-        }, "classified"
+        }, "low_confidence" if is_low_confidence else "classified"
 
 
 def _parse_classifier_output(raw: str) -> Optional[dict]:

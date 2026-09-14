@@ -75,6 +75,7 @@ class AgentCatalogEntry(BaseModel):
             "low_confidence",
             "not_enough_evidence",
             "contradictions",
+            "multi_artifact_evidence",
         ]
     ]
     sync_eligible: bool = Field(

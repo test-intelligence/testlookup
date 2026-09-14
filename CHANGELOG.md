@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-14 - Split root-cause classification from explanation (T8 / E5.3)
+
+Root-cause analysis now resolves the project's model policy once per durable
+pipeline run and uses the SLM endpoint for each test's category and confidence.
+The LLM ReAct path runs only when confidence is below the configured minimum or
+the supporting input spans more than one artifact type. Its richer explanation,
+actions, and evidence are merged without allowing it to replace the SLM verdict.
+
+Routing metadata records both tiers, the escalation trigger, artifact types,
+and fallback state. Escalation rechecks the step-call and cost budgets, explicit
+SLM pins are honored, and refused or failed SLM routing uses the deterministic
+rules fallback. Paired outputs use the existing bounded shadow-evaluation hook.
+
 ## 2026-09-14 - Route structured summaries through SLM with bounded escalation (T7 / E5.2)
 
 Summary generation now resolves the project's `agent.summary.v1` configuration
