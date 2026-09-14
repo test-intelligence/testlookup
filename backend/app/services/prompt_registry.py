@@ -1193,8 +1193,8 @@ def _offline_gate_results() -> tuple[EvalVerdict, list[dict[str, Any]]]:
             {"rule": "dataset_exists", "passed": False, "detail": "no golden dataset"}
         ]
         passed = bool(items) and all(r["passed"] for r in rules)
-        insufficient = task_type in _OFFLINE_INSUFFICIENT_GATES
-        if insufficient:
+        is_insufficient = task_type in _OFFLINE_INSUFFICIENT_GATES
+        if is_insufficient:
             has_insufficient = True
         else:
             all_passed = all_passed and passed
@@ -1203,7 +1203,7 @@ def _offline_gate_results() -> tuple[EvalVerdict, list[dict[str, Any]]]:
             "agent_name": gate["agent_name"],
             "status": (
                 EvalVerdict.INSUFFICIENT_SAMPLES
-                if insufficient
+                if is_insufficient
                 else EvalVerdict.PASS if passed else EvalVerdict.FAIL
             ).value,
             "metrics": {
@@ -1213,8 +1213,8 @@ def _offline_gate_results() -> tuple[EvalVerdict, list[dict[str, Any]]]:
         })
     from app.services.prompt_eval_recordings import check_recordings, recordings_verdict
 
-    recording_problems, insufficient = check_recordings()
-    recorded_verdict = recordings_verdict(recording_problems, insufficient)
+    recording_problems, insufficient_prompts = check_recordings()
+    recorded_verdict = recordings_verdict(recording_problems, insufficient_prompts)
     if recorded_verdict is not EvalVerdict.PASS:
         return recorded_verdict, results
     if has_insufficient:
