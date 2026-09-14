@@ -214,6 +214,7 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("release.activated", "release", "release", "Release {entity_label} was activated"),
     _spec("release.closed", "release", "release", "Release {entity_label} was closed"),
     _spec("release.decided", "release", "release", "Release {entity_label}: {recommendation}"),
+    _spec("release.outcome_marked", "release", "release", "Release {entity_label} marked as {outcome}"),
     _spec("release.decision_overridden", "release", "release", "Release decision for {entity_label} overridden to {recommendation}", "attempt"),
     _spec("release.phase_advanced", "release", "release", "Release {entity_label} advanced to {phase}"),
     _spec("release.phase_skipped", "release", "release", "Phase {phase} skipped on release {entity_label}", "attempt"),

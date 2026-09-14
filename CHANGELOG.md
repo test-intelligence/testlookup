@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-14 - Record production outcomes on releases (E9.9)
+
+Added a QA Lead action for recording a reasoned production incident or
+rollback on a release. Outcomes are append-only, identify the actor and time,
+appear in release detail and the Releases UI, and share a transaction with a
+`release.outcome_marked` activity event.
+
+Migration 0185 adds the `release_outcomes` source with release-history and
+project/time-window indexes. The project-window query gives the G5 drift gate
+an explicit source for incident-after-GO measurements.
+
 ## 2026-09-14 - Gate workflow publishing on replay evaluation (E9.5)
 
 Added G4 workflow evaluation at

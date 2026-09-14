@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Calendar, CheckCircle2, Package, Plus, Trash2, X,
+  Calendar, CheckCircle2, Package, Plus, RotateCcw, Trash2, TriangleAlert, X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
@@ -349,6 +349,8 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
   const { data: detail, isLoading, mutate: refetch } = useRelease(releaseId)
   const [showLinkModal, setShowLinkModal] = useState(false)
   const [markingReleased, setMarkingReleased] = useState(false)
+  const [outcomeReason, setOutcomeReason] = useState('')
+  const [markingOutcome, setMarkingOutcome] = useState<'incident' | 'rollback' | null>(null)
   // Pagination for the linked-runs table — 25 rows per page, client-side
   // slice. The release summary above still aggregates across every linked
   // run because it reads ``detail.metrics`` from the API, not this slice.
@@ -384,6 +386,26 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
       await releasesService.deletePhase(releaseId, phaseId)
       refetch()
     } catch { toast.error('Failed to delete phase') }
+  }
+
+  async function markOutcome(outcome: 'incident' | 'rollback') {
+    const reason = outcomeReason.trim()
+    if (reason.length < 3) {
+      toast.error('Add a reason before recording the release outcome')
+      return
+    }
+    setMarkingOutcome(outcome)
+    try {
+      await releasesService.markOutcome(releaseId, outcome, reason)
+      toast.success(outcome === 'incident' ? 'Incident recorded' : 'Rollback recorded')
+      setOutcomeReason('')
+      await refetch()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(msg || 'Failed to record release outcome')
+    } finally {
+      setMarkingOutcome(null)
+    }
   }
 
   async function unlinkRun(runId: string) {
@@ -446,6 +468,62 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
 
       {/* Tier 1 item 4 — Compliance export pack for audit reviewers. */}
       <CompliancePackPanel releaseId={releaseId} releaseName={detail.name} />
+
+      <section className="card space-y-3" aria-labelledby="release-outcome-title">
+        <div>
+          <h3 id="release-outcome-title" className="text-sm font-semibold text-[var(--color-text)]">Production outcome</h3>
+          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+            Record incidents and rollbacks so weekly drift checks can compare release decisions with production outcomes.
+          </p>
+        </div>
+        <label className="block text-xs text-[var(--color-text-secondary)]" htmlFor={`release-outcome-reason-${releaseId}`}>
+          Reason
+        </label>
+        <textarea
+          id={`release-outcome-reason-${releaseId}`}
+          value={outcomeReason}
+          onChange={event => setOutcomeReason(event.target.value)}
+          rows={2}
+          maxLength={2000}
+          className="input w-full resize-y"
+          placeholder="What happened in production?"
+        />
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void markOutcome('incident')}
+            disabled={markingOutcome !== null}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--status-failed-bd)] px-3 py-1.5 text-xs font-medium text-[var(--status-failed)] disabled:opacity-50"
+          >
+            <TriangleAlert className="h-3.5 w-3.5" />
+            {markingOutcome === 'incident' ? 'Recording…' : 'Mark incident'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void markOutcome('rollback')}
+            disabled={markingOutcome !== null}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--status-broken-bd)] px-3 py-1.5 text-xs font-medium text-[var(--status-broken)] disabled:opacity-50"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            {markingOutcome === 'rollback' ? 'Recording…' : 'Record rollback'}
+          </button>
+        </div>
+        {(detail.outcomes ?? []).length > 0 && (
+          <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+            {(detail.outcomes ?? []).map(outcome => (
+              <li key={outcome.id} className="py-2 text-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium capitalize text-[var(--color-text)]">{outcome.outcome_kind}</span>
+                  <time className="text-[var(--color-text-faint)]" dateTime={outcome.marked_at}>
+                    {new Date(outcome.marked_at).toLocaleString()}
+                  </time>
+                </div>
+                <p className="mt-0.5 text-[var(--color-text-muted)]">{outcome.reason}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {/* Auto-complete banner — shown when all phases done and release not yet released */}
       {detail.status !== 'released' && detail.status !== 'cancelled' && (detail.phases ?? []).length > 0 &&

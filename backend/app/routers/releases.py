@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -31,6 +31,7 @@ from app.services import (
     release_lifecycle_service,
     jira_release_sync,
     release_gate_service,
+    release_outcome_service,
     release_phase_gate_service,
     release_service,
 )
@@ -139,6 +140,23 @@ class ReleaseSyncIn(BaseModel):
     source: Literal["github", "jira"]
     #: Jira only. Falls back to the deployment's configured default key.
     jira_project_key: Optional[str] = None
+
+
+class ReleaseOutcomeIn(BaseModel):
+    """A production outcome reported by a release owner for G5 drift."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal["incident", "rollback"]
+    reason: str = Field(min_length=3, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def reason_must_contain_text(cls, value: str) -> str:
+        clean = value.strip()
+        if len(clean) < 3:
+            raise ValueError("reason must contain at least 3 non-whitespace characters")
+        return clean
 
 
 # ── Read endpoints (any authenticated user) ──────────────────────────────────
@@ -356,6 +374,37 @@ async def update_release(
     await db.commit()
     await db.refresh(release)
     return serialize_model(release)
+
+
+@router.post("/{release_id}/outcomes", status_code=201)
+async def mark_release_outcome(
+    release_id: str,
+    body: ReleaseOutcomeIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
+    _access: User = Depends(require_release_access()),
+):
+    """Append a human incident or rollback outcome for later G5 evaluation."""
+    release = await release_service.get_release_or_404(db, release_id)
+    outcome = await release_outcome_service.record_outcome(
+        db,
+        release=release,
+        outcome_kind=body.outcome,
+        reason=body.reason,
+        marked_by_user_id=current_user.id,
+    )
+    await record_activity(
+        db,
+        project_id=release.project_id,
+        event_type="release.outcome_marked",
+        actor=ActorRef.from_user(current_user),
+        entity_id=release.id,
+        entity_label=release.name,
+        release_id=release.id,
+        context={"outcome": body.outcome, "reason": body.reason},
+    )
+    await db.commit()
+    return serialize_model(outcome)
 
 
 @router.delete("/{release_id}", status_code=204)
