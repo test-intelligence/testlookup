@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-14 - Pin capabilities on measured online drift (E9.6)
+
+Added a Monday G5 evaluation that compares the latest seven days with the
+preceding seven using Wilson confidence intervals. It combines the nightly
+evaluation accuracy with capability-scoped human review acceptance and reason
+rates, plus incident-after-GO rates for release decisions. Small windows are
+reported as unmeasured and do not open reviews.
+
+A degrading metric creates one pending `eval_drift` review for the configured
+project capability. While that human review remains open, project and request
+tier downgrades are refused and resolution clamps automatic review to the
+human-required policy. The existing review settlement closes the pin.
+
 ## 2026-09-14 - Record production outcomes on releases (E9.9)
 
 Added a QA Lead action for recording a reasoned production incident or

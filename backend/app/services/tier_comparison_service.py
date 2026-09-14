@@ -299,7 +299,7 @@ def _quality_tier(config: Any) -> str:
     return DEFAULT_TIERS[stage]
 
 
-def _is_downgrade(before: Any, after: Any) -> bool:
+def is_quality_downgrade(before: Any, after: Any) -> bool:
     quality_order = ("deterministic", "slm", "llm")
     if quality_order.index(_quality_tier(after)) < quality_order.index(_quality_tier(before)):
         return True
@@ -326,6 +326,17 @@ async def enforce_config_tier_gate(
     """Refuse failed G2 changes and downgrades without conclusive evidence."""
     if not _g2_change(before, after):
         return
+    if is_quality_downgrade(before, after):
+        from app.services.online_drift_service import has_active_drift_pin  # noqa: PLC0415
+
+        if await has_active_drift_pin(db, project_id, agent_id):
+            raise TierComparisonRejected({
+                "verdict": EvalVerdict.FAIL.value,
+                "reason": "tier downgrade is pinned until the eval-drift review is closed",
+                "agent_id": agent_id,
+                "candidate_tier": after.model.tier,
+                "gate_run_id": None,
+            })
     query = (
         select(AIEvalGateRun)
         .where(
@@ -341,7 +352,7 @@ async def enforce_config_tier_gate(
     if evidence is not None and evidence.status == EvalVerdict.PASS.value:
         return
     verdict = evidence.status if evidence is not None else EvalVerdict.INSUFFICIENT_SAMPLES.value
-    if verdict == EvalVerdict.INSUFFICIENT_SAMPLES.value and not _is_downgrade(before, after):
+    if verdict == EvalVerdict.INSUFFICIENT_SAMPLES.value and not is_quality_downgrade(before, after):
         return
     raise TierComparisonRejected({
         "verdict": verdict,

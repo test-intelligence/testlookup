@@ -116,6 +116,16 @@ def test_it_does_not_collide_with_the_other_nightly_jobs():
     assert 4 in cron.hour
 
 
+def test_weekly_drift_runs_after_the_nightly_producer():
+    entry = celery_app.conf.beat_schedule["weekly-agent-quality-drift"]
+    cron = entry["schedule"]
+
+    assert entry["task"] == "app.worker.tasks.run_weekly_agent_quality_drift"
+    assert entry["task"] in celery_app.tasks
+    assert 1 in cron.day_of_week
+    assert 6 in cron.hour
+
+
 # ── Seeding: idempotent, shared, and user-free ───────────────────────────────
 
 

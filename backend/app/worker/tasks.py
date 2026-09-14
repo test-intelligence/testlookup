@@ -5528,6 +5528,30 @@ def run_scheduled_agent_eval(self, change_id: str | None = None) -> dict:
 
     return _run_async(_run())
 
+
+@celery_app.task(
+    name="app.worker.tasks.run_weekly_agent_quality_drift",
+    queue="default",
+    bind=True,
+    max_retries=0,
+)
+def run_weekly_agent_quality_drift(self) -> dict:
+    """Run G5 and commit capability review pins once each Monday."""
+
+    async def _run() -> dict:
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.online_drift_service import run_weekly_online_drift
+
+        async with AsyncSessionLocal() as db:
+            result = await run_weekly_online_drift(db)
+            await db.commit()
+        logger.info("weekly_agent_quality_drift_complete", **{
+            key: value for key, value in result.items() if key != "reports"
+        })
+        return result
+
+    return cast(dict, _run_async(_run()))
+
 @celery_app.task(
     name="app.worker.tasks.run_retention_purges",
     queue="default",

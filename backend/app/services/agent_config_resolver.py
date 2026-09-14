@@ -42,6 +42,7 @@ from app.services.llm_policy_service import (
     enforce_provider_policy,
     enforce_provider_policy_async,
 )
+from app.services.online_drift_service import has_active_drift_pin
 
 LAYER_ENV = "env"
 LAYER_AI_CONFIG = "ai_config"
@@ -218,6 +219,7 @@ def resolve(
     stored: Optional[Mapping[str, Any]] = None,
     config_version: int = 0,
     patch: Optional[AgentConfigPatch] = None,
+    drift_pin_active: bool = False,
 ) -> ResolvedAgentConfig:
     """The effective configuration of one agent. Pure: no I/O and no DNS.
 
@@ -243,7 +245,31 @@ def resolve(
             raise AgentConfigInvalid(agent_id, [str(err.get("msg", "")) for err in exc.errors()]) from exc
 
     if patch is not None:
-        config = apply_patch(config, patch)
+        patched = apply_patch(config, patch)
+        if drift_pin_active:
+            from app.services.tier_comparison_service import is_quality_downgrade  # noqa: PLC0415
+
+            if is_quality_downgrade(config, patched):
+                raise configs.OverrideRejected([
+                    "tier downgrade is pinned until the eval-drift review is closed"
+                ])
+        config = patched
+
+    if drift_pin_active:
+        requested_policy = config.review.policy
+        requested_auto = config.review.auto_reviewer
+        config.review.policy = "human_required"
+        config.review.auto_reviewer = False
+        config.review.second_model_check = False
+        config.override_policy.allow_tier_downgrade = False
+        if requested_policy != "human_required" or requested_auto:
+            clamps.append(Clamp(
+                field="review.policy",
+                layer="eval_drift",
+                requested=requested_policy,
+                effective="human_required",
+                reason="capability drift review is pending",
+            ))
 
     endpoints: dict[str, Optional[ResolvedEndpoint]] = {
         tier: _endpoint(tier, config, ai, clamps) for tier in TIERS
@@ -276,12 +302,14 @@ async def resolve_for_project(
     if row is not None:
         stored = {**dict(row.config or {}), "enabled": bool(row.enabled), "mode": row.mode}
         version = int(row.config_version)
+    drift_pin_active = await has_active_drift_pin(db, project_id, agent_id)
     resolved = resolve(
         agent_id,
         global_ai_config=await get_effective_ai_config(),
         stored=stored,
         config_version=version,
         patch=patch,
+        drift_pin_active=drift_pin_active,
     )
     await _apply_endpoint_residency(resolved)
     return resolved

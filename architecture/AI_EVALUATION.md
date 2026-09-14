@@ -71,10 +71,13 @@ Two sources of labeled truth:
 `ai_eval_service` (OPS-02) runs the agents over a dataset via
 `agent_eval_harness`, computes metrics, and persists an **`AIEvalRun`** per
 evaluation. The 04:00 UTC scheduled gate also writes one run per evaluated
-task type alongside its aggregate gate run. `detect_quality_drift` compares recent runs to prior windows and
-reports the direction — so a slow degradation (a model drifting, a data-shape
-shift) is caught as a trend, not only at a release boundary. Results surface on
-the **AI Evaluation Dashboard** (`/settings/ai-eval`).
+task type alongside its aggregate gate run. `detect_quality_drift` compares the
+latest seven days with the preceding seven using Wilson 95% confidence
+intervals and reports small windows as unmeasured. The Monday G5 task adds
+project capability review/reason rates and incident-after-GO rates. A degrading
+signal opens a human `eval_drift` review whose pending state pins that
+capability against tier downgrades and automatic review. Results surface on the
+**AI Evaluation Dashboard** (`/settings/ai-eval`).
 
 ## 4. The pre-release gate (`eval_gate_service`)
 
