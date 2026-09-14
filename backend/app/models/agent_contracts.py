@@ -207,6 +207,12 @@ class ReviewVerdictV1(BaseModel):
         return self
 
 
+class ReviewerAgentOutput(ContractedAgentOutput):
+    """Workflow-state envelope for a contracted reviewer verdict."""
+
+    review_verdict: ReviewVerdictV1
+
+
 # ── AIQ-P4 shared item/enum models ────────────────────────────────────────────
 # Defined here (import-light module) and imported into the gap_detection /
 # report_refinement agents to avoid a models -> agents import cycle. All

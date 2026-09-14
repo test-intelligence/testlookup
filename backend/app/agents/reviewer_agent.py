@@ -22,8 +22,10 @@ from app.models.agent_contracts import (
     ReviewCheckV1,
     ReviewDisagreementV1,
     ReviewedStepV1,
+    ReviewerAgentOutput,
     ReviewerInputV1,
     ReviewVerdictV1,
+    validate_agent_contract,
 )
 from app.services.agent_catalog import resolve_schema_model
 from app.services.agent_capability_registry import get_capability
@@ -325,4 +327,16 @@ class ReviewerAgent(BaseAgent):
         result = verdict.model_dump(mode="json")
         if pipeline_run_id:
             await self.mark_stage_done(pipeline_run_id, result_data=result)
-        return {"review_verdict": result, "current_stage": "reviewer"}
+        contracted = validate_agent_contract(
+            ReviewerAgentOutput,
+            {"review_verdict": result},
+            agent_name=self.stage_name,
+            fallback_used=verdict.verdict == "reject",
+            confidence={"pass": 100, "pass_with_flags": 70}.get(verdict.verdict, 0),
+            evidence_refs=[
+                {"type": "reviewed_step", "id": step_name}
+                for step_name in verdict.reviewed_steps
+            ],
+            decision_reason=f"deterministic_review_{verdict.verdict}",
+        )
+        return {**contracted, "current_stage": "reviewer"}

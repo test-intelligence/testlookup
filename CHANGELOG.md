@@ -17,6 +17,9 @@ Supervisor retry/reject routing remain E6.2-E6.4.
 
 Reviewer-source attestations now normalize checkout line endings before
 hashing, so Windows CRLF and CI LF checkouts agree on the same source identity.
+The workflow delta also carries the standard `agent_contracts.reviewer`
+metadata envelope, preserving the public `ReviewVerdictV1` catalog schema while
+making reviewer provenance visible to the existing architectural verifier.
 
 ## 2026-09-14 - Freeze per-invocation agent config overrides (T11 / E4.2)
 

@@ -103,7 +103,7 @@
   ],
   "manifest_digest": "cfda795043edde047962fe0d734446bf238ff47f0e463c4b61cb88475fc7217d",
   "mode": "source_review",
-  "notes": "T15 adds deterministic ReviewerAgent checks and no LLM prompt or model call. The 63-test focused suite passed; an exact-application harness killed 11 schema, grounding, numeric, policy, and verdict-invariant mutations. The prompt manifest is unchanged. DB-backed evaluation was unavailable on the implementation host; E9.4 remains the reviewer quality gate.",
+  "notes": "T15 adds deterministic ReviewerAgent checks and no LLM prompt or model call. The 63-test focused suite passed; an exact-application harness killed 11 schema, grounding, numeric, policy, and verdict-invariant mutations. A CI-discovered architectural guard failure was corrected by stamping the standard agent contract envelope, with the reviewer and architectural suites passing together. The prompt manifest is unchanged. DB-backed evaluation was unavailable on the implementation host; E9.4 remains the reviewer quality gate.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -137,7 +137,7 @@
   "schema_version": 1,
   "verdict": "pass",
   "watched_sources": {
-    "backend/app/agents/reviewer_agent.py": "c04582dccde5fa8cc894b18bde168a06a502fb7a2ba0eba62594c3f19eeeca0e",
+    "backend/app/agents/reviewer_agent.py": "0be50c9e979c5c5d0a86f9249fcae36fd8e7e23bf434417477c1615ce6e652fa",
     "backend/app/services/agent_capability_registry.py": "fa9c67446476b8fd39068a069832559c44a6f8cbc55d83239099e13e837ea473",
     "backend/app/services/llm_factory.py": "b4676eaae9d54da9b8d6ac1437644f7a46b24cbdcbc111931dec1d3312a89058",
     "backend/app/services/model_router.py": "ec15d9a80e14121c2213ea9ed2c751eab2092a4f2df44d3082f0167af40d448d"

@@ -331,6 +331,12 @@ async def test_reviewer_agent_records_and_returns_the_validated_verdict(monkeypa
     })
 
     assert result["review_verdict"]["verdict"] == "pass"
+    assert result["agent_contracts"]["reviewer"]["decision_reason"] == (
+        "deterministic_review_pass"
+    )
+    assert result["agent_contracts"]["reviewer"]["evidence_refs"] == [
+        {"type": "reviewed_step", "id": "root_cause_analysis"}
+    ]
     assert calls == [
         ("running", "run-1"),
         ("decision", ("run-1", "pass")),
