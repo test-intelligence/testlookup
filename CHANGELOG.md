@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-14 - Trace runtime runs to evaluation manifests (E9.7)
+
+Every new agent pipeline now freezes the checksum of the passing eval
+attestation that admitted its prompt, model-routing, and reviewer sources. The
+checksum survives terminal metadata reconstruction and resolves through
+`GET /api/v1/ai-eval/gates/{checksum}`.
+
+Eval attestations are retained in a checksum-addressed, version-controlled
+archive so source-review and offline attestations remain resolvable after a
+later release replaces the current file. The AI Evaluation Dashboard flags
+recent runs with missing or unknown checksums and reports exact seven-day
+coverage.
+
 ## 2026-09-14 - Pin capabilities on measured online drift (E9.6)
 
 Added a Monday G5 evaluation that compares the latest seven days with the

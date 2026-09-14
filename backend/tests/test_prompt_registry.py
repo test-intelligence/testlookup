@@ -287,6 +287,9 @@ def test_offline_attest_writes_a_complete_passing_attestation(tmp_path, monkeypa
     assert payload["prompt_versions"] == versions
     assert payload["manifest_digest"] == pr.manifest_digest(manifest["prompts"])
     assert payload["notes"] == "coverage slice"
+    checksum = payload["eval_manifest_checksum"]
+    assert len(checksum) == 64
+    assert (tmp_path / "eval_manifests" / f"{checksum}.json").is_file()
     assert messages and "verdict=pass" in messages[-1]
 
 

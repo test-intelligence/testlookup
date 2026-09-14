@@ -62,6 +62,18 @@ export interface AIQualityDashboard {
   model_versions: Array<{ id: string; track: string; model_name: string; status: string; eval_accuracy: number | null; created_at: string }>;
   feedback_summary: Record<string, unknown> | null;
   label_health: LabelHealth | null;
+  eval_provenance?: {
+    window_days: number;
+    window_start: string;
+    window_end: string;
+    total_runs: number;
+    stamped_runs: number;
+    resolved_runs: number;
+    missing_checksum_count: number;
+    unresolvable_run_count: number;
+    unresolvable_checksums: string[];
+    has_unresolvable_checksums: boolean;
+  } | null;
 }
 
 export interface DecisionReportEvalCycle {

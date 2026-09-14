@@ -66,6 +66,7 @@ function dashboard(
     model_versions: [],
     feedback_summary: null,
     label_health: null,
+    eval_provenance: null,
   } as AIQualityDashboard
 }
 
@@ -179,5 +180,29 @@ describe('an unrated period does not fabricate a rate', () => {
     await screen.findByText(/human-ai agreement/i)
     expect(await screen.findByText('N/A')).toBeInTheDocument()
     expect(screen.queryByText('0.0%')).not.toBeInTheDocument()
+  })
+})
+
+describe('runtime eval provenance', () => {
+  it('flags recent runs whose manifest checksum cannot be resolved', async () => {
+    const value = dashboard(null)
+    value.eval_provenance = {
+      window_days: 7,
+      window_start: '2026-09-07T00:00:00Z',
+      window_end: '2026-09-14T00:00:00Z',
+      total_runs: 12,
+      stamped_runs: 11,
+      resolved_runs: 9,
+      missing_checksum_count: 1,
+      unresolvable_run_count: 3,
+      unresolvable_checksums: ['f'.repeat(64)],
+      has_unresolvable_checksums: true,
+    }
+    mockGetDashboard.mockResolvedValue(value)
+    renderPage()
+
+    expect(await screen.findByText('UNRESOLVED')).toBeInTheDocument()
+    expect(screen.getByText(/3 of 12 recent runs/)).toBeInTheDocument()
+    expect(screen.getByText(/Unknown: f{64}/)).toBeInTheDocument()
   })
 })

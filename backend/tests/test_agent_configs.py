@@ -452,6 +452,9 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
 
     (run,) = [row for row in added if isinstance(row, AgentPipelineRun)]
     assert run.execution_metadata["agent_config_versions"] == {SUMMARY: 4}
+    from app.services.eval_provenance_service import current_eval_manifest_checksum
+
+    assert run.execution_metadata["eval_manifest_checksum"] == current_eval_manifest_checksum()
 
 
 async def test_an_invocation_run_uses_and_persists_its_frozen_config(monkeypatch):

@@ -4428,6 +4428,28 @@ class AIEvalGateRunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AIEvalManifestResponse(BaseModel):
+    eval_manifest_checksum: str
+    source: str
+    status: str
+    manifest: Dict[str, Any]
+    gate_run_id: Optional[uuid.UUID] = None
+    evaluated_at: Optional[datetime] = None
+
+
+class EvalProvenanceHealthResponse(BaseModel):
+    window_days: int
+    window_start: datetime
+    window_end: datetime
+    total_runs: int
+    stamped_runs: int
+    resolved_runs: int
+    missing_checksum_count: int
+    unresolvable_run_count: int
+    unresolvable_checksums: List[str]
+    has_unresolvable_checksums: bool
+
+
 class AIQualityDashboardResponse(BaseModel):
     """Combined dashboard data for AI quality metrics."""
     agreement: Optional[dict] = None  # agreement_rate, total_feedback, ...
@@ -4438,6 +4460,7 @@ class AIQualityDashboardResponse(BaseModel):
     # AI-F1: human-label coverage of the ML training pool + last-trained
     # provenance composition (human_direct / human_indirect / llm_pseudo)
     label_health: Optional[dict] = None
+    eval_provenance: Optional[EvalProvenanceHealthResponse] = None
 
 
 # ── Agent Memory Schemas (P3 — Unified Memory & Retrieval) ─────────────────

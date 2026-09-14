@@ -150,6 +150,47 @@ export default function AIEvalDashboardPage() {
           {/* Dashboard Tab */}
           {tab === 'dashboard' && dashboard && (
             <div className="space-y-6">
+              {dashboard.eval_provenance && (
+                <div className={clsx(
+                  'rounded-lg border p-4',
+                  dashboard.eval_provenance.has_unresolvable_checksums
+                    ? 'border-[var(--status-failed-bd)]/50 bg-[var(--status-failed-bg)]/20'
+                    : 'border-[var(--status-passed-bd)]/50 bg-[var(--status-passed-bg)]/20',
+                )}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-sm font-semibold text-[var(--color-text)]">Runtime eval provenance</h2>
+                      <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                        Evaluation manifests for agent runs in the last {dashboard.eval_provenance.window_days} days
+                      </p>
+                    </div>
+                    <span className={clsx(
+                      'rounded px-2 py-1 text-xs font-medium',
+                      dashboard.eval_provenance.has_unresolvable_checksums
+                        ? 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]'
+                        : 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]',
+                    )}>
+                      {dashboard.eval_provenance.has_unresolvable_checksums ? 'UNRESOLVED' : 'RESOLVED'}
+                    </span>
+                  </div>
+                  <p className={clsx(
+                    'mt-3 text-sm',
+                    dashboard.eval_provenance.has_unresolvable_checksums
+                      ? 'text-[var(--status-failed)]'
+                      : 'text-[var(--status-passed)]',
+                  )}>
+                    {dashboard.eval_provenance.has_unresolvable_checksums
+                      ? `${dashboard.eval_provenance.unresolvable_run_count} of ${dashboard.eval_provenance.total_runs} recent runs have a missing or unresolvable eval manifest.`
+                      : `All ${dashboard.eval_provenance.total_runs} recent runs resolve to an eval manifest.`}
+                  </p>
+                  {dashboard.eval_provenance.unresolvable_checksums.length > 0 && (
+                    <p className="mt-2 break-all font-mono text-[10px] text-[var(--color-text-muted)]">
+                      Unknown: {dashboard.eval_provenance.unresolvable_checksums.join(', ')}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Agreement metrics */}
               {dashboard.agreement && (
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
