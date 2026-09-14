@@ -46,6 +46,8 @@ _TC_AI = (
 SCOPED: dict[str, tuple[str, ...]] = {
     "agents/anomaly_agent.py::AnomalyDetectionAgent._generate_summary": _PIPELINE,
     "agents/release_risk_agent.py::ReleaseRiskAgent._get_llm_reasoning": _PIPELINE,
+    "agents/reviewer_agent.py::_self_consistency_check": _PIPELINE,
+    "agents/reviewer_agent.py::_second_model_check": _PIPELINE,
     "agents/summary_agent.py::SummaryAgent._generate_tiered_report": _PIPELINE,
     "agents/summary_agent.py::SummaryAgent._generate_structured_report": _PIPELINE,
     "agents/regression_watchman.py::RegressionWatchman._llm_classify": _PIPELINE + (
