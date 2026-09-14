@@ -47,6 +47,9 @@ class MutationClass(StrEnum):
     WRONG_LABEL = "wrong_label"
     MISSING_REQUIRED_FIELD = "missing_required_field"
     UNSUPPORTED_CLAIM = "unsupported_claim"
+    UNSUPPORTED_CAUSAL_CLAIM = "unsupported_causal_claim"
+    PLAUSIBLE_WRONG_CATEGORY = "plausible_wrong_category"
+    CORRECT_NUMBERS_WRONG_CONCLUSION = "correct_numbers_wrong_conclusion"
 
 
 class EvalContract(BaseModel):
@@ -252,10 +255,20 @@ def generate_semantic_mutations(sample: CapabilityEvalSampleV1) -> tuple[EvalMut
 
     unsupported = deepcopy(original)
     unsupported["unsupported_claim"] = "claim with no authorized evidence"
+    unsupported_cause = deepcopy(original)
+    unsupported_cause["causal_claim"] = "the deployment caused this failure without supporting evidence"
+    plausible_wrong = deepcopy(wrong)
+    plausible_wrong["plausible_explanation"] = "a credible explanation attached to the wrong category"
+    wrong_conclusion = deepcopy(original)
+    wrong_conclusion["numeric_facts_preserved"] = True
+    wrong_conclusion["conclusion"] = "the preserved numbers support the opposite decision"
     variants = (
         (MutationClass.WRONG_LABEL, wrong),
         (MutationClass.MISSING_REQUIRED_FIELD, missing),
         (MutationClass.UNSUPPORTED_CLAIM, unsupported),
+        (MutationClass.UNSUPPORTED_CAUSAL_CLAIM, unsupported_cause),
+        (MutationClass.PLAUSIBLE_WRONG_CATEGORY, plausible_wrong),
+        (MutationClass.CORRECT_NUMBERS_WRONG_CONCLUSION, wrong_conclusion),
     )
     return tuple(
         EvalMutationV1(

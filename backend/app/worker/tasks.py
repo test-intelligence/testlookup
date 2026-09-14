@@ -5470,6 +5470,7 @@ def run_scheduled_agent_eval(self, change_id: str | None = None) -> dict:
             persist_nightly_eval_runs,
         )
         from app.services.eval_verdict import EvalVerdict
+        from app.services.reviewer_quality_service import run_nightly_reviewer_quality
 
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         async with AsyncSessionLocal() as db:
@@ -5486,6 +5487,7 @@ def run_scheduled_agent_eval(self, change_id: str | None = None) -> dict:
                 gate_results=list(result.get("gate_results") or []),
                 model_name=settings.LLM_MODEL,
             )
+            reviewer_rows = await run_nightly_reviewer_quality(db)
             await db.commit()
 
         gates = list(result.get("gate_results") or [])
@@ -5518,6 +5520,7 @@ def run_scheduled_agent_eval(self, change_id: str | None = None) -> dict:
             "blocking_gates": list(result.get("blocking_gates") or []),
             "datasets_seeded": seeded,
             "eval_runs_written": len(nightly_rows),
+            "reviewer_quality_runs_written": len(reviewer_rows),
             "evaluated_at": stamp,
         }
         logger.info("scheduled_agent_eval_complete", **summary)
