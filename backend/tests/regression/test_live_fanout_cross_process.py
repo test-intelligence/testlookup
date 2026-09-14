@@ -385,10 +385,7 @@ async def test_live_analysis_publication_is_at_least_once_without_preclaim():
     from app.streams.live_consumer import _queue_live_analysis
 
     task = MagicMock()
-    with (
-        patch("app.streams.circuit_breaker.LLMCircuitBreaker.is_available", AsyncMock(return_value=True)),
-        patch("app.worker.tasks.run_live_test_analysis", task),
-    ):
+    with patch("app.worker.tasks.run_live_test_analysis", task):
         for _ in range(2):
             await _queue_live_analysis(
                 "case-1", "failed test", "run-1", "project-a", "live-analysis:7-0:case-1",

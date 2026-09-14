@@ -23,7 +23,6 @@ ANALYSIS_GROUP  = "analysis-processors"
 LIVE_STATE_KEY  = "testlookup:live:state:{run_id}"   # Hash per active run
 LIVE_ACTIVE_SET = "testlookup:live:active"           # Set of active run IDs
 DEDUP_KEY       = "testlookup:dedup:{task}:{key}"    # Deduplication locks
-CIRCUIT_KEY     = "testlookup:circuit:llm"           # Circuit breaker state
 
 # Live session management keys
 SESSION_TOKEN_KEY = "testlookup:session:token:{token}"   # token → session_id (TTL: 24h)

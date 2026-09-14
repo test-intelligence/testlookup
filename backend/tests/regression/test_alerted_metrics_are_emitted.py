@@ -90,44 +90,49 @@ class TestCeleryTaskOutcome:
 
 class _FakeRedis:
     def __init__(self) -> None:
-        self.hash: dict[str, str] = {}
-        self.zset: dict[str, float] = {}
+        self.hashes: dict[str, dict[str, str]] = {}
+        self.values: dict[str, str] = {}
 
     async def hset(self, key, mapping=None, **_kw):
-        self.hash.update(mapping or {})
+        self.hashes.setdefault(key, {}).update(
+            {str(k): str(v) for k, v in (mapping or {}).items()}
+        )
         return 1
-
-    async def hgetall(self, key):
-        return dict(self.hash)
 
     async def hget(self, key, field):
-        return self.hash.get(field)
+        return self.hashes.get(key, {}).get(field)
 
-    async def expire(self, *a, **k):
+    async def hincrby(self, key, field, amount):
+        values = self.hashes.setdefault(key, {})
+        value = int(values.get(field, "0")) + amount
+        values[field] = str(value)
+        return value
+
+    async def set(self, key, value, *, ex=None, nx=False):
+        del ex
+        if nx and key in self.values:
+            return False
+        self.values[key] = str(value)
         return True
 
-    async def zadd(self, key, mapping):
-        self.zset.update(mapping)
-        return 1
-
-    async def zremrangebyscore(self, *a, **k):
-        return 0
-
-    async def zcard(self, key):
-        return len(self.zset)
+    async def expire(self, *args, **kwargs):
+        del args, kwargs
+        return True
 
     async def delete(self, *keys):
-        self.hash.clear()
-        self.zset.clear()
-        return 1
+        for key in keys:
+            self.hashes.pop(key, None)
+            self.values.pop(key, None)
+        return len(keys)
 
 
 class TestCircuitBreakerTrips:
     def _breaker(self, monkeypatch):
-        import app.streams.circuit_breaker as cb
+        import app.services.llm_circuit_breaker as cb
 
         fake = _FakeRedis()
         monkeypatch.setattr(cb, "get_redis", lambda: fake)
+        cb.LLMCircuitBreaker._known_open_until.clear()
         return cb, fake
 
     def test_opening_the_circuit_is_counted(self, monkeypatch):
@@ -135,7 +140,11 @@ class TestCircuitBreakerTrips:
         before = metrics.llm_circuit_breaker_trips_total._value.get()
 
         for _ in range(cb.FAILURE_THRESHOLD):
-            asyncio.run(cb.LLMCircuitBreaker.record_failure())
+            asyncio.run(
+                cb.LLMCircuitBreaker.record_failure(
+                    "ollama", "http://model-a:11434", TimeoutError("down")
+                )
+            )
 
         assert metrics.llm_circuit_breaker_trips_total._value.get() == before + 1
 
@@ -147,7 +156,11 @@ class TestCircuitBreakerTrips:
         before = metrics.llm_circuit_breaker_trips_total._value.get()
 
         for _ in range(cb.FAILURE_THRESHOLD * 3):
-            asyncio.run(cb.LLMCircuitBreaker.record_failure())
+            asyncio.run(
+                cb.LLMCircuitBreaker.record_failure(
+                    "ollama", "http://model-b:11434", TimeoutError("down")
+                )
+            )
 
         assert metrics.llm_circuit_breaker_trips_total._value.get() == before + 1
 

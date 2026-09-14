@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-14 - Isolate LLM circuit breakers by provider endpoint (T9 / E5.4)
+
+LLM calls now share a Redis-backed circuit breaker keyed by provider and a
+normalized base URL. Five consecutive availability failures open only that
+endpoint's circuit; calls then fail before cost reservation or concurrency
+admission so the existing deterministic agent fallback runs immediately. One
+half-open probe is admitted after the recovery interval, and a success resets
+the consecutive-failure sequence.
+
+Live-analysis preflight checks against the old global breaker were removed so
+one unavailable model server cannot suppress work configured for another.
+Prometheus now exposes endpoint-scoped circuit state, while breaker-store
+errors remain visible in logs and do not mask a healthy model provider.
+
 ## 2026-09-14 - Split root-cause classification from explanation (T8 / E5.3)
 
 Root-cause analysis now resolves the project's model policy once per durable

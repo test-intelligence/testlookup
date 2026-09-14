@@ -4,7 +4,7 @@
 > Prometheus/Grafana stack, OTEL tracing, structured logs, and the layer that's
 > unusual here — **agent decision logs**, which make the AI pipeline's choices
 > as observable as its latencies. Verified against the implementation
-> 2026-07-02.
+> 2026-09-14.
 
 ## 1. The three signals plus one
 
@@ -28,6 +28,29 @@ The compose sidecar stack (`docker-compose.monitoring.yml` +
 `infra/monitoring/`) ships `prometheus.yml` scrape config, provisioned
 **Grafana dashboards**, and **alert rules** (`prometheus-rules/testlookup-alerts.yml`)
 — alerts are versioned artifacts in the repo, not console-configured state.
+
+### 2a. LLM endpoint circuit breakers
+
+`BudgetedLLM` checks a Redis-backed breaker immediately before provider
+admission. State is isolated by the lowercase provider and a normalized base
+URL; Redis keys and metric labels carry a stable endpoint digest rather than
+the URL itself. Five consecutive availability failures open that endpoint for
+120 seconds. One worker then receives a 30-second half-open probe lease; a
+successful call closes the circuit and resets its failure sequence.
+
+An open circuit raises before the monthly-cost reservation and cluster
+semaphore, so summary and analysis callers enter their deterministic fallback
+without waiting on a provider timeout. Authentication, validation, and other
+non-availability errors do not count. A Redis bookkeeping failure is logged
+and allows the provider call because the breaker store is not the inference
+service.
+
+The metrics are:
+
+- `testlookup_llm_circuit_breaker_trips_total`, incremented once per transition
+  to open; and
+- `testlookup_llm_circuit_breaker_state{provider,endpoint}`, where closed is
+  `0`, half-open is `0.5`, and open is `1`.
 
 ## 3. Traces (`core/tracing.py`)
 
