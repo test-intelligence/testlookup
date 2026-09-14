@@ -81,6 +81,7 @@ ENTITY_TYPES: Final[tuple[str, ...]] = (
     "saved_view",
     "knowledge_source",
     "agent_action",
+    "workflow",
     "export",
 )
 
@@ -110,6 +111,9 @@ _ENTITY_ROUTES: Final[Mapping[str, str]] = {
     "saved_view": "/search",
     "knowledge_source": "/settings/ai",
     "agent_action": "/settings/agent-activity",
+    # Workflow definitions do not have a UI until E3.4. Keep activity entries
+    # as plain text rather than linking to a route that does not exist yet.
+    "workflow": "",
     "export": "",
 }
 
@@ -247,6 +251,11 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("policy.deleted", "configuration", "policy", "Release gate policy {entity_label} was deleted"),
     _spec("policy.activated", "configuration", "policy", "Release gate policy {entity_label} was activated"),
     _spec("agent_config.updated", "configuration", "project", "Agent {entity_label} configuration changed to version {config_version}: {changed}", "outcome", _HUMAN_OR_KEY),
+    _spec("workflow.created", "configuration", "workflow", "Workflow {entity_label} version {version} was created", "outcome", _HUMAN_OR_KEY),
+    _spec("workflow.updated", "configuration", "workflow", "Workflow {entity_label} version {version} was updated", "outcome", _HUMAN_OR_KEY),
+    _spec("workflow.deleted", "configuration", "workflow", "Workflow {entity_label} version {version} was deleted", "outcome", _HUMAN_OR_KEY),
+    _spec("workflow.published", "configuration", "workflow", "Workflow {entity_label} version {version} was published", "outcome", _HUMAN_OR_KEY),
+    _spec("workflow.forked", "configuration", "workflow", "Workflow {entity_label} was forked from {source}", "outcome", _HUMAN_OR_KEY),
     _spec("ai_eval.tier_compared", "configuration", "project", "Agent {entity_label} tier comparison {verdict} with {sample_count} paired samples", "outcome", _HUMAN_OR_KEY),
     _spec("ai_eval.reviewer_evaluated", "configuration", "project", "Agent {entity_label} reviewer evaluation {verdict} with {sample_count} semantic samples", "outcome", _HUMAN_OR_KEY),
     _spec("attribution_rule.created", "configuration", "attribution_rule", "Attribution rule {entity_label} was created"),

@@ -197,6 +197,8 @@ def test_summary_is_capped_at_column_width() -> None:
 
 def test_entity_href_resolves_known_types_and_skips_unknown() -> None:
     assert E.entity_href("run", "abc") == "/runs/abc"
+    assert "workflow" in E.ENTITY_TYPES
+    assert E.entity_href("workflow", "abc") is None
     assert E.entity_href("export", "abc") is None
     assert E.entity_href("not_a_type", "abc") is None
 

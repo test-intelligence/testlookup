@@ -5371,6 +5371,62 @@ class AgentConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+WORKFLOW_BASES: tuple[str, ...] = ("offline", "deep", "live")
+WORKFLOW_DEFINITION_STATUSES: tuple[str, ...] = ("draft", "published")
+
+
+class WorkflowDefinition(Base):
+    """One immutable-on-publish version of a project workflow (E3.1)."""
+
+    __tablename__ = "workflow_definitions"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "workflow_id", "version",
+            name="uq_workflow_definitions_project_workflow_version",
+        ),
+        CheckConstraint("version >= 1", name="ck_workflow_definitions_version_positive"),
+        CheckConstraint(
+            f"base IN ({_review_in(WORKFLOW_BASES)})",
+            name="ck_workflow_definitions_base",
+        ),
+        CheckConstraint(
+            f"status IN ({_review_in(WORKFLOW_DEFINITION_STATUSES)})",
+            name="ck_workflow_definitions_status",
+        ),
+        CheckConstraint(
+            "(status = 'published' AND published_at IS NOT NULL) OR "
+            "(status = 'draft' AND published_at IS NULL)",
+            name="ck_workflow_definitions_published_at",
+        ),
+        Index("ix_workflow_definitions_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    workflow_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    base: Mapped[str] = mapped_column(String(16), nullable=False)
+    definition: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft", server_default="draft")
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class AgentActionDispatchOutbox(Base):
     """Durable delivery intent for approved actions; never contains prompts."""
 
