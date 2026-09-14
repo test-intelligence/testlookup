@@ -136,6 +136,8 @@ REVIEWED_OPT_INS: dict[tuple[str, str], tuple[str, str]] = {
         "resolve_project_scope", "called on the body project_id"),
     ("app/routers/releases.py", "update_release"): (
         "require_release_access", "path {release_id} resolved to its project"),
+    ("app/routers/releases.py", "mark_release_outcome"): (
+        "require_release_access", "path {release_id} resolved to its project"),
     ("app/routers/releases.py", "evaluate_release_gate"): (
         "require_release_access", "path {release_id} resolved to its project"),
     ("app/routers/releases.py", "add_phase"): (
