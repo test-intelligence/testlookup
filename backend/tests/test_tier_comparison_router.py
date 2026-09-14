@@ -81,7 +81,10 @@ async def test_agent_config_put_surfaces_unmeasured_downgrade_as_422(monkeypatch
     put = AsyncMock()
     monkeypatch.setattr(configs, "put_config", put)
     query_result = SimpleNamespace(scalar_one_or_none=lambda: None)
-    db = SimpleNamespace(execute=AsyncMock(return_value=query_result))
+    db = SimpleNamespace(
+        execute=AsyncMock(return_value=query_result),
+        scalar=AsyncMock(return_value=None),
+    )
     body = configs.default_config("agent.summary.v1").model_copy(
         update={"model": configs.ModelConfig(tier="deterministic")}
     )
