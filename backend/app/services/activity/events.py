@@ -81,6 +81,7 @@ ENTITY_TYPES: Final[tuple[str, ...]] = (
     "saved_view",
     "knowledge_source",
     "agent_action",
+    "workflow",
     "export",
 )
 
@@ -110,6 +111,9 @@ _ENTITY_ROUTES: Final[Mapping[str, str]] = {
     "saved_view": "/search",
     "knowledge_source": "/settings/ai",
     "agent_action": "/settings/agent-activity",
+    # Workflow definitions do not have a UI until E3.4. Keep activity entries
+    # as plain text rather than linking to a route that does not exist yet.
+    "workflow": "",
     "export": "",
 }
 
