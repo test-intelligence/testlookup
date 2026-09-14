@@ -34,7 +34,14 @@ OUT of the passing set — tests use it to assert metrics CAN fail.
 """
 from __future__ import annotations
 
+from app.services.agent_capability_registry import CAPABILITY_REGISTRY
 from app.services.agent_eval_harness import AgentEvalSample
+from app.services.agent_eval_samples import (
+    ANALYSIS_SAMPLE_FLOOR,
+    CAPABILITY_EVAL_SAMPLES,
+    EVAL_EXEMPTIONS,
+    SMOKE_SAMPLE_FLOOR,
+)
 
 
 def _refs(n: int) -> list[dict]:
@@ -82,7 +89,7 @@ def get_golden_analysis_outputs() -> list[dict]:
     flaky verdicts that (correctly) need no action. Verdicts match ground truth
     so outcomes are 1 at high confidence — driving Brier/ECE low.
     """
-    return [
+    entries = [
         # 3 well-calibrated correct non-flaky (high conf + evidence + action).
         _entry(
             sample_id="ana-product-bug-npe",
@@ -190,6 +197,52 @@ def get_golden_analysis_outputs() -> list[dict]:
             is_flaky=False,
         ),
     ]
+    categories = (
+        ("product_bug", False, "Product behavior differs from the asserted contract"),
+        ("infrastructure", False, "Service dependency was unavailable during the run"),
+        ("automation_defect", False, "The test locator no longer matches the interface"),
+        ("test_data", False, "The fixture references stale test data"),
+        ("flaky", True, "The timing-dependent failure passes on a controlled retry"),
+        ("regression", False, "The failure begins after the last green revision"),
+    )
+    for index in range(len(entries), ANALYSIS_SAMPLE_FLOOR):
+        verdict, is_flaky, reason = categories[index % len(categories)]
+        entries.append(_entry(
+            sample_id=f"ana-corpus-{index + 1:03d}",
+            agent_name="AnalysisAgent",
+            verdict=verdict,
+            confidence=92 + (index % 6),
+            evidence_count=1 + (index % 3),
+            decision_reason=reason,
+            recommended_actions=[] if is_flaky else [f"Remediate labelled case {index + 1:03d}"],
+            truth_verdict=verdict,
+            is_flaky=is_flaky,
+        ))
+    return entries
+
+
+def eval_coverage_by_capability() -> dict[str, dict]:
+    """Return corpus coverage for every registered capability.
+
+    A capability is measured only when its input/label count meets its floor.
+    Exemptions are explicit and reasoned; missing corpus data never silently
+    becomes an exemption.
+    """
+    coverage: dict[str, dict] = {}
+    for capability, spec in CAPABILITY_REGISTRY.items():
+        samples = CAPABILITY_EVAL_SAMPLES.get(capability, ())
+        floor = ANALYSIS_SAMPLE_FLOOR if capability == "root_cause_analysis" else SMOKE_SAMPLE_FLOOR
+        reason = EVAL_EXEMPTIONS.get(capability)
+        coverage[capability] = {
+            "input_schema": spec.input_schema,
+            "output_schema": spec.output_schema,
+            "sample_count": len(samples),
+            "sample_floor": floor,
+            "measured": len(samples) >= floor,
+            "eval_exempt": reason is not None,
+            "exemption_reason": reason,
+        }
+    return coverage
 
 
 # ── Registry ─────────────────────────────────────────────────────────────────

@@ -58,6 +58,13 @@ Two sources of labeled truth:
   [correction loop](./AI_QUALITY.md#2-the-correction-learning-loop-servicesanalysis_correctionspy)
   captures). This is what turns "users keep fixing X" into a regression test
   for X.
+- **Capability corpora** (`agent_eval_samples`) — frozen inputs and labels that
+  pin each capability's declared input and output contract. Classification,
+  structured, and narrative output contracts use separate label schemas. The
+  four pilot corpora live in this registry, every executable capability has at
+  least 20 cases, and `root_cause_analysis` (AnalysisAgent) has 100. The
+  `workflow` runtime pseudo-capability is the sole `eval_exempt` entry because
+  it has no successful agent output; the registry records that reason.
 
 ## 3. Evaluation runs & drift
 
@@ -204,6 +211,10 @@ A "better" model that costs 10× is a trade-off the numbers make visible.
   only at release.
 - **Everything auditable** — eval runs, gate runs, and promotions are all
   persisted with their metrics.
+- **Coverage is explicit** — `eval_coverage_by_capability()` reports sample
+  count, floor, measurement state, and any exemption reason for every registry
+  entry. Semantic mutations are labelled negative fixtures and never count as
+  golden accuracy samples.
 
 ## Related docs
 
