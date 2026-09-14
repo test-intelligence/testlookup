@@ -169,13 +169,20 @@ async def test_auto_uses_the_capability_default_for_quality_direction():
     automatic = configs.default_config(AGENT_ID)
     llm = automatic.model_copy(update={"model": configs.ModelConfig(tier="llm")})
     slm = automatic.model_copy(update={"model": configs.ModelConfig(tier="slm")})
-    # Summary still defaults to LLM on main, so pinning LLM is not a downgrade.
+    deterministic = automatic.model_copy(
+        update={"model": configs.ModelConfig(tier="deterministic")}
+    )
+    # T7 promotes summary's measured default to SLM.  Pinning that tier is a
+    # no-op and pinning LLM is an upgrade; deterministic remains a downgrade.
+    await svc.enforce_config_tier_gate(
+        _DB(), project_id=PROJECT_ID, agent_id=AGENT_ID, before=automatic, after=slm
+    )
     await svc.enforce_config_tier_gate(
         _DB(), project_id=PROJECT_ID, agent_id=AGENT_ID, before=automatic, after=llm
     )
     with pytest.raises(svc.TierComparisonRejected):
         await svc.enforce_config_tier_gate(
-            _DB(), project_id=PROJECT_ID, agent_id=AGENT_ID, before=automatic, after=slm
+            _DB(), project_id=PROJECT_ID, agent_id=AGENT_ID, before=automatic, after=deterministic
         )
 
 

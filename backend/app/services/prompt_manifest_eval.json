@@ -1,6 +1,6 @@
 {
-  "attested_at": "2026-09-13T23:55:26.124420+00:00",
-  "change_id": "T12-eval-verdict-watch-set",
+  "attested_at": "2026-09-14T04:17:08.824781+00:00",
+  "change_id": "t7-e5.2-summary-tier-routing",
   "eval_gate_run_id": null,
   "gate_results": [
     {
@@ -94,7 +94,7 @@
   ],
   "manifest_digest": "cfda795043edde047962fe0d734446bf238ff47f0e463c4b61cb88475fc7217d",
   "mode": "offline_golden",
-  "notes": "Vocabulary/watch-set migration; prompt manifest unchanged. Existing prompt pass carried forward; current unrecorded candidates remain insufficient_samples.",
+  "notes": "Watched routing sources changed; prompt hashes are unchanged. Offline rule gates passed; the five pre-existing unrecorded prompts remain grandfathered. E9.3 is shipped, and T7 regression and mutation tests pin SLM repair, LLM escalation, endpoint resolution, provenance, and shadow pairing.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -129,8 +129,8 @@
   "verdict": "pass",
   "watched_sources": {
     "backend/app/agents/reviewer_agent.py": "missing",
-    "backend/app/services/agent_capability_registry.py": "93bf32cf861e041ec3fc8c4853dbd540cd9131d460c0860e417406da99d48440",
-    "backend/app/services/llm_factory.py": "c32e2a92923c97ee409ddfdb641ef7f0caeefb71808e9aac5bcb0c218a1e05f9",
+    "backend/app/services/agent_capability_registry.py": "8f217e0f28f57b5a2a23d43688ae92c118048358764ecc1dfd354aa8dcbed096",
+    "backend/app/services/llm_factory.py": "5baa337ed7ba18dc5fa192bdb16ef8845aa6d4590a601352e914fa8b53dd273c",
     "backend/app/services/model_router.py": "de009952f181d07329e2158cc71ff38631bff1fba0853f01ee909b03a1e8e022"
   }
 }

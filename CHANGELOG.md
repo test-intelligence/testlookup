@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-14 - Route structured summaries through SLM with bounded escalation (T7 / E5.2)
+
+Summary generation now resolves the project's `agent.summary.v1` configuration
+and runs the capability through `ModelRouter`. The default tier is SLM; schema
+or consistency failures receive one complete SLM repair pass, then an eligible
+automatic configuration may escalate once to LLM. A failed or refused
+escalation produces the existing deterministic four-layer report.
+
+Summary provenance records the requested and used tiers, escalation count, and
+fallback state. The LLM factory consumes a policy-resolved endpoint as one unit,
+including its provider, model, temperature, token cap, and base URL while
+keeping credentials in global configuration. Runs that produce both SLM and LLM
+outputs submit the pair to the existing bounded shadow-evaluation queue.
+
 ## 2026-09-14 - Gate model-tier changes with paired evidence (T14 / E9.3)
 
 Added G2 paired tier comparison for every registered capability corpus. The

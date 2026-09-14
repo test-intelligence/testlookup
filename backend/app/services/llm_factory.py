@@ -5,11 +5,14 @@ by changing the LLM_PROVIDER environment variable — no agent code changes need
 """
 import logging
 import time
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from langchain_core.language_models import BaseChatModel
 
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from app.services.agent_config_resolver import ResolvedEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -398,6 +401,7 @@ async def get_llm(
     model: Optional[str] = None,
     temperature: Optional[float] = None,
     track: Optional[str] = None,
+    endpoint: Optional["ResolvedEndpoint"] = None,
 ) -> BaseChatModel:
     """
     Return a LangChain chat model for the configured provider.
@@ -408,23 +412,38 @@ async def get_llm(
         temperature: Override LLM_TEMPERATURE env var
         track:       If set ("reasoning"), check ModelRegistry for a promoted fine-tuned
                      model before falling back to LLM_MODEL. Used by run_triage_agent.
+        endpoint:    A policy-resolved project tier endpoint. Provider, model,
+                     temperature, max tokens, and base URL are consumed as one
+                     unit; credentials still come only from global config.
 
     Returns:
         A LangChain BaseChatModel compatible with ReAct agents
     """
     # LP-1: Use runtime config resolver instead of static env-only settings
     _effective: dict = {}
-    if provider is None:
+    if provider is None or endpoint is not None:
         from app.services.ai_config_resolver import get_effective_ai_config  # noqa: PLC0415
         try:
             _effective = await get_effective_ai_config()
         except Exception:
             pass  # Fall through to env defaults
 
-    _provider = (provider or _effective.get("provider") or settings.LLM_PROVIDER).lower()
-    _temperature = temperature if temperature is not None else _effective.get("temperature", settings.LLM_TEMPERATURE)
-    _max_tokens = _effective.get("max_tokens", settings.LLM_MAX_TOKENS)
-    _base_url = _effective.get("base_url") or _default_llm_base_url(_provider)
+    endpoint_provider = endpoint.provider if endpoint is not None else None
+    endpoint_model = endpoint.model if endpoint is not None else None
+    endpoint_temperature = endpoint.temperature if endpoint is not None else None
+    _provider = (endpoint_provider or provider or _effective.get("provider") or settings.LLM_PROVIDER).lower()
+    _temperature = (
+        endpoint_temperature
+        if endpoint_temperature is not None
+        else temperature if temperature is not None
+        else _effective.get("temperature", settings.LLM_TEMPERATURE)
+    )
+    _max_tokens = endpoint.max_tokens if endpoint is not None else _effective.get("max_tokens", settings.LLM_MAX_TOKENS)
+    _base_url = (
+        endpoint.base_url or _default_llm_base_url(_provider)
+        if endpoint is not None
+        else _effective.get("base_url") or _default_llm_base_url(_provider)
+    )
     _offline = _effective.get("offline_mode", settings.AI_OFFLINE_MODE)
     from app.services.llm_policy_service import enforce_provider_policy_async
 
@@ -433,7 +452,9 @@ async def get_llm(
     _retries = max(0, int(settings.AI_MAX_RETRIES or 0))
 
     # Resolve model name: explicit override > fine-tuned registry > effective config > env default
-    if model:
+    if endpoint_model:
+        _model = endpoint_model
+    elif model:
         _model = model
     elif track:
         _model = await _async_get_active_model(track) or _effective.get("model", settings.LLM_MODEL)

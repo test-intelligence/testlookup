@@ -18,6 +18,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from pydantic import BaseModel
+
 from app.agents.base import BaseAgent
 from app.agents.consistency import (
     check_summary_consistency,
@@ -25,7 +27,9 @@ from app.agents.consistency import (
 )
 from app.core.config import settings
 from app.db.mongo import Collections, get_mongo_db
+from app.db.postgres import AsyncSessionLocal
 from app.models.agent_contracts import SummaryAgentOutput, validate_agent_contract
+from app.models.postgres import AgentPipelineRun, AgentStageResult
 from app.models.llm_schemas import (
     ActionPlan,
     EvidencePack,
@@ -40,6 +44,11 @@ from app.services.evidence_catalogue import (
 )
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
+from app.services.model_router import choose_model, decide_escalation, provenance
+from app.services.pipeline_budget_service import (
+    get_pipeline_budget_context,
+    remaining_cost_usd,
+)
 from app.services.prompt_registry import get_prompt, get_prompt_text
 from app.services.redaction_service import redact_text
 from app.services.resilience import truncate_to_token_budget, truncate_with_report
@@ -106,6 +115,15 @@ class SummaryLLMUnavailable(RuntimeError):
     and the agent emits an executive summary that points the reader at a
     "detailed breakdown" consisting of three empty objects.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        routing_provenance: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.routing_provenance = routing_provenance or {}
 
 
 def _layer_has_content(layer: object) -> bool:
@@ -218,7 +236,7 @@ class SummaryAgent(BaseAgent):
                 )
             else:
                 try:
-                    structured = await self._generate_structured_report(
+                    structured, routing_provenance = await self._generate_tiered_report(
                         run_data=run_data,
                         anomaly_summary=anomaly_summary,
                         anomalies=anomalies,
@@ -227,9 +245,15 @@ class SummaryAgent(BaseAgent):
                         stage_quality=stage_quality,
                         stage_errors=stage_errors,
                         pipeline_run_id=pipeline_run_id,
+                        project_id=project_id,
+                        test_run_id=test_run_id,
+                        failed_test_ids=state.get("failed_test_ids") or [],
                     )
+                    summary_provenance.update(routing_provenance)
                 except Exception as exc:
                     fallback_reason = str(exc)
+                    if isinstance(exc, SummaryLLMUnavailable):
+                        summary_provenance.update(exc.routing_provenance)
                     logger.warning(
                         "summary_llm_unavailable_generating_deterministic_fallback_su",
                         error=exc,
@@ -552,6 +576,268 @@ class SummaryAgent(BaseAgent):
 
     # ── LLM calls ─────────────────────────────────────────────────────────────
 
+    async def _routing_inputs(
+        self,
+        *,
+        project_id: str,
+        pipeline_run_id: str,
+    ) -> tuple[Any, float | None, int]:
+        """Resolve the project policy and this stage's remaining soft budget."""
+        from sqlalchemy import select  # noqa: PLC0415
+
+        from app.services.agent_capability_registry import get_capability  # noqa: PLC0415
+        from app.services.agent_config_resolver import resolve_for_project  # noqa: PLC0415
+
+        project_uuid = uuid.UUID(str(project_id))
+        agent_id = get_capability(self.stage_name).capability_id
+        async with AsyncSessionLocal() as db:
+            resolved = await resolve_for_project(db, project_uuid, agent_id)
+            pipeline = (
+                await db.execute(
+                    select(AgentPipelineRun).where(
+                        AgentPipelineRun.id == pipeline_run_id
+                    )
+                )
+            ).scalar_one_or_none()
+            stage = (
+                await db.execute(
+                    select(AgentStageResult).where(
+                        AgentStageResult.pipeline_run_id == pipeline_run_id,
+                        AgentStageResult.stage_name == self.stage_name,
+                    )
+                )
+            ).scalar_one_or_none()
+
+        metadata = (
+            dict(pipeline.execution_metadata)
+            if pipeline is not None and isinstance(pipeline.execution_metadata, dict)
+            else {}
+        )
+        remaining = remaining_cost_usd(metadata)
+        reservation_id = self._budget_reservations.get(pipeline_run_id)
+        reservations = (metadata.get("budget_spend") or {}).get("reservations") or {}
+        receipt = reservations.get(reservation_id) if reservation_id else None
+        if remaining is not None and isinstance(receipt, dict):
+            # The current stage already reserved its envelope in BaseAgent.
+            # Add that envelope back for the router's within-stage soft check.
+            remaining += max(0.0, float(receipt.get("cost_usd") or 0.0))
+
+        max_calls = int(resolved.config.budget.max_llm_calls_per_run)
+        if stage is not None and isinstance(stage.allocated_budget, dict):
+            if "max_llm_calls" in stage.allocated_budget:
+                allocated = max(
+                    0, int(stage.allocated_budget.get("max_llm_calls") or 0)
+                )
+                max_calls = min(max_calls, allocated)
+        observed = int((get_pipeline_budget_context() or {}).get("observed_llm_calls") or 0)
+        return resolved, remaining, max(0, max_calls - observed)
+
+    @staticmethod
+    def _observed_tokens() -> int:
+        context = get_pipeline_budget_context() or {}
+        return max(0, int(context.get("observed_input_tokens") or 0)) + max(
+            0, int(context.get("observed_output_tokens") or 0)
+        )
+
+    @staticmethod
+    def _report_failures(
+        structured: dict,
+        *,
+        validation_failures: list[str],
+        run_data: dict[str, Any],
+        failed_test_ids: list[str],
+        analyses: dict[str, dict],
+    ) -> list[str]:
+        failures = list(validation_failures)
+        consistency = check_summary_consistency(
+            structured=structured,
+            run_data=run_data,
+            failed_test_ids=failed_test_ids,
+            analyses=analyses,
+        )
+        failures.extend(f"consistency:{check.name}" for check in consistency.failed)
+        return failures
+
+    async def _generate_tiered_report(
+        self,
+        *,
+        run_data: dict,
+        anomaly_summary: str,
+        anomalies: list[dict],
+        analyses: dict[str, dict],
+        similar_failures: list[dict] | None,
+        stage_quality: str,
+        stage_errors: dict[str, list[str]] | None,
+        pipeline_run_id: str,
+        project_id: str,
+        test_run_id: str,
+        failed_test_ids: list[str],
+    ) -> tuple[dict, dict[str, Any]]:
+        """Run summary on SLM, repair once, then escalate or fall back."""
+        from app.services.tier_comparison_service import enqueue_shadow_pair  # noqa: PLC0415
+
+        resolved, budget_remaining, step_calls = await self._routing_inputs(
+            project_id=project_id,
+            pipeline_run_id=pipeline_run_id,
+        )
+        requested = resolved.config.model.tier
+        choice = choose_model(
+            self.stage_name,
+            resolved,
+            budget_remaining_usd=budget_remaining,
+        )
+        initial_provenance = provenance(
+            requested, choice, escalations=0, fallback_used=choice.tier == "deterministic"
+        )
+        await self.log_decision(
+            pipeline_run_id,
+            decision_point="summary_model_tier",
+            chosen=choice.tier,
+            rationale=choice.reason,
+            context=initial_provenance,
+        )
+        if choice.endpoint is None:
+            raise SummaryLLMUnavailable(
+                choice.reason,
+                routing_provenance=initial_provenance,
+            )
+
+        llm = await get_llm(endpoint=choice.endpoint)
+        before_tokens = self._observed_tokens()
+        validation_failures: list[str] = []
+        structured = await self._generate_structured_report(
+            run_data=run_data,
+            anomaly_summary=anomaly_summary,
+            anomalies=anomalies,
+            analyses=analyses,
+            similar_failures=similar_failures,
+            stage_quality=stage_quality,
+            stage_errors=stage_errors,
+            pipeline_run_id=pipeline_run_id,
+            llm=llm,
+            validation_failures=validation_failures,
+        )
+        failures = self._report_failures(
+            structured,
+            validation_failures=validation_failures,
+            run_data=run_data,
+            failed_test_ids=failed_test_ids,
+            analyses=analyses,
+        )
+
+        # The repair is one complete SLM pass, so both schema failures and
+        # cross-layer consistency failures get a chance to be corrected.
+        if choice.tier == "slm" and failures:
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="summary_slm_repair",
+                chosen="repair_once",
+                rationale="; ".join(failures)[:1000],
+            )
+            validation_failures = []
+            structured = await self._generate_structured_report(
+                run_data=run_data,
+                anomaly_summary=anomaly_summary,
+                anomalies=anomalies,
+                analyses=analyses,
+                similar_failures=similar_failures,
+                stage_quality=stage_quality,
+                stage_errors=stage_errors,
+                pipeline_run_id=pipeline_run_id,
+                llm=llm,
+                validation_failures=validation_failures,
+                repair_instruction="Correct these validation failures: "
+                + "; ".join(failures)[:1500],
+            )
+            failures = self._report_failures(
+                structured,
+                validation_failures=validation_failures,
+                run_data=run_data,
+                failed_test_ids=failed_test_ids,
+                analyses=analyses,
+            )
+
+        candidate_tokens = self._observed_tokens() - before_tokens
+        if not failures:
+            return structured, provenance(requested, choice, 0, False)
+
+        decision = decide_escalation(
+            self.stage_name,
+            choice,
+            resolved,
+            trigger="validation_failure",
+            confidence=None,
+            escalations=0,
+            step_llm_calls_remaining=step_calls,
+            budget_remaining_usd=budget_remaining,
+        )
+        if decision.action != "escalate" or decision.choice.endpoint is None:
+            fallback_provenance = provenance(
+                requested,
+                decision.choice,
+                decision.escalations,
+                True,
+            )
+            raise SummaryLLMUnavailable(
+                decision.reason,
+                routing_provenance=fallback_provenance,
+            )
+
+        await self.log_decision(
+            pipeline_run_id,
+            decision_point="summary_model_escalation",
+            chosen="llm",
+            rationale="SLM output failed after one repair: " + "; ".join(failures)[:900],
+        )
+        llm = await get_llm(endpoint=decision.choice.endpoint)
+        before_llm_tokens = self._observed_tokens()
+        llm_validation_failures: list[str] = []
+        llm_structured = await self._generate_structured_report(
+            run_data=run_data,
+            anomaly_summary=anomaly_summary,
+            anomalies=anomalies,
+            analyses=analyses,
+            similar_failures=similar_failures,
+            stage_quality=stage_quality,
+            stage_errors=stage_errors,
+            pipeline_run_id=pipeline_run_id,
+            llm=llm,
+            validation_failures=llm_validation_failures,
+            repair_instruction="Replace the invalid SLM result with a contract-valid report.",
+        )
+        llm_failures = self._report_failures(
+            llm_structured,
+            validation_failures=llm_validation_failures,
+            run_data=run_data,
+            failed_test_ids=failed_test_ids,
+            analyses=analyses,
+        )
+        llm_tokens = self._observed_tokens() - before_llm_tokens
+        enqueue_shadow_pair(
+            config=resolved.config,
+            project_id=uuid.UUID(str(project_id)),
+            agent_id=resolved.agent_id,
+            sample_key=f"summary:{test_run_id}",
+            incumbent_tier="llm",
+            candidate_tier="slm",
+            incumbent_output=llm_structured,
+            candidate_output=structured,
+            incumbent_tokens=llm_tokens,
+            candidate_tokens=candidate_tokens,
+        )
+        final_provenance = provenance(
+            requested,
+            decision.choice,
+            decision.escalations,
+            bool(llm_failures),
+        )
+        if llm_failures:
+            raise SummaryLLMUnavailable(
+                "LLM escalation failed summary validation: " + "; ".join(llm_failures),
+                routing_provenance=final_provenance,
+            )
+        return llm_structured, final_provenance
+
     async def _generate_structured_report(
         self,
         run_data: dict,
@@ -562,6 +848,9 @@ class SummaryAgent(BaseAgent):
         stage_quality: str = "normal",
         stage_errors: dict[str, list[str]] | None = None,
         pipeline_run_id: str | None = None,
+        llm: Any | None = None,
+        validation_failures: list[str] | None = None,
+        repair_instruction: str | None = None,
     ) -> dict:
         # F-3: one catalogue per run, built ONCE and shared by every layer call.
         # The three layers are separate invocations; a catalogue rebuilt per call
@@ -574,7 +863,10 @@ class SummaryAgent(BaseAgent):
             stage_errors=stage_errors or {},
             catalogue=catalogue,
         )
-        llm = await get_llm()
+        if repair_instruction:
+            context += "\n\nREPAIR REQUIREMENT: " + repair_instruction
+        if llm is None:
+            llm = await get_llm()
 
         # Layer 1: executive summary (plain text) with timeout
         safe_context = truncate_to_token_budget(context, _MAX_CONTEXT_TOKENS)
@@ -631,18 +923,21 @@ class SummaryAgent(BaseAgent):
                 expected_keys=["what_failed", "likely_cause", "criticality", "release_impact"],
                 layer_name="incident_view",
                 pipeline_run_id=pipeline_run_id,
+                validation_failures=validation_failures,
             ),
             self._call_json_layer(
                 llm, _EVIDENCE_PACK_PROMPT, context,
                 expected_keys=["top_stack_traces", "log_anomalies", "data_sources_used"],
                 layer_name="evidence_pack",
                 pipeline_run_id=pipeline_run_id,
+                validation_failures=validation_failures,
             ),
             self._call_json_layer(
                 llm, _ACTION_PLAN_PROMPT, context,
                 expected_keys=["immediate_mitigation", "fix_recommendations", "validation_steps"],
                 layer_name="action_plan",
                 pipeline_run_id=pipeline_run_id,
+                validation_failures=validation_failures,
             ),
         )
 
@@ -765,7 +1060,7 @@ class SummaryAgent(BaseAgent):
         }
 
     # Map layer names to Pydantic schemas for structured validation
-    _LAYER_SCHEMAS: dict[str, type] = {
+    _LAYER_SCHEMAS: dict[str, type[BaseModel]] = {
         "incident_view": IncidentView,
         "evidence_pack": EvidencePack,
         "action_plan": ActionPlan,
@@ -775,9 +1070,10 @@ class SummaryAgent(BaseAgent):
         self,
         llm,
         prompt: str,
-        schema_model: type,
+        schema_model: type[BaseModel],
         layer_name: str,
         pipeline_run_id: str | None,
+        expected_keys: list[str] | None = None,
     ) -> dict | None:
         """Ask the provider to return the schema directly. None = fall back.
 
@@ -813,9 +1109,31 @@ class SummaryAgent(BaseAgent):
 
         # Providers may hand back the model, a dict, or (on some paths) raw text.
         if isinstance(result, schema_model):
+            if expected_keys and not set(expected_keys) <= result.model_fields_set:
+                logger.warning(
+                    "structured_output_required_fields_missing",
+                    layer=layer_name,
+                    missing=sorted(set(expected_keys) - result.model_fields_set),
+                )
+                return None
             payload = result.model_dump()
         elif isinstance(result, dict):
-            payload = dict(result)
+            if expected_keys and not set(expected_keys) <= set(result):
+                logger.warning(
+                    "structured_output_required_fields_missing",
+                    layer=layer_name,
+                    missing=sorted(set(expected_keys) - set(result)),
+                )
+                return None
+            try:
+                payload = schema_model.model_validate(result).model_dump()
+            except Exception as exc:  # noqa: BLE001 — invalid model output
+                logger.warning(
+                    "structured_output_schema_invalid",
+                    layer=layer_name,
+                    error=str(exc)[:500],
+                )
+                return None
         else:
             logger.debug("structured_output_unexpected_shape", layer=layer_name)
             return None
@@ -841,6 +1159,7 @@ class SummaryAgent(BaseAgent):
         expected_keys: list[str] | None = None,
         layer_name: str = "unknown",
         pipeline_run_id: str | None = None,
+        validation_failures: list[str] | None = None,
     ) -> dict:
         """Call LLM with a JSON-requesting prompt. Returns parsed dict or error stub.
 
@@ -882,7 +1201,12 @@ class SummaryAgent(BaseAgent):
 
         if schema_model is not None:
             structured = await self._try_structured_layer(
-                llm, prompt, schema_model, layer_name, pipeline_run_id
+                llm,
+                prompt,
+                schema_model,
+                layer_name,
+                pipeline_run_id,
+                expected_keys,
             )
             if structured is not None:
                 return structured
@@ -931,12 +1255,19 @@ class SummaryAgent(BaseAgent):
                             "expected_keys": expected_keys or [],
                         },
                     )
+            failure = (validation_error or error) if schema else error
+            if failure and validation_failures is not None:
+                validation_failures.append(f"{layer_name}:{failure}")
             return parsed
         except asyncio.TimeoutError:
             logger.warning("JSON layer call timed out", layer=layer_name, timeout=_LAYER_TIMEOUT_SECONDS)
+            if validation_failures is not None:
+                validation_failures.append(f"{layer_name}:timeout")
             return {}
         except Exception as exc:
             logger.warning("JSON layer call failed", layer=layer_name, error=str(exc))
+            if validation_failures is not None:
+                validation_failures.append(f"{layer_name}:{type(exc).__name__}")
         return {}
 
     async def _fetch_similar_failures(
