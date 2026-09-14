@@ -77,6 +77,7 @@ from app.services.evidence_sanitizer import (
     sanitize_persistence_payload,
     sanitize_reference_text,
 )
+from app.services.eval_provenance_service import current_eval_manifest_checksum
 from app.core.metrics import pipeline_execution_context_persist_failures_total
 
 import structlog
@@ -2757,6 +2758,7 @@ async def _create_pipeline_run(
             ),
             started_at=datetime.now(timezone.utc),
             execution_metadata={
+                "eval_manifest_checksum": current_eval_manifest_checksum(),
                 "initial_workflow_plan": initial_plan,
                 "cluster_child_settings": cluster_settings,
                 "async_decision_report_supersession_enabled": async_report_supersession_enabled,
@@ -2972,6 +2974,9 @@ async def _mark_pipeline_done(
                         reason="pipeline_terminalized" if success else "pipeline_failed",
                     )
                 run.execution_metadata = {
+                    "eval_manifest_checksum": prior_metadata.get(
+                        "eval_manifest_checksum"
+                    ),
                     "tools_used": final_state.get("tools_used", []),
                     "schema_version": final_state.get("schema_version", 2),
                     "fallback_used": final_state.get("fallback_used", False),

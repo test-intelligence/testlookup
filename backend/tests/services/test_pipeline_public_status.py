@@ -252,6 +252,36 @@ async def test_a_failed_run_is_never_passed(monkeypatch):
     assert pipeline.status == "failed"
 
 
+@pytest.mark.asyncio
+async def test_finalize_preserves_the_frozen_eval_manifest(monkeypatch):
+    from app.agents import workflow
+    from app.services import agent_action_ledger_service, run_downstream_outbox
+
+    checksum = "a" * 64
+    pipeline = _pipeline()
+    pipeline.execution_metadata = {"eval_manifest_checksum": checksum}
+    monkeypatch.setattr(
+        workflow, "AsyncSessionLocal", lambda: _Session(pipeline, [_stage("ingestion")])
+    )
+    monkeypatch.setattr(
+        agent_action_ledger_service, "persist_report_action_proposals", AsyncMock()
+    )
+    monkeypatch.setattr(
+        run_downstream_outbox, "stage_ai_summary_notification_operation", AsyncMock()
+    )
+
+    await workflow._mark_pipeline_done(
+        str(pipeline.id),
+        success=True,
+        final_state={
+            "project_id": str(uuid.uuid4()),
+            "test_run_id": str(pipeline.test_run_id),
+        },
+    )
+
+    assert pipeline.execution_metadata["eval_manifest_checksum"] == checksum
+
+
 # ── the agentic-runtime projection (GET /pipelines/{id}/agentic-runtime) ─────
 
 

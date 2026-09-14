@@ -79,6 +79,15 @@ signal opens a human `eval_drift` review whose pending state pins that
 capability against tier downgrades and automatic review. Results surface on the
 **AI Evaluation Dashboard** (`/settings/ai-eval`).
 
+Every new `AgentPipelineRun` also freezes `eval_manifest_checksum` in
+`execution_metadata`. The current passing prompt/model-routing/reviewer
+attestation and each predecessor are stored under that checksum in
+`app/services/eval_manifests/`; this keeps source-review and offline
+attestations resolvable even though they do not have an `AIEvalGateRun` row.
+`GET /api/v1/ai-eval/gates/{checksum}` resolves either a database gate or one
+of those bundled attestations. The dashboard checks all runs from the last
+seven days and visibly flags missing or unknown checksums.
+
 ## 4. The pre-release gate (`eval_gate_service`)
 
 This is the enforcement point, and it mirrors the shape of the product
@@ -93,7 +102,7 @@ This is the enforcement point, and it mirrors the shape of the product
   folds the per-gate results. Non-blocking warnings remain details on `pass`.
 - `persist_agent_stack_gate_run` — the run is stored, so the decision to ship
   (or not) an AI change is auditable.
-- The `POST /api/v1/ai-evaluation/pre-release-gate` endpoint is **admin-only**,
+- The `POST /api/v1/ai-eval/agent-stack-release-gate` endpoint is **admin-only**,
   and the docstring states the contract plainly: *prompt, model, or routing
   changes should not ship if the gate returns FAIL.*
 

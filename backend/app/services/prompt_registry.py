@@ -1145,6 +1145,24 @@ def check_attestation(
             "`python -m app.services.prompt_registry --attest <change-id>`"
         ]
     problems: list[str] = []
+    from app.services.eval_provenance_service import (
+        eval_manifest_checksum,
+        load_bundled_eval_manifest,
+    )
+
+    checksum = attestation.get("eval_manifest_checksum")
+    if checksum != eval_manifest_checksum(attestation):
+        problems.append(
+            "eval-gate attestation checksum is missing or stale — run "
+            "`python -m app.services.prompt_registry --attest <change-id>`"
+        )
+    elif (attestation_path is None or attestation_path == ATTESTATION_PATH) and (
+        load_bundled_eval_manifest(str(checksum)) != attestation
+    ):
+        problems.append(
+            "eval-gate attestation is missing from its checksum-addressed archive — run "
+            "`python -m app.services.prompt_registry --attest <change-id>`"
+        )
     if attestation.get("manifest_digest") != digest:
         problems.append(
             "manifest changed without a fresh eval-gate attestation "
@@ -1324,8 +1342,12 @@ def _attest(change_id: str, offline: bool, notes: str) -> int:
         "attested_at": datetime.now(timezone.utc).isoformat(),
         "notes": notes,
     }
-    ATTESTATION_PATH.write_text(
-        json.dumps(attestation, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    from app.services.eval_provenance_service import stamp_and_archive_eval_manifest
+
+    stamp_and_archive_eval_manifest(
+        attestation,
+        current_path=ATTESTATION_PATH,
+        archive_dir=ATTESTATION_PATH.parent / "eval_manifests",
     )
     _echo(f"wrote {ATTESTATION_PATH} (verdict={verdict.value}, mode={mode})")
     return 0 if verdict is EvalVerdict.PASS else 1

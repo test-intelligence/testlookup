@@ -69,6 +69,7 @@ from app.models.postgres import (
 )
 from app.services.pipeline_event_log import emit_event
 from app.services.evidence_sanitizer import sanitize_reference_text
+from app.services.eval_provenance_service import current_eval_manifest_checksum
 
 logger = structlog.get_logger("agents.investigator.workflow")
 
@@ -591,6 +592,7 @@ async def _create_stage_rows(
             status="running",
             started_at=datetime.now(timezone.utc),
             execution_metadata={
+                "eval_manifest_checksum": current_eval_manifest_checksum(),
                 "initial_workflow_plan": initial_plan,
                 "run_budget": run_budget,
                 "investigation_id": investigation_id,

@@ -22,9 +22,11 @@ from app.models.postgres import (
 from app.models.schemas import (
     AIEvalDatasetCreate,
     AIEvalGateRunResponse,
+    AIEvalManifestResponse,
     AIEvalDatasetResponse,
     AIEvalRunResponse,
     AIQualityDashboardResponse,
+    EvalProvenanceHealthResponse,
 )
 from app.services.activity.service import ActorRef, record as record_activity
 from app.services.reviewer_quality_service import (
@@ -54,6 +56,7 @@ async def get_quality_dashboard(
         get_label_health,
         get_model_version_history,
     )
+    from app.services.eval_provenance_service import eval_provenance_health
     from app.services.feedback_service import get_feedback_stats
 
     agreement = await compute_agreement_rate(db, days=days)
@@ -70,6 +73,7 @@ async def get_quality_dashboard(
 
     # Feedback summary
     feedback_stats = await get_feedback_stats(db)
+    provenance = await eval_provenance_health(db)
 
     return AIQualityDashboardResponse(
         agreement=agreement,
@@ -78,6 +82,7 @@ async def get_quality_dashboard(
         model_versions=model_versions,
         feedback_summary=feedback_stats,
         label_health=label_health,
+        eval_provenance=EvalProvenanceHealthResponse.model_validate(provenance),
     )
 
 
@@ -655,6 +660,21 @@ async def list_agent_stack_gate_runs(
         query = query.where(AIEvalGateRun.status == status_filter)
     result = await db.execute(query)
     return result.scalars().all()
+
+
+@router.get("/gates/{checksum}", response_model=AIEvalManifestResponse)
+async def get_eval_manifest(
+    checksum: str,
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve the immutable eval manifest stamped on an agent pipeline run."""
+    from app.services.eval_provenance_service import resolve_eval_manifest
+
+    manifest = await resolve_eval_manifest(db, checksum.lower())
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Evaluation manifest not found")
+    return manifest
 
 
 @router.post("/baselines", status_code=201)
