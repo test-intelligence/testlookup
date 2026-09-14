@@ -21,9 +21,11 @@ from app.services.agent_eval_harness import (
     score_calibration,
     score_coherence,
     score_completeness,
+    prose_contract_text,
 )
 from app.services.ai_eval_service import compute_agent_report_quality
 from app.services.eval_gate_service import evaluate_agent_report_quality_rules
+from app.services.eval_verdict import EvalVerdict
 
 
 # ── AgentEvalSample.from_recorded_output extraction ──────────────────────────
@@ -302,6 +304,22 @@ def test_compute_agent_report_quality_non_list_is_empty() -> None:
         assert isinstance(report, dict)
         assert report["sample_count"] == 0
         assert report["passed"] is False
+        assert report["verdict"] == EvalVerdict.INSUFFICIENT_SAMPLES
+
+
+def test_report_uses_the_shared_conclusive_verdicts() -> None:
+    from app.services.agent_eval_harness import AgentEvalSample, evaluate_agent_outputs
+
+    good = AgentEvalSample(
+        verdict="flaky", ground_truth_verdict="flaky", confidence_score=100,
+        evidence_count=1, decision_reason="confirmed intermittent failure",
+    )
+    passed = evaluate_agent_outputs([good] * 5)
+    assert passed.verdict is EvalVerdict.PASS
+
+    bad = good.model_copy(update={"ground_truth_verdict": "product_bug"})
+    failed = evaluate_agent_outputs([bad] * 5)
+    assert failed.verdict is EvalVerdict.FAIL
 
 
 # ── evaluate_agent_report_quality_rules (gate-rule projection) ───────────────
@@ -372,3 +390,9 @@ def test_report_quality_rules_wrong_agent_fails_accuracy_and_overall() -> None:
 
     assert by_rule["agent_accuracy"]["passed"] is False
     assert by_rule["agent_report_quality"]["passed"] is False
+
+
+def test_prose_contract_checks_plain_and_json_outputs() -> None:
+    assert prose_contract_text("  Two grounded sentences.  ") == "Two grounded sentences."
+    assert prose_contract_text('{"narrative": "Database failed."}', json_field="narrative") == "Database failed."
+    assert prose_contract_text("not json", json_field="narrative") == ""

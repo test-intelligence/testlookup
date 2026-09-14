@@ -26,7 +26,7 @@ What is guarded
 * seeding is idempotent — a second run creates nothing;
 * seeding has ONE implementation, shared by the route and the task;
 * a scheduled run works with no user (``created_by`` is nullable);
-* ``NO_BASELINE`` stays blocking: a gate with nothing to compare against has
+* ``insufficient_samples`` stays blocking: a gate with nothing to compare against has
   not passed.
 """
 from __future__ import annotations
@@ -166,7 +166,7 @@ def test_seeding_has_one_implementation():
 
 def test_no_baseline_is_still_blocking():
     """A gate with nothing to compare against has not passed."""
-    assert GateStatus.NO_BASELINE in _BLOCKING_GATE_STATUSES
+    assert GateStatus.INSUFFICIENT_SAMPLES in _BLOCKING_GATE_STATUSES
     assert GateStatus.PASS not in _BLOCKING_GATE_STATUSES
 
 
@@ -194,18 +194,48 @@ def test_the_service_exposes_seeding_for_the_scheduler():
     assert callable(eval_gate_service.ensure_golden_datasets)
 
 
+@pytest.mark.asyncio
+async def test_nightly_producer_writes_one_eval_run_per_task_type():
+    from types import SimpleNamespace
+
+    class _RunSession:
+        def __init__(self):
+            self.added = []
+            self.flushed = False
+
+        async def execute(self, _stmt):
+            return _FakeResult(SimpleNamespace(id=__import__("uuid").uuid4()))
+
+        def add(self, row):
+            self.added.append(row)
+
+        async def flush(self):
+            self.flushed = True
+
+    db = _RunSession()
+    results = [
+        {"task_type": "classification", "current_metrics": {"total": 5, "correct": 4, "accuracy": 0.8}},
+        {"task_type": "root_cause", "current_metrics": {"total": 3, "correct": 3, "accuracy": 1.0}},
+    ]
+    rows = await eval_gate_service.persist_nightly_eval_runs(
+        db, gate_results=results, model_name="fixture-model",
+    )
+    assert [row.task_type for row in rows] == ["classification", "root_cause"]
+    assert all(row.model_name == "fixture-model" for row in rows)
+    assert db.added == rows
+    assert db.flushed
+
+
 def test_never_baselined_is_reported_distinctly_from_regressed():
     """Verified against the deployment: with zero baselines all four gates
-    return NO_BASELINE, so the daily job would otherwise report FAIL forever —
+    return insufficient_samples, so the daily job reports missing evidence —
     and a permanently-red job is one nobody reads. The gate's own status keeps
     blocking releases; only the scheduled signal separates the two cases."""
     from app.worker import tasks
 
     src = inspect.getsource(tasks.run_scheduled_agent_eval)
-    assert '"NOT_BASELINED"' in src, (
-        "a never-baselined schedule is indistinguishable from a regression"
-    )
+    assert 'EvalVerdict.INSUFFICIENT_SAMPLES.value' in src
     assert '"signal": signal' in src
     # The release semantics must NOT be softened to achieve it.
-    assert 'GateStatus.NO_BASELINE' in src
+    assert 'EvalVerdict.INSUFFICIENT_SAMPLES' in src
     assert '"status": gate_status' in src, "the gate's own status must survive intact"

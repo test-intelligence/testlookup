@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-13 - Unify agent evaluation verdicts and nightly evidence (T12 / E9.1)
+
+All agent evaluation surfaces now use `pass`, `fail`, or
+`insufficient_samples`. Missing datasets, baselines, and undersized harness
+runs can no longer be reported as regressions or passes. Prompt recordings are
+indexed by prompt content hash and `provider/model@tier`, including rubric
+scoring for narrative prompts. The attestation watches model routing and
+reviewer sources, and the nightly gate writes one `AIEvalRun` per task type.
+
 ## 2026-09-13 - Add budget-aware per-capability ModelRouter (T6 / E5.1)
 
 Added a pure ModelRouter that resolves deterministic, SLM, or LLM choices from

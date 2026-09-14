@@ -180,10 +180,13 @@ def test_manifest_in_sync_with_registry():
 def test_attestation_matches_current_manifest_and_passes():
     assert pr.check_attestation() == []
     attestation = pr.load_attestation()
-    assert attestation["verdict"] == "PASS"
+    assert attestation["verdict"] == "pass"
     assert attestation["manifest_digest"] == pr.manifest_digest(
         pr.load_manifest()["prompts"]
     )
+    assert {gate["status"] for gate in attestation["gate_results"]} <= {
+        verdict.value for verdict in pr.EvalVerdict
+    }
 
 
 def test_manifest_pins_every_registered_prompt():
@@ -249,11 +252,11 @@ def test_missing_attestation_fails(tmp_path):
 
 def test_failed_verdict_fails(tmp_path):
     attestation = pr.load_attestation()
-    attestation["verdict"] = "FAIL"
+    attestation["verdict"] = "fail"
     path = tmp_path / "prompt_manifest_eval.json"
     path.write_text(json.dumps(attestation), encoding="utf-8")
     problems = pr.check_attestation(attestation_path=path)
-    assert any("not PASS" in p for p in problems)
+    assert any("not pass" in p for p in problems)
 
 
 # ── Attestation CLI behavior ────────────────────────────────────────────────
@@ -270,21 +273,26 @@ def test_offline_attest_writes_a_complete_passing_attestation(tmp_path, monkeypa
     monkeypatch.setattr(pr, "check_manifest", lambda: [])
     monkeypatch.setattr(pr, "load_manifest", lambda: manifest)
     monkeypatch.setattr(pr, "registry_versions", lambda: versions)
-    monkeypatch.setattr(pr, "_offline_gate_results", lambda: ("PASS", gate_results))
+    monkeypatch.setattr(pr, "_offline_gate_results", lambda: ("pass", gate_results))
     monkeypatch.setattr(pr, "_echo", messages.append)
 
     assert pr._attest("change-42", offline=True, notes="coverage slice") == 0
 
     payload = json.loads(attestation_path.read_text(encoding="utf-8"))
     assert payload["change_id"] == "change-42"
-    assert payload["verdict"] == "PASS"
+    assert payload["verdict"] == "pass"
     assert payload["mode"] == "offline_golden"
     assert payload["eval_gate_run_id"] is None
     assert payload["gate_results"] == gate_results
     assert payload["prompt_versions"] == versions
     assert payload["manifest_digest"] == pr.manifest_digest(manifest["prompts"])
     assert payload["notes"] == "coverage slice"
-    assert messages and "verdict=PASS" in messages[-1]
+    assert messages and "verdict=pass" in messages[-1]
+
+
+def test_offline_gate_never_passes_without_candidate_recordings():
+    verdict, _ = pr._offline_gate_results()
+    assert verdict is pr.EvalVerdict.INSUFFICIENT_SAMPLES
 
 
 def test_attest_refuses_manifest_drift_without_overwriting_file(tmp_path, monkeypatch):
@@ -367,6 +375,17 @@ def test_quality_gate_digest_mirrors_registry():
 def test_quality_gate_guard_is_registered():
     qg = _load_quality_gate_module()
     assert "ai.prompt-manifest-sync" in qg.GUARD_BY_NAME
+
+
+def test_attestation_pins_model_routing_and_reviewer_sources():
+    expected = {
+        "backend/app/services/llm_factory.py",
+        "backend/app/services/model_router.py",
+        "backend/app/services/agent_capability_registry.py",
+        "backend/app/agents/reviewer_agent.py",
+    }
+    assert set(pr.EVAL_ATTESTATION_WATCHED_PATHS) == expected
+    assert pr.load_attestation()["watched_sources"] == pr.attestation_watched_sources()
 
 
 # ── Public API shape ─────────────────────────────────────────────────────────

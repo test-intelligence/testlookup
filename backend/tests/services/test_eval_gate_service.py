@@ -261,6 +261,20 @@ def test_coerce_dataset_uuid_handles_malformed():
 
 
 @pytest.mark.asyncio
+async def test_missing_dataset_and_baseline_are_insufficient_not_fail(monkeypatch):
+    from app.services import eval_gate_service as svc
+    from app.services.eval_verdict import EvalVerdict
+
+    db = _FakeAsyncDB()
+    monkeypatch.setattr(svc, "_load_active_baseline", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "_load_dataset_items", AsyncMock(return_value=[]))
+    missing = await svc.evaluate_pre_release_gate(
+        db, task_type="classification", agent_name="AnalysisAgent",
+    )
+    assert missing["status"] is EvalVerdict.INSUFFICIENT_SAMPLES
+
+
+@pytest.mark.asyncio
 async def test_load_dataset_items_malformed_id_does_not_500():
     from app.services import eval_gate_service as svc
 

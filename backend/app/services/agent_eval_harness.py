@@ -15,10 +15,14 @@ unexpected error degrades to a failed report instead of propagating.
 """
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.services.eval_verdict import EvalVerdict
 
 logger = structlog.get_logger("services.agent_eval_harness")
 
@@ -42,6 +46,23 @@ NON_FLAKY_VERDICTS = frozenset(
 ECE_BINS = 10
 # Minimum sample count before a report is allowed to PASS.
 MIN_SAMPLES = 5
+
+
+def prose_contract_text(output: Any, *, json_field: str | None = None) -> str:
+    """Return contract-valid prose, or ``""`` for malformed model output."""
+    if not isinstance(output, str) or not output.strip():
+        return ""
+    if json_field is None:
+        return output.strip()
+    cleaned = re.sub(r"```(?:json)?", "", output).strip()
+    try:
+        payload = json.loads(cleaned)
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    text = payload.get(json_field)
+    return text.strip() if isinstance(text, str) else ""
 
 
 def _as_list(value) -> list:
@@ -314,6 +335,7 @@ class AgentEvalReport(BaseModel):
     sample_count: int = 0
     per_metric_pass: dict[str, bool] = Field(default_factory=dict)
     passed: bool = False
+    verdict: EvalVerdict = EvalVerdict.INSUFFICIENT_SAMPLES
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -336,6 +358,7 @@ def _failed_report(sample_count: int, detail: dict) -> AgentEvalReport:
             "ece": False,
         },
         passed=False,
+        verdict=EvalVerdict.FAIL,
         detail=detail,
     )
 
@@ -389,6 +412,11 @@ def evaluate_agent_outputs(samples: list[AgentEvalSample]) -> AgentEvalReport:
             detail["insufficient_data"] = True
 
         passed = all(per_metric_pass.values()) and sample_count >= MIN_SAMPLES
+        verdict = (
+            EvalVerdict.INSUFFICIENT_SAMPLES
+            if sample_count < MIN_SAMPLES
+            else EvalVerdict.PASS if passed else EvalVerdict.FAIL
+        )
 
         return AgentEvalReport(
             coherence=coherence,
@@ -400,6 +428,7 @@ def evaluate_agent_outputs(samples: list[AgentEvalSample]) -> AgentEvalReport:
             sample_count=sample_count,
             per_metric_pass=per_metric_pass,
             passed=passed,
+            verdict=verdict,
             detail=detail,
         )
     except Exception as exc:  # never-raise invariant

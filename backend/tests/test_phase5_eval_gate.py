@@ -377,7 +377,7 @@ class TestAgentStackReleaseGate:
 
         assert _overall_manifest_status([
             {"status": GateStatus.PASS},
-            {"status": GateStatus.NO_BASELINE},
+            {"status": GateStatus.INSUFFICIENT_SAMPLES},
         ]) == GateStatus.FAIL
 
     def test_version_change_summary_compares_against_baseline(self):

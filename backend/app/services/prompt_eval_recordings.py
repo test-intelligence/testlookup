@@ -34,7 +34,7 @@ deliberate act, visible in the PR diff of ``prompt_eval_recordings.json``,
 where recordings are reviewed like code.
 
 Honest about what is not measured yet. Real outputs need a model, and none
-were recorded when this landed, so the three gated prompts start *unmeasured*
+were recorded when this landed, so the gated prompts start *unmeasured*
 -- listed by name by :func:`check_recordings`, never counted as passing. An
 unmeasured entry is accepted only at the exact hash frozen in
 :data:`GRANDFATHERED_UNMEASURED`: the first edit to one of these prompts
@@ -56,13 +56,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
+from app.services.eval_verdict import EvalVerdict
+from app.services.agent_eval_harness import prose_contract_text
 from app.services.prompt_registry import get_prompt
 
 RECORDINGS_PATH = Path(__file__).resolve().parent / "prompt_eval_recordings.json"
 
 #: prompt id -> scoring task. Only prompts whose output is a checkable decision.
 GATED_PROMPTS: dict[str, str] = {
+    "anomaly_narrative": "prose_rubric",
     "fast_classifier_system": "classification",
+    "investigator_synthesis_narrative": "prose_rubric",
     "regression_watchman_classify": "regression_classification",
     "release_risk_reasoning": "release_grounding",
 }
@@ -70,7 +74,9 @@ GATED_PROMPTS: dict[str, str] = {
 #: The only (prompt id, hash) pairs allowed to be unmeasured. Shrinks to empty
 #: as prompts are recorded; never add to it to get past the gate.
 GRANDFATHERED_UNMEASURED: dict[str, str] = {
+    "anomaly_narrative": "0298a3b5009f",
     "fast_classifier_system": "9d46ffbbed7b",
+    "investigator_synthesis_narrative": "f7d92dd09981",
     "regression_watchman_classify": "2ac1510063fd",
     "release_risk_reasoning": "a152fb254091",
 }
@@ -144,10 +150,35 @@ def _score_release_grounding(case: dict) -> float:
     return 1.0
 
 
+def _score_prose_rubric(case: dict) -> float:
+    """Score prose for parseability and the case's explicit grounding rubric."""
+    rubric = case.get("expected") or {}
+    output = prose_contract_text(
+        case.get("output"), json_field=rubric.get("json_field"),
+    )
+    if not output:
+        return 0.0
+    lowered = output.lower()
+    terms = [str(term).lower() for term in rubric.get("required_terms", [])]
+    if any(term not in lowered for term in terms):
+        return 0.0
+    sentences = [part for part in re.split(r"[.!?]+", output) if part.strip()]
+    minimum = int(rubric.get("min_sentences", 1))
+    maximum = int(rubric.get("max_sentences", 100))
+    if not minimum <= len(sentences) <= maximum:
+        return 0.0
+    if rubric.get("requires_action") and not any(
+        token in lowered for token in ("investigate", "fix", "retry", "check", "restore")
+    ):
+        return 0.0
+    return 1.0
+
+
 SCORERS: dict[str, Callable[[dict], float]] = {
     "classification": _score_classification,
     "regression_classification": _score_regression_classification,
     "release_grounding": _score_release_grounding,
+    "prose_rubric": _score_prose_rubric,
 }
 
 
@@ -207,11 +238,60 @@ def _provenance_problem(prompt_id: str, entry: dict) -> Optional[str]:
     return None
 
 
+def _keyed_recordings_problem(prompt_id: str, entry: dict) -> Optional[str]:
+    recordings = entry.get("recordings")
+    if not isinstance(recordings, dict):
+        return f"{prompt_id}: recordings must be keyed by content_hash then provider/model@tier"
+    for content_hash, by_model in recordings.items():
+        if not isinstance(by_model, dict):
+            return f"{prompt_id}: recordings[{content_hash!r}] is not a model map"
+        for model_ref, recording in by_model.items():
+            if not isinstance(recording, dict) or "/" not in model_ref or "@" not in model_ref:
+                return f"{prompt_id}: invalid recording key {content_hash!r}, {model_ref!r}"
+            provenance = recording.get("provenance") or {}
+            expected_ref = (
+                f"{provenance.get('provider', '')}/{provenance.get('model', '')}"
+                f"@{provenance.get('tier', '')}"
+            )
+            if model_ref != expected_ref:
+                return f"{prompt_id}: recording key {model_ref!r} disagrees with provenance"
+            candidate = {
+                "content_hash": content_hash,
+                "cases": recording.get("cases"),
+                "min_score": entry.get("min_score"),
+                "provenance": provenance,
+            }
+            problem = _provenance_problem(prompt_id, candidate)
+            if problem:
+                return problem
+            score = score_entry({**entry, "cases": recording.get("cases") or []})
+            minimum = float(entry.get("min_score", 1.0))
+            if score < minimum:
+                return (
+                    f"{prompt_id}: keyed recording {model_ref} score {score:.2f} "
+                    f"< min_score {minimum:.2f}"
+                )
+    return None
+
+
 # ── the check ───────────────────────────────────────────────────────────────
 
 
 def load_recordings(path: Optional[Path] = None) -> dict[str, Any]:
     return dict(json.loads((path or RECORDINGS_PATH).read_text(encoding="utf-8")))
+
+
+def recording_key(content_hash: str, provider: str, model: str, tier: str) -> tuple[str, str]:
+    """Stable identity required to compare the same prompt across model tiers."""
+    return content_hash, f"{provider}/{model}@{tier}"
+
+
+def recordings_verdict(problems: list[str], insufficient: list[str]) -> EvalVerdict:
+    if problems:
+        return EvalVerdict.FAIL
+    if insufficient:
+        return EvalVerdict.INSUFFICIENT_SAMPLES
+    return EvalVerdict.PASS
 
 
 def check_recordings(path: Optional[Path] = None) -> tuple[list[str], list[str]]:
@@ -250,6 +330,10 @@ def check_recordings(path: Optional[Path] = None) -> tuple[list[str], list[str]]
                 f"(under {recorded_hash}) -- re-record: "
                 f"python -m app.services.prompt_eval_recordings --record {prompt_id}"
             )
+            continue
+        keyed_problem = _keyed_recordings_problem(prompt_id, entry)
+        if keyed_problem:
+            problems.append(keyed_problem)
             continue
         cases = entry.get("cases") or []
         if not cases or any(not isinstance(c.get("output"), str) for c in cases):
@@ -296,6 +380,7 @@ async def record(
     recorded_by: str = "",
     provider: str = "",
     model: str = "",
+    tier: str = "llm",
 ) -> dict:
     """Run the CURRENT prompt on every case, store raw outputs + hash + score,
     and the provenance :func:`check_recordings` requires."""
@@ -322,6 +407,16 @@ async def record(
         },
     )
     entry["score"] = score_entry(entry)
+    content_key, model_key = recording_key(content_hash, provider, model, tier)
+    recordings = dict(entry.get("recordings") or {})
+    by_model = dict(recordings.get(content_key) or {})
+    by_model[model_key] = {
+        "cases": cases,
+        "score": entry["score"],
+        "provenance": {**entry["provenance"], "tier": tier},
+    }
+    recordings[content_key] = by_model
+    entry["recordings"] = recordings
     data["prompts"][prompt_id] = entry
     (path or RECORDINGS_PATH).write_text(
         json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n",
@@ -329,7 +424,7 @@ async def record(
     return entry
 
 
-async def _record_with_llm(prompt_id: str, model: Optional[str]) -> dict:
+async def _record_with_llm(prompt_id: str, model: Optional[str], tier: str) -> dict:
     from app.services.llm_factory import get_llm
 
     llm = await get_llm(model=model, temperature=0.0)
@@ -337,7 +432,7 @@ async def _record_with_llm(prompt_id: str, model: Optional[str]) -> dict:
     model_name = str(getattr(llm, "_model", "") or model or "")
     return await record(
         prompt_id, invoke=llm.ainvoke, recorded_by=f"{provider}:{model_name}",
-        provider=provider, model=model_name,
+        provider=provider, model=model_name, tier=tier,
     )
 
 
@@ -352,19 +447,29 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--check", action="store_true", help="Fail when a gated prompt lacks current scored outputs.")
     parser.add_argument("--record", metavar="PROMPT_ID", help="Record outputs for one gated prompt with the configured LLM.")
     parser.add_argument("--model", help="With --record: model override.")
+    parser.add_argument(
+        "--tier", choices=("slm", "llm"), default="llm",
+        help="With --record: tier represented by the selected model.",
+    )
     args = parser.parse_args(argv)
     if args.record:
         if args.record not in GATED_PROMPTS:
             _echo(f"{args.record} is not a gated prompt: {sorted(GATED_PROMPTS)}")
             return 2
-        entry = asyncio.run(_record_with_llm(args.record, args.model))
+        entry = asyncio.run(_record_with_llm(args.record, args.model, args.tier))
         _echo(f"recorded {len(entry['cases'])} case(s) for {args.record}: score {entry['score']:.2f}")
         return 0 if entry["score"] >= float(entry.get("min_score", 1.0)) else 1
     problems, unmeasured = check_recordings()
     for problem in problems:
         _echo(f"FAIL {problem}")
     for prompt_id in unmeasured:
-        _echo(f"UNMEASURED {prompt_id} (grandfathered at its current hash; its next edit needs recorded outputs)")
+        _echo(
+            f"INSUFFICIENT_SAMPLES {prompt_id} (grandfathered at its current hash; "
+            "its next edit needs recorded outputs)"
+        )
+    # Grandfathered insufficient evidence is reported honestly but does not
+    # make every unchanged branch red. A prompt edit removes that grandfather
+    # and becomes a problem, so candidate changes still fail closed.
     return 1 if problems else 0
 
 

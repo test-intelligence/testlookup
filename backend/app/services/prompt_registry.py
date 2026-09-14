@@ -55,12 +55,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from app.services.eval_verdict import EvalVerdict
+
 MANIFEST_SCHEMA_VERSION = 1
 PROMPT_HASH_LENGTH = 12
 
 _MODULE_DIR = Path(__file__).resolve().parent
 MANIFEST_PATH = _MODULE_DIR / "prompt_manifest.json"
 ATTESTATION_PATH = _MODULE_DIR / "prompt_manifest_eval.json"
+_REPO_ROOT = _MODULE_DIR.parents[2]
+EVAL_ATTESTATION_WATCHED_PATHS: tuple[str, ...] = (
+    "backend/app/services/llm_factory.py",
+    "backend/app/services/model_router.py",
+    "backend/app/services/agent_capability_registry.py",
+    "backend/app/agents/reviewer_agent.py",
+)
 # repo_root/mcp/prompts/templates.py — present in the repo checkout, absent in
 # the backend container image (the mcp server ships separately).
 MCP_TEMPLATES_PATH = _MODULE_DIR.parents[2] / "mcp" / "prompts" / "templates.py"
@@ -1015,6 +1024,18 @@ def manifest_digest(prompts: dict[str, dict[str, Any]]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def attestation_watched_sources(repo_root: Optional[Path] = None) -> dict[str, str]:
+    """Hash model routing and reviewer sources covered by an eval attestation."""
+    root = repo_root or _REPO_ROOT
+    watched: dict[str, str] = {}
+    for relative in EVAL_ATTESTATION_WATCHED_PATHS:
+        path = root / relative
+        watched[relative] = (
+            hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "missing"
+        )
+    return watched
+
+
 def load_manifest(path: Optional[Path] = None) -> dict[str, Any]:
     data = json.loads((path or MANIFEST_PATH).read_text(encoding="utf-8"))
     return dict(data)
@@ -1096,9 +1117,15 @@ def check_attestation(
             f"current {digest[:12]}…) — run "
             "`python -m app.services.prompt_registry --attest <change-id>`"
         )
-    if attestation.get("verdict") != "PASS":
+    current_watched = attestation_watched_sources()
+    if attestation.get("watched_sources") != current_watched:
         problems.append(
-            f"attested eval-gate verdict is {attestation.get('verdict')!r}, not PASS — "
+            "model routing or reviewer sources changed without a fresh eval-gate "
+            "attestation — run `python -m app.services.prompt_registry --attest <change-id>`"
+        )
+    if attestation.get("verdict") != EvalVerdict.PASS.value:
+        problems.append(
+            f"attested eval-gate verdict is {attestation.get('verdict')!r}, not pass — "
             "the prompt change did not clear the eval gate"
         )
     return problems
@@ -1133,13 +1160,13 @@ def _write_manifest() -> None:
 # duplicate_detection's shipped scorer is a lexical word-overlap simulation
 # whose golden set intentionally contains paraphrase duplicates it cannot
 # catch (accuracy 0.5 by construction) — it is recorded in the attestation as
-# informational rather than blocking the PROMPT gate. The full DB-backed gate
+# insufficient rather than passing the PROMPT gate. The full DB-backed gate
 # (``--attest`` without ``--offline``) still evaluates it against its
 # baseline like everything else.
-_OFFLINE_INFORMATIONAL_GATES = frozenset({"duplicate_detection"})
+_OFFLINE_INSUFFICIENT_GATES = frozenset({"duplicate_detection"})
 
 
-def _offline_gate_results() -> tuple[str, list[dict[str, Any]]]:
+def _offline_gate_results() -> tuple[EvalVerdict, list[dict[str, Any]]]:
     """Score the default agent-stack gates against the in-repo golden datasets.
 
     No DB / no baselines: applies ``eval_gate_service._evaluate_rules`` with
@@ -1156,6 +1183,7 @@ def _offline_gate_results() -> tuple[str, list[dict[str, Any]]]:
 
     results: list[dict[str, Any]] = []
     all_passed = True
+    has_insufficient = False
     for gate in DEFAULT_AGENT_STACK_GATES:
         task_type = gate["task_type"]
         spec = GOLDEN_DATASETS.get(task_type)
@@ -1165,20 +1193,33 @@ def _offline_gate_results() -> tuple[str, list[dict[str, Any]]]:
             {"rule": "dataset_exists", "passed": False, "detail": "no golden dataset"}
         ]
         passed = bool(items) and all(r["passed"] for r in rules)
-        informational = task_type in _OFFLINE_INFORMATIONAL_GATES
-        if not informational:
+        is_insufficient = task_type in _OFFLINE_INSUFFICIENT_GATES
+        if is_insufficient:
+            has_insufficient = True
+        else:
             all_passed = all_passed and passed
         results.append({
             "task_type": task_type,
             "agent_name": gate["agent_name"],
-            "status": "PASS" if passed else "FAIL",
-            "informational": informational,
+            "status": (
+                EvalVerdict.INSUFFICIENT_SAMPLES
+                if is_insufficient
+                else EvalVerdict.PASS if passed else EvalVerdict.FAIL
+            ).value,
             "metrics": {
                 k: current.get(k) for k in ("accuracy", "f1_score", "total")
             },
             "rule_results": rules,
         })
-    return ("PASS" if all_passed else "FAIL"), results
+    from app.services.prompt_eval_recordings import check_recordings, recordings_verdict
+
+    recording_problems, insufficient_prompts = check_recordings()
+    recorded_verdict = recordings_verdict(recording_problems, insufficient_prompts)
+    if recorded_verdict is not EvalVerdict.PASS:
+        return recorded_verdict, results
+    if has_insufficient:
+        return EvalVerdict.INSUFFICIENT_SAMPLES, results
+    return (EvalVerdict.PASS if all_passed else EvalVerdict.FAIL), results
 
 
 async def _online_gate_result(change_id: str) -> dict[str, Any]:
@@ -1218,7 +1259,8 @@ def _attest(change_id: str, offline: bool, notes: str) -> int:
             _echo(f"eval gate run failed ({exc!r}); retry with --offline "
                   "to score against the in-repo golden datasets")
             return 1
-        verdict = str(result.get("status"))
+        raw_verdict = result.get("status")
+        verdict = raw_verdict if isinstance(raw_verdict, EvalVerdict) else EvalVerdict(raw_verdict)
         gate_results = [
             {
                 "task_type": g.get("task_type"),
@@ -1230,24 +1272,28 @@ def _attest(change_id: str, offline: bool, notes: str) -> int:
         mode = "eval_gate_service"
         gate_run_id = result.get("gate_run_id")
 
+    if not isinstance(verdict, EvalVerdict):
+        verdict = EvalVerdict(str(verdict).lower())
+
     manifest = load_manifest()
     attestation = {
         "schema_version": 1,
         "change_id": change_id,
         "manifest_digest": manifest_digest(manifest.get("prompts") or {}),
-        "verdict": verdict,
+        "verdict": verdict.value,
         "mode": mode,
         "eval_gate_run_id": gate_run_id,
         "gate_results": gate_results,
         "prompt_versions": registry_versions(),
+        "watched_sources": attestation_watched_sources(),
         "attested_at": datetime.now(timezone.utc).isoformat(),
         "notes": notes,
     }
     ATTESTATION_PATH.write_text(
         json.dumps(attestation, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    _echo(f"wrote {ATTESTATION_PATH} (verdict={verdict}, mode={mode})")
-    return 0 if verdict == "PASS" else 1
+    _echo(f"wrote {ATTESTATION_PATH} (verdict={verdict.value}, mode={mode})")
+    return 0 if verdict is EvalVerdict.PASS else 1
 
 
 def main(argv: Optional[list[str]] = None) -> int:

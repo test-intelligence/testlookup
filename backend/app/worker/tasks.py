@@ -5430,7 +5430,7 @@ def run_scheduled_agent_eval(self, change_id: str | None = None) -> dict:
     when it means "nothing was measured". Seeding is idempotent, so the cost
     after the first run is four SELECTs.
 
-    ``NO_BASELINE`` is already a blocking status upstream and is deliberately
+    ``insufficient_samples`` is already a blocking verdict upstream and is deliberately
     left that way: a gate with nothing to compare against has not passed.
     """
     async def _run() -> dict:
@@ -5438,10 +5438,11 @@ def run_scheduled_agent_eval(self, change_id: str | None = None) -> dict:
 
         from app.db.postgres import AsyncSessionLocal
         from app.services.eval_gate_service import (
-            GateStatus,
             ensure_golden_datasets,
             evaluate_agent_stack_release_gate,
+            persist_nightly_eval_runs,
         )
+        from app.services.eval_verdict import EvalVerdict
 
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         async with AsyncSessionLocal() as db:
@@ -5451,6 +5452,13 @@ def run_scheduled_agent_eval(self, change_id: str | None = None) -> dict:
                 change_id=change_id or f"scheduled-{stamp}",
                 persist=True,
             )
+            from app.core.config import settings
+
+            nightly_rows = await persist_nightly_eval_runs(
+                db,
+                gate_results=list(result.get("gate_results") or []),
+                model_name=settings.LLM_MODEL,
+            )
             await db.commit()
 
         gates = list(result.get("gate_results") or [])
@@ -5458,18 +5466,21 @@ def run_scheduled_agent_eval(self, change_id: str | None = None) -> dict:
         for gate in gates:
             key = str(gate.get("status") or "UNKNOWN")
             by_status[key] = by_status.get(key, 0) + 1
-        # The gate's own status stays untouched -- NO_BASELINE must keep
+        # The gate's own verdict stays untouched -- insufficient evidence must keep
         # blocking a RELEASE, because shipping against nothing is not a pass.
         # But a daily job that reports FAIL forever is a job everyone learns to
         # ignore, and "never baselined" is a different problem from "regressed".
         # Verified against the deployment before shipping: with zero baselines
-        # all four gates return NO_BASELINE, so this is the first run's state,
+        # all four gates return insufficient_samples, so this is the first run's state,
         # not a hypothetical.
-        gate_status = str(result.get("status") or "")
-        statuses = {str(g.get("status") or "") for g in gates}
+        def _value(value) -> str:
+            return value.value if isinstance(value, EvalVerdict) else str(value)
+
+        gate_status = _value(result.get("status") or "")
+        statuses = {_value(g.get("status") or "") for g in gates}
         signal = (
-            "NOT_BASELINED"
-            if gates and statuses == {GateStatus.NO_BASELINE}
+            EvalVerdict.INSUFFICIENT_SAMPLES.value
+            if gates and statuses == {EvalVerdict.INSUFFICIENT_SAMPLES.value}
             else gate_status
         )
         summary = {
@@ -5479,6 +5490,7 @@ def run_scheduled_agent_eval(self, change_id: str | None = None) -> dict:
             "by_status": by_status,
             "blocking_gates": list(result.get("blocking_gates") or []),
             "datasets_seeded": seeded,
+            "eval_runs_written": len(nightly_rows),
             "evaluated_at": stamp,
         }
         logger.info("scheduled_agent_eval_complete", **summary)
