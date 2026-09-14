@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-14 - Add versioned workflow definitions (T17 / E3.1)
+
+Added project-scoped workflow definition CRUD, structural validation, fork,
+and publish endpoints. The `offline`, `deep`, and `live` graphs are exposed as
+read-only templates and return 405 from mutation endpoints; any template can
+be forked into a project's own draft. Publishing freezes a version, and a PUT
+against the latest published custom workflow creates the next draft under a
+transaction-scoped advisory lock instead of changing published JSON.
+
+Migration 0183 adds the versioned `workflow_definitions` store with project,
+status, base, version, and publication-coherence constraints. Every mutation
+requires QA Lead access and writes the project activity ledger. Validation in
+this slice covers the strict stored shape and identifies compiler validation
+as pending E3.2.
+
 ## 2026-09-14 - Gate reviewer changes on measured quality (T18 / E9.4)
 
 Added the G3 reviewer-quality gate and `POST /api/v1/ai-eval/reviewer-quality`.

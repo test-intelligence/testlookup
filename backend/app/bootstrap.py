@@ -86,6 +86,7 @@ from app.routers import (
     value_metrics,
     webhooks,
     webhooks_outbound,
+    workflows,
 )
 from app.routers.health import router as health_router
 from app.routers.observability import router as observability_router
@@ -145,6 +146,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     # once every literal /agents/... route has had its chance.
     agent_invoke.router,
     agent_configs.router,              # E4.1: per-project agent configuration
+    workflows.router,                  # E3.1: versioned project workflow definitions
     chat.router,
     feedback.router,
     feedback.lookup_router,            # US-2.4: fingerprint → analysis_id lookup (project-scoped)

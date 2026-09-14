@@ -63,6 +63,8 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     "rule_id",
     "source_id",
     "batch_id",
+    # E3.1: nested under project_id; service queries always include that project.
+    "workflow_id",
 })
 
 # ── Known backlog of unprotected scoped routes ──────────────────────────────
@@ -1036,6 +1038,7 @@ UNCLASSIFIED_PATH_PARAMS_BACKLOG: frozenset[str] = frozenset({
 STRICT_ROUTER_MODULES: frozenset[str] = frozenset({
     "app.routers.agent_invoke",
     "app.routers.reviews",
+    "app.routers.workflows",
 })
 
 import re  # noqa: E402
