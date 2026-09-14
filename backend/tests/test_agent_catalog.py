@@ -48,7 +48,9 @@ def test_reviewer_catalog_contract_is_resolved_and_deterministic():
     assert entry.stage_name == "reviewer"
     assert entry.execution == "on_demand"
     assert entry.default_tier == "deterministic"
-    assert entry.expected_cost_usd == 0
+    # Default routing stays deterministic, while enabled family 3/4 checks
+    # make this a budgeted LLM-capable capability.
+    assert entry.expected_cost_usd == 0.02
     assert entry.input_schema == "ReviewerInputV1" and entry.input_schema_resolved
     assert entry.output_schema == "ReviewVerdictV1" and entry.output_schema_resolved
 

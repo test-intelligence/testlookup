@@ -1,6 +1,6 @@
 {
-  "attested_at": "2026-09-14T12:09:06.963305+00:00",
-  "change_id": "T15-E6.1-reviewer-agent",
+  "attested_at": "2026-09-14T13:56:36.165619+00:00",
+  "change_id": "T16-E6.2-E6.4-reviewer-model-supervisor",
   "eval_gate_run_id": null,
   "gate_results": [
     {
@@ -94,16 +94,28 @@
     {
       "agent_name": "ReviewerAgent",
       "metrics": {
-        "focused_tests": 63,
-        "mutations_applied_and_killed": 11
+        "focused_tests": 44,
+        "mutations_applied_and_killed": 5
       },
+      "rule_results": [
+        {
+          "detail": "44 reviewer/router tests passed",
+          "passed": true,
+          "rule": "t16_focused_regressions"
+        },
+        {
+          "detail": "all 5 asserted source mutations were killed",
+          "passed": true,
+          "rule": "t16_mutation_check"
+        }
+      ],
       "status": "pass",
-      "task_type": "deterministic_reviewer"
+      "task_type": "reviewer_quality"
     }
   ],
-  "manifest_digest": "cfda795043edde047962fe0d734446bf238ff47f0e463c4b61cb88475fc7217d",
+  "manifest_digest": "47dbe7f7d1396d2999700f6bb50b99d1c58706a5810afcc99c6939761116b1c7",
   "mode": "source_review",
-  "notes": "T15 adds deterministic ReviewerAgent checks and no LLM prompt or model call. The 63-test focused suite passed; an exact-application harness killed 11 schema, grounding, numeric, policy, and verdict-invariant mutations. A CI-discovered architectural guard failure was corrected by stamping the standard agent contract envelope, with the reviewer and architectural suites passing together. The prompt manifest is unchanged. DB-backed evaluation was unavailable on the implementation host; E9.4 remains the reviewer quality gate.",
+  "notes": "T16 reviewer prompts do not yet have candidate-inference recordings because E9.4 follows E6. Regression coverage ran 44 focused tests; a mutation harness asserted and killed five mutations covering hidden reasoning, agreement threshold, shared budget exhaustion, retry count, and contradicted numeric claims.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -118,6 +130,8 @@
     "react_triage": "v3:e71c26f0ad74",
     "regression_watchman_classify": "v1:2ac1510063fd",
     "release_risk_reasoning": "v1:a152fb254091",
+    "reviewer_claim_extraction": "v1:657326161d7b",
+    "reviewer_second_model": "v1:7714b62aff2c",
     "run_compare_report": "v1:5272dd391090",
     "run_compare_system": "v1:bbba41240c3f",
     "summary_action_plan": "v2:a554d240b844",
@@ -137,9 +151,9 @@
   "schema_version": 1,
   "verdict": "pass",
   "watched_sources": {
-    "backend/app/agents/reviewer_agent.py": "0be50c9e979c5c5d0a86f9249fcae36fd8e7e23bf434417477c1615ce6e652fa",
-    "backend/app/services/agent_capability_registry.py": "fa9c67446476b8fd39068a069832559c44a6f8cbc55d83239099e13e837ea473",
+    "backend/app/agents/reviewer_agent.py": "8a43343b9235a8aa9e617ca523d3bc2f85df94ec4ffeaef50e2c95ab1e7ad16d",
+    "backend/app/services/agent_capability_registry.py": "b43814bba3b476dffe3e0e2bccc1573dab01159722c7cf7c730ce1e6e468e5ca",
     "backend/app/services/llm_factory.py": "b4676eaae9d54da9b8d6ac1437644f7a46b24cbdcbc111931dec1d3312a89058",
-    "backend/app/services/model_router.py": "ec15d9a80e14121c2213ea9ed2c751eab2092a4f2df44d3082f0167af40d448d"
+    "backend/app/services/model_router.py": "0e203407eebb7abe46d6e2a196e7f61fb6fbccaebc6cd041cba3d6a49b35e569"
   }
 }

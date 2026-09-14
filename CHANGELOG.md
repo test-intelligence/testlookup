@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-14 - Add bounded model review and supervisor routing (T16 / E6.2-E6.4)
+
+The generic reviewer can now re-extract claims with the reviewed step's model
+tier and, when configured, ask a distinct LLM for an independent agreement
+score and unsupported claims. Prompts receive only the published output and a
+bounded evidence snapshot; hidden reasoning fields are removed. Orphan
+references, contradicted numbers, low agreement, and unsupported blocking
+claims downgrade, retry, or reject through strict typed verdicts.
+
+A deterministic supervisor validates every verdict before returning an
+attach-ready route. Blocking semantic claims retry the reviewed steps once at
+the LLM tier, then finalize as `failed` with `validation_failed`; flagged
+results continue with human review pinned. Reviewer calls, model escalation,
+and the retry route consume one serializable `step_llm_budget`, capped by the
+configured loop and escalation limits and the remaining run call budget.
+The ModelRouter and supervisor accept the same budget object so the E3 workflow
+compiler can carry that counter across graph edges. Unauthorized tool findings
+also emit an incident decision event.
+
 ## 2026-09-14 - Add the deterministic generic reviewer (T15 / E6.1)
 
 Added `agent.reviewer.v1` and strict `ReviewerInputV1` / `ReviewVerdictV1`

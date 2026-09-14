@@ -318,6 +318,39 @@ GROUNDING RULES:
 """,
 )
 
+# agents/reviewer_agent.py family 3 claim extraction. This prompt receives
+# only the published output and its evidence snapshot, never hidden reasoning.
+_register(
+    "reviewer_claim_extraction",
+    1,
+    """\
+Extract every externally checkable identifier and numeric claim from the agent output.
+Use only the supplied output; do not infer missing claims. Return only JSON:
+{{"reference_ids": ["id"], "numeric_facts": {{"fact_name": 1.0}}}}
+
+Agent output:
+{output}
+""",
+)
+
+# agents/reviewer_agent.py family 4 independent critique.
+_register(
+    "reviewer_second_model",
+    1,
+    """\
+Independently decide whether the conclusion follows from the evidence snapshot.
+Return only JSON with agreement_score from 0 to 1, unsupported_claims, and
+blocking_unsupported_claims. A blocking claim could reverse a release, defect,
+or root-cause decision.
+
+Agent output:
+{output}
+
+Evidence snapshot:
+{evidence}
+""",
+)
+
 # agents/summary_agent.py _EXEC_SUMMARY_PROMPT
 _register(
     "summary_executive",

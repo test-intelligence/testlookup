@@ -84,7 +84,7 @@ _SPECS = (
     _capability("hypothesis_known_flaky", inputs="InvestigationPlanV1", output="AgentFindingV1", dependencies=("investigator_plan",), evidence=("historical_results",), concurrency_class="investigation_hypothesis"),
     _capability("hypothesis_regression", inputs="InvestigationPlanV1", output="AgentFindingV1", dependencies=("investigator_plan",), evidence=("failed_test_results",), concurrency_class="investigation_hypothesis"),
     _capability("investigator_synthesis", inputs="AgentFindingV1[]", output="InvestigationVerdictV1", dependencies=("hypothesis_infra", "hypothesis_commit", "hypothesis_environment", "hypothesis_known_flaky", "hypothesis_regression"), evidence=("investigation_findings",), concurrency_class="investigation"),
-    _capability("reviewer", execution="on_demand", inputs="ReviewerInputV1", output="ReviewVerdictV1", evidence=("reviewed_step_outputs", "workflow_state"), latency_ms=2_000, cost_usd=0, timeout_seconds=30, fallback="reject", concurrency_class="verification"),
+    _capability("reviewer", execution="on_demand", inputs="ReviewerInputV1", output="ReviewVerdictV1", evidence=("reviewed_step_outputs", "workflow_state"), latency_ms=10_000, cost_usd=0.02, timeout_seconds=30, fallback="reject", concurrency_class="verification"),
     _capability("workflow", execution="runtime", inputs="AgenticRunV1", output="WorkflowFailure", cost_usd=0, fallback="persist_terminal_failure", concurrency_class="runtime"),
 )
 

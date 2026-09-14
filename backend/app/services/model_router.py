@@ -17,6 +17,7 @@ from app.services.agent_capability_registry import (
     get_capability,
 )
 from app.services.agent_config_resolver import ResolvedAgentConfig, ResolvedEndpoint
+from app.services.step_llm_budget import StepLLMBudget
 
 ModelTier = Literal["deterministic", "slm", "llm"]
 EscalationTrigger = Literal[
@@ -122,6 +123,7 @@ def decide_escalation(
     escalations: int,
     step_llm_calls_remaining: int,
     budget_remaining_usd: float | None,
+    step_budget: StepLLMBudget | None = None,
 ) -> EscalationDecision:
     """Accept, upgrade SLM to LLM, or take the deterministic fallback."""
     capability = get_capability(stage)
@@ -144,7 +146,10 @@ def decide_escalation(
         refusal = "tier_pinned"
     if refusal is None and escalations >= escalation.max_escalations:
         refusal = "escalation_limit"
-    if refusal is None and step_llm_calls_remaining < 1:
+    calls_remaining = (
+        step_budget.remaining if step_budget is not None else step_llm_calls_remaining
+    )
+    if refusal is None and calls_remaining < 1:
         refusal = "step_llm_budget"
     endpoint = resolved.endpoints.get("llm")
     if refusal is None and endpoint is None:
@@ -164,12 +169,25 @@ def decide_escalation(
             reason=refusal,
         )
     assert endpoint is not None
+    if step_budget is not None and not step_budget.consume("model_escalation"):
+        return EscalationDecision(
+            action="fallback",
+            choice=_fallback(stage, "step_llm_budget"),
+            escalations=escalations,
+            step_llm_calls_remaining=0,
+            stage_quality="degraded",
+            reason="step_llm_budget",
+        )
     escalated = ModelChoice(tier="llm", endpoint=endpoint, reason="escalation")
     return EscalationDecision(
         action="escalate",
         choice=escalated,
         escalations=escalations + 1,
-        step_llm_calls_remaining=step_llm_calls_remaining - 1,
+        step_llm_calls_remaining=(
+            step_budget.remaining
+            if step_budget is not None
+            else step_llm_calls_remaining - 1
+        ),
         stage_quality="normal",
         reason=trigger_reason,
     )

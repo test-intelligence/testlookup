@@ -109,6 +109,9 @@ class ReviewedStepV1(BaseModel):
     tool_permissions: dict[str, Literal["read_only", "propose_action", "mutating"]] = Field(
         default_factory=dict
     )
+    model_tier: Optional[Literal["deterministic", "slm", "llm"]] = None
+    model_provider: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    model_name: Optional[str] = Field(default=None, min_length=1, max_length=160)
 
 
 class ReviewerInputV1(BaseModel):
@@ -136,7 +139,7 @@ class ReviewerInputV1(BaseModel):
 class ReviewCheckV1(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    family: Literal[1, 2, 5]
+    family: Literal[1, 2, 3, 4, 5]
     name: str = Field(min_length=1, max_length=120)
     passed: bool
     severity: Literal["info", "warning", "blocking"]
@@ -184,7 +187,7 @@ class ReviewVerdictV1(BaseModel):
                 families = {
                     check.family for check in self.checks if check.step_name == step_name
                 }
-                if families != {1, 2, 5}:
+                if not {1, 2, 5}.issubset(families):
                     raise ValueError(
                         "a continuing verdict requires check families 1, 2, and 5 "
                         "for every reviewed step"
@@ -207,10 +210,42 @@ class ReviewVerdictV1(BaseModel):
         return self
 
 
+class ReviewerSupervisorDecisionV1(BaseModel):
+    """Deterministic routing instruction emitted for the workflow compiler."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    route: Literal["continue", "retry", "finalize"]
+    reviewed_steps: list[str] = Field(min_length=1, max_length=20)
+    tier_override: Optional[Literal["llm"]] = None
+    status: Optional[Literal["failed"]] = None
+    error_code: Optional[Literal["validation_failed"]] = None
+    requires_human_review: bool = False
+    retry_count: int = Field(default=0, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def _route_fields_are_consistent(self) -> "ReviewerSupervisorDecisionV1":
+        if self.route == "retry":
+            if self.tier_override != "llm" or self.retry_count != 1:
+                raise ValueError("retry requires tier_override=llm and retry_count=1")
+            if self.status is not None or self.error_code is not None:
+                raise ValueError("retry cannot carry a terminal status")
+        elif self.route == "finalize":
+            if self.status != "failed" or self.error_code != "validation_failed":
+                raise ValueError("finalize requires failed/validation_failed")
+            if self.tier_override is not None:
+                raise ValueError("finalize cannot carry a tier override")
+        elif any(value is not None for value in (self.tier_override, self.status, self.error_code)):
+            raise ValueError("continue cannot carry retry or terminal fields")
+        return self
+
+
 class ReviewerAgentOutput(ContractedAgentOutput):
     """Workflow-state envelope for a contracted reviewer verdict."""
 
     review_verdict: ReviewVerdictV1
+    supervisor: ReviewerSupervisorDecisionV1
+    step_llm_budget: dict[str, Any]
 
 
 # ── AIQ-P4 shared item/enum models ────────────────────────────────────────────

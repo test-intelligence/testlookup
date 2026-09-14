@@ -81,6 +81,14 @@
       "content_hash": "a152fb254091",
       "version": 1
     },
+    "reviewer_claim_extraction": {
+      "content_hash": "657326161d7b",
+      "version": 1
+    },
+    "reviewer_second_model": {
+      "content_hash": "7714b62aff2c",
+      "version": 1
+    },
     "run_compare_report": {
       "content_hash": "5272dd391090",
       "version": 1
