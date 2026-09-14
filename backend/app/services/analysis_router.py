@@ -19,10 +19,20 @@ Usage:
     result = await classify_test(test_case, history, run_context)
     summary = await generate_summary(run_data, classifications, anomalies)
 """
+import uuid
+from typing import Any, cast
+
 import structlog
-from typing import Any
 
 from app.core.config import settings
+from app.services.agent_config_resolver import ResolvedAgentConfig
+from app.services.model_router import (
+    ModelChoice,
+    EscalationTrigger,
+    choose_model,
+    decide_escalation,
+    provenance,
+)
 
 logger = structlog.get_logger("services.analysis_router")
 
@@ -43,6 +53,264 @@ _cached_mode_ts: float = 0
 _ollama_model_available: bool | None = None
 _ollama_probe_ts: float = 0
 _OLLAMA_PROBE_TTL_SECONDS = 60
+
+
+def _observed_model_tokens() -> int:
+    from app.services.pipeline_budget_service import get_pipeline_budget_context
+
+    context = get_pipeline_budget_context() or {}
+    return max(0, int(context.get("observed_input_tokens") or 0)) + max(
+        0, int(context.get("observed_output_tokens") or 0)
+    )
+
+
+def _record_tier_fallback(
+    result: dict,
+    *,
+    requested: str,
+    choice: ModelChoice,
+    escalations: int,
+    reason: str,
+    trigger: str | None = None,
+    artifact_types: set[str] | None = None,
+) -> dict:
+    result.setdefault("_routing", {}).update(
+        {
+            "mode_used": "rules",
+            "mode_resolved": "llm",
+            "fallback_from": "slm",
+            "fallback_reason": reason,
+            "model_tier_reason": reason,
+            "execution_path": "tiered_root_cause",
+            "classification_tier": "deterministic",
+            "explanation_tier": "deterministic",
+            "escalation_trigger": trigger,
+            "artifact_types": sorted(artifact_types or set()),
+            **provenance(requested, choice, escalations, True),
+        }
+    )
+    return result
+
+
+def _root_cause_artifact_types(test_case: dict, history: dict | None) -> set[str]:
+    """Return the distinct input artifact types supporting classification."""
+    kinds: set[str] = set()
+    if test_case.get("error_message"):
+        kinds.add("error_message")
+    if test_case.get("stack_trace"):
+        kinds.add("stack_trace")
+    if history:
+        kinds.add("test_history")
+    for artifact in test_case.get("evidence_artifacts") or []:
+        if isinstance(artifact, dict):
+            kind = artifact.get("artifact_type") or artifact.get("type")
+            if kind:
+                kinds.add(str(kind))
+    return kinds
+
+
+async def classify_root_cause_tiered(
+    test_case: dict,
+    history: dict | None,
+    run_context: dict | None,
+    *,
+    resolved: ResolvedAgentConfig,
+    budget_remaining_usd: float | None,
+    step_llm_calls_remaining: int,
+) -> dict:
+    """Use SLM for the verdict and LLM only for explanations that need it."""
+    from app.services.agent import run_triage_agent
+    from app.services.agent_capability_registry import get_capability
+    from app.services.training.classifier import FastClassifier
+    from app.services.model_registry import ModelRegistry
+    from app.services.tier_comparison_service import enqueue_shadow_pair
+
+    stage = "root_cause_analysis"
+    requested = resolved.config.model.tier
+    promoted = await ModelRegistry.get_active_model("classifier")
+    choice = choose_model(
+        stage,
+        resolved,
+        budget_remaining_usd=budget_remaining_usd,
+        promoted_classifier=promoted,
+    )
+    if choice.endpoint is None:
+        return _record_tier_fallback(
+            _classify_rules(test_case, history, run_context),
+            requested=requested,
+            choice=choice,
+            escalations=0,
+            reason=choice.reason,
+        )
+
+    before_slm_tokens = _observed_model_tokens()
+    classification, outcome = await FastClassifier.classify_with_outcome(
+        test_name=str(test_case.get("test_name") or ""),
+        error_message=str(test_case.get("error_message") or ""),
+        stack_trace=str(test_case.get("stack_trace") or ""),
+        endpoint=choice.endpoint,
+        accept_low_confidence=True,
+    )
+    slm_tokens = _observed_model_tokens() - before_slm_tokens
+    if classification is None:
+        fallback_choice = ModelChoice(
+            tier="deterministic",
+            endpoint=None,
+            reason=f"slm_{outcome}",
+            fallback="progressive",
+        )
+        fallback = _record_tier_fallback(
+            _classify_rules(test_case, history, run_context),
+            requested=requested,
+            choice=fallback_choice,
+            escalations=0,
+            reason=fallback_choice.reason,
+        )
+        fallback["_classifier_outcome"] = outcome
+        return fallback
+
+    confidence = int(classification.get("confidence_score") or 0)
+    confidence_min = int(resolved.config.thresholds.confidence_min)
+    artifact_types = _root_cause_artifact_types(test_case, history)
+    trigger: EscalationTrigger | None = (
+        "low_confidence"
+        if confidence < confidence_min
+        else "multi_artifact_evidence"
+        if len(artifact_types) > 1
+        else None
+    )
+    classification["_classifier_outcome"] = (
+        "low_confidence" if confidence < confidence_min else outcome
+    )
+    classification["tools_used"] = []
+    try:
+        from app.services.classifier_evidence import attach_classifier_evidence
+
+        attach_classifier_evidence(classification, test_case, history)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("classifier_evidence_attach_failed", error=str(exc))
+
+    if trigger is None:
+        classification["_routing"] = {
+            "mode_used": "llm",
+            "mode_resolved": "llm",
+            "execution_path": "tiered_root_cause",
+            "classification_tier": "slm",
+            "explanation_tier": "slm",
+            "classification_provider": choice.endpoint.provider,
+            "classification_model": choice.endpoint.model,
+            "artifact_types": sorted(artifact_types),
+            **provenance(requested, choice, 0, False),
+        }
+        return classification
+
+    decision = decide_escalation(
+        stage,
+        choice,
+        resolved,
+        trigger=trigger,
+        confidence=confidence,
+        escalations=0,
+        step_llm_calls_remaining=max(0, step_llm_calls_remaining - 1),
+        budget_remaining_usd=(
+            None
+            if budget_remaining_usd is None
+            else max(
+                0.0,
+                budget_remaining_usd - get_capability(stage).expected_cost_usd,
+            )
+        ),
+    )
+    if decision.action != "escalate" or decision.choice.endpoint is None:
+        fallback = _record_tier_fallback(
+            _classify_rules(test_case, history, run_context),
+            requested=requested,
+            choice=decision.choice,
+            escalations=decision.escalations,
+            reason=decision.reason,
+            trigger=trigger,
+            artifact_types=artifact_types,
+        )
+        fallback["_classifier_outcome"] = classification["_classifier_outcome"]
+        return fallback
+
+    before_llm_tokens = _observed_model_tokens()
+    explanation = await run_triage_agent(
+        test_case_id=str(test_case.get("test_case_id") or ""),
+        test_name=str(test_case.get("test_name") or ""),
+        service_name=test_case.get("suite_name"),
+        error_message=test_case.get("error_message"),
+        stack_trace=test_case.get("stack_trace"),
+        pipeline_run_id=test_case.get("pipeline_run_id"),
+        run_id=test_case.get("run_id") or (run_context or {}).get("run_id"),
+        project_id=str(test_case.get("project_id")) if test_case.get("project_id") else None,
+        test_fingerprint=test_case.get("test_fingerprint"),
+        endpoint=decision.choice.endpoint,
+        skip_fast_classifier=True,
+        skip_cache=True,
+    )
+    llm_tokens = _observed_model_tokens() - before_llm_tokens
+    explanation_routing = explanation.get("_routing") or {}
+    if explanation_routing and explanation_routing.get("mode_used") != "llm":
+        reason = str(
+            explanation_routing.get("fallback_reason")
+            or "llm_explanation_unavailable"
+        )
+        fallback_choice = ModelChoice(
+            tier="deterministic",
+            endpoint=None,
+            reason=reason,
+            fallback="progressive",
+        )
+        fallback = _record_tier_fallback(
+            _classify_rules(test_case, history, run_context),
+            requested=requested,
+            choice=fallback_choice,
+            escalations=decision.escalations,
+            reason=reason,
+            trigger=trigger,
+            artifact_types=artifact_types,
+        )
+        fallback["_classifier_outcome"] = classification["_classifier_outcome"]
+        return fallback
+    slm_output = dict(classification)
+    for field in (
+        "root_cause_summary",
+        "recommended_actions",
+        "evidence_references",
+        "tools_used",
+    ):
+        if field in explanation:
+            classification[field] = explanation[field]
+    classification["_routing"] = {
+        "mode_used": "llm",
+        "mode_resolved": "llm",
+        "execution_path": "tiered_root_cause",
+        "classification_tier": "slm",
+        "explanation_tier": "llm",
+        "classification_provider": choice.endpoint.provider,
+        "classification_model": choice.endpoint.model,
+        "escalation_trigger": trigger,
+        "artifact_types": sorted(artifact_types),
+        "explanation_provider": decision.choice.endpoint.provider,
+        "explanation_model": decision.choice.endpoint.model,
+        **provenance(requested, decision.choice, decision.escalations, False),
+    }
+    project_id = test_case.get("project_id")
+    if project_id:
+        enqueue_shadow_pair(
+            config=resolved.config,
+            project_id=uuid.UUID(str(project_id)),
+            agent_id=resolved.agent_id,
+            sample_key=f"root_cause:{test_case.get('test_case_id')}",
+            incumbent_tier="llm",
+            candidate_tier="slm",
+            incumbent_output=explanation,
+            candidate_output=slm_output,
+            incumbent_tokens=llm_tokens,
+            candidate_tokens=slm_tokens,
+        )
+    return classification
 
 
 async def _probe_ollama_model_async() -> bool | None:
@@ -175,7 +443,7 @@ async def refresh_analysis_mode_from_cache() -> str:
         if cached and cached in ("llm", "ml", "rules", "auto"):
             _cached_mode = cached
             _cached_mode_ts = time.monotonic()
-            return cached
+            return cast(str, cached)
     except Exception:
         pass
     return get_analysis_mode()

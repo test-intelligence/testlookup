@@ -25,6 +25,7 @@ import copy
 import hashlib
 import json
 import time
+import uuid
 from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -37,7 +38,13 @@ from app.agents.consistency import (
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.agent_contracts import AnalysisAgentOutput, validate_agent_contract
-from app.models.postgres import AIAnalysis, TestCase, TestStatus
+from app.models.postgres import (
+    AIAnalysis,
+    AgentPipelineRun,
+    AgentStageResult,
+    TestCase,
+    TestStatus,
+)
 from app.services.agent import run_triage_agent
 from app.services.artifact_store import store_artifact
 from app.services.category_normalizer import normalize_category_in_analysis
@@ -232,6 +239,24 @@ class AnalysisAgent(BaseAgent):
 
         # Sort by priority: blockers/critical first, then by severity
         prioritized_ids = self._prioritize_tests(failed_ids, test_meta)
+
+        resolved_mode = str(state.get("analysis_mode_resolved") or "auto").lower()
+        if (
+            cap_decision.mode_override not in ("ml", "rules")
+            and resolved_mode not in ("ml", "rules")
+        ):
+            try:
+                uuid.UUID(str(project_id))
+            except ValueError:
+                # Unit/in-process callers historically use symbolic ids. They
+                # have no project row to resolve; preserve that legacy entry
+                # point while durable pipeline runs (UUID ids) use tier policy.
+                logger.debug("root_cause_tier_resolution_skipped_for_symbolic_ids")
+            else:
+                state["_root_cause_tier_context"] = await self._routing_inputs(
+                    project_id=str(project_id),
+                    pipeline_run_id=str(pipeline_run_id),
+                )
 
         concurrency_policy = await self._resolve_adaptive_concurrency(state, len(prioritized_ids))
         concurrency = concurrency_policy["concurrency"]
@@ -596,6 +621,9 @@ class AnalysisAgent(BaseAgent):
             return False
 
         audit = result.get("_audit") or {}
+        routing = result.get("_routing") or {}
+        if routing.get("execution_path") == "tiered_root_cause":
+            return False
         analysis_mode = str(audit.get("analysis_mode") or result.get("analysis_engine") or "").lower()
         if analysis_mode in _DETERMINISTIC_ANALYSIS_ENGINES:
             return False
@@ -722,26 +750,48 @@ class AnalysisAgent(BaseAgent):
                     mode=mode,
                 )
             else:
-                # LLM path: existing ReAct agent with timeout + fallback
+                # Tiered model path: SLM owns category/confidence. The richer
+                # ReAct LLM explanation runs only for low-confidence or
+                # multi-artifact evidence cases.
                 try:
-                    analysis = await asyncio.wait_for(
-                        run_triage_agent(
+                    from app.services.analysis_router import classify_root_cause_tiered
+
+                    tier_context = state.get("_root_cause_tier_context")
+                    run_data = state.get("test_run_data") or {}
+                    if tier_context is None:
+                        operation = run_triage_agent(
                             test_case_id=tc_id,
                             test_name=meta.get("test_name", tc_id),
                             service_name=meta.get("suite_name"),
-                            timestamp=None,
-                            ocp_pod_name=state.get("test_run_data", {}).get("ocp_pod_name"),
-                            ocp_namespace=state.get("test_run_data", {}).get("ocp_namespace"),
                             error_message=meta.get("error_message"),
                             stack_trace=meta.get("stack_trace"),
                             pipeline_run_id=pipeline_run_id,
                             run_id=str(state.get("test_run_id")) if state.get("test_run_id") else None,
-                            # Scope the analysis caches to this tenant.
                             project_id=str(state.get("project_id")) if state.get("project_id") else None,
-                            # Feeds the recall_similar_failures tool's
-                            # server-side, project-scoped context (AI-F3).
                             test_fingerprint=meta.get("test_fingerprint"),
-                        ),
+                        )
+                    else:
+                        resolved, budget_remaining, step_calls = tier_context
+                        operation = classify_root_cause_tiered(
+                            test_case={
+                                "test_case_id": tc_id,
+                                "pipeline_run_id": pipeline_run_id,
+                                "run_id": str(state.get("test_run_id")) if state.get("test_run_id") else None,
+                                "project_id": state.get("project_id"),
+                                "test_fingerprint": meta.get("test_fingerprint"),
+                                "test_name": meta.get("test_name", tc_id),
+                                "suite_name": meta.get("suite_name"),
+                                "error_message": meta.get("error_message"),
+                                "stack_trace": meta.get("stack_trace"),
+                            },
+                            history=meta.get("flakiness_data"),
+                            run_context={"run_id": state.get("test_run_id"), **run_data},
+                            resolved=resolved,
+                            budget_remaining_usd=budget_remaining,
+                            step_llm_calls_remaining=step_calls,
+                        )
+                    analysis = await asyncio.wait_for(
+                        operation,
                         timeout=settings.AI_TIMEOUT_SECONDS,
                     )
                 except asyncio.TimeoutError:
@@ -765,6 +815,36 @@ class AnalysisAgent(BaseAgent):
                 analysis["flakiness_data"] = meta["flakiness_data"]
 
             # Post-process: validate confidence and sanitize category
+            tier_routing = analysis.get("_routing") or {}
+            if (
+                tier_routing.get("execution_path") == "tiered_root_cause"
+                and pipeline_run_id
+            ):
+                await self.log_decision(
+                    pipeline_run_id,
+                    decision_point="root_cause_model_tier",
+                    chosen=str(
+                        tier_routing.get("explanation_tier")
+                        or tier_routing.get("tier_used")
+                    ),
+                    rationale=str(
+                        tier_routing.get("escalation_trigger")
+                        or tier_routing.get("model_tier_reason")
+                        or "SLM classification accepted"
+                    ),
+                    test_case_id=tc_id,
+                    context={
+                        key: tier_routing.get(key)
+                        for key in (
+                            "tier_requested",
+                            "tier_used",
+                            "classification_tier",
+                            "explanation_tier",
+                            "escalations",
+                            "fallback_used",
+                        )
+                    },
+                )
             analysis = self._validate_confidence(analysis)
             analysis = self._sanitize_category(analysis)
 
@@ -796,6 +876,17 @@ class AnalysisAgent(BaseAgent):
                 "mode_resolved": routing.get("mode_resolved"),
                 "fallback_from": routing.get("fallback_from"),
                 "fallback_reason": routing.get("fallback_reason"),
+                "tier_requested": routing.get("tier_requested"),
+                "tier_used": routing.get("tier_used"),
+                "classification_tier": routing.get("classification_tier"),
+                "explanation_tier": routing.get("explanation_tier"),
+                "classification_provider": routing.get("classification_provider"),
+                "classification_model": routing.get("classification_model"),
+                "explanation_provider": routing.get("explanation_provider"),
+                "explanation_model": routing.get("explanation_model"),
+                "escalations": routing.get("escalations"),
+                "escalation_trigger": routing.get("escalation_trigger"),
+                "artifact_types": routing.get("artifact_types"),
                 # US-15.2: the confidence-gate evaluation for THIS analysis
                 # ({threshold, observed_confidence, passed, source}), recorded
                 # by the router and refreshed against the post-adjustment
@@ -907,6 +998,60 @@ class AnalysisAgent(BaseAgent):
                     analysis["_artifact_uri"] = artifact_uri
 
             return analysis
+
+    async def _routing_inputs(
+        self,
+        *,
+        project_id: str,
+        pipeline_run_id: str,
+    ) -> tuple[object, float | None, int]:
+        """Resolve project tier policy and the remaining stage budget once."""
+        from app.services.agent_capability_registry import get_capability
+        from app.services.agent_config_resolver import resolve_for_project
+        from app.services.pipeline_budget_service import (
+            get_pipeline_budget_context,
+            remaining_cost_usd,
+        )
+
+        project_uuid = uuid.UUID(str(project_id))
+        agent_id = get_capability(self.stage_name).capability_id
+        async with AsyncSessionLocal() as db:
+            resolved = await resolve_for_project(db, project_uuid, agent_id)
+            pipeline = (
+                await db.execute(
+                    select(AgentPipelineRun).where(AgentPipelineRun.id == pipeline_run_id)
+                )
+            ).scalar_one_or_none()
+            stage = (
+                await db.execute(
+                    select(AgentStageResult).where(
+                        AgentStageResult.pipeline_run_id == pipeline_run_id,
+                        AgentStageResult.stage_name == self.stage_name,
+                    )
+                )
+            ).scalar_one_or_none()
+
+        metadata = (
+            dict(pipeline.execution_metadata)
+            if pipeline is not None and isinstance(pipeline.execution_metadata, dict)
+            else {}
+        )
+        remaining = remaining_cost_usd(metadata)
+        reservation_id = self._budget_reservations.get(pipeline_run_id)
+        reservations = (metadata.get("budget_spend") or {}).get("reservations") or {}
+        receipt = reservations.get(reservation_id) if reservation_id else None
+        if remaining is not None and isinstance(receipt, dict):
+            remaining += max(0.0, float(receipt.get("cost_usd") or 0.0))
+
+        max_calls = int(resolved.config.budget.max_llm_calls_per_run)
+        if stage is not None and isinstance(stage.allocated_budget, dict):
+            if "max_llm_calls" in stage.allocated_budget:
+                max_calls = min(
+                    max_calls,
+                    max(0, int(stage.allocated_budget.get("max_llm_calls") or 0)),
+                )
+        observed = int((get_pipeline_budget_context() or {}).get("observed_llm_calls") or 0)
+        return resolved, remaining, max(0, max_calls - observed)
 
     async def _fetch_test_metadata(self, tc_ids: list[str]) -> dict[str, dict]:
         """Fetch enriched test metadata including error details and flakiness history."""
