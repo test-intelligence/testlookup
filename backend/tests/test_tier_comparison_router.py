@@ -83,7 +83,7 @@ async def test_agent_config_put_surfaces_unmeasured_downgrade_as_422(monkeypatch
     query_result = SimpleNamespace(scalar_one_or_none=lambda: None)
     db = SimpleNamespace(execute=AsyncMock(return_value=query_result))
     body = configs.default_config("agent.summary.v1").model_copy(
-        update={"model": configs.ModelConfig(tier="slm")}
+        update={"model": configs.ModelConfig(tier="deterministic")}
     )
 
     with pytest.raises(HTTPException) as exc:
