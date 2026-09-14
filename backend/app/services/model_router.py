@@ -24,6 +24,7 @@ EscalationTrigger = Literal[
     "low_confidence",
     "not_enough_evidence",
     "contradictions",
+    "multi_artifact_evidence",
 ]
 
 

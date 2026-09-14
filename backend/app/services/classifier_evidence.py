@@ -53,7 +53,7 @@ _DETERMINISTIC_ENGINES = {"rules_engine", "ml_classifier", "rules", "ml"}
 # identical to a rule's -- the input it matched on is what it has -- and it is
 # why excluding "llm" wholesale left this deployment at 0.06% coverage after
 # F-17 shipped. Measured: all 593 LLM analyses carried tools_used = [].
-_TOOL_FREE_EXECUTION_PATHS = {"fast_classifier"}
+_TOOL_FREE_EXECUTION_PATHS = {"fast_classifier", "tiered_root_cause"}
 
 _EXCERPT_LIMIT = 300
 

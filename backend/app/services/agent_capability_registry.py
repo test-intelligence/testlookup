@@ -164,7 +164,7 @@ DEFAULT_TIERS: dict[str, str] = {
     "cluster_investigation": "llm",
     "contract_validation": "deterministic",
     "log_intelligence": "deterministic",
-    "root_cause_analysis": "llm",
+    "root_cause_analysis": "slm",
     "summary": "slm",
     "triage": "llm",
     "gap_detection": "deterministic",
@@ -192,7 +192,7 @@ ESCALATION_TRIGGERS: dict[str, frozenset[str]] = {
 }
 ESCALATION_TRIGGERS.update({
     "summary": frozenset({"validation_failure"}),
-    "root_cause_analysis": frozenset({"low_confidence"}),
+    "root_cause_analysis": frozenset({"low_confidence", "multi_artifact_evidence"}),
     "contract_validation": frozenset({"not_enough_evidence"}),
     "log_intelligence": frozenset({"not_enough_evidence"}),
     "change_ownership": frozenset({"not_enough_evidence"}),

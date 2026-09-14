@@ -12,4 +12,4 @@
 #
 # Reviewed in PR; remove entries as the code is cleaned up.
 # ---- notes below this line are preserved across --update-baseline ----
-c1aeee98060c49ad  # backend/app/agents/analysis_agent.py:642  in AnalysisAgent._analyse_one  run_triage_agent(
+e211d33c4fe66096  # backend/app/agents/analysis_agent.py:760  in AnalysisAgent._analyse_one  operation = run_triage_agent(

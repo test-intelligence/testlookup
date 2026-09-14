@@ -1,6 +1,6 @@
 {
-  "attested_at": "2026-09-14T04:17:08.824781+00:00",
-  "change_id": "t7-e5.2-summary-tier-routing",
+  "attested_at": "2026-09-14T05:51:08.397247+00:00",
+  "change_id": "T8-E5.3-root-cause-tier-split",
   "eval_gate_run_id": null,
   "gate_results": [
     {
@@ -94,7 +94,7 @@
   ],
   "manifest_digest": "cfda795043edde047962fe0d734446bf238ff47f0e463c4b61cb88475fc7217d",
   "mode": "offline_golden",
-  "notes": "Watched routing sources changed; prompt hashes are unchanged. Offline rule gates passed; the five pre-existing unrecorded prompts remain grandfathered. E9.3 is shipped, and T7 regression and mutation tests pin SLM repair, LLM escalation, endpoint resolution, provenance, and shadow pairing.",
+  "notes": "Watched routing sources changed; prompt hashes are unchanged. Offline rule gates passed; the five pre-existing unrecorded prompts remain grandfathered. E9.3 is shipped, and T8 regression and mutation tests pin the SLM verdict, both explanation triggers, resolved endpoints, budget refusal, provenance, cache/classifier bypass, and shadow pairing.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -129,8 +129,8 @@
   "verdict": "pass",
   "watched_sources": {
     "backend/app/agents/reviewer_agent.py": "missing",
-    "backend/app/services/agent_capability_registry.py": "8f217e0f28f57b5a2a23d43688ae92c118048358764ecc1dfd354aa8dcbed096",
+    "backend/app/services/agent_capability_registry.py": "6e6a0672fd9f1bd83521beefa6f51da4ef73333370cbe0de15fb7983586178ff",
     "backend/app/services/llm_factory.py": "5baa337ed7ba18dc5fa192bdb16ef8845aa6d4590a601352e914fa8b53dd273c",
-    "backend/app/services/model_router.py": "de009952f181d07329e2158cc71ff38631bff1fba0853f01ee909b03a1e8e022"
+    "backend/app/services/model_router.py": "ec15d9a80e14121c2213ea9ed2c751eab2092a4f2df44d3082f0167af40d448d"
   }
 }
