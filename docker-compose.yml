@@ -7,14 +7,14 @@ name: testlookup
 # Default start (no local LLM — uses rules/ML engine):
 #   docker compose up -d --build
 #
-# With local LLM (Ollama + ChromaDB — adds ~4GB download):
+# With local LLM (Ollama + ChromaDB):
 #   docker compose --profile local-llm up -d --build
-#   docker compose exec ollama ollama pull qwen2.5:7b
+#   make pull-llm  # exact-tag 3B SLM + 14B LLM + embedding model
 #
 # Or via Make (recommended):
 #   make dev          # no local LLM
-#   make dev-llm      # with Ollama + ChromaDB
-#   make dev-setup    # first-time: dev-llm + pull LLM models
+#   make dev-llm      # starts services and pulls the pinned model set
+#   make dev-setup    # first-time alias with setup guidance
 #
 # The backend degrades gracefully when local-llm services are
 # absent: ANALYSIS_MODE=auto falls back to ML then rules.

@@ -16,6 +16,9 @@ SHELL := bash
 DOCKER_COMPOSE ?= docker compose
 BACKEND_CONTAINER = testlookup_backend
 OLLAMA_CONTAINER = ollama
+OLLAMA_SLM_MODEL ?= qwen2.5:3b-instruct-q5_K_M
+OLLAMA_LLM_MODEL ?= qwen2.5:14b-instruct-q5_K_M
+OLLAMA_EMBEDDING_MODEL ?= nomic-embed-text:v1.5
 K8S_NAMESPACE ?= testlookup
 
 # PostgreSQL defaults (overridable via environment — used by shell-db target)
@@ -58,8 +61,9 @@ dev: .env ## Start core stack without local LLM (Ollama/ChromaDB excluded)
 	@echo "  Use the Quick Login buttons at http://localhost:3000 (no password required in dev)."
 	@echo "  Run 'make dev-logs-seed' to watch seed progress."
 
-dev-llm: .env ## Start full stack including local LLM (Ollama + ChromaDB)
+dev-llm: .env ## Start full stack and pull the pinned local SLM/LLM pair
 	$(DOCKER_COMPOSE) --profile local-llm up -d --build
+	$(MAKE) pull-llm
 	@echo ""
 	@echo "Stack started with local LLM enabled."
 	@echo "  Dashboard  -> http://localhost:3000"
@@ -67,13 +71,12 @@ dev-llm: .env ## Start full stack including local LLM (Ollama + ChromaDB)
 	@echo "  Ollama     -> http://localhost:11434"
 	@echo "  ChromaDB   -> http://localhost:8001"
 	@echo ""
-	@echo "  Run 'make pull-llm' to download models (required on first run)."
+	@echo "  SLM         -> $(OLLAMA_SLM_MODEL)"
+	@echo "  LLM         -> $(OLLAMA_LLM_MODEL)"
 	@echo "  Seed data runs automatically via the seed-init container."
 
-dev-setup: .env ## First-time full setup with local LLM: start stack + pull LLM models
+dev-setup: .env ## First-time full setup with local LLM and pinned model pair
 	$(MAKE) dev-llm
-	@echo "Pulling Ollama LLM models (this may take a while on first run)..."
-	$(MAKE) pull-llm
 	@echo ""
 	@echo "Setup complete. Open http://localhost:3000 and use the Quick Login buttons (no password required in dev)."
 
@@ -144,12 +147,18 @@ migrate-status: ## Show migration status
 # These targets require Ollama to be running.
 # Start it first with: make dev-llm
 
-pull-llm: ## Pull recommended local LLM models (requires: make dev-llm)
+pull-llm: ## Pull pinned SLM, LLM, and embedding models (requires Ollama)
 	@$(DOCKER_COMPOSE) --profile local-llm ps --services --filter status=running | grep -q "^ollama$$" || \
 	  (echo "ERROR: Ollama is not running. Start it first with: make dev-llm" && exit 1)
-	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:7b
-	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull nomic-embed-text
-	@echo "Models downloaded."
+	@attempt=0; until $(DOCKER_COMPOSE) --profile local-llm exec -T $(OLLAMA_CONTAINER) ollama list >/dev/null 2>&1; do \
+	  attempt=$$((attempt + 1)); \
+	  if [ "$$attempt" -ge 60 ]; then echo "ERROR: Ollama did not become ready within 120 seconds."; exit 1; fi; \
+	  sleep 2; \
+	done
+	$(DOCKER_COMPOSE) --profile local-llm exec -T $(OLLAMA_CONTAINER) ollama pull $(OLLAMA_SLM_MODEL)
+	$(DOCKER_COMPOSE) --profile local-llm exec -T $(OLLAMA_CONTAINER) ollama pull $(OLLAMA_LLM_MODEL)
+	$(DOCKER_COMPOSE) --profile local-llm exec -T $(OLLAMA_CONTAINER) ollama pull $(OLLAMA_EMBEDDING_MODEL)
+	@echo "Pinned SLM/LLM pair and embedding model downloaded."
 
 pull-llm-large: ## Pull larger/more capable models — 16GB+ VRAM (requires: make dev-llm)
 	@$(DOCKER_COMPOSE) --profile local-llm ps --services --filter status=running | grep -q "^ollama$$" || \

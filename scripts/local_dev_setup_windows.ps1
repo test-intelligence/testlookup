@@ -10,6 +10,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$ollamaSlmModel = if ($env:OLLAMA_SLM_MODEL) { $env:OLLAMA_SLM_MODEL } else { "qwen2.5:3b-instruct-q5_K_M" }
+$ollamaLlmModel = if ($env:OLLAMA_LLM_MODEL) { $env:OLLAMA_LLM_MODEL } else { "qwen2.5:14b-instruct-q5_K_M" }
+$ollamaEmbeddingModel = if ($env:OLLAMA_EMBEDDING_MODEL) { $env:OLLAMA_EMBEDDING_MODEL } else { "nomic-embed-text:v1.5" }
 
 function Write-Step {
     param([string]$Message)
@@ -39,7 +42,7 @@ function Get-ComposePrefix {
     if ($Lite) {
         return "docker compose -f docker-compose.dev-lite.yml"
     }
-    return "docker compose"
+    return "docker compose --profile local-llm"
 }
 
 function Test-PlaceholderSecrets {
@@ -146,9 +149,10 @@ try {
     }
 
     if (-not $Lite -and -not $SkipModelPull) {
-        Write-Step "Pulling local Ollama models"
-        Invoke-Step "$compose exec ollama ollama pull qwen2.5:7b"
-        Invoke-Step "$compose exec ollama ollama pull nomic-embed-text"
+        Write-Step "Pulling pinned local Ollama SLM/LLM pair"
+        Invoke-Step "$compose exec -T ollama ollama pull $ollamaSlmModel"
+        Invoke-Step "$compose exec -T ollama ollama pull $ollamaLlmModel"
+        Invoke-Step "$compose exec -T ollama ollama pull $ollamaEmbeddingModel"
     }
 
     $stackLabel = if ($Lite) { "lite" } else { "full" }

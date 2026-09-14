@@ -4,6 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PLATFORM_NAME="${PLATFORM_NAME:-Unix}"
+OLLAMA_SLM_MODEL="${OLLAMA_SLM_MODEL:-qwen2.5:3b-instruct-q5_K_M}"
+OLLAMA_LLM_MODEL="${OLLAMA_LLM_MODEL:-qwen2.5:14b-instruct-q5_K_M}"
+OLLAMA_EMBEDDING_MODEL="${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text:v1.5}"
 
 LITE_MODE=0
 CLEAN_MODE=0
@@ -63,7 +66,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-COMPOSE_ARGS=()
+COMPOSE_ARGS=(--profile local-llm)
 STACK_LABEL="full"
 if [[ ${LITE_MODE} -eq 1 ]]; then
   COMPOSE_ARGS=(-f docker-compose.dev-lite.yml)
@@ -182,8 +185,9 @@ main() {
   fi
 
   if [[ ${LITE_MODE} -eq 0 && ${SKIP_MODEL_PULL} -eq 0 ]]; then
-    run_compose exec ollama ollama pull qwen2.5:7b
-    run_compose exec ollama ollama pull nomic-embed-text
+    run_compose exec -T ollama ollama pull "${OLLAMA_SLM_MODEL}"
+    run_compose exec -T ollama ollama pull "${OLLAMA_LLM_MODEL}"
+    run_compose exec -T ollama ollama pull "${OLLAMA_EMBEDDING_MODEL}"
   fi
 
   cat <<EOF

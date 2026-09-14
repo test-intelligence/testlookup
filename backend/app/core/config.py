@@ -373,7 +373,7 @@ class Settings(BaseSettings):
         "ollama", "lmstudio", "localai", "vllm",
         "openai", "gemini", "anthropic", "openrouter",
     ] = "ollama"
-    LLM_MODEL: str = "qwen2.5:7b"
+    LLM_MODEL: str = "qwen2.5:3b-instruct-q5_K_M"
     LLM_TEMPERATURE: float = 0.1
     LLM_MAX_TOKENS: int = 4096
     OLLAMA_BASE_URL: str = "http://localhost:11434"
@@ -410,7 +410,7 @@ class Settings(BaseSettings):
 
     # ── Embedding ─────────────────────────────────────────────
     EMBEDDING_PROVIDER: str = "ollama"
-    EMBEDDING_MODEL: str = "nomic-embed-text"
+    EMBEDDING_MODEL: str = "nomic-embed-text:v1.5"
 
     # ── ChromaDB ──────────────────────────────────────────────
     CHROMA_HOST: str = "localhost"

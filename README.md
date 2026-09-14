@@ -31,7 +31,7 @@ Three run modes. Pick the one that fits.
 |------|---------|-------------|------|
 | **Demo** ⭐ | `make quickstart` | Zero config: auto-generates `.env` with local secrets, starts the core stack, loads sample data | ~3 min |
 | **Core** (no LLM) | `make dev` | Rules/ML analysis, dashboards, CLI, MCP | ~5 min |
-| **Full** (local LLM) | `make dev-llm` then `docker compose exec ollama ollama pull qwen2.5:7b` | Core + AI-assisted triage via Ollama + ChromaDB | ~10 min |
+| **Full** (local LLM) | `make dev-llm` | Core + AI-assisted triage via Ollama + ChromaDB; pulls the pinned SLM/LLM pair | ~10 min + first model download |
 
 ```bash
 git clone https://github.com/anandtopu/testlookup.git
@@ -43,7 +43,7 @@ That's it — no manual secret editing. `make quickstart` / `make dev` run `scri
 
 Dashboard: http://localhost:3000 | API docs: http://localhost:8000/api-docs | MCP SSE: http://localhost:8002/sse
 
-Prerequisites: Docker + Compose v2. Core mode: 4 GB RAM / 2 vCPU. Full mode: 8 GB / 4 vCPU.
+Prerequisites: Docker + Compose v2. Core mode: 4 GB RAM / 2 vCPU. Full mode with the default local pair: 16 GB RAM / 4 vCPU and about 14 GB of free model storage.
 
 ### Run without cloning (pre-built images)
 
@@ -81,6 +81,28 @@ Ollama model files are stored in Docker's named volume for this Compose project,
 ```bash
 docker compose exec ollama ollama list
 ```
+
+`make dev-llm` waits for Ollama and pulls this tested, exact-tag local pair:
+
+| Tier | Ollama tag | Download | Intended work |
+|------|------------|----------|---------------|
+| SLM | `qwen2.5:3b-instruct-q5_K_M` | 2.2 GB | Summary, classification, extraction, and JSON shaping |
+| LLM | `qwen2.5:14b-instruct-q5_K_M` | 11 GB | Causal reasoning, synthesis, and escalation |
+
+It also pulls the pinned `nomic-embed-text:v1.5` embedding model. Fresh `.env`
+files use the installed SLM for legacy single-model calls and the same pinned
+embedding tag. Existing layers in the named volume are reused on later starts.
+Override either tier for local hardware experiments without editing the
+Makefile:
+
+```bash
+make dev-llm OLLAMA_SLM_MODEL=qwen2.5:3b-instruct-q4_K_M \
+  OLLAMA_LLM_MODEL=qwen2.5:14b-instruct-q4_K_M
+```
+
+Project agent configuration still selects which installed tag each tier uses.
+Keep explicit tags in that configuration; do not use `latest` or an omitted
+tag.
 
 ## Feature matrix
 
