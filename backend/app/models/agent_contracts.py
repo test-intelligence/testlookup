@@ -6,6 +6,7 @@ contract metadata added under ``agent_contracts`` for audit/replay consumers.
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Optional, TypeVar
@@ -84,6 +85,126 @@ class ProposedActionV1(BaseModel):
     status: Literal["proposed"] = "proposed"
 class ContractedAgentOutput(BaseModel):
     contract: AgentContractMetadata
+
+
+class ReviewReferenceSetV1(BaseModel):
+    """Identifiers the reviewed output is allowed to cite."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    test_case_ids: list[str] = Field(default_factory=list)
+    cluster_ids: list[str] = Field(default_factory=list)
+    artifact_ids: list[str] = Field(default_factory=list)
+
+
+class ReviewedStepV1(BaseModel):
+    """One completed step and the policy context needed to review it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    step_name: str = Field(min_length=1, max_length=80)
+    output: dict[str, Any]
+    mode: Literal["shadow", "suggest", "act"] = "shadow"
+    tools_used: list[str] = Field(default_factory=list)
+    tool_permissions: dict[str, Literal["read_only", "propose_action", "mutating"]] = Field(
+        default_factory=dict
+    )
+
+
+class ReviewerInputV1(BaseModel):
+    """Deterministic evidence supplied to the generic reviewer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reviewed_steps: list[ReviewedStepV1] = Field(min_length=1, max_length=20)
+    references: ReviewReferenceSetV1 = Field(default_factory=ReviewReferenceSetV1)
+    numeric_facts: dict[str, float] = Field(default_factory=dict)
+    numeric_tolerance: float = Field(default=0.01, ge=0.0, le=1.0)
+    run_data: dict[str, Any] = Field(default_factory=dict)
+    analyses: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _step_names_are_unique(self) -> "ReviewerInputV1":
+        names = [step.step_name for step in self.reviewed_steps]
+        if len(names) != len(set(names)):
+            raise ValueError("reviewed step names must be unique")
+        if any(not math.isfinite(value) for value in self.numeric_facts.values()):
+            raise ValueError("numeric facts must be finite")
+        return self
+
+
+class ReviewCheckV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    family: Literal[1, 2, 5]
+    name: str = Field(min_length=1, max_length=120)
+    passed: bool
+    severity: Literal["info", "warning", "blocking"]
+    detail: str = Field(default="", max_length=1_000)
+    step_name: Optional[str] = Field(default=None, max_length=80)
+    offending_refs: list[str] = Field(default_factory=list, max_length=100)
+
+
+class ReviewDisagreementV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str = Field(min_length=1, max_length=120)
+    agents: list[str] = Field(min_length=1, max_length=20)
+    resolution: str = Field(min_length=1, max_length=500)
+    severity: Literal["warning", "blocking"] = "warning"
+
+
+class SecondModelCheckV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(min_length=1, max_length=80)
+    model: str = Field(min_length=1, max_length=160)
+    agreement_score: float = Field(ge=0.0, le=1.0)
+
+
+class ReviewVerdictV1(BaseModel):
+    """Fail-closed result consumed by the workflow supervisor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reviewed_steps: list[str] = Field(min_length=1, max_length=20)
+    checks: list[ReviewCheckV1]
+    verdict: Literal["pass", "pass_with_flags", "retry", "reject"]
+    disagreements: list[ReviewDisagreementV1] = Field(default_factory=list)
+    hallucination_risk: Literal["low", "medium", "high"]
+    requires_human_review: bool
+    second_model: Optional[SecondModelCheckV1] = None
+
+    @model_validator(mode="after")
+    def _verdict_is_consistent(self) -> "ReviewVerdictV1":
+        if len(self.reviewed_steps) != len(set(self.reviewed_steps)):
+            raise ValueError("reviewed step names must be unique")
+        if self.verdict in {"pass", "pass_with_flags"}:
+            for step_name in self.reviewed_steps:
+                families = {
+                    check.family for check in self.checks if check.step_name == step_name
+                }
+                if families != {1, 2, 5}:
+                    raise ValueError(
+                        "a continuing verdict requires check families 1, 2, and 5 "
+                        "for every reviewed step"
+                    )
+        if self.verdict == "pass":
+            if any(not check.passed for check in self.checks):
+                raise ValueError("pass requires every deterministic check to pass")
+            if any(item.severity == "blocking" for item in self.disagreements):
+                raise ValueError("pass is incompatible with a blocking disagreement")
+            if self.hallucination_risk == "high":
+                raise ValueError("pass is incompatible with high hallucination risk")
+        elif not self.requires_human_review:
+            raise ValueError("a non-pass verdict requires human review")
+        if (
+            self.second_model is not None
+            and self.second_model.agreement_score < 0.7
+            and self.verdict == "pass"
+        ):
+            raise ValueError("pass requires second-model agreement of at least 0.7")
+        return self
 
 
 # ── AIQ-P4 shared item/enum models ────────────────────────────────────────────
