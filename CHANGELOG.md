@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-14 - Gate model-tier changes with paired evidence (T14 / E9.3)
+
+Added G2 paired tier comparison for every registered capability corpus. The
+gate reports Wilson accuracy intervals, a paired 95% difference interval,
+contract validity, cost and latency deltas; it uses smoke criteria below 100
+samples and a configurable 0.05 non-inferiority margin at 100 or more.
+
+`POST /api/v1/ai-eval/tier-comparison` persists project-scoped decisions, and
+agent-config PUTs now refuse failed comparisons and unmeasured downgrades while
+allowing upgrades when evidence is insufficient. Sampled shadow pairs use the
+configured rate and a transaction-serialized daily token budget, run on the
+default queue, and remain pending labelling candidates until human-labelled or
+matched to a golden input. Migration 0180 adds the shadow store and typed G2
+manifest selectors to gate runs.
+
 ## 2026-09-14 - Register golden eval coverage for every capability (T13 / E9.2)
 
 Added frozen input/label sample contracts for every registered agent output,

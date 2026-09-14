@@ -4835,6 +4835,14 @@ class AIEvalGateRun(Base):
         Index("ix_aeg_status", "status"),
         Index("ix_aeg_manifest_checksum", "manifest_checksum_sha256"),
         Index("ix_aeg_evaluated_at", "evaluated_at"),
+        Index(
+            "ix_aeg_tier_comparison_lookup",
+            "project_id",
+            "agent_id",
+            "candidate_tier",
+            "evaluated_at",
+            postgresql_where=text("gate_type = 'tier_comparison'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -4845,8 +4853,45 @@ class AIEvalGateRun(Base):
     gate_results: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     blocking_gates: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     version_changes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # E9.3: typed manifest selectors. Nullable for pre-G2 release-gate rows.
+    gate_type: Mapped[Optional[str]] = mapped_column(String(40))
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    agent_id: Mapped[Optional[str]] = mapped_column(String(80))
+    baseline_tier: Mapped[Optional[str]] = mapped_column(String(20))
+    candidate_tier: Mapped[Optional[str]] = mapped_column(String(20))
+    sample_count: Mapped[Optional[int]] = mapped_column(Integer)
     evaluated_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AIEvalShadowPair(Base):
+    """A bounded live tier pair awaiting a human or golden-input label."""
+    __tablename__ = "ai_eval_shadow_pairs"
+    __table_args__ = (
+        UniqueConstraint("project_id", "agent_id", "sample_key", name="uq_ai_eval_shadow_pair_sample"),
+        Index("ix_aesp_project_agent_created", "project_id", "agent_id", "created_at"),
+        CheckConstraint("label_status IN ('pending', 'human_labelled', 'golden_match')", name="ck_aesp_label_status"),
+        CheckConstraint("total_tokens >= 0", name="ck_aesp_tokens_nonnegative"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    agent_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    sample_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    incumbent_tier: Mapped[str] = mapped_column(String(20), nullable=False)
+    candidate_tier: Mapped[str] = mapped_column(String(20), nullable=False)
+    incumbent_output: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    candidate_output: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    incumbent_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    candidate_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    label_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    label: Mapped[Optional[dict]] = mapped_column(JSONB)
+    labelled_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    labelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class DecisionReportEvalCycle(Base):

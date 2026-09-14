@@ -18,6 +18,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_project_access, require_project_role
@@ -90,6 +91,31 @@ async def put_agent_config(
 
     before = await svc.get_config_row(db, project_id, agent_id)
     before_doc = svc.serialize(agent_id, before)["config"]
+    try:
+        before_config = svc.AgentConfigV1.model_validate(before_doc)
+    except ValidationError:
+        # A lowered environment ceiling can invalidate a stored row. Preserve
+        # its valid model block for G2 while the PUT repairs another field.
+        try:
+            before_model = svc.ModelConfig.model_validate(before_doc.get("model", {}))
+        except ValidationError:
+            before_model = body.model
+        before_config = body.model_copy(update={"model": before_model})
+    from app.services.tier_comparison_service import (
+        TierComparisonRejected,
+        enforce_config_tier_gate,
+    )
+
+    try:
+        await enforce_config_tier_gate(
+            db,
+            project_id=project_id,
+            agent_id=agent_id,
+            before=before_config,
+            after=body,
+        )
+    except TierComparisonRejected as exc:
+        raise HTTPException(status_code=422, detail=exc.report) from None
     row = await svc.put_config(db, project_id, body, updated_by=getattr(current_user, "id", None))
     after = svc.serialize(agent_id, row)
     changed = sorted(key for key in after["config"] if after["config"].get(key) != before_doc.get(key))
