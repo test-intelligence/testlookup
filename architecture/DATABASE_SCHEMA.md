@@ -55,7 +55,7 @@ The 109 tables group into nine functional domains:
 | Identity, Tenancy & Access | 12 | Users, projects, membership, API keys, SSO/SCIM, refresh tokens, access audit |
 | Test Execution & Ingestion | 15 | Runs, per-run cases, suites, steps, attachments, canonical inventory, live sessions, reviews |
 | AI Analysis Pipeline | 15 | Agent pipeline runs + per-stage results, classifications, clusters, deep findings, provenance, agent memory |
-| AI Evaluation & Models | 5 | Model versions, eval datasets/runs/baselines, pre-release eval gate |
+| AI Evaluation & Models | 6 | Model versions, eval datasets/runs/baselines, pre-release and tier gates, shadow pairs |
 | Defects, Releases & Gates | 10 | Defects + candidates, release decisions, releases/phases, gate policies, compliance packs, coverage |
 | Test Management (Authored Cases) | 10 | Managed cases, versions, reviews, comments, duplicate review, plans, strategies, case audit |
 | Knowledge, RAG & Generation | 6 | Knowledge sources, sync events, chunks, generation batches + sources, requirement coverage |
@@ -87,8 +87,8 @@ flowchart TB
     D2 -->|1 FK| PROJECTS
     D2 -->|8 FK| TEST_RUNS
     D2 -->|4 FK| TEST_CASES
-    D3["AI Evaluation  Models<br/>(5 tables)"]
-    D3 -->|3 FK| USERS
+    D3["AI Evaluation  Models<br/>(6 tables)"]
+    D3 -->|4 FK| USERS
     D4["Defects Releases  Gates<br/>(10 tables)"]
     D4 -->|6 FK| USERS
     D4 -->|6 FK| PROJECTS
@@ -430,6 +430,8 @@ erDiagram
     MODEL_VERSIONS ||--o{ AI_EVAL_RUNS : "model_version_id"
     AI_EVAL_RUNS ||--o{ AI_EVAL_BASELINES : "eval_run_id"
     AI_EVAL_DATASETS ||--o{ AI_EVAL_BASELINES : "dataset_id"
+    PROJECTS ||--o{ AI_EVAL_GATE_RUNS : "project_id"
+    PROJECTS ||--o{ AI_EVAL_SHADOW_PAIRS : "project_id"
     MODEL_VERSIONS {
         UUID id PK
         String status
@@ -455,8 +457,17 @@ erDiagram
     }
     AI_EVAL_GATE_RUNS {
         UUID id PK
+        UUID project_id FK
         UUID evaluated_by FK
         String status
+    }
+    AI_EVAL_SHADOW_PAIRS {
+        UUID id PK
+        UUID project_id FK
+        UUID labelled_by FK
+        String agent_id
+        String label_status
+        DateTime created_at
     }
 ```
 
@@ -1929,10 +1940,39 @@ _Constraints:_ Index(`ix_aeb_task_agent`, `task_type`, `agent_name`); UniqueCons
 | `gate_results` | `JSONB` |  | NN def |  |
 | `blocking_gates` | `JSONB` |  | NN def |  |
 | `version_changes` | `JSONB` |  | NN def |  |
+| `gate_type` | `String(40)` |  |  |  |
+| `project_id` | `UUID` | FK |  | → `projects.id` |
+| `agent_id` | `String(80)` |  |  |  |
+| `baseline_tier` | `String(20)` |  |  |  |
+| `candidate_tier` | `String(20)` |  |  |  |
+| `sample_count` | `Integer` |  |  |  |
 | `evaluated_by` | `UUID` | FK |  | → `users.id` |
 | `evaluated_at` | `DateTime` |  | NN def |  |
 
-_Constraints:_ Index(`ix_aeg_change_id`, `change_id`); Index(`ix_aeg_status`, `status`); Index(`ix_aeg_manifest_checksum`, `manifest_checksum_sha256`); Index(`ix_aeg_evaluated_at`, `evaluated_at`)
+_Constraints:_ Index(`ix_aeg_change_id`, `change_id`); Index(`ix_aeg_status`, `status`); Index(`ix_aeg_manifest_checksum`, `manifest_checksum_sha256`); Index(`ix_aeg_evaluated_at`, `evaluated_at`); partial Index(`ix_aeg_tier_comparison_lookup`, `project_id`, `agent_id`, `candidate_tier`, `evaluated_at`) for G2 rows
+
+#### `ai_eval_shadow_pairs`  <sub>(model `AIEvalShadowPair`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `UUID` | FK | NN | → `projects.id` |
+| `agent_id` | `String(80)` |  | NN |  |
+| `sample_key` | `String(128)` |  | NN |  |
+| `incumbent_tier` | `String(20)` |  | NN |  |
+| `candidate_tier` | `String(20)` |  | NN |  |
+| `incumbent_output` | `JSONB` |  | NN |  |
+| `candidate_output` | `JSONB` |  | NN |  |
+| `incumbent_tokens` | `Integer` |  | NN def |  |
+| `candidate_tokens` | `Integer` |  | NN def |  |
+| `total_tokens` | `Integer` |  | NN def |  |
+| `label_status` | `String(20)` |  | NN def |  |
+| `label` | `JSONB` |  |  |  |
+| `labelled_by` | `UUID` | FK |  | → `users.id` |
+| `labelled_at` | `DateTime` |  |  |  |
+| `created_at` | `DateTime` |  | NN def |  |
+
+_Constraints:_ UniqueConstraint(`project_id`, `agent_id`, `sample_key`); CheckConstraint label status is `pending | human_labelled | golden_match`; CheckConstraint(`total_tokens >= 0`); Index(`ix_aesp_project_agent_created`, `project_id`, `agent_id`, `created_at`)
 
 ### Defects, Releases & Gates
 

@@ -4,11 +4,11 @@ import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_role
+from app.core.deps import require_project_access, require_role
 from app.db.postgres import get_db
 from app.models.postgres import (
     AIEvalBaseline,
@@ -26,6 +26,7 @@ from app.models.schemas import (
     AIEvalRunResponse,
     AIQualityDashboardResponse,
 )
+from app.services.activity.service import ActorRef, record as record_activity
 
 logger = logging.getLogger("routers.ai_evaluation")
 
@@ -412,6 +413,33 @@ class AgentStackReleaseGateRequest(BaseModel):
     persist: bool = True
 
 
+class TierOutputPairRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sample_id: str = Field(min_length=1, max_length=160)
+    incumbent_output: Any
+    candidate_output: Any
+    incumbent_cost_usd: float = Field(default=0.0, ge=0)
+    candidate_cost_usd: float = Field(default=0.0, ge=0)
+    incumbent_latency_ms: int = Field(default=0, ge=0)
+    candidate_latency_ms: int = Field(default=0, ge=0)
+    incumbent_tokens: int = Field(default=0, ge=0)
+    candidate_tokens: int = Field(default=0, ge=0)
+
+
+class TierComparisonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: uuid.UUID
+    agent_id: str = Field(min_length=1, max_length=80)
+    capability: str = Field(min_length=1, max_length=80)
+    incumbent_tier: str = Field(pattern="^(deterministic|slm|llm|auto)$")
+    candidate_tier: str = Field(pattern="^(deterministic|slm|llm|auto)$")
+    delta: float = Field(default=0.05, ge=0, le=1)
+    pairs: list[TierOutputPairRequest] = Field(default_factory=list, max_length=1_000)
+    persist: bool = True
+
+
 class SetBaselineRequest(BaseModel):
     task_type: str = "classification"
     agent_name: str = "AnalysisAgent"
@@ -470,6 +498,59 @@ async def run_agent_stack_release_gate(
         evaluated_by=current_user.id,
         persist=body.persist,
     )
+
+
+@router.post("/tier-comparison")
+async def run_tier_comparison(
+    body: TierComparisonRequest,
+    current_user: User = Depends(require_project_access()),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run G2 against paired golden outputs and optionally retain the decision."""
+    from app.services.tier_comparison_service import (
+        TierOutputPair,
+        compare_tier_outputs,
+        persist_tier_comparison,
+    )
+    from app.services.agent_capability_registry import get_capability
+
+    try:
+        if get_capability(body.capability).capability_id != body.agent_id:
+            raise ValueError("agent_id does not match the capability registry entry")
+        result = compare_tier_outputs(
+            capability=body.capability,
+            incumbent_tier=body.incumbent_tier,
+            candidate_tier=body.candidate_tier,
+            delta=body.delta,
+            pairs=[TierOutputPair(**pair.model_dump()) for pair in body.pairs],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    if body.persist:
+        row = await persist_tier_comparison(
+            db,
+            project_id=body.project_id,
+            agent_id=body.agent_id,
+            result=result,
+            evaluated_by=current_user.id,
+        )
+        await record_activity(
+            db,
+            project_id=body.project_id,
+            event_type="ai_eval.tier_compared",
+            actor=ActorRef.from_user(current_user),
+            entity_id=body.project_id,
+            entity_label=body.agent_id,
+            context={
+                "verdict": result["verdict"],
+                "sample_count": result["sample_count"],
+                "candidate_tier": body.candidate_tier,
+                "gate_run_id": str(row.id),
+            },
+        )
+        await db.commit()
+        result["gate_run_id"] = str(row.id)
+    return result
 
 
 @router.get("/agent-stack-release-gate/runs", response_model=list[AIEvalGateRunResponse])

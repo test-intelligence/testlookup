@@ -5412,6 +5412,51 @@ async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any
 
 
 @celery_app.task(
+    name="app.worker.tasks.persist_ai_eval_shadow_pair",
+    queue="default",
+    bind=True,
+    max_retries=0,
+)
+def persist_ai_eval_shadow_pair(
+    self,
+    *,
+    project_id: str,
+    agent_id: str,
+    sample_key: str,
+    incumbent_tier: str,
+    candidate_tier: str,
+    incumbent_output: dict,
+    candidate_output: dict,
+    incumbent_tokens: int,
+    candidate_tokens: int,
+    daily_token_budget: int,
+) -> dict:
+    """Persist one sampled live pair as a pending labelling candidate."""
+    async def _run() -> dict:
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.tier_comparison_service import store_shadow_pair
+
+        async with AsyncSessionLocal() as db:
+            row = await store_shadow_pair(
+                db,
+                project_id=uuid.UUID(project_id),
+                agent_id=agent_id,
+                sample_key=sample_key,
+                incumbent_tier=incumbent_tier,
+                candidate_tier=candidate_tier,
+                incumbent_output=incumbent_output,
+                candidate_output=candidate_output,
+                incumbent_tokens=incumbent_tokens,
+                candidate_tokens=candidate_tokens,
+                daily_token_budget=daily_token_budget,
+            )
+            await db.commit()
+        return {"stored": row is not None, "pair_id": str(row.id) if row is not None else None}
+
+    return cast(dict, _run_async(_run()))
+
+
+@celery_app.task(
     name="app.worker.tasks.run_scheduled_agent_eval",
     queue="default",
     bind=True,

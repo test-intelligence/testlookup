@@ -4417,6 +4417,12 @@ class AIEvalGateRunResponse(BaseModel):
     gate_results: List[Dict[str, Any]]
     blocking_gates: List[Dict[str, Any]]
     version_changes: List[Dict[str, Any]]
+    gate_type: Optional[str] = None
+    project_id: Optional[uuid.UUID] = None
+    agent_id: Optional[str] = None
+    baseline_tier: Optional[str] = None
+    candidate_tier: Optional[str] = None
+    sample_count: Optional[int] = None
     evaluated_by: Optional[uuid.UUID] = None
     evaluated_at: datetime
     model_config = ConfigDict(from_attributes=True)
