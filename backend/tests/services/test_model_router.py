@@ -62,11 +62,11 @@ def test_zero_cost_defaults_are_limited_to_truly_deterministic_capabilities():
     assert CAPABILITY_REGISTRY["release_risk"].expected_cost_usd > 0
 
 
-def test_auto_uses_the_registered_default_without_promoting_summary_before_e9_3():
+def test_auto_uses_the_g2_unlocked_summary_slm_default():
     choice = choose_model("summary", _resolved("summary"), budget_remaining_usd=1.0)
 
-    assert choice.tier == "llm"
-    assert choice.endpoint is not None and choice.endpoint.model == "large"
+    assert choice.tier == "slm"
+    assert choice.endpoint is not None and choice.endpoint.model == "small"
     assert choice.reason == "tier"
 
 

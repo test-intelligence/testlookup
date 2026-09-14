@@ -46,6 +46,7 @@ _TC_AI = (
 SCOPED: dict[str, tuple[str, ...]] = {
     "agents/anomaly_agent.py::AnomalyDetectionAgent._generate_summary": _PIPELINE,
     "agents/release_risk_agent.py::ReleaseRiskAgent._get_llm_reasoning": _PIPELINE,
+    "agents/summary_agent.py::SummaryAgent._generate_tiered_report": _PIPELINE,
     "agents/summary_agent.py::SummaryAgent._generate_structured_report": _PIPELINE,
     "agents/regression_watchman.py::RegressionWatchman._llm_classify": _PIPELINE + (
         f"{_ENTRY}::test_the_on_demand_regression_watchman_runs_inside_the_runs_project_scope",

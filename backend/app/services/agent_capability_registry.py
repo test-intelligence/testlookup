@@ -151,8 +151,9 @@ SYNC_ELIGIBLE: frozenset[str] = frozenset({
 # there would change retry authority for every existing run (T6 / E5.1).
 #
 # Defaults reflect the implementation on main. Planned downgrades such as
-# summary llm -> slm require E9.3 non-inferiority evidence before this map may
-# change. Deterministic capabilities that optionally add an LLM narrative keep
+# Tier promotions require the E9.3 gate before this map changes. Summary moved
+# to SLM in E5.2 after E9.3 shipped. Deterministic capabilities that optionally
+# add an LLM narrative keep
 # a positive expected_cost_usd so their existing budget reservation remains.
 DEFAULT_TIERS: dict[str, str] = {
     "ingestion": "deterministic",
@@ -164,7 +165,7 @@ DEFAULT_TIERS: dict[str, str] = {
     "contract_validation": "deterministic",
     "log_intelligence": "deterministic",
     "root_cause_analysis": "llm",
-    "summary": "llm",
+    "summary": "slm",
     "triage": "llm",
     "gap_detection": "deterministic",
     "report_refinement": "deterministic",
