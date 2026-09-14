@@ -4,12 +4,13 @@ from __future__ import annotations
 import uuid
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_project_access, require_project_role
 from app.models.postgres import User, UserRole, WorkflowDefinition
 from app.services import workflow_definition_service as svc
+from app.services import workflow_evaluation_service as eval_svc
 from app.services.activity.service import ActorRef, record as record_activity
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/workflows", tags=["Workflows"])
@@ -40,6 +41,7 @@ def _conflict(exc: svc.WorkflowConflict) -> HTTPException:
 async def _activity(
     db: AsyncSession, *, project_id: uuid.UUID, event_type: str,
     user: User, item: dict[str, Any], source: Optional[str] = None,
+    extra_context: Optional[dict[str, Any]] = None,
 ) -> None:
     await record_activity(
         db,
@@ -52,6 +54,7 @@ async def _activity(
             "workflow_id": item["workflow_id"],
             "version": item["version"],
             "source": source or "",
+            **(extra_context or {}),
         },
     )
 
@@ -152,10 +155,50 @@ async def validate_workflow(
     return svc.validation_result(await _get(db, project_id, workflow_id, version))
 
 
+@router.post("/{workflow_id}/evaluate")
+async def evaluate_workflow(
+    project_id: uuid.UUID,
+    workflow_id: str,
+    body: svc.WorkflowEvaluateV1 = Body(default_factory=svc.WorkflowEvaluateV1),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_project_access()),
+    _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
+) -> dict[str, Any]:
+    _mutable(workflow_id)
+    row = await _get(db, project_id, workflow_id, body.version)
+    assert isinstance(row, WorkflowDefinition)
+    try:
+        result = await eval_svc.evaluate_definition(
+            db,
+            project_id=project_id,
+            row=row,
+            sample_limit=body.sample_limit,
+            evaluated_by=current_user.id,
+        )
+    except eval_svc.WorkflowEvaluationConflict as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    item = svc.serialize(row)
+    await _activity(
+        db,
+        project_id=project_id,
+        event_type="workflow.evaluated",
+        user=current_user,
+        item=item,
+        extra_context={
+            "verdict": result["verdict"],
+            "coverage": result["coverage"],
+            "sample_count": result["sample_count"],
+        },
+    )
+    await db.commit()
+    return result
+
+
 @router.post("/{workflow_id}/publish")
 async def publish_workflow(
     project_id: uuid.UUID,
     workflow_id: str,
+    body: svc.WorkflowPublishV1 = Body(default_factory=svc.WorkflowPublishV1),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
@@ -163,9 +206,52 @@ async def publish_workflow(
     _mutable(workflow_id)
     row = await _get(db, project_id, workflow_id)
     assert isinstance(row, WorkflowDefinition)
+    if row.status != "published" and row.eval_verdict is None:
+        result = await eval_svc.evaluate_definition(
+            db,
+            project_id=project_id,
+            row=row,
+            sample_limit=eval_svc.MIN_REPLAY_RUNS,
+            evaluated_by=current_user.id,
+        )
+        item = svc.serialize(row)
+        await _activity(
+            db,
+            project_id=project_id,
+            event_type="workflow.evaluated",
+            user=current_user,
+            item=item,
+            extra_context={
+                "verdict": result["verdict"],
+                "coverage": result["coverage"],
+                "sample_count": result["sample_count"],
+            },
+        )
+    try:
+        eval_svc.enforce_publish_gate(
+            row,
+            accept_regression=body.accept_regression,
+            reason=body.reason,
+            accepted_by=current_user.id,
+        )
+    except eval_svc.WorkflowEvaluationConflict as exc:
+        # Preserve an evaluation triggered by this publish attempt so the
+        # caller can inspect and explicitly accept the measured regression.
+        await db.commit()
+        raise _conflict(svc.WorkflowConflict(str(exc))) from None
     row = await svc.publish_definition(db, row)
     item = svc.serialize(row)
-    await _activity(db, project_id=project_id, event_type="workflow.published", user=current_user, item=item)
+    await _activity(
+        db,
+        project_id=project_id,
+        event_type="workflow.published",
+        user=current_user,
+        item=item,
+        extra_context={
+            "accept_regression": row.eval_regression_accepted,
+            "regression_reason": row.eval_regression_reason or "",
+        },
+    )
     await db.commit()
     return item
 

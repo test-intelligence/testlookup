@@ -86,6 +86,22 @@ class WorkflowForkV1(_Strict):
     description: Optional[str] = Field(default=None, max_length=4000)
 
 
+class WorkflowEvaluateV1(_Strict):
+    version: Optional[int] = Field(default=None, ge=1)
+    sample_limit: int = Field(default=20, ge=20, le=100)
+
+
+class WorkflowPublishV1(_Strict):
+    accept_regression: bool = False
+    reason: Optional[str] = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def regression_reason_required(self) -> "WorkflowPublishV1":
+        if self.accept_regression and not (self.reason or "").strip():
+            raise ValueError("accept_regression requires a non-empty reason")
+        return self
+
+
 BUILTIN_STAGE_NAMES: dict[str, tuple[str, ...]] = {
     "offline": ("ingestion", "anomaly_detection", "root_cause_analysis", "summary", "triage"),
     "live": ("ingestion", "summary"),
@@ -147,6 +163,13 @@ def builtin(workflow_id: str) -> dict[str, Any]:
         "definition": _linear_definition(workflow_id),
         "status": "published",
         "published_at": None,
+        "eval_verdict": None,
+        "eval_coverage": None,
+        "eval_gate_run_id": None,
+        "evaluated_at": None,
+        "eval_regression_accepted": False,
+        "eval_regression_reason": None,
+        "eval_regression_accepted_at": None,
         "read_only": True,
         "built_in": True,
     }
@@ -164,6 +187,13 @@ def serialize(row: WorkflowDefinition) -> dict[str, Any]:
         "definition": row.definition,
         "status": row.status,
         "published_at": row.published_at,
+        "eval_verdict": row.eval_verdict,
+        "eval_coverage": row.eval_coverage,
+        "eval_gate_run_id": str(row.eval_gate_run_id) if row.eval_gate_run_id else None,
+        "evaluated_at": row.evaluated_at,
+        "eval_regression_accepted": row.eval_regression_accepted,
+        "eval_regression_reason": row.eval_regression_reason,
+        "eval_regression_accepted_at": row.eval_regression_accepted_at,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
         "read_only": row.status == "published",
@@ -210,6 +240,18 @@ def _definition(body: WorkflowBodyV1, project_id: uuid.UUID, version: int) -> di
     data = body.model_dump(mode="json", by_alias=True, exclude={"name", "description"})
     data.update({"project_id": str(project_id), "version": version})
     return data
+
+
+def _clear_evaluation(row: WorkflowDefinition) -> None:
+    """A definition edit invalidates evidence keyed to its prior checksum."""
+    row.eval_verdict = None
+    row.eval_coverage = None
+    row.eval_gate_run_id = None
+    row.evaluated_at = None
+    row.eval_regression_accepted = False
+    row.eval_regression_reason = None
+    row.eval_regression_accepted_by = None
+    row.eval_regression_accepted_at = None
 
 
 async def create_definition(
@@ -262,6 +304,7 @@ async def update_definition(
     current.base = body.base
     current.definition = _definition(body, project_id, current.version)
     current.updated_by = actor_id
+    _clear_evaluation(current)
     await db.flush()
     return current, False
 
@@ -318,7 +361,8 @@ def validation_result(item: WorkflowDefinition | dict[str, Any]) -> dict[str, An
 
 __all__ = [
     "BUILTIN_WORKFLOW_IDS", "WorkflowBodyV1", "WorkflowConflict",
-    "WorkflowForkV1", "WorkflowNotFound", "create_definition",
+    "WorkflowEvaluateV1", "WorkflowForkV1", "WorkflowNotFound", "WorkflowPublishV1",
+    "create_definition",
     "delete_definition", "fork_definition", "get_definition", "is_builtin",
     "list_definitions", "publish_definition", "serialize", "update_definition",
     "validation_result",

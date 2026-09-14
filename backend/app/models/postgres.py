@@ -5398,6 +5398,30 @@ class WorkflowDefinition(Base):
             "(status = 'draft' AND published_at IS NULL)",
             name="ck_workflow_definitions_published_at",
         ),
+        CheckConstraint(
+            "eval_verdict IS NULL OR eval_verdict IN "
+            "('pass', 'fail', 'insufficient_samples')",
+            name="ck_workflow_definitions_eval_verdict",
+        ),
+        CheckConstraint(
+            "eval_coverage IS NULL OR (eval_coverage >= 0 AND eval_coverage <= 1)",
+            name="ck_workflow_definitions_eval_coverage",
+        ),
+        CheckConstraint(
+            "(eval_verdict IS NULL AND eval_coverage IS NULL AND "
+            "eval_gate_run_id IS NULL AND evaluated_at IS NULL) OR "
+            "(eval_verdict IS NOT NULL AND eval_coverage IS NOT NULL AND "
+            "eval_gate_run_id IS NOT NULL AND evaluated_at IS NOT NULL)",
+            name="ck_workflow_definitions_eval_evidence",
+        ),
+        CheckConstraint(
+            "(eval_regression_accepted IS FALSE AND eval_regression_reason IS NULL AND "
+            "eval_regression_accepted_by IS NULL AND eval_regression_accepted_at IS NULL) OR "
+            "(eval_regression_accepted IS TRUE AND eval_verdict = 'fail' AND "
+            "length(trim(eval_regression_reason)) > 0 AND "
+            "eval_regression_accepted_by IS NOT NULL AND eval_regression_accepted_at IS NOT NULL)",
+            name="ck_workflow_definitions_regression_acceptance",
+        ),
         Index("ix_workflow_definitions_project_status", "project_id", "status"),
     )
 
@@ -5413,6 +5437,24 @@ class WorkflowDefinition(Base):
     definition: Mapped[dict] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft", server_default="draft")
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # E9.5: the latest G4 dry-run is copied onto the definition so list/get
+    # responses can show whether the version was measured before publication.
+    eval_verdict: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    eval_coverage: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    eval_gate_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("ai_eval_gate_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    evaluated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    eval_regression_accepted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    eval_regression_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    eval_regression_accepted_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    eval_regression_accepted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -5424,6 +5466,54 @@ class WorkflowDefinition(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class WorkflowReplayCorpus(Base):
+    """A project run output cached for deterministic workflow evaluation (E9.5)."""
+
+    __tablename__ = "workflow_replay_corpus"
+    __table_args__ = (
+        UniqueConstraint(
+            "agent_id", "prompt_version", "input_hash",
+            name="uq_workflow_replay_agent_prompt_input",
+        ),
+        CheckConstraint(
+            "input_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_workflow_replay_input_hash",
+        ),
+        CheckConstraint("cost_usd >= 0", name="ck_workflow_replay_cost_nonnegative"),
+        CheckConstraint("latency_ms >= 0", name="ck_workflow_replay_latency_nonnegative"),
+        Index(
+            "ix_workflow_replay_project_run",
+            "project_id",
+            "pipeline_run_id",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    pipeline_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agent_pipeline_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    test_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    step_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    output: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    stage_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    degraded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

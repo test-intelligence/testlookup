@@ -254,6 +254,7 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("workflow.created", "configuration", "workflow", "Workflow {entity_label} version {version} was created", "outcome", _HUMAN_OR_KEY),
     _spec("workflow.updated", "configuration", "workflow", "Workflow {entity_label} version {version} was updated", "outcome", _HUMAN_OR_KEY),
     _spec("workflow.deleted", "configuration", "workflow", "Workflow {entity_label} version {version} was deleted", "outcome", _HUMAN_OR_KEY),
+    _spec("workflow.evaluated", "configuration", "workflow", "Workflow {entity_label} version {version} evaluation {verdict} at {coverage} coverage", "outcome", _HUMAN_OR_KEY),
     _spec("workflow.published", "configuration", "workflow", "Workflow {entity_label} version {version} was published", "outcome", _HUMAN_OR_KEY),
     _spec("workflow.forked", "configuration", "workflow", "Workflow {entity_label} was forked from {source}", "outcome", _HUMAN_OR_KEY),
     _spec("ai_eval.tier_compared", "configuration", "project", "Agent {entity_label} tier comparison {verdict} with {sample_count} paired samples", "outcome", _HUMAN_OR_KEY),
