@@ -1,6 +1,6 @@
 {
-  "attested_at": "2026-09-14T08:06:58.936722+00:00",
-  "change_id": "T9-E5.4-provider-endpoint-circuit-breaker",
+  "attested_at": "2026-09-14T12:09:06.963305+00:00",
+  "change_id": "T15-E6.1-reviewer-agent",
   "eval_gate_run_id": null,
   "gate_results": [
     {
@@ -90,11 +90,20 @@
       ],
       "status": "pass",
       "task_type": "release_decision"
+    },
+    {
+      "agent_name": "ReviewerAgent",
+      "metrics": {
+        "focused_tests": 63,
+        "mutations_applied_and_killed": 11
+      },
+      "status": "pass",
+      "task_type": "deterministic_reviewer"
     }
   ],
   "manifest_digest": "cfda795043edde047962fe0d734446bf238ff47f0e463c4b61cb88475fc7217d",
-  "mode": "offline_golden",
-  "notes": "T9/E5.4 changes endpoint circuit admission and telemetry only; registered prompt texts and hashes are unchanged. Offline golden gates passed for classification, root-cause, and release-decision tasks. The five existing duplicate-detection golden cases remain grandfathered as insufficient samples. Six breaker mutations were applied exactly once and killed by focused regression tests.",
+  "mode": "source_review",
+  "notes": "T15 adds deterministic ReviewerAgent checks and no LLM prompt or model call. The 63-test focused suite passed; an exact-application harness killed 11 schema, grounding, numeric, policy, and verdict-invariant mutations. A CI-discovered architectural guard failure was corrected by stamping the standard agent contract envelope, with the reviewer and architectural suites passing together. The prompt manifest is unchanged. DB-backed evaluation was unavailable on the implementation host; E9.4 remains the reviewer quality gate.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -128,8 +137,8 @@
   "schema_version": 1,
   "verdict": "pass",
   "watched_sources": {
-    "backend/app/agents/reviewer_agent.py": "missing",
-    "backend/app/services/agent_capability_registry.py": "7bbf172b5d982e91ac373a9527fc6451b576b7bf16ff11b1ee5d66c761292df7",
+    "backend/app/agents/reviewer_agent.py": "0be50c9e979c5c5d0a86f9249fcae36fd8e7e23bf434417477c1615ce6e652fa",
+    "backend/app/services/agent_capability_registry.py": "fa9c67446476b8fd39068a069832559c44a6f8cbc55d83239099e13e837ea473",
     "backend/app/services/llm_factory.py": "b4676eaae9d54da9b8d6ac1437644f7a46b24cbdcbc111931dec1d3312a89058",
     "backend/app/services/model_router.py": "ec15d9a80e14121c2213ea9ed2c751eab2092a4f2df44d3082f0167af40d448d"
   }

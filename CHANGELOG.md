@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-14 - Add the deterministic generic reviewer (T15 / E6.1)
+
+Added `agent.reviewer.v1` and strict `ReviewerInputV1` / `ReviewVerdictV1`
+contracts. The reviewer validates each selected step's output schema, grounds
+test, cluster, and artifact references, reconciles labelled numbers with the
+workflow state, reuses the existing Summary, Root Cause, Release Risk, and
+Decision Report consistency checks, and rejects tools that lack policy or the
+required `act` mode.
+
+Verdict validation fails closed when a passing result omits a deterministic
+check family, contains failed checks or blocking disagreements, reports high
+hallucination risk, or carries a low second-model agreement score. The reviewer
+is deterministic and zero-cost in this slice; optional model checks and
+Supervisor retry/reject routing remain E6.2-E6.4.
+
+Reviewer-source attestations now normalize checkout line endings before
+hashing, so Windows CRLF and CI LF checkouts agree on the same source identity.
+The workflow delta also carries the standard `agent_contracts.reviewer`
+metadata envelope, preserving the public `ReviewVerdictV1` catalog schema while
+making reviewer provenance visible to the existing architectural verifier.
+
 ## 2026-09-14 - Freeze per-invocation agent config overrides (T11 / E4.2)
 
 `POST /api/v1/agents/{agent_id}/invoke` now accepts the nested, tighten-only

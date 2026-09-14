@@ -41,6 +41,18 @@ def test_root_cause_catalog_publishes_multi_artifact_escalation():
     assert "multi_artifact_evidence" in entry.escalation
 
 
+def test_reviewer_catalog_contract_is_resolved_and_deterministic():
+    entry = agent_catalog.get_catalog_detail("agent.reviewer.v1")
+
+    assert entry is not None
+    assert entry.stage_name == "reviewer"
+    assert entry.execution == "on_demand"
+    assert entry.default_tier == "deterministic"
+    assert entry.expected_cost_usd == 0
+    assert entry.input_schema == "ReviewerInputV1" and entry.input_schema_resolved
+    assert entry.output_schema == "ReviewVerdictV1" and entry.output_schema_resolved
+
+
 def test_sync_eligibility_is_the_explicit_registry_flag_and_only_cheap_agents_have_it():
     entries = agent_catalog.list_catalog()
     assert {e.stage_name for e in entries if e.sync_eligible} == set(SYNC_ELIGIBLE)
