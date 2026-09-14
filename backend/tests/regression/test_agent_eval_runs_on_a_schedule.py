@@ -190,6 +190,14 @@ def test_the_task_seeds_before_it_evaluates():
     ), "the gate would run against an empty dataset on first execution"
 
 
+def test_the_nightly_eval_also_rolls_up_reviewer_quality():
+    from app.worker import tasks
+
+    src = inspect.getsource(tasks.run_scheduled_agent_eval)
+    assert "run_nightly_reviewer_quality(db)" in src
+    assert '"reviewer_quality_runs_written": len(reviewer_rows)' in src
+
+
 def test_the_service_exposes_seeding_for_the_scheduler():
     assert callable(eval_gate_service.ensure_golden_datasets)
 

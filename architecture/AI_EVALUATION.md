@@ -94,6 +94,39 @@ This is the enforcement point, and it mirrors the shape of the product
   and the docstring states the contract plainly: *prompt, model, or routing
   changes should not ship if the gate returns FAIL.*
 
+## 4a. G3 reviewer quality
+
+`reviewer_quality_service` measures the generic reviewer against three labelled
+streams in a trailing 30-day window:
+
+- mutations report recall for every mutation class and check family 1–5;
+- clean outputs report the false-flag rate;
+- human outcomes report false omission, defined as human rejection among
+  reports the reviewer passed. Reviewer confidence is never used as its own
+  label.
+
+`POST /api/v1/ai-eval/reviewer-quality` is project-scoped and requires
+`QA_LEAD`. It stores strict, time-stamped observation batches and the G3 result
+in `ai_eval_reviewer_quality`. A release-gate result is
+`insufficient_samples` until the three semantic classes, clean corpus, and
+reviewer-pass human outcomes each have 20 samples. With enough evidence it
+fails below 0.95 semantic family-3/4 recall, above 0.10 clean false flags, or
+above 0.10 false omissions. Every proportion carries `n` and a Wilson 95%
+interval.
+
+The 04:00 UTC scheduled agent evaluation rolls up persisted observation
+batches. It may disable `review.second_model_check` only when each semantic
+class has at least 30 observations and family 4 improves less than 0.10 over
+the combined deterministic families 1, 2, and 5. It uses
+`agent_config_service.put_config`, so versioning and the single config writer
+remain intact, and records both the evaluation and config change in the
+project activity ledger.
+
+The evaluator currently receives labelled batches through the QA-lead API.
+E3 must attach the reviewer to workflow graphs and persist its observations;
+that same wiring must link reviewer-pass verdicts to later `ReviewRequest`
+outcomes so the nightly job can produce the human stream automatically.
+
 ## 4b. Prompt registry + enforced manifest ratchet (AI-F2)
 
 Since 2026-07-15 every prompt that reaches an LLM is a **versioned artifact**

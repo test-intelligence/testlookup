@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-14 - Gate reviewer changes on measured quality (T18 / E9.4)
+
+Added the G3 reviewer-quality gate and `POST /api/v1/ai-eval/reviewer-quality`.
+It reports recall for every mutation-class/check-family pair with Wilson
+intervals, clean-corpus false-flag rate, and the human false-omission rate
+among reports the reviewer passed. The gate uses the shared
+`pass|fail|insufficient_samples` vocabulary and retains the labelled evidence
+and result in `ai_eval_reviewer_quality`.
+
+The daily agent evaluation now rolls up each project's trailing 30 days of G3
+evidence. It can turn off `review.second_model_check` only when all three
+semantic mutation classes have at least 30 samples and family 4 adds less than
+0.10 recall over deterministic families 1, 2, and 5. The change goes through
+the existing agent-config writer and both the evaluation and configuration
+change are written to the project activity ledger.
+
 ## 2026-09-14 - Add bounded model review and supervisor routing (T16 / E6.2-E6.4)
 
 The generic reviewer can now re-extract claims with the reviewed step's model

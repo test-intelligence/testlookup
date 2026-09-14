@@ -4894,6 +4894,68 @@ class AIEvalShadowPair(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class AIEvalReviewerQuality(Base):
+    """A G3 reviewer-quality observation batch or scheduled 30-day rollup."""
+
+    __tablename__ = "ai_eval_reviewer_quality"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('observation_batch', 'scheduled')",
+            name="ck_aerq_source",
+        ),
+        CheckConstraint(
+            "status IN ('pass', 'fail', 'insufficient_samples')",
+            name="ck_aerq_status",
+        ),
+        CheckConstraint(
+            "clean_sample_count >= 0 AND human_outcome_count >= 0",
+            name="ck_aerq_sample_counts_nonnegative",
+        ),
+        CheckConstraint(
+            "window_started_at <= window_ended_at",
+            name="ck_aerq_window_order",
+        ),
+        Index(
+            "ix_aerq_project_agent_evaluated",
+            "project_id",
+            "agent_id",
+            "evaluated_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    agent_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    source: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    manifest_checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    mutation_observations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    clean_observations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    human_outcomes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    metrics: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    regressions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    semantic_sample_counts: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    clean_sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    human_outcome_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    deterministic_recall: Mapped[Optional[float]] = mapped_column(Float)
+    second_model_recall: Mapped[Optional[float]] = mapped_column(Float)
+    recall_delta: Mapped[Optional[float]] = mapped_column(Float)
+    false_flag_rate: Mapped[Optional[float]] = mapped_column(Float)
+    false_omission_rate: Mapped[Optional[float]] = mapped_column(Float)
+    auto_disable_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    auto_disable_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    evaluated_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class DecisionReportEvalCycle(Base):
     """Durable evidence for a report-level evaluation corpus cycle.
 

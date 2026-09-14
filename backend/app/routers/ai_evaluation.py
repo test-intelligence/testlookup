@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_project_access, require_role
+from app.core.deps import require_project_access, require_project_role, require_role
 from app.db.postgres import get_db
 from app.models.postgres import (
     AIEvalBaseline,
@@ -27,6 +27,11 @@ from app.models.schemas import (
     AIQualityDashboardResponse,
 )
 from app.services.activity.service import ActorRef, record as record_activity
+from app.services.reviewer_quality_service import (
+    ReviewerCleanObservation,
+    ReviewerHumanOutcome,
+    ReviewerMutationObservation,
+)
 
 logger = logging.getLogger("routers.ai_evaluation")
 
@@ -440,6 +445,18 @@ class TierComparisonRequest(BaseModel):
     persist: bool = True
 
 
+class ReviewerQualityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: uuid.UUID
+    agent_id: str = Field(default="agent.reviewer.v1", min_length=1, max_length=80)
+    mutations: list[ReviewerMutationObservation] = Field(default_factory=list, max_length=10_000)
+    clean: list[ReviewerCleanObservation] = Field(default_factory=list, max_length=10_000)
+    human_outcomes: list[ReviewerHumanOutcome] = Field(default_factory=list, max_length=10_000)
+    persist: bool = True
+    auto_disable: bool = True
+
+
 class SetBaselineRequest(BaseModel):
     task_type: str = "classification"
     agent_name: str = "AnalysisAgent"
@@ -550,6 +567,75 @@ async def run_tier_comparison(
         )
         await db.commit()
         result["gate_run_id"] = str(row.id)
+    return result
+
+
+@router.post("/reviewer-quality")
+async def run_reviewer_quality(
+    body: ReviewerQualityRequest,
+    current_user: User = Depends(require_project_access()),
+    _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run G3 and apply its guarded second-model retirement decision."""
+    from app.services.agent_capability_registry import get_capability
+    from app.services.reviewer_quality_service import (
+        disable_second_model_if_eligible,
+        evaluate_reviewer_quality,
+        persist_reviewer_quality,
+    )
+
+    if body.agent_id != get_capability("reviewer").capability_id:
+        raise HTTPException(status_code=422, detail="G3 evaluates agent.reviewer.v1 only")
+    if body.auto_disable and not body.persist:
+        raise HTTPException(
+            status_code=422,
+            detail="auto_disable requires persist=true so the config change has durable evidence",
+        )
+    try:
+        result = evaluate_reviewer_quality(
+            mutations=body.mutations,
+            clean=body.clean,
+            human_outcomes=body.human_outcomes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    if body.auto_disable:
+        await disable_second_model_if_eligible(
+            db,
+            project_id=body.project_id,
+            agent_id=body.agent_id,
+            result=result,
+            updated_by=current_user.id,
+        )
+    if body.persist:
+        row = await persist_reviewer_quality(
+            db,
+            project_id=body.project_id,
+            agent_id=body.agent_id,
+            result=result,
+            mutations=body.mutations,
+            clean=body.clean,
+            human_outcomes=body.human_outcomes,
+            source="observation_batch",
+            evaluated_by=current_user.id,
+        )
+        await record_activity(
+            db,
+            project_id=body.project_id,
+            event_type="ai_eval.reviewer_evaluated",
+            actor=ActorRef.from_user(current_user),
+            entity_id=body.project_id,
+            entity_label=body.agent_id,
+            context={
+                "verdict": result["verdict"],
+                "sample_count": sum(result["semantic_sample_counts"].values()),
+                "auto_disable_applied": result["auto_disable_applied"],
+                "reviewer_quality_id": str(row.id),
+            },
+        )
+        await db.commit()
+        result["reviewer_quality_id"] = str(row.id)
     return result
 
 
