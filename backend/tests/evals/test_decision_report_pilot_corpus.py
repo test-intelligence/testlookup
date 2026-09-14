@@ -9,10 +9,13 @@ from __future__ import annotations
 
 from app.services.agent_eval_harness import AgentEvalSample
 from app.services.decision_report_eval_service import evaluate_decision_report_quality
+from app.services.agent_eval_samples import pilot_inputs
+
+_PILOT_INPUTS = pilot_inputs("decision_report")
 
 
 def _report(index: int, *, invalid: bool = False, contradiction: bool = False) -> dict:
-    evidence_id = f"pilot-evidence-{index}"
+    evidence_id = _PILOT_INPUTS[index]["evidence_id"]
     return {
         "schema_version": 1,
         "status": "complete",
@@ -52,7 +55,7 @@ def test_representative_report_corpus_passes_grounded_calibration_gate():
     results = [
         evaluate_decision_report_quality(
             report,
-            authorized_evidence_ids={f"pilot-evidence-{index}"},
+            authorized_evidence_ids={_PILOT_INPUTS[index]["evidence_id"]},
             eval_samples=_samples(),
             feedback_summary={"sample_count": 5, "useful_count": 5, "partially_useful_count": 0},
         )
@@ -66,10 +69,10 @@ def test_representative_report_corpus_passes_grounded_calibration_gate():
 
 def test_report_corpus_rejects_invalid_citation_and_policy_contradiction():
     invalid = evaluate_decision_report_quality(
-        _report(1, invalid=True), authorized_evidence_ids={"pilot-evidence-1"}
+        _report(1, invalid=True), authorized_evidence_ids={_PILOT_INPUTS[1]["evidence_id"]}
     )
     contradiction = evaluate_decision_report_quality(
-        _report(2, contradiction=True), authorized_evidence_ids={"pilot-evidence-2"}
+        _report(2, contradiction=True), authorized_evidence_ids={_PILOT_INPUTS[2]["evidence_id"]}
     )
 
     assert invalid["status"] == "fail"

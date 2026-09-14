@@ -14,6 +14,7 @@ import pytest
 
 from app.agents import workflow as wf
 from app.agents.log_intelligence_agent import LogIntelligenceAgent
+from app.services.agent_eval_samples import pilot_inputs
 
 
 @pytest.fixture(autouse=True)
@@ -30,15 +31,7 @@ def _quiet_stage_lifecycle(monkeypatch):
     monkeypatch.setattr(LogIntelligenceAgent, "log_decision", AsyncMock())
 
 
-_CORPUS = [
-    {"cluster_id": "checkout-timeout", "test_id": "tc-1", "service": "checkout"},
-    {"cluster_id": "payments-5xx", "test_id": "tc-2", "service": "payments"},
-    {"cluster_id": "profile-cache", "test_id": "tc-3", "service": "profile"},
-    {"cluster_id": "search-degraded", "test_id": "tc-4", "service": "search"},
-    {"cluster_id": "notifications-lag", "test_id": "tc-5", "service": "notifications"},
-    # The sixth entry proves the deterministic five-cluster cap.
-    {"cluster_id": "warehouse-overflow", "test_id": "tc-6", "service": "warehouse"},
-]
+_CORPUS = pilot_inputs("log_intelligence")[:6]
 
 
 def _state(*, enabled: bool) -> dict:

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-14 - Register golden eval coverage for every capability (T13 / E9.2)
+
+Added frozen input/label sample contracts for every registered agent output,
+with classification, structured, and narrative label families. Every executable
+capability now has at least 20 unique golden cases and AnalysisAgent has 100;
+the runtime bookkeeping pseudo-capability is explicitly exempt with a reason.
+The four pilot suites consume their registered corpora, coverage is reported by
+`eval_coverage_by_capability()`, and labelled semantic mutations stay outside
+the accuracy corpus.
+
 ## 2026-09-13 - Unify agent evaluation verdicts and nightly evidence (T12 / E9.1)
 
 All agent evaluation surfaces now use `pass`, `fail`, or

@@ -11,53 +11,58 @@ import json
 
 import pytest
 
+from app.services.agent_eval_samples import pilot_inputs
+
 
 def _corpus() -> tuple[list[dict], dict, dict]:
+    registered = pilot_inputs("regression_watchman")[:4]
+    cluster_ids = [item["cluster_id"] for item in registered]
+    test_ids = [item["member_test_ids"][0] for item in registered]
     clusters = [
         {
-            "cluster_id": "new-product",
+            "cluster_id": cluster_ids[0],
             "label": "product failure password=hunter2",
             "representative_error": "Authorization: Bearer sk-secret-value",
-            "member_test_ids": ["test-new"],
+            "member_test_ids": [test_ids[0]],
         },
         {
-            "cluster_id": "flaky-retry",
-            "member_test_ids": ["test-flaky-1", "test-flaky-2"],
+            "cluster_id": cluster_ids[1],
+            "member_test_ids": [test_ids[1], "test-flaky-2"],
         },
         {
-            "cluster_id": "infra-outage",
-            "member_test_ids": ["test-infra-1", "test-infra-2"],
+            "cluster_id": cluster_ids[2],
+            "member_test_ids": [test_ids[2], "test-infra-2"],
         },
         {
-            "cluster_id": "insufficient-history",
-            "member_test_ids": ["test-unknown"],
+            "cluster_id": cluster_ids[3],
+            "member_test_ids": [test_ids[3]],
         },
     ]
     analyses = {
-        "test-new": {"failure_category": "ASSERTION", "is_flaky": False},
-        "test-flaky-1": {"failure_category": "ASSERTION", "is_flaky": True},
+        test_ids[0]: {"failure_category": "ASSERTION", "is_flaky": False},
+        test_ids[1]: {"failure_category": "ASSERTION", "is_flaky": True},
         "test-flaky-2": {"failure_category": "ASSERTION", "is_flaky": True},
-        "test-infra-1": {"failure_category": "INFRASTRUCTURE", "is_flaky": False},
+        test_ids[2]: {"failure_category": "INFRASTRUCTURE", "is_flaky": False},
         "test-infra-2": {"failure_category": "INFRASTRUCTURE", "is_flaky": False},
-        "test-unknown": {"failure_category": "ASSERTION", "is_flaky": False},
+        test_ids[3]: {"failure_category": "ASSERTION", "is_flaky": False},
     }
     history = {
-        "new-product": {
+        cluster_ids[0]: {
             "seen_in_baseline": False,
             "recent_occurrences": 0,
             "baseline_run_count": 5,
         },
-        "flaky-retry": {
+        cluster_ids[1]: {
             "seen_in_baseline": True,
             "recent_occurrences": 3,
             "baseline_run_count": 5,
         },
-        "infra-outage": {
+        cluster_ids[2]: {
             "seen_in_baseline": True,
             "recent_occurrences": 1,
             "baseline_run_count": 5,
         },
-        "insufficient-history": {
+        cluster_ids[3]: {
             "seen_in_baseline": False,
             "recent_occurrences": 0,
             "baseline_run_count": 1,
@@ -74,12 +79,13 @@ def test_regression_watchman_deterministic_policy_corpus():
         clusters, analyses, history
     )
 
-    assert result["new-product"]["classification"] == "new_regression"
-    assert result["new-product"]["confidence"] >= 80
-    assert result["flaky-retry"]["classification"] == "known_flaky_recurrence"
-    assert result["infra-outage"]["classification"] == "environmental_anomaly"
-    assert result["insufficient-history"]["reason_code"] == "LOW_EVIDENCE"
-    assert result["insufficient-history"]["confidence"] < 70
+    cluster_ids = [item["cluster_id"] for item in clusters]
+    assert result[cluster_ids[0]]["classification"] == "new_regression"
+    assert result[cluster_ids[0]]["confidence"] >= 80
+    assert result[cluster_ids[1]]["classification"] == "known_flaky_recurrence"
+    assert result[cluster_ids[2]]["classification"] == "environmental_anomaly"
+    assert result[cluster_ids[3]]["reason_code"] == "LOW_EVIDENCE"
+    assert result[cluster_ids[3]]["confidence"] < 70
 
 
 @pytest.mark.asyncio
@@ -108,7 +114,7 @@ async def test_regression_watchman_enabled_disabled_and_privacy_projection(monke
     }
     enabled = await workflow.regression_watchman_node(state)
     assert set(enabled["regression_classification"]) == {
-        "new-product", "flaky-retry", "infra-outage", "insufficient-history",
+        item["cluster_id"] for item in clusters
     }
 
     disabled = await workflow.regression_watchman_node(

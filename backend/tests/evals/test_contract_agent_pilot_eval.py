@@ -14,6 +14,7 @@ import pytest
 from app.agents import contract_agent as contract_agent_module
 from app.agents import workflow
 from app.agents.contract_agent import ContractAgent
+from app.services.agent_eval_samples import pilot_inputs
 
 
 @pytest.fixture(autouse=True)
@@ -30,11 +31,7 @@ def _quiet_stage_lifecycle(monkeypatch):
     monkeypatch.setattr(ContractAgent, "log_decision", AsyncMock())
 
 
-_CORPUS = [
-    {"test_case_id": "tc-checkout", "endpoint": "/checkout", "field": "payment.id"},
-    {"test_case_id": "tc-profile", "endpoint": "/profile", "field": "user.email"},
-    {"test_case_id": "tc-search", "endpoint": "/search", "field": "results[0].id"},
-]
+_CORPUS = pilot_inputs("contract_validation")[:3]
 
 
 def _state(*, enabled: bool) -> dict:

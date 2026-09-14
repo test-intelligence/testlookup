@@ -623,7 +623,7 @@ Priority: **P0** = blocks correctness/safety or other epics · **P1** = needed f
 | T10 | P2 | S | **E5.5** `make dev-llm` SLM+LLM tag pair | `Makefile`, compose | — | — | docs |
 | T11 | P1 | M | Accept `config_overrides` (AgentConfigPatch) on invoke once a runtime consumer exists; freeze resolved config into the invocation run | `routers/agent_invoke.py`, `agents/workflow.py`, idempotency fingerprint includes overrides | — | invoke tests; E1.4 docs regenerate | §12 E4.2 |
 | T12 | P0 for E5 promotion | M | **Shipped: E9.1** EvalVerdict + recordings keyed by model@tier | `agent_eval_harness.py`, `eval_gate_service.py`, `prompt_registry.py`, `prompt_eval_recordings.py` | `eval_verdict.py` | harness, recording, schedule and guard tests | AI_EVALUATION.md |
-| T13 | P0 for E5 promotion | L | **E9.2** golden sets (n ≥ 20 all, n ≥ 100 AnalysisAgent), sample schemas, `eval_coverage_by_capability()`, `eval_exempt` | `golden_agent_outputs.py`, `tests/evals/*` | sample schema modules | coverage tests | AI_EVALUATION.md |
+| T13 | P0 for E5 promotion | L | **Shipped: E9.2** golden sets (n ≥ 20 all, n ≥ 100 AnalysisAgent), sample schemas, `eval_coverage_by_capability()`, `eval_exempt` | `golden_agent_outputs.py`, `tests/evals/*` | `agent_eval_samples.py` | coverage tests | AI_EVALUATION.md |
 | T14 | P1 | M | **E9.3** G2 tier comparison + shadow sampling + `PUT agent-configs` hook | `routers/ai_evaluation.py`, `agent_config_service.put_config` / router | migration (shadow pairs) | tests | §12 |
 | T15 | P1 | M | **E6.1** ReviewerAgent + `ReviewVerdictV1`, `agent.reviewer.v1` | registry, catalog modules | `agents/reviewer_agent.py`, contract model | tests + mutation | §12 |
 | T16 | P1 | S/M/S | **E6.2–E6.4** | reviewer, supervisor, budgets | — | tests | §12 |
