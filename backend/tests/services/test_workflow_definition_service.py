@@ -108,6 +108,35 @@ async def test_updating_published_definition_creates_next_draft_without_mutating
 
 
 @pytest.mark.asyncio
+async def test_editing_draft_invalidates_prior_workflow_evaluation() -> None:
+    db = _db()
+    source = _row(status="draft")
+    source.eval_verdict = "pass"
+    source.eval_coverage = 1.0
+    source.eval_gate_run_id = uuid.uuid4()
+    source.evaluated_at = datetime.now(timezone.utc)
+    source.eval_regression_accepted = True
+    source.eval_regression_reason = "previous definition"
+    source.eval_regression_accepted_by = uuid.uuid4()
+    source.eval_regression_accepted_at = datetime.now(timezone.utc)
+    db.execute.side_effect = [MagicMock(), _scalar_result(source)]
+
+    updated, made_version = await svc.update_definition(
+        db, source.project_id, source.workflow_id, _body(), actor_id=uuid.uuid4()
+    )
+
+    assert updated is source and made_version is False
+    assert updated.eval_verdict is None
+    assert updated.eval_coverage is None
+    assert updated.eval_gate_run_id is None
+    assert updated.evaluated_at is None
+    assert updated.eval_regression_accepted is False
+    assert updated.eval_regression_reason is None
+    assert updated.eval_regression_accepted_by is None
+    assert updated.eval_regression_accepted_at is None
+
+
+@pytest.mark.asyncio
 async def test_published_definition_cannot_be_deleted() -> None:
     db = _db()
     with pytest.raises(svc.WorkflowConflict, match="immutable"):

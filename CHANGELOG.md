@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-14 - Gate workflow publishing on replay evaluation (E9.5)
+
+Added G4 workflow evaluation at
+`POST /api/v1/projects/{project_id}/workflows/{workflow_id}/evaluate`. The
+evaluator caches historical stage outputs by the exact
+`(agent_id, prompt_version, input_hash)` key, marks misses `unmeasured`, and
+reports measured-step coverage alongside plan-verification, degraded-run,
+reviewer-rejection, cost, and latency comparisons over the project's latest
+20 to 100 runs.
+
+Publishing a measured regression now returns 409 unless a QA Lead explicitly
+sets `accept_regression=true` with a reason; that acceptance is stored on the
+published workflow. Insufficient evidence remains publishable with its
+coverage visible. Migration 0184 adds the replay corpus and durable evaluation
+fields on workflow definitions, and draft edits invalidate stale evaluations.
+
 ## 2026-09-14 - Add versioned workflow definitions (T17 / E3.1)
 
 Added project-scoped workflow definition CRUD, structural validation, fork,

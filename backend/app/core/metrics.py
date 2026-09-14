@@ -557,3 +557,13 @@ activity_events_dropped_total = Counter(
     # | no_session_for_outcome | outcome_write_failed | attempt_write_failed
     ["reason"],
 )
+
+# E9.5: fraction of candidate workflow steps backed by an exact replay-cache
+# key during the latest dry-run. Project/workflow labels are bounded by stored
+# definitions and let operators distinguish a safe regression result from an
+# insufficient one.
+workflow_eval_coverage = Gauge(
+    "testlookup_workflow_eval_coverage",
+    "Fraction of candidate workflow steps measured by the replay corpus",
+    ["project_id", "workflow_id"],
+)
