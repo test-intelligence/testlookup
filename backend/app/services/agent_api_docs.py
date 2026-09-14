@@ -47,6 +47,7 @@ EXAMPLE_BODIES: dict[tuple[str, str], dict[str, Any]] = {
         "project_id": "{{project_id}}",
         "input": {"agent_id": "{{agent_id}}", "payload": {"test_run_id": "{{test_run_id}}"}},
         "mode": "async",
+        "config_overrides": {"model": {"tier": "slm"}},
     },
     ("POST", "/api/v1/reviews/{review_id}/accept"): {
         "notes": "Checked against the failing test logs.",

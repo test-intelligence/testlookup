@@ -209,6 +209,91 @@ def test_the_resolved_config_carries_no_api_keys():
     assert "sk-live-secret" not in dumped and "ak-secret" not in dumped
 
 
+async def test_an_invocation_snapshot_freezes_values_without_base_urls_or_keys(monkeypatch):
+    patch = AgentConfigPatch.model_validate({
+        "timeout_seconds": 30,
+        "retry": {"max_attempts": 2},
+    })
+    accepted = resolver.resolve(
+        SUMMARY,
+        global_ai_config=_ai(api_key="sk-do-not-store"),
+        config_version=7,
+        patch=patch,
+    )
+
+    snapshot = resolver.freeze_for_invocation(accepted)
+    encoded = json.dumps(snapshot)
+    assert "base_url" not in encoded and "sk-do-not-store" not in encoded
+    assert snapshot["config"]["model"]["slm"]["model"] == "qwen2.5:7b"
+    assert snapshot["config"]["timeout_seconds"] == 30
+
+    monkeypatch.setattr(
+        resolver,
+        "get_effective_ai_config",
+        AsyncMock(return_value=_ai(model="qwen2.5:new", base_url="http://localhost:9999")),
+    )
+    residency = AsyncMock()
+    monkeypatch.setattr(resolver, "enforce_provider_policy_async", residency)
+    restored = await resolver.resolve_frozen_for_project(
+        snapshot,
+        expected_agent_id=SUMMARY,
+    )
+
+    assert restored.patched and restored.config_version == 7
+    assert restored.config.retry.max_attempts == 2
+    assert restored.endpoints["slm"].model == "qwen2.5:7b"
+    assert restored.endpoints["slm"].base_url == "http://localhost:9999"
+    assert residency.await_count == 2
+
+
+async def test_a_tier_refused_at_acceptance_stays_unavailable(monkeypatch):
+    monkeypatch.setattr(settings, "AI_LLM_PROVIDER_ALLOWLIST", "vllm")
+    accepted = resolver.resolve(SUMMARY, global_ai_config=_ai())
+    snapshot = resolver.freeze_for_invocation(accepted)
+    assert snapshot["unavailable_tiers"] == ["slm", "llm"]
+
+    monkeypatch.setattr(settings, "AI_LLM_PROVIDER_ALLOWLIST", "")
+    monkeypatch.setattr(
+        resolver,
+        "get_effective_ai_config",
+        AsyncMock(return_value=_ai(model="now-permitted")),
+    )
+    monkeypatch.setattr(resolver, "enforce_provider_policy_async", AsyncMock())
+    restored = await resolver.resolve_frozen_for_project(
+        snapshot,
+        expected_agent_id=SUMMARY,
+    )
+    assert restored.endpoints == {"slm": None, "llm": None}
+
+
+async def test_a_pipeline_prefers_its_frozen_invocation_config(monkeypatch):
+    snapshot = resolver.freeze_for_invocation(
+        resolver.resolve(SUMMARY, global_ai_config=_ai())
+    )
+    pipeline = SimpleNamespace(
+        execution_metadata={"resolved_agent_configs": {SUMMARY: snapshot}}
+    )
+    frozen = AsyncMock(return_value="frozen")
+    live = AsyncMock(return_value="live")
+    monkeypatch.setattr(resolver, "resolve_frozen_for_project", frozen)
+    monkeypatch.setattr(resolver, "resolve_for_project", live)
+
+    assert await resolver.resolve_for_pipeline("db", pipeline, PROJECT_ID, SUMMARY) == "frozen"
+    frozen.assert_awaited_once_with(snapshot, expected_agent_id=SUMMARY)
+    live.assert_not_awaited()
+
+
+async def test_a_frozen_snapshot_cannot_be_replayed_for_another_agent():
+    snapshot = resolver.freeze_for_invocation(
+        resolver.resolve(SUMMARY, global_ai_config=_ai())
+    )
+    with pytest.raises(resolver.AgentConfigInvalid, match="does not match"):
+        await resolver.resolve_frozen_for_project(
+            snapshot,
+            expected_agent_id="agent.root_cause_analysis.v1",
+        )
+
+
 # -- the async project resolver ---------------------------------------------------------------------------
 
 
@@ -293,3 +378,26 @@ async def test_invoking_with_a_stored_config_that_no_longer_validates_is_409(mon
     assert exc.value.detail["errors"] == ["unknown tools ['gone']"]
     assert f"/agent-configs/{SUMMARY}" in exc.value.detail["message"]
     db.add.assert_not_called()
+
+
+async def test_a_loosening_invoke_override_is_reported_as_422(monkeypatch):
+    rejected = AsyncMock(side_effect=OverrideRejected(["retry.max_attempts=5 loosens project value 2"]))
+    router, db, dispatch, body = _invoke_harness(monkeypatch, rejected)
+    body.config_overrides = AgentConfigPatch.model_validate(
+        {"retry": {"max_attempts": 2}}
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await router.invoke_agent(
+            agent_id=SUMMARY,
+            body=body,
+            response=Response(),
+            db=db,
+            current_user=SimpleNamespace(id=uuid.uuid4()),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["errors"] == ["retry.max_attempts=5 loosens project value 2"]
+    assert rejected.await_args.kwargs["patch"] == body.config_overrides
+    db.add.assert_not_called()
+    dispatch.assert_not_called()

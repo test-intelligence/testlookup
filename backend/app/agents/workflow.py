@@ -1859,6 +1859,7 @@ async def run_offline_pipeline(
     expected_attempt: int | None = None,
     rerun_of: str | None = None,
     invocation_stage: str | None = None,
+    invocation_config_snapshot: dict[str, Any] | None = None,
 ) -> dict:
     """
     Execute the full offline analysis pipeline for a completed test run.
@@ -1886,6 +1887,7 @@ async def run_offline_pipeline(
             pipeline_setup = await _create_pipeline_run(
                 pipeline_run_id, test_run_id, project_id, workflow_type,
                 invocation_stage=invocation_stage,
+                invocation_config_snapshot=invocation_config_snapshot,
             )
         test_run_id = pipeline_setup["test_run_id"]
         project_id = pipeline_setup["project_id"]
@@ -1896,6 +1898,7 @@ async def run_offline_pipeline(
         pipeline_setup = await _create_pipeline_run(
             pipeline_run_id, test_run_id, project_id, workflow_type, rerun_of=rerun_of,
             invocation_stage=invocation_stage,
+            invocation_config_snapshot=invocation_config_snapshot,
         )
 
     try:
@@ -2120,6 +2123,7 @@ async def run_deep_pipeline(
     rerun_of: str | None = None,
     create_if_missing: bool = False,
     invocation_stage: str | None = None,
+    invocation_config_snapshot: dict[str, Any] | None = None,
 ) -> dict:
     """
     Execute the deep investigation pipeline with clustering, flaky sentinel,
@@ -2140,6 +2144,7 @@ async def run_deep_pipeline(
             pipeline_setup = await _create_pipeline_run(
                 pipeline_run_id, test_run_id, project_id, "deep",
                 invocation_stage=invocation_stage,
+                invocation_config_snapshot=invocation_config_snapshot,
             )
         test_run_id = pipeline_setup["test_run_id"]
         project_id = pipeline_setup["project_id"]
@@ -2150,6 +2155,7 @@ async def run_deep_pipeline(
         pipeline_setup = await _create_pipeline_run(
             pipeline_run_id, test_run_id, project_id, "deep", rerun_of=rerun_of,
             invocation_stage=invocation_stage,
+            invocation_config_snapshot=invocation_config_snapshot,
         )
 
     try:
@@ -2587,6 +2593,7 @@ async def _create_pipeline_run(
     *,
     rerun_of: str | None = None,
     invocation_stage: str | None = None,
+    invocation_config_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if workflow_type == "deep":
         stages = _DEEP_PIPELINE_STAGES
@@ -2639,11 +2646,56 @@ async def _create_pipeline_run(
 
         policy = await get_effective_policy(db, uuid.UUID(str(project_id)))
         run_budget = run_budget_from_policy(policy)
+        from app.services.agent_config_resolver import (
+            FrozenAgentConfig,
+            resolve_frozen_for_project,
+        )
         from app.services.agent_config_service import config_versions as _agent_config_versions
 
         # E4.1: freeze each configured agent's config_version, so a later
         # config change never alters how this run is interpreted.
         agent_config_versions = await _agent_config_versions(db, uuid.UUID(str(project_id)))
+        frozen_config = None
+        frozen_snapshot = None
+        if invocation_config_snapshot is not None:
+            frozen_snapshot = FrozenAgentConfig.model_validate(
+                invocation_config_snapshot
+            )
+            if invocation_stage is None:
+                raise ValueError("invocation_stage_required_for_config_snapshot")
+            expected_agent_id = get_capability(invocation_stage).capability_id
+            if frozen_snapshot.agent_id != expected_agent_id:
+                raise ValueError("invocation_config_snapshot_agent_mismatch")
+            # The accepted values are durable, but safety ceilings remain
+            # one-way. Re-resolve immediately before the run is created so an
+            # offline flip or a lowered attempt/timeout ceiling wins even when
+            # it happened between API acceptance and worker execution.
+            frozen_config = (
+                await resolve_frozen_for_project(
+                    frozen_snapshot.model_dump(mode="json"),
+                    expected_agent_id=expected_agent_id,
+                )
+            ).config
+            agent_config_versions[expected_agent_id] = frozen_snapshot.config_version
+            run_budget = {
+                **run_budget,
+                "max_llm_calls": min(
+                    int(run_budget["max_llm_calls"]),
+                    frozen_config.budget.max_llm_calls_per_run,
+                ),
+                "max_tokens": min(
+                    int(run_budget["max_tokens"]),
+                    frozen_config.budget.max_tokens_per_run,
+                ),
+                "max_cost_usd": min(
+                    float(run_budget["max_cost_usd"]),
+                    frozen_config.budget.max_cost_usd_per_run,
+                ),
+                "max_seconds": min(
+                    int(run_budget["max_seconds"]),
+                    frozen_config.timeout_seconds,
+                ),
+            }
         initial_plan = build_workflow_plan(
             workflow_type=workflow_type,
             cluster_children_enabled=bool(cluster_settings["enabled"]),
@@ -2658,6 +2710,33 @@ async def _create_pipeline_run(
             defect_commander_enabled=defect_commander_enabled,
             invocation_stage=invocation_stage,
         )
+        if frozen_config is not None and invocation_stage is not None:
+            for planned_stage in initial_plan.get("stages", []):
+                if planned_stage.get("stage") != invocation_stage:
+                    continue
+                allocated = dict(planned_stage.get("budget") or {})
+                allocated.update(
+                    {
+                        "max_llm_calls": min(
+                            int(allocated.get("max_llm_calls") or 0),
+                            frozen_config.budget.max_llm_calls_per_run,
+                        ),
+                        "max_tokens": min(
+                            int(allocated.get("max_tokens") or 0),
+                            frozen_config.budget.max_tokens_per_run,
+                        ),
+                        "max_cost_usd": min(
+                            float(allocated.get("max_cost_usd") or 0.0),
+                            frozen_config.budget.max_cost_usd_per_run,
+                        ),
+                        "timeout_seconds": min(
+                            int(allocated.get("timeout_seconds") or 0),
+                            frozen_config.timeout_seconds,
+                        ),
+                    }
+                )
+                planned_stage["budget"] = allocated
+                break
         _lease_token, _lease_fields = acquire_lease_fields()
         db.add(AgentPipelineRun(
             id=pipeline_run_id,
@@ -2668,6 +2747,14 @@ async def _create_pipeline_run(
             # (its frozen config no longer matches the live one).
             rerun_of=uuid.UUID(str(rerun_of)) if rerun_of else None,
             status="running",
+            max_attempts=(
+                frozen_config.retry.max_attempts if frozen_config is not None else 5
+            ),
+            review_policy=(
+                frozen_config.review.policy
+                if frozen_config is not None
+                else "human_required"
+            ),
             started_at=datetime.now(timezone.utc),
             execution_metadata={
                 "initial_workflow_plan": initial_plan,
@@ -2680,6 +2767,15 @@ async def _create_pipeline_run(
                 "defect_commander_settings": {"enabled": defect_commander_enabled},
                 "run_budget": run_budget,
                 "agent_config_versions": agent_config_versions,
+                "resolved_agent_configs": (
+                    {
+                        frozen_snapshot.agent_id: frozen_snapshot.model_dump(
+                            mode="json"
+                        )
+                    }
+                    if frozen_snapshot is not None
+                    else {}
+                ),
                 "budget_spend": {
                     "llm_calls": 0,
                     "tokens": 0,

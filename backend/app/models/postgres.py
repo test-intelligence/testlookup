@@ -5269,6 +5269,10 @@ class AgentInvocation(Base):
     # request it created; a replay with a different request is refused.
     idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     request_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # E4.2/T11: credential-free, resolved project/request policy. The worker
+    # copies this into the pipeline run before executing any stage. base_url and
+    # API keys are deliberately absent and remain environment-owned.
+    resolved_config_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
 
 #: Agent configuration modes, loosest last (architecture section 4.1). Migration

@@ -306,7 +306,7 @@
             "description": "Invoke one agent on a stored test run.\n\n``mode=async`` (the default) answers 202 with a poll link. ``mode=sync`` on a\nsync-eligible agent waits up to ``AGENT_INVOKE_SYNC_WAIT_SECONDS`` for the run\nto finish: 200 with the result if it did, 202 if it is still going. A full\npool of sync slots is 503 with ``Retry-After``. ``mode=sync`` on any other\nagent runs async.\n\nThe project is derived from the test run; ``project_id`` in the body is an\nassertion that must match it. An invocation of the same agent on the same\nrun that is still in progress is returned as-is with 200. With an\n``Idempotency-Key``, a repeated request returns the invocation it created\n(E1.3).",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"project_id\": \"{{project_id}}\",\n  \"input\": {\n    \"agent_id\": \"{{agent_id}}\",\n    \"payload\": {\n      \"test_run_id\": \"{{test_run_id}}\"\n    }\n  },\n  \"mode\": \"async\"\n}",
+              "raw": "{\n  \"project_id\": \"{{project_id}}\",\n  \"input\": {\n    \"agent_id\": \"{{agent_id}}\",\n    \"payload\": {\n      \"test_run_id\": \"{{test_run_id}}\"\n    }\n  },\n  \"mode\": \"async\",\n  \"config_overrides\": {\n    \"model\": {\n      \"tier\": \"slm\"\n    }\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"

@@ -181,7 +181,6 @@ AgentInvokeRequest:
     input:             {$ref: '#/components/schemas/<AgentId>InvokeInput'}  # per-agent wrapper model, see note below
     mode:              {type: string, enum: [sync, async], default: async}
     config_overrides:  {$ref: '#/components/schemas/AgentConfigPatch'}  # tighten-only, see §4.3
-    add_auto_reviewer: {type: boolean, default: false, description: "May ADD the auto-reviewer on top of the project's review policy; can never remove human review"}
     correlation_id:    {type: string, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$'}
 
 # Per-agent input wrappers. The registry's input contracts (RunEvidenceBundleV1 etc.) are shared
@@ -197,11 +196,40 @@ AgentConfigPatch:              # the ONLY fields a request may override; everyth
   type: object
   additionalProperties: false
   properties:
-    model_tier:        {type: string, enum: [deterministic, slm]}   # downgrade only; llm never requestable here
-    max_attempts:      {type: integer, minimum: 1}                  # must be <= project value
-    timeout_seconds:   {type: integer, minimum: 10}                 # must be <= project value
-    tools_allowlist:   {type: array, items: {type: string}}         # must be a subset of project allowlist
-    max_cost_usd:      {type: number, minimum: 0}                   # must be <= project budget
+    model:
+      type: object
+      additionalProperties: false
+      properties:
+        tier: {type: string, enum: [deterministic, slm, llm, auto]} # must be no looser than the project tier
+    retry:
+      type: object
+      additionalProperties: false
+      properties:
+        max_attempts: {type: integer, minimum: 1}                   # must be <= project value
+    timeout_seconds: {type: integer, minimum: 1}                    # must be <= project value
+    thresholds:
+      type: object
+      additionalProperties: false
+      properties:
+        max_failures_analyzed: {type: integer, minimum: 1}          # must be <= project value
+    tools:
+      type: object
+      additionalProperties: false
+      properties:
+        allowlist: {type: array, items: {type: string}}             # subset of project allowlist
+    budget:
+      type: object
+      additionalProperties: false
+      properties:
+        max_llm_calls_per_run: {type: integer, minimum: 0}
+        max_tokens_per_run: {type: integer, minimum: 0}
+        max_cost_usd_per_run: {type: number, minimum: 0}
+        max_runs_per_day: {type: integer, minimum: 0}
+    review:
+      type: object
+      additionalProperties: false
+      properties:
+        add_auto_reviewer: {type: boolean, default: false}          # can only add review
 
 AgentInvocation:
   type: object
@@ -265,7 +293,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/agents/ca
 curl -s -X POST http://localhost:8000/api/v1/agents/agent.summary.v1/invoke \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -H "Idempotency-Key: 018f3c2e-7b1a-7c1d-9e4f-2a6b8c0d1e2f" \   # client-generated UUIDv4/ULID; scoped per user+project, not a secret
-  -d '{"project_id":"<uuid>","input":{"agent_id":"agent.summary.v1","test_run_id":"<uuid>"},"config_overrides":{"model_tier":"slm"}}'
+  -d '{"project_id":"<uuid>","input":{"agent_id":"agent.summary.v1","payload":{"test_run_id":"<uuid>"}},"config_overrides":{"model":{"tier":"slm"}}}'
 # → 202 {"id":"...","status":"in_progress","links":{"self":"/api/v1/agents/invocations/..."}}
 
 # Poll
@@ -860,7 +888,7 @@ class EvalGateResult(BaseModel):
 
 ### E4 — Per-agent configuration (requirement 4) — sum ≈ 13 days
 - **E4.1 (M)** `agent_configs` table (migration 0176) + Pydantic schema from §4.2 (`extra="forbid"`, no endpoints) with the monotonicity table as validators and composition checks; `GET/PUT …/agent-configs/{agent_id}` (≥ QA_LEAD); `config_version` frozen into `execution_metadata`. **(shipped)** Migration 0179 (0176 was taken by agent_invocations). Budget fields use the existing DEFAULT_BUDGETS names (max_llm_calls_per_run, max_tokens_per_run, max_cost_usd_per_run, max_runs_per_day), not the section 4.2 example names. `mode` and `enabled` are columns; `config` holds the rest. New ceiling AGENT_MAX_TIMEOUT_CEILING=600. Tool permissions live in AGENT_TOOL_PERMISSIONS (all 19 @tool functions are read_only; a test holds the map equal to app/tools). Tier tightness: deterministic < slm < llm < auto (auto may escalate to llm, so it is loosest). Defaults: the lowest mode that runs the capability, but a mutating capability starts disabled in shadow; defaults are clamped to the env ceilings; review.auto_reviewer defaults to false. A stored row that stops validating is returned as stored with valid=false. Added a list route GET .../agent-configs. AgentConfigPatch + apply_patch implement the monotonicity table but no request accepts overrides until E4.2. Runs freeze `agent_config_versions` ({agent_id: version}, configured agents only).
-- **E4.2 (S)** Resolver merges env → ai_config → AgentConfig → `AgentConfigPatch`; **resolve-time** offline clamp via `apply_offline_ceiling` + `enforce_provider_policy`; unit tests for every precedence pair and for a stored cloud provider after an env flip. **(shipped)** `agent_config_resolver.resolve` (pure) and `resolve_for_project` (row + live ai_config + async residency check for endpoints with a base_url). A refused tier falls back to the global ai_config model when that is permitted, else it has no endpoint; every change is recorded in `clamps` with its layer. Stored rows are clamped to lowered attempt/timeout ceilings and the deadline before validation; a row no clamp can repair raises AgentConfigInvalid. A project block inherits the global base_url only for the same provider. Global ai_config does not floor thresholds (the section 4.1 table makes thresholds project-only). The invoke route refuses a disabled agent with 403 and an invalid stored config with 409; defect_commander is therefore not invocable until a project enables it in mode act. Deviation: the invoke body does not accept config_overrides yet, because nothing at run time consumes a resolved config before E5 tier routing.
+- **E4.2 (S)** Resolver merges env → ai_config → AgentConfig → `AgentConfigPatch`; **resolve-time** offline clamp via `apply_offline_ceiling` + `enforce_provider_policy`; unit tests for every precedence pair and for a stored cloud provider after an env flip. **(shipped)** `agent_config_resolver.resolve` (pure) and `resolve_for_project` (row + live ai_config + async residency check for endpoints with a base_url). A refused tier falls back to the global ai_config model when that is permitted, else it has no endpoint; every change is recorded in `clamps` with its layer. Stored rows are clamped to lowered attempt/timeout ceilings and the deadline before validation; a row no clamp can repair raises AgentConfigInvalid. A project block inherits the global base_url only for the same provider. Global ai_config does not floor thresholds (the section 4.1 table makes thresholds project-only). The invoke route refuses a disabled agent with 403 and an invalid stored config with 409; defect_commander is therefore not invocable until a project enables it in mode act. **(T11 shipped)** The invoke body now accepts the nested, tighten-only `AgentConfigPatch`; rejected loosenings return 422 and the full body, including overrides, participates in the idempotency fingerprint. Revision 0181 stores a credential- and base-URL-free resolved snapshot on `agent_invocations`; the worker copies it to pipeline execution metadata before any stage runs. Invocation retries and the Summary/Root Cause model routers consume that snapshot while current offline, allowlist, timeout, attempt, and endpoint-residency ceilings are reapplied. A tier refused when accepted remains unavailable even if deployment policy later relaxes. A conflicting explicit override never silently reuses an in-progress invocation. **Deviation:** T11's file list implied no schema change, but code on main had no durable invocation field capable of carrying the resolved config across API and worker processes, so the additive nullable JSONB column was required. Section 3.3's illustrative flat patch names also disagreed with the shipped nested `AgentConfigPatch` and are corrected here. **Gap:** capability-specific use of thresholds and tool allowlists remains tied to each agent's E5/E6 runtime integration; every invocation still freezes and enforces the common retry, timeout, budget, review, and model policy.
 - **E4.3 (S)** Settings UI tab per agent on `SettingsPage`. **(shipped)** Built as an Agent configuration panel on Settings → AI Agents (`/settings/ai-agents`, already a QA_LEAD+ management route) rather than a new SettingsPage tab: one tab per configurable agent. Edits mode, tier, attempts/timeout (worst case shown live), budget, tool allowlist, review and override policy; saves the whole document with PUT; server refusals (422 Pydantic errors or provider courtesy strings) are listed inline; a stored row with valid=false shows its errors. The list route now also returns `tools` ({tool: permission}). Model endpoint blocks (slm/llm provider+model), escalation, thresholds and shadow sampling are not editable in the UI yet; they keep their stored or default values and remain settable through the API. The agent-policy cards stay until E4.4.
 - **E4.4 (S)** Migrate `AgentPolicy` rows into `agent_configs` (keep `shadow_runs_completed`); `agent-policies` becomes a read-only alias for one release; guard that only `agent_config_service` writes `mode`. **(part 1 shipped; migration pending, D1 answered 2026-09-13)** The guard shipped as the `agents.agent-mode-single-writer` ratchet, with the two agent_policies writers (agent_investigation_service.upsert_policy, fixer_service.upsert_fixer_config) baselined. The row migration was not done because this item's premise does not hold: agent_policies holds `investigator` and `fixer`, neither of which is a capability-registry agent that AgentConfigV1 accepts. The Investigator policy's budgets (including max_seconds_per_run and the cluster child keys, absent from AgentConfigV1.budget) are also read as every deep pipeline's run budget (workflow._create_pipeline_run) and by cluster_investigation_orchestrator. The fixer row stores runner/test_globs/schedule in its budgets JSONB behind the pinned FixerConfig API. The options (migrate both with an extensions document and configurable non-registry ids; migrate the investigator only; or defer) change pinned APIs and runtime budgets, so they required an owner decision. D1 now selects migrating both while preserving those contracts; implementation remains T5.
 

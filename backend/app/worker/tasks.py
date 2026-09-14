@@ -6427,6 +6427,7 @@ def run_agent_invocation(self, invocation_id: str):
                 "stage_name": str(invocation.stage_name),
                 "workflow_type": str(invocation.workflow_type),
                 "build_number": str(build_number or "invocation"),
+                "config_snapshot": getattr(invocation, "resolved_config_snapshot", None),
             }
 
     loaded = _run_async(_load())
@@ -6445,6 +6446,7 @@ def run_agent_invocation(self, invocation_id: str):
             "pipeline_run_id": loaded["pipeline_run_id"],
             "create_if_missing": True,
             "invocation_stage": loaded["stage_name"],
+            "invocation_config_snapshot": loaded["config_snapshot"],
         }
         if loaded["workflow_type"] == "deep":
             return await run_deep_pipeline(**common)

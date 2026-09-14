@@ -36,6 +36,10 @@ def test_the_fingerprint_ignores_key_order_and_covers_project_and_input():
         "agent.summary.v1", {**body, "project_id": str(uuid.uuid4())},
     )
     assert idem.request_fingerprint("agent.summary.v1", body) != idem.request_fingerprint("agent.triage.v1", body)
+    assert idem.request_fingerprint("agent.summary.v1", body) != idem.request_fingerprint(
+        "agent.summary.v1",
+        {**body, "config_overrides": {"retry": {"max_attempts": 2}}},
+    )
 
 
 def test_the_lock_key_is_scoped_by_user_and_project_and_hides_the_client_key():
@@ -155,10 +159,11 @@ def route(monkeypatch):
     monkeypatch.setattr(router.invocation_idempotency, "release", AsyncMock())
     monkeypatch.setattr(tasks.run_agent_invocation, "apply_async", dispatch)
 
-    async def call(key=KEY):
+    async def call(key=KEY, *, config_overrides=None):
         body = router.AgentInvokeRequest(
             project_id=run.project_id,
             input={"agent_id": "agent.summary.v1", "payload": {"test_run_id": str(run.id)}},
+            config_overrides=config_overrides,
         )
         response = Response()
         response.status_code = 202
@@ -237,6 +242,27 @@ async def test_a_first_request_stores_its_key_commits_marks_the_key_done_then_di
     assert route.router.invocation_idempotency.complete.await_args.args[-1] == added.id
     route.router.invocation_idempotency.release.assert_not_awaited()
     assert response.status_code == 202 and out["id"] == added.id
+
+
+@pytest.mark.asyncio
+async def test_the_route_fingerprint_includes_config_overrides(route):
+    override = {"retry": {"max_attempts": 2}}
+
+    await route.call(config_overrides=override)
+
+    body = route.router.AgentInvokeRequest(
+        project_id=route.run.project_id,
+        input={
+            "agent_id": "agent.summary.v1",
+            "payload": {"test_run_id": str(route.run.id)},
+        },
+        config_overrides=override,
+    )
+    expected = idem.request_fingerprint(
+        "agent.summary.v1",
+        body.model_dump(mode="json"),
+    )
+    assert route.router.invocation_idempotency.claim.await_args.args[-1] == expected
 
 
 @pytest.mark.asyncio

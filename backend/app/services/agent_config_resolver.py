@@ -26,9 +26,9 @@ from __future__ import annotations
 
 import copy
 import uuid
-from typing import Any, Mapping, Optional, TypeGuard
+from typing import Any, Literal, Mapping, Optional, TypeGuard
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -48,7 +48,7 @@ LAYER_AI_CONFIG = "ai_config"
 LAYER_PROJECT = "project"
 LAYER_REQUEST = "request"
 
-TIERS: tuple[str, ...] = ("slm", "llm")
+TIERS: tuple[Literal["slm", "llm"], ...] = ("slm", "llm")
 
 
 class AgentConfigInvalid(ValueError):
@@ -90,6 +90,20 @@ class ResolvedAgentConfig(BaseModel):
     offline_mode_source: str
     offline_mode_env_pinned: bool
     clamps: list[Clamp] = Field(default_factory=list)
+
+
+class FrozenAgentConfig(BaseModel):
+    """Durable, credential-free project/request configuration for an invocation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    agent_id: str
+    source: str
+    config_version: int
+    patched: bool
+    config: dict[str, Any]
+    unavailable_tiers: list[Literal["slm", "llm"]] = Field(default_factory=list)
 
 
 # -- env ceilings on a stored document ---------------------------------------------------
@@ -231,7 +245,9 @@ def resolve(
     if patch is not None:
         config = apply_patch(config, patch)
 
-    endpoints = {tier: _endpoint(tier, config, ai, clamps) for tier in TIERS}
+    endpoints: dict[str, Optional[ResolvedEndpoint]] = {
+        tier: _endpoint(tier, config, ai, clamps) for tier in TIERS
+    }
     return ResolvedAgentConfig(
         agent_id=agent_id,
         source=source,
@@ -267,6 +283,12 @@ async def resolve_for_project(
         config_version=version,
         patch=patch,
     )
+    await _apply_endpoint_residency(resolved)
+    return resolved
+
+
+async def _apply_endpoint_residency(resolved: ResolvedAgentConfig) -> None:
+    """Recheck every custom endpoint against the live environment policy."""
     for tier, endpoint in list(resolved.endpoints.items()):
         if endpoint is None or not endpoint.base_url:
             continue
@@ -277,7 +299,86 @@ async def resolve_for_project(
             resolved.clamps.append(Clamp(
                 field=f"model.{tier}.base_url", layer=LAYER_ENV, requested=endpoint.provider, effective=None, reason=str(exc),
             ))
+
+
+def freeze_for_invocation(resolved: ResolvedAgentConfig) -> dict[str, Any]:
+    """Freeze effective values without persisting credentials or ``base_url``.
+
+    Missing project endpoint blocks inherit the resolved global provider/model.
+    Materialising those blocks here prevents later global model changes from
+    changing an accepted invocation. The live environment and endpoint policy
+    are still re-applied by :func:`resolve_frozen_for_project` at execution.
+    """
+    config = resolved.config.model_dump(mode="json")
+    unavailable_tiers: list[Literal["slm", "llm"]] = []
+    for tier in TIERS:
+        endpoint = resolved.endpoints[tier]
+        if endpoint is None:
+            config["model"][tier] = None
+            unavailable_tiers.append(tier)
+            continue
+        config["model"][tier] = {
+            "provider": endpoint.provider,
+            "model": endpoint.model,
+            "temperature": endpoint.temperature,
+            "max_tokens": endpoint.max_tokens,
+        }
+    return FrozenAgentConfig(
+        agent_id=resolved.agent_id,
+        source=resolved.source,
+        config_version=resolved.config_version,
+        patched=resolved.patched,
+        config=config,
+        unavailable_tiers=unavailable_tiers,
+    ).model_dump(mode="json")
+
+
+async def resolve_frozen_for_project(
+    snapshot: Mapping[str, Any],
+    *,
+    expected_agent_id: str,
+) -> ResolvedAgentConfig:
+    """Restore an invocation snapshot under today's one-way safety ceilings."""
+    try:
+        frozen = FrozenAgentConfig.model_validate(snapshot)
+    except ValidationError as exc:
+        raise AgentConfigInvalid(expected_agent_id, [str(err.get("msg", "")) for err in exc.errors()]) from exc
+    if frozen.agent_id != expected_agent_id:
+        raise AgentConfigInvalid(
+            expected_agent_id,
+            [f"frozen agent_id {frozen.agent_id!r} does not match {expected_agent_id!r}"],
+        )
+    resolved = resolve(
+        expected_agent_id,
+        global_ai_config=await get_effective_ai_config(),
+        stored=frozen.config,
+        config_version=frozen.config_version,
+    )
+    resolved.source = frozen.source
+    resolved.patched = frozen.patched
+    for tier in frozen.unavailable_tiers:
+        resolved.endpoints[tier] = None
+    await _apply_endpoint_residency(resolved)
     return resolved
+
+
+async def resolve_for_pipeline(
+    db: AsyncSession,
+    pipeline: Any,
+    project_id: uuid.UUID,
+    agent_id: str,
+) -> ResolvedAgentConfig:
+    """Use an invocation's frozen config, falling back to the live project row."""
+    metadata = (
+        dict(pipeline.execution_metadata)
+        if pipeline is not None and isinstance(pipeline.execution_metadata, dict)
+        else {}
+    )
+    snapshots = metadata.get("resolved_agent_configs")
+    snapshot = snapshots.get(agent_id) if isinstance(snapshots, dict) else None
+    if isinstance(snapshot, dict):
+        return await resolve_frozen_for_project(snapshot, expected_agent_id=agent_id)
+    return await resolve_for_project(db, project_id, agent_id)
 
 
 def invocation_refusal(resolved: ResolvedAgentConfig, *, project_id: uuid.UUID) -> Optional[str]:
@@ -297,6 +398,7 @@ def invocation_refusal(resolved: ResolvedAgentConfig, *, project_id: uuid.UUID) 
 __all__ = [
     "AgentConfigInvalid",
     "Clamp",
+    "FrozenAgentConfig",
     "LAYER_AI_CONFIG",
     "LAYER_ENV",
     "LAYER_PROJECT",
@@ -304,6 +406,9 @@ __all__ = [
     "ResolvedAgentConfig",
     "ResolvedEndpoint",
     "invocation_refusal",
+    "freeze_for_invocation",
     "resolve",
+    "resolve_for_pipeline",
     "resolve_for_project",
+    "resolve_frozen_for_project",
 ]

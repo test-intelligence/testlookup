@@ -91,6 +91,7 @@ def test_invoke_sends_an_idempotency_key_and_the_catalog_input_shape(spec):
     assert headers["X-API-Key"]["disabled"] is True
     body = json.loads(invoke["request"]["body"]["raw"])
     assert body["input"] == {"agent_id": "{{agent_id}}", "payload": {"test_run_id": "{{test_run_id}}"}}
+    assert body["config_overrides"] == {"model": {"tier": "slm"}}
 
     block = _section(docs.build_curl_markdown(spec), "### POST /api/v1/agents/{agent_id}/invoke")
     assert '"$BASE_URL/api/v1/agents/$AGENT_ID/invoke"' in block
