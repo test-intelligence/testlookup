@@ -144,6 +144,10 @@ but their eval story is thinner: they steer an external assistant's tool
 calls rather than a scored model output, so the attestation covers them as
 hash-pinned + reviewed, not metric-gated.
 
+Watched source hashes use UTF-8 text after universal-newline normalization.
+LF and CRLF checkouts therefore share one attestation identity; raw checkout
+line endings do not represent a model or reviewer behavior change.
+
 **What the attestation does not measure, and the gate that does (re-audit
 M16).** The offline attestation scores golden items whose correctness is
 written in the dataset, so it passes whatever the prompt text says: it proves

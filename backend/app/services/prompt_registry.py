@@ -1025,13 +1025,15 @@ def manifest_digest(prompts: dict[str, dict[str, Any]]) -> str:
 
 
 def attestation_watched_sources(repo_root: Optional[Path] = None) -> dict[str, str]:
-    """Hash model routing and reviewer sources covered by an eval attestation."""
+    """Hash watched source text with platform line endings normalized."""
     root = repo_root or _REPO_ROOT
     watched: dict[str, str] = {}
     for relative in EVAL_ATTESTATION_WATCHED_PATHS:
         path = root / relative
         watched[relative] = (
-            hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "missing"
+            hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+            if path.exists()
+            else "missing"
         )
     return watched
 

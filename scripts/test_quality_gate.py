@@ -2783,3 +2783,14 @@ def test_prompt_attestation_watched_paths_are_pinned(tmp_path: Path) -> None:
     assert before["backend/app/services/model_router.py"] != after[
         "backend/app/services/model_router.py"
     ]
+
+
+def test_prompt_attestation_hash_normalizes_checkout_line_endings(tmp_path: Path) -> None:
+    relative = qg._EVAL_ATTESTATION_WATCHED_PATHS[0]
+    target = tmp_path / relative
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"first\nsecond\n")
+    lf_hash = qg._eval_attestation_watched_sources(tmp_path)[relative]
+    target.write_bytes(b"first\r\nsecond\r\n")
+
+    assert qg._eval_attestation_watched_sources(tmp_path)[relative] == lf_hash

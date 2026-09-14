@@ -388,6 +388,17 @@ def test_attestation_pins_model_routing_and_reviewer_sources():
     assert pr.load_attestation()["watched_sources"] == pr.attestation_watched_sources()
 
 
+def test_attestation_source_hash_is_independent_of_checkout_line_endings(tmp_path):
+    relative = pr.EVAL_ATTESTATION_WATCHED_PATHS[0]
+    target = tmp_path / relative
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"first\nsecond\n")
+    lf_hash = pr.attestation_watched_sources(tmp_path)[relative]
+    target.write_bytes(b"first\r\nsecond\r\n")
+
+    assert pr.attestation_watched_sources(tmp_path)[relative] == lf_hash
+
+
 # ── Public API shape ─────────────────────────────────────────────────────────
 
 

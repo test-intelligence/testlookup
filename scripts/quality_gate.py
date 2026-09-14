@@ -3447,7 +3447,9 @@ def _eval_attestation_watched_sources(repo_root: Optional[Path] = None) -> dict[
     root = repo_root or REPO_ROOT
     return {
         relative: (
-            hashlib.sha256((root / relative).read_bytes()).hexdigest()
+            hashlib.sha256(
+                (root / relative).read_text(encoding="utf-8").encode("utf-8")
+            ).hexdigest()
             if (root / relative).exists()
             else "missing"
         )

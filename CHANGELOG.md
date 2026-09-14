@@ -15,6 +15,9 @@ hallucination risk, or carries a low second-model agreement score. The reviewer
 is deterministic and zero-cost in this slice; optional model checks and
 Supervisor retry/reject routing remain E6.2-E6.4.
 
+Reviewer-source attestations now normalize checkout line endings before
+hashing, so Windows CRLF and CI LF checkouts agree on the same source identity.
+
 ## 2026-09-14 - Freeze per-invocation agent config overrides (T11 / E4.2)
 
 `POST /api/v1/agents/{agent_id}/invoke` now accepts the nested, tighten-only
