@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-14 - Pull a pinned local SLM/LLM pair (T10 / E5.5)
+
+`make dev-llm` now waits for Ollama and automatically pulls exact Qwen2.5
+models for both agent tiers: a 3B Q5 SLM and a 14B Q5 LLM. It also pins the
+embedding model to `nomic-embed-text:v1.5`, reuses downloads in the existing
+Ollama volume, and accepts make-variable overrides for hardware experiments.
+The Unix/macOS and Windows bootstrap scripts now enable the local-LLM Compose
+profile and pull the same pinned set. Fresh environment and application
+defaults reference the installed SLM and embedding tags, so the default
+single-model path does not request an uninstalled model.
+
+The quick-start and developer docs now list the tested pair, download sizes,
+resource expectations, intended workloads, and the requirement that project
+agent configuration name an installed exact tag.
+
 ## 2026-09-14 - Isolate LLM circuit breakers by provider endpoint (T9 / E5.4)
 
 LLM calls now share a Redis-backed circuit breaker keyed by provider and a

@@ -26,6 +26,13 @@ make type-check     # mypy + tsc                  make quality-gate  # cross-cut
 make test-backend / test-frontend / test-e2e
 ```
 
+`make dev-llm` waits for Ollama and pulls the exact tested local pair:
+`qwen2.5:3b-instruct-q5_K_M` for SLM work and
+`qwen2.5:14b-instruct-q5_K_M` for LLM work, plus
+`nomic-embed-text:v1.5`. Override `OLLAMA_SLM_MODEL` or `OLLAMA_LLM_MODEL` on
+the make command only for deliberate local experiments; agent configuration
+must name the same installed exact tags.
+
 There are **scaffolding skills** that encode the exact file patterns — prefer
 them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`.
 
