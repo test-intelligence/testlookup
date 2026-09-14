@@ -214,6 +214,25 @@ async def test_persistence_stamps_typed_g2_manifest_columns():
     assert row.candidate_tier == "slm" and row.sample_count == 20
 
 
+async def test_active_drift_pin_blocks_even_a_previously_passing_downgrade(monkeypatch):
+    async def pinned(_db, _project_id, _agent_id):
+        return True
+
+    from app.services import online_drift_service
+
+    monkeypatch.setattr(online_drift_service, "has_active_drift_pin", pinned)
+    llm = configs.default_config(AGENT_ID).model_copy(
+        update={"model": configs.ModelConfig(tier="llm")}
+    )
+    slm = llm.model_copy(update={"model": configs.ModelConfig(tier="slm")})
+    passed = SimpleNamespace(id=uuid.uuid4(), status=EvalVerdict.PASS.value)
+
+    with pytest.raises(svc.TierComparisonRejected, match="eval-drift review"):
+        await svc.enforce_config_tier_gate(
+            _DB(passed), project_id=PROJECT_ID, agent_id=AGENT_ID, before=llm, after=slm
+        )
+
+
 async def test_shadow_pair_is_pending_and_daily_budget_is_hard():
     db = _DB(used=90)
     refused = await svc.store_shadow_pair(

@@ -538,6 +538,8 @@ async def detect_quality_drift(
             func.avg(AIEvalRun.f1_score).label("avg_f1"),
             func.avg(AIEvalRun.agreement_rate).label("avg_agreement"),
             func.count(AIEvalRun.id).label("run_count"),
+            func.coalesce(func.sum(AIEvalRun.correct_items), 0).label("correct_items"),
+            func.coalesce(func.sum(AIEvalRun.total_items), 0).label("total_items"),
         )
         .where(AIEvalRun.task_type == task_type, AIEvalRun.evaluated_at >= current_cutoff)
     )
@@ -549,6 +551,9 @@ async def detect_quality_drift(
             func.avg(AIEvalRun.accuracy).label("avg_accuracy"),
             func.avg(AIEvalRun.f1_score).label("avg_f1"),
             func.avg(AIEvalRun.agreement_rate).label("avg_agreement"),
+            func.count(AIEvalRun.id).label("run_count"),
+            func.coalesce(func.sum(AIEvalRun.correct_items), 0).label("correct_items"),
+            func.coalesce(func.sum(AIEvalRun.total_items), 0).label("total_items"),
         )
         .where(
             AIEvalRun.task_type == task_type,
@@ -564,14 +569,21 @@ async def detect_quality_drift(
     current_accuracy = _safe_float(current.avg_accuracy) if current else None
     previous_accuracy = _safe_float(previous.avg_accuracy) if previous else None
 
-    drift = None
-    drift_direction = "stable"
-    if current_accuracy is not None and previous_accuracy is not None:
-        drift = round(current_accuracy - previous_accuracy, 4)
-        if drift > 0.02:
-            drift_direction = "improving"
-        elif drift < -0.02:
-            drift_direction = "degrading"
+    from app.services.online_drift_service import compare_rates  # noqa: PLC0415
+
+    rate_comparison = compare_rates(
+        "eval_accuracy",
+        current_successes=int(current.correct_items) if current else 0,
+        current_total=int(current.total_items) if current else 0,
+        previous_successes=int(previous.correct_items) if previous else 0,
+        previous_total=int(previous.total_items) if previous else 0,
+    )
+    drift = (
+        round(current_accuracy - previous_accuracy, 4)
+        if current_accuracy is not None and previous_accuracy is not None
+        else None
+    )
+    drift_direction = rate_comparison["direction"]
 
     return {
         "task_type": task_type,
@@ -581,14 +593,20 @@ async def detect_quality_drift(
             "f1_score": _safe_float(current.avg_f1) if current else None,
             "agreement_rate": _safe_float(current.avg_agreement) if current else None,
             "eval_run_count": current.run_count if current else 0,
+            "accuracy_ci95": rate_comparison["current"]["ci95"],
+            "sample_count": rate_comparison["current"]["total"],
         },
         "previous": {
             "accuracy": previous_accuracy,
             "f1_score": _safe_float(previous.avg_f1) if previous else None,
             "agreement_rate": _safe_float(previous.avg_agreement) if previous else None,
+            "eval_run_count": previous.run_count if previous else 0,
+            "accuracy_ci95": rate_comparison["previous"]["ci95"],
+            "sample_count": rate_comparison["previous"]["total"],
         },
         "drift": drift,
         "drift_direction": drift_direction,
+        "measured": rate_comparison["measured"],
     }
 
 

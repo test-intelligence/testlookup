@@ -122,6 +122,13 @@ celery_app.conf.update(
             "schedule": crontab(hour=4, minute=0),
             "options": {"queue": "default"},
         },
+        # E9.6/G5: compare the two completed seven-day windows after the
+        # nightly producer has populated Sunday's final observations.
+        "weekly-agent-quality-drift": {
+            "task": "app.worker.tasks.run_weekly_agent_quality_drift",
+            "schedule": crontab(hour=6, minute=0, day_of_week="monday"),
+            "options": {"queue": "default"},
+        },
         "nightly-retention-purge": {
             "task": "app.worker.tasks.run_retention_purges",
             "schedule": crontab(hour=2, minute=0),

@@ -30,6 +30,7 @@ PROJECT_ID = uuid.uuid4()
 def _online_environment(monkeypatch):
     monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
     monkeypatch.setattr(settings, "AI_LLM_PROVIDER_ALLOWLIST", "")
+    monkeypatch.setattr(resolver, "has_active_drift_pin", AsyncMock(return_value=False))
 
 
 def _ai(**over):
@@ -367,6 +368,41 @@ async def test_invoking_a_disabled_agent_is_403_before_anything_is_recorded(monk
     assert resolved.await_args.args[1:] == (PROJECT_ID, SUMMARY)
     db.add.assert_not_called()
     dispatch.assert_not_called()
+
+
+def test_a_drift_pin_blocks_a_request_tier_downgrade():
+    stored = _stored(model={"tier": "llm"})
+    patch = AgentConfigPatch.model_validate({"model": {"tier": "slm"}})
+
+    with pytest.raises(OverrideRejected, match="eval-drift review is closed"):
+        resolver.resolve(
+            SUMMARY,
+            global_ai_config=_ai(),
+            stored=stored,
+            patch=patch,
+            drift_pin_active=True,
+        )
+
+
+def test_a_drift_pin_requires_human_review_and_disables_auto_review():
+    stored = _stored(review={
+        "policy": "human_required_plus_auto_reviewer",
+        "auto_reviewer": True,
+        "second_model_check": True,
+    })
+
+    out = resolver.resolve(
+        SUMMARY,
+        global_ai_config=_ai(),
+        stored=stored,
+        drift_pin_active=True,
+    )
+
+    assert out.config.review.policy == "human_required"
+    assert out.config.review.auto_reviewer is False
+    assert out.config.review.second_model_check is False
+    assert out.config.override_policy.allow_tier_downgrade is False
+    assert any(clamp.layer == "eval_drift" for clamp in out.clamps)
 
 
 async def test_invoking_with_a_stored_config_that_no_longer_validates_is_409(monkeypatch):
