@@ -452,3 +452,77 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
 
     (run,) = [row for row in added if isinstance(row, AgentPipelineRun)]
     assert run.execution_metadata["agent_config_versions"] == {SUMMARY: 4}
+
+
+async def test_an_invocation_run_uses_and_persists_its_frozen_config(monkeypatch):
+    from app.agents import workflow
+    from app.models.postgres import AgentPipelineRun
+    from app.services import agent_config_resolver, agent_investigation_service, feature_flags
+
+    added = []
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        def add(self, row):
+            added.append(row)
+
+        async def commit(self):
+            return None
+
+    patch = svc.AgentConfigPatch.model_validate({
+        "retry": {"max_attempts": 2},
+        "timeout_seconds": 30,
+        "budget": {
+            "max_llm_calls_per_run": 3,
+            "max_tokens_per_run": 4000,
+            "max_cost_usd_per_run": 0.5,
+        },
+        "review": {"add_auto_reviewer": True},
+    })
+    snapshot = agent_config_resolver.freeze_for_invocation(
+        agent_config_resolver.resolve(
+            SUMMARY,
+            global_ai_config={},
+            config_version=9,
+            patch=patch,
+        )
+    )
+    # A ceiling tightened after request acceptance still wins at worker start.
+    monkeypatch.setattr(settings, "AGENT_MAX_ATTEMPTS_CEILING", 1)
+    monkeypatch.setattr(workflow, "AsyncSessionLocal", lambda: _Session())
+    monkeypatch.setattr(feature_flags, "is_enabled", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        agent_investigation_service,
+        "get_effective_policy",
+        AsyncMock(return_value={"budgets": {}}),
+    )
+    monkeypatch.setattr(svc, "config_versions", AsyncMock(return_value={SUMMARY: 4}))
+
+    await workflow._create_pipeline_run(
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        str(PROJECT_ID),
+        "offline",
+        invocation_stage="summary",
+        invocation_config_snapshot=snapshot,
+    )
+
+    (run,) = [row for row in added if isinstance(row, AgentPipelineRun)]
+    metadata = run.execution_metadata
+    assert (run.max_attempts, run.review_policy) == (
+        1,
+        "human_required_plus_auto_reviewer",
+    )
+    assert metadata["agent_config_versions"][SUMMARY] == 9
+    assert metadata["resolved_agent_configs"][SUMMARY] == snapshot
+    assert metadata["run_budget"] == {
+        "max_llm_calls": 3,
+        "max_tokens": 4000,
+        "max_cost_usd": 0.5,
+        "max_seconds": 30,
+    }

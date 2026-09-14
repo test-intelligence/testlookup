@@ -60,7 +60,13 @@ from app.models.schemas import ReviewBlock
 from app.services import agent_catalog, agent_planner, invocation_idempotency, invocation_stream
 from app.services.activity.service import ActorRef, record as record_activity
 from app.services.agent_capability_registry import is_report_producing, is_sync_eligible
-from app.services.agent_config_resolver import AgentConfigInvalid, invocation_refusal, resolve_for_project
+from app.services.agent_config_resolver import (
+    AgentConfigInvalid,
+    freeze_for_invocation,
+    invocation_refusal,
+    resolve_for_project,
+)
+from app.services.agent_config_service import AgentConfigPatch, OverrideRejected
 from app.services.pipeline_cancellation import request_cancel
 from app.services.pipeline_retry_config import decide_retry_mode
 from app.services.review_envelope import ReviewEnvelope, envelope_from_review
@@ -97,6 +103,13 @@ class AgentInvokeRequest(BaseModel):
         description=(
             "sync waits for the result, and only for sync-eligible agents (see the catalog); "
             "any other agent runs async and answers 202."
+        ),
+    )
+    config_overrides: Optional[AgentConfigPatch] = Field(
+        default=None,
+        description=(
+            "Per-invocation tighten-only overrides. Provider, endpoint, mode, temperature, "
+            "max_tokens, escalation, and other ambiguous fields are rejected."
         ),
     )
     correlation_id: Optional[str] = Field(default=None, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
@@ -425,7 +438,11 @@ def _validate_invocation(agent_id: str, body: AgentInvokeRequest) -> tuple[str, 
 
 
 async def _in_progress_invocation(
-    db: AsyncSession, test_run_id: uuid.UUID, agent_id: str
+    db: AsyncSession,
+    test_run_id: uuid.UUID,
+    agent_id: str,
+    *,
+    expected_config_snapshot: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
     """The newest invocation of this agent on this run, if it is still in progress."""
     latest = (
@@ -439,7 +456,20 @@ async def _in_progress_invocation(
     if latest is None:
         return None
     view = await _invocation_view(db, latest)
-    return view if view["status"] == "in_progress" else None
+    if view["status"] != "in_progress":
+        return None
+    if (
+        expected_config_snapshot is not None
+        and getattr(latest, "resolved_config_snapshot", None) != expected_config_snapshot
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This agent is already running on the test run with a different frozen "
+                "configuration; wait for it to finish or cancel it before invoking again"
+            ),
+        )
+    return view
 
 
 def _sse(event: str, data: Any) -> str:
@@ -784,7 +814,20 @@ async def invoke_agent(
         raise HTTPException(status_code=400, detail="project_id does not match the test run's project")
     # E4.2: the project's resolved agent config decides whether this agent may run.
     try:
-        resolved = await resolve_for_project(db, run.project_id, agent_id)
+        resolved = await resolve_for_project(
+            db,
+            run.project_id,
+            agent_id,
+            patch=body.config_overrides,
+        )
+    except OverrideRejected as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "config_overrides may only tighten the project agent configuration",
+                "errors": exc.reasons,
+            },
+        ) from None
     except AgentConfigInvalid as exc:
         raise HTTPException(
             status_code=409,
@@ -799,6 +842,7 @@ async def invoke_agent(
     refusal = invocation_refusal(resolved, project_id=run.project_id)
     if refusal is not None:
         raise HTTPException(status_code=403, detail=refusal)
+    config_snapshot = freeze_for_invocation(resolved)
 
     user_id = getattr(current_user, "id", None)
     fingerprint: Optional[str] = None
@@ -827,7 +871,17 @@ async def invoke_agent(
 
     holds_slot = False
     try:
-        existing = await _in_progress_invocation(db, run.id, agent_id)
+        existing = await _in_progress_invocation(
+            db,
+            run.id,
+            agent_id,
+            # Preserve the established de-duplication behaviour for an ordinary
+            # invoke. An explicit request patch, however, must never be silently
+            # discarded by returning a run frozen with different settings.
+            expected_config_snapshot=(
+                config_snapshot if body.config_overrides is not None else None
+            ),
+        )
         if existing is not None:
             response.status_code = 200
             return existing
@@ -857,6 +911,7 @@ async def invoke_agent(
             dispatched_at=now,
             idempotency_key=idempotency_key,
             request_sha256=fingerprint,
+            resolved_config_snapshot=config_snapshot,
         )
         db.add(invocation)
         await record_activity(

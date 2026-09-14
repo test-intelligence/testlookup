@@ -992,7 +992,7 @@ class AnalysisAgent(BaseAgent):
     ) -> tuple[object, float | None, int]:
         """Resolve project tier policy and the remaining stage budget once."""
         from app.services.agent_capability_registry import get_capability
-        from app.services.agent_config_resolver import resolve_for_project
+        from app.services.agent_config_resolver import resolve_for_pipeline
         from app.services.pipeline_budget_service import (
             get_pipeline_budget_context,
             remaining_cost_usd,
@@ -1001,12 +1001,14 @@ class AnalysisAgent(BaseAgent):
         project_uuid = uuid.UUID(str(project_id))
         agent_id = get_capability(self.stage_name).capability_id
         async with AsyncSessionLocal() as db:
-            resolved = await resolve_for_project(db, project_uuid, agent_id)
             pipeline = (
                 await db.execute(
                     select(AgentPipelineRun).where(AgentPipelineRun.id == pipeline_run_id)
                 )
             ).scalar_one_or_none()
+            resolved = await resolve_for_pipeline(
+                db, pipeline, project_uuid, agent_id
+            )
             stage = (
                 await db.execute(
                     select(AgentStageResult).where(

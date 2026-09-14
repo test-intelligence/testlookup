@@ -211,6 +211,84 @@ async def test_a_valid_invocation_is_recorded_committed_then_dispatched(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_invoke_resolves_and_durably_freezes_the_request_override(monkeypatch):
+    from app.services import agent_config_resolver
+    from app.services.agent_config_service import AgentConfigPatch
+
+    run = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4(), build_number="42")
+    router, _tasks, db, _dispatch, _order = _router_harness(monkeypatch, run, None)
+    patch = AgentConfigPatch.model_validate({
+        "timeout_seconds": 30,
+        "retry": {"max_attempts": 2},
+    })
+    resolved = agent_config_resolver.resolve(
+        "agent.summary.v1",
+        global_ai_config={"provider": "ollama", "model": "qwen2.5:3b"},
+        config_version=4,
+        patch=patch,
+    )
+    route_resolver = AsyncMock(return_value=resolved)
+    monkeypatch.setattr(router, "resolve_for_project", route_resolver)
+    body = _body(
+        project_id=str(run.project_id),
+        input={"agent_id": "agent.summary.v1", "payload": {"test_run_id": str(run.id)}},
+        config_overrides=patch,
+    )
+
+    await router.invoke_agent(
+        agent_id="agent.summary.v1",
+        body=body,
+        response=Response(),
+        db=db,
+        current_user=SimpleNamespace(id=uuid.uuid4()),
+    )
+
+    assert route_resolver.await_args.kwargs["patch"] == patch
+    added = db.add.call_args.args[0]
+    snapshot = added.resolved_config_snapshot
+    assert snapshot["config_version"] == 4 and snapshot["patched"] is True
+    assert snapshot["config"]["retry"]["max_attempts"] == 2
+    assert "base_url" not in str(snapshot) and "api_key" not in str(snapshot)
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_override_is_not_silently_lost_to_a_different_running_config(monkeypatch):
+    run = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4(), build_number="42")
+    existing = _invocation(
+        test_run_id=run.id,
+        project_id=run.project_id,
+        resolved_config_snapshot={"agent_id": "agent.summary.v1", "config": "different"},
+    )
+    pipeline = _pipeline(existing, status="running")
+    router, _tasks, db, dispatch, _order = _router_harness(
+        monkeypatch,
+        run,
+        existing,
+        pipeline,
+        None,
+        None,
+    )
+    body = _body(
+        project_id=str(run.project_id),
+        input={"agent_id": "agent.summary.v1", "payload": {"test_run_id": str(run.id)}},
+        config_overrides={"retry": {"max_attempts": 2}},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await router.invoke_agent(
+            agent_id="agent.summary.v1",
+            body=body,
+            response=Response(),
+            db=db,
+            current_user=SimpleNamespace(id=uuid.uuid4()),
+        )
+
+    assert exc.value.status_code == 409 and "different frozen configuration" in exc.value.detail
+    db.add.assert_not_called()
+    dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_a_body_project_that_is_not_the_runs_project_is_refused(monkeypatch):
     run = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4(), build_number="42")
     router, _tasks, db, dispatch, _order = _router_harness(monkeypatch, run)
@@ -354,7 +432,8 @@ def test_the_worker_runs_the_invocation_as_a_restricted_pipeline_under_the_minte
     import app.agents.workflow as workflow
     from app.worker import tasks
 
-    invocation = _invocation()
+    snapshot = {"agent_id": "agent.summary.v1", "config": {"frozen": True}}
+    invocation = _invocation(resolved_config_snapshot=snapshot)
 
     class _Session:
         async def get(self, _model, _id):
@@ -379,6 +458,7 @@ def test_the_worker_runs_the_invocation_as_a_restricted_pipeline_under_the_minte
     assert kwargs["invocation_stage"] == "summary"
     assert kwargs["create_if_missing"] is True
     assert kwargs["pipeline_run_id"] == str(invocation.pipeline_run_id)
+    assert kwargs["invocation_config_snapshot"] == snapshot
     assert kwargs["workflow_type"] == "offline" and kwargs["build_number"] == "build-7"
     inspect.signature(real_offline).bind(**kwargs)
     assert out["completed_stages"] == ["ingestion", "summary"]
@@ -415,6 +495,7 @@ def test_the_migration_and_model_agree():
         MIGRATION,
         MIGRATION.with_name("0177_agent_invocation_dispatched_at.py"),
         MIGRATION.with_name("0178_agent_invocation_idempotency.py"),
+        MIGRATION.with_name("0181_agent_invocation_config_snapshot.py"),
     ):
         migrated |= {
             call.args[0].value
@@ -423,6 +504,15 @@ def test_the_migration_and_model_agree():
             and call.args and isinstance(call.args[0], ast.Constant)
         }
     assert migrated == {c.name for c in AgentInvocation.__table__.columns}
+
+
+def test_the_config_snapshot_migration_has_a_real_downgrade():
+    source = MIGRATION.with_name("0181_agent_invocation_config_snapshot.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'op.add_column(' in source
+    assert 'sa.Column("resolved_config_snapshot"' in source
+    assert 'op.drop_column(TABLE, "resolved_config_snapshot")' in source
 
 
 def test_the_invoked_event_is_registered():

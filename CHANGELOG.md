@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-14 - Freeze per-invocation agent config overrides (T11 / E4.2)
+
+`POST /api/v1/agents/{agent_id}/invoke` now accepts the nested, tighten-only
+`AgentConfigPatch`. Loosening attempts return 422, and the complete override is
+part of the idempotency fingerprint so one key cannot identify two effective
+requests.
+
+Each accepted invocation stores a credential- and base-URL-free snapshot of
+its resolved project and request configuration. The worker copies that snapshot
+to the durable pipeline before execution; retry, review, shared budgets, and
+the Summary and Root Cause model routers then use the frozen values while
+reapplying current offline, provider, endpoint-residency, attempt, and timeout
+ceilings. Explicit overrides also refuse reuse of a running invocation whose
+snapshot differs.
+
 ## 2026-09-14 - Pull a pinned local SLM/LLM pair (T10 / E5.5)
 
 `make dev-llm` now waits for Ollama and automatically pulls exact Qwen2.5

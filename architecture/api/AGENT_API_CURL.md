@@ -101,7 +101,12 @@ curl -s -X POST "$BASE_URL/api/v1/agents/$AGENT_ID/invoke" \
       "test_run_id": "$TEST_RUN_ID"
     }
   },
-  "mode": "async"
+  "mode": "async",
+  "config_overrides": {
+    "model": {
+      "tier": "slm"
+    }
+  }
 }
 EOF
 ```

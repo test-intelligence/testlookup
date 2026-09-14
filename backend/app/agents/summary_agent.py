@@ -586,12 +586,11 @@ class SummaryAgent(BaseAgent):
         from sqlalchemy import select  # noqa: PLC0415
 
         from app.services.agent_capability_registry import get_capability  # noqa: PLC0415
-        from app.services.agent_config_resolver import resolve_for_project  # noqa: PLC0415
+        from app.services.agent_config_resolver import resolve_for_pipeline  # noqa: PLC0415
 
         project_uuid = uuid.UUID(str(project_id))
         agent_id = get_capability(self.stage_name).capability_id
         async with AsyncSessionLocal() as db:
-            resolved = await resolve_for_project(db, project_uuid, agent_id)
             pipeline = (
                 await db.execute(
                     select(AgentPipelineRun).where(
@@ -599,6 +598,9 @@ class SummaryAgent(BaseAgent):
                     )
                 )
             ).scalar_one_or_none()
+            resolved = await resolve_for_pipeline(
+                db, pipeline, project_uuid, agent_id
+            )
             stage = (
                 await db.execute(
                     select(AgentStageResult).where(
