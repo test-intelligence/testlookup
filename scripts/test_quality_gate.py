@@ -2763,3 +2763,23 @@ def test_codacy_workflow_does_not_reference_secrets_in_step_condition() -> None:
         line.lstrip().startswith("if:") and "secrets." in line
         for line in workflow.splitlines()
     )
+
+
+def test_prompt_attestation_watched_paths_are_pinned(tmp_path: Path) -> None:
+    expected = {
+        "backend/app/services/llm_factory.py",
+        "backend/app/services/model_router.py",
+        "backend/app/services/agent_capability_registry.py",
+        "backend/app/agents/reviewer_agent.py",
+    }
+    assert set(qg._EVAL_ATTESTATION_WATCHED_PATHS) == expected
+
+    target = tmp_path / "backend" / "app" / "services" / "model_router.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("before\n", encoding="utf-8")
+    before = qg._eval_attestation_watched_sources(tmp_path)
+    target.write_text("after\n", encoding="utf-8")
+    after = qg._eval_attestation_watched_sources(tmp_path)
+    assert before["backend/app/services/model_router.py"] != after[
+        "backend/app/services/model_router.py"
+    ]

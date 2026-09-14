@@ -25,6 +25,7 @@ def test_the_tree_passes_and_names_every_unmeasured_prompt():
     assert problems == []
     # Honest: no real outputs have been recorded yet, and the gate says so.
     assert unmeasured == sorted(rec.GATED_PROMPTS)
+    assert rec.recordings_verdict(problems, unmeasured) is rec.EvalVerdict.INSUFFICIENT_SAMPLES
     assert rec.main(["--check"]) == 0
 
 
@@ -99,6 +100,8 @@ async def test_a_changed_prompt_recorded_with_good_outputs_passes(tmp_path, monk
     assert entry["provenance"]["provider"] == "fake" and entry["provenance"]["model"] == "test-model"
     assert entry["content_hash"] == new_hash
     assert entry["score"] == 1.0
+    assert list(entry["recordings"]) == [new_hash]
+    assert "fake/test-model@llm" in entry["recordings"][new_hash]
     # The model was shown the NEW prompt text, not the old one.
     assert model.seen[0][0].content.endswith("Be brief.")
     problems, unmeasured = rec.check_recordings(path)
@@ -164,6 +167,20 @@ def test_regression_scorer_gives_partial_credit():
         "output": '{"a": {"classification": "new_regression"}, "b": {"classification": "new_regression"}}',
     }
     assert rec._score_regression_classification(case) == 0.5
+
+
+def test_prose_rubric_requires_grounding_length_and_action():
+    case = {
+        "expected": {
+            "required_terms": ["checkout", "73.5%"],
+            "min_sentences": 2,
+            "max_sentences": 3,
+            "requires_action": True,
+        }
+    }
+    good = "Checkout failures reduced the pass rate to 73.5%. Investigate the API 500s next."
+    assert rec._score_prose_rubric({**case, "output": good}) == 1.0
+    assert rec._score_prose_rubric({**case, "output": "Everything looks fine."}) == 0.0
 
 
 def _answer(recommendation, blocking=(), conditions=()):
@@ -303,7 +320,7 @@ _TAMPER = {
 async def test_editing_what_the_score_depends_on_after_recording_fails_check(tmp_path, monkeypatch, edit):
     path = await _recorded(tmp_path, monkeypatch)
     monkeypatch.setattr(rec, "RECORDINGS_PATH", path)
-    assert rec.main(["--check"]) == 0  # control: the untouched recording passes
+    assert rec.check_recordings(path)[0] == []  # control: this recording is valid
 
     _rewrite(path, _TAMPER[edit])
     problems, _ = rec.check_recordings(path)

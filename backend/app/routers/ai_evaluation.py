@@ -432,7 +432,8 @@ async def run_pre_release_gate(
     """
     Run the pre-release evaluation gate for an agent.
 
-    Compares current metrics against baseline thresholds. Returns PASS/FAIL
+    Compares current metrics against baseline thresholds. Returns pass, fail,
+    or insufficient_samples
     with per-rule results. Prompt, model, or routing changes should not ship
     if the gate returns FAIL.
     """

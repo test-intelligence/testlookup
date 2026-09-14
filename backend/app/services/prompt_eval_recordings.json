@@ -1,10 +1,39 @@
 {
   "prompts": {
+    "anomaly_narrative": {
+      "cases": [
+        {
+          "case_id": "critical_checkout_anomaly",
+          "expected": {
+            "max_sentences": 3,
+            "min_sentences": 2,
+            "required_terms": [
+              "73.5%",
+              "checkout"
+            ],
+            "requires_action": true
+          },
+          "input": {
+            "descriptions": "- [CRITICAL] checkout API returned HTTP 500 for 31 tests\n- [LOW] one retry passed",
+            "pass_rate": 73.5,
+            "total_tests": 200
+          }
+        }
+      ],
+      "content_hash": "0298a3b5009f",
+      "measured": false,
+      "min_score": 1.0,
+      "notes": "Prose output is scored for grounding, length, and an actionable next step.",
+      "recordings": {},
+      "task_type": "prose_rubric"
+    },
     "fast_classifier_system": {
       "cases": [
         {
           "case_id": "clear_npe_root_cause",
-          "expected": {"category": "PRODUCT_BUG"},
+          "expected": {
+            "category": "PRODUCT_BUG"
+          },
           "input": {
             "error_message": "NullPointerException: Cannot invoke method on null",
             "stack_trace": "at PaymentService.processRefund(PaymentService.java:142)",
@@ -13,7 +42,9 @@
         },
         {
           "case_id": "latency_root_cause",
-          "expected": {"category": "INFRASTRUCTURE"},
+          "expected": {
+            "category": "INFRASTRUCTURE"
+          },
           "input": {
             "error_message": "AssertionError: Expected response time < 200ms, got 5432ms",
             "stack_trace": "at PerformanceTest.testApiLatency(PerformanceTest.java:88)",
@@ -22,7 +53,9 @@
         },
         {
           "case_id": "selector_change_root_cause",
-          "expected": {"category": "AUTOMATION_DEFECT"},
+          "expected": {
+            "category": "AUTOMATION_DEFECT"
+          },
           "input": {
             "error_message": "ElementNotFound: #login-button",
             "stack_trace": "at LoginPage.clickLogin(LoginPage.ts:25)",
@@ -31,7 +64,9 @@
         },
         {
           "case_id": "missing_fixture_root_cause",
-          "expected": {"category": "TEST_DATA"},
+          "expected": {
+            "category": "TEST_DATA"
+          },
           "input": {
             "error_message": "FileNotFoundError: /data/fixtures/users.csv",
             "stack_trace": "at DataImporter.load(DataImporter.py:12)",
@@ -40,7 +75,9 @@
         },
         {
           "case_id": "insufficient_evidence",
-          "expected": {"category": "UNKNOWN"},
+          "expected": {
+            "category": "UNKNOWN"
+          },
           "input": {
             "error_message": "AssertionError: Expected 10, got 8",
             "stack_trace": "(no trace available)",
@@ -52,13 +89,46 @@
       "measured": false,
       "min_score": 0.8,
       "notes": "Cases: golden_datasets.get_golden_root_cause_items. Unmeasured until recorded with a real model.",
+      "recordings": {},
       "task_type": "classification"
+    },
+    "investigator_synthesis_narrative": {
+      "cases": [
+        {
+          "case_id": "database_primary_cause",
+          "expected": {
+            "json_field": "narrative",
+            "max_sentences": 4,
+            "min_sentences": 2,
+            "required_terms": [
+              "infrastructure",
+              "database"
+            ],
+            "requires_action": true
+          },
+          "input": {
+            "hypotheses_json": "[{\"cause\":\"database unavailable\",\"status\":\"validated\",\"evidence\":[\"connection refused\"]}]",
+            "primary_cause": "infrastructure",
+            "run_context": "12 checkout tests failed after database failover."
+          }
+        }
+      ],
+      "content_hash": "f7d92dd09981",
+      "measured": false,
+      "min_score": 1.0,
+      "notes": "Narrative JSON is scored for contract validity, grounding, length, and actionability.",
+      "recordings": {},
+      "task_type": "prose_rubric"
     },
     "regression_watchman_classify": {
       "cases": [
         {
           "case_id": "first_time_failure",
-          "expected": {"classifications": {"cl_001": "new_regression"}},
+          "expected": {
+            "classifications": {
+              "cl_001": "new_regression"
+            }
+          },
           "input": {
             "clusters_json": "{\"cl_001\": {\"tests\": [\"test_checkout_total\", \"test_checkout_tax\"], \"error\": \"AssertionError: total 99.00 != 100.00\", \"first_failed\": \"this run\"}}",
             "history_json": "{\"cl_001\": {\"baseline_runs\": 10, \"failures_in_baseline\": 0}}"
@@ -66,7 +136,11 @@
         },
         {
           "case_id": "retry_passing_flake",
-          "expected": {"classifications": {"cl_002": "known_flaky_recurrence"}},
+          "expected": {
+            "classifications": {
+              "cl_002": "known_flaky_recurrence"
+            }
+          },
           "input": {
             "clusters_json": "{\"cl_002\": {\"tests\": [\"test_dashboard_widgets\"], \"error\": \"TimeoutError: waiting for .widget-grid\", \"first_failed\": \"2026-07-02\"}}",
             "history_json": "{\"cl_002\": {\"baseline_runs\": 20, \"failures_in_baseline\": 7, \"passed_on_retry\": 6, \"code_changed_in_area\": false}}"
@@ -74,7 +148,11 @@
         },
         {
           "case_id": "database_failover",
-          "expected": {"classifications": {"cl_003": "environmental_anomaly"}},
+          "expected": {
+            "classifications": {
+              "cl_003": "environmental_anomaly"
+            }
+          },
           "input": {
             "clusters_json": "{\"cl_003\": {\"tests\": [\"test_orders_list\", \"test_orders_create\", \"test_users_list\"], \"error\": \"ConnectionRefusedError: postgres-primary:5432\", \"first_failed\": \"this run\"}}",
             "history_json": "{\"cl_003\": {\"baseline_runs\": 15, \"failures_in_baseline\": 0, \"infra_events\": [\"postgres failover at 10:02 UTC\"]}}"
@@ -85,13 +163,17 @@
       "measured": false,
       "min_score": 0.66,
       "notes": "Unmeasured until recorded with a real model.",
+      "recordings": {},
       "task_type": "regression_classification"
     },
     "release_risk_reasoning": {
       "cases": [
         {
           "case_id": "go_without_failures",
-          "expected": {"has_failures": false, "recommendation": "GO"},
+          "expected": {
+            "has_failures": false,
+            "recommendation": "GO"
+          },
           "input": {
             "composite": 12,
             "failures": "",
@@ -102,7 +184,10 @@
         },
         {
           "case_id": "conditional_go_with_checkout_bugs",
-          "expected": {"has_failures": true, "recommendation": "CONDITIONAL_GO"},
+          "expected": {
+            "has_failures": true,
+            "recommendation": "CONDITIONAL_GO"
+          },
           "input": {
             "composite": 38,
             "failures": "test_checkout_payment_over_999: AssertionError amount rejected; test_cart_total_after_coupon: expected 42.00 got 47.00",
@@ -113,7 +198,10 @@
         },
         {
           "case_id": "no_go_auth_outage",
-          "expected": {"has_failures": true, "recommendation": "NO_GO"},
+          "expected": {
+            "has_failures": true,
+            "recommendation": "NO_GO"
+          },
           "input": {
             "composite": 72,
             "failures": "14 tests in auth-suite fail with 401 on valid credentials after the token-service change",
@@ -127,6 +215,7 @@
       "measured": false,
       "min_score": 1.0,
       "notes": "Scored against the prompt's own grounding rules. Unmeasured until recorded with a real model.",
+      "recordings": {},
       "task_type": "release_grounding"
     }
   },

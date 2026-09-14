@@ -2,7 +2,7 @@
 Evaluation Gate Service — Phase 5: Make Evaluation a Release Gate.
 
 Evaluates agent quality against baselines and configurable thresholds.
-Returns PASS/FAIL with per-rule results so that prompt, model, or routing
+Returns a shared evaluation verdict with per-rule results so that prompt, model, or routing
 changes cannot ship without passing quality gates.
 
 Gate flow:
@@ -24,17 +24,14 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import AIEvalBaseline, AIEvalDataset, AIEvalGateRun
+from app.models.postgres import AIEvalBaseline, AIEvalDataset, AIEvalGateRun, AIEvalRun
 from app.services.ai_eval_service import compute_metrics_for_task_type
+from app.services.eval_verdict import EvalVerdict
 
 logger = logging.getLogger("services.eval_gate")
 
 
-class GateStatus:
-    PASS = "PASS"
-    FAIL = "FAIL"
-    WARN = "WARN"
-    NO_BASELINE = "NO_BASELINE"
+GateStatus = EvalVerdict
 
 
 DEFAULT_AGENT_STACK_GATES: tuple[dict[str, str], ...] = (
@@ -43,7 +40,7 @@ DEFAULT_AGENT_STACK_GATES: tuple[dict[str, str], ...] = (
     {"task_type": "duplicate_detection", "agent_name": "DefectPromotionAgent"},
     {"task_type": "release_decision", "agent_name": "ReleaseRiskAgent"},
 )
-_BLOCKING_GATE_STATUSES = {GateStatus.FAIL, GateStatus.NO_BASELINE}
+_BLOCKING_GATE_STATUSES = {EvalVerdict.FAIL, EvalVerdict.INSUFFICIENT_SAMPLES}
 
 
 def _canonical_json(value: Any) -> str:
@@ -147,9 +144,11 @@ def _overall_manifest_status(gate_results: list[dict[str, Any]]) -> str:
     statuses = [result.get("status") for result in gate_results]
     if any(status in _BLOCKING_GATE_STATUSES for status in statuses):
         return GateStatus.FAIL
-    if any(status == GateStatus.WARN for status in statuses):
-        return GateStatus.WARN
-    return GateStatus.PASS
+    return EvalVerdict.PASS
+
+
+def _verdict_value(value: Any) -> str:
+    return value.value if isinstance(value, EvalVerdict) else str(value)
 
 
 async def evaluate_agent_stack_release_gate(
@@ -220,7 +219,7 @@ async def persist_agent_stack_gate_run(
     manifest = gate_result.get("manifest") or {}
     row = AIEvalGateRun(
         change_id=str(manifest.get("change_id") or ""),
-        status=str(gate_result.get("status") or GateStatus.FAIL),
+        status=_verdict_value(gate_result.get("status") or EvalVerdict.FAIL),
         manifest_checksum_sha256=str(manifest.get("manifest_checksum_sha256") or ""),
         manifest=manifest,
         gate_results=list(gate_result.get("gate_results") or []),
@@ -311,7 +310,7 @@ async def evaluate_pre_release_gate(
 
     Returns:
         {
-            "status": "PASS" | "FAIL" | "WARN" | "NO_BASELINE",
+            "status": "pass" | "fail" | "insufficient_samples",
             "task_type": str,
             "agent_name": str,
             "current_metrics": {...},
@@ -327,7 +326,7 @@ async def evaluate_pre_release_gate(
     items = await _load_dataset_items(db, task_type, dataset_id)
     if not items:
         return {
-            "status": GateStatus.FAIL,
+            "status": EvalVerdict.INSUFFICIENT_SAMPLES,
             "task_type": task_type,
             "agent_name": agent_name,
             "current_metrics": None,
@@ -344,16 +343,12 @@ async def evaluate_pre_release_gate(
 
     # 5. Determine overall status
     failures = [r for r in rule_results if not r["passed"]]
-    warnings = [r for r in rule_results if r.get("severity") == "warn"]
-
     if not baseline:
-        status = GateStatus.NO_BASELINE
+        status = EvalVerdict.INSUFFICIENT_SAMPLES
     elif failures:
         status = GateStatus.FAIL
-    elif warnings:
-        status = GateStatus.WARN
     else:
-        status = GateStatus.PASS
+        status = EvalVerdict.PASS
 
     baseline_metrics = None
     if baseline:
@@ -378,6 +373,47 @@ async def evaluate_pre_release_gate(
         "rule_results": rule_results,
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+async def persist_nightly_eval_runs(
+    db: AsyncSession,
+    *,
+    gate_results: list[dict[str, Any]],
+    model_name: str,
+) -> list[AIEvalRun]:
+    """Write one ``AIEvalRun`` per evaluated task type for drift analysis."""
+    rows: list[AIEvalRun] = []
+    for result in gate_results:
+        task_type = str(result.get("task_type") or "")
+        dataset_result = await db.execute(
+            select(AIEvalDataset).where(
+                AIEvalDataset.task_type == task_type,
+                AIEvalDataset.is_active.is_(True),
+            ).order_by(AIEvalDataset.updated_at.desc()).limit(1)
+        )
+        dataset = dataset_result.scalar_one_or_none()
+        if dataset is None:
+            continue
+        metrics = result.get("current_metrics") or {}
+        total = int(metrics.get("total") or 0)
+        correct = int(metrics.get("correct") or 0)
+        row = AIEvalRun(
+            dataset_id=dataset.id,
+            model_name=model_name,
+            task_type=task_type,
+            precision=metrics.get("precision"),
+            recall=metrics.get("recall"),
+            f1_score=metrics.get("f1_score"),
+            accuracy=metrics.get("accuracy"),
+            agreement_rate=(correct / total) if total else None,
+            total_items=total,
+            correct_items=correct,
+            fallback_used=False,
+        )
+        db.add(row)
+        rows.append(row)
+    await db.flush()
+    return rows
 
 
 async def set_baseline_from_eval(

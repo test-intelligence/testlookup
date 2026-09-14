@@ -142,7 +142,7 @@ fails if a *second* deleter appears.
 
 | Gate id | Requires | How to satisfy |
 |---|---|---|
-| `ai.prompt-manifest-sync` † | every LLM prompt matches its pinned hash in `prompt_manifest.json`, and that manifest digest carries a green eval-gate attestation | Bump the prompt version, re-run the eval gate, re-attest (see `architecture/AI_EVALUATION.md`) |
+| `ai.prompt-manifest-sync` † | every LLM prompt matches its pinned hash, and the prompt plus model-routing/reviewer watched sources carry a green eval-gate attestation | Bump the prompt version when applicable, run candidate inference, then re-attest. Changes to `llm_factory.py`, `model_router.py`, capability tier/escalation maps, or reviewer checks also require a fresh attestation (see `architecture/AI_EVALUATION.md`) |
 
 ### Homelab
 

@@ -3418,6 +3418,12 @@ _PROMPT_REGISTRY_PATH = REPO_ROOT / "backend" / "app" / "services" / "prompt_reg
 _PROMPT_MANIFEST_PATH = REPO_ROOT / "backend" / "app" / "services" / "prompt_manifest.json"
 _PROMPT_ATTESTATION_PATH = REPO_ROOT / "backend" / "app" / "services" / "prompt_manifest_eval.json"
 _MCP_PROMPT_TEMPLATES_PATH = REPO_ROOT / "mcp" / "prompts" / "templates.py"
+_EVAL_ATTESTATION_WATCHED_PATHS = (
+    "backend/app/services/llm_factory.py",
+    "backend/app/services/model_router.py",
+    "backend/app/services/agent_capability_registry.py",
+    "backend/app/agents/reviewer_agent.py",
+)
 _PROMPT_HASH_LEN = 12
 _PROMPT_ATTEST_HINT = (
     "cd backend && python -m app.services.prompt_registry --write-manifest && "
@@ -3435,6 +3441,18 @@ def _prompt_manifest_digest(prompts: dict) -> str:
     """MUST mirror app.services.prompt_registry.manifest_digest."""
     canonical = json.dumps(prompts, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _eval_attestation_watched_sources(repo_root: Optional[Path] = None) -> dict[str, str]:
+    root = repo_root or REPO_ROOT
+    return {
+        relative: (
+            hashlib.sha256((root / relative).read_bytes()).hexdigest()
+            if (root / relative).exists()
+            else "missing"
+        )
+        for relative in _EVAL_ATTESTATION_WATCHED_PATHS
+    }
 
 
 def _extract_registry_prompts(path: Path) -> tuple[dict, list[tuple[int, str]]]:
@@ -3597,11 +3615,18 @@ def _ai_prompt_manifest_sync(
             f"(attested digest {str(attestation.get('manifest_digest'))[:12]}… != "
             f"current {digest[:12]}…) — {_PROMPT_ATTEST_HINT}",
         ))
-    if attestation.get("verdict") != "PASS":
+    watched_sources = _eval_attestation_watched_sources()
+    if attestation.get("watched_sources") != watched_sources:
+        violations.append(Violation(
+            attestation_path, 0,
+            "model routing or reviewer sources changed WITHOUT a fresh eval-gate "
+            f"attestation — {_PROMPT_ATTEST_HINT}",
+        ))
+    if attestation.get("verdict") != "pass":
         violations.append(Violation(
             attestation_path, 0,
             f"attested eval-gate verdict is {attestation.get('verdict')!r}, not "
-            "PASS — the prompt change did not clear the eval gate; fix the "
+            "pass — the prompt change did not clear the eval gate; fix the "
             "regression (or re-baseline deliberately) and re-attest",
         ))
     return violations
@@ -5224,8 +5249,8 @@ GUARDS: list[Guard] = [
         name="ai.prompt-manifest-sync",
         description=(
             "Every LLM prompt (registry + MCP templates) matches its pinned "
-            "hash in prompt_manifest.json, and the manifest digest carries a "
-            "green eval-gate attestation (prompt_manifest_eval.json)."
+            "hash in prompt_manifest.json, and prompts plus model-routing and "
+            "reviewer sources carry a green eval-gate attestation."
         ),
         check=_ai_prompt_manifest_sync,
         fix_hint=(

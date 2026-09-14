@@ -28,7 +28,7 @@ flowchart TB
 
     subgraph Gate["Pre-release gate"]
         GATEMAN["eval_gate_service.build_agent_stack_gate_manifest<br/>checksummed manifest of models/prompts/datasets"]
-        GATEEVAL["evaluate_pre_release_gate<br/>current metrics vs baseline thresholds → PASS/FAIL"]
+        GATEEVAL["evaluate_pre_release_gate<br/>current metrics vs baseline thresholds → shared verdict"]
     end
 
     subgraph Registry["Model registry"]
@@ -63,7 +63,8 @@ Two sources of labeled truth:
 
 `ai_eval_service` (OPS-02) runs the agents over a dataset via
 `agent_eval_harness`, computes metrics, and persists an **`AIEvalRun`** per
-evaluation. `detect_quality_drift` compares recent runs to prior windows and
+evaluation. The 04:00 UTC scheduled gate also writes one run per evaluated
+task type alongside its aggregate gate run. `detect_quality_drift` compares recent runs to prior windows and
 reports the direction — so a slow degradation (a model drifting, a data-shape
 shift) is caught as a trend, not only at a release boundary. Results surface on
 the **AI Evaluation Dashboard** (`/settings/ai-eval`).
@@ -77,8 +78,9 @@ This is the enforcement point, and it mirrors the shape of the product
   (`_manifest_checksum`) of the AI stack under test: models, prompt versions,
   datasets. The checksum makes "what exactly did we evaluate" tamper-evident.
 - `evaluate_agent_stack_release_gate` / `evaluate_pre_release_gate` — compares
-  current metrics against baseline thresholds and returns **PASS/FAIL with
-  per-rule results**; `_overall_manifest_status` folds the per-gate results.
+  current metrics against baseline thresholds and returns `pass`, `fail`, or
+  `insufficient_samples` with per-rule results; `_overall_manifest_status`
+  folds the per-gate results. Non-blocking warnings remain details on `pass`.
 - `persist_agent_stack_gate_run` — the run is stored, so the decision to ship
   (or not) an AI change is auditable.
 - The `POST /api/v1/ai-evaluation/pre-release-gate` endpoint is **admin-only**,
@@ -106,8 +108,10 @@ the two source files, never importing them). It fails when:
 1. any prompt's text hash ≠ its manifest pin (forcing a deliberate version
    bump + manifest rewrite), or a manifest entry is stale/missing;
 2. the manifest digest changed **without a fresh attestation**, or the
-   attested verdict is not `PASS` — i.e. *a prompt edit cannot ship without
+   attested verdict is not `pass` — i.e. *a prompt edit cannot ship without
    an eval-gate run*.
+3. model construction, routing, capability tier/escalation maps, or reviewer
+   checks differ from the source hashes recorded in the attestation.
 
 Workflow for changing a prompt:
 
@@ -125,8 +129,9 @@ python -m app.services.prompt_registry --check                # what CI will ass
 Offline attestation notes: it applies `eval_gate_service._evaluate_rules`
 with no baseline (default thresholds) over the golden datasets and records
 `"mode": "offline_golden"` so reviewers can tell it apart from a
-baseline-compared gate run; the `duplicate_detection` gate is recorded as
-*informational* there (its offline scorer is a prompt-independent lexical
+baseline-compared gate run. Without current recorded candidate outputs the
+offline verdict is `insufficient_samples`, never `pass`. The `duplicate_detection` gate is also
+`insufficient_samples` there (its offline scorer is a prompt-independent lexical
 heuristic — a prompt change cannot regress it). MCP templates are hash-pinned
 but their eval story is thinner: they steer an external assistant's tool
 calls rather than a scored model output, so the attestation covers them as
@@ -136,8 +141,10 @@ hash-pinned + reviewed, not metric-gated.
 M16).** The offline attestation scores golden items whose correctness is
 written in the dataset, so it passes whatever the prompt text says: it proves
 a version moved, not that outputs stayed good. For prompts whose output is a
-checkable decision, `prompt_eval_recordings.json` holds golden cases, the raw
-model outputs recorded for them, and the prompt hash those outputs were
+checkable decision or narrative, `prompt_eval_recordings.json` holds golden cases, the raw
+model outputs recorded for them, and indexes recordings by prompt hash then
+`provider/model@tier`. Narrative cases add explicit grounding, length, and
+actionability rubrics. The prompt hash identifies the prompt those outputs were
 produced under; `app/services/prompt_eval_recordings.py` scores them
 (`fast_classifier_system`: category matches; `regression_watchman_classify`:
 per-cluster classification matches; `release_risk_reasoning`: the prompt's own
@@ -150,16 +157,17 @@ test job (`tests/test_prompt_eval_recordings.py`) and as
 ```bash
 # after editing a gated prompt (on a machine with the model):
 cd backend
-python -m app.services.prompt_eval_recordings --record fast_classifier_system [--model qwen2.5:7b]
+python -m app.services.prompt_eval_recordings --record fast_classifier_system [--model qwen2.5:7b] [--tier slm]
 python -m app.services.prompt_eval_recordings --check
 # commit the prompt edit + prompt_eval_recordings.json with the manifest + attestation
 ```
 
-When this landed no outputs had been recorded (no model was available), so all
-three gated prompts are **unmeasured**: `--check` lists them by name and never
+No model is available in CI, so the five current gated prompts are
+`insufficient_samples`: `--check` lists them by name and never
 counts them as passing. An unmeasured entry is accepted only at the exact hash
 frozen in `GRANDFATHERED_UNMEASURED`, so the first edit to any of them fails
-the gate until real outputs are recorded and scored.
+the gate until real outputs are recorded and scored. The grandfather keeps an
+unchanged branch green; it cannot produce a passing attestation.
 
 Runtime provenance: the registry's version tags (`v<version>:<hash12>`) are
 stamped into the pipeline version snapshot
