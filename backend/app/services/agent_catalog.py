@@ -13,11 +13,9 @@ The registry's input contracts are shared by several capabilities, so one union
 discriminated on a field inside them would not be injective. One wrapper per
 capability, chosen by the path's ``agent_id``, avoids that (section 3.3).
 
-Many registry schema names are still labels with no model behind them. Those
-entries say so (``input_schema_resolved: false``); their wrapper accepts only a
-``SubjectRef``, and they publish no output JSON Schema. The
-``agents.catalog-schema-complete`` quality-gate ratchet keeps that list from
-growing.
+Every registry input name resolves to a concrete, closed Pydantic model. The
+wrapper still accepts ``SubjectRef`` so the invoke route can preserve its
+stored-subject authorization boundary.
 """
 from __future__ import annotations
 
@@ -43,6 +41,7 @@ from app.services.agent_capability_registry import (
 #: anywhere else does not count as resolved.
 CATALOG_SCHEMA_MODULES = (
     "app.models.agent_contracts",
+    "app.models.agent_input_contracts",
     "app.models.agentic_runtime",
     "app.models.evidence_contracts",
     "app.services.decision_report_service",

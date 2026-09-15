@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-15 - Publish concrete agent catalog inputs (T21)
+
+All 30 registered capabilities now publish a concrete, closed Pydantic input
+schema. Nine new versioned contracts replace the 13 label-only catalog entries
+for ingestion, cluster orchestration, summaries, release risk, decision
+evidence, and Investigator planning; shared contracts cover the five hypothesis
+agents. The catalog completeness baseline is now empty.
+
+The invoke route continues to accept only a stored `SubjectRef`; the new schemas
+document catalog contracts without bypassing stored-subject authorization. A
+nine-mutation harness proves that removing any new named contract makes the
+catalog completeness guard fail.
+
 ## 2026-09-15 - Show accepted-review time on pipeline cards (T20)
 
 Pipeline list and detail responses now include an additive, identity-free review

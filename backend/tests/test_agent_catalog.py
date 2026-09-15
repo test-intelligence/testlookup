@@ -6,6 +6,7 @@ report flags come from the registry's own declarations, every capability gets a
 generated input wrapper whose JSON Schema renders, and the routes answer 422 for
 a malformed id and 404 for an unknown one.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -61,13 +62,17 @@ def test_sync_eligibility_is_the_explicit_registry_flag_and_only_cheap_agents_ha
     for entry in entries:
         if entry.sync_eligible:
             assert entry.expected_latency_ms <= 5_000, entry.agent_id
-    assert SYNC_ELIGIBLE <= set(CAPABILITY_REGISTRY), "a sync-eligible name no capability has"
+    assert SYNC_ELIGIBLE <= set(CAPABILITY_REGISTRY), (
+        "a sync-eligible name no capability has"
+    )
 
 
 def test_report_producers_are_flagged_by_output_contract():
     entries = agent_catalog.list_catalog()
     assert {e.stage_name for e in entries if e.produces_report} == {
-        name for name, spec in CAPABILITY_REGISTRY.items() if spec.output_schema in REPORT_OUTPUT_SCHEMAS
+        name
+        for name, spec in CAPABILITY_REGISTRY.items()
+        if spec.output_schema in REPORT_OUTPUT_SCHEMAS
     }
 
 
@@ -87,20 +92,50 @@ def test_a_resolved_input_accepts_its_model_or_a_subject_ref_and_nothing_else():
     assert entry.input_schema == "RunEvidenceBundleV1" and entry.input_schema_resolved
 
     subject = {"test_run_id": str(uuid.uuid4())}
-    wrapper.model_validate({"agent_id": "agent.anomaly_detection.v1", "payload": subject})
+    wrapper.model_validate(
+        {"agent_id": "agent.anomaly_detection.v1", "payload": subject}
+    )
     with pytest.raises(ValidationError):
         wrapper.model_validate({"agent_id": "agent.summary.v1", "payload": subject})
     with pytest.raises(ValidationError):
-        wrapper.model_validate({"agent_id": "agent.anomaly_detection.v1", "payload": subject, "extra": 1})
+        wrapper.model_validate(
+            {"agent_id": "agent.anomaly_detection.v1", "payload": subject, "extra": 1}
+        )
 
 
-def test_an_unresolved_input_accepts_only_a_subject_ref():
+def test_every_catalog_input_schema_resolves_to_a_concrete_model():
+    assert [
+        entry.agent_id
+        for entry in agent_catalog.list_catalog()
+        if not entry.input_schema_resolved
+    ] == []
+
+
+def test_ingestion_accepts_a_concrete_test_run_or_a_subject_ref():
     entry = agent_catalog.get_catalog_detail("agent.ingestion.v1")
-    assert entry.input_schema == "TestRun" and entry.input_schema_resolved is False
+    assert entry.input_schema == "TestRun" and entry.input_schema_resolved
     wrapper = agent_catalog.input_wrapper("agent.ingestion.v1")
-    wrapper.model_validate({"agent_id": "agent.ingestion.v1", "payload": {"test_run_id": str(uuid.uuid4())}})
+    wrapper.model_validate(
+        {
+            "agent_id": "agent.ingestion.v1",
+            "payload": {
+                "id": str(uuid.uuid4()),
+                "project_id": str(uuid.uuid4()),
+                "build_number": "build-42",
+                "status": "completed",
+            },
+        }
+    )
+    wrapper.model_validate(
+        {
+            "agent_id": "agent.ingestion.v1",
+            "payload": {"test_run_id": str(uuid.uuid4())},
+        }
+    )
     with pytest.raises(ValidationError):
-        wrapper.model_validate({"agent_id": "agent.ingestion.v1", "payload": {"anything": 1}})
+        wrapper.model_validate(
+            {"agent_id": "agent.ingestion.v1", "payload": {"anything": 1}}
+        )
 
 
 def test_a_list_input_wraps_a_list_of_its_model():
@@ -145,4 +180,6 @@ def test_both_catalog_routes_require_an_authenticated_user():
 
     for handler in (list_agent_catalog, get_agent_catalog_entry):
         default = inspect.signature(handler).parameters["_"].default
-        assert getattr(default, "dependency", None) is get_current_active_user, handler.__name__
+        assert getattr(default, "dependency", None) is get_current_active_user, (
+            handler.__name__
+        )
