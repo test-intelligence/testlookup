@@ -11,6 +11,7 @@ from app.core.deps import get_db, require_project_access, require_project_role
 from app.models.postgres import User, UserRole, WorkflowDefinition
 from app.services import workflow_definition_service as svc
 from app.services import workflow_evaluation_service as eval_svc
+from app.services import agent_config_service as config_svc
 from app.services.activity.service import ActorRef, record as record_activity
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/workflows", tags=["Workflows"])
@@ -36,6 +37,34 @@ def _mutable(workflow_id: str) -> None:
 
 def _conflict(exc: svc.WorkflowConflict) -> HTTPException:
     return HTTPException(status_code=409, detail=str(exc))
+
+
+async def _semantic_result(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    item: WorkflowDefinition | dict[str, Any],
+) -> dict[str, Any]:
+    body = svc.body_from_item(item)
+    rows = await config_svc.list_config_rows(db, project_id)
+    configs = {
+        step.agent_id: config_svc.serialize(step.agent_id, rows.get(step.agent_id))["config"]
+        for step in body.steps
+        if step.agent_id in config_svc.configurable_agents()
+    }
+    return svc.validation_result(item, agent_configs=configs)
+
+
+async def _require_semantic_validity(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    item: WorkflowDefinition | dict[str, Any],
+) -> None:
+    result = await _semantic_result(db, project_id, item)
+    if not result["valid"]:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "Workflow definition failed semantic validation", "errors": result["errors"]},
+        )
 
 
 async def _activity(
@@ -152,7 +181,7 @@ async def validate_workflow(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
 ) -> dict[str, Any]:
-    return svc.validation_result(await _get(db, project_id, workflow_id, version))
+    return await _semantic_result(db, project_id, await _get(db, project_id, workflow_id, version))
 
 
 @router.post("/{workflow_id}/evaluate")
@@ -167,6 +196,7 @@ async def evaluate_workflow(
     _mutable(workflow_id)
     row = await _get(db, project_id, workflow_id, body.version)
     assert isinstance(row, WorkflowDefinition)
+    await _require_semantic_validity(db, project_id, row)
     try:
         result = await eval_svc.evaluate_definition(
             db,
@@ -206,6 +236,7 @@ async def publish_workflow(
     _mutable(workflow_id)
     row = await _get(db, project_id, workflow_id)
     assert isinstance(row, WorkflowDefinition)
+    await _require_semantic_validity(db, project_id, row)
     if row.status != "published" and row.eval_verdict is None:
         result = await eval_svc.evaluate_definition(
             db,

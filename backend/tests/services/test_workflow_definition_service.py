@@ -72,7 +72,7 @@ def test_workflow_schema_is_strict_and_rejects_duplicate_steps() -> None:
         svc.WorkflowBodyV1.model_validate(document)
 
 
-def test_builtins_are_read_only_structural_templates() -> None:
+def test_builtins_are_read_only_semantically_valid_templates() -> None:
     assert svc.BUILTIN_WORKFLOW_IDS == {"offline", "deep", "live"}
     item = svc.builtin("offline")
     assert item["read_only"] is True
@@ -82,8 +82,8 @@ def test_builtins_are_read_only_structural_templates() -> None:
         "workflow_id": "offline",
         "version": 1,
         "errors": [],
-        "validation_scope": "structural",
-        "compiler_validation": "pending_e3_2",
+        "validation_scope": "semantic",
+        "compiler_validation": "passed",
     }
 
 

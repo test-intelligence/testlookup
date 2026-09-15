@@ -1,7 +1,7 @@
-"""Storage and structural contracts for versioned workflow definitions (E3.1).
+"""Storage and wire contracts for versioned workflow definitions.
 
-Semantic compilation belongs to E3.2. This module deliberately validates the
-stored wire shape only and labels that boundary in validation responses.
+E3.1 owns persistence and structural parsing. E3.2 delegates semantic
+validation to ``agents.workflow_compiler`` before evaluation or publication.
 """
 from __future__ import annotations
 
@@ -130,18 +130,76 @@ def is_builtin(workflow_id: str) -> bool:
     return workflow_id in BUILTIN_WORKFLOW_IDS
 
 
-def _linear_definition(name: str) -> dict[str, Any]:
+def _step(stage: str) -> dict[str, Any]:
+    return {"id": stage, "agent_id": f"agent.{stage}.v1", "tools": [], "reviews": []}
+
+
+def _builtin_edges(name: str) -> list[dict[str, Any]]:
+    failed: dict[str, Any] = {"field": "failed_test_ids", "op": "count_gt", "value": 0}
+    triageable: dict[str, Any] = {
+        "field": "triageable_analysis_count", "op": "gt", "value": 0,
+    }
+    otherwise: dict[str, Any] = {"op": "else"}
+    if name == "live":
+        return [
+            {"from": "ingestion", "to": "summary"},
+            {"from": "summary", "to": "__end__"},
+        ]
+    shared: list[dict[str, Any]] = [
+        {"from": "ingestion", "to": "root_cause_analysis"},
+        {"from": "ingestion", "to": "anomaly_detection", "when": failed},
+        {"from": "ingestion", "to": "root_cause_analysis", "when": otherwise},
+        {"from": "anomaly_detection", "to": "summary"},
+        {"from": "root_cause_analysis", "to": "summary"},
+        {"from": "summary", "to": "triage", "when": triageable},
+    ]
+    if name == "offline":
+        return [
+            *shared,
+            {"from": "summary", "to": "__end__", "when": otherwise},
+            {"from": "triage", "to": "__end__"},
+        ]
+    specialists = [
+        "contract_validation",
+        "log_intelligence",
+        "regression_watchman",
+        "change_ownership",
+        "defect_commander",
+    ]
+    specialist_edges: list[dict[str, Any]] = [
+        edge
+        for stage in specialists
+        for edge in (
+            {"from": "cluster_investigation_join", "to": stage},
+            {"from": stage, "to": "gap_detection"},
+        )
+    ]
+    return [
+        *shared,
+        {"from": "summary", "to": "failure_clustering", "when": otherwise},
+        {"from": "triage", "to": "failure_clustering"},
+        {"from": "failure_clustering", "to": "cluster_investigation_dispatch"},
+        {"from": "cluster_investigation_dispatch", "to": "cluster_investigation_join"},
+        *specialist_edges,
+        {"from": "gap_detection", "to": "report_refinement"},
+        {"from": "report_refinement", "to": "flaky_sentinel"},
+        {"from": "flaky_sentinel", "to": "test_health"},
+        {"from": "test_health", "to": "release_risk"},
+        {"from": "release_risk", "to": "decision_report"},
+        {"from": "decision_report", "to": "decision_report_critic"},
+        {"from": "decision_report_critic", "to": "__end__"},
+    ]
+
+
+def _builtin_definition(name: str) -> dict[str, Any]:
     stages = BUILTIN_STAGE_NAMES[name]
     return {
         "workflow_id": name,
         "version": 1,
         "project_id": None,
         "base": name,
-        "steps": [
-            {"id": stage, "agent_id": f"agent.{stage}.v1", "tools": [], "reviews": []}
-            for stage in stages
-        ],
-        "edges": [{"from": stages[index], "to": stages[index + 1]} for index in range(len(stages) - 1)],
+        "steps": [_step(stage) for stage in stages],
+        "edges": _builtin_edges(name),
         "loops": [],
         "retry_policy": {"max_attempts": 5, "base_seconds": 30, "cap_seconds": 600},
         "review_policy": "human_required",
@@ -160,7 +218,7 @@ def builtin(workflow_id: str) -> dict[str, Any]:
         "name": f"{workflow_id.title()} workflow",
         "description": "Built-in TestLookup workflow template.",
         "base": workflow_id,
-        "definition": _linear_definition(workflow_id),
+        "definition": _builtin_definition(workflow_id),
         "status": "published",
         "published_at": None,
         "eval_verdict": None,
@@ -340,29 +398,41 @@ async def fork_definition(
     return await create_definition(db, project_id, create, actor_id=actor_id)
 
 
-def validation_result(item: WorkflowDefinition | dict[str, Any]) -> dict[str, Any]:
+def body_from_item(item: WorkflowDefinition | dict[str, Any]) -> WorkflowBodyV1:
     payload = item if isinstance(item, dict) else serialize(item)
     definition = payload["definition"]
     # Re-parse stored JSON so corruption is reported rather than compiled.
-    body = WorkflowBodyV1.model_validate({
+    return WorkflowBodyV1.model_validate({
         **{key: value for key, value in definition.items() if key not in {"version", "project_id"}},
         "name": payload["name"],
         "description": payload["description"],
     })
+
+
+def validation_result(
+    item: WorkflowDefinition | dict[str, Any],
+    *,
+    agent_configs: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    payload = item if isinstance(item, dict) else serialize(item)
+    body = body_from_item(item)
+    from app.agents.workflow_compiler import validate_workflow  # noqa: PLC0415
+
+    result = validate_workflow(body, agent_configs=agent_configs)
     return {
-        "valid": True,
+        "valid": result.valid,
         "workflow_id": body.workflow_id,
         "version": payload["version"],
-        "errors": [],
-        "validation_scope": "structural",
-        "compiler_validation": "pending_e3_2",
+        "errors": list(result.errors),
+        "validation_scope": "semantic",
+        "compiler_validation": "passed" if result.valid else "failed",
     }
 
 
 __all__ = [
     "BUILTIN_WORKFLOW_IDS", "WorkflowBodyV1", "WorkflowConflict",
     "WorkflowEvaluateV1", "WorkflowForkV1", "WorkflowNotFound", "WorkflowPublishV1",
-    "create_definition",
+    "body_from_item", "create_definition",
     "delete_definition", "fork_definition", "get_definition", "is_builtin",
     "list_definitions", "publish_definition", "serialize", "update_definition",
     "validation_result",

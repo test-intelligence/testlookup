@@ -774,6 +774,43 @@ def _route_after_summary_deep(state: WorkflowState) -> str:
 
 # ── Graph construction ────────────────────────────────────────────────────────
 
+def workflow_node_executors() -> dict[str, Any]:
+    """Return the production executors available to ``WorkflowCompiler``.
+
+    The compiler keys by the public capability id while checkpoint rows retain
+    the canonical registry stage name.  E3.3 will bind selected published
+    definitions to pipeline runs; E3.2 keeps the existing hand-built graphs as
+    the live runtime and diff-tests them against these executors.
+    """
+
+    nodes = {
+        "ingestion": ingestion_node,
+        "anomaly_detection": anomaly_node,
+        "failure_clustering": cluster_node,
+        "cluster_investigation_dispatch": cluster_investigation_dispatch_node,
+        "cluster_investigation_join": cluster_investigation_join_node,
+        "root_cause_analysis": analysis_node,
+        "summary": summary_node,
+        "triage": triage_node,
+        "contract_validation": contract_validation_node,
+        "log_intelligence": log_intelligence_node,
+        "regression_watchman": regression_watchman_node,
+        "change_ownership": change_ownership_node,
+        "defect_commander": defect_commander_node,
+        "gap_detection": gap_detection_node,
+        "report_refinement": report_refinement_node,
+        "flaky_sentinel": flaky_sentinel_node,
+        "test_health": test_health_node,
+        "release_risk": release_risk_node,
+        "decision_report": decision_report_node,
+        "decision_report_critic": decision_report_critic_node,
+    }
+    return {
+        f"agent.{stage}.v1": _make_checkpointed_node(node, stage)
+        for stage, node in nodes.items()
+    }
+
+
 def _build_offline_graph() -> StateGraph:
     """
     Full offline pipeline with parallel anomaly + analysis fan-out.

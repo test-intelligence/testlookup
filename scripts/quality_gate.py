@@ -2716,6 +2716,9 @@ _SUPPORT_AGENT_FILES = {
     # helper; it is a pure-local scoring utility with no agent class and no
     # observability contract.
     "evidence.py",
+    # workflow_compiler.py contains immutable validation result types and the
+    # deterministic graph compiler. It does not execute a pipeline stage.
+    "workflow_compiler.py",
     # Fixer (AI-2) support modules — NOT LangGraph pipeline agents. runners.py
     # holds the sandbox ValidationRunner executors (subprocess/HTTP), pipeline.py
     # holds pure stage helpers (candidate selection, glob rejection, PR opener,

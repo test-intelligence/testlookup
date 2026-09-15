@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-15 - Compile and validate versioned workflows (T17 / E3.2)
+
+Added the semantic `WorkflowCompiler` for stored workflow definitions. It
+validates registered capabilities, dependency closure, explicit bounded loops,
+project mode and tool policy, reviewer targets, and a typed JSON condition AST
+with depth, leaf, list, enum, field, and config-reference limits. Invalid
+definitions are now refused before replay evaluation or publication.
+
+The compiler emits LangGraph `StateGraph` instances, and the three built-in
+definitions now describe their real branch, fan-out, fan-in, and terminal
+topologies. Diff tests hold those definitions equal to the live hand-built
+graphs until E3.3 binds versioned definitions to runs. Seeded fuzz checks cover
+valid and hostile condition trees, while eleven asserted mutations cover policy,
+cycle, dependency, condition-limit, loop-bound, publish-gate, and built-in
+topology failures.
+
 ## 2026-09-15 - Record pipeline trigger users and enforce act-mode review separation (T3)
 
 Agent pipeline runs now retain the authenticated user who created their durable

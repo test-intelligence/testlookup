@@ -164,6 +164,7 @@ class WorkflowState(TypedDict):
     _cost_budget_mode_override: Optional[str]
     _cost_budget_block: bool
     _workflow_route_decisions: list[dict]  # sync router decisions persisted in pipeline metadata
+    _workflow_loop_iterations: dict[str, int]  # bounded custom-workflow loop counters
     _checkpoint_stages: list[str]  # stage outputs restored from a previous authorized checkpoint
     _checkpoint_replay_metadata: dict[str, dict]  # replay hashes/version breadcrumbs for restored stages
     workflow_plan: dict  # deterministic planner output for expected stage path
