@@ -37,6 +37,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
 
+from app.core.metrics import agent_retry_attempts_total, agent_run_transitions_total
 from app.models.enums import PipelineRunStatus
 
 __all__ = [
@@ -172,6 +173,32 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _record_transition(
+    source: PipelineRunStatus,
+    target: PipelineRunStatus,
+    *,
+    run: Any = None,
+    error: Optional[str] = None,
+) -> None:
+    """Record a successful state edge without making telemetry a state writer."""
+    if source is target:
+        return
+    try:
+        agent_run_transitions_total.labels(**{"from": source.value, "to": target.value}).inc()
+        if target is _S.RETRY_WAIT:
+            reason = (
+                "lease_expired"
+                if str(error or "").startswith("Worker stopped heartbeating")
+                else "execution_failure"
+            )
+            agent_retry_attempts_total.labels(
+                agent=str(getattr(run, "workflow_type", None) or "unknown"),
+                reason=reason,
+            ).inc()
+    except Exception:  # noqa: BLE001 -- metrics cannot invalidate a legal transition
+        return
+
+
 def apply_transition(
     run: Any,
     to: PipelineRunStatus | str,
@@ -214,6 +241,7 @@ def apply_transition(
         run.error = error[:2000]
     if degraded and target is _S.COMPLETED:
         run.execution_metadata = mark_degraded(getattr(run, "execution_metadata", None))
+    _record_transition(current, target, run=run, error=error)
     return target
 
 
@@ -273,6 +301,7 @@ async def guarded_transition(
         raise TransitionLost(
             f"agent_pipeline_runs {run_id}: expected {expected_s.value}, another writer moved it"
         )
+    _record_transition(expected_s, target, error=error)
     return target
 
 

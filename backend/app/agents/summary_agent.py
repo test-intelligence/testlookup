@@ -26,6 +26,7 @@ from app.agents.consistency import (
     log_consistency_failures,
 )
 from app.core.config import settings
+from app.core.metrics import model_escalations_total
 from app.db.mongo import Collections, get_mongo_db
 from app.db.postgres import AsyncSessionLocal
 from app.models.agent_contracts import SummaryAgentOutput, validate_agent_contract
@@ -784,6 +785,11 @@ class SummaryAgent(BaseAgent):
                 decision.reason,
                 routing_provenance=fallback_provenance,
             )
+
+        model_escalations_total.labels(
+            agent=self.stage_name,
+            **{"from": choice.tier, "to": decision.choice.tier},
+        ).inc()
 
         await self.log_decision(
             pipeline_run_id,

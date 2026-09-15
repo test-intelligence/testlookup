@@ -15,6 +15,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Iterator, Mapping
 
+from app.core.metrics import agent_invocations_total
 from app.core.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,14 @@ def trace_agent_step(stage_name: str, state: Mapping[str, Any]) -> Iterator[None
         observation.outcome = "error"
         raise
     finally:
+        try:
+            agent_invocations_total.labels(
+                agent=capability_id,
+                tier=observation.tier,
+                status=observation.outcome,
+            ).inc()
+        except Exception:  # noqa: BLE001 -- telemetry must never break a workflow
+            logger.debug("agent_step_invocation_metric_failed", exc_info=True)
         _set_attribute(span, "gen_ai.request.model", observation.model)
         _set_attribute(span, "gen_ai.usage.input_tokens", observation.input_tokens)
         _set_attribute(span, "gen_ai.usage.output_tokens", observation.output_tokens)

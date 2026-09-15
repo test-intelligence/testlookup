@@ -25,6 +25,7 @@ from typing import Any, cast
 import structlog
 
 from app.core.config import settings
+from app.core.metrics import model_escalations_total
 from app.services.agent_config_resolver import ResolvedAgentConfig
 from app.services.model_router import (
     ModelChoice,
@@ -233,6 +234,11 @@ async def classify_root_cause_tiered(
         )
         fallback["_classifier_outcome"] = classification["_classifier_outcome"]
         return fallback
+
+    model_escalations_total.labels(
+        agent=stage,
+        **{"from": choice.tier, "to": decision.choice.tier},
+    ).inc()
 
     before_llm_tokens = _observed_model_tokens()
     explanation = await run_triage_agent(

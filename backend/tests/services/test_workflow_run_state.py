@@ -97,6 +97,48 @@ def test_degraded_completion_stamps_stage_quality():
     assert run.execution_metadata == {"tools_used": ["a"], "stage_quality": "degraded"}
 
 
+def test_successful_edge_and_retry_reason_are_emitted_once():
+    from app.core.metrics import agent_retry_attempts_total, agent_run_transitions_total
+
+    transition = agent_run_transitions_total.labels(**{"from": "failed", "to": "retry_wait"})
+    retry = agent_retry_attempts_total.labels(agent="offline", reason="execution_failure")
+    before_transition = transition._value.get()
+    before_retry = retry._value.get()
+    run = _run("failed", workflow_type="offline")
+
+    wrs.apply_transition(run, S.RETRY_WAIT, error="RuntimeError: failed")
+
+    assert transition._value.get() == before_transition + 1
+    assert retry._value.get() == before_retry + 1
+
+
+def test_same_state_call_emits_neither_transition_nor_retry():
+    from app.core.metrics import agent_retry_attempts_total, agent_run_transitions_total
+
+    transition = agent_run_transitions_total.labels(**{"from": "retry_wait", "to": "retry_wait"})
+    retry = agent_retry_attempts_total.labels(agent="offline", reason="execution_failure")
+    before = (transition._value.get(), retry._value.get())
+
+    wrs.apply_transition(_run("retry_wait", workflow_type="offline"), S.RETRY_WAIT)
+
+    assert (transition._value.get(), retry._value.get()) == before
+
+
+def test_reaper_retry_uses_the_bounded_lease_reason():
+    from app.core.metrics import agent_retry_attempts_total
+
+    metric = agent_retry_attempts_total.labels(agent="deep", reason="lease_expired")
+    before = metric._value.get()
+
+    wrs.apply_transition(
+        _run("running", workflow_type="deep"),
+        S.RETRY_WAIT,
+        error="Worker stopped heartbeating (lease lapsed)",
+    )
+
+    assert metric._value.get() == before + 1
+
+
 # ── legacy vocabulary: readable, never writable ──────────────────────────────
 
 
@@ -190,6 +232,10 @@ async def test_guarded_transition_rejects_illegal_edge_before_touching_db():
 
 @pytest.mark.asyncio
 async def test_guarded_transition_adds_fencing_predicate():
+    from app.core.metrics import agent_run_transitions_total
+
+    metric = agent_run_transitions_total.labels(**{"from": "running", "to": "failed"})
+    before = metric._value.get()
     class _Result:
         def first(self):
             return ("failed",)
@@ -205,5 +251,6 @@ async def test_guarded_transition_adds_fencing_predicate():
         fencing_token="tok-1", error="lease",
     )
     assert out is S.FAILED
+    assert metric._value.get() == before + 1
     compiled = str(db.stmt.compile(compile_kwargs={"literal_binds": True}))
     assert "fencing_token = 'tok-1'" in compiled
