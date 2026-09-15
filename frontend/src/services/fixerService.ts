@@ -7,6 +7,8 @@ import type {
 import type { AgentConfigDocument, AgentConfigView } from '@/types/agentConfig'
 import { getData, postData, putData } from './http'
 
+const FIXER_AGENT_ID = 'fixer'
+
 /**
  * Fixer agent (AI-2). The pinned FixerConfig is projected from AgentConfig;
  * its former route remains a read-only server alias for one release.
@@ -16,7 +18,9 @@ import { getData, postData, putData } from './http'
  */
 export const fixerService = {
   getConfig: async (projectId: string): Promise<FixerConfig> => {
-    const view = await getData<AgentConfigView>(`/api/v1/projects/${projectId}/agent-configs/fixer`)
+    const view = await getData<AgentConfigView>(
+      `/api/v1/projects/${projectId}/agent-configs/${FIXER_AGENT_ID}`,
+    )
     const extension = view.config.extensions?.fixer
     if (!extension) throw new Error('Fixer AgentConfig extension is missing')
     return {
@@ -27,7 +31,7 @@ export const fixerService = {
   },
 
   updateConfig: async (projectId: string, update: FixerConfig): Promise<FixerConfig> => {
-    const path = `/api/v1/projects/${projectId}/agent-configs/fixer`
+    const path = `/api/v1/projects/${projectId}/agent-configs/${FIXER_AGENT_ID}`
     const view = await getData<AgentConfigView>(path)
     const config: AgentConfigDocument = {
       ...view.config,

@@ -7,6 +7,8 @@ import type {
 import type { AgentConfigDocument, AgentConfigListResponse, AgentConfigView } from '@/types/agentConfig'
 import { getData, putData } from './http'
 
+const INVESTIGATOR_AGENT_ID = 'investigator'
+
 /**
  * Agent governance (AI-3). AgentConfig is the writable source; the pinned
  * AgentPolicy shape is projected here while the server keeps a read-only alias.
@@ -14,13 +16,13 @@ import { getData, putData } from './http'
 export const agentGovernanceService = {
   listPolicies: async (projectId: string): Promise<AgentPolicyListResponse> => {
     const view = await getData<AgentConfigView>(
-      `/api/v1/projects/${projectId}/agent-configs/investigator`,
+      `/api/v1/projects/${projectId}/agent-configs/${INVESTIGATOR_AGENT_ID}`,
     )
     const extension = view.config.extensions?.investigator
     if (!extension) throw new Error('Investigator AgentConfig extension is missing')
     return {
       policies: [{
-        agent_id: 'investigator',
+        agent_id: INVESTIGATOR_AGENT_ID,
         enabled: view.config.enabled,
         mode: view.config.mode,
         budgets: extension.budgets,
