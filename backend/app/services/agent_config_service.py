@@ -29,7 +29,15 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.postgres import AGENT_CONFIG_MODES, AgentConfig
+from app.models.postgres import AGENT_CONFIG_MODES, AgentConfig, Project
+from app.agents.fixer.state import (
+    DEFAULT_FIXER_BUDGETS,
+    DEFAULT_TEST_GLOBS,
+    FIXER_AGENT_ID,
+    VALID_RUNNER_TYPES,
+    VALID_SCHEDULES,
+    is_valid_runner_image,
+)
 from app.services.agent_capability_registry import CAPABILITY_REGISTRY
 from app.services.agent_investigation_service import DEFAULT_BUDGETS
 from app.services.llm_policy_service import (
@@ -111,6 +119,14 @@ def configurable_capabilities() -> dict[str, str]:
         for stage, spec in CAPABILITY_REGISTRY.items()
         if spec.execution != "runtime"
     }
+
+
+COMPATIBILITY_AGENT_IDS: tuple[str, ...] = ("fixer", "investigator")
+
+
+def configurable_agents() -> tuple[str, ...]:
+    """Registry capabilities plus the two pre-registry governance agents."""
+    return tuple(sorted((*configurable_capabilities(), *COMPATIBILITY_AGENT_IDS)))
 
 
 def _capability_for(agent_id: str) -> Any:
@@ -235,6 +251,89 @@ class OverridePolicyConfig(_Strict):
     allow_tool_narrowing: bool = True
 
 
+class InvestigatorPolicyBudgets(_Strict):
+    """The complete legacy Investigator budget contract preserved by E4.4."""
+
+    max_runs_per_day: int = Field(default=10, ge=0, le=10_000)
+    max_llm_calls_per_run: int = Field(default=30, ge=0, le=100_000)
+    max_tokens_per_run: int = Field(default=60_000, ge=0, le=100_000_000)
+    max_cost_usd_per_run: float = Field(default=5.0, ge=0, le=1_000_000)
+    max_seconds_per_run: int = Field(default=300, ge=0, le=86_400)
+    max_cluster_children_per_run: int = Field(default=1, ge=0, le=20)
+    max_cluster_members_per_child: int = Field(default=50, ge=1, le=500)
+    max_cluster_child_llm_calls_per_parent: int = Field(default=6, ge=0, le=1_000)
+    max_cluster_child_tokens_per_parent: int = Field(default=12_000, ge=0, le=10_000_000)
+    max_cluster_child_cost_usd_per_parent: float = Field(default=2.0, ge=0, le=1_000_000)
+    max_cluster_child_seconds_per_parent: int = Field(default=180, ge=0, le=86_400)
+    max_active_cluster_children_per_project: int = Field(default=2, ge=0, le=20)
+    max_cluster_children_per_day: int = Field(default=20, ge=0, le=1_000)
+
+
+class InvestigatorConfigExtension(_Strict):
+    budgets: InvestigatorPolicyBudgets = Field(default_factory=InvestigatorPolicyBudgets)
+    shadow_runs_completed: int = Field(default=0, ge=0)
+    promotion_note: Optional[str] = Field(default=None, max_length=2_000)
+
+
+class FixerRunnerExtension(_Strict):
+    type: str = "none"
+    runner_image: Optional[str] = None
+    command_template: Optional[str] = None
+    workflow_ref: Optional[str] = None
+
+    @field_validator("type")
+    @classmethod
+    def _known_runner_type(cls, value: str) -> str:
+        if value not in VALID_RUNNER_TYPES:
+            raise ValueError(f"runner.type must be one of {list(VALID_RUNNER_TYPES)}")
+        return value
+
+    @field_validator("runner_image")
+    @classmethod
+    def _safe_runner_image(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and not is_valid_runner_image(value):
+            raise ValueError("runner_image must be a valid container image reference")
+        return value
+
+
+class FixerPolicyBudgets(_Strict):
+    max_tests_per_run: int = Field(default=int(DEFAULT_FIXER_BUDGETS["max_tests_per_run"]), ge=0, le=1_000)
+    max_attempts_per_test: int = Field(default=int(DEFAULT_FIXER_BUDGETS["max_attempts_per_test"]), ge=0, le=100)
+    validation_reruns: int = Field(default=int(DEFAULT_FIXER_BUDGETS["validation_reruns"]), ge=1, le=100)
+    max_concurrent_open_prs: int = Field(
+        default=int(DEFAULT_FIXER_BUDGETS["max_concurrent_open_prs"]), ge=0, le=100
+    )
+
+
+class FixerConfigExtension(_Strict):
+    runner: FixerRunnerExtension = Field(default_factory=FixerRunnerExtension)
+    test_globs: list[str] = Field(default_factory=lambda: list(DEFAULT_TEST_GLOBS))
+    budgets: FixerPolicyBudgets = Field(default_factory=FixerPolicyBudgets)
+    schedule: str = "off"
+
+    @field_validator("test_globs")
+    @classmethod
+    def _non_empty_globs(cls, value: list[str]) -> list[str]:
+        cleaned = [str(item).strip() for item in value if str(item).strip()]
+        if not cleaned:
+            raise ValueError("test_globs must contain at least one non-empty glob")
+        return cleaned
+
+    @field_validator("schedule")
+    @classmethod
+    def _known_schedule(cls, value: str) -> str:
+        if value not in VALID_SCHEDULES:
+            raise ValueError(f"schedule must be one of {list(VALID_SCHEDULES)}")
+        return value
+
+
+class AgentConfigExtensions(_Strict):
+    """Typed homes for pre-registry contracts migrated from agent_policies."""
+
+    investigator: Optional[InvestigatorConfigExtension] = None
+    fixer: Optional[FixerConfigExtension] = None
+
+
 class AgentConfigV1(_Strict):
     """A project's configuration of one agent (section 4.2)."""
 
@@ -250,12 +349,13 @@ class AgentConfigV1(_Strict):
     shadow: ShadowConfig = Field(default_factory=ShadowConfig)
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     override_policy: OverridePolicyConfig = Field(default_factory=OverridePolicyConfig)
+    extensions: AgentConfigExtensions = Field(default_factory=AgentConfigExtensions)
 
     @field_validator("agent_id")
     @classmethod
     def _registered(cls, value: str) -> str:
-        if value not in configurable_capabilities():
-            raise ValueError(f"unknown agent_id {value!r}; configurable agents: {sorted(configurable_capabilities())}")
+        if value not in configurable_agents():
+            raise ValueError(f"unknown agent_id {value!r}; configurable agents: {list(configurable_agents())}")
         return value
 
     @model_validator(mode="after")
@@ -284,6 +384,17 @@ class AgentConfigV1(_Strict):
                 f"{self.agent_id} is a {capability.permission} capability; mode {self.mode!r} cannot run it. "
                 f"Raise mode to {_PERMISSION_MIN_MODE[capability.permission]!r} or set enabled=false"
             )
+        if self.agent_id == "investigator" and self.extensions.fixer is not None:
+            errors.append("investigator config cannot carry extensions.fixer")
+        if self.agent_id == FIXER_AGENT_ID:
+            if self.mode == "act":
+                errors.append("fixer mode 'act' is reserved; use 'shadow' or 'suggest'")
+            if self.extensions.investigator is not None:
+                errors.append("fixer config cannot carry extensions.investigator")
+        if self.agent_id not in COMPATIBILITY_AGENT_IDS and (
+            self.extensions.investigator is not None or self.extensions.fixer is not None
+        ):
+            errors.append("registry capability configs cannot carry compatibility extensions")
         if errors:
             raise ValueError("; ".join(errors))
         return self
@@ -296,6 +407,20 @@ def default_config(agent_id: str) -> AgentConfigV1:
     ``mutating`` capability is never granted ``act`` by default: it starts in
     ``shadow`` and disabled.
     """
+    if agent_id == "investigator":
+        return AgentConfigV1(
+            agent_id=agent_id,
+            enabled=True,
+            mode="shadow",
+            extensions=AgentConfigExtensions(investigator=InvestigatorConfigExtension()),
+        )
+    if agent_id == FIXER_AGENT_ID:
+        return AgentConfigV1(
+            agent_id=agent_id,
+            enabled=False,
+            mode="shadow",
+            extensions=AgentConfigExtensions(fixer=FixerConfigExtension()),
+        )
     capability = _capability_for(agent_id)
     if capability is None:
         raise KeyError(agent_id)
@@ -533,6 +658,24 @@ async def config_versions(db: AsyncSession, project_id: uuid.UUID) -> dict[str, 
     return {str(agent_id): int(version) for agent_id, version in result.all()}
 
 
+async def increment_investigator_shadow_runs(db: AsyncSession, project_id: uuid.UUID) -> AgentConfig:
+    """Atomically increment the server-owned Investigator promotion counter."""
+    await db.execute(select(Project.id).where(Project.id == project_id).with_for_update())
+    row = await get_config_row(db, project_id, "investigator")
+    current = AgentConfigV1.model_validate(serialize("investigator", row)["config"])
+    extension = current.extensions.investigator or InvestigatorConfigExtension()
+    document = current.model_dump(mode="json")
+    document["extensions"]["investigator"] = extension.model_copy(
+        update={"shadow_runs_completed": extension.shadow_runs_completed + 1}
+    ).model_dump(mode="json")
+    return await put_config(
+        db,
+        project_id,
+        AgentConfigV1.model_validate(document),
+        updated_by=None,
+    )
+
+
 def serialize(agent_id: str, row: Optional[AgentConfig]) -> dict[str, Any]:
     """The wire shape. A stored row that no longer validates is returned as stored, marked invalid.
 
@@ -572,6 +715,7 @@ def serialize(agent_id: str, row: Optional[AgentConfig]) -> dict[str, Any]:
 __all__ = [
     "AGENT_CONFIG_MODES",
     "AGENT_TOOL_PERMISSIONS",
+    "COMPATIBILITY_AGENT_IDS",
     "AgentConfigPatch",
     "AgentConfigV1",
     "MODE_ORDER",
@@ -581,8 +725,10 @@ __all__ = [
     "apply_patch",
     "config_versions",
     "configurable_capabilities",
+    "configurable_agents",
     "default_config",
     "get_config_row",
+    "increment_investigator_shadow_runs",
     "list_config_rows",
     "mode_permits",
     "provider_environment_errors",

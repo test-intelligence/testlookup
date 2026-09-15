@@ -560,7 +560,6 @@ async def test_finalize_is_idempotent_and_cancellation_updates_pipeline_atomical
         error=None,
         execution_metadata={},
     )
-    policy = SimpleNamespace(shadow_runs_completed=0)
     recorded: list[str] = []
 
     class _Result:
@@ -583,8 +582,6 @@ async def test_finalize_is_idempotent_and_cancellation_updates_pipeline_atomical
                 return _Result(row)
             if "agent_pipeline_runs" in sql:
                 return _Result(pipeline)
-            if "agent_policies" in sql:
-                return _Result(policy)
             raise AssertionError(sql)
 
         def add(self, _value):
@@ -615,7 +612,6 @@ async def test_finalize_is_idempotent_and_cancellation_updates_pipeline_atomical
     assert pipeline.status == "failed"
     assert pipeline.error.startswith("cancelled: ")
     assert recorded == ["recorded"]
-    assert policy.shadow_runs_completed == 0
 
 
 @pytest.mark.asyncio

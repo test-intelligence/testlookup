@@ -6,7 +6,7 @@
  * DRAFT pull requests — merging is always human"; act is rendered disabled —
  * it does not exist for this agent), schedule, validation-runner section with
  * per-type conditional fields, test-glob allowlist editor, the four Fixer
- * budgets, Save (PUT — QA_LEAD+), and a Run-now button (POST) that toasts the
+ * budgets, Save through AgentConfig (PUT — QA_LEAD+), and a Run-now button that toasts the
  * server detail per 202 / 403 disabled / 409 running / 422 runner-required.
  */
 import { useState } from 'react'

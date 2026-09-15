@@ -1,12 +1,12 @@
 # TestLookup — Database & Schema Design
 
 > Originally generated 2026-06-25 from the live implementation (`backend/app/models/postgres.py`,
-> `backend/migrations/versions/`) and updated incrementally through migration 0185.
+> `backend/migrations/versions/`) and updated incrementally through migration 0187.
 > Regenerate the ER diagrams and the schema
 > reference with the extractor in `architecture/` after model changes — see
 > [Keeping these docs current](#keeping-these-docs-current).
 
-PostgreSQL is the **system of record** (140 declared tables, Alembic head `0185`). MongoDB, Redis, MinIO and
+PostgreSQL is the **system of record** (139 declared tables, Alembic head `0187`). MongoDB, Redis, MinIO and
 ChromaDB hold derived, ephemeral, or large-blob data that does not belong in the
 relational store. This document covers all of them, but the relational schema is
 the focus.
@@ -1759,18 +1759,18 @@ _Constraints:_ Index(`ix_evidence_run_id`, `run_id`); Index(`ix_evidence_cluster
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
 
-#### `agent_policies`  <sub>(model `AgentPolicy`)</sub>
+#### `agent_configs`  <sub>(model `AgentConfig`)</sub>
 
 | Column | Type | Key | Flags | References |
 |---|---|---|---|---|
 | `id` | `UUID` | PK | NN def |  |
 | `project_id` | `ForeignKey` | FK | NN | `projects.id` |
-| `agent_id` | `String(50)` |  | NN |  |
+| `agent_id` | `String(80)` |  | NN |  |
 | `enabled` | `Boolean` |  | NN def |  |
 | `mode` | `String(10)` |  | NN def |  |
-| `budgets` | `JSONB` |  | NN def |  |
-| `shadow_runs_completed` | `Integer` |  | NN def |  |
-| `promotion_note` | `Text` |  |  |  |
+| `config` | `JSONB` |  | NN def |  |
+| `config_version` | `Integer` |  | NN def |  |
+| `updated_by` | `ForeignKey` | FK |  | `users.id` |
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
 

@@ -25,7 +25,7 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from app.models.postgres import AgentInvestigation, AgentRun, TestRun  # noqa: E402
+from app.models.postgres import AgentConfig, AgentInvestigation, AgentRun, TestRun  # noqa: E402
 from app.services import agent_investigation_service as svc  # noqa: E402
 
 PROJECT_ID = uuid.uuid4()
@@ -160,7 +160,7 @@ class _GateDB(_StageDB):
             def scalar(self):
                 return self._value
 
-        if "agent_policies" in text:
+        if "agent_configs" in text:
             return _R(self._policy)
         if "count(" in text:
             return _R(self._today_count)
@@ -173,12 +173,19 @@ def _test_run():
     return TestRun(id=RUN_ID, project_id=PROJECT_ID, build_number="b-1")
 
 
+def _policy(*, enabled=True, mode="shadow", budgets=None, shadow_runs_completed=0):
+    return AgentConfig(
+        id=uuid.uuid4(), project_id=PROJECT_ID, agent_id="investigator",
+        enabled=enabled, mode=mode, config={"extensions": {"investigator": {
+            "budgets": budgets or {}, "shadow_runs_completed": shadow_runs_completed,
+            "promotion_note": None,
+        }}}, config_version=1,
+    )
+
+
 @pytest.mark.asyncio
 async def test_start_investigation_policy_disabled_raises():
-    policy = SimpleNamespace(
-        agent_id="investigator", enabled=False, mode="shadow",
-        budgets={}, shadow_runs_completed=0, promotion_note=None,
-    )
+    policy = _policy(enabled=False)
     with pytest.raises(svc.InvestigationPolicyDisabled):
         await svc.start_investigation(_GateDB(policy=policy), _test_run())
 
@@ -200,11 +207,11 @@ async def test_start_investigation_max_runs_per_day_raises():
 
 @pytest.mark.asyncio
 async def test_start_investigation_inherits_policy_mode_and_budgets():
-    policy = SimpleNamespace(
-        agent_id="investigator", enabled=True, mode="suggest",
+    policy = _policy(
+        mode="suggest",
         budgets={"max_runs_per_day": 3, "max_llm_calls_per_run": 7,
                  "max_tokens_per_run": 1000, "max_seconds_per_run": 60},
-        shadow_runs_completed=4, promotion_note=None,
+        shadow_runs_completed=4,
     )
     db = _GateDB(policy=policy, today_count=2)
     inv = await svc.start_investigation(db, _test_run(), triggered_by="auto:gate_no_go")

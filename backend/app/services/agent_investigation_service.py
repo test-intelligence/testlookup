@@ -3,7 +3,7 @@
 This module owns everything around the hypothesis-loop Investigator EXCEPT
 the reasoning itself (which lives in ``app/agents/investigator/``):
 
-* **Policies** — per-(project, agent) :class:`AgentPolicy` rows with a
+* **Policies** — the ``investigator`` :class:`AgentConfig` row with a
   code-side default (enabled, shadow, budgets 10/30/60000/300) when no row
   exists. The PUT endpoint stages through :func:`upsert_policy`.
 * **Trigger gate** — :func:`start_investigation` enforces the policy
@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
     AgentInvestigation,
-    AgentPolicy,
+    AgentConfig,
     AgentRun,
     Project,
     TestRun,
@@ -53,7 +53,7 @@ KNOWN_AGENT_IDS: tuple[str, ...] = (AGENT_ID_INVESTIGATOR,)
 
 VALID_MODES: tuple[str, ...] = ("shadow", "suggest", "act")
 
-# Default policy budgets when no AgentPolicy row exists (API contract).
+# Default policy budgets when no AgentConfig row exists (pinned API contract).
 DEFAULT_BUDGETS: dict[str, int | float] = {
     "max_runs_per_day": 10,
     "max_llm_calls_per_run": 30,
@@ -124,36 +124,32 @@ def _effective_budgets(raw: Optional[dict]) -> dict[str, int | float]:
 
 
 def serialize_policy(
-    agent_id: str, row: Optional[AgentPolicy]
+    agent_id: str, row: Optional[AgentConfig]
 ) -> dict[str, Any]:
     """AgentPolicy wire shape (pinned API contract)."""
-    if row is None:
-        return {
-            "agent_id": agent_id,
-            "enabled": True,
-            "mode": "shadow",
-            "budgets": dict(DEFAULT_BUDGETS),
-            "promotion": {"shadow_runs_completed": 0, "note": None},
-        }
+    from app.services import agent_config_service as config_svc
+
+    config = config_svc.AgentConfigV1.model_validate(config_svc.serialize(agent_id, row)["config"])
+    extension = config.extensions.investigator or config_svc.InvestigatorConfigExtension()
     return {
-        "agent_id": row.agent_id,
-        "enabled": bool(row.enabled),
-        "mode": row.mode,
-        "budgets": _effective_budgets(row.budgets),
+        "agent_id": agent_id,
+        "enabled": config.enabled,
+        "mode": config.mode,
+        "budgets": _effective_budgets(extension.budgets.model_dump()),
         "promotion": {
-            "shadow_runs_completed": int(row.shadow_runs_completed or 0),
-            "note": row.promotion_note,
+            "shadow_runs_completed": extension.shadow_runs_completed,
+            "note": extension.promotion_note,
         },
     }
 
 
 async def get_policy_row(
     db: AsyncSession, project_id: uuid.UUID, agent_id: str
-) -> Optional[AgentPolicy]:
+) -> Optional[AgentConfig]:
     result = await db.execute(
-        select(AgentPolicy).where(
-            AgentPolicy.project_id == project_id,
-            AgentPolicy.agent_id == agent_id,
+        select(AgentConfig).where(
+            AgentConfig.project_id == project_id,
+            AgentConfig.agent_id == agent_id,
         )
     )
     return result.scalar_one_or_none()
@@ -175,25 +171,29 @@ async def upsert_policy(
     mode: str,
     budgets: Optional[dict] = None,
     promotion_note: Optional[str] = None,
-) -> AgentPolicy:
-    """Create or update the policy row. Stage-only — the router handler owns
-    ``db.commit()`` (transaction-boundary discipline).
+) -> AgentConfig:
+    """Compatibility helper that writes the canonical AgentConfig row.
 
     ``shadow_runs_completed`` is server-maintained (the workflow runner
     increments it) and deliberately not writable here.
     """
     if mode not in VALID_MODES:
         raise ValueError(f"invalid mode {mode!r} — expected one of {VALID_MODES}")
+    from app.services import agent_config_service as config_svc
+
     row = await get_policy_row(db, project_id, agent_id)
-    if row is None:
-        row = AgentPolicy(project_id=project_id, agent_id=agent_id)
-        db.add(row)
-    row.enabled = bool(enabled)
-    row.mode = mode
-    row.budgets = _effective_budgets(budgets)
-    row.promotion_note = promotion_note
-    await db.flush()
-    return row
+    current = config_svc.AgentConfigV1.model_validate(config_svc.serialize(agent_id, row)["config"])
+    existing = current.extensions.investigator or config_svc.InvestigatorConfigExtension()
+    extension = config_svc.InvestigatorConfigExtension(
+        budgets=config_svc.InvestigatorPolicyBudgets.model_validate(_effective_budgets(budgets)),
+        shadow_runs_completed=existing.shadow_runs_completed,
+        promotion_note=promotion_note,
+    )
+    document = current.model_dump(mode="json")
+    document.update({"enabled": bool(enabled), "mode": mode})
+    document["extensions"]["investigator"] = extension.model_dump(mode="json")
+    config = config_svc.AgentConfigV1.model_validate(document)
+    return await config_svc.put_config(db, project_id, config, updated_by=None)
 
 
 def run_budget_from_policy(policy: dict[str, Any]) -> dict[str, int | float]:
@@ -276,7 +276,7 @@ async def start_investigation(
     """
     # Serialize the count+insert gate per project so concurrent runs cannot
     # both pass max_runs_per_day. The project row always exists, unlike an
-    # optional AgentPolicy row.
+    # optional Investigator AgentConfig row.
     await db.execute(
         select(Project.id).where(Project.id == run.project_id).with_for_update()
     )
@@ -288,7 +288,7 @@ async def start_investigation(
     if active is not None:
         raise InvestigationAlreadyActive(active.id)
 
-    max_per_day = _effective_budgets(policy.get("budgets"))["max_runs_per_day"]
+    max_per_day = int(_effective_budgets(policy.get("budgets"))["max_runs_per_day"])
     if await count_investigations_today(db, run.project_id) >= max_per_day:
         raise InvestigationDailyBudgetExceeded(max_per_day)
 

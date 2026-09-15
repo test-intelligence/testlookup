@@ -3,8 +3,9 @@
 Pinned wire contract the frontend is built against verbatim — do not rename
 keys:
 
-* ``GET  /api/v1/projects/{project_id}/fixer/config`` → FixerConfig.
-* ``PUT  /api/v1/projects/{project_id}/fixer/config`` (QA_LEAD+) → FixerConfig.
+* ``GET  /api/v1/projects/{project_id}/fixer/config`` keeps the pinned
+  read-only FixerConfig projection for one release. Writes use
+  ``/agent-configs/fixer``.
 * ``POST /api/v1/projects/{project_id}/fixer/run`` → 202 ``{"fixer_run_id"}``;
   403 disabled / 409 already running / 422 runner-required-for-suggest.
 * ``GET  /api/v1/projects/{project_id}/fixer/attempts?limit=&offset=`` →
@@ -157,7 +158,7 @@ class FixerConfigUpdate(BaseModel):
 # ── Config ───────────────────────────────────────────────────────────────────
 
 
-@router.get("/projects/{project_id}/fixer/config")
+@router.get("/projects/{project_id}/fixer/config", deprecated=True)
 async def get_fixer_config(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -167,7 +168,8 @@ async def get_fixer_config(
     return await svc.get_effective_config(db, project_id)
 
 
-@router.put("/projects/{project_id}/fixer/config")
+# activity: none — deprecated write alias always returns 405
+@router.put("/projects/{project_id}/fixer/config", deprecated=True)
 async def put_fixer_config(
     project_id: uuid.UUID,
     body: FixerConfigUpdate,
@@ -175,19 +177,12 @@ async def put_fixer_config(
     current_user: User = Depends(require_project_access()),
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
 ) -> dict[str, Any]:
-    """Upsert the fixer config (QA_LEAD+)."""
-    row = await svc.upsert_fixer_config(
-        db,
-        project_id,
-        enabled=body.enabled,
-        mode=body.mode,
-        runner=body.runner.model_dump(),
-        test_globs=body.test_globs,
-        budgets=body.budgets.model_dump(),
-        schedule=body.schedule,
+    """Retired write alias; agent-configs is the single writable resource."""
+    raise HTTPException(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        detail="fixer/config is read-only; write /agent-configs/fixer",
+        headers={"Location": f"/api/v1/projects/{project_id}/agent-configs/fixer"},
     )
-    await db.commit()
-    return svc.serialize_fixer_config(row)
 
 
 # ── Manual run ───────────────────────────────────────────────────────────────

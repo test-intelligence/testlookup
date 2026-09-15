@@ -1,0 +1,20 @@
+"""Keep the T5 mutation harness wired into the backend suite."""
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+
+def test_t5_mutation_harness() -> None:
+    root = Path(__file__).resolve().parents[2]
+    run = subprocess.run(
+        [sys.executable, str(root / "scripts" / "mutation_check_t5.py")],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert run.stdout.strip() == "T5 mutation check: 7 mutations killed"

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-15 - Consolidate Investigator and Fixer policy configuration (T5)
+
+Migrated the legacy Investigator and Fixer policy rows into strictly typed
+`agent_configs` extensions while preserving their pinned API projections,
+runtime budgets, schedules, and Investigator shadow-run counter. The legacy
+GET routes remain deprecated read-only aliases for one release; their PUT
+routes now return 405 and point clients to the canonical agent-config resource.
+
+The settings clients now read and write the canonical resource, the scheduled
+Fixer lookup reads its typed extension, and the agent-mode single-writer
+baseline is empty. Migration 0187 handles both directions and refuses unknown
+legacy policy IDs rather than dropping data. Seven asserted mutations cover
+the compatibility IDs, projections, aliases, migration, and scheduler path.
+
 ## 2026-09-15 - Verify the agentic live definition of done (T22)
 
 Added a repeatable live API probe and recorded the full T22 stack verification.

@@ -32,10 +32,10 @@ logger = structlog.get_logger("routers.agent_configs")
 
 
 def _require_known(agent_id: str) -> None:
-    if agent_id not in svc.configurable_capabilities():
+    if agent_id not in svc.configurable_agents():
         raise HTTPException(
             status_code=404,
-            detail=f"Unknown agent_id {agent_id!r}; configurable agents: {sorted(svc.configurable_capabilities())}",
+            detail=f"Unknown agent_id {agent_id!r}; configurable agents: {list(svc.configurable_agents())}",
         )
 
 
@@ -101,21 +101,22 @@ async def put_agent_config(
         except ValidationError:
             before_model = body.model
         before_config = body.model_copy(update={"model": before_model})
-    from app.services.tier_comparison_service import (
-        TierComparisonRejected,
-        enforce_config_tier_gate,
-    )
-
-    try:
-        await enforce_config_tier_gate(
-            db,
-            project_id=project_id,
-            agent_id=agent_id,
-            before=before_config,
-            after=body,
+    if agent_id not in svc.COMPATIBILITY_AGENT_IDS:
+        from app.services.tier_comparison_service import (
+            TierComparisonRejected,
+            enforce_config_tier_gate,
         )
-    except TierComparisonRejected as exc:
-        raise HTTPException(status_code=422, detail=exc.report) from None
+
+        try:
+            await enforce_config_tier_gate(
+                db,
+                project_id=project_id,
+                agent_id=agent_id,
+                before=before_config,
+                after=body,
+            )
+        except TierComparisonRejected as exc:
+            raise HTTPException(status_code=422, detail=exc.report) from None
     row = await svc.put_config(db, project_id, body, updated_by=getattr(current_user, "id", None))
     after = svc.serialize(agent_id, row)
     changed = sorted(key for key in after["config"] if after["config"].get(key) != before_doc.get(key))

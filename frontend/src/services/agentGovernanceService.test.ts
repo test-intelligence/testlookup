@@ -29,4 +29,48 @@ describe('agentGovernanceService agent configs', () => {
     await agentGovernanceService.updateAgentConfig('proj-1', 'agent.summary.v1', document)
     expect(putData).toHaveBeenCalledWith('/api/v1/projects/proj-1/agent-configs/agent.summary.v1', document)
   })
+
+  it('projects and updates Investigator policy through agent-configs only', async () => {
+    const view = {
+      config: {
+        agent_id: 'investigator', enabled: true, mode: 'shadow',
+        extensions: {
+          fixer: null,
+          investigator: {
+            budgets: { max_runs_per_day: 10, max_llm_calls_per_run: 30, max_tokens_per_run: 60000,
+              max_seconds_per_run: 300 },
+            shadow_runs_completed: 7,
+            promotion_note: 'observed',
+          },
+        },
+      },
+    }
+    ;(getData as ReturnType<typeof vi.fn>).mockResolvedValue(view)
+    ;(putData as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...view,
+      config: { ...view.config, enabled: false, mode: 'suggest' },
+    })
+
+    const listed = await agentGovernanceService.listPolicies('proj-1')
+    expect(listed.policies[0]?.promotion).toEqual({ shadow_runs_completed: 7, note: 'observed' })
+    await agentGovernanceService.updatePolicy('proj-1', 'investigator', {
+      enabled: false,
+      mode: 'suggest',
+      budgets: { max_runs_per_day: 5, max_llm_calls_per_run: 12, max_tokens_per_run: 20000,
+        max_seconds_per_run: 120 },
+    })
+
+    const path = '/api/v1/projects/proj-1/agent-configs/investigator'
+    expect(getData).toHaveBeenCalledWith(path)
+    expect(putData).toHaveBeenCalledWith(path, expect.objectContaining({
+      enabled: false,
+      mode: 'suggest',
+      extensions: expect.objectContaining({ investigator: expect.objectContaining({
+        shadow_runs_completed: 7,
+        promotion_note: 'observed',
+        budgets: expect.objectContaining({ max_runs_per_day: 5, max_seconds_per_run: 120 }),
+      }) }),
+    }))
+    expect(String((putData as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])).not.toContain('agent-policies')
+  })
 })

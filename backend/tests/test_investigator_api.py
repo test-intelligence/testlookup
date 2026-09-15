@@ -28,7 +28,7 @@ from fastapi import HTTPException  # noqa: E402
 
 from app.models.postgres import (  # noqa: E402
     AgentInvestigation,
-    AgentPolicy,
+    AgentConfig,
     AgentRun,
     TestRun,
     UserRole,
@@ -94,6 +94,22 @@ def _investigation(status="queued", **over):
     return row
 
 
+def _policy_config(*, enabled=True, mode="shadow", budgets=None, shadow_runs_completed=0, note=None):
+    return AgentConfig(
+        id=uuid.uuid4(),
+        project_id=PROJECT_ID,
+        agent_id="investigator",
+        enabled=enabled,
+        mode=mode,
+        config={"extensions": {"investigator": {
+            "budgets": budgets or {},
+            "shadow_runs_completed": shadow_runs_completed,
+            "promotion_note": note,
+        }}},
+        config_version=1,
+    )
+
+
 class _Result:
     def __init__(self, *, scalars=None, scalar=None, _all=None):
         self._scalars_val = scalars
@@ -142,7 +158,7 @@ class _FakeSession:
 
     async def execute(self, stmt):
         text = str(stmt).lower()
-        if "agent_policies" in text:
+        if "agent_configs" in text:
             return _Result(scalar=self._policy)
         if "count(" in text and "agent_investigations" in text:
             return _Result(scalar=self._today_count if not self._list_rows else self._total)
@@ -206,18 +222,14 @@ async def test_start_investigation_202_with_default_policy(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_start_investigation_403_when_policy_disables(monkeypatch):
-    policy = AgentPolicy(
-        id=uuid.uuid4(), project_id=PROJECT_ID, agent_id="investigator",
-        enabled=False, mode="shadow", budgets={}, shadow_runs_completed=0,
-    )
+    policy = _policy_config(enabled=False)
     db = _FakeSession(run=_run(), policy=policy)
     with pytest.raises(HTTPException) as exc:
         await router_mod.start_investigation(
             run_id=RUN_ID, db=db, current_user=_user(), _writer=_user(),
         )
     assert exc.value.status_code == 403
-    # Actionable: names the policy endpoint that re-enables the agent.
-    assert "agent-policies/investigator" in exc.value.detail
+    assert "agent-configs/investigator" in exc.value.detail
 
 
 @pytest.mark.asyncio
@@ -377,7 +389,7 @@ async def test_policies_default_shape_when_no_row():
 
 
 @pytest.mark.asyncio
-async def test_policy_put_round_trip():
+async def test_policy_put_is_a_read_only_alias():
     db = _FakeSession(policy=None)
     body = router_mod.AgentPolicyUpdate(
         enabled=False,
@@ -388,18 +400,14 @@ async def test_policy_put_round_trip():
         ),
         promotion=router_mod.AgentPolicyPromotion(shadow_runs_completed=999, note="ready"),
     )
-    result = await router_mod.update_agent_policy(
-        project_id=PROJECT_ID, agent_id="investigator", body=body,
-        db=db, current_user=_user(UserRole.QA_LEAD), _lead=_user(UserRole.QA_LEAD),
-    )
-    assert set(result.keys()) == POLICY_KEYS
-    assert result["enabled"] is False
-    assert result["mode"] == "suggest"
-    assert result["budgets"]["max_runs_per_day"] == 5
-    assert result["promotion"]["note"] == "ready"
-    # shadow_runs_completed is server-maintained — the client's 999 is ignored.
-    assert result["promotion"]["shadow_runs_completed"] == 0
-    assert db.committed
+    with pytest.raises(HTTPException) as exc:
+        await router_mod.update_agent_policy(
+            project_id=PROJECT_ID, agent_id="investigator", body=body,
+            db=db, current_user=_user(UserRole.QA_LEAD), _lead=_user(UserRole.QA_LEAD),
+        )
+    assert exc.value.status_code == 405
+    assert exc.value.headers["Location"].endswith("/agent-configs/investigator")
+    assert not db.committed
 
 
 @pytest.mark.asyncio

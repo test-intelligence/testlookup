@@ -3,7 +3,7 @@
  *
  * Renders as an "Agent Investigation" section on the Deep Investigation page:
  *   - "Investigate this run" CTA (tooltip-disabled when no run in scope, the
- *     project policy disables the agent, or the viewer lacks QA Engineer).
+ *     project AgentConfig disables the agent, or the viewer lacks QA Engineer).
  *     409 on start → attach to the already-running investigation.
  *   - Hypothesis matrix: 5 fixed cards (Infrastructure / Commit-caused /
  *     Environment / Known-flaky / Regression) with live status, confidence +

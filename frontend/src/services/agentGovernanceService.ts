@@ -8,21 +8,58 @@ import type { AgentConfigDocument, AgentConfigListResponse, AgentConfigView } fr
 import { getData, putData } from './http'
 
 /**
- * Agent governance (AI-3) — per-project agent policies (trust-ladder mode +
- * budgets) and the agent-activity ledger. Pinned Wave-B contract.
- *
- * E4.3 adds the per-agent configuration resource (agent-configs), which
- * replaces agent-policies once E4.4 migrates the policy rows.
+ * Agent governance (AI-3). AgentConfig is the writable source; the pinned
+ * AgentPolicy shape is projected here while the server keeps a read-only alias.
  */
 export const agentGovernanceService = {
-  listPolicies: (projectId: string) =>
-    getData<AgentPolicyListResponse>(`/api/v1/projects/${projectId}/agent-policies`),
+  listPolicies: async (projectId: string): Promise<AgentPolicyListResponse> => {
+    const view = await getData<AgentConfigView>(
+      `/api/v1/projects/${projectId}/agent-configs/investigator`,
+    )
+    const extension = view.config.extensions?.investigator
+    if (!extension) throw new Error('Investigator AgentConfig extension is missing')
+    return {
+      policies: [{
+        agent_id: 'investigator',
+        enabled: view.config.enabled,
+        mode: view.config.mode,
+        budgets: extension.budgets,
+        promotion: {
+          shadow_runs_completed: extension.shadow_runs_completed,
+          note: extension.promotion_note,
+        },
+      }],
+    }
+  },
 
-  updatePolicy: (projectId: string, agentId: string, update: AgentPolicyUpdate) =>
-    putData<AgentPolicy, AgentPolicyUpdate>(
-      `/api/v1/projects/${projectId}/agent-policies/${agentId}`,
-      update,
-    ),
+  updatePolicy: async (projectId: string, agentId: string, update: AgentPolicyUpdate): Promise<AgentPolicy> => {
+    const path = `/api/v1/projects/${projectId}/agent-configs/${agentId}`
+    const view = await getData<AgentConfigView>(path)
+    const extension = view.config.extensions?.investigator
+    if (!extension) throw new Error('Investigator AgentConfig extension is missing')
+    const config: AgentConfigDocument = {
+      ...view.config,
+      enabled: update.enabled,
+      mode: update.mode,
+      extensions: {
+        ...(view.config.extensions ?? { investigator: null, fixer: null }),
+        investigator: { ...extension, budgets: { ...extension.budgets, ...update.budgets } },
+      },
+    }
+    const saved = await putData<AgentConfigView, AgentConfigDocument>(path, config)
+    const savedExtension = saved.config.extensions?.investigator
+    if (!savedExtension) throw new Error('Saved Investigator AgentConfig extension is missing')
+    return {
+      agent_id: agentId,
+      enabled: saved.config.enabled,
+      mode: saved.config.mode,
+      budgets: savedExtension.budgets,
+      promotion: {
+        shadow_runs_completed: savedExtension.shadow_runs_completed,
+        note: savedExtension.promotion_note,
+      },
+    }
+  },
 
   listAgentConfigs: (projectId: string) =>
     getData<AgentConfigListResponse>(`/api/v1/projects/${projectId}/agent-configs`),

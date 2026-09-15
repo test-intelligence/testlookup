@@ -13,7 +13,7 @@ export const FIX_ATTEMPTS_POLL_MS = 5000
 /** Per-project Fixer config (Settings → AI Agents card). */
 export function useFixerConfig(projectId: string | null) {
   return useSWR<FixerConfig>(
-    projectId ? `/projects/${projectId}/fixer/config` : null,
+    projectId ? `/projects/${projectId}/agent-configs/fixer` : null,
     () => fixerService.getConfig(projectId ?? ''),
     { revalidateOnFocus: false },
   )

@@ -4732,17 +4732,15 @@ def _agents_no_partial_pipeline_status() -> list[Violation]:
 #
 # An agent's autonomy ``mode`` has exactly one writable home:
 # ``agent_configs.mode``, written only by app/services/agent_config_service.py.
-# ``agent_policies.mode`` is the older copy that E4.4 migrates away; its two
-# writers today (the Investigator policy PUT and the Fixer config PUT) are the
-# baseline, and the list may only shrink. ``agent_runs.mode`` is a per-run
-# ledger record of the mode a run executed under, not a policy, so AgentRun is
-# not one of the models this guard watches.
+# E4.4 removed ``agent_policies``. ``agent_runs.mode`` is a per-run ledger
+# record of the mode a run executed under, not a policy, so AgentRun is not one
+# of the models this guard watches.
 
-_MODE_MODELS = frozenset({"AgentConfig", "AgentPolicy"})
+_MODE_MODELS = frozenset({"AgentConfig"})
 _MODE_ROW_NAMES = frozenset({"row", "policy", "config", "agent_config", "agent_policy", "existing"})
 _MODE_WRITER_PATH = ("backend", "app", "services", "agent_config_service.py")
 _MODE_SQL_RE = re.compile(
-    r"\b(?:update|insert\s+into)\s+(?:agent_configs|agent_policies)\b.*\bmode\b",
+    r"\b(?:update|insert\s+into)\s+agent_configs\b.*\bmode\b",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -4752,7 +4750,7 @@ def _mentions_mode_model(node: ast.AST) -> bool:
 
 
 def _mode_row_names(func: ast.AST) -> set[str]:
-    """Names in ``func`` that hold an AgentConfig/AgentPolicy row."""
+    """Names in ``func`` that hold an AgentConfig row."""
     if not _mentions_mode_model(func):
         return set()
     names = set(_MODE_ROW_NAMES)
@@ -4781,7 +4779,7 @@ def _agents_agent_mode_single_writer() -> list[Violation]:
         # First message per line wins; one line is one violation.
         found: dict[int, str] = {}
         for node in ast.walk(tree):
-            # AgentConfig(..., mode=...) / AgentPolicy(..., mode=...)
+            # AgentConfig(..., mode=...)
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
@@ -5191,9 +5189,7 @@ GUARDS: list[Guard] = [
         check=_agents_agent_mode_single_writer,
         fix_hint=(
             "Change an agent's mode through agent_config_service.put_config. A "
-            "ratchet: the two agent_policies writers that predate agent_configs "
-            "(the Investigator policy PUT and the Fixer config PUT) are "
-            "baselined until E4.4 migrates those rows."
+            "retired compatibility API must project from agent_configs and stay read-only."
         ),
     ),
     Guard(

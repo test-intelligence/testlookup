@@ -1,7 +1,7 @@
 """Fixer config + attempt serialization + PUT-body validation + diff apply (AI-2).
 
 Pins the pinned wire contract key-sets, the shadow/suggest/act policy layer,
-and the agent_policies storage of the fixer config — all DB-free (a staging
+and the agent_configs storage of the fixer config — all DB-free (a staging
 fake session for the upsert path).
 """
 from __future__ import annotations
@@ -10,12 +10,15 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+from fastapi import HTTPException
 
 pytest.importorskip("sqlalchemy")
 
 from app.agents.fixer.pipeline import apply_unified_diff, split_per_file_diffs  # noqa: E402
-from app.models.postgres import AgentPolicy, FixAttempt  # noqa: E402
+from app.models.postgres import AgentConfig, FixAttempt  # noqa: E402
 from app.services import fixer_service as svc  # noqa: E402
+from app.services import agent_config_service as config_svc  # noqa: E402
+from app.routers import fixer as fixer_router  # noqa: E402
 
 PROJECT_ID = uuid.uuid4()
 
@@ -72,15 +75,16 @@ def test_config_defaults_when_unconfigured():
 
 
 def test_config_roundtrip_from_policy_row():
-    row = AgentPolicy(
+    row = AgentConfig(
         id=uuid.uuid4(), project_id=PROJECT_ID, agent_id="fixer",
         enabled=True, mode="suggest",
-        budgets={
-            "max_tests_per_run": 5, "max_attempts_per_test": 1,
-            "validation_reruns": 7, "max_concurrent_open_prs": 4,
-            "runner": {"type": "docker", "runner_image": "python:3.11", "command_template": "pytest {test_selector}", "workflow_ref": None},
+        config={"extensions": {"fixer": {
+            "budgets": {"max_tests_per_run": 5, "max_attempts_per_test": 1,
+                        "validation_reruns": 7, "max_concurrent_open_prs": 4},
+            "runner": {"type": "docker", "runner_image": "python:3.11",
+                       "command_template": "pytest {test_selector}", "workflow_ref": None},
             "test_globs": ["tests/**"], "schedule": "daily",
-        },
+        }}}, config_version=1,
     )
     cfg = svc.serialize_fixer_config(row)
     assert cfg["enabled"] is True and cfg["mode"] == "suggest"
@@ -91,9 +95,11 @@ def test_config_roundtrip_from_policy_row():
 
 
 def test_validation_reruns_floored_at_one():
-    row = AgentPolicy(
+    row = AgentConfig(
         id=uuid.uuid4(), project_id=PROJECT_ID, agent_id="fixer",
-        enabled=True, mode="shadow", budgets={"validation_reruns": 0},
+        enabled=True, mode="shadow",
+        config={"extensions": {"fixer": {"budgets": {"validation_reruns": 1}}}},
+        config_version=1,
     )
     assert svc.serialize_fixer_config(row)["budgets"]["validation_reruns"] == 1
 
@@ -113,8 +119,20 @@ async def test_upsert_rejects_act_mode():
 
 
 @pytest.mark.asyncio
-async def test_upsert_stores_fixer_block_in_budgets():
+async def test_upsert_stores_fixer_block_in_agent_config(monkeypatch):
     db = _StageDB()
+    captured = {}
+
+    async def _put(_db, project_id, config, *, updated_by):
+        captured["config"] = config
+        return AgentConfig(
+            id=uuid.uuid4(), project_id=project_id, agent_id="fixer",
+            enabled=config.enabled, mode=config.mode,
+            config=config.model_dump(mode="json", exclude={"agent_id", "enabled", "mode"}),
+            config_version=1,
+        )
+
+    monkeypatch.setattr(config_svc, "put_config", _put)
     row = await svc.upsert_fixer_config(
         db, PROJECT_ID, enabled=True, mode="suggest",
         runner={"type": "workflow_dispatch", "workflow_ref": "flaky.yml"},
@@ -122,13 +140,28 @@ async def test_upsert_stores_fixer_block_in_budgets():
         schedule="weekly",
     )
     assert row.enabled is True and row.mode == "suggest"
-    assert row.budgets["runner"]["type"] == "workflow_dispatch"
-    assert row.budgets["runner"]["workflow_ref"] == "flaky.yml"
-    assert row.budgets["test_globs"] == ["tests/**", "e2e/**"]
-    assert row.budgets["schedule"] == "weekly"
-    assert row.budgets["max_tests_per_run"] == 9
+    extension = captured["config"].extensions.fixer
+    assert extension.runner.type == "workflow_dispatch"
+    assert extension.runner.workflow_ref == "flaky.yml"
+    assert extension.test_globs == ["tests/**", "e2e/**"]
+    assert extension.schedule == "weekly"
+    assert extension.budgets.max_tests_per_run == 9
     # Round-trips back through the serializer to the pinned contract shape.
     assert set(svc.serialize_fixer_config(row)) == CONFIG_KEYS
+
+
+@pytest.mark.asyncio
+async def test_legacy_fixer_put_is_read_only():
+    with pytest.raises(HTTPException) as exc:
+        await fixer_router.put_fixer_config(
+            PROJECT_ID,
+            fixer_router.FixerConfigUpdate(),
+            db=_StageDB(),
+            current_user=object(),
+            _lead=object(),
+        )
+    assert exc.value.status_code == 405
+    assert exc.value.headers["Location"].endswith("/agent-configs/fixer")
 
 
 # ── Attempt serialization key-sets ───────────────────────────────────────────

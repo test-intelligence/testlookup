@@ -5,7 +5,8 @@
  * (backend/app/services/agent_config_service.py, AgentConfigV1 + serialize()).
  * The server validates every document; these types only describe it.
  */
-import type { AgentMode } from './investigator'
+import type { AgentMode, AgentPolicyBudgets } from './investigator'
+import type { FixerBudgets, FixerRunner, FixerSchedule } from './fixer'
 
 export type AgentTier = 'auto' | 'deterministic' | 'slm' | 'llm'
 export type ReviewPolicy = 'human_required' | 'human_required_plus_auto_reviewer'
@@ -41,6 +42,29 @@ export interface AgentConfigDocument {
   shadow: { sample_rate: number; daily_token_budget: number }
   review: { policy: ReviewPolicy; auto_reviewer: boolean; second_model_check: boolean }
   override_policy: { allow_tier_downgrade: boolean; allow_retry_decrease: boolean; allow_tool_narrowing: boolean }
+  extensions?: {
+    investigator: {
+      budgets: AgentPolicyBudgets & {
+        max_cost_usd_per_run: number
+        max_cluster_children_per_run: number
+        max_cluster_members_per_child: number
+        max_cluster_child_llm_calls_per_parent: number
+        max_cluster_child_tokens_per_parent: number
+        max_cluster_child_cost_usd_per_parent: number
+        max_cluster_child_seconds_per_parent: number
+        max_active_cluster_children_per_project: number
+        max_cluster_children_per_day: number
+      }
+      shadow_runs_completed: number
+      promotion_note: string | null
+    } | null
+    fixer: {
+      runner: FixerRunner
+      test_globs: string[]
+      budgets: FixerBudgets
+      schedule: FixerSchedule
+    } | null
+  }
 }
 
 export interface AgentConfigView {

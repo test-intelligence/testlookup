@@ -60,7 +60,6 @@ from app.models.postgres import (
     AgentChildDispatchOutbox,
     AgentInvestigation,
     AgentPipelineRun,
-    AgentPolicy,
     AgentStageResult,
     AIAnalysis,
     FailureCluster,
@@ -850,22 +849,9 @@ async def _finalize(
         # Promotion counter: completed shadow runs are the evidence base for
         # a later shadow→suggest promotion (AI-3).
         if status == "completed" and row.mode == "shadow":
-            policy = (
-                await db.execute(
-                    select(AgentPolicy).where(
-                        AgentPolicy.project_id == row.project_id,
-                        AgentPolicy.agent_id == "investigator",
-                    )
-                )
-            ).scalar_one_or_none()
-            if policy is None:
-                policy = AgentPolicy(
-                    project_id=row.project_id,
-                    agent_id="investigator",
-                    shadow_runs_completed=0,
-                )
-                db.add(policy)
-            policy.shadow_runs_completed = int(policy.shadow_runs_completed or 0) + 1
+            from app.services.agent_config_service import increment_investigator_shadow_runs
+
+            await increment_investigator_shadow_runs(db, row.project_id)
 
         verdict = row.verdict or {}
         await record_agent_run(

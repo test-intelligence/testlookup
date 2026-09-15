@@ -14,7 +14,7 @@ import type { AgentConfigListResponse } from '@/types/agentConfig'
 
 export function useAgentPolicies(projectId: string | null) {
   const swr = useSWR<AgentPolicyListResponse>(
-    projectId ? `/projects/${projectId}/agent-policies` : null,
+    projectId ? `/projects/${projectId}/agent-configs/investigator` : null,
     () => agentGovernanceService.listPolicies(projectId ?? ''),
     { revalidateOnFocus: false },
   )
