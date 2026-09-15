@@ -48,6 +48,8 @@ def test_summary_default_is_promoted_only_after_the_g2_gate_shipped() -> None:
 async def test_summary_repairs_slm_once_then_escalates_and_enqueues_pair(
     monkeypatch,
 ) -> None:
+    from app.core.metrics import model_escalations_total
+
     agent = SummaryAgent()
     agent.log_decision = AsyncMock()
     agent._routing_inputs = AsyncMock(return_value=(_resolved(), 1.0, 10))
@@ -74,6 +76,10 @@ async def test_summary_repairs_slm_once_then_escalates_and_enqueues_pair(
         "app.services.tier_comparison_service.enqueue_shadow_pair",
         lambda **kwargs: queued.append(kwargs),
     )
+    metric = model_escalations_total.labels(
+        agent="summary", **{"from": "slm", "to": "llm"}
+    )
+    before = metric._value.get()
 
     structured, routing = await agent._generate_tiered_report(
         run_data={},
@@ -97,6 +103,7 @@ async def test_summary_repairs_slm_once_then_escalates_and_enqueues_pair(
         "escalations": 1,
         "fallback_used": False,
     }
+    assert metric._value.get() == before + 1
     assert len(queued) == 1
     assert queued[0]["incumbent_tier"] == "llm"
     assert queued[0]["candidate_tier"] == "slm"

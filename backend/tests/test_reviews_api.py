@@ -149,9 +149,14 @@ async def test_a_run_that_moved_on_refuses_the_decision_and_writes_nothing(monke
 
 @pytest.mark.asyncio
 async def test_accept_moves_the_run_completed_to_passed(transitions):
+    from app.core.metrics import review_requests_total
+
     review, reviewer = _review(), _user()
+    metric = review_requests_total.labels(state="accepted")
+    before = metric._value.get()
     await svc.settle_review(_DB(), review=review, reviewer=reviewer, decision="accepted")
 
+    assert metric._value.get() == before + 1
     assert transitions == [{"run_id": review.pipeline_run_id, "expected": "completed", "to": "passed", "error": None}]
     assert review.state == "accepted"
     assert review.reviewed_by == reviewer.id and review.reviewed_at is not None
@@ -160,10 +165,15 @@ async def test_accept_moves_the_run_completed_to_passed(transitions):
 
 @pytest.mark.asyncio
 async def test_reject_moves_the_run_to_failed_with_the_review_rejected_code(transitions):
+    from app.core.metrics import review_requests_total
+
     review = _review()
+    metric = review_requests_total.labels(state="rejected")
+    before = metric._value.get()
     await svc.settle_review(_DB(), review=review, reviewer=_user(), decision="rejected",
                             reason_code="missing_evidence")
 
+    assert metric._value.get() == before + 1
     assert transitions[0]["to"] == "failed"
     assert transitions[0]["error"] == "review_rejected: missing_evidence"
     assert review.state == "rejected" and review.reason_code == "missing_evidence"

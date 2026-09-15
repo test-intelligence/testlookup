@@ -59,6 +59,7 @@ class _Inner:
 async def test_step_span_carries_required_gen_ai_attributes_from_real_llm_boundary(
     monkeypatch,
 ):
+    from app.core.metrics import agent_invocations_total
     from app.core.config import settings
     from app.services import agent_step_tracing as tracing
     from app.services import llm_circuit_breaker
@@ -75,6 +76,10 @@ async def test_step_span_carries_required_gen_ai_attributes_from_real_llm_bounda
     monkeypatch.setattr(llm_circuit_breaker.LLMCircuitBreaker, "record_success", AsyncMock())
 
     budget_token = set_pipeline_budget_context(stage_name="summary")
+    metric = agent_invocations_total.labels(
+        agent="agent.summary.v1", tier="slm", status="success"
+    )
+    before = metric._value.get()
     try:
         with tracing.trace_agent_step(
             "summary", {"pipeline_run_id": "run-1", "_attempt": 3}
@@ -86,6 +91,7 @@ async def test_step_span_carries_required_gen_ai_attributes_from_real_llm_bounda
         reset_pipeline_budget_context(budget_token)
 
     assert result.content == "ok"
+    assert metric._value.get() == before + 1
     assert len(tracer.calls) == 1
     name, manager = tracer.calls[0]
     assert name == "testlookup.agent.step"
@@ -107,11 +113,16 @@ async def test_step_span_carries_required_gen_ai_attributes_from_real_llm_bounda
 
 
 def test_step_span_records_error_and_deterministic_zero_usage(monkeypatch):
+    from app.core.metrics import agent_invocations_total
     from app.services import agent_step_tracing as tracing
 
     tracer = _Tracer()
     monkeypatch.setattr(tracing, "get_tracer", lambda _name: tracer)
     error = RuntimeError("broken stage")
+    metric = agent_invocations_total.labels(
+        agent="agent.ingestion.v1", tier="deterministic", status="error"
+    )
+    before = metric._value.get()
 
     with pytest.raises(RuntimeError, match="broken stage"):
         with tracing.trace_agent_step("ingestion", {"pipeline_run_id": "run-2"}):
@@ -125,6 +136,7 @@ def test_step_span_records_error_and_deterministic_zero_usage(monkeypatch):
     assert manager.span.attributes["tier"] == "deterministic"
     assert manager.span.attributes["attempt"] == 1
     assert manager.span.attributes["testlookup.step.outcome"] == "error"
+    assert metric._value.get() == before + 1
 
 
 @pytest.mark.asyncio

@@ -189,6 +189,20 @@ async def test_non_availability_errors_do_not_trip_the_breaker(monkeypatch):
     assert await breaker.LLMCircuitBreaker.is_available("openai", None)
 
 
+def test_circuit_state_metric_keeps_endpoint_scope_and_emits_open_state():
+    from app.core.metrics import llm_circuit_breaker_state
+
+    scope = breaker.scope_for("ollama", "http://model-a:11434")
+    metric = llm_circuit_breaker_state.labels(
+        provider="ollama", endpoint=scope.scope_id
+    )
+
+    breaker._state_metric(scope, breaker._STATE_OPEN)
+
+    assert llm_circuit_breaker_state._labelnames == ("provider", "endpoint")
+    assert metric._value.get() == 1.0
+
+
 @pytest.mark.asyncio
 async def test_redis_failure_does_not_hide_a_healthy_provider(monkeypatch):
     def _broken_redis():

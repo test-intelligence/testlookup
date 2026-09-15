@@ -76,10 +76,15 @@ async def _create(session, run, *, stages=("summary",), evidence=HASH_A):
 
 @pytest.mark.asyncio
 async def test_a_report_run_gets_one_pending_request():
+    from app.core.metrics import review_requests_total
+
     session, run = _Session(), _run()
+    metric = review_requests_total.labels(state="pending_review")
+    before = metric._value.get()
 
     request = await _create(session, run)
 
+    assert metric._value.get() == before + 1
     assert request.state == "pending_review"
     assert request.kind == "report" and request.subject_type == "pipeline_run"
     assert request.subject_id == str(run.id)
@@ -144,9 +149,14 @@ async def test_a_changed_report_supersedes_its_settled_review():
     session, run = _Session(), _run()
     first = await _create(session, run, evidence=HASH_A)
     first.state = "accepted"
+    from app.core.metrics import review_requests_total
+
+    metric = review_requests_total.labels(state="superseded")
+    before = metric._value.get()
 
     replacement = await _create(session, run, evidence=HASH_B)
 
+    assert metric._value.get() == before + 1
     assert replacement is not first
     assert first.state == "superseded"
     assert first.superseded_by == replacement.id
@@ -159,12 +169,17 @@ async def test_a_changed_report_supersedes_its_settled_review():
 
 @pytest.mark.asyncio
 async def test_a_newer_run_supersedes_the_older_pending_review():
+    from app.core.metrics import review_requests_total
+
     session = _Session()
     older_run, newer_run = _run(), _run()
     older = await _create(session, older_run)
+    metric = review_requests_total.labels(state="superseded")
+    before = metric._value.get()
 
     newer = await _create(session, newer_run)
 
+    assert metric._value.get() == before + 1
     assert older.state == "superseded"
     assert older.superseded_by == newer.id
     assert newer.state == "pending_review"

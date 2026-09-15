@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-15 - Emit agentic runtime metrics (E2.2)
+
+Added Prometheus counters for agent workflow-step outcomes, pipeline state
+transitions and retries, human-review states, and model-tier escalations. The
+emission boundaries avoid counting same-state calls and bound retry reasons so
+exception text cannot create unbounded series.
+
+Regression tests exercise every emitted state and retain the existing
+endpoint-scoped LLM circuit-breaker gauge. An 11-mutation harness proves the
+tests fail when an emission is removed or labelled incorrectly.
+
 ## 2026-09-14 - Trace every agent workflow step (E2.1)
 
 Every LangGraph step now emits one canonical `testlookup.agent.step`

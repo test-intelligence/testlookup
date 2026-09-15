@@ -40,6 +40,7 @@ from typing import Any, Iterable, Mapping, Optional
 import structlog
 from sqlalchemy import select
 
+from app.core.metrics import review_requests_total
 from app.models.postgres import ReviewRequest
 from app.services.agent_capability_registry import is_report_producing
 from app.services.eval_label_provenance import checksum_from_execution_metadata
@@ -175,6 +176,7 @@ async def create_run_review_request(
         # describes it. Supersede first so the one-live-per-subject index holds.
         live.state = "superseded"
         await db.flush()
+        review_requests_total.labels(state="superseded").inc()
 
     request = _new_request(
         project_id=pid,
@@ -184,12 +186,14 @@ async def create_run_review_request(
     )
     db.add(request)
     await db.flush()
+    review_requests_total.labels(state="pending_review").inc()
     if live is not None:
         live.superseded_by = request.id
 
     # A newer run over the same test run and workflow replaces older pending reviews.
     test_run_id = _as_uuid(getattr(run, "test_run_id", None))
     workflow_type = getattr(run, "workflow_type", None)
+    older: list[ReviewRequest] = []
     if test_run_id is not None and workflow_type:
         older = (
             await db.execute(
@@ -212,6 +216,8 @@ async def create_run_review_request(
                 superseded=len(older),
             )
     await db.flush()
+    if older:
+        review_requests_total.labels(state="superseded").inc(len(older))
     logger.info(
         "review_request_created",
         pipeline_run_id=subject_id,
@@ -351,6 +357,7 @@ async def settle_review(
     review.reason_code = reason_code if decision == "rejected" else None
     review.notes = sanitize_for_llm(cleaned)[:_NOTES_MAX] if cleaned else None
     await db.flush()
+    review_requests_total.labels(state=decision).inc()
     logger.info(
         "review_settled",
         review_id=str(review.id),

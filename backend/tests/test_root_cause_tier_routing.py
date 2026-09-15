@@ -105,6 +105,7 @@ async def test_default_root_cause_uses_slm_without_llm_for_accepted_single_artif
 async def test_low_confidence_uses_llm_explanation_but_preserves_slm_verdict(
     monkeypatch, tier_stubs
 ):
+    from app.core.metrics import model_escalations_total
     import app.services.agent as agent_service
 
     tier_stubs.return_value = (_classification(55), "low_confidence")
@@ -119,6 +120,10 @@ async def test_low_confidence_uses_llm_explanation_but_preserves_slm_verdict(
         }
     )
     monkeypatch.setattr(agent_service, "run_triage_agent", react)
+    metric = model_escalations_total.labels(
+        agent="root_cause_analysis", **{"from": "slm", "to": "llm"}
+    )
+    before = metric._value.get()
 
     result = await classify_root_cause_tiered(
         {"test_case_id": "tc-2", "test_name": "checkout", "error_message": "boom"},
@@ -135,6 +140,7 @@ async def test_low_confidence_uses_llm_explanation_but_preserves_slm_verdict(
     assert result["_routing"]["escalation_trigger"] == "low_confidence"
     assert result["_routing"]["explanation_tier"] == "llm"
     assert result["_routing"]["escalations"] == 1
+    assert metric._value.get() == before + 1
     assert react.await_args.kwargs["endpoint"].model == "large"
     assert react.await_args.kwargs["skip_fast_classifier"] is True
     assert react.await_args.kwargs["skip_cache"] is True

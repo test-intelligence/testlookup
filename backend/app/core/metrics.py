@@ -125,6 +125,38 @@ pipeline_stage_runs_total = Counter(
     ["stage_name", "status"],
 )
 
+# ── Agentic runtime (architecture E2.2) ─────────────────────────────────────
+
+agent_invocations_total = Counter(
+    "testlookup_agent_invocations_total",
+    "Agent workflow-step invocations by capability, configured tier, and outcome",
+    ["agent", "tier", "status"],  # status: success | error
+)
+
+agent_run_transitions_total = Counter(
+    "testlookup_agent_run_transitions_total",
+    "Successful agent pipeline state transitions",
+    ["from", "to"],
+)
+
+agent_retry_attempts_total = Counter(
+    "testlookup_agent_retry_attempts_total",
+    "Agent pipeline retry attempts by workflow and bounded reason",
+    ["agent", "reason"],  # reason: execution_failure | lease_expired
+)
+
+review_requests_total = Counter(
+    "testlookup_review_requests_total",
+    "Review requests entering each durable state",
+    ["state"],  # pending_review | accepted | rejected | superseded
+)
+
+model_escalations_total = Counter(
+    "testlookup_model_escalations_total",
+    "Model-tier escalations selected by the agent router",
+    ["agent", "from", "to"],
+)
+
 # ── Phase 6: Agent Observability & Cost Control ──────────────────────────────
 
 pipeline_stage_tokens_total = Counter(
