@@ -157,6 +157,27 @@ model_escalations_total = Counter(
     ["agent", "from", "to"],
 )
 
+# E2.3 operational invariants. These are refreshed from the durable stores on
+# every /metrics scrape (bootstrap.py), so they remain meaningful on quiet
+# deployments where no request or task happens to update a process-local gauge.
+agent_in_progress_overdue_seconds = Gauge(
+    "testlookup_agent_in_progress_overdue_seconds",
+    "Seconds the oldest in-progress agent run exceeds its configured deadline plus grace",
+    multiprocess_mode="mostrecent",
+)
+
+agent_dlq_depth = Gauge(
+    "testlookup_agent_dlq_depth",
+    "Entries waiting across the Redis dead-letter list and stream stores",
+    multiprocess_mode="mostrecent",
+)
+
+pending_review_oldest_age_seconds = Gauge(
+    "testlookup_pending_review_oldest_age_seconds",
+    "Age in seconds of the oldest pending agent review request",
+    multiprocess_mode="mostrecent",
+)
+
 # ── Phase 6: Agent Observability & Cost Control ──────────────────────────────
 
 pipeline_stage_tokens_total = Counter(

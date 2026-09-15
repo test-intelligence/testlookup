@@ -158,10 +158,11 @@ Format per epic: **Title · Description · Business value · Technical scope · 
 - **Dependencies.** E9.3 needs E4.1 (config hook — done) and E5.1 (`default_tier`); E9.4 needs E6.1; E9.5 needs E3.1; E9.6 needs E8 + E9.9; E9.7 needs E7.1 (done).
 - **Note.** The doc's four-engineer plan starts E9.1/E9.2 in week 1 in parallel. The single-engineer loop did not. **[Recommendation]** start E9.1/E9.2 early (see §8).
 
-### 2.9 E2 — Hardening and observability  ⬜ Not started (E2.4 ongoing)
+### 2.9 E2 — Hardening and observability  ✅ Complete
 
 - **Description.** OTel spans with `gen_ai.*` attributes; §10 counters with emission tests; DLQ list/replay; alerts (in-progress age beyond deadline, DLQ depth, pending-review age) each with a positive test; keep the architecture doc current.
 - **Dependencies.** E7, E8 (signals exist).
+- **Implemented.** E2.1–E2.3 are shipped. E2.3 retained the existing `/api/v1/admin/maintenance/dlq` reader as a compatibility route and added the canonical list/replay API; the architecture premise that no DLQ router existed was stale. Replay covers allowlisted Celery STREAM entries. The ingestion LIST and live-event entries remain inspection-only because their recovery protocols differ.
 
 ---
 
@@ -629,7 +630,7 @@ Priority: **P0** = blocks correctness/safety or other epics · **P1** = needed f
 | T16 | P1 | S/M/S | **E6.2–E6.4** | reviewer, supervisor, budgets | — | tests | §12 |
 | T17 | P1 | M/L/S/M/S | **E3.1–E3.5** workflows | `agents/workflow.py`, `agent_planner.py`, new routers, frontend `AgentWorkflowPage.tsx` | `models` + `services/workflow_compiler.py`, `routers/workflows.py`, migration | compiler fuzz, diff tests, guard | §4.4, §12 |
 | T18 | P1 | M×3, S×5 | **E9.4–E9.10** | eval services, releases UI | migrations | tests | AI_EVALUATION.md |
-| T19 | P2 | S×3 | **E2.1–E2.3** OTel, counters, DLQ + alerts with positive tests | `core/tracing.py`, `core/metrics.py`, `worker/tasks.py`, `infra/` | — | emission + alert tests | OBSERVABILITY.md |
+| T19 | P2 | S×3 | **Shipped: E2.1–E2.3** OTel, counters, DLQ + alerts with positive tests | `core/tracing.py`, `core/metrics.py`, `worker/tasks.py`, `infra/` | — | emission + alert tests | OBSERVABILITY.md |
 | T20 | P2 | S | K3 chip review time | `routers/agents.py` list response, `AgentStatusPage.tsx` | — | tests | — |
 | T21 | P2 | M | K5 label-only catalog inputs → models | `models/*contracts*.py` | — | catalog tests; baseline shrink | — |
 | T22 | P2 | S | Live DoD verification (§8.5) | — | — | live probes | record results in §12 |

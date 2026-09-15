@@ -16,6 +16,7 @@ from app.routers import (
     agent_memory,
     agents,
     ai_evaluation,
+    admin_dlq,
     admin_maintenance,
     admin_storage,
     analysis_report,
@@ -125,6 +126,7 @@ PUBLIC_ROUTERS: Sequence[APIRouter] = (
 )
 
 PROTECTED_ROUTERS: Sequence[APIRouter] = (
+    admin_dlq.router,
     admin_maintenance.router,
     admin_storage.router,
     projects.router,
@@ -307,9 +309,8 @@ def configure_metrics(app: FastAPI) -> None:
         excluded_handlers=["/metrics", "/health/live", "/health/ready"],
     ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
-    # Refresh Celery queue depths on each scrape. Registered as a route
-    # dependency on /metrics so the numbers are read when Prometheus asks,
-    # never from a timer that can go stale while the scheduler is the sick one.
+    # Refresh durable operational signals on each scrape, never from a timer
+    # that can go stale while the scheduler is the sick component.
     _install_celery_queue_depth_collector(app)
 
 
@@ -369,6 +370,11 @@ def _install_celery_queue_depth_collector(app) -> None:
 
         async def _endpoint(*args, __orig=original, **kwargs):
             await _refresh_celery_queue_depths()
+            from app.services.agent_operational_metrics import (
+                refresh_agent_operational_metrics,
+            )
+
+            await refresh_agent_operational_metrics()
             result = __orig(*args, **kwargs)
             if inspect.isawaitable(result):
                 result = await result

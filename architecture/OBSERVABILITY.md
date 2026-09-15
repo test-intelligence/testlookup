@@ -4,7 +4,7 @@
 > Prometheus/Grafana stack, OTEL tracing, structured logs, and the layer that's
 > unusual here — **agent decision logs**, which make the AI pipeline's choices
 > as observable as its latencies. Verified against the implementation
-> 2026-09-14.
+> 2026-09-15.
 
 ## 1. The three signals plus one
 
@@ -51,6 +51,24 @@ The metrics are:
   to open; and
 - `testlookup_llm_circuit_breaker_state{provider,endpoint}`, where closed is
   `0`, half-open is `0.5`, and open is `1`.
+
+### 2b. Agent operational invariants
+
+The `/metrics` scrape refreshes three gauges directly from PostgreSQL and
+Redis, so quiet deployments still expose current state:
+
+- `testlookup_agent_in_progress_overdue_seconds` is zero through the configured
+  `AI_PIPELINE_DEADLINE_SECONDS` plus `AGENT_PIPELINE_ALERT_GRACE_SECONDS`, then
+  reports the oldest run's overrun;
+- `testlookup_agent_dlq_depth` totals the `persist_live_session` list and the
+  shared Celery/live-event dead-letter stream; and
+- `testlookup_pending_review_oldest_age_seconds` reports the oldest open
+  agent-review age.
+
+The versioned Prometheus rules alert at any deadline overrun, any DLQ entry,
+and a pending review older than 24 hours. Operators can inspect both Redis DLQ
+stores at `GET /api/v1/admin/dlq`; `POST /api/v1/admin/dlq/{id}/replay` accepts
+only the allowlisted Celery task shapes written by the application.
 
 ## 3. Traces (`core/tracing.py`)
 
