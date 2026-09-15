@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-14 - Prevent evaluation-label leakage (E9.10)
+
+Feedback and review rows now retain the evaluation-manifest checksum of the AI
+output they grade. Feedback-built datasets include that provenance and the
+label timestamp, require a 14-day holdout, and exclude legacy rows whose source
+cannot be proven.
+
+Agent-stack release gates recheck stored datasets and exclude feedback or
+review labels from the candidate manifest itself, recent labels, and derived
+labels with missing provenance. Static golden samples remain eligible.
+
 ## 2026-09-14 - Trace runtime runs to evaluation manifests (E9.7)
 
 Every new agent pipeline now freezes the checksum of the passing eval

@@ -407,7 +407,10 @@ class AnalysisAgent(BaseAgent):
             stage_errors["root_cause_analysis"] = errors
 
         # Batch persist all analyses in chunked upserts (single session)
-        await self._batch_upsert_analyses(analyses)
+        await self._batch_upsert_analyses(
+            analyses,
+            eval_manifest_checksum=state.get("eval_manifest_checksum"),
+        )
 
         # Summarise routing across all analyses — the dominant mode is what
         # ran for the majority; fallbacks are tallied separately so degradation
@@ -1441,7 +1444,11 @@ class AnalysisAgent(BaseAgent):
         }
 
     async def _batch_upsert_analyses(
-        self, analyses: dict[str, dict], chunk_size: int = 50
+        self,
+        analyses: dict[str, dict],
+        chunk_size: int = 50,
+        *,
+        eval_manifest_checksum: str | None = None,
     ) -> None:
         """Batch upsert all analysis results in chunked commits (single session per chunk)."""
         items = list(analyses.items())
@@ -1459,7 +1466,8 @@ class AnalysisAgent(BaseAgent):
                         # Persist the per-test decision audit so the trail UI
                         # can show "why did the AI route this test to engine X"
                         # without hitting the Mongo event log.
-                        routing_metadata = analysis.get("_audit") or None
+                        routing_metadata = dict(analysis.get("_audit") or {})
+                        routing_metadata["eval_manifest_checksum"] = eval_manifest_checksum
                         stmt = pg_insert(AIAnalysis).values(
                             test_case_id=tc_id,
                             root_cause_summary=analysis.get("root_cause_summary"),

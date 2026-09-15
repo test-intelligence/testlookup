@@ -1602,9 +1602,10 @@ _Constraints:_ Index(`ix_stage_results_pipeline`, `pipeline_run_id`); Index(`ix_
 | `comment` | `Text` |  |  |  |
 | `source` | `String(50)` |  | NN def |  |
 | `exported` | `Boolean` |  | NN IX def |  |
+| `eval_manifest_checksum` | `String(64)` |  |  |  |
 | `created_at` | `DateTime` |  | NN IX def |  |
 
-_Constraints:_ Index(`ix_ai_feedback_analysis`, `analysis_id`); Index(`ix_ai_feedback_created`, `created_at`); Index(`ix_ai_feedback_rating`, `rating`)
+_Constraints:_ `eval_manifest_checksum` is NULL for legacy/direct labels or a 64-character lowercase SHA-256; Index(`ix_ai_feedback_analysis`, `analysis_id`); Index(`ix_ai_feedback_created`, `created_at`); Index(`ix_ai_feedback_rating`, `rating`)
 
 #### `failure_clusters`  <sub>(model `FailureCluster`)</sub>
 
@@ -1841,12 +1842,13 @@ _Constraints:_ Index(`ix_evidence_run_id`, `run_id`); Index(`ix_evidence_cluster
 | `reason_code` | `String(40)` |  |  |  |
 | `notes` | `Text` |  |  |  |
 | `evidence_bundle_sha256` | `String(64)` |  |  |  |
+| `eval_manifest_checksum` | `String(64)` |  |  |  |
 | `ai_disclaimer_version` | `String(40)` |  | NN |  |
 | `superseded_by` | `ForeignKey` | FK |  | `review_requests.id` |
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
 
-One live row per report-producing run (partial unique index on `kind, subject_type, subject_id WHERE state <> 'superseded'`); superseded rows are kept as history. `state` is `pending_review | accepted | rejected | superseded`; a rejection must carry `reason_code`. Added by migration 0175 (architecture E8.1).
+One live row per report-producing run (partial unique index on `kind, subject_type, subject_id WHERE state <> 'superseded'`); superseded rows are kept as history. `state` is `pending_review | accepted | rejected | superseded`; a rejection must carry `reason_code`. `eval_manifest_checksum` is NULL for legacy rows or the 64-character lowercase SHA-256 of the manifest that produced the reviewed subject. Added by migration 0175 (architecture E8.1); label provenance added by migration 0186 (E9.10).
 
 ### AI Evaluation & Models
 

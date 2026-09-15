@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import AIEvalBaseline, AIEvalDataset, AIEvalGateRun, AIEvalRun
 from app.services.ai_eval_service import compute_metrics_for_task_type
+from app.services.eval_label_provenance import gate_eligible_items
 from app.services.eval_verdict import EvalVerdict
 
 logger = logging.getLogger("services.eval_gate")
@@ -170,6 +171,7 @@ async def evaluate_agent_stack_release_gate(
         routing_versions=routing_versions,
         required_gates=required_gates,
     )
+    evaluated_at = datetime.now(timezone.utc)
 
     gate_results: list[dict[str, Any]] = []
     for gate in manifest["required_gates"]:
@@ -179,6 +181,8 @@ async def evaluate_agent_stack_release_gate(
                 task_type=gate["task_type"],
                 agent_name=gate["agent_name"],
                 dataset_id=gate.get("dataset_id"),
+                gate_manifest_checksum=manifest["manifest_checksum_sha256"],
+                evaluated_at=evaluated_at,
             )
         )
 
@@ -197,7 +201,7 @@ async def evaluate_agent_stack_release_gate(
         "gate_results": gate_results,
         "blocking_gates": blocking_gates,
         "version_changes": _version_change_summary(manifest, gate_results),
-        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "evaluated_at": evaluated_at.isoformat(),
     }
     if persist:
         gate_run = await persist_agent_stack_gate_run(
@@ -297,6 +301,8 @@ async def evaluate_pre_release_gate(
     task_type: str,
     agent_name: str,
     dataset_id: Optional[str] = None,
+    gate_manifest_checksum: str | None = None,
+    evaluated_at: datetime | None = None,
 ) -> dict[str, Any]:
     """
     Run the pre-release evaluation gate for an agent.
@@ -323,7 +329,13 @@ async def evaluate_pre_release_gate(
     baseline = await _load_active_baseline(db, task_type, agent_name)
 
     # 2. Load dataset
-    items = await _load_dataset_items(db, task_type, dataset_id)
+    items = await _load_dataset_items(
+        db,
+        task_type,
+        dataset_id,
+        gate_manifest_checksum=gate_manifest_checksum,
+        evaluated_at=evaluated_at,
+    )
     if not items:
         return {
             "status": EvalVerdict.INSUFFICIENT_SAMPLES,
@@ -521,6 +533,9 @@ async def _load_dataset_items(
     db: AsyncSession,
     task_type: str,
     dataset_id: Optional[str] = None,
+    *,
+    gate_manifest_checksum: str | None = None,
+    evaluated_at: datetime | None = None,
 ) -> list[dict]:
     """Load dataset items — from specific dataset or golden defaults."""
     dataset_uuid = _coerce_dataset_uuid(dataset_id)
@@ -530,7 +545,14 @@ async def _load_dataset_items(
         )
         dataset = result.scalar_one_or_none()
         if dataset:
-            return dataset.items or []
+            items = dataset.items or []
+            if gate_manifest_checksum is not None:
+                return gate_eligible_items(
+                    items,
+                    gate_manifest_checksum=gate_manifest_checksum,
+                    evaluated_at=evaluated_at,
+                )
+            return items
 
     # Fallback to golden dataset
     from app.services.golden_datasets import GOLDEN_DATASETS

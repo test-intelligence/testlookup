@@ -42,6 +42,7 @@ from sqlalchemy import select
 
 from app.models.postgres import ReviewRequest
 from app.services.agent_capability_registry import is_report_producing
+from app.services.eval_label_provenance import checksum_from_execution_metadata
 
 logger = structlog.get_logger("services.review_request")
 
@@ -114,6 +115,9 @@ def _new_request(
         requested_by=requested_by,
         created_by="system",
         evidence_bundle_sha256=evidence_bundle_sha256,
+        eval_manifest_checksum=checksum_from_execution_metadata(
+            getattr(run, "execution_metadata", None)
+        ),
         ai_disclaimer_version=AI_DISCLAIMER_VERSION,
     )
 
@@ -138,6 +142,9 @@ async def create_run_review_request(
         return None
     requester = _as_uuid(requested_by)
     subject_id = str(run.id)
+    manifest_checksum = checksum_from_execution_metadata(
+        getattr(run, "execution_metadata", None)
+    )
 
     # Typed explicitly: scalar_one_or_none() is Any, and returning it would
     # widen this function's declared ReviewRequest return (mypy no-any-return).
@@ -157,6 +164,8 @@ async def create_run_review_request(
             # Same run finalized again: one request, refreshed to the latest payload.
             if evidence_bundle_sha256:
                 live.evidence_bundle_sha256 = evidence_bundle_sha256
+            if getattr(live, "eval_manifest_checksum", None) is None:
+                live.eval_manifest_checksum = manifest_checksum
             await db.flush()
             return live
         if live.evidence_bundle_sha256 == evidence_bundle_sha256:

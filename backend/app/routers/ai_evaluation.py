@@ -155,7 +155,7 @@ async def create_dataset_from_feedback(
     if not items:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No feedback data available to build a dataset",
+            detail="No held-out feedback with eval-manifest provenance is available",
         )
 
     dataset = AIEvalDataset(

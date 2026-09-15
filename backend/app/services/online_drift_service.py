@@ -20,6 +20,7 @@ from app.models.postgres import (
     ReviewRequest,
 )
 from app.services.agent_capability_registry import get_capability
+from app.services.eval_provenance_service import current_eval_manifest_checksum
 from app.services.review_request_service import AI_DISCLAIMER_VERSION
 
 MIN_BINOMIAL_SAMPLES = 20
@@ -148,6 +149,7 @@ async def ensure_drift_review(
         state="pending_review",
         created_by="system",
         evidence_bundle_sha256=_evidence_hash(report),
+        eval_manifest_checksum=current_eval_manifest_checksum(),
         ai_disclaimer_version=AI_DISCLAIMER_VERSION,
     )
     db.add(row)
