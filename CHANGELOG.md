@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-15 - Verify the agentic live definition of done (T22)
+
+Added a repeatable live API probe and recorded the full T22 stack verification.
+The catalog now distinguishes independently invokable capabilities from
+workflow-only stages, so the probe exercises all eight invokable sync or report
+capabilities against the generated Postman contract.
+
+The live worker pause/reap test found and fixed an unfenced finalization write:
+a stale worker can no longer complete or fail a reaper-owned attempt. Review-gate
+testing also found and fixed an intelligence-export path that released pending
+AI content while enforcement was enabled; export decisions now use the shared
+distribution policy and audit refused attempts. Seven asserted source mutations
+pin the probe, catalog projection, finalization fence, and export refusal.
+
+The verification record identifies two code-truth corrections and the remaining
+inference evidence gap: workflow-only stages are not directly invokable, and the
+overdue alert clears when recovery reaches a terminal state rather than merely
+when the reaper changes the run to `retry_wait`.
+
 ## 2026-09-15 - Publish concrete agent catalog inputs (T21)
 
 All 30 registered capabilities now publish a concrete, closed Pydantic input

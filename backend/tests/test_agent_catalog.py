@@ -24,6 +24,7 @@ from app.services.agent_capability_registry import (
     REPORT_OUTPUT_SCHEMAS,
     SYNC_ELIGIBLE,
 )
+from app.services.agent_planner import invocation_workflow_type
 
 AGENT_IDS = sorted(spec.capability_id for spec in CAPABILITY_REGISTRY.values())
 
@@ -74,6 +75,17 @@ def test_report_producers_are_flagged_by_output_contract():
         for name, spec in CAPABILITY_REGISTRY.items()
         if spec.output_schema in REPORT_OUTPUT_SCHEMAS
     }
+
+
+def test_catalog_marks_only_capabilities_that_can_run_without_a_surrounding_workflow():
+    entries = agent_catalog.list_catalog()
+    assert {entry.agent_id for entry in entries if entry.invokable} == {
+        spec.capability_id
+        for spec in CAPABILITY_REGISTRY.values()
+        if invocation_workflow_type(spec.stage_name) is not None
+    }
+    assert agent_catalog.get_catalog_detail("agent.cluster_investigation_dispatch.v1").invokable is False
+    assert agent_catalog.get_catalog_detail("agent.summary.v1").invokable is True
 
 
 @pytest.mark.parametrize("agent_id", AGENT_IDS)

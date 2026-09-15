@@ -1524,7 +1524,12 @@ async def _complete_cost_budget_block(
             "cost_budget_blocked": True,
         }
     )
-    await _mark_pipeline_done(pipeline_run_id, success=True, final_state=state)
+    await _mark_pipeline_done(
+        pipeline_run_id,
+        success=True,
+        final_state=state,
+        fencing_token=state.get("_fencing_token"),
+    )
     await emit_event(
         pipeline_run_id,
         "pipeline_completed",
@@ -2037,7 +2042,12 @@ async def run_offline_pipeline(
         error_msg = f"Pipeline setup error: {_safe_workflow_error(exc)}"
         # Marked first: a log call that raises (QA reproduced one with a
         # non-UTF-8 stdout) must not leave the pipeline 'running' again.
-        await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)
+        await _mark_pipeline_done(
+            pipeline_run_id,
+            success=False,
+            error=error_msg,
+            fencing_token=pipeline_setup.get("fencing_token"),
+        )
         _tag_failure_with_pipeline(exc, pipeline_run_id)
         try:
             logger.error("pipeline_setup_failed", error_type=type(exc).__name__, exc_info=True)
@@ -2071,7 +2081,12 @@ async def run_offline_pipeline(
             final_state = await _persist_deep_outputs(
                 test_run_id, pipeline_run_id, final_state
             )
-        await _mark_pipeline_done(pipeline_run_id, success=True, final_state=final_state)
+        await _mark_pipeline_done(
+            pipeline_run_id,
+            success=True,
+            final_state=final_state,
+            fencing_token=initial_state.get("_fencing_token"),
+        )
         await emit_event(
             pipeline_run_id,
             "workflow_verified",
@@ -2113,7 +2128,12 @@ async def run_offline_pipeline(
                     "cluster_child_cancel_failed",
                     error_type=type(cancel_exc).__name__,
                 )
-        await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)
+        await _mark_pipeline_done(
+            pipeline_run_id,
+            success=False,
+            error=error_msg,
+            fencing_token=initial_state.get("_fencing_token"),
+        )
         _tag_failure_with_pipeline(exc, pipeline_run_id)
         await emit_event(pipeline_run_id, "error_occurred", detail={
             "workflow_type": workflow_type,
@@ -2280,7 +2300,12 @@ async def run_deep_pipeline(
         # pipeline was created left it 'running' for the 30-minute reaper
         # (QA of N27, on the deep path).
         error_msg = f"Pipeline setup error: {_safe_workflow_error(exc)}"
-        await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)
+        await _mark_pipeline_done(
+            pipeline_run_id,
+            success=False,
+            error=error_msg,
+            fencing_token=pipeline_setup.get("fencing_token"),
+        )
         _tag_failure_with_pipeline(exc, pipeline_run_id)
         try:
             logger.error("pipeline_setup_failed", error_type=type(exc).__name__, exc_info=True)
@@ -2311,7 +2336,12 @@ async def run_deep_pipeline(
         final_state = await _persist_deep_outputs(
             test_run_id, pipeline_run_id, final_state
         )
-        await _mark_pipeline_done(pipeline_run_id, success=True, final_state=final_state)
+        await _mark_pipeline_done(
+            pipeline_run_id,
+            success=True,
+            final_state=final_state,
+            fencing_token=initial_state.get("_fencing_token"),
+        )
         await emit_event(
             pipeline_run_id,
             "workflow_verified",
@@ -2352,7 +2382,12 @@ async def run_deep_pipeline(
                 "cluster_child_cancel_failed",
                 error_type=type(cancel_exc).__name__,
             )
-        await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)
+        await _mark_pipeline_done(
+            pipeline_run_id,
+            success=False,
+            error=error_msg,
+            fencing_token=initial_state.get("_fencing_token"),
+        )
         _tag_failure_with_pipeline(exc, pipeline_run_id)
         await emit_event(pipeline_run_id, "error_occurred", detail={
             "workflow_type": "deep",
@@ -2859,6 +2894,7 @@ async def _mark_pipeline_done(
     success: bool,
     error: Optional[str] = None,
     final_state: Optional[dict] = None,
+    fencing_token: Optional[str] = None,
 ) -> None:
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select as sa_select, update as sa_update  # noqa: PLC0415
@@ -2871,10 +2907,18 @@ async def _mark_pipeline_done(
             retry_pending_stage_settlements,
         )
 
-        result = await db.execute(
-            sa_select(AgentPipelineRun).where(AgentPipelineRun.id == pipeline_run_id)
-        )
+        query = sa_select(AgentPipelineRun).where(AgentPipelineRun.id == pipeline_run_id)
+        if fencing_token is not None:
+            query = query.where(AgentPipelineRun.fencing_token == fencing_token)
+        result = await db.execute(query.with_for_update())
         run = result.scalar_one_or_none()
+        if run is None and fencing_token is not None:
+            # A reaper rotated the lease while this worker was paused. Finalize
+            # is a write just like a stage checkpoint: the stale holder must not
+            # complete or fail the newer attempt.
+            from app.services.pipeline_lease import LeaseLost  # noqa: PLC0415
+
+            raise LeaseLost(pipeline_run_id, fencing_token)
         if run:
             summary_completed = False
             if success:

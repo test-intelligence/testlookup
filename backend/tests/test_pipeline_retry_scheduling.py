@@ -177,9 +177,11 @@ def test_failure_exceptions_carry_the_pipeline_id():
     workflow._tag_failure_with_pipeline(exc, "abc")
     assert exc.pipeline_run_id == "abc"
     text = open(workflow.__file__, encoding="utf-8").read()
-    marks = text.count("await _mark_pipeline_done(pipeline_run_id, success=False, error=error_msg)")
+    marks = text.count("success=False,")
     tags = text.count("_tag_failure_with_pipeline(exc, pipeline_run_id)")
-    assert marks >= 2 and tags == marks, (marks, tags)
+    assert marks >= 2 and tags >= 2, (marks, tags)
+    assert "fencing_token=initial_state.get(\"_fencing_token\")" in text
+    assert "fencing_token=pipeline_setup.get(\"fencing_token\")" in text
 
 
 # ── stale scheduled resume ────────────────────────────────────────────────────

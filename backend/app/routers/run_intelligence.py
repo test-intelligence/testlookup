@@ -38,6 +38,11 @@ from app.services.run_intelligence_service import get_run_intelligence, get_run_
 from app.services.intelligence_snapshot_service import get_cached_snapshot, get_stale_snapshot, invalidate, save_snapshot
 from app.models.postgres import TestRun
 from app.services.review_envelope import review_envelope_for_run
+from app.services.report_distribution_policy import (
+    decide_run_distribution,
+    record_distribution,
+    refusal_detail,
+)
 
 logger = logging.getLogger("routers.run_intelligence")
 
@@ -341,6 +346,30 @@ async def export_intelligence_report(
         "category_breakdown": intelligence.get("category_breakdown", {}),
     }
 
+    run_data = intelligence.get("run", {})
+    project_id = run_data.get("project_id") if isinstance(run_data, dict) else None
+    if project_id is None:
+        project_id = (
+            await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
+        ).scalar_one_or_none()
+    distribution = await decide_run_distribution(
+        db,
+        run_id=run_id,
+        project_id=project_id,
+        channel="intelligence_export",
+    )
+    await record_distribution(
+        db,
+        distribution,
+        channel="intelligence_export",
+        run_id=run_id,
+        project_id=project_id,
+        actor=_,
+    )
+    if not distribution.allowed:
+        await db.commit()
+        raise HTTPException(status_code=409, detail=refusal_detail(distribution))
+
     # E8.6: the export is a downloadable copy of AI report content, so it says
     # whether a person has accepted that content (review envelope, E8.3).
     envelope = await review_envelope_for_run(db, run_id)
@@ -350,7 +379,6 @@ async def export_intelligence_report(
 
     import json
     content = json.dumps(report, indent=2, default=str)
-    run_data = intelligence.get("run", {})
     filename = f"intelligence-report-{run_data.get('build_number', str(run_id)[:8])}.json"
 
     return Response(

@@ -1,5 +1,6 @@
 import json
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,7 +12,7 @@ async def test_export_contains_immutable_report_identity(monkeypatch):
 
     run_id = uuid.uuid4()
     intelligence = {
-        "run": {"build_number": "42"},
+        "run": {"build_number": "42", "project_id": str(uuid.uuid4())},
         "structured_summary": {
             "executive_summary": "verified",
             "decision_report": {
@@ -39,6 +40,12 @@ async def test_export_contains_immutable_report_identity(monkeypatch):
     monkeypatch.setattr(run_intelligence, "review_envelope_for_run", AsyncMock(return_value=ReviewEnvelope(
         ai_generated=True, state="accepted", message="Reviewed and accepted.",
     )))
+    monkeypatch.setattr(
+        run_intelligence,
+        "decide_run_distribution",
+        AsyncMock(return_value=SimpleNamespace(allowed=True)),
+    )
+    monkeypatch.setattr(run_intelligence, "record_distribution", AsyncMock())
 
     response = await run_intelligence.export_intelligence_report(run_id, db=object())
     payload = json.loads(response.body)
