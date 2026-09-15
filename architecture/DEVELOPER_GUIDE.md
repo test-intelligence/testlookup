@@ -115,7 +115,7 @@ fails if a *second* deleter appears.
 
 | Gate id | Requires | How to satisfy |
 |---|---|---|
-| `agents.base-agent-subclass` | every agent subclasses `BaseAgent` | Subclass it (support modules like `state.py`/`workflow.py` are exempt) |
+| `agents.base-agent-subclass` | every agent subclasses `BaseAgent` | Subclass it (support modules such as `state.py`, `workflow.py`, and the deterministic `workflow_compiler.py` are exempt) |
 | `agents.log-decision-present` | every agent that **implements `run()`** calls `self.log_decision(...)` — resolved through the inheritance graph, so a subclass overriding `run()` owes its own trail | Log every non-trivial route/fallback/skip; a subclass that only extends behaviour may delegate with `await super().run(state)` |
 | `agents.routing-metadata` | `classify_test()` populates `_routing` | Set `result['_routing'] = {...}` before returning |
 | `agents.capability-has-executor` † | a capability in `agent_capability_registry` that no workflow plans, or one that contradicts the planner | Add the stage to the right `_*_STAGES` tuple in `services/agent_planner.py`, or declare how it really runs: `_capability("name", execution="on_demand"/"child_spawned"/"runtime", ...)`. `defect_commander` read as a mutating pipeline stage depending on `root_cause_analysis` while having no executor at all — zero `agent_stage_results` rows in the deployment's entire history |

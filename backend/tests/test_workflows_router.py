@@ -46,6 +46,10 @@ def _dependency_names(endpoint) -> set[str]:
     return names
 
 
+def _allow_semantic(monkeypatch) -> None:
+    monkeypatch.setattr(workflows, "_require_semantic_validity", AsyncMock())
+
+
 def test_every_route_is_project_scoped_and_mutations_require_qa_lead() -> None:
     for route in workflows.router.routes:
         assert "{project_id}" in route.path
@@ -89,6 +93,7 @@ async def test_evaluate_route_persists_g4_and_records_activity(monkeypatch) -> N
         "sample_count": 20,
     }
     monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
+    _allow_semantic(monkeypatch)
     evaluate = AsyncMock(return_value=result)
     monkeypatch.setattr(eval_svc, "evaluate_definition", evaluate)
     activity = AsyncMock()
@@ -115,6 +120,7 @@ async def test_publish_refuses_measured_regression_without_override(monkeypatch)
     db = AsyncMock()
     actor = SimpleNamespace(id=uuid.uuid4())
     monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
+    _allow_semantic(monkeypatch)
 
     with pytest.raises(HTTPException) as exc:
         await workflows.publish_workflow(
@@ -137,6 +143,7 @@ async def test_publish_records_reasoned_regression_acceptance(monkeypatch) -> No
     db = AsyncMock()
     actor = SimpleNamespace(id=uuid.uuid4())
     monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
+    _allow_semantic(monkeypatch)
     activity = AsyncMock()
     monkeypatch.setattr(workflows, "_activity", activity)
 
@@ -166,6 +173,7 @@ async def test_publish_triggers_missing_evaluation_and_allows_insufficient_evide
     db = AsyncMock()
     actor = SimpleNamespace(id=uuid.uuid4())
     monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
+    _allow_semantic(monkeypatch)
 
     async def evaluate(*_args, **_kwargs):
         row.eval_verdict = "insufficient_samples"
@@ -195,3 +203,33 @@ async def test_publish_triggers_missing_evaluation_and_allows_insufficient_evide
     assert response["status"] == "published"
     assert response["eval_verdict"] == "insufficient_samples"
     assert response["eval_coverage"] == 0.25
+
+
+@pytest.mark.asyncio
+async def test_publish_refuses_semantically_invalid_workflow_before_evaluation(monkeypatch) -> None:
+    row = _row()
+    db = AsyncMock()
+    actor = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(workflows, "_get", AsyncMock(return_value=row))
+    invalid = AsyncMock(side_effect=HTTPException(
+        status_code=422,
+        detail={"message": "Workflow definition failed semantic validation", "errors": ["cycle"]},
+    ))
+    monkeypatch.setattr(workflows, "_require_semantic_validity", invalid)
+    evaluate = AsyncMock()
+    monkeypatch.setattr(eval_svc, "evaluate_definition", evaluate)
+
+    with pytest.raises(HTTPException) as exc:
+        await workflows.publish_workflow(
+            row.project_id,
+            row.workflow_id,
+            svc.WorkflowPublishV1(),
+            db,
+            actor,
+            actor,
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["errors"] == ["cycle"]
+    evaluate.assert_not_awaited()
+    assert row.status == "draft"

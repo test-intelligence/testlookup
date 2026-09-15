@@ -39,13 +39,13 @@ TestLookup (local-first test-failure intelligence) is being extended from "pipel
 | **E8** Human review gate | 10 | 6/6 | **Complete** (enforcement flag **off**) | #59 #60 #62 #63 #64 #65 #66 #68 #69 |
 | **E1** OpenAPI agent exposure | 1 | 6/6 | **Complete** | #70 #71 #72 #73 #74 #75 #76 #77 |
 | **E4** Per-agent configuration | 4 | 4/4 | **Complete** — E4.4 migration shipped in T5 | #78 #79 #80 #82 T5 |
-| **E5** Model tiering, SLM summarization | 5, 6 | 1/5 | **In progress** — E5.1 ModelRouter shipped | T6 |
-| **E6** Generic reviewer | 7 | 0/4 | Not started | — |
-| **E3** User-customizable workflows | 3 | 0/5 | Not started | — |
-| **E9** Evals as the control loop | 13 | 0/10 | Not started | — |
-| **E2** Hardening, observability | 2, 11, 12 | 0/4 (E2.4 ongoing) | Not started | — |
+| **E5** Model tiering, SLM summarization | 5, 6 | 5/5 | **Complete** | #87 #91 #92 #93 #94 |
+| **E6** Generic reviewer | 7 | 4/4 | **Complete** | #96 #97 |
+| **E3** User-customizable workflows | 3 | 2/5 | **In progress** — E3.1 and E3.2 shipped | #99, T17/E3.2 |
+| **E9** Evals as the control loop | 13 | 10/10 | **Complete** | #88 #89 #90 #98 #100 #101 #102 #103 #104 #105 |
+| **E2** Hardening, observability | 2, 11, 12 | 4/4 | **Complete** | #85 #106 #107 #108 |
 
-**Totals at the original handover:** 21 stories shipped + 1 partial (E4.4). T5 has since completed that partial; later shipped stories are recorded in §9 and the architecture backlog.
+**Totals at the original handover:** 21 stories shipped + 1 partial (E4.4). The continuation has completed E4.4, E5, E6, E9, E2, and E3.1–E3.2: 47/50 stories are shipped after T17/E3.2. E3.3–E3.5 remain.
 
 ### 1.3 The three owner decisions that gate work
 
@@ -99,7 +99,7 @@ Format per epic: **Title · Description · Business value · Technical scope · 
 - **Acceptance criteria.** Pending report ⇒ 409 on export (when enforced); setting on ⇒ watermark + audit row; accept flips run to `passed` with reviewer in audit log and absent from API payloads; e2e accept moves chip to `passed`.
 - **Implemented.** All six stories. `REVIEW_GATE_ENFORCED=False` (shadow): decisions are recorded as `not_enforced_would_refuse`, AI content is marked unreviewed/watermarked, nothing is withheld.
 - **Partial / gaps.**
-  - E8.2: separation of duties is coded but inert — `requested_by` is always NULL because pipeline runs do not record the triggering user → **K2**. No per-project toggle for SoD.
+  - E8.2: **K2 fixed by T3.** Authenticated triggers are durable and act-mode self-review is refused. The per-project read-only SoD toggle remains.
   - E8.3: `/runs/compare` AI comparison has no review subject.
   - E8.5: `passed · reviewed <time>` is now rendered from the identity-free pipeline review summary → **K3 fixed by T20**.
   - E8.6: pipeline-originated mutations now require the proposing agent's current mode to be `act` → **K4 fixed by T4**.
@@ -127,34 +127,36 @@ Format per epic: **Title · Description · Business value · Technical scope · 
 - **Dependencies.** E1 (invoke route), E8 (review policy), E7 (`execution_metadata`).
 - **Acceptance criteria.** Monotonicity table enforced as validators; composition `max_attempts × timeout_seconds ≤ AI_PIPELINE_DEADLINE_SECONDS` with arithmetic in the error; `config_version` frozen into runs; offline clamp at resolve time; unit test per precedence pair; guard that only `agent_config_service` writes `mode`.
 - **Implemented.** E4.1–E4.4. Migration 0187 moves both legacy rows into strict AgentConfig extensions, preserves runtime/pinned contracts, and removes the legacy table/model. Deprecated GET aliases remain for one release; old PUTs return 405.
-- **Not implemented.** Request overrides on the invoke body (`config_overrides`) — deliberately deferred until a runtime consumer exists (E5). Runs record `agent_config_versions` but **no agent reads the resolved config at run time yet**.
+- **Implemented follow-up.** T11 added tighten-only invoke `config_overrides`, froze the credential-free resolved snapshot, and wired Summary/Root Cause runtime consumers.
 
-### 2.5 E5 — Model tiering and SLM summarization  🟡 In progress
+### 2.5 E5 — Model tiering and SLM summarization  ✅ Complete
 
 - **Description.** A `ModelRouter` that picks deterministic/SLM/LLM per capability, escalates SLM→LLM on validation failure or low confidence with a budget re-check, SLM summaries with repair/escalation/fallback, root-cause split, per-provider circuit breaker, dev tag pairs.
 - **Business value.** Lower cost/latency for summaries and classification; LLMs reserved for reasoning; graceful degradation.
 - **Dependencies.** E4.1/E4.2 (resolved config — done). **Promotion of any tier default is forbidden before E9.3** (tier comparison), which needs E9.2 golden sets and E9.1.
 - **Acceptance criteria.** SLM summary non-inferior to LLM on the summary golden set by the G2 rule (E9); provenance `tier_requested/tier_used/escalations/fallback_used`; escalation never exceeds budget.
-- **E5.1 implemented by T6.** The investigation and deviations are recorded in §6.3 and the architecture §12 shipped note.
+- **Implemented.** E5.1–E5.5 shipped in T6–T10; T11 added invocation overrides and frozen runtime config.
 
-### 2.6 E6 — Generic reviewer  ⬜ Not started
+### 2.6 E6 — Generic reviewer  ✅ Complete
 
 - **Description.** `ReviewerAgent` (`agent.reviewer.v1`) with check families 1–5, `ReviewVerdictV1`, self-consistency (SLM), heterogeneous second-model agreement, supervisor handling of `retry/reject/pass_with_flags`, shared `step_llm_budget`.
 - **Business value.** Any workflow (including user-defined ones) can attach an independent verifier; reduces single-model blind spots.
 - **Dependencies.** E5.1 (tiers), E4 (`review.second_model_check`). E9.4 depends on E6.1.
+- **Implemented.** E6.1–E6.4 shipped in T15–T16. Workflow attachment remains an E3 runtime concern.
 
-### 2.7 E3 — User-customizable workflows  ⬜ Not started
+### 2.7 E3 — User-customizable workflows  🟡 2/5
 
 - **Description.** Versioned `workflow_definitions` with publish immutability; `WorkflowCompiler` (registry validation, dependency closure, cycle rules, capability permission ≤ mode, step tools ⊆ config allowlist, typed JSON condition AST); runs record `workflow_id@version`; editor UI; guard that built-ins match compiled graphs.
 - **Business value.** Requirement 3 is the only one still **Missing**.
 - **Dependencies.** E4 (permissions, allowlists), E1.6 (`require_workflow_access`). E9.5 depends on E3.1.
+- **Implemented.** E3.1 stores and governs versioned definitions. E3.2 semantically validates and emits LangGraph graphs with built-in topology parity. E3.3–E3.5 remain.
 
-### 2.8 E9 — Evals as the control loop  ⬜ Not started
+### 2.8 E9 — Evals as the control loop  ✅ Complete
 
 - **Description.** One `EvalVerdict`; recordings keyed by `(prompt hash, provider/model@tier)`; golden sets (every capability n ≥ 20, AnalysisAgent n ≥ 100); G2 tier comparison + shadow sampling; G3 reviewer quality; G4 workflow evaluation; G5 drift; manifest provenance; eval-on-eval; release incident marks; label-leakage rules.
 - **Business value.** Every prompt/model/tier/routing/reviewer/workflow change is measured before and after shipping.
 - **Dependencies.** E9.3 needs E4.1 (config hook — done) and E5.1 (`default_tier`); E9.4 needs E6.1; E9.5 needs E3.1; E9.6 needs E8 + E9.9; E9.7 needs E7.1 (done).
-- **Note.** The doc's four-engineer plan starts E9.1/E9.2 in week 1 in parallel. The single-engineer loop did not. **[Recommendation]** start E9.1/E9.2 early (see §8).
+- **Implemented.** E9.1–E9.10 shipped in T12–T14, T18, and the subsequent E9 continuation PRs; detailed deviations and gaps are on each architecture §12 story line.
 
 ### 2.9 E2 — Hardening and observability  ✅ Complete
 
@@ -616,18 +618,18 @@ Priority: **P0** = blocks correctness/safety or other epics · **P1** = needed f
 | T4 | P1 | S | **Shipped:** fix K4, the `mode=act` half of the mutating-call invariant | `services/agent_action_ledger_service.py` | — | `tests/services/test_agent_action_ledger_service.py` | §12 E8.6 note |
 | T5 | P1 | S–M | **Shipped:** E4.4 remainder per D1; both policy rows migrated, pinned GET aliases retained read-only, old PUTs return 405, mode baseline zero | `agent_investigation_service.py`, `fixer_service.py`, Investigator workflow, Fixer scheduler, routers/config service, frontend governance services | migration 0187 | alias, migration, projection, guard and mutation tests | §12 E4.4; CHANGELOG |
 | T6 | P1 | S | **Shipped: E5.1** ModelRouter + registry `default_tier`/escalation maps (design in §6.3) | `agent_capability_registry.py`, `agent_catalog.py` | `services/model_router.py` | `test_model_router.py`, registry invariants, catalog test; `agent_api_docs --check` | §12 E5.1 note; E1.1 note |
-| T7 | P1 | M | **E5.2** Summary on SLM: validate → one SLM repair → LLM escalation → deterministic fallback; provenance | `agents/summary_agent.py`, `llm_factory.py` (endpoint-aware call) | — | summary escalation tests; mutation | §12 |
-| T8 | P1 | S | **E5.3** Root-cause split | `agents/analysis_agent.py`, `services/analysis_router.py` | — | tests | §12 |
-| T9 | P1 | S | **E5.4** Circuit breaker per provider+base_url | `services/llm_factory.py` | `services/llm_circuit_breaker.py` | breaker tests | OBSERVABILITY.md |
-| T10 | P2 | S | **E5.5** `make dev-llm` SLM+LLM tag pair | `Makefile`, compose | — | — | docs |
-| T11 | P1 | M | Accept `config_overrides` (AgentConfigPatch) on invoke once a runtime consumer exists; freeze resolved config into the invocation run | `routers/agent_invoke.py`, `agents/workflow.py`, idempotency fingerprint includes overrides | — | invoke tests; E1.4 docs regenerate | §12 E4.2 |
+| T7 | P1 | M | **Shipped: E5.2** Summary on SLM with repair, LLM escalation, deterministic fallback, and provenance | `agents/summary_agent.py`, `llm_factory.py` | — | summary escalation tests; mutation | §12 |
+| T8 | P1 | S | **Shipped: E5.3** Root-cause split | `agents/analysis_agent.py`, `services/analysis_router.py` | — | tests | §12 |
+| T9 | P1 | S | **Shipped: E5.4** Circuit breaker per provider+base_url | `services/llm_factory.py` | `services/llm_circuit_breaker.py` | breaker tests | OBSERVABILITY.md |
+| T10 | P2 | S | **Shipped: E5.5** `make dev-llm` SLM+LLM tag pair | `Makefile`, compose | — | — | docs |
+| T11 | P1 | M | **Shipped:** accept `config_overrides` on invoke and freeze resolved config into the invocation run | `routers/agent_invoke.py`, `agents/workflow.py` | migration 0181 | invoke tests; E1.4 docs | §12 E4.2 |
 | T12 | P0 for E5 promotion | M | **Shipped: E9.1** EvalVerdict + recordings keyed by model@tier | `agent_eval_harness.py`, `eval_gate_service.py`, `prompt_registry.py`, `prompt_eval_recordings.py` | `eval_verdict.py` | harness, recording, schedule and guard tests | AI_EVALUATION.md |
 | T13 | P0 for E5 promotion | L | **Shipped: E9.2** golden sets (n ≥ 20 all, n ≥ 100 AnalysisAgent), sample schemas, `eval_coverage_by_capability()`, `eval_exempt` | `golden_agent_outputs.py`, `tests/evals/*` | `agent_eval_samples.py` | coverage tests | AI_EVALUATION.md |
-| T14 | P1 | M | **E9.3** G2 tier comparison + shadow sampling + `PUT agent-configs` hook | `routers/ai_evaluation.py`, `agent_config_service.put_config` / router | migration (shadow pairs) | tests | §12 |
-| T15 | P1 | M | **E6.1** ReviewerAgent + `ReviewVerdictV1`, `agent.reviewer.v1` | registry, catalog modules | `agents/reviewer_agent.py`, contract model | tests + mutation | §12 |
-| T16 | P1 | S/M/S | **E6.2–E6.4** | reviewer, supervisor, budgets | — | tests | §12 |
-| T17 | P1 | M/L/S/M/S | **E3.1–E3.5** workflows | `agents/workflow.py`, `agent_planner.py`, new routers, frontend `AgentWorkflowPage.tsx` | `models` + `services/workflow_compiler.py`, `routers/workflows.py`, migration | compiler fuzz, diff tests, guard | §4.4, §12 |
-| T18 | P1 | M×3, S×5 | **E9.4–E9.10** | eval services, releases UI | migrations | tests | AI_EVALUATION.md |
+| T14 | P1 | M | **Shipped: E9.3** G2 tier comparison + shadow sampling + `PUT agent-configs` hook | `routers/ai_evaluation.py`, config router | migration 0180 | tests | §12 |
+| T15 | P1 | M | **Shipped: E6.1** ReviewerAgent + `ReviewVerdictV1`, `agent.reviewer.v1` | registry, catalog modules | `agents/reviewer_agent.py`, contract model | tests + mutation | §12 |
+| T16 | P1 | S/M/S | **Shipped: E6.2–E6.4** reviewer model checks, supervisor, shared budget | reviewer, supervisor, budgets | — | tests + mutation | §12 |
+| T17 | P1 | M/L/S/M/S | **In progress:** E3.1 and **E3.2 shipped**; E3.3–E3.5 remain | `agents/workflow.py`, `agent_planner.py`, workflows router | `agents/workflow_compiler.py`; migration 0183 | compiler fuzz, topology diff, mutation | §4.4, §12 |
+| T18 | P1 | M×3, S×5 | **Shipped: E9.4–E9.10** reviewer quality, workflow eval, drift, provenance, eval mutations, release outcomes, label leakage | eval services, releases UI | migrations 0182, 0184–0186 | tests + mutations | AI_EVALUATION.md |
 | T19 | P2 | S×3 | **Shipped: E2.1–E2.3** OTel, counters, DLQ + alerts with positive tests | `core/tracing.py`, `core/metrics.py`, `worker/tasks.py`, `infra/` | — | emission + alert tests | OBSERVABILITY.md |
 | T20 | P2 | S | **Shipped:** K3 chip review time | `routers/agents.py` list response, `AgentStatusPage.tsx` | — | backend/frontend regression tests; six-mutation harness | CHANGELOG; §12 E8.5 |
 | T21 | P2 | M | **Shipped:** K5 label-only catalog inputs → nine concrete models | `models/agent_input_contracts.py`, catalog module list | — | catalog + contract tests; empty baseline; nine-mutation harness | CHANGELOG; §12 E1.1 |

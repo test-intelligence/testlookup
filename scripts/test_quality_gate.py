@@ -245,6 +245,19 @@ def test_base_agent_subclass_flags_standalone_class(monkeypatch: pytest.MonkeyPa
     assert "rogue.py" in violations[0].file.as_posix()
 
 
+def test_base_agent_subclass_ignores_workflow_compiler_support_types(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "app" / "agents" / "workflow_compiler.py", """
+        from dataclasses import dataclass
+        @dataclass(frozen=True)
+        class WorkflowValidation:
+            valid: bool
+    """)
+    assert qg._agents_base_agent_subclass() == []
+
+
 # ── Guard: frontend.ingest-formats-match-backend ─────────────────────────────
 
 
