@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-14 - Prove evaluation scorers detect broken outputs (E9.8)
+
+Added a CI mutation suite for every rule in the report-quality harness and the
+classification, failure-kind, root-cause, duplicate, release-decision, and
+task-dispatch scorers. Thirteen focused probes isolate rule boundaries and 29
+source mutations reverse or disable them; CI fails if any mutation survives or
+if a source edit prevents a mutation from applying exactly once.
+
 ## 2026-09-14 - Prevent evaluation-label leakage (E9.10)
 
 Feedback and review rows now retain the evaluation-manifest checksum of the AI
