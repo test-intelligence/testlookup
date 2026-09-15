@@ -114,7 +114,7 @@ Format per epic: **Title · Description · Business value · Technical scope · 
 - **Acceptance criteria.** `GET /openapi.json` lists every capability under `/api/v1/agents/{agent_id}/invoke` with per-agent input schema; Postman run returns `202` then `passed`/`completed` on the seed project **[not yet run live]**.
 - **Implemented.** All six stories.
 - **Partial / gaps.**
-  - E1.1: 20 of 31 registry schema names have no Pydantic model; 13 label-only inputs baselined in `agents.catalog-schema-complete`. Those agents accept only `SubjectRef` (a stored test run). `description` and `default_tier` not published (E5.1).
+  - E1.1: **K5 fixed by T21.** All capability inputs now resolve to closed Pydantic models and the `agents.catalog-schema-complete` baseline is empty. Thirteen output schemas remain unresolved. The invoke route still accepts only `SubjectRef` (a stored test run); direct structured payload execution is an E1.2 follow-up. The workflow currently consumes its durable shared-state projections rather than accepting these catalog models directly.
   - E1.2: arbitrary payloads other than a stored subject are a follow-up.
   - E1.3: deviation — DB idempotency key never expires; only the 24 h Redis lock does.
   - E1.6: 34 unclassified path ids remain in a shrink-only backlog; `require_workflow_access` arrives with E3.
@@ -507,7 +507,7 @@ Non-programme merges in the same window: #61 (test fixtures stop stubbing app mo
 | K2 | P1 | Separation of duties inert | Trigger a pipeline as user A, accept its review as user A → accepted (SoD should refuse for `mode=act`) because `review_requests.requested_by` is NULL | Record triggering user on `agent_pipeline_runs` (new nullable column + migration CONCURRENTLY rules) and pass it to `create_run_review_request`; then enforce SoD for `mode=act` per §8 |
 | K3 | P2 | Status chip lacked "passed · reviewed <time>" | **Fixed by T20:** pipeline responses carry the live report review state and settlement time; accepted PASSED cards render the time beside the four-value chip | Regression and mutation coverage in `test_agents_pipeline_review_summary.py` and `AgentStatusPage.publicStatus.test.tsx` |
 | K4 | P1 | `mode=act` half of mutating-call invariant not wired | **Fixed by T4:** pipeline proposals carry a hashed `proposing_agent_id`; `execute_agent_action` resolves it and fails `policy_denied` unless `mode == "act"` | Regression and mutation coverage in `tests/services/test_agent_action_ledger_service.py` |
-| K5 | P2 | 13 capability inputs are labels (SubjectRef only) | `GET /api/v1/agents/catalog/agent.summary.v1` → `input_schema_resolved` per baseline | Define models in `CATALOG_SCHEMA_MODULES`; shrink baseline |
+| K5 | P2 | 13 capability inputs were labels (SubjectRef only) | **Fixed by T21:** all 30 capabilities report `input_schema_resolved=true`; the completeness baseline is empty | Nine closed input contracts cover the 13 entries; direct structured invoke payloads remain refused by E1.2 |
 | K6 | P3 | Idempotency key never expires in DB | Invoke with key K; after 24 h, same key with different body → 422 (lock expired, row remains) | Documented deviation; decide with owner whether keys should expire (partial index on `created_at` or cleanup job) |
 | K7 | P3 | Codacy push workflow failed in 0 s on every branch (pre-existing) | GitHub rejected a step `if` that referenced `secrets.CODACY_PROJECT_TOKEN` directly | **Fixed by T23:** compute token availability in job-level `env`, then check that value in the step condition; regression test pins the workflow shape |
 | K8 | P2 | E7.5 e2e (`frontend/tests/e2e/agents-public-status.spec.ts`) not in CI | CI job list | Run against a CI stack or document live-probe procedure |
@@ -632,7 +632,7 @@ Priority: **P0** = blocks correctness/safety or other epics · **P1** = needed f
 | T18 | P1 | M×3, S×5 | **E9.4–E9.10** | eval services, releases UI | migrations | tests | AI_EVALUATION.md |
 | T19 | P2 | S×3 | **Shipped: E2.1–E2.3** OTel, counters, DLQ + alerts with positive tests | `core/tracing.py`, `core/metrics.py`, `worker/tasks.py`, `infra/` | — | emission + alert tests | OBSERVABILITY.md |
 | T20 | P2 | S | **Shipped:** K3 chip review time | `routers/agents.py` list response, `AgentStatusPage.tsx` | — | backend/frontend regression tests; six-mutation harness | CHANGELOG; §12 E8.5 |
-| T21 | P2 | M | K5 label-only catalog inputs → models | `models/*contracts*.py` | — | catalog tests; baseline shrink | — |
+| T21 | P2 | M | **Shipped:** K5 label-only catalog inputs → nine concrete models | `models/agent_input_contracts.py`, catalog module list | — | catalog + contract tests; empty baseline; nine-mutation harness | CHANGELOG; §12 E1.1 |
 | T22 | P2 | S | Live DoD verification (§8.5) | — | — | live probes | record results in §12 |
 | T23 | P3 | S | K7 Codacy workflow **(shipped early as a prerequisite)** | `.github/workflows/codacy.yml` | — | workflow syntax regression test | CHANGELOG; §12 E2.4 |
 
