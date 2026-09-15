@@ -17,4 +17,4 @@ def test_e32_mutation_harness() -> None:
         check=False,
     )
     assert run.returncode == 0, run.stdout + run.stderr
-    assert run.stdout.strip() == "E3.2 mutation check: 11 mutations killed"
+    assert run.stdout.strip() == "E3.2 mutation check: 12 mutations killed"

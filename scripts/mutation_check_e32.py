@@ -19,6 +19,7 @@ PYTEST = (
     "--basetemp=backend/.pytest-tmp-e32-mutation",
     "backend/tests/test_workflow_compiler.py",
     "backend/tests/test_workflows_router.py",
+    "backend/tests/test_architectural_agent_contracts.py",
 )
 
 # (file, correct source, wrong behavior, exact replacement count)
@@ -87,6 +88,12 @@ MUTATIONS = (
         "backend/app/services/workflow_definition_service.py",
         '{"from": "decision_report_critic", "to": "__end__"},',
         '{"from": "decision_report", "to": "__end__"},',
+        1,
+    ),
+    (
+        "backend/tests/test_architectural_agent_contracts.py",
+        '    "workflow_compiler.py",',
+        '    "workflow_compiler_MUTATED.py",',
         1,
     ),
 )

@@ -43,6 +43,9 @@ INFRA_ALLOWLIST: frozenset[str] = frozenset({
     "contract_agent.py",
     "defect_commander.py",
     "agent_planner.py",
+    # Workflow-definition compiler (E3.2): validates and compiles a declarative
+    # graph into LangGraph structure; it does not emit an analytic payload.
+    "workflow_compiler.py",
     # Shared self-critique / verification helpers (AIQ-P2): emits consistency
     # reports for other agents to fold into their contracts; not itself an
     # analytic agent with a contracted output.
