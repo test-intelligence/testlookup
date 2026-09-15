@@ -1,12 +1,12 @@
 # TestLookup — Database & Schema Design
 
 > Originally generated 2026-06-25 from the live implementation (`backend/app/models/postgres.py`,
-> `backend/migrations/versions/`) and updated incrementally through migration 0187.
+> `backend/migrations/versions/`) and updated incrementally through migration 0188.
 > Regenerate the ER diagrams and the schema
 > reference with the extractor in `architecture/` after model changes — see
 > [Keeping these docs current](#keeping-these-docs-current).
 
-PostgreSQL is the **system of record** (139 declared tables, Alembic head `0187`). MongoDB, Redis, MinIO and
+PostgreSQL is the **system of record** (139 declared tables, Alembic head `0188`). MongoDB, Redis, MinIO and
 ChromaDB hold derived, ephemeral, or large-blob data that does not belong in the
 relational store. This document covers all of them, but the relational schema is
 the focus.
@@ -1524,6 +1524,7 @@ _Constraints:_ Index(`ix_sme_project_suite`, `project_id`, `suite_name`, `create
 |---|---|---|---|---|
 | `id` | `UUID` | PK | NN def |  |
 | `test_run_id` | `UUID` | FK | NN | → `test_runs.id` |
+| `requested_by` | `UUID` | FK |  | → `users.id` |
 | `workflow_type` | `String(20)` |  | NN def |  |
 | `status` | `String(20)` |  | NN def |  |
 | `started_at` | `DateTime` |  |  |  |

@@ -1986,6 +1986,12 @@ class AgentPipelineRun(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
+    # The authenticated user who caused this pipeline identity to be created.
+    # Automatic/outbox runs remain NULL. Review settlement uses this durable
+    # attribution for the mode=act separation-of-duties check.
+    requested_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     parent_pipeline_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("agent_pipeline_runs.id", ondelete="SET NULL"), nullable=True
     )

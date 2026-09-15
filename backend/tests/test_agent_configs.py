@@ -473,10 +473,18 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
     monkeypatch.setattr(agent_investigation_service, "get_effective_policy", AsyncMock(return_value={"budgets": {}}))
     monkeypatch.setattr(svc, "config_versions", AsyncMock(return_value={SUMMARY: 4}))
 
-    await workflow._create_pipeline_run(str(uuid.uuid4()), str(uuid.uuid4()), str(PROJECT_ID), "offline")
+    requester = uuid.uuid4()
+    await workflow._create_pipeline_run(
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        str(PROJECT_ID),
+        "offline",
+        requested_by=str(requester),
+    )
 
     (run,) = [row for row in added if isinstance(row, AgentPipelineRun)]
     assert run.execution_metadata["agent_config_versions"] == {SUMMARY: 4}
+    assert run.requested_by == requester
     from app.services.eval_provenance_service import current_eval_manifest_checksum
 
     assert run.execution_metadata["eval_manifest_checksum"] == current_eval_manifest_checksum()

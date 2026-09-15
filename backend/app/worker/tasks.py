@@ -1892,6 +1892,7 @@ def run_agent_pipeline(
     build_number: str,
     workflow_type: str = "offline",
     rerun_of: str | None = None,
+    requested_by: str | None = None,
 ):
     """
     Background task: run the full multi-agent LangGraph pipeline for a completed test run.
@@ -1966,6 +1967,7 @@ def run_agent_pipeline(
                 build_number=build_number,
                 cost_budget_mode_override=cost_budget_mode_override,
                 rerun_of=rerun_of,
+                requested_by=requested_by,
             )
         return await run_offline_pipeline(
             test_run_id=test_run_id,
@@ -1976,6 +1978,7 @@ def run_agent_pipeline(
             create_if_missing=durable_pipeline_id is not None,
             cost_budget_mode_override=cost_budget_mode_override,
             rerun_of=rerun_of,
+            requested_by=requested_by,
         )
 
     logger.info(
@@ -2080,6 +2083,7 @@ def run_agent_pipeline(
                 "build_number": build_number,
                 "workflow_type": workflow_type,
                 "rerun_of": rerun_of,
+                "requested_by": requested_by,
             },
             error=safe_error,
         ))
@@ -6460,6 +6464,7 @@ def run_agent_invocation(self, invocation_id: str):
                 "workflow_type": str(invocation.workflow_type),
                 "build_number": str(build_number or "invocation"),
                 "config_snapshot": getattr(invocation, "resolved_config_snapshot", None),
+                "requested_by": str(invocation.requested_by) if invocation.requested_by else None,
             }
 
     loaded = _run_async(_load())
@@ -6479,6 +6484,7 @@ def run_agent_invocation(self, invocation_id: str):
             "create_if_missing": True,
             "invocation_stage": loaded["stage_name"],
             "invocation_config_snapshot": loaded["config_snapshot"],
+            "requested_by": loaded["requested_by"],
         }
         if loaded["workflow_type"] == "deep":
             return await run_deep_pipeline(**common)

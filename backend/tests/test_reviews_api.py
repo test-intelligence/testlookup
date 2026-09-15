@@ -45,13 +45,20 @@ def _review(**kw):
 
 
 class _DB:
-    def __init__(self, row=None):
+    def __init__(self, row=None, *, action_payloads=()):
         self.row = row
+        self.action_payloads = list(action_payloads)
         self.flushed = False
         self.committed = False
 
     async def execute(self, _stmt):
-        return SimpleNamespace(scalar_one_or_none=lambda: self.row)
+        return SimpleNamespace(
+            scalar_one_or_none=lambda: self.row,
+            scalars=lambda: SimpleNamespace(all=lambda: list(self.action_payloads)),
+        )
+
+    async def get(self, _model, _row_id):
+        return SimpleNamespace(execution_metadata={})
 
     async def flush(self):
         self.flushed = True
@@ -120,12 +127,62 @@ async def test_only_a_pending_review_can_be_settled(transitions, state):
 
 
 @pytest.mark.asyncio
-async def test_the_requester_cannot_review_their_own_run(transitions):
+async def test_the_requester_cannot_review_their_own_act_mode_run(monkeypatch, transitions):
     reviewer = _user()
+    monkeypatch.setattr(
+        "app.services.agent_config_resolver.resolve_for_pipeline",
+        AsyncMock(return_value=SimpleNamespace(config=SimpleNamespace(mode="act"))),
+    )
     with pytest.raises(svc.ReviewDecisionRefused) as exc:
-        await svc.settle_review(_DB(), review=_review(requested_by=reviewer.id), reviewer=reviewer,
-                                decision="accepted")
+        await svc.settle_review(
+            _DB(action_payloads=[{"proposing_agent_id": "decision_report"}]),
+            review=_review(requested_by=reviewer.id),
+            reviewer=reviewer,
+            decision="accepted",
+        )
     assert (exc.value.status_code, exc.value.code) == (403, "separation_of_duties")
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_proposal_without_agent_identity_fails_closed_for_self_review(
+    transitions,
+):
+    reviewer = _user()
+
+    with pytest.raises(svc.ReviewDecisionRefused) as exc:
+        await svc.settle_review(
+            _DB(action_payloads=[{}]),
+            review=_review(requested_by=reviewer.id),
+            reviewer=reviewer,
+            decision="accepted",
+        )
+
+    assert (exc.value.status_code, exc.value.code) == (403, "separation_of_duties")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action_payloads, mode",
+    [([], "act"), ([{"proposing_agent_id": "decision_report"}], "suggest")],
+)
+async def test_the_requester_may_review_when_the_run_has_no_act_mode_proposal(
+    monkeypatch, transitions, action_payloads, mode
+):
+    reviewer = _user()
+    monkeypatch.setattr(
+        "app.services.agent_config_resolver.resolve_for_pipeline",
+        AsyncMock(return_value=SimpleNamespace(config=SimpleNamespace(mode=mode))),
+    )
+
+    review = _review(requested_by=reviewer.id)
+    await svc.settle_review(
+        _DB(action_payloads=action_payloads),
+        review=review,
+        reviewer=reviewer,
+        decision="accepted",
+    )
+
+    assert review.state == "accepted"
 
 
 @pytest.mark.asyncio
