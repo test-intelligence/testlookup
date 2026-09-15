@@ -12,9 +12,9 @@ against verbatim — do not rename keys):
   ``{"status": "cancelling"}`` (cooperative cancel).
 * ``GET /api/v1/projects/{project_id}/investigations?limit=&offset=`` →
   ``{"items": [InvestigationSummary], "total": N}``.
-* ``GET /api/v1/projects/{project_id}/agent-policies`` →
-  ``{"policies": [AgentPolicy]}``; ``PUT .../agent-policies/{agent_id}``
-  (QA_LEAD+) → AgentPolicy.
+* ``GET /api/v1/projects/{project_id}/agent-policies`` keeps the pinned
+  read-only AgentPolicy projection for one release. Writes use
+  ``/agent-configs/investigator``.
 * ``GET /api/v1/projects/{project_id}/agent-runs?agent_id=&limit=&offset=``
   → ``{"items": [AgentRunEntry], "total": N}``.
 
@@ -22,7 +22,7 @@ Authorization: project/run-scoped guards per the ratchet
 (``require_run_access`` / ``require_project_access``); the
 ``{investigation_id}`` routes resolve the investigation to its project and
 verify membership on the PROVIDED id (IDOR discipline). Write operations
-require QA_ENGINEER+; the policy PUT requires QA_LEAD+.
+require QA_ENGINEER+; the retired policy PUT still authenticates before 405.
 """
 from __future__ import annotations
 
@@ -184,8 +184,8 @@ async def start_investigation(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 "The Investigator agent is disabled for this project by its "
-                "agent policy. A QA Lead can enable it via "
-                f"PUT /api/v1/projects/{run.project_id}/agent-policies/investigator."
+                "configuration. A QA Lead can enable it via "
+                f"PUT /api/v1/projects/{run.project_id}/agent-configs/investigator."
             ),
         )
     except svc.InvestigationAlreadyActive as exc:
@@ -297,7 +297,7 @@ async def list_investigations(
 # ── Agent policies ───────────────────────────────────────────────────────────
 
 
-@router.get("/projects/{project_id}/agent-policies")
+@router.get("/projects/{project_id}/agent-policies", deprecated=True)
 async def list_agent_policies(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -311,7 +311,8 @@ async def list_agent_policies(
     return {"policies": policies}
 
 
-@router.put("/projects/{project_id}/agent-policies/{agent_id}")
+# activity: none — deprecated write alias always returns 405
+@router.put("/projects/{project_id}/agent-policies/{agent_id}", deprecated=True)
 async def update_agent_policy(
     project_id: uuid.UUID,
     agent_id: str,
@@ -320,24 +321,17 @@ async def update_agent_policy(
     current_user: User = Depends(require_project_access()),
     _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
 ) -> dict[str, Any]:
-    """Upsert a project's agent policy (QA_LEAD+). ``shadow_runs_completed``
-    is server-maintained and ignored on write."""
+    """Retired write alias; agent-configs is the single writable resource."""
     if agent_id not in svc.KNOWN_AGENT_IDS:
         raise HTTPException(
             status_code=404,
             detail=f"Unknown agent_id {agent_id!r} — known agents: {list(svc.KNOWN_AGENT_IDS)}",
         )
-    row = await svc.upsert_policy(
-        db,
-        project_id,
-        agent_id,
-        enabled=body.enabled,
-        mode=body.mode,
-        budgets=body.budgets.model_dump(),
-        promotion_note=body.promotion.note if body.promotion else None,
+    raise HTTPException(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        detail="agent-policies is read-only; write /agent-configs/investigator",
+        headers={"Location": f"/api/v1/projects/{project_id}/agent-configs/{agent_id}"},
     )
-    await db.commit()
-    return svc.serialize_policy(agent_id, row)
 
 
 # ── Agent-runs ledger ────────────────────────────────────────────────────────

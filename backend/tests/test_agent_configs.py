@@ -410,6 +410,31 @@ async def test_put_writes_records_activity_and_commits(monkeypatch):
     db.commit.assert_awaited_once()
 
 
+async def test_compatibility_config_put_skips_registry_tier_gate(monkeypatch):
+    """Investigator/Fixer model fields are inert compatibility scaffolding."""
+    user = _user()
+    body = svc.default_config("fixer")
+    config = body.model_dump(mode="json", exclude={"agent_id", "enabled", "mode"})
+    written = _row(agent_id="fixer", enabled=False, config=config, config_version=1)
+    monkeypatch.setattr(router_mod, "get_effective_ai_config", AsyncMock(return_value={"offline_mode": True}))
+    monkeypatch.setattr(svc, "get_config_row", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "put_config", AsyncMock(return_value=written))
+    monkeypatch.setattr(router_mod, "record_activity", AsyncMock())
+    db = SimpleNamespace(commit=AsyncMock())
+
+    out = await router_mod.put_agent_config(
+        PROJECT_ID,
+        "fixer",
+        body,
+        db=db,
+        current_user=user,
+        _lead=user,
+    )
+
+    assert out["agent_id"] == "fixer"
+    db.commit.assert_awaited_once()
+
+
 def test_put_requires_qa_lead():
     dependency = inspect.signature(router_mod.put_agent_config).parameters["_lead"].default.dependency
     cells = [c.cell_contents for c in (dependency.__closure__ or ())]

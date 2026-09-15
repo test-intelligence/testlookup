@@ -40,7 +40,6 @@
 2 app/services/activity/query.py
 1 app/services/agent.py
 2 app/services/agent_capability_registry.py
-1 app/services/agent_investigation_service.py
 4 app/services/agent_memory_service.py
 7 app/services/agentic_runtime_service.py
 3 app/services/analytics_service.py

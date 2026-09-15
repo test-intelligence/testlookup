@@ -1,7 +1,7 @@
 """Fixer config + run-gate + serialization core (Agentic plan AI-2).
 
 Mirrors ``agent_investigation_service`` for the Investigator; the Fixer's
-governance rides the SAME ``agent_policies`` table under ``agent_id='fixer'``:
+governance lives in the canonical ``agent_configs`` row under ``agent_id='fixer'``:
 
 * ``enabled`` + ``mode`` map to the row columns (``mode`` restricted to
   shadow|suggest — ``act`` is rejected at the policy layer, like the
@@ -37,7 +37,7 @@ from app.agents.fixer.state import (
     VALID_SCHEDULES,
     is_valid_runner_image,
 )
-from app.models.postgres import AgentPolicy, FixAttempt
+from app.models.postgres import AgentConfig, FixAttempt
 from app.services import agent_investigation_service as inv_svc
 
 logger = structlog.get_logger("services.fixer")
@@ -63,7 +63,7 @@ class FixerRunnerRequiredForSuggest(Exception):
     """Suggest mode requires a configured (non-none) runner."""
 
 
-# ── Config (agent_policies row for agent_id='fixer') ─────────────────────────
+# ── Config (agent_configs row for agent_id='fixer') ──────────────────────────
 
 
 def _default_runner() -> dict[str, Any]:
@@ -110,32 +110,27 @@ def _coerce_globs(raw: Any) -> list[str]:
     return list(DEFAULT_TEST_GLOBS)
 
 
-def serialize_fixer_config(row: Optional[AgentPolicy]) -> dict[str, Any]:
+def serialize_fixer_config(row: Optional[AgentConfig]) -> dict[str, Any]:
     """FixerConfig wire shape (pinned API contract). Missing row → defaults:
     disabled, shadow, runner type none, default globs, budgets 3/2/5/2, off."""
-    if row is None:
-        return {
-            "enabled": False,
-            "mode": "shadow",
-            "runner": _default_runner(),
-            "test_globs": list(DEFAULT_TEST_GLOBS),
-            "budgets": dict(DEFAULT_FIXER_BUDGETS),
-            "schedule": "off",
-        }
-    stored = dict(row.budgets or {})
+    from app.services import agent_config_service as config_svc
+
+    config = config_svc.AgentConfigV1.model_validate(config_svc.serialize(FIXER_AGENT_ID, row)["config"])
+    extension = config.extensions.fixer or config_svc.FixerConfigExtension()
+    stored = extension.model_dump(mode="json")
     return {
-        "enabled": bool(row.enabled),
-        "mode": row.mode if row.mode in VALID_FIXER_MODES else "shadow",
+        "enabled": config.enabled,
+        "mode": config.mode if config.mode in VALID_FIXER_MODES else "shadow",
         "runner": _coerce_runner(stored.get("runner")),
         "test_globs": _coerce_globs(stored.get("test_globs")),
-        "budgets": _coerce_budgets(stored),
+        "budgets": _coerce_budgets(stored.get("budgets")),
         "schedule": stored.get("schedule") if stored.get("schedule") in VALID_SCHEDULES else "off",
     }
 
 
 async def get_fixer_policy_row(
     db: AsyncSession, project_id: uuid.UUID,
-) -> Optional[AgentPolicy]:
+) -> Optional[AgentConfig]:
     return await inv_svc.get_policy_row(db, project_id, FIXER_AGENT_ID)
 
 
@@ -155,28 +150,28 @@ async def upsert_fixer_config(
     test_globs: list[str],
     budgets: dict[str, int],
     schedule: str,
-) -> AgentPolicy:
-    """Create/update the fixer's ``agent_policies`` row. Stage-only — router
-    commits. ``act`` mode is rejected here (reserved)."""
+) -> AgentConfig:
+    """Compatibility helper that writes the canonical AgentConfig row."""
     if mode not in VALID_FIXER_MODES:
         raise ValueError(f"invalid fixer mode {mode!r} — expected one of {VALID_FIXER_MODES}")
     runner = _coerce_runner(runner)
     if schedule not in VALID_SCHEDULES:
         schedule = "off"
+    from app.services import agent_config_service as config_svc
+
     row = await get_fixer_policy_row(db, project_id)
-    if row is None:
-        row = AgentPolicy(project_id=project_id, agent_id=FIXER_AGENT_ID)
-        db.add(row)
-    row.enabled = bool(enabled)
-    row.mode = mode
-    row.budgets = {
-        **_coerce_budgets(budgets),
-        "runner": runner,
-        "test_globs": _coerce_globs(test_globs),
-        "schedule": schedule,
-    }
-    await db.flush()
-    return row
+    current = config_svc.AgentConfigV1.model_validate(config_svc.serialize(FIXER_AGENT_ID, row)["config"])
+    extension = config_svc.FixerConfigExtension(
+        runner=config_svc.FixerRunnerExtension.model_validate(runner),
+        test_globs=_coerce_globs(test_globs),
+        budgets=config_svc.FixerPolicyBudgets.model_validate(_coerce_budgets(budgets)),
+        schedule=schedule,
+    )
+    document = current.model_dump(mode="json")
+    document.update({"enabled": bool(enabled), "mode": mode})
+    document["extensions"]["fixer"] = extension.model_dump(mode="json")
+    config = config_svc.AgentConfigV1.model_validate(document)
+    return await config_svc.put_config(db, project_id, config, updated_by=None)
 
 
 # ── Run gate ─────────────────────────────────────────────────────────────────

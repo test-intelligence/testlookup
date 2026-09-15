@@ -35,7 +35,7 @@ class InvestigationState(TypedDict):
     mode: str                   # shadow | suggest | act (behaviour identical this slice)
     triggered_by: str
 
-    # Budgets (from the AgentPolicy at trigger time)
+    # Budgets (from the Investigator AgentConfig at trigger time)
     budget: dict[str, int]      # {"max_llm_calls", "max_tokens", "max_seconds"}
     deadline_ts: float          # epoch seconds — wall-clock budget checkpoint
 

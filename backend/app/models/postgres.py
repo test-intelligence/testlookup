@@ -1866,37 +1866,6 @@ class AgentChildDispatchOutbox(Base):
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
-class AgentPolicy(Base):
-    """Per-(project, agent) governance policy (Agentic plan AI-3 core).
-
-    A MISSING row resolves in code to the default policy — enabled=True,
-    mode=shadow, budgets 10 runs/day, 30 LLM calls/run, 60000 tokens/run,
-    300 seconds/run (``agent_investigation_service.DEFAULT_BUDGETS``).
-    ``shadow_runs_completed`` is the promotion counter: how many shadow-mode
-    runs have completed, evidence for a later shadow→suggest promotion.
-    """
-    __tablename__ = "agent_policies"
-    __table_args__ = (
-        UniqueConstraint("project_id", "agent_id", name="uq_agent_policies_project_agent"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
-    )
-    agent_id: Mapped[str] = mapped_column(String(50), nullable=False)
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    # shadow | suggest | act
-    mode: Mapped[str] = mapped_column(String(10), nullable=False, default="shadow")
-    # {"max_runs_per_day", "max_llm_calls_per_run", "max_tokens_per_run",
-    #  "max_seconds_per_run"} — missing keys resolve to DEFAULT_BUDGETS.
-    budgets: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    shadow_runs_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    promotion_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
-
-
 class AgentRun(Base):
     """Agent activity ledger (Agentic plan AI-3): one row per agent
     execution — what ran, why, what it proposed, what it actually did

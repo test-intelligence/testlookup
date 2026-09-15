@@ -2602,7 +2602,7 @@ def dispatch_scheduled_fixer_runs(self, schedule: str):
     from sqlalchemy import select
 
     from app.db.postgres import AsyncSessionLocal
-    from app.models.postgres import AgentPolicy
+    from app.models.postgres import AgentConfig
     from app.services import fixer_service
 
     _bind_task_context(self, schedule=schedule)
@@ -2610,14 +2610,13 @@ def dispatch_scheduled_fixer_runs(self, schedule: str):
     async def _run() -> int:
         dispatched = 0
         async with AsyncSessionLocal() as db:
-            # Schedule filter pushed into SQL (budgets JSONB ->> 'schedule')
-            # instead of deserializing every enabled fixer policy in Python.
+            # Schedule filter stays in SQL over the typed compatibility extension.
             project_ids = (
                 await db.execute(
-                    select(AgentPolicy.project_id).where(
-                        AgentPolicy.agent_id == "fixer",
-                        AgentPolicy.enabled.is_(True),
-                        AgentPolicy.budgets["schedule"].astext == schedule,
+                    select(AgentConfig.project_id).where(
+                        AgentConfig.agent_id == "fixer",
+                        AgentConfig.enabled.is_(True),
+                        AgentConfig.config["extensions"]["fixer"]["schedule"].astext == schedule,
                     )
                 )
             ).scalars().all()

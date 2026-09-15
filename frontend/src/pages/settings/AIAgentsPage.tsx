@@ -5,7 +5,7 @@
  * toggle, trust-ladder mode selector (shadow → suggest → act; act is disabled
  * with a "coming in a later wave" tooltip), the four per-run/per-day budget
  * inputs, and the promotion status line ("N shadow runs completed"). Saves
- * via PUT /projects/{id}/agent-policies/{agent_id} with success/error toasts.
+ * via the canonical /agent-configs/{agent_id} resource with success/error toasts.
  *
  * Route-level access is QA_LEAD+ (managementRoutes in App.tsx), same as every
  * other settings page.
@@ -266,8 +266,7 @@ export default function AIAgentsPage() {
               />
             ))
           )}
-          {/* Fixer (AI-2) has its own config resource — it renders regardless
-              of the agent-policies list state. */}
+          {/* Fixer keeps its pinned card shape while AgentConfig owns storage. */}
           <FixerConfigCard projectId={scopedProjectId} />
           {/* E4.3: per-agent configuration (agent-configs), one tab per agent. */}
           <AgentConfigPanel projectId={scopedProjectId} />

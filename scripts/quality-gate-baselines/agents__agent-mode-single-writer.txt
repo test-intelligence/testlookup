@@ -12,5 +12,3 @@
 #
 # Reviewed in PR; remove entries as the code is cleaned up.
 # ---- notes below this line are preserved across --update-baseline ----
-4086936551074282  # backend/app/services/agent_investigation_service.py:192  in upsert_policy  row.mode = mode
-983325349876d81b  # backend/app/services/fixer_service.py:171  in upsert_fixer_config  row.mode = mode

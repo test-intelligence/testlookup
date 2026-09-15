@@ -38,14 +38,14 @@ TestLookup (local-first test-failure intelligence) is being extended from "pipel
 | **E7** Run state machine, leases, fencing, retry | 8, 9 | 6/6 | **Complete** | #52 #53 #54 #56 #57 #58 |
 | **E8** Human review gate | 10 | 6/6 | **Complete** (enforcement flag **off**) | #59 #60 #62 #63 #64 #65 #66 #68 #69 |
 | **E1** OpenAPI agent exposure | 1 | 6/6 | **Complete** | #70 #71 #72 #73 #74 #75 #76 #77 |
-| **E4** Per-agent configuration | 4 | 3½/4 | **In progress** — E4.4 migration **blocked on owner decision** | #78 #79 #80 #82 |
+| **E4** Per-agent configuration | 4 | 4/4 | **Complete** — E4.4 migration shipped in T5 | #78 #79 #80 #82 T5 |
 | **E5** Model tiering, SLM summarization | 5, 6 | 1/5 | **In progress** — E5.1 ModelRouter shipped | T6 |
 | **E6** Generic reviewer | 7 | 0/4 | Not started | — |
 | **E3** User-customizable workflows | 3 | 0/5 | Not started | — |
 | **E9** Evals as the control loop | 13 | 0/10 | Not started | — |
 | **E2** Hardening, observability | 2, 11, 12 | 0/4 (E2.4 ongoing) | Not started | — |
 
-**Totals:** 21 stories shipped + 1 partial (E4.4). ≈64 dev-days delivered, ≈100 remaining. 27 programme PRs merged 2026-09-11 → 2026-09-13.
+**Totals at the original handover:** 21 stories shipped + 1 partial (E4.4). T5 has since completed that partial; later shipped stories are recorded in §9 and the architecture backlog.
 
 ### 1.3 The three owner decisions that gate work
 
@@ -119,17 +119,15 @@ Format per epic: **Title · Description · Business value · Technical scope · 
   - E1.3: deviation — DB idempotency key never expires; only the 24 h Redis lock does.
   - E1.6: 34 unclassified path ids remain in a shrink-only backlog; `require_workflow_access` arrives with E3.
 
-### 2.4 E4 — Per-agent configuration  🟡 3½/4
+### 2.4 E4 — Per-agent configuration  🟢 4/4
 
 - **Description.** Per-project, per-agent configuration (mode, tier, model endpoints, thresholds, retry, timeout, tools, budget, shadow sampling, review, override policy) resolved through four tighten-only layers.
 - **Business value.** Teams tune cost, autonomy and reliability per agent without code changes; unsafe loosening is impossible by construction.
 - **Technical scope.** `agent_configs` (0179), `agent_config_service.py`, `agent_config_resolver.py`, `routers/agent_configs.py`, invoke-route enforcement, Settings panel (`AgentConfigPanel.tsx`), mode single-writer guard.
 - **Dependencies.** E1 (invoke route), E8 (review policy), E7 (`execution_metadata`).
 - **Acceptance criteria.** Monotonicity table enforced as validators; composition `max_attempts × timeout_seconds ≤ AI_PIPELINE_DEADLINE_SECONDS` with arithmetic in the error; `config_version` frozen into runs; offline clamp at resolve time; unit test per precedence pair; guard that only `agent_config_service` writes `mode`.
-- **Implemented.** E4.1, E4.2, E4.3, E4.4 part 1 (guard).
-- **Partial.** E4.4 migration of both `agent_policies` rows + read-only alias remains T5; D1 is answered.
+- **Implemented.** E4.1–E4.4. Migration 0187 moves both legacy rows into strict AgentConfig extensions, preserves runtime/pinned contracts, and removes the legacy table/model. Deprecated GET aliases remain for one release; old PUTs return 405.
 - **Not implemented.** Request overrides on the invoke body (`config_overrides`) — deliberately deferred until a runtime consumer exists (E5). Runs record `agent_config_versions` but **no agent reads the resolved config at run time yet**.
-- **Re-evaluate.** The E4.4 premise (see §5.2 R9).
 
 ### 2.5 E5 — Model tiering and SLM summarization  🟡 In progress
 
@@ -201,7 +199,7 @@ Format per epic: **Title · Description · Business value · Technical scope · 
                       │ agents/workflow.py (LangGraph)│   │ PostgreSQL: agent_pipeline_runs,      │
                       │  _create_pipeline_run        │──►│  agent_stage_results, review_requests,│
                       │  checkpointed nodes, fencing │   │  agent_invocations, agent_configs,    │
-                      │  BaseAgent hooks, budgets    │   │  agent_policies (legacy), activity    │
+                      │  BaseAgent hooks, budgets    │   │  agent_configs extensions, activity   │
                       └──────────────┬───────────────┘   │ Redis: idempotency locks, SSE         │
                                      ▼                   │  tickets, cost reservations, model    │
                       ┌──────────────────────────────┐   │  registry active models, dedup locks  │
@@ -524,7 +522,7 @@ Non-programme merges in the same window: #61 (test fixtures stop stubbing app mo
 ### 4.7 Areas needing refactoring
 
 - `agents/workflow.py` (`_create_pipeline_run` ≈ 130 lines of flag resolution) — extract a `PipelineSetup` builder before E3's compiler replaces stage lists.
-- `agent_investigation_service.py` + `fixer_service.py` share the `agent_policies` table with different JSON shapes in `budgets` — resolved by D1.
+- Investigator and Fixer compatibility fields now use separate strict extensions in `agent_configs`; remove their deprecated read-only aliases after one release.
 - `routers/agent_invoke.py` (≈ 850 lines) — split validation, idempotency flow and SSE into services when adding `config_overrides`.
 - `llm_factory.get_llm(provider, model, temperature, track)` has no per-call `max_tokens`/`base_url` parameters; E5 needs an endpoint-aware entry point (see §6.3).
 
@@ -616,7 +614,7 @@ Priority: **P0** = blocks correctness/safety or other epics · **P1** = needed f
 | T2 | P1 | S | **Shipped:** refuse retry of review-rejected runs (pipeline + invocation retry) | `routers/agents.py` (retry), `routers/agent_invoke.py` (invocation retry) | — | `test_agents_retry_cancel_endpoints.py`, `test_agent_invocation_retry_cancel.py`; mutation harness | CHANGELOG; §12 E7.4/E8.2 notes |
 | T3 | P1 | M | Fix K2: record trigger user on runs; wire `requested_by`; SoD for `mode=act` | `models/postgres.py`, new migration (0180+), `agents/workflow.py`, `routers/agents.py` trigger, `worker/tasks.py`, `review_request_service.py`, `routers/reviews.py` | migration | review SoD tests; migration test | DATABASE_SCHEMA.md; §12 |
 | T4 | P1 | S | **Shipped:** fix K4, the `mode=act` half of the mutating-call invariant | `services/agent_action_ledger_service.py` | — | `tests/services/test_agent_action_ledger_service.py` | §12 E8.6 note |
-| T5 | P1 | S–M | E4.4 remainder per D1 | `agent_investigation_service.py`, `fixer_service.py`, `agents/investigator/workflow.py`, `cluster_investigation_orchestrator.py`, `agents/workflow.py`, `routers/agent_investigations.py`, `routers/fixer.py`, `agent_config_service.py`, frontend `AIAgentsPage.tsx`, `InvestigatorCockpit.tsx`; shrink `agents__agent-mode-single-writer.txt` | data migration | policy alias tests; guard real-repo test update | §12 E4.4; CHANGELOG |
+| T5 | P1 | S–M | **Shipped:** E4.4 remainder per D1; both policy rows migrated, pinned GET aliases retained read-only, old PUTs return 405, mode baseline zero | `agent_investigation_service.py`, `fixer_service.py`, Investigator workflow, Fixer scheduler, routers/config service, frontend governance services | migration 0187 | alias, migration, projection, guard and mutation tests | §12 E4.4; CHANGELOG |
 | T6 | P1 | S | **Shipped: E5.1** ModelRouter + registry `default_tier`/escalation maps (design in §6.3) | `agent_capability_registry.py`, `agent_catalog.py` | `services/model_router.py` | `test_model_router.py`, registry invariants, catalog test; `agent_api_docs --check` | §12 E5.1 note; E1.1 note |
 | T7 | P1 | M | **E5.2** Summary on SLM: validate → one SLM repair → LLM escalation → deterministic fallback; provenance | `agents/summary_agent.py`, `llm_factory.py` (endpoint-aware call) | — | summary escalation tests; mutation | §12 |
 | T8 | P1 | S | **E5.3** Root-cause split | `agents/analysis_agent.py`, `services/analysis_router.py` | — | tests | §12 |
