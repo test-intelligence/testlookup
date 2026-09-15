@@ -19,6 +19,7 @@ from app.models.postgres import (
     AIFeedback,
     ModelVersion,
 )
+from app.services.eval_label_provenance import EVAL_LABEL_HOLDOUT_DAYS
 
 logger = logging.getLogger("services.ai_eval")
 
@@ -30,6 +31,8 @@ async def build_dataset_from_feedback(
     db: AsyncSession,
     task_type: str = "classification",
     min_confidence: int = 0,
+    *,
+    as_of: datetime | None = None,
 ) -> list[dict]:
     """
     Build a labeled evaluation dataset from human feedback records.
@@ -44,11 +47,22 @@ async def build_dataset_from_feedback(
     ``confidence_score`` is at or above the floor — useful to train/evaluate
     against the model's higher-confidence predictions. ``0`` (default) applies
     no floor and keeps rows with a NULL confidence.
+
+    E9.10 applies a 14-day holdout and requires source-manifest provenance.
+    The release gate rechecks both rules because a stored dataset can be reused
+    against a later candidate manifest.
     """
+    cutoff = (as_of or datetime.now(timezone.utc)) - timedelta(
+        days=EVAL_LABEL_HOLDOUT_DAYS
+    )
     query = (
         select(AIFeedback, AIAnalysis)
         .join(AIAnalysis, AIFeedback.analysis_id == AIAnalysis.id)
-        .where(AIFeedback.rating.in_(["correct", "incorrect"]))
+        .where(
+            AIFeedback.rating.in_(["correct", "incorrect"]),
+            AIFeedback.created_at <= cutoff,
+            AIFeedback.eval_manifest_checksum.isnot(None),
+        )
     )
     if min_confidence:
         # Was previously accepted but never applied — a silent no-op that let a
@@ -74,6 +88,9 @@ async def build_dataset_from_feedback(
                 "feedback_id": str(feedback.id),
                 "analysis_id": str(analysis.id),
                 "source": feedback.source,
+                "label_source": "feedback",
+                "label_created_at": feedback.created_at.isoformat(),
+                "eval_manifest_checksum": feedback.eval_manifest_checksum,
                 # AI-4: which engine tier produced the prediction (llm / ml /
                 # rules / human_corrected), recovered from the persisted
                 # routing audit. None for rows written before routing

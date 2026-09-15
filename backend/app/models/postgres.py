@@ -2205,6 +2205,10 @@ class AIFeedback(Base):
     """
     __tablename__ = "ai_feedback"
     __table_args__ = (
+        CheckConstraint(
+            "eval_manifest_checksum IS NULL OR eval_manifest_checksum ~ '^[0-9a-f]{64}$'",
+            name="ck_ai_feedback_eval_manifest_checksum",
+        ),
         Index("ix_ai_feedback_analysis", "analysis_id"),
         Index("ix_ai_feedback_created", "created_at"),
         Index("ix_ai_feedback_rating", "rating"),
@@ -2222,6 +2226,10 @@ class AIFeedback(Base):
     source: Mapped[str] = mapped_column(String(50), default="manual")
     # Whether this record has been exported into a training batch
     exported: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    # Eval manifest that produced the AI analysis this label grades. NULL is
+    # retained for legacy/direct-analysis rows and is excluded from release
+    # gates rather than guessed (architecture E9.10).
+    eval_manifest_checksum: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
@@ -5268,6 +5276,10 @@ class ReviewRequest(Base):
             "evidence_bundle_sha256 IS NULL OR evidence_bundle_sha256 ~ '^[0-9a-f]{64}$'",
             name="ck_review_requests_evidence_hash",
         ),
+        CheckConstraint(
+            "eval_manifest_checksum IS NULL OR eval_manifest_checksum ~ '^[0-9a-f]{64}$'",
+            name="ck_review_requests_eval_manifest_checksum",
+        ),
         Index("ix_review_requests_project_state", "project_id", "state", "created_at"),
         Index(
             "uq_review_requests_live_subject",
@@ -5309,6 +5321,9 @@ class ReviewRequest(Base):
     reason_code: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     evidence_bundle_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Eval manifest that produced the reviewed subject. This becomes label
+    # provenance when a settled review is used by an evaluation dataset.
+    eval_manifest_checksum: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     ai_disclaimer_version: Mapped[str] = mapped_column(String(40), nullable=False)
     superseded_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("review_requests.id", ondelete="SET NULL"), nullable=True

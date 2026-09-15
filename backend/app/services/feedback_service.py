@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.mongo import Collections
+from app.services.eval_label_provenance import checksum_from_analysis
 from app.services.privacy_service import sanitize_for_persistence
 
 from app.models.postgres import AIAnalysis, AIFeedback, DecisionReportFeedback, Defect, FeedbackRating, ModelVersion, TestRun
@@ -38,6 +39,7 @@ async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
         comment=body.comment,
         source="manual",
         exported=False,
+        eval_manifest_checksum=checksum_from_analysis(analysis),
     )
     db.add(feedback)
 
@@ -225,6 +227,7 @@ async def record_fix_outcome(
                 AIAnalysis.id,
                 AIAnalysis.test_case_id,
                 AIAnalysis.failure_category,
+                AIAnalysis.routing_metadata,
             )
             .join(TestCase, AIAnalysis.test_case_id == TestCase.id)
             .join(TestRun, TestCase.test_run_id == TestRun.id)
@@ -255,6 +258,7 @@ async def record_fix_outcome(
         comment=compose_fix_outcome_comment(outcome, reference, comment),
         source="fix_outcome",
         exported=False,
+        eval_manifest_checksum=checksum_from_analysis(row),
     )
     db.add(feedback)
     # Flush so the Python-side uuid default is applied and the returned
@@ -486,6 +490,7 @@ async def jira_resolution_webhook(db: AsyncSession, payload: dict) -> dict:
                 rating=rating,
                 source=source,
                 exported=False,
+                eval_manifest_checksum=checksum_from_analysis(analysis),
             )
         )
 

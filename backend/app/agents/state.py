@@ -64,6 +64,7 @@ class WorkflowState(TypedDict):
     project_id: str             # Project.id
     build_number: str
     workflow_type: str          # WorkflowType enum value: "offline" | "deep" | "live"
+    eval_manifest_checksum: str  # immutable eval manifest that admitted this runtime
     # ``time.monotonic()`` instant after which no new stage may START. Set once
     # at pipeline start from AI_PIPELINE_DEADLINE_SECONDS and never advanced, so
     # a resume gets a fresh budget while a single attempt cannot outrun the

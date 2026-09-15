@@ -120,6 +120,7 @@ async def test_detected_drift_creates_one_pending_capability_review():
     assert row.capability_id == capability_id
     assert row.state == "pending_review"
     assert len(row.evidence_bundle_sha256) == 64
+    assert row.eval_manifest_checksum == drift.current_eval_manifest_checksum()
 
 
 @pytest.mark.asyncio

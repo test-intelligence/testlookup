@@ -1358,6 +1358,7 @@ async def _claim_pipeline_resume(
         await db.commit()
         return {
             "fencing_token": resume_token,
+            "eval_manifest_checksum": metadata.get("eval_manifest_checksum"),
             "test_run_id": str(pipeline.test_run_id),
             "project_id": str(project_id),
             "workflow_type": pipeline.workflow_type,
@@ -1923,6 +1924,7 @@ async def run_offline_pipeline(
 
         initial_state: WorkflowState = {
             "pipeline_run_id":    pipeline_run_id,
+            "eval_manifest_checksum": str(pipeline_setup.get("eval_manifest_checksum") or ""),
             "test_run_id":        test_run_id,
             "project_id":         project_id,
             "build_number":       build_number,
@@ -2177,6 +2179,7 @@ async def run_deep_pipeline(
 
         initial_state: WorkflowState = {
             "pipeline_run_id":    pipeline_run_id,
+            "eval_manifest_checksum": str(pipeline_setup.get("eval_manifest_checksum") or ""),
             "test_run_id":        test_run_id,
             "project_id":         project_id,
             "build_number":       build_number,
@@ -2739,6 +2742,7 @@ async def _create_pipeline_run(
                 planned_stage["budget"] = allocated
                 break
         _lease_token, _lease_fields = acquire_lease_fields()
+        eval_checksum = current_eval_manifest_checksum()
         db.add(AgentPipelineRun(
             id=pipeline_run_id,
             **_lease_fields,
@@ -2758,7 +2762,7 @@ async def _create_pipeline_run(
             ),
             started_at=datetime.now(timezone.utc),
             execution_metadata={
-                "eval_manifest_checksum": current_eval_manifest_checksum(),
+                "eval_manifest_checksum": eval_checksum,
                 "initial_workflow_plan": initial_plan,
                 "cluster_child_settings": cluster_settings,
                 "async_decision_report_supersession_enabled": async_report_supersession_enabled,
@@ -2815,6 +2819,7 @@ async def _create_pipeline_run(
             # with KeyError before its first stage (re-audit N27).
             "test_run_id": str(test_run_id),
             "project_id": str(project_id),
+            "eval_manifest_checksum": eval_checksum,
             "initial_workflow_plan": initial_plan,
             "cluster_child_settings": cluster_settings,
             "async_decision_report_supersession_enabled": async_report_supersession_enabled,
