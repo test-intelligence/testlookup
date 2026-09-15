@@ -2074,7 +2074,13 @@ def run_agent_pipeline(
         _run_async(_send_to_dlq(
             task_name=self.name,
             task_id=self.request.id,
-            kwargs={"test_run_id": test_run_id, "build_number": build_number},
+            kwargs={
+                "test_run_id": test_run_id,
+                "project_id": project_id,
+                "build_number": build_number,
+                "workflow_type": workflow_type,
+                "rerun_of": rerun_of,
+            },
             error=safe_error,
         ))
         raise RuntimeError(safe_error) from None

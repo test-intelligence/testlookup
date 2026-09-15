@@ -331,6 +331,10 @@ class Settings(BaseSettings):
     # Default leaves ~4 minutes under the soft limit for that terminal
     # synthesis, persistence, and finalisation. 0 disables the budget.
     AI_PIPELINE_DEADLINE_SECONDS: int = 1500
+    # Operational alert grace after the wall-clock pipeline deadline. This is
+    # applied by the scrape-time E2.3 collector before the overdue gauge moves
+    # above zero, so deployments with a narrower deadline keep correct alerts.
+    AGENT_PIPELINE_ALERT_GRACE_SECONDS: int = 300
 
     # ── Phase 4 high-volume sampling (2026-05-16) ─────────────
     # Auto-flag a project as ``high_volume`` when it sustains

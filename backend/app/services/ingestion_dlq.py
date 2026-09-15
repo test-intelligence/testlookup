@@ -36,7 +36,9 @@ empty list, which would tell on-call that nothing has failed.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
+from typing import Any
 
 import structlog
 
@@ -55,6 +57,19 @@ _DLQ_TTL_SECONDS = 7 * 24 * 3600  # 7 days
 # Stream fields whose value is a JSON document (see the two writers:
 # ``LiveEventStreamConsumer._move_to_dlq`` and ``worker.tasks._send_to_dlq``).
 _JSON_STREAM_FIELDS = frozenset({"original_data", "kwargs"})
+_STREAM_ID = re.compile(r"^[0-9]+-[0-9]+$")
+_REPLAY_LOCK_TTL_SECONDS = 60
+
+# Only task names written by ``worker.tasks._send_to_dlq`` may cross the
+# operator replay boundary. A Redis writer cannot turn this endpoint into an
+# arbitrary Celery dispatcher.
+REPLAYABLE_CELERY_TASKS = frozenset(
+    {
+        "app.worker.tasks.ingest_test_run",
+        "app.worker.tasks.run_agent_pipeline",
+        "app.worker.tasks.generate_run_compare_report",
+    }
+)
 
 
 class DLQUnavailable(Exception):
@@ -63,6 +78,18 @@ class DLQUnavailable(Exception):
     Deliberately an exception rather than an empty result: "we could not look"
     must never render as "nothing has permanently failed".
     """
+
+
+class DLQEntryNotFound(Exception):
+    """The requested stream entry does not exist."""
+
+
+class DLQReplayRefused(Exception):
+    """The entry is not a replayable, server-authored Celery task."""
+
+
+class DLQReplayInProgress(Exception):
+    """Another operator currently owns this entry's replay claim."""
 
 
 def _text(value) -> str:
@@ -220,3 +247,82 @@ async def get_stream_dlq_count() -> int | None:
     except Exception as exc:
         logger.warning("dlq_count_unavailable", kind="stream", error=str(exc))
         return None
+
+
+async def replay_stream_failure(entry_id: str) -> dict[str, Any]:
+    """Dispatch one allowlisted Celery dead letter, then remove its entry.
+
+    The short Redis claim prevents two operator requests from dispatching the
+    same task concurrently. The entry is deleted only after Celery accepts the
+    replacement task; broker failures leave it available for another attempt.
+    Live-stream events use a different recovery protocol and are refused.
+    """
+    if not _STREAM_ID.fullmatch(entry_id):
+        raise DLQEntryNotFound(entry_id)
+
+    from app.db.redis_client import get_redis
+    from app.streams import DLQ_STREAM
+
+    redis = get_redis()
+    lock_key = f"testlookup:dlq:replay:{entry_id}"
+    try:
+        claimed = await redis.set(
+            lock_key, "1", ex=_REPLAY_LOCK_TTL_SECONDS, nx=True
+        )
+    except Exception as exc:
+        raise DLQUnavailable(str(exc)) from exc
+    if not claimed:
+        raise DLQReplayInProgress(entry_id)
+
+    dispatched = False
+    entry_deleted = False
+    try:
+        try:
+            rows = await redis.xrange(
+                DLQ_STREAM, min=entry_id, max=entry_id, count=1
+            )
+        except Exception as exc:
+            raise DLQUnavailable(str(exc)) from exc
+        if not rows:
+            raise DLQEntryNotFound(entry_id)
+
+        _msg_id, fields = rows[0]
+        decoded = {_text(key): _text(value) for key, value in (fields or {}).items()}
+        task_name = decoded.get("task_name", "")
+        if decoded.get("source") != "celery" or task_name not in REPLAYABLE_CELERY_TASKS:
+            raise DLQReplayRefused(entry_id)
+        try:
+            kwargs = json.loads(decoded.get("kwargs", ""))
+        except (TypeError, ValueError) as exc:
+            raise DLQReplayRefused(entry_id) from exc
+        if not isinstance(kwargs, dict):
+            raise DLQReplayRefused(entry_id)
+
+        try:
+            from app.worker.celery_app import celery_app
+
+            replacement = celery_app.send_task(task_name, kwargs=kwargs)
+        except Exception as exc:
+            raise DLQUnavailable(str(exc)) from exc
+        dispatched = True
+        try:
+            await redis.xdel(DLQ_STREAM, entry_id)
+            entry_deleted = True
+        except Exception as exc:
+            # Dispatch has already been accepted. Keep the claim until its TTL
+            # rather than permit an immediate duplicate while cleanup is down.
+            raise DLQUnavailable(str(exc)) from exc
+        return {
+            "accepted": True,
+            "entry_id": entry_id,
+            "task_name": task_name,
+            "task_id": str(replacement.id),
+        }
+    finally:
+        if not dispatched or entry_deleted:
+            try:
+                await redis.delete(lock_key)
+            except Exception:
+                pass
+        # When dispatch succeeded but XDEL failed, retain the claim until its
+        # TTL. Immediate release would invite a duplicate dispatch.

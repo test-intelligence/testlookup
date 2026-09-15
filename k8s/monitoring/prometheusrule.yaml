@@ -84,6 +84,30 @@ spec:
       annotations:
         summary: Abnormally high number of active pipeline runs
         description: More than 20 pipeline runs are simultaneously active — possible stuck pipelines.
+    - alert: TestLookupAgentPipelineOverdue
+      expr: testlookup_agent_in_progress_overdue_seconds > 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: Agent pipeline exceeded its deadline and grace period
+        description: The oldest in-progress agent run is {{ $value }} seconds beyond its configured deadline plus grace. Check worker leases and retry scheduling.
+    - alert: TestLookupAgentDLQNotEmpty
+      expr: testlookup_agent_dlq_depth > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: A TestLookup dead-letter store is not empty
+        description: At least one exhausted task or live event awaits inspection at /api/v1/admin/dlq.
+    - alert: TestLookupPendingReviewStale
+      expr: testlookup_pending_review_oldest_age_seconds > 86400
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: An AI report has awaited review for more than 24 hours
+        description: The oldest pending agent review is over 24 hours old. Check the review queue and reviewer coverage.
     - alert: TestLookupFinalizeStepFailing
       expr: 'sum by (step) (increase(testlookup_finalize_step_failures_total[30m])) > 0
 

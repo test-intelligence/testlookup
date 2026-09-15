@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-15 - Inspect and replay agent dead letters (E2.3)
+
+Added instance-admin endpoints at `/api/v1/admin/dlq` to inspect both existing
+Redis dead-letter stores and replay allowlisted Celery entries. Replay uses a
+short claim, removes an entry only after broker acceptance, and refuses
+live-event entries, malformed payloads, and task names the server never writes.
+The pipeline DLQ writer now preserves the required project ID and selected
+workflow, so replay reproduces the original call instead of failing on a
+missing argument or silently falling back to the offline workflow.
+
+Three scrape-time gauges now drive alerts for a pipeline beyond its configured
+deadline plus grace, non-empty agent DLQ depth, and a review pending longer
+than 24 hours. Positive tests inject each condition and verify its alert fires
+and clears; a ten-mutation harness pins the recovery and alert boundaries.
+
 ## 2026-09-15 - Emit agentic runtime metrics (E2.2)
 
 Added Prometheus counters for agent workflow-step outcomes, pipeline state

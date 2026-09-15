@@ -1016,6 +1016,7 @@ def test_binding_confinement_is_not_scope_evidence() -> None:
 #: Path ids that name nothing tenant-owned, with the reason.
 GLOBAL_PATH_PARAMS: dict[str, str] = {
     "agent_id": "a capability id from the global agent registry (agent.<name>.v<n>), not tenant data",
+    "entry_id": "an instance-global Redis DLQ stream id guarded by require_instance_admin",
 }
 
 #: Path ids in use when this scan was added that neither list classifies. Their
