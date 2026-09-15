@@ -65,13 +65,15 @@ def test_the_architecture_vocabulary_is_what_shipped():
     }
 
 
-def test_every_check_constraint_is_declared_on_both_sides():
+def test_every_frozen_check_constraint_remains_declared_on_the_model():
     migration_names = set(re.findall(r'name="(ck_review_requests_[a-z_]+)"', _source()))
     model_names = {
         c.name for c in ReviewRequest.__table__.constraints
         if getattr(c, "name", "") and str(c.name).startswith("ck_review_requests_")
     }
-    assert migration_names == model_names
+    # Later migrations may add model constraints; 0175's frozen constraints
+    # must remain represented without claiming that 0175 owns those additions.
+    assert migration_names <= model_names
     assert "ck_review_requests_rejection_has_reason" in model_names
 
 
