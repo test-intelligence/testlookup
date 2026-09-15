@@ -1,0 +1,16 @@
+{
+  "base_url": "http://localhost:8000",
+  "catalog_count": 30,
+  "results": [
+    {"agent_id": "agent.decision_report.v1", "attempt": 1, "initial_http": 202, "review_state": "pending_review", "terminal_status": "completed"},
+    {"agent_id": "agent.flaky_sentinel.v1", "attempt": 1, "initial_http": 202, "review_state": "not_applicable", "terminal_status": "passed"},
+    {"agent_id": "agent.ingestion.v1", "attempt": 1, "initial_http": 202, "review_state": "not_applicable", "terminal_status": "passed"},
+    {"agent_id": "agent.release_risk.v1", "attempt": 1, "initial_http": 202, "review_state": "not_applicable", "terminal_status": "passed"},
+    {"agent_id": "agent.report_refinement.v1", "attempt": 1, "initial_http": 202, "review_state": "pending_review", "terminal_status": "completed"},
+    {"agent_id": "agent.root_cause_analysis.v1", "attempt": 1, "initial_http": 202, "review_state": "pending_review", "terminal_status": "completed"},
+    {"agent_id": "agent.summary.v1", "attempt": 1, "initial_http": 202, "review_state": "pending_review", "terminal_status": "completed"},
+    {"agent_id": "agent.test_health.v1", "attempt": 1, "initial_http": 202, "review_state": "not_applicable", "terminal_status": "passed"}
+  ],
+  "schema_version": 1,
+  "target_count": 8
+}

@@ -80,6 +80,9 @@ class AgentCatalogEntry(BaseModel):
     sync_eligible: bool = Field(
         description="May be invoked synchronously: deterministic and expected to finish in 5 s or less.",
     )
+    invokable: bool = Field(
+        description="Can be invoked independently; false means the capability requires a surrounding workflow.",
+    )
     produces_report: bool = Field(
         description="Its output is a report contract, so a run of it needs human review (E8).",
     )
@@ -163,6 +166,11 @@ def _output_json_schema(schema: str) -> Optional[dict[str, Any]]:
 
 
 def _entry_fields(spec: CapabilitySpecV1) -> dict[str, Any]:
+    # Imported lazily because the planner itself consumes the capability
+    # registry. Independent invocability belongs to this additive catalog
+    # projection, not to the frozen CapabilitySpecV1 wire shape.
+    from app.services.agent_planner import invocation_workflow_type  # noqa: PLC0415
+
     match = _VERSION.search(spec.capability_id)
     return {
         "agent_id": spec.capability_id,
@@ -173,6 +181,7 @@ def _entry_fields(spec: CapabilitySpecV1) -> dict[str, Any]:
         "default_tier": DEFAULT_TIERS[spec.stage_name],
         "escalation": sorted(ESCALATION_TRIGGERS[spec.stage_name]),
         "sync_eligible": is_sync_eligible(spec.stage_name),
+        "invokable": invocation_workflow_type(spec.stage_name) is not None,
         "produces_report": is_report_producing(spec.stage_name),
         "input_schema": spec.input_schema,
         "output_schema": spec.output_schema,

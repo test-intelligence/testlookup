@@ -253,6 +253,50 @@ async def test_a_failed_run_is_never_passed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_stale_worker_cannot_finalize_the_reapers_new_attempt(monkeypatch):
+    """The live T22 pause/reap probe found finalize was the one unfenced write."""
+    from sqlalchemy.dialects import postgresql
+
+    from app.agents import workflow
+    from app.services.pipeline_lease import LeaseLost
+
+    pipeline = _pipeline()
+    pipeline.status = "retry_wait"
+    pipeline.fencing_token = "new-token"
+
+    class _StaleSession(_Session):
+        def __init__(self):
+            super().__init__(pipeline, [])
+            self._results = [_Result(scalar=None)]
+            self.statement = None
+
+        async def execute(self, statement):
+            self.statement = statement
+            return await super().execute(statement)
+
+    session = _StaleSession()
+    monkeypatch.setattr(workflow, "AsyncSessionLocal", lambda: session)
+
+    with pytest.raises(LeaseLost):
+        await workflow._mark_pipeline_done(
+            str(pipeline.id),
+            success=True,
+            fencing_token="old-token",
+        )
+
+    sql = str(
+        session.statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    assert "agent_pipeline_runs.fencing_token = 'old-token'" in sql
+    assert "FOR UPDATE" in sql
+    assert pipeline.status == "retry_wait"
+    assert session.committed is False
+
+
+@pytest.mark.asyncio
 async def test_finalize_preserves_the_frozen_eval_manifest(monkeypatch):
     from app.agents import workflow
     from app.services import agent_action_ledger_service, run_downstream_outbox

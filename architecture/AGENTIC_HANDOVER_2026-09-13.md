@@ -51,11 +51,11 @@ TestLookup (local-first test-failure intelligence) is being extended from "pipel
 
 | # | Decision | Blocks | Options |
 |---|---|---|---|
-| D1 | Where `investigator` and `fixer` policies live (E4.4) | Requirement 4 completion; shrinking `agents.agent-mode-single-writer` baseline | (a) migrate both, (b) migrate Investigator only, (c) defer until after E5 |
-| D2 | When to set `REVIEW_GATE_ENFORCED=true` (E8.4) | Requirement 10 enforcement | a date or a condition (e.g. review-queue age SLO) |
-| D3 | Investigator narrative excerpts in notifications (E8.4) | Enforcement completeness once D2 is on | drop / watermark / give them a review subject |
+| D1 | Where `investigator` and `fixer` policies live (E4.4) | Requirement 4 completion; shrinking `agents.agent-mode-single-writer` baseline | **Answered:** migrate both to `agent_configs` while preserving pinned APIs and runtime budgets |
+| D2 | When to set `REVIEW_GATE_ENFORCED=true` (E8.4) | Requirement 10 enforcement | **Answered:** on a release date configured by the user |
+| D3 | Investigator narrative excerpts in notifications (E8.4) | Enforcement completeness once D2 is on | **Answered:** give excerpts a review subject |
 
-**Do not implement D1–D3 without the owner's answer.** Everything else in §6 is unblocked.
+**T1 completed on 2026-09-13.** The decisions above unblock their stories; D2 is a future scheduling requirement and does not enable the flag immediately.
 
 ### 1.4 Repository state at handover
 
@@ -103,7 +103,7 @@ Format per epic: **Title · Description · Business value · Technical scope · 
   - E8.3: `/runs/compare` AI comparison has no review subject.
   - E8.5: `passed · reviewed <time>` is now rendered from the identity-free pipeline review summary → **K3 fixed by T20**.
   - E8.6: pipeline-originated mutations now require the proposing agent's current mode to be `act` → **K4 fixed by T4**.
-- **Re-evaluate.** D2 and D3 (owner).
+- **Re-evaluate.** Implement the user-configured release-date rollout (D2) and an Investigator excerpt review subject (D3).
 
 ### 2.3 E1 — OpenAPI agent exposure  ✅ Complete
 
@@ -127,7 +127,7 @@ Format per epic: **Title · Description · Business value · Technical scope · 
 - **Dependencies.** E1 (invoke route), E8 (review policy), E7 (`execution_metadata`).
 - **Acceptance criteria.** Monotonicity table enforced as validators; composition `max_attempts × timeout_seconds ≤ AI_PIPELINE_DEADLINE_SECONDS` with arithmetic in the error; `config_version` frozen into runs; offline clamp at resolve time; unit test per precedence pair; guard that only `agent_config_service` writes `mode`.
 - **Implemented.** E4.1, E4.2, E4.3, E4.4 part 1 (guard).
-- **Partial.** E4.4 migration of `agent_policies` rows + read-only alias → **blocked on D1**.
+- **Partial.** E4.4 migration of both `agent_policies` rows + read-only alias remains T5; D1 is answered.
 - **Not implemented.** Request overrides on the invoke body (`config_overrides`) — deliberately deferred until a runtime consumer exists (E5). Runs record `agent_config_versions` but **no agent reads the resolved config at run time yet**.
 - **Re-evaluate.** The E4.4 premise (see §5.2 R9).
 
@@ -612,7 +612,7 @@ Priority: **P0** = blocks correctness/safety or other epics · **P1** = needed f
 | ID | P | Size | Task | Files to modify | New modules | Tests | Docs |
 |---|---|---|---|---|---|---|---|
 | T0 | P0 | S | Environment check: run gate, ruff, mypy ratchet, key suites on `main` (Appendix B) | — | — | — | — |
-| T1 | P0 | — | Obtain owner answers D1, D2, D3 | — | — | — | Record in arch doc §12 |
+| T1 | P0 | — | **Shipped:** owner answered D1, D2, D3 | — | — | — | Architecture §12 owner-decision note |
 | T2 | P1 | S | **Shipped:** refuse retry of review-rejected runs (pipeline + invocation retry) | `routers/agents.py` (retry), `routers/agent_invoke.py` (invocation retry) | — | `test_agents_retry_cancel_endpoints.py`, `test_agent_invocation_retry_cancel.py`; mutation harness | CHANGELOG; §12 E7.4/E8.2 notes |
 | T3 | P1 | M | Fix K2: record trigger user on runs; wire `requested_by`; SoD for `mode=act` | `models/postgres.py`, new migration (0180+), `agents/workflow.py`, `routers/agents.py` trigger, `worker/tasks.py`, `review_request_service.py`, `routers/reviews.py` | migration | review SoD tests; migration test | DATABASE_SCHEMA.md; §12 |
 | T4 | P1 | S | **Shipped:** fix K4, the `mode=act` half of the mutating-call invariant | `services/agent_action_ledger_service.py` | — | `tests/services/test_agent_action_ledger_service.py` | §12 E8.6 note |
@@ -633,7 +633,7 @@ Priority: **P0** = blocks correctness/safety or other epics · **P1** = needed f
 | T19 | P2 | S×3 | **Shipped: E2.1–E2.3** OTel, counters, DLQ + alerts with positive tests | `core/tracing.py`, `core/metrics.py`, `worker/tasks.py`, `infra/` | — | emission + alert tests | OBSERVABILITY.md |
 | T20 | P2 | S | **Shipped:** K3 chip review time | `routers/agents.py` list response, `AgentStatusPage.tsx` | — | backend/frontend regression tests; six-mutation harness | CHANGELOG; §12 E8.5 |
 | T21 | P2 | M | **Shipped:** K5 label-only catalog inputs → nine concrete models | `models/agent_input_contracts.py`, catalog module list | — | catalog + contract tests; empty baseline; nine-mutation harness | CHANGELOG; §12 E1.1 |
-| T22 | P2 | S | Live DoD verification (§8.5) | — | — | live probes | record results in §12 |
+| T22 | P2 | S | **Shipped:** Live DoD verification (§8.5); fixed stale-worker finalization fence and pending intelligence export | catalog projection, workflow finalization, intelligence export, repeatable probe | — | live probes + seven-mutation harness | §12 + `architecture/verification/AGENTIC_LIVE_DOD_2026-09-15.md` |
 | T23 | P3 | S | K7 Codacy workflow **(shipped early as a prerequisite)** | `.github/workflows/codacy.yml` | — | workflow syntax regression test | CHANGELOG; §12 E2.4 |
 
 ### 6.2 Recommended order
@@ -767,12 +767,14 @@ Escalation allowed only when: capability rule allows the trigger; project `escal
 - Finish E5 (T6–T11) behind today's default tiers; promote defaults only after E9.3 passes non-inferiority.
 - E6 then E9.4; E3 then E9.5; E9.6/9.7/9.9/9.10; E2.1–E2.3.
 - Live definition-of-done on a running stack (`make dev-llm`, `make seed-data`):
-  1. Postman run of `architecture/api/agents.postman_collection.json`: `202` then `passed` for sync-eligible agents, `202` then `completed` for report-producing agents.
+  1. Postman run of `architecture/api/agents.postman_collection.json`: `202` then `passed` for independently invokable sync-eligible agents, `202` then `completed` for independently invokable report-producing agents. Catalog entries that require surrounding workflow state expose `invokable=false`.
   2. `SELECT DISTINCT status FROM agent_pipeline_runs` ⊆ six internal states; API returns only the four public values.
   3. Kill a worker mid-run ⇒ `retry_wait → running → completed` with `attempt=2`; paused worker late writes affect zero rows.
   4. Pending-review decision report cannot be exported/notified/read as `GO` with enforcement on; accept flips to `passed`, reviewer in audit log only.
-  5. Stuck-beyond-deadline alert fires on injected lease expiry and clears after reaping (positive test).
+  5. Stuck-beyond-deadline alert fires while an active run is older than deadline plus grace, and clears after reaping and successful recovery terminalize it. Lease expiry triggers the reaper; the intermediate `retry_wait` state remains active by design.
   6. Eval DoD bullets from §12 (attestation blocks prompt/model/tier changes without fresh inference-backed attestation; coverage thresholds; SLM summary non-inferiority; reviewer recall per class).
+
+T22 ran on 2026-09-15 against a seeded Podman lite stack with review enforcement enabled. All eight independently invokable sync/report capabilities passed their API terminal contract. The pause/reap probe found `_mark_pipeline_done` was the only unfenced pipeline write; it is now fenced and locked, and the repeated attempt completed at attempt 2 while a stale token affected zero rows. The review probe found `/runs/{id}/export` bypassed the distribution policy; it now refuses and audits pending AI exports under enforcement. Notification withholding, `PENDING_REVIEW`, human acceptance, identity-only-in-audit, public/internal status projection, and the positive overdue alert were verified. The original alert premise was wrong because its metric is deadline age rather than lease expiry and `retry_wait` is active. Eval guard/coverage/G2/reviewer/provenance/workflow-refusal checks passed statically; the bundled attestation is still source-review evidence and the 2 GiB local VM could not run the SLM+LLM pair, so fresh inference-backed release evidence remains open. See `architecture/verification/AGENTIC_LIVE_DOD_2026-09-15.md`.
 
 ### 8.6 Release readiness
 
@@ -794,10 +796,10 @@ Escalation allowed only when: capability rule allows the trigger; project `escal
 | 4 | Alembic head `0179`; single head | ✅ |
 | 5 | Quality gate 42 guards / 18 ratchets green; mypy baseline 373 | ✅ at `19b9bdef` |
 | 6 | Architecture doc §12 has shipped notes for E7, E8, E1, E4 | ✅ |
-| 7 | Owner decisions D1–D3 recorded and unanswered | ⚠️ ask owner |
+| 7 | Owner decisions D1–D3 | ✅ recorded and answered in §1.3 and architecture §12 |
 | 8 | Known defects K1–K9 listed with reproduction | ✅ §4.5 |
 | 9 | E5.1 investigation captured | ✅ §6.3 |
-| 10 | Live DoD verification | ❌ not done (§8.5) |
+| 10 | Live DoD verification | ✅ T22 completed on the seeded Podman lite stack; inference-backed SLM/LLM release evidence remains open (§8.5) |
 | 11 | Owner-started sessions | ✅ Jira duplicate fix merged as #81 · ⚠️ release.decided session has no open PR; run `gh pr list` before branching |
 | 12 | Visual status report | ✅ https://claude.ai/code/artifact/0dd966a6-d71a-47a4-9304-354c292eba7b |
 
