@@ -39,6 +39,7 @@ from app.models.postgres import (
     AgentPipelineRun,
     AgentStageResult,
     Project,
+    ReviewRequest,
     TestRun,
     User,
     UserRole,
@@ -109,6 +110,46 @@ async def _attach_run_context(
         p.build_number = row.build_number if row else None
         p.suite_name = row.primary_suite_name if row else None
         p.run_seq = seq_map.get(str(p.test_run_id))
+
+
+async def _attach_review_summaries(
+    db: AsyncSession, pipelines: list[AgentPipelineRun],
+) -> None:
+    """Attach the live report review state and settlement time in one query.
+
+    The pipeline cards need this projection to distinguish ``passed`` after a
+    human acceptance from a non-report pipeline that passed automatically.
+    Only pipeline-run report subjects belong here: invocation and capability
+    reviews may share a pipeline id but govern a different public subject.
+    """
+    pipeline_ids = [pipeline.id for pipeline in pipelines]
+    if not pipeline_ids:
+        return
+    rows = (
+        await db.execute(
+            select(
+                ReviewRequest.pipeline_run_id,
+                ReviewRequest.state,
+                ReviewRequest.reviewed_at,
+            )
+            .where(
+                ReviewRequest.pipeline_run_id.in_(pipeline_ids),
+                ReviewRequest.kind == "report",
+                ReviewRequest.subject_type == "pipeline_run",
+                ReviewRequest.state != "superseded",
+            )
+            .order_by(ReviewRequest.created_at.desc())
+        )
+    ).all()
+    by_pipeline: dict[uuid.UUID, dict[str, Any]] = {}
+    for row in rows:
+        if row.pipeline_run_id is not None:
+            by_pipeline.setdefault(
+                row.pipeline_run_id,
+                {"state": row.state, "settled_at": row.reviewed_at},
+            )
+    for pipeline in pipelines:
+        pipeline.review_summary = by_pipeline.get(pipeline.id)  # type: ignore[attr-defined]
 
 
 async def _resolve_maybe_awaitable(value: Any) -> Any:
@@ -233,6 +274,7 @@ async def list_pipelines(
     # between -- the same row read as running in SQL and failed in the API.
     _attach_public_status(pipelines)
     await _attach_run_context(db, pipelines)
+    await _attach_review_summaries(db, pipelines)
     return pipelines
 
 
@@ -248,6 +290,7 @@ async def get_pipeline(
 
     _attach_public_status([pipeline])
     await _attach_run_context(db, [pipeline])
+    await _attach_review_summaries(db, [pipeline])
     return pipeline
 
 

@@ -145,4 +145,40 @@ describe('AgentStatusPage — four-value status chips (E7.5)', () => {
     expect(tags).toHaveLength(1)
     expect(tags[0]).toHaveTextContent('awaiting review')
   })
+
+  it('shows when a PASSED report was reviewed without changing the four-value chip', async () => {
+    await renderWith([
+      pipeline(0, {
+        status: 'passed',
+        public_status: 'passed',
+        completed_at: '2026-09-12T10:01:00Z',
+        review_summary: {
+          state: 'accepted',
+          settled_at: '2026-09-12T11:15:00Z',
+        },
+      }),
+      pipeline(1, {
+        status: 'passed',
+        public_status: 'passed',
+        review_summary: null,
+      }),
+      pipeline(2, {
+        status: 'failed',
+        public_status: 'failed',
+        review_summary: {
+          state: 'rejected',
+          settled_at: '2026-09-12T11:30:00Z',
+        },
+      }),
+    ])
+
+    expect(await screen.findAllByTestId('pipeline-reviewed-at')).toHaveLength(1)
+    expect(screen.getByTestId('pipeline-reviewed-at')).toHaveTextContent(
+      `· reviewed ${new Date('2026-09-12T11:15:00Z').toLocaleString()}`,
+    )
+    const chips = screen.getAllByTestId('pipeline-status-chip')
+    const passedChips = chips.filter((chip) => chip.textContent === 'PASSED')
+    expect(passedChips).toHaveLength(2)
+    for (const chip of passedChips) expect(chip).not.toHaveTextContent('reviewed')
+  })
 })

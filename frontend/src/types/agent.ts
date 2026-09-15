@@ -221,6 +221,12 @@ export interface AgentPipelineRun {
   build_number?: string | null
   run_seq?: number | null
   suite_name?: string | null
+  // T20/K3: deliberately excludes reviewer identity. Null means this pipeline
+  // has no report review (for example an automatically passed non-report run).
+  review_summary?: {
+    state: 'pending_review' | 'accepted' | 'rejected'
+    settled_at: string | null
+  } | null
 }
 
 export interface RunSummary extends ReviewEnvelopeFields {

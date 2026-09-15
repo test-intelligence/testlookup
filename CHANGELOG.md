@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-15 - Show accepted-review time on pipeline cards (T20)
+
+Pipeline list and detail responses now include an additive, identity-free review
+summary containing the live report review state and settlement time. The query
+is batched across the visible pipelines and excludes superseded, invocation,
+and capability review subjects.
+
+The `/agents` page shows `· reviewed <time>` beside PASSED when the pipeline's
+report was accepted, while the status chip itself retains the four-value public
+status contract. Regression tests cover response serialization, query scope,
+automatic non-report passes, rejected reviews, and the rendered timestamp; a
+six-mutation harness pins the backend and frontend behavior.
+
 ## 2026-09-15 - Inspect and replay agent dead letters (E2.3)
 
 Added instance-admin endpoints at `/api/v1/admin/dlq` to inspect both existing

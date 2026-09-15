@@ -1561,6 +1561,18 @@ class AgentStageResultResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AgentPipelineReviewSummary(BaseModel):
+    """Minimal review projection for a pipeline card.
+
+    Reviewer identity deliberately stays out of this API response.  A settled
+    timestamp is enough for the status card to distinguish an accepted report
+    from a non-report pipeline that passed without human review.
+    """
+
+    state: Literal["pending_review", "accepted", "rejected"]
+    settled_at: Optional[datetime] = None
+
+
 class AgentPipelineResponse(BaseModel):
     id: uuid.UUID
     test_run_id: uuid.UUID
@@ -1593,6 +1605,10 @@ class AgentPipelineResponse(BaseModel):
     next_retry_at: Optional[Any] = None
     cancel_requested: Optional[bool] = None
     rerun_of: Optional[uuid.UUID] = None
+    # T20/K3: the live report review for this pipeline.  ``None`` means the
+    # pipeline has no report review (for example a deterministic non-report
+    # invocation); it must not be presented as human-reviewed.
+    review_summary: Optional[AgentPipelineReviewSummary] = None
 
     model_config = ConfigDict(from_attributes=True)
 

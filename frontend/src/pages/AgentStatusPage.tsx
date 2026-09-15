@@ -326,6 +326,12 @@ function PipelineCard({
           (new Date(pipeline.completed_at).getTime() - new Date(pipeline.started_at).getTime()) / 1000,
         )
       : null
+  const reviewedAt =
+    publicPipelineStatus(pipeline) === 'passed' &&
+    pipeline.review_summary?.state === 'accepted' &&
+    pipeline.review_summary?.settled_at
+      ? new Date(pipeline.review_summary.settled_at).toLocaleString()
+      : null
 
   return (
     <button
@@ -358,6 +364,11 @@ function PipelineCard({
         >
           {PUBLIC_PIPELINE_STATUS_LABEL[publicPipelineStatus(pipeline)]}
         </span>
+        {reviewedAt && (
+          <span data-testid="pipeline-reviewed-at" className="text-[10px] font-mono text-[var(--color-text-muted)]">
+            · reviewed {reviewedAt}
+          </span>
+        )}
         {/* E8.5: a finished report pipeline rests at `completed` until a person
             accepts its report (section 7.2); accepting moves it to `passed`. */}
         {publicPipelineStatus(pipeline) === 'completed' && (

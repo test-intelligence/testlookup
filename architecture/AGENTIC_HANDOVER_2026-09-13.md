@@ -79,7 +79,7 @@ Format per epic: **Title · Description · Business value · Technical scope · 
 - **Acceptance criteria (from §12).** Delays within jitter bounds for attempts 1..5; attempt 6 ⇒ `failed` + DLQ; kill worker mid-stage ⇒ `retry_wait` then `completed` attempt 2; paused worker's late writes affect zero rows; cancel racing a retryable failure always lands `failed`; crash after ticket creation ⇒ retry creates no second ticket.
 - **Implemented.** All six stories (see §4.2 inventory).
 - **Partial / gaps.**
-  - E7.4: retry endpoint still accepts a review-rejected run (§7.2 says terminal) → **known defect K1**.
+  - E7.4: retry endpoints now refuse review-rejected pipeline and invocation runs → **K1 fixed by T2**.
   - E7.5: every pipeline type runs `summary`, so no pipeline auto-passes yet (rule exists for invocations). The e2e spec `frontend/tests/e2e/agents-public-status.spec.ts` needs a live stack and is **not in CI**.
   - E7.6: agent paths still do not reach the idempotent tool calls (Jira ticket creation always requires approval; approved-action execution is deferred). The one live filing path, one-click `POST /api/v1/projects/{project_id}/defects/jira`, now uses `run_once` (PR #81):
     - `pg_advisory_xact_lock` on (project, signature) before the dedup read;
@@ -101,8 +101,8 @@ Format per epic: **Title · Description · Business value · Technical scope · 
 - **Partial / gaps.**
   - E8.2: separation of duties is coded but inert — `requested_by` is always NULL because pipeline runs do not record the triggering user → **K2**. No per-project toggle for SoD.
   - E8.3: `/runs/compare` AI comparison has no review subject.
-  - E8.5: status chip cannot show `passed · reviewed <time>` (pipeline list response lacks review data) → **K3**.
-  - E8.6: the `mode=act` half of the mutating-call invariant waited for E4; agent configs now exist but it is **not wired** → **K4**.
+  - E8.5: `passed · reviewed <time>` is now rendered from the identity-free pipeline review summary → **K3 fixed by T20**.
+  - E8.6: pipeline-originated mutations now require the proposing agent's current mode to be `act` → **K4 fixed by T4**.
 - **Re-evaluate.** D2 and D3 (owner).
 
 ### 2.3 E1 — OpenAPI agent exposure  ✅ Complete
@@ -503,9 +503,9 @@ Non-programme merges in the same window: #61 (test fixtures stop stubbing app mo
 
 | ID | Severity | Defect | Reproduction | Fix sketch |
 |---|---|---|---|---|
-| K1 | P1 | Manual retry accepts a review-rejected run (§7.2 says terminal) | 1) Run a pipeline producing a report → `completed` + `pending_review`. 2) `POST /api/v1/reviews/{id}/reject {"reason_code":"other"}` → run `failed` with error `review_rejected: other`. 3) `POST /api/v1/agents/pipelines/{pipeline_id}/retry` → **202** (expected 409) | In the retry handler, refuse when `error` starts with `REVIEW_REJECTED_ERROR_PREFIX` (409, `links.rerun` only if a new run is intended); same for invocation retry |
+| K1 | P1 | Manual retry accepted a review-rejected run (§7.2 says terminal) | **Fixed by T2:** pipeline and invocation retry endpoints return 409 with `reason=review_rejected` before config comparison, attempt-ceiling handling, or dispatch | Regression coverage in `test_agents_retry_cancel_endpoints.py` and `test_agent_invocation_retry_cancel.py` |
 | K2 | P1 | Separation of duties inert | Trigger a pipeline as user A, accept its review as user A → accepted (SoD should refuse for `mode=act`) because `review_requests.requested_by` is NULL | Record triggering user on `agent_pipeline_runs` (new nullable column + migration CONCURRENTLY rules) and pass it to `create_run_review_request`; then enforce SoD for `mode=act` per §8 |
-| K3 | P2 | Status chip lacks "passed · reviewed <time>" | Accept a review; open `/agents` → chip shows `passed` without review time | Add review summary (state, settled_at) to the pipeline list response; update `AgentStatusPage` |
+| K3 | P2 | Status chip lacked "passed · reviewed <time>" | **Fixed by T20:** pipeline responses carry the live report review state and settlement time; accepted PASSED cards render the time beside the four-value chip | Regression and mutation coverage in `test_agents_pipeline_review_summary.py` and `AgentStatusPage.publicStatus.test.tsx` |
 | K4 | P1 | `mode=act` half of mutating-call invariant not wired | **Fixed by T4:** pipeline proposals carry a hashed `proposing_agent_id`; `execute_agent_action` resolves it and fails `policy_denied` unless `mode == "act"` | Regression and mutation coverage in `tests/services/test_agent_action_ledger_service.py` |
 | K5 | P2 | 13 capability inputs are labels (SubjectRef only) | `GET /api/v1/agents/catalog/agent.summary.v1` → `input_schema_resolved` per baseline | Define models in `CATALOG_SCHEMA_MODULES`; shrink baseline |
 | K6 | P3 | Idempotency key never expires in DB | Invoke with key K; after 24 h, same key with different body → 422 (lock expired, row remains) | Documented deviation; decide with owner whether keys should expire (partial index on `created_at` or cleanup job) |
@@ -613,7 +613,7 @@ Priority: **P0** = blocks correctness/safety or other epics · **P1** = needed f
 |---|---|---|---|---|---|---|---|
 | T0 | P0 | S | Environment check: run gate, ruff, mypy ratchet, key suites on `main` (Appendix B) | — | — | — | — |
 | T1 | P0 | — | Obtain owner answers D1, D2, D3 | — | — | — | Record in arch doc §12 |
-| T2 | P1 | S | Fix K1: refuse retry of review-rejected runs (pipeline + invocation retry) | `routers/agents.py` (retry), `routers/agent_invoke.py` (invocation retry), maybe `pipeline_retry_config.py` | — | extend `test_agents_retry_cancel_endpoints.py`, `test_agent_invocation_retry_cancel.py` | CHANGELOG; §12 E7.4/E8.2 notes |
+| T2 | P1 | S | **Shipped:** refuse retry of review-rejected runs (pipeline + invocation retry) | `routers/agents.py` (retry), `routers/agent_invoke.py` (invocation retry) | — | `test_agents_retry_cancel_endpoints.py`, `test_agent_invocation_retry_cancel.py`; mutation harness | CHANGELOG; §12 E7.4/E8.2 notes |
 | T3 | P1 | M | Fix K2: record trigger user on runs; wire `requested_by`; SoD for `mode=act` | `models/postgres.py`, new migration (0180+), `agents/workflow.py`, `routers/agents.py` trigger, `worker/tasks.py`, `review_request_service.py`, `routers/reviews.py` | migration | review SoD tests; migration test | DATABASE_SCHEMA.md; §12 |
 | T4 | P1 | S | **Shipped:** fix K4, the `mode=act` half of the mutating-call invariant | `services/agent_action_ledger_service.py` | — | `tests/services/test_agent_action_ledger_service.py` | §12 E8.6 note |
 | T5 | P1 | S–M | E4.4 remainder per D1 | `agent_investigation_service.py`, `fixer_service.py`, `agents/investigator/workflow.py`, `cluster_investigation_orchestrator.py`, `agents/workflow.py`, `routers/agent_investigations.py`, `routers/fixer.py`, `agent_config_service.py`, frontend `AIAgentsPage.tsx`, `InvestigatorCockpit.tsx`; shrink `agents__agent-mode-single-writer.txt` | data migration | policy alias tests; guard real-repo test update | §12 E4.4; CHANGELOG |
@@ -631,7 +631,7 @@ Priority: **P0** = blocks correctness/safety or other epics · **P1** = needed f
 | T17 | P1 | M/L/S/M/S | **E3.1–E3.5** workflows | `agents/workflow.py`, `agent_planner.py`, new routers, frontend `AgentWorkflowPage.tsx` | `models` + `services/workflow_compiler.py`, `routers/workflows.py`, migration | compiler fuzz, diff tests, guard | §4.4, §12 |
 | T18 | P1 | M×3, S×5 | **E9.4–E9.10** | eval services, releases UI | migrations | tests | AI_EVALUATION.md |
 | T19 | P2 | S×3 | **Shipped: E2.1–E2.3** OTel, counters, DLQ + alerts with positive tests | `core/tracing.py`, `core/metrics.py`, `worker/tasks.py`, `infra/` | — | emission + alert tests | OBSERVABILITY.md |
-| T20 | P2 | S | K3 chip review time | `routers/agents.py` list response, `AgentStatusPage.tsx` | — | tests | — |
+| T20 | P2 | S | **Shipped:** K3 chip review time | `routers/agents.py` list response, `AgentStatusPage.tsx` | — | backend/frontend regression tests; six-mutation harness | CHANGELOG; §12 E8.5 |
 | T21 | P2 | M | K5 label-only catalog inputs → models | `models/*contracts*.py` | — | catalog tests; baseline shrink | — |
 | T22 | P2 | S | Live DoD verification (§8.5) | — | — | live probes | record results in §12 |
 | T23 | P3 | S | K7 Codacy workflow **(shipped early as a prerequisite)** | `.github/workflows/codacy.yml` | — | workflow syntax regression test | CHANGELOG; §12 E2.4 |
