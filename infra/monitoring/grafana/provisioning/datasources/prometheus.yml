@@ -9,6 +9,7 @@ datasources:
     editable: false
 
   - name: Jaeger
+    uid: jaeger
     type: jaeger
     access: proxy
     url: http://jaeger:16686

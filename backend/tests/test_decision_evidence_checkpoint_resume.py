@@ -198,6 +198,7 @@ async def test_same_pipeline_resume_claim_resets_only_incomplete_stages(monkeypa
     claimed = await _claim_pipeline_resume("pipeline-1")
 
     assert claimed["resume_attempt"] == 1
+    assert claimed["attempt"] == 2
     assert claimed["async_decision_report_supersession_enabled"] is True
     assert pipeline.status == "running"
     assert pipeline.completed_at is None

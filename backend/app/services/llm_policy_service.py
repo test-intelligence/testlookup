@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.core.config import settings
+from app.services.agent_step_tracing import record_gen_ai_request
 
 logger = logging.getLogger("services.llm_policy")
 
@@ -409,11 +410,17 @@ def record_invocation_audit(
     from app.services.pipeline_budget_service import get_pipeline_budget_context
 
     context = get_pipeline_budget_context()
+    traced_provider = str(provider)[:40]
+    traced_model = str(model)[:120]
     event = {
-        "provider": str(provider)[:40],
-        "model": str(model)[:120],
+        "provider": traced_provider,
+        "model": traced_model,
         "redacted_strings": max(int(stats.get("redacted_strings", 0)), 0),
     }
+    try:
+        record_gen_ai_request(provider=traced_provider, model=traced_model)
+    except Exception:  # noqa: BLE001 -- tracing must never block inference
+        logger.debug("llm_invocation_trace_failed", exc_info=True)
     logger.info("llm_invocation_policy", extra=event)
     if context is not None:
         events = context.get("llm_privacy_events")
