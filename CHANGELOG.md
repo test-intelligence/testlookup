@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-15 - Record pipeline trigger users and enforce act-mode review separation (T3)
+
+Agent pipeline runs now retain the authenticated user who created their durable
+identity. Manual single, bulk, deep, config-changed rerun, and direct invocation
+dispatches carry that user through Celery into `agent_pipeline_runs`; automatic
+and outbox runs remain explicitly unattributed. Finalize copies the durable
+value to the run's review request.
+
+Self-review is refused when the report produced an action-ledger proposal whose
+proposing agent resolves to `mode=act`. Read-only and suggest-mode reports no
+longer inherit the earlier blanket refusal. Migration 0188 adds the nullable
+`users.id` foreign key with `ON DELETE SET NULL` and a complete downgrade.
+Nine asserted mutations cover dispatch, persistence, review wiring, mode
+scoping, and migration behavior.
+
 ## 2026-09-15 - Consolidate Investigator and Fixer policy configuration (T5)
 
 Migrated the legacy Investigator and Fixer policy rows into strictly typed

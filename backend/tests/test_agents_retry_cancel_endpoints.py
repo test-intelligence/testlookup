@@ -258,6 +258,7 @@ async def test_changed_config_starts_a_new_run_linked_by_rerun_of(monkeypatch):
     assert result.links["poll"]
     assert delay.call_args.kwargs["rerun_of"] == str(db.pipeline.id)
     assert delay.call_args.kwargs["workflow_type"] == "offline"
+    assert delay.call_args.kwargs["requested_by"] is not None
 
 
 @pytest.mark.asyncio

@@ -1873,6 +1873,7 @@ async def run_offline_pipeline(
     rerun_of: str | None = None,
     invocation_stage: str | None = None,
     invocation_config_snapshot: dict[str, Any] | None = None,
+    requested_by: str | None = None,
 ) -> dict:
     """
     Execute the full offline analysis pipeline for a completed test run.
@@ -1901,6 +1902,7 @@ async def run_offline_pipeline(
                 pipeline_run_id, test_run_id, project_id, workflow_type,
                 invocation_stage=invocation_stage,
                 invocation_config_snapshot=invocation_config_snapshot,
+                requested_by=requested_by,
             )
         test_run_id = pipeline_setup["test_run_id"]
         project_id = pipeline_setup["project_id"]
@@ -1912,6 +1914,7 @@ async def run_offline_pipeline(
             pipeline_run_id, test_run_id, project_id, workflow_type, rerun_of=rerun_of,
             invocation_stage=invocation_stage,
             invocation_config_snapshot=invocation_config_snapshot,
+            requested_by=requested_by,
         )
 
     try:
@@ -2154,6 +2157,7 @@ async def run_deep_pipeline(
     create_if_missing: bool = False,
     invocation_stage: str | None = None,
     invocation_config_snapshot: dict[str, Any] | None = None,
+    requested_by: str | None = None,
 ) -> dict:
     """
     Execute the deep investigation pipeline with clustering, flaky sentinel,
@@ -2175,6 +2179,7 @@ async def run_deep_pipeline(
                 pipeline_run_id, test_run_id, project_id, "deep",
                 invocation_stage=invocation_stage,
                 invocation_config_snapshot=invocation_config_snapshot,
+                requested_by=requested_by,
             )
         test_run_id = pipeline_setup["test_run_id"]
         project_id = pipeline_setup["project_id"]
@@ -2186,6 +2191,7 @@ async def run_deep_pipeline(
             pipeline_run_id, test_run_id, project_id, "deep", rerun_of=rerun_of,
             invocation_stage=invocation_stage,
             invocation_config_snapshot=invocation_config_snapshot,
+            requested_by=requested_by,
         )
 
     try:
@@ -2641,6 +2647,7 @@ async def _create_pipeline_run(
     rerun_of: str | None = None,
     invocation_stage: str | None = None,
     invocation_config_snapshot: dict[str, Any] | None = None,
+    requested_by: str | None = None,
 ) -> dict[str, Any]:
     if workflow_type == "deep":
         stages = _DEEP_PIPELINE_STAGES
@@ -2790,6 +2797,7 @@ async def _create_pipeline_run(
             id=pipeline_run_id,
             **_lease_fields,
             test_run_id=test_run_id,
+            requested_by=uuid.UUID(str(requested_by)) if requested_by else None,
             workflow_type=workflow_type,
             # E7.4: set when a manual retry could not resume the previous run
             # (its frozen config no longer matches the live one).
@@ -2976,6 +2984,7 @@ async def _mark_pipeline_done(
                             project_id=review_project_id,
                             report_stage_names=produced,
                             evidence_bundle_sha256=review_request_service.evidence_hash_from(final_state),
+                            requested_by=run.requested_by,
                         )
                     except Exception as review_exc:  # noqa: BLE001
                         logger.warning(

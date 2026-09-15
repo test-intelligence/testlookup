@@ -433,7 +433,11 @@ def test_the_worker_runs_the_invocation_as_a_restricted_pipeline_under_the_minte
     from app.worker import tasks
 
     snapshot = {"agent_id": "agent.summary.v1", "config": {"frozen": True}}
-    invocation = _invocation(resolved_config_snapshot=snapshot)
+    requester = uuid.uuid4()
+    invocation = _invocation(
+        resolved_config_snapshot=snapshot,
+        requested_by=requester,
+    )
 
     class _Session:
         async def get(self, _model, _id):
@@ -459,6 +463,7 @@ def test_the_worker_runs_the_invocation_as_a_restricted_pipeline_under_the_minte
     assert kwargs["create_if_missing"] is True
     assert kwargs["pipeline_run_id"] == str(invocation.pipeline_run_id)
     assert kwargs["invocation_config_snapshot"] == snapshot
+    assert kwargs["requested_by"] == str(requester)
     assert kwargs["workflow_type"] == "offline" and kwargs["build_number"] == "build-7"
     inspect.signature(real_offline).bind(**kwargs)
     assert out["completed_stages"] == ["ingestion", "summary"]

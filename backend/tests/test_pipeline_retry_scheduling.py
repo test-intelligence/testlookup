@@ -166,6 +166,7 @@ def test_pipeline_task_no_longer_uses_celery_retries():
     assert "self.retry(" not in body
     assert "_schedule_pipeline_retry(" in body
     assert "_release_duplicate_lock(dedup_key, dedup_owner)" in body  # exhausted path still releases
+    assert body.count("requested_by=requested_by,") == 2
     assert tasks.run_agent_pipeline.max_retries == 0
     del src
 
@@ -251,7 +252,9 @@ async def test_trigger_returns_the_in_progress_run_instead_of_queueing(monkeypat
     monkeypatch.setattr("app.worker.tasks.run_agent_pipeline.delay", delay)
 
     payload = SimpleNamespace(test_run_id=run.id)
-    resp = await router.trigger_pipeline(payload, db=db, current_user=SimpleNamespace(), _=None)
+    resp = await router.trigger_pipeline(
+        payload, db=db, current_user=SimpleNamespace(id=uuid.uuid4()), _=None
+    )
     assert resp.status_code == 200
     import json
 
@@ -291,6 +294,13 @@ async def test_trigger_queues_when_nothing_is_in_progress(monkeypatch):
     delay = MagicMock(return_value=SimpleNamespace(id="task-1"))
     monkeypatch.setattr("app.worker.tasks.run_agent_pipeline.delay", delay)
 
-    resp = await router.trigger_pipeline(SimpleNamespace(test_run_id=run.id), db=db, current_user=SimpleNamespace(), _=None)
+    requester = uuid.uuid4()
+    resp = await router.trigger_pipeline(
+        SimpleNamespace(test_run_id=run.id),
+        db=db,
+        current_user=SimpleNamespace(id=requester),
+        _=None,
+    )
     assert resp == {"message": "Pipeline queued", "task_id": "task-1", "run_id": str(run.id)}
     delay.assert_called_once()
+    assert delay.call_args.kwargs["requested_by"] == str(requester)

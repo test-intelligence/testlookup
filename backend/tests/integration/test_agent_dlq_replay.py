@@ -87,6 +87,7 @@ async def test_pipeline_dead_letter_preserves_the_replay_signature():
         '"build_number": build_number',
         '"workflow_type": workflow_type',
         '"rerun_of": rerun_of',
+        '"requested_by": requested_by',
     ):
         assert required in send_call, f"pipeline replay payload lost {required}"
 

@@ -125,6 +125,7 @@ async def trigger_deep_investigation(
                 "project_id": str(run.project_id),
                 "build_number": run.build_number,
                 "workflow_type": workflow_type,
+                "requested_by": str(current_user.id),
             },
             queue="ai_analysis",
         )

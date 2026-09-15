@@ -340,6 +340,7 @@ async def trigger_pipeline(
         project_id=str(run.project_id),
         build_number=run.build_number,
         workflow_type="offline",
+        requested_by=str(current_user.id),
     )
 
     # Attempt mode: this handler never commits the request session, and the
@@ -539,6 +540,7 @@ async def retry_pipeline(
             build_number=run.build_number,
             workflow_type=pipeline.workflow_type,
             rerun_of=str(pipeline.id),
+            requested_by=str(current_user.id),
         )
         logger.info(
             "pipeline retry -> rerun (%s) for %s", plan.reason, pipeline.id
@@ -707,6 +709,7 @@ async def bulk_trigger_pipelines(
                         "project_id": str(project_id),
                         "build_number": build_number,
                         "workflow_type": payload.workflow_type,
+                        "requested_by": str(current_user.id),
                     },
                     queue="ai_analysis",
                 )

@@ -41,7 +41,7 @@ import structlog
 from sqlalchemy import select
 
 from app.core.metrics import review_requests_total
-from app.models.postgres import ReviewRequest
+from app.models.postgres import AgentActionLedger, AgentPipelineRun, ReviewRequest
 from app.services.agent_capability_registry import is_report_producing
 from app.services.eval_label_provenance import checksum_from_execution_metadata
 
@@ -327,10 +327,14 @@ async def settle_review(
         raise ReviewDecisionRefused(
             409, "review_not_pending", f"This review is already {review.state}.",
         )
-    if review.requested_by is not None and review.requested_by == getattr(reviewer, "id", None):
+    same_user = (
+        review.requested_by is not None
+        and review.requested_by == getattr(reviewer, "id", None)
+    )
+    if same_user and await _run_proposes_act_actions(db, review):
         raise ReviewDecisionRefused(
             403, "separation_of_duties",
-            "The person who requested this run cannot review its report.",
+            "The person who requested this run cannot review its act-mode proposals.",
         )
 
     if review.pipeline_run_id is not None:
@@ -365,3 +369,42 @@ async def settle_review(
         reason_code=review.reason_code,
     )
     return review
+
+
+async def _run_proposes_act_actions(db: Any, review: ReviewRequest) -> bool:
+    """Whether this review covers an action proposed by an act-mode agent.
+
+    The action ledger is the durable record that a report proposed a mutation.
+    Its hashed payload carries the proposing agent id (T4). Invocation runs use
+    their frozen config; ordinary pipelines use the current project config,
+    matching the execution-time mode check. An unidentifiable legacy proposal
+    fails closed for self-review.
+    """
+    if review.pipeline_run_id is None:
+        return False
+    result = await db.execute(
+        select(AgentActionLedger.request_payload).where(
+            AgentActionLedger.pipeline_run_id == review.pipeline_run_id
+        )
+    )
+    payloads = result.scalars().all()
+    if not payloads:
+        return False
+
+    pipeline = await db.get(AgentPipelineRun, review.pipeline_run_id)
+    from app.services.agent_config_resolver import resolve_for_pipeline  # noqa: PLC0415
+
+    for payload in payloads:
+        agent_id = (
+            payload.get("proposing_agent_id")
+            if isinstance(payload, dict)
+            else None
+        )
+        if not isinstance(agent_id, str) or not agent_id:
+            return True
+        resolved = await resolve_for_pipeline(
+            db, pipeline, review.project_id, agent_id
+        )
+        if resolved.config.mode == "act":
+            return True
+    return False

@@ -56,8 +56,13 @@ class _Session:
                 live[key] = r
 
 
-def _run(workflow="offline", test_run=TEST_RUN):
-    return SimpleNamespace(id=uuid.uuid4(), test_run_id=test_run, workflow_type=workflow)
+def _run(workflow="offline", test_run=TEST_RUN, requested_by=None):
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        test_run_id=test_run,
+        workflow_type=workflow,
+        requested_by=requested_by,
+    )
 
 
 def _live(session, run):
@@ -68,6 +73,7 @@ async def _create(session, run, *, stages=("summary",), evidence=HASH_A):
     return await svc.create_run_review_request(
         session, run=run, project_id=PROJECT, report_stage_names=list(stages),
         evidence_bundle_sha256=evidence,
+        requested_by=run.requested_by,
     )
 
 
@@ -93,10 +99,15 @@ async def test_a_report_run_gets_one_pending_request():
     assert request.evidence_bundle_sha256 == HASH_A
     assert request.ai_disclaimer_version == svc.AI_DISCLAIMER_VERSION
     assert request.created_by == "system"
-    assert request.requested_by is None, (
-        "pipeline runs do not record who triggered them yet; a guessed requester "
-        "would make separation of duties (section 8.3) enforce against the wrong person"
-    )
+    assert request.requested_by is None
+
+
+@pytest.mark.asyncio
+async def test_the_pipeline_requester_is_copied_to_its_review():
+    requester = uuid.uuid4()
+    request = await _create(_Session(), _run(requested_by=requester))
+
+    assert request.requested_by == requester
 
 
 @pytest.mark.asyncio

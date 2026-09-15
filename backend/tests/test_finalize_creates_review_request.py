@@ -62,8 +62,10 @@ class _Session:
 
 
 def _pipeline():
+    requester = uuid.uuid4()
     return SimpleNamespace(
         id=uuid.uuid4(), test_run_id=uuid.uuid4(), workflow_type="offline",
+        requested_by=requester,
         status="running", started_at=datetime.now(timezone.utc), completed_at=None,
         error=None, execution_metadata={}, review_policy="human_required",
         lease_owner="h:1", fencing_token="tok", lease_expires_at=datetime.now(timezone.utc),
@@ -101,6 +103,7 @@ async def test_a_completed_report_run_stages_its_review_request(monkeypatch):
     assert kwargs["run"] is pipeline
     assert kwargs["project_id"] == PROJECT
     assert kwargs["report_stage_names"] == ["summary"]
+    assert kwargs["requested_by"] == pipeline.requested_by
     assert session.committed is True
 
 
