@@ -72,6 +72,7 @@ from app.services.agent_planner import (
     build_workflow_plan,
 )
 from app.services.agent_capability_registry import get_capability
+from app.services.agent_step_tracing import trace_agent_step
 from app.services.pipeline_event_log import emit_event
 from app.services.evidence_sanitizer import (
     sanitize_persistence_payload,
@@ -154,7 +155,7 @@ def _stage_input_checksum(state: Any) -> str:
         state = {
             k: v
             for k, v in state.items()
-            if k not in ("pipeline_deadline_ts", "_fencing_token")
+            if k not in ("pipeline_deadline_ts", "_fencing_token", "_attempt")
         }
     return _canonical_checksum(state)
 
@@ -1358,6 +1359,7 @@ async def _claim_pipeline_resume(
         await db.commit()
         return {
             "fencing_token": resume_token,
+            "attempt": current_row_attempt + 1,
             "eval_manifest_checksum": metadata.get("eval_manifest_checksum"),
             "test_run_id": str(pipeline.test_run_id),
             "project_id": str(project_id),
@@ -1634,7 +1636,7 @@ async def _raise_if_pipeline_cancelled(pipeline_run_id: str) -> None:
 
 def _make_checkpointed_node(original_node, stage_name: str):
     """Wrap a node function so its output is checkpointed after successful execution."""
-    async def wrapper(state: WorkflowState) -> dict[str, Any]:
+    async def execute(state: WorkflowState) -> dict[str, Any]:
         pipeline_run_id = state.get("pipeline_run_id", "")
         input_checksum = _stage_input_checksum(state)
 
@@ -1811,6 +1813,10 @@ def _make_checkpointed_node(original_node, stage_name: str):
 
         return result
 
+    async def wrapper(state: WorkflowState) -> dict[str, Any]:
+        with trace_agent_step(stage_name, state):
+            return await execute(state)
+
     wrapper.__name__ = original_node.__name__
     return wrapper
 
@@ -1931,6 +1937,7 @@ async def run_offline_pipeline(
             "workflow_type":      workflow_type,
             "pipeline_deadline_ts": _pipeline_deadline(),
             "_fencing_token": pipeline_setup.get("fencing_token"),
+            "_attempt": int(pipeline_setup.get("attempt") or 1),
             # Stage outputs (initialised empty — agents populate these)
             "test_run_data":      None,
             "branch":             None,
@@ -2186,6 +2193,7 @@ async def run_deep_pipeline(
             "workflow_type":      "deep",
             "pipeline_deadline_ts": _pipeline_deadline(),
             "_fencing_token": pipeline_setup.get("fencing_token"),
+            "_attempt": int(pipeline_setup.get("attempt") or 1),
             "test_run_data":      None,
             "branch":             None,
             "failed_test_ids":    [],
@@ -2819,6 +2827,7 @@ async def _create_pipeline_run(
             # with KeyError before its first stage (re-audit N27).
             "test_run_id": str(test_run_id),
             "project_id": str(project_id),
+            "attempt": 1,
             "eval_manifest_checksum": eval_checksum,
             "initial_workflow_plan": initial_plan,
             "cluster_child_settings": cluster_settings,

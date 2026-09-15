@@ -448,6 +448,54 @@
       ],
       "title": "health_details",
       "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 55 },
+      "id": 49,
+      "title": "Agent Traces",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "jaeger", "uid": "jaeger" },
+      "description": "Recent canonical workflow-step traces. Open a trace to inspect model, token, tier, attempt, and agent attributes.",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 56 },
+      "id": 50,
+      "options": { "showHeader": true, "cellHeight": "sm" },
+      "targets": [
+        {
+          "datasource": { "type": "jaeger", "uid": "jaeger" },
+          "limit": 50,
+          "operation": "testlookup.agent.step",
+          "queryType": "search",
+          "refId": "A",
+          "service": "testlookup"
+        }
+      ],
+      "title": "Recent Agent Steps",
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "jaeger", "uid": "jaeger" },
+      "description": "Canonical workflow-step traces whose span status is error.",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 56 },
+      "id": 51,
+      "options": { "showHeader": true, "cellHeight": "sm" },
+      "targets": [
+        {
+          "datasource": { "type": "jaeger", "uid": "jaeger" },
+          "limit": 50,
+          "operation": "testlookup.agent.step",
+          "queryType": "search",
+          "refId": "A",
+          "service": "testlookup",
+          "tags": "error=true"
+        }
+      ],
+      "title": "Failed Agent Steps",
+      "type": "table"
     }
   ],
   "refresh": "30s",

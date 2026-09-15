@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-14 - Trace every agent workflow step (E2.1)
+
+Every LangGraph step now emits one canonical `testlookup.agent.step`
+OpenTelemetry span, including planner skips, checkpoint restores, and failures.
+The span carries the registered agent ID, pipeline attempt, default model tier,
+actual provider and model, and aggregated provider-reported input/output tokens.
+The shared LLM invocation boundary supplies the GenAI attributes so bound and
+structured-output clients cannot bypass them.
+
+Grafana now provisions a stable Jaeger data-source UID and includes panels for
+recent and failed agent-step traces. Five focused regression tests and a
+15-mutation harness pin the span boundary, required attributes, attempt
+propagation, LLM enrichment, and dashboard wiring.
+
 ## 2026-09-14 - Prove evaluation scorers detect broken outputs (E9.8)
 
 Added a CI mutation suite for every rule in the report-quality harness and the

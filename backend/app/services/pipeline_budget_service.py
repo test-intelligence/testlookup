@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from app.services.agent_step_tracing import record_gen_ai_usage
+
 
 _PIPELINE_BUDGET_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
     "pipeline_budget_context", default=None
@@ -23,6 +25,29 @@ _MAX_PROVIDER_NAME = 40
 _MAX_MODEL_NAME = 120
 
 
+class _PipelineBudgetContext(dict[str, Any]):
+    """Budget context that mirrors reported token deltas into the active span."""
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        previous = self.get(key, 0)
+        super().__setitem__(key, value)
+        if key not in {"observed_input_tokens", "observed_output_tokens"}:
+            return
+        if not isinstance(value, int) or isinstance(value, bool):
+            return
+        old_value = previous if isinstance(previous, int) and not isinstance(previous, bool) else 0
+        delta = max(0, value - old_value)
+        if delta == 0:
+            return
+        try:
+            record_gen_ai_usage(
+                input_tokens=delta if key == "observed_input_tokens" else 0,
+                output_tokens=delta if key == "observed_output_tokens" else 0,
+            )
+        except Exception:  # noqa: BLE001 -- telemetry cannot affect budgeting
+            return
+
+
 @dataclass(frozen=True)
 class PipelineBudgetReservation:
     reservation_id: str | None
@@ -32,7 +57,7 @@ class PipelineBudgetReservation:
 
 
 def set_pipeline_budget_context(**values: Any):
-    return _PIPELINE_BUDGET_CONTEXT.set(dict(values))
+    return _PIPELINE_BUDGET_CONTEXT.set(_PipelineBudgetContext(values))
 
 
 def reset_pipeline_budget_context(token: Any) -> None:

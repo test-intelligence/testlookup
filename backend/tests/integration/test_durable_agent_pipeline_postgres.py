@@ -136,6 +136,7 @@ async def test_a_created_setup_has_every_key_the_pipelines_read(world):
     assert {"test_run_id", "project_id", "initial_workflow_plan"} <= read, read
     pipeline_run_id = str(uuid.uuid4())
     setup = await workflow._create_pipeline_run(pipeline_run_id, world["run"], world["project"], "offline")
+    assert setup["attempt"] == 1
     # analysis_mode_resolution is read only on the resume path, where the
     # claim supplies it.
     missing = sorted(read - set(setup) - {"analysis_mode_resolution"})
@@ -153,6 +154,7 @@ async def test_an_outbox_driven_pipeline_starts_and_completes(world):
 
     assert world["graph"].calls == 1, "the pipeline never reached its graph"
     assert state["test_run_id"] == world["run"]
+    assert state["_attempt"] == 1
     assert await _status(world, pipeline_run_id) == "completed"
 
 

@@ -177,6 +177,10 @@ class WorkflowState(TypedDict):
     # from checkpoints (see _serialisable_state): it belongs to the attempt,
     # not to the work.
     _fencing_token: Optional[str]
+    # Pipeline row attempt exposed only to the canonical E2.1 trace span. Like
+    # the fencing token, this is execution metadata rather than checkpointed
+    # workflow input.
+    _attempt: int
 
     # ── Phase 6: Per-Stage Observability ─────────────────────────
     # Accumulated by BaseAgent.mark_stage_done() — keyed by stage_name
