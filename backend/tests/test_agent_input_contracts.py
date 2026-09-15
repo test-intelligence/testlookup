@@ -12,6 +12,7 @@ from app.models.agent_input_contracts import (
     ClusterInvestigationExpansionPlanV1,
     InvestigationRequestV1,
 )
+from app.services.agent_planner import build_cluster_investigation_plan
 
 ZERO_HASH = "0" * 64
 
@@ -72,6 +73,29 @@ def test_cluster_expansion_plan_rejects_a_false_count_projection():
     base["candidate_count"] = 2
     with pytest.raises(ValidationError, match="candidate_count"):
         ClusterInvestigationExpansionPlanV1.model_validate(base)
+
+
+def test_cluster_planner_output_matches_its_published_catalog_contract():
+    plan = build_cluster_investigation_plan(
+        parent_pipeline_run_id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        run_id=uuid.uuid4(),
+        clusters=[
+            {
+                "failure_cluster_id": uuid.uuid4(),
+                "cluster_id": "cluster-1",
+                "member_test_ids": [uuid.uuid4()],
+            }
+        ],
+        aggregate_budget={
+            "max_llm_calls": 1,
+            "max_tokens": 100,
+            "max_cost_usd": 0.1,
+            "max_seconds": 10,
+        },
+    )
+
+    ClusterInvestigationExpansionPlanV1.model_validate(plan)
 
 
 def test_investigation_request_requires_complete_cluster_scope_authority():
