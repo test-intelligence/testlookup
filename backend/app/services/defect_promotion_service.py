@@ -201,6 +201,19 @@ async def promote_cluster(
     if not cluster:
         raise ValueError(f"Cluster {cluster_id} not found for run {run_id}")
 
+    # Keep the promoted defect on the same release axis as the evidence that
+    # produced it. Release gates look at Defect.release_id (or an explicit
+    # affects_releases assertion); leaving this NULL made a promoted HIGH or
+    # CRITICAL defect disappear from the gate even though the run itself was
+    # part of the release rollup.
+    run_release_result = await db.execute(
+        select(TestRun.primary_release_id).where(
+            TestRun.id == _uuid.UUID(run_id),
+            TestRun.project_id == _uuid.UUID(project_id),
+        )
+    )
+    run_release_id = run_release_result.scalar_one_or_none()
+
     member_ids = cluster.member_test_ids or []
 
     # Load analyses for evidence bundle
@@ -310,6 +323,7 @@ async def promote_cluster(
         evidence_bundle=evidence_bundle,
         ai_confidence_score=int(composite),
         failure_category=failure_cat,
+        release_id=run_release_id,
         resolution_status="OPEN",
         is_duplicate=duplicate_detected,
         duplicate_of=_uuid.UUID(duplicate_id) if duplicate_id else None,

@@ -34,6 +34,8 @@ cannot abort Finalize's transaction and leave the run ``running``.
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 import uuid
 from typing import Any, Iterable, Mapping, Optional
 
@@ -54,6 +56,7 @@ __all__ = [
     "ReviewDecisionRefused",
     "create_run_review_request",
     "evidence_hash_from",
+    "investigation_evidence_hash",
     "report_stages",
     "settle_review",
     "stage_run_review_request",
@@ -85,6 +88,14 @@ def evidence_hash_from(final_state: Optional[Mapping[str, Any]]) -> Optional[str
         return None
     value = decision.get("evidence_bundle_sha256")
     return value if isinstance(value, str) and _SHA256.match(value) else None
+
+
+def investigation_evidence_hash(verdict: Mapping[str, Any]) -> str:
+    """Stable review identity for one persisted Investigator verdict."""
+    canonical = json.dumps(
+        dict(verdict), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _as_uuid(value: Any) -> Optional[uuid.UUID]:

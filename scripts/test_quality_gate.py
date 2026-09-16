@@ -1971,7 +1971,20 @@ def test_a_suite_is_run_only_by_a_command_that_names_or_contains_it() -> None:
 def test_the_real_repo_runs_every_suite_and_the_mcp_step_is_what_runs_it() -> None:
     assert qg._ci_every_test_suite_runs() == []
     ci = (qg.REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    step = "        run: python -m pytest tests -q\n"
+    step = """        run: |
+          python -m pytest tests -q \\
+            --cov=client \\
+            --cov=config \\
+            --cov=prompts \\
+            --cov=resources \\
+            --cov=review_notice \\
+            --cov=server \\
+            --cov=token_verifier \\
+            --cov=tools \\
+            --cov-report=term-missing \\
+            --cov-report=xml:coverage.xml \\
+            --cov-fail-under=41
+"""
     assert ci.count(step) == 1
     commands = qg._workflow_test_commands(ci.replace(step, "        run: echo skipped\n"))
     assert not qg._unit_is_run("mcp/tests", commands), (

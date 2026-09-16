@@ -46,6 +46,7 @@ __all__ = [
     "envelope_from_review",
     "not_ai_generated",
     "review_envelope_for_run",
+    "review_envelope_for_pipeline",
 ]
 
 HEADER_AI_GENERATED = "X-TestLookup-AI-Generated"
@@ -164,3 +165,42 @@ async def review_envelope_for_run(
     if row is None:
         return _unreviewed()
     return envelope_from_review(row)
+
+
+async def review_envelope_for_pipeline(
+    db: Any,
+    pipeline_run_id: Any,
+    *,
+    ai_generated: bool = True,
+) -> ReviewEnvelope:
+    """The live review envelope for one exact pipeline subject.
+
+    Investigator excerpts need this narrower lookup because one test run may
+    have several investigations. Selecting by test_run_id would let the newest
+    investigation's review state authorize every older narrative.
+    """
+    if not ai_generated:
+        return not_ai_generated()
+    try:
+        pipeline_uuid = (
+            pipeline_run_id
+            if isinstance(pipeline_run_id, uuid.UUID)
+            else uuid.UUID(str(pipeline_run_id))
+        )
+    except (TypeError, ValueError):
+        return _unreviewed()
+    if db is None:
+        return _unreviewed()
+    row: Optional[ReviewRequest] = (
+        await db.execute(
+            select(ReviewRequest)
+            .where(
+                ReviewRequest.pipeline_run_id == pipeline_uuid,
+                ReviewRequest.kind == "report",
+                ReviewRequest.state != "superseded",
+            )
+            .order_by(ReviewRequest.created_at.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+    return envelope_from_review(row) if row is not None else _unreviewed()

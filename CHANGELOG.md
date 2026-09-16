@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased - Expand critical-journey coverage
+
+Added blocking browser journeys for accepting and rejecting pending AI reports,
+including reason persistence, read-only role behavior, and a separation-of-
+duties refusal that must leave the report pending. These journeys use the real
+SPA and controlled HTTP boundary without a backend, credentials, or VPN.
+
+Added a PostgreSQL integration journey that carries one batch from ingestion
+through run intelligence, failure-cluster promotion, and an append-only release
+gate decision. Promoted defects now inherit the source run's release, fixing a
+gap where a HIGH or CRITICAL defect could disappear from the release gate.
+
+Investigator verdicts now create their own human-review subjects. Manual trigger
+identity is preserved through the Investigator pipeline, and narrative excerpts
+in downloadable or digest-attached analysis reports are withheld while pending,
+shown only after acceptance, or clearly watermarked under the project draft
+opt-in. Cause, confidence, hypothesis tally, and investigation links remain
+available when the prose is withheld.
+
+Expanded the frontend test-management service contract suite across case, plan,
+strategy, suite, review, duplicate-detection, export, and download operations.
+The tests pin project scoping, encoded suite names, exact mutation bodies,
+filename fallback behavior, DOM cleanup, and object-URL release.
+
+The Test Cases page now distinguishes request failure from a successful empty
+catalog, keeps stale rows visible during an outage, retries both the paginated
+list and health roll together, and prevents overlapping retry requests. Failed
+retries remain explicit without discarding the last usable data.
+
+Added a keyboard-visible skip link to the application shell and completed the
+New/Edit Project dialog focus contract. Hermetic Chromium tests now verify main
+landmark focus, focus containment, Escape dismissal, and restoration to the
+control that opened the dialog.
+
+CI now measures the MCP server and CLI independently. The MCP suite records
+41.96% line coverage with a 41% floor; the CLI records 63.16% with a 62% floor.
+The SDK remains a separate test invocation so its dynamic module loading cannot
+hide CLI coverage or dilute the CLI ratchet.
+
+Added a hermetic two-project browser journey for scope changes during a service
+outage. It proves Project A rows disappear before a failed Project B request is
+reported, every request carries an explicit project ID, and Retry recovers only
+Project B data. A hook regression pins project identity in the SWR cache key.
+
 ## 2026-09-15 - Ratchet frontend coverage and add hermetic browser journeys
 
 Added an evidence-based testability assessment with requirement traceability,

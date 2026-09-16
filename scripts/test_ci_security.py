@@ -101,6 +101,29 @@ def test_publishing_waits_for_the_dependency_scan() -> None:
     assert "security-deps" in _jobs()["build-images"]["needs"]
 
 
+def test_mcp_coverage_has_its_own_measured_floor() -> None:
+    script = "\n".join(_runs(_jobs()["mcp-test"]))
+    assert "pip install pytest pytest-cov pyyaml" in script
+    for target in (
+        "client", "config", "prompts", "resources", "review_notice",
+        "server", "token_verifier", "tools",
+    ):
+        assert f"--cov={target}" in script
+    assert "--cov-report=xml:coverage.xml" in script
+    assert "--cov-fail-under=41" in script
+
+
+def test_cli_coverage_has_an_independent_measured_floor() -> None:
+    script = "\n".join(_runs(_jobs()["sdk-cli-test"]))
+    assert "pip install pytest pytest-cov" in script
+    assert "python -m pytest client/tests -q" in script
+    assert "python -m pytest cli/tests -q" in script
+    assert "--cov=testlookup_cli" in script
+    assert "--cov-report=xml:cli-coverage.xml" in script
+    assert "--cov-fail-under=62" in script
+    assert "--cov=client" not in script
+
+
 def test_every_accepted_finding_says_why_and_expires() -> None:
     doc = yaml.safe_load(IGNORE.read_text(encoding="utf-8"))
     assert set(doc) == {"vulnerabilities"}

@@ -199,10 +199,11 @@ class _FakeSession:
 async def test_start_investigation_202_with_default_policy(monkeypatch):
     db = _FakeSession(run=_run())
     enqueued = []
+    requester = _user()
     monkeypatch.setattr(svc, "enqueue_investigation_task", lambda i: enqueued.append(i) or True)
 
     result = await router_mod.start_investigation(
-        run_id=RUN_ID, db=db, current_user=_user(), _writer=_user(),
+        run_id=RUN_ID, db=db, current_user=requester, _writer=requester,
     )
     assert set(result.keys()) == {"investigation_id"}
     uuid.UUID(result["investigation_id"])  # parseable
@@ -212,6 +213,7 @@ async def test_start_investigation_202_with_default_policy(monkeypatch):
     (row,) = db.added
     assert [h["id"] for h in row.hypotheses] == list(svc.HYPOTHESIS_IDS)
     assert row.mode == "shadow" and row.triggered_by == "manual"
+    assert row.requested_by == requester.id
     assert row.budget == {
         "max_llm_calls": 30,
         "max_tokens": 60000,

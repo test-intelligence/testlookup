@@ -120,6 +120,7 @@ async def test_investigator_pipeline_creation_freezes_the_eval_manifest(monkeypa
         spawn_depth=0,
         failure_cluster_id=None,
         cluster_scope_sha256="scope",
+        requested_by=uuid.uuid4(),
     )
 
     class _Result:
@@ -160,3 +161,4 @@ async def test_investigator_pipeline_creation_freezes_the_eval_manifest(monkeypa
     assert pipeline.execution_metadata["eval_manifest_checksum"] == (
         provenance.current_eval_manifest_checksum()
     )
+    assert pipeline.requested_by == investigation.requested_by

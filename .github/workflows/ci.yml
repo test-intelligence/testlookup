@@ -604,6 +604,7 @@ jobs:
           tests/integration/test_evidence_artifact_authority_postgres.py
           tests/integration/test_ingestion_identity_postgres.py
           tests/integration/test_ingestion_savepoint_postgres.py
+          tests/integration/test_ingest_intelligence_defect_release_postgres.py
           tests/integration/test_investigator_budget_postgres.py
           tests/integration/test_investigator_claim_provider_postgres.py
           tests/integration/test_investigator_resume_postgres.py
@@ -904,7 +905,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install pytest pyyaml
+          pip install pytest pytest-cov pyyaml
 
       - name: Syntax check all Python files
         run: |
@@ -950,7 +951,19 @@ jobs:
           TESTLOOKUP_PASSWORD: ""
 
       - name: Run MCP regression tests
-        run: python -m pytest tests -q
+        run: |
+          python -m pytest tests -q \
+            --cov=client \
+            --cov=config \
+            --cov=prompts \
+            --cov=resources \
+            --cov=review_notice \
+            --cov=server \
+            --cov=token_verifier \
+            --cov=tools \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=41
 
       - name: Render and validate MCP deployment overlays
         shell: bash
@@ -1075,7 +1088,7 @@ jobs:
         # gets from `pip install ./cli`, and hatchling's editable (PEP 660)
         # hook is not available on every pinned version.
         run: |
-          pip install pytest
+          pip install pytest pytest-cov
           pip install ./client
           pip install ./cli
 
@@ -1086,7 +1099,13 @@ jobs:
           git config --global init.defaultBranch main
 
       - name: Run SDK + CLI tests
-        run: python -m pytest client/tests cli/tests -q
+        run: |
+          python -m pytest client/tests -q
+          python -m pytest cli/tests -q \
+            --cov=testlookup_cli \
+            --cov-report=term-missing \
+            --cov-report=xml:cli-coverage.xml \
+            --cov-fail-under=62
 
   # ─────────────────────────────────────────────────────────────
   java-sdk-test:

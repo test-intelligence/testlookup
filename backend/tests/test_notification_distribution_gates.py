@@ -189,6 +189,76 @@ def test_the_task_is_unchanged_while_the_gate_is_not_enforced(monkeypatch, world
     assert deliveries[0]["body"] == AI_TEXT
 
 
+# ── Investigator narrative subject ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_pending_investigator_excerpt_is_withheld_by_its_exact_subject(
+    monkeypatch, world,
+):
+    seen = {}
+
+    async def _subject(_db, pipeline_id):
+        seen["pipeline_id"] = pipeline_id
+        return _envelope("pending_review")
+
+    monkeypatch.setattr(policy, "review_envelope_for_pipeline", _subject)
+    investigation_id = uuid.uuid4()
+    text, decision = await policy.gate_investigation_excerpt(
+        None,
+        investigation_id=investigation_id,
+        project_id=PROJECT,
+        excerpt=AI_TEXT,
+        channel="digest_attachment",
+    )
+
+    assert seen["pipeline_id"] == uuid.uuid5(
+        uuid.NAMESPACE_URL, f"testlookup:investigation:{investigation_id}"
+    )
+    assert text == policy.INVESTIGATION_REVIEW_PENDING_NOTICE
+    assert AI_TEXT not in text
+    assert decision is not None and decision.allowed is False
+
+
+@pytest.mark.asyncio
+async def test_accepted_investigator_excerpt_is_distributed(monkeypatch, world):
+    monkeypatch.setattr(
+        policy,
+        "review_envelope_for_pipeline",
+        AsyncMock(return_value=_envelope("accepted")),
+    )
+    text, decision = await policy.gate_investigation_excerpt(
+        None,
+        investigation_id=uuid.uuid4(),
+        project_id=PROJECT,
+        excerpt=AI_TEXT,
+        channel="analysis_report",
+    )
+    assert text == AI_TEXT
+    assert decision is not None and decision.envelope.state == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_opted_in_investigator_excerpt_is_watermarked(monkeypatch, world):
+    world.drafts = True
+    monkeypatch.setattr(
+        policy,
+        "review_envelope_for_pipeline",
+        AsyncMock(return_value=_envelope("pending_review")),
+    )
+    text, decision = await policy.gate_investigation_excerpt(
+        None,
+        investigation_id=uuid.uuid4(),
+        project_id=PROJECT,
+        excerpt=AI_TEXT,
+        channel="digest_attachment",
+    )
+    assert text.startswith(policy.DRAFT_WATERMARK)
+    assert AI_TEXT in text
+    assert decision is not None
+    assert decision.audit_action == "ai_report.distributed_unreviewed"
+
+
 def _break_the_gate(monkeypatch):
     async def _boom(*_a, **_kw):
         raise RuntimeError("review_requests unavailable")

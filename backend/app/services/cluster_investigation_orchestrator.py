@@ -418,6 +418,7 @@ async def stage_cluster_investigations(
                     status="queued",
                     mode="shadow",
                     triggered_by="auto:cluster_child",
+                    requested_by=getattr(parent_pipeline, "requested_by", None),
                     budget=dict(task["budget"]),
                     spend=_empty_spend(),
                     hypotheses=_pending_hypotheses(),

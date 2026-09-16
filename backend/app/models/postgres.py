@@ -1777,6 +1777,12 @@ class AgentInvestigation(Base):
     mode: Mapped[str] = mapped_column(String(10), nullable=False, default="shadow")
     # manual | auto:newly_failing | auto:gate_no_go
     triggered_by: Mapped[str] = mapped_column(String(40), nullable=False, default="manual")
+    # Authenticated user who manually requested the investigation. Automatic
+    # triggers and historical rows keep NULL; review separation-of-duties uses
+    # this durable value after the request context is gone.
+    requested_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     # {"max_llm_calls": int, "max_tokens": int, "max_seconds": int}
     budget: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     # {"llm_calls": int, "tokens": int, "cost_usd": float, "seconds": float}

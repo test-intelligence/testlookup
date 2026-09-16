@@ -265,6 +265,7 @@ async def start_investigation(
     run: TestRun,
     *,
     triggered_by: str = "manual",
+    requested_by: Optional[uuid.UUID] = None,
 ) -> AgentInvestigation:
     """Gate + create an investigation row for a run. Stage-only (flush);
     the caller owns the commit and enqueues the Celery task AFTER commit.
@@ -298,6 +299,7 @@ async def start_investigation(
         status="queued",
         mode=policy["mode"],
         triggered_by=triggered_by,
+        requested_by=requested_by,
         budget=run_budget_from_policy(policy),
         spend={
             "ledger_version": 2,

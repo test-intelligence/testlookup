@@ -178,7 +178,12 @@ async def start_investigation(
         raise HTTPException(status_code=404, detail="Test run not found")
 
     try:
-        investigation = await svc.start_investigation(db, run, triggered_by="manual")
+        investigation = await svc.start_investigation(
+            db,
+            run,
+            triggered_by="manual",
+            requested_by=current_user.id,
+        )
     except svc.InvestigationPolicyDisabled:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
