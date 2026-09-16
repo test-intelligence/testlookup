@@ -41,11 +41,11 @@ TestLookup (local-first test-failure intelligence) is being extended from "pipel
 | **E4** Per-agent configuration | 4 | 4/4 | **Complete** — E4.4 migration shipped in T5 | #78 #79 #80 #82 T5 |
 | **E5** Model tiering, SLM summarization | 5, 6 | 5/5 | **Complete** | #87 #91 #92 #93 #94 |
 | **E6** Generic reviewer | 7 | 4/4 | **Complete** | #96 #97 |
-| **E3** User-customizable workflows | 3 | 4/5 | **In progress** — E3.1–E3.4 shipped | #99, T17/E3.4 |
+| **E3** User-customizable workflows | 3 | 5/5 | **Complete** | #99, T17/E3.5 |
 | **E9** Evals as the control loop | 13 | 10/10 | **Complete** | #88 #89 #90 #98 #100 #101 #102 #103 #104 #105 |
 | **E2** Hardening, observability | 2, 11, 12 | 4/4 | **Complete** | #85 #106 #107 #108 |
 
-**Totals at the original handover:** 21 stories shipped + 1 partial (E4.4). The continuation has completed E4.4, E5, E6, E9, E2, and E3.1–E3.4: 49/50 stories are shipped after T17/E3.4. E3.5 remains.
+**Totals at the original handover:** 21 stories shipped + 1 partial (E4.4). The continuation completed E4.4, E5, E6, E9, E2, and E3: all 50/50 stories are shipped after T17/E3.5.
 
 ### 1.3 The three owner decisions that gate work
 
@@ -144,12 +144,12 @@ Format per epic: **Title · Description · Business value · Technical scope · 
 - **Dependencies.** E5.1 (tiers), E4 (`review.second_model_check`). E9.4 depends on E6.1.
 - **Implemented.** E6.1–E6.4 shipped in T15–T16. Workflow attachment remains an E3 runtime concern.
 
-### 2.7 E3 — User-customizable workflows  🟡 4/5
+### 2.7 E3 — User-customizable workflows  ✅ Complete
 
 - **Description.** Versioned `workflow_definitions` with publish immutability; `WorkflowCompiler` (registry validation, dependency closure, cycle rules, capability permission ≤ mode, step tools ⊆ config allowlist, typed JSON condition AST); runs record `workflow_id@version`; editor UI; guard that built-ins match compiled graphs.
-- **Business value.** Requirement 3 is the only one still **Missing**.
+- **Business value.** Teams can govern, measure, publish, and execute project-specific workflows without changing application code.
 - **Dependencies.** E4 (permissions, allowlists), E1.6 (`require_workflow_access`). E9.5 depends on E3.1.
-- **Implemented.** E3.1 stores and governs versioned definitions. E3.2 semantically validates and emits LangGraph graphs with built-in topology parity. E3.3 freezes published workflow and plan authority on each run, executes the emitted graph, and refuses cross-version replay. E3.4 adds the project-scoped list/fork/edit/preview/validate/evaluate/publish UI at `/agents/workflows`, linked from the active agent pipeline page. E3.5 remains.
+- **Implemented.** E3.1 stores and governs versioned definitions. E3.2 semantically validates and emits LangGraph graphs with built-in topology parity. E3.3 freezes published workflow and plan authority on each run, executes the emitted graph, and refuses cross-version replay. E3.4 adds the project-scoped list/fork/edit/preview/validate/evaluate/publish UI at `/agents/workflows`, linked from the active agent pipeline page. E3.5 makes the three-way compiler/live topology regression an absolute quality-gate contract and documents the complete workflow lifecycle.
 
 ### 2.8 E9 — Evals as the control loop  ✅ Complete
 
@@ -628,7 +628,7 @@ Priority: **P0** = blocks correctness/safety or other epics · **P1** = needed f
 | T14 | P1 | M | **Shipped: E9.3** G2 tier comparison + shadow sampling + `PUT agent-configs` hook | `routers/ai_evaluation.py`, config router | migration 0180 | tests | §12 |
 | T15 | P1 | M | **Shipped: E6.1** ReviewerAgent + `ReviewVerdictV1`, `agent.reviewer.v1` | registry, catalog modules | `agents/reviewer_agent.py`, contract model | tests + mutation | §12 |
 | T16 | P1 | S/M/S | **Shipped: E6.2–E6.4** reviewer model checks, supervisor, shared budget | reviewer, supervisor, budgets | — | tests + mutation | §12 |
-| T17 | P1 | M/L/S/M/S | **In progress:** E3.1–**E3.4 shipped**; E3.5 remains | `agents/workflow.py`, `agent_planner.py`, workflows router, `/agents/workflows` UI | `agents/workflow_compiler.py`; migration 0183 | compiler fuzz, topology/runtime replay, UI regression, mutation | §4.4, §12 |
+| T17 | P1 | M/L/S/M/S | **Shipped:** E3.1–E3.5 | `agents/workflow.py`, `agent_planner.py`, workflows router, `/agents/workflows` UI | `agents/workflow_compiler.py`; migration 0183 | compiler fuzz, topology/runtime replay, UI regression, guard self-tests, mutation | §4.4, §12; `architecture/WORKFLOWS.md` |
 | T18 | P1 | M×3, S×5 | **Shipped: E9.4–E9.10** reviewer quality, workflow eval, drift, provenance, eval mutations, release outcomes, label leakage | eval services, releases UI | migrations 0182, 0184–0186 | tests + mutations | AI_EVALUATION.md |
 | T19 | P2 | S×3 | **Shipped: E2.1–E2.3** OTel, counters, DLQ + alerts with positive tests | `core/tracing.py`, `core/metrics.py`, `worker/tasks.py`, `infra/` | — | emission + alert tests | OBSERVABILITY.md |
 | T20 | P2 | S | **Shipped:** K3 chip review time | `routers/agents.py` list response, `AgentStatusPage.tsx` | — | backend/frontend regression tests; six-mutation harness | CHANGELOG; §12 E8.5 |

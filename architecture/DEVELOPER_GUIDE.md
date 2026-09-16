@@ -40,10 +40,10 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **42 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **43 guards**.
 18 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 24 ship at zero with **no baseline file at all** — those are
+fail CI. The other 25 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -123,6 +123,12 @@ fails if a *second* deleter appears.
 | `agents.agent-mode-single-writer` | an agent's `mode` written anywhere but `services/agent_config_service.py`: `<row>.mode =` on an `AgentConfig` row, a `mode=` constructor keyword, `.values(mode=...)`, or raw SQL updating the column | Change mode through `agent_config_service.put_config`. `mode` has one writable home, `agent_configs.mode` (architecture section 4.1). The retired Investigator/Fixer compatibility APIs project from that row and remain read-only. `agent_runs.mode` is a per-run record, not a policy, and is not watched |
 | `agents.pipeline-status-writes-via-state-machine` † | assigning `AgentPipelineRun.status` anywhere but `services/workflow_run_state.py` | Call `apply_transition(pipeline, PipelineRunStatus.X, error=...)`, or `await guarded_transition(db, id, expected=..., to=...)` where two writers can race. Five modules used to assign the column directly and the vocabulary drifted into `partial`, `cancelled` and a read-time 30-minute `failed` rewrite (E7.1) |
 | `agents.no-partial-pipeline-status` † | `AgentPipelineRun.status` compared with, filtered by, or assigned the retired literals `partial` / `cancelled` | Degraded runs are `completed` with `execution_metadata.stage_quality = 'degraded'` (use `workflow_run_state.is_resumable`); cancelled runs are `failed` with an error prefixed `cancelled:`. Migration 0173 backfilled the rows, so a comparison against a retired value matches nothing forever |
+
+### Workflows
+
+| Gate id | Requires | How to satisfy |
+|---|---|---|
+| `workflows.builtins-match-compiled` † | the collected compiler regression covers exactly `offline`, `deep`, and `live`, compiles each built-in with the real runtime executors, and compares full node/edge/branch topology with its live graph builder | Keep `test_builtin_definitions_compile_to_the_live_graph_topology` parameterized over all three built-ins and compare `_topology(compiled.graph)` with `_topology(legacy_builder())`. The quality guard pins the strength and collection of that dynamic test; the backend suite executes the actual LangGraph comparison. |
 
 ### Reviews
 
