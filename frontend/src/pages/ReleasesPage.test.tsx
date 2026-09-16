@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ReleasesPage from './ReleasesPage'
 import { releasesService } from '@/services/releasesService'
@@ -14,13 +14,25 @@ vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(),
 }))
 
+const projectStoreState = vi.hoisted(() => ({
+  activeProjectId: 'proj-1' as string,
+  activeProject: { id: 'proj-1', name: 'Project One' } as { id: string; name: string } | null,
+  projects: [{ id: 'proj-1', name: 'Project One' }] as Array<{ id: string; name: string }>,
+}))
+
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
-  useProjectStore: vi.fn((selector: (state: { activeProjectId: string; activeProject: { id: string; name: string } | null }) => unknown) =>
-    selector({ activeProjectId: 'proj-1', activeProject: { id: 'proj-1', name: 'Project One' } })),
+  useProjectStore: vi.fn((selector: (state: typeof projectStoreState) => unknown) =>
+    selector(projectStoreState)),
 }))
 
 describe('ReleasesPage', () => {
+  beforeEach(() => {
+    projectStoreState.activeProjectId = 'proj-1'
+    projectStoreState.activeProject = { id: 'proj-1', name: 'Project One' }
+    projectStoreState.projects = [{ id: 'proj-1', name: 'Project One' }]
+  })
+
   it('renders the release summary row with the current hook contracts', async () => {
     const { useRelease, useReleases } = await import('@/hooks/useReleases')
     const { useRuns } = await import('@/hooks/useRuns')
@@ -109,10 +121,15 @@ describe('ReleasesPage', () => {
       configurable: true,
       value: scrollIntoView,
     })
+    projectStoreState.activeProjectId = '__ALL__'
+    projectStoreState.activeProject = null
+    projectStoreState.projects = [
+      { id: 'proj-1', name: 'Project One' },
+      { id: 'proj-target', name: 'Target Project' },
+    ]
     const target = {
       id: 'release-target',
       project_id: 'proj-target',
-      project_name: 'Target Project',
       name: 'Target Release',
       version: '3.0.0',
       description: 'Requested by deep link',
@@ -183,6 +200,35 @@ describe('ReleasesPage', () => {
     expect(screen.queryByText('Persisted Project Release')).not.toBeInTheDocument()
     expect(document.getElementById('phase-phase-target')).toHaveTextContent('Target phase')
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' }))
+  })
+
+  it('retries the routed release request after a transient detail failure', async () => {
+    const { useRelease, useReleases } = await import('@/hooks/useReleases')
+    const routedRefetch = vi.fn()
+    const listRefetch = vi.fn()
+    ;(useRelease as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: undefined,
+      error: new TypeError('Failed to fetch'),
+      isLoading: false,
+      mutate: routedRefetch,
+    })
+    ;(useReleases as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [] },
+      isLoading: false,
+      mutate: listRefetch,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/releases/release-target']}>
+        <Routes>
+          <Route path="/releases/:releaseId" element={<ReleasesPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(routedRefetch).toHaveBeenCalledOnce()
+    expect(listRefetch).not.toHaveBeenCalled()
   })
 
   it('records a reasoned incident from the expanded release detail', async () => {

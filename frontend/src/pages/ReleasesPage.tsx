@@ -692,12 +692,14 @@ export default function ReleasesPage() {
   const { releaseId } = useParams<{ releaseId: string }>()
   const project   = useProjectStore(s => s.activeProject)
   const projectId = useProjectStore(s => s.activeProjectId)
+  const projects = useProjectStore(s => s.projects)
 
   const { data, isLoading: listLoading, error: releasesError, mutate: refetch } = useReleases()
   const {
     data: routedRelease,
     isLoading: routedReleaseLoading,
     error: routedReleaseError,
+    mutate: refetchRoutedRelease,
   } = useRelease(releaseId ?? null)
   // Memoize so the array identity is stable across renders — the downstream
   // `derived` useMemo keys on it. A detail URL resolves through its own
@@ -709,8 +711,9 @@ export default function ReleasesPage() {
   )
   const isLoading = releaseId ? routedReleaseLoading : listLoading
   const pageError = releaseId ? routedReleaseError : releasesError
+  const routedProjectName = projects.find(item => item.id === routedRelease?.project_id)?.name
   const scopeName = releaseId
-    ? (routedRelease?.project_name ?? 'the linked project')
+    ? (routedRelease?.project_name ?? routedProjectName ?? 'the linked project')
     : (project?.name ?? 'this project')
 
   const [showModal, setShowModal]     = useState(false)
@@ -770,7 +773,8 @@ export default function ReleasesPage() {
 
   // M21: an outage used to render "No releases yet" and a create-release CTA.
   if (pageError && releases.length === 0) {
-    return <DataUnavailable error={pageError} onRetry={() => void refetch()} testId="releases-data-unavailable" />
+    const retry = releaseId ? refetchRoutedRelease : refetch
+    return <DataUnavailable error={pageError} onRetry={() => void retry()} testId="releases-data-unavailable" />
   }
 
   if (!releaseId && !project && !isAllProjects) {
@@ -798,9 +802,11 @@ export default function ReleasesPage() {
         <PageHeader
           title="Releases"
           subtitle={
-            isAllProjects
-              ? `${stageCounts.all} active across all projects`
-              : `${stageCounts.all} active across ${scopeName}`
+            releaseId
+              ? `${stageCounts.all} active across ${scopeName}`
+              : isAllProjects
+                ? `${stageCounts.all} active across all projects`
+                : `${stageCounts.all} active across ${scopeName}`
             + ` · ${stageCounts.in_progress} in progress · ${derived.filter(r => r.blockers.some(b => b.severity === 'red')).length} blocked`
           }
           actions={

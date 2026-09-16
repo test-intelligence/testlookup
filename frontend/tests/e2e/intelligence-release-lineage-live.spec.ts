@@ -113,6 +113,7 @@ test.describe('Intelligence to release lineage — live read contract', () => {
     await expect(page.getByRole('heading', { name: releaseName, exact: true })).toBeVisible({
       timeout: 30_000,
     })
+    await expect(page.getByText(new RegExp(`1 active across ${project.name}`))).toBeVisible()
     await expect(page.getByText('Linked Test Runs (1)', { exact: true })).toBeVisible()
     await expect(page.getByText(buildNumber, { exact: true })).toBeVisible()
 
