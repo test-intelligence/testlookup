@@ -58,6 +58,11 @@ Project-scoped feature-flag status checks now authorize the requested project
 before evaluating the flag. A stale or substituted project ID can no longer
 receive a successful rollout answer outside the caller's tenant membership.
 
+Admin-created users now receive the forced-reset flag together with their
+one-time password. Their first login is routed through the existing
+first-time-reset flow instead of silently treating the disclosed bootstrap
+credential as permanent.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,

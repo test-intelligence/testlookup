@@ -1,5 +1,5 @@
 mission,priority,state,record,defects,blocker
-M01,P0,PASSED,M01-authentication.md,EXP-BUG-005;EXP-BUG-006;EXP-BUG-008;EXP-BUG-009,
+M01,P0,RUNNING,M01-authentication.md,EXP-BUG-005;EXP-BUG-006;EXP-BUG-008;EXP-BUG-009;EXP-BUG-011,EXP-BUG-011 fix and deployed first-time-reset retest pending
 M02,P0,RUNNING,M02-project-isolation.md,EXP-BUG-010,CLI and MCP isolation repetitions remain
 M03,P0,NOT_RUN,,,
 M04,P0,NOT_RUN,,,

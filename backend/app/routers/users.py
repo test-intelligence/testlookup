@@ -290,6 +290,7 @@ async def admin_create_user(
         full_name=payload.full_name,
         hashed_password=get_password_hash(temp_password),
         role=payload.role,
+        must_change_password=True,
     )
     db.add(user)
     await db.commit()

@@ -150,8 +150,8 @@ class TestAdminCreateUserRequest:
 
 class TestAdminCreateUser:
     @pytest.mark.asyncio
-    async def test_happy_path_returns_temp_password(self):
-        """Admin creates a new user; response includes a non-empty temp password."""
+    async def test_happy_path_returns_forced_reset_temp_password(self):
+        """The one-time admin credential must require replacement after login."""
         from app.routers.users import admin_create_user
 
         admin = _make_user(role=UserRole.ADMIN)
@@ -180,6 +180,8 @@ class TestAdminCreateUser:
             result = await admin_create_user(payload=payload, db=db, current_user=admin)
 
         db.add.assert_called_once()
+        created_user = db.add.call_args.args[0]
+        assert created_user.must_change_password is True
         db.commit.assert_awaited_once()
         assert result.temp_password
         assert len(result.temp_password) >= 8
