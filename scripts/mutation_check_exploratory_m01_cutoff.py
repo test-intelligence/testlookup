@@ -18,18 +18,32 @@ TESTS = (
     "no:testlookup",
     "--basetemp=.pytest-tmp-exploratory-m01-cutoff-mutation",
     "tests/core/test_access_token_precision.py",
+    "tests/core/test_auth_session_tokens.py",
     "tests/core/test_token_revocation.py",
     "tests/core/test_deps_revocation_fail_closed.py::test_fractional_iat_reaches_cutoff_check",
-    "tests/regression/test_durable_token_revocation.py::test_durable_cutoff_preserves_subsecond_ordering",
-    "tests/regression/test_durable_token_revocation.py::test_revoke_all_cutoff_uses_wall_clock_not_transaction_start",
+    "tests/regression/test_durable_token_revocation.py",
     "tests/regression/test_auth_session_serialization.py",
 )
 
 SECURITY = BACKEND / "app" / "core" / "security.py"
 DEPS = BACKEND / "app" / "core" / "deps.py"
 REVOCATION = BACKEND / "app" / "core" / "token_revocation.py"
+AUTH = BACKEND / "app" / "routers" / "auth.py"
+MFA = BACKEND / "app" / "routers" / "mfa.py"
+SSO = BACKEND / "app" / "routers" / "sso.py"
+DEFAULT_QA_LEAD = BACKEND / "app" / "services" / "default_qa_lead_service.py"
+SESSION_TOKENS = BACKEND / "app" / "services" / "auth_session_tokens.py"
 MUTATIONS = (
-    (SECURITY, '        "iat": now.timestamp(),', '        "iat": int(now.timestamp()),'),
+    (
+        SECURITY,
+        '        "iat": now.timestamp(),\n        "exp": expire,\n        "type": "access",',
+        '        "iat": int(now.timestamp()),\n        "exp": expire,\n        "type": "access",',
+    ),
+    (
+        SECURITY,
+        '        "iat": now.timestamp(),\n        "exp": expire,\n        "type": token_type,',
+        '        "iat": int(now.timestamp()),\n        "exp": expire,\n        "type": token_type,',
+    ),
     (DEPS, "        iat_value = float(iat)", "        iat_value = float(int(iat))"),
     (
         REVOCATION,
@@ -45,30 +59,86 @@ MUTATIONS = (
     (REVOCATION, "        cutoff = float(cutoff_str)", "        cutoff = int(cutoff_str)"),
     (
         REVOCATION,
+        "            cutoff = result.scalar_one().timestamp()",
+        "            _ = result.scalar_one().timestamp()",
+    ),
+    (
+        REVOCATION,
+        "            cutoff = rows[0][0].timestamp()",
+        "            _ = rows[0][0].timestamp()",
+    ),
+    (
+        REVOCATION,
         '    "VALUES (:jti, :uid, clock_timestamp()) "\n'
         '    "ON CONFLICT (jti) DO UPDATE SET valid_from=clock_timestamp() "',
         '    "VALUES (:jti, :uid, now()) "\n'
         '    "ON CONFLICT (jti) DO UPDATE SET valid_from=now() "',
     ),
     (
-        BACKEND / "app" / "routers" / "auth.py",
+        AUTH,
         "        ).with_for_update()\n    )\n    user = result.scalar_one_or_none()",
         "        )\n    )\n    user = result.scalar_one_or_none()",
     ),
     (
-        BACKEND / "app" / "routers" / "auth.py",
+        AUTH,
         "    result = await db.execute(select(User).where(User.id == uid).with_for_update())",
         "    result = await db.execute(select(User).where(User.id == uid))",
     ),
     (
-        BACKEND / "app" / "routers" / "mfa.py",
+        MFA,
         "        await db.execute(select(User).where(User.id == uid).with_for_update())",
         "        await db.execute(select(User).where(User.id == uid))",
     ),
     (
-        BACKEND / "app" / "routers" / "mfa.py",
+        MFA,
         "        if await is_token_before_cutoff(uid, iat_value):",
         "        if False and await is_token_before_cutoff(uid, iat_value):",
+    ),
+    (
+        AUTH,
+        "    await db.execute(select(User.id).where(User.id == user.id).with_for_update())\n"
+        "    await db.refresh(user)\n\n    # dev-login",
+        "    await db.execute(select(User.id).where(User.id == user.id))\n"
+        "    await db.refresh(user)\n\n    # dev-login",
+    ),
+    (
+        AUTH,
+        "    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())\n"
+        "    await db.refresh(current_user)\n    if not current_user.must_change_password:",
+        "    await db.execute(select(User.id).where(User.id == current_user.id))\n"
+        "    await db.refresh(current_user)\n    if not current_user.must_change_password:",
+    ),
+    (
+        AUTH,
+        "    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())\n"
+        "    await db.refresh(current_user)\n    if not verify_password",
+        "    await db.execute(select(User.id).where(User.id == current_user.id))\n"
+        "    await db.refresh(current_user)\n    if not verify_password",
+    ),
+    (
+        SSO,
+        "    await db.execute(select(User.id).where(User.id == user.id).with_for_update())",
+        "    await db.execute(select(User.id).where(User.id == user.id))",
+    ),
+    (
+        DEFAULT_QA_LEAD,
+        "    await db.execute(select(User.id).where(User.id == user.id).with_for_update())",
+        "    await db.execute(select(User.id).where(User.id == user.id))",
+    ),
+    (
+        SESSION_TOKENS,
+        "    result = await db.execute(select(func.clock_timestamp()))",
+        "    result = await db.execute(select(func.now()))",
+    ),
+    (
+        SESSION_TOKENS,
+        "    return create_access_token(subject, expires_delta, issued_at=issued_at)",
+        "    return create_access_token(subject, expires_delta)",
+    ),
+    (
+        SESSION_TOKENS,
+        "    return create_mfa_token(subject, token_type, issued_at=issued_at)",
+        "    return create_mfa_token(subject, token_type)",
     ),
 )
 

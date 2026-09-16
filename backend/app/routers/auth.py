@@ -16,8 +16,6 @@ from app.core.deps import get_current_active_user, oauth2_scheme
 from app.core.security import (
     MFA_CHALLENGE_TOKEN_TYPE,
     MFA_ENROLLMENT_TOKEN_TYPE,
-    create_access_token,
-    create_mfa_token,
     decode_token,
     get_password_hash,
     verify_password,
@@ -26,6 +24,7 @@ from app.core.token_revocation import RevocationUnavailable, revoke_all_user_tok
 from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, User, UserRole
 from app.services import mfa_service, ui_dismissal_service
+from app.services.auth_session_tokens import issue_access_jwt, issue_mfa_jwt
 from app.services.refresh_token_service import (
     RefreshTokenError,
     _revoke_family as _revoke_refresh_family,
@@ -234,7 +233,9 @@ async def login(
         )
 
     if requirement is mfa_service.LoginRequirement.CHALLENGE:
-        challenge, _jti, ttl = create_mfa_token(str(user.id), MFA_CHALLENGE_TOKEN_TYPE)
+        challenge, _jti, ttl = await issue_mfa_jwt(
+            db, str(user.id), MFA_CHALLENGE_TOKEN_TYPE
+        )
         # No commit needed for the challenge itself (nothing was staged), but
         # the SSO admin-fallback event above may be pending.
         await db.commit()
@@ -242,7 +243,9 @@ async def login(
         return MfaChallengeResponse(challenge_token=challenge, expires_in=ttl)
 
     if requirement is mfa_service.LoginRequirement.ENROLL:
-        enroll_token, _jti, ttl = create_mfa_token(str(user.id), MFA_ENROLLMENT_TOKEN_TYPE)
+        enroll_token, _jti, ttl = await issue_mfa_jwt(
+            db, str(user.id), MFA_ENROLLMENT_TOKEN_TYPE
+        )
         await db.commit()
         logger.info("MFA enrollment required at login: user_id=%s", user.id)
         return MfaEnrollmentRequiredResponse(
@@ -251,7 +254,7 @@ async def login(
             required_for_role=policy.required_for_role,
         )
 
-    access_token = create_access_token(str(user.id))
+    access_token = await issue_access_jwt(db, str(user.id))
     refresh_token = await issue_refresh_token(db, user.id)
     await mfa_service.register_successful_login(db, user)
     await db.commit()
@@ -396,7 +399,7 @@ async def dev_login(
             ),
         )
 
-    access_token = create_access_token(str(user.id))
+    access_token = await issue_access_jwt(db, str(user.id))
     refresh_token = await issue_refresh_token(db, user.id)
     await db.commit()
     logger.info("dev-login: issued token for user_id=%s (%s)", user.id, role)
@@ -519,7 +522,7 @@ async def refresh_tokens(
         logger.warning("Refresh token rejected for user_id=%s: %s", user.id, exc)
         raise credentials_exception
 
-    new_access = create_access_token(str(user.id))
+    new_access = await issue_access_jwt(db, str(user.id))
     await db.commit()
 
     return TokenResponse(

@@ -23,7 +23,6 @@ from app.core.deps import get_current_active_user
 from app.core.security import (
     MFA_CHALLENGE_TOKEN_TYPE,
     MFA_ENROLLMENT_TOKEN_TYPE,
-    create_access_token,
     decode_token,
     verify_password,
 )
@@ -48,6 +47,7 @@ from app.models.schemas import (
     TokenResponse,
 )
 from app.services import mfa_service
+from app.services.auth_session_tokens import issue_access_jwt
 from app.services.refresh_token_service import issue_refresh_token
 from app.services.sso_service import log_identity_event
 
@@ -199,7 +199,7 @@ def _assert_not_locked(user: User) -> None:
 
 
 async def _issue_session(db: AsyncSession, user: User) -> TokenResponse:
-    access_token = create_access_token(str(user.id))
+    access_token = await issue_access_jwt(db, str(user.id))
     refresh_token = await issue_refresh_token(db, user.id)
     await mfa_service.register_successful_login(db, user)
     return TokenResponse(

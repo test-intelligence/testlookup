@@ -21,6 +21,13 @@ paths, returns the stored value, and copies that exact timestamp to Redis. This
 removes transaction-start skew and prevents the durable and cache authorities
 from receiving different cutoffs.
 
+Independent review found one more same-second boundary: python-jose converted
+MFA `iat` datetimes to integer seconds, and application-node time could drift
+from the PostgreSQL cutoff clock. Access and MFA session JWTs now take an
+explicit PostgreSQL `clock_timestamp()` while the user lock is held, and MFA
+`iat` is encoded as a fractional NumericDate. A post-cutoff token therefore
+uses the same clock and precision as the cutoff authority.
+
 **Regression tests:**
 
 - `test_auth_session_serialization.py` pins user-row locking for password login,
@@ -30,6 +37,9 @@ from receiving different cutoffs.
   requires the login to wait and then fail after the new hash commits.
 - `test_revoke_all_cutoff_uses_wall_clock_not_transaction_start` pins both
   statement-time cutoff branches.
+- `test_auth_session_tokens.py` requires both access and MFA JWT wrappers to
+  use PostgreSQL statement time, while the precision suite pins the fractional
+  MFA wire claim.
 
 **Red evidence:** the focused regression run failed all four new backend
 contracts on exact deployed revision `e40fbddb564d6139c9ac2ad0c899773d0da4608c`.

@@ -38,6 +38,9 @@ PostgreSQL row. Revocation cutoffs use statement-time wall clock values for
 both durable storage and the Redis cache, and MFA interstitials issued before a
 password change are rejected. This closes races where an old-password login,
 refresh, or MFA exchange could otherwise create a session after revoke-all.
+Access and MFA JWT issuance now uses PostgreSQL's clock while that lock is held,
+so ordering does not depend on clock synchronization between application nodes
+and the revocation database. MFA `iat` claims also preserve subsecond precision.
 
 ## Unreleased - Expand critical-journey coverage
 

@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -93,3 +94,65 @@ async def test_revoke_all_cutoff_uses_wall_clock_not_transaction_start(monkeypat
     normalized = " ".join(session.statement.lower().split())
     assert normalized.count("clock_timestamp()") == 2
     assert "now()" not in normalized
+
+
+@pytest.mark.asyncio
+async def test_revoke_all_copies_returned_durable_cutoff_to_cache(monkeypatch):
+    from app.core import token_revocation
+
+    cutoff = datetime(2033, 5, 18, 3, 33, 20, 125000, tzinfo=timezone.utc)
+
+    class Result:
+        def scalar_one(self):
+            return cutoff
+
+    class Session:
+        async def execute(self, _statement, _params):
+            return Result()
+
+    cached = {}
+
+    class Cache:
+        async def set(self, key, value, *, ex):
+            cached.update(key=key, value=value, ex=ex)
+
+    async def redis():
+        return Cache()
+
+    monkeypatch.setattr(token_revocation, "_redis", redis)
+    user_id = uuid.uuid4()
+
+    await token_revocation.revoke_all_user_tokens(user_id, db=Session())
+
+    assert cached["key"] == f"auth:tokens_valid_from:{user_id}"
+    assert cached["value"] == str(cutoff.timestamp())
+    assert cached["ex"] >= 60
+
+
+@pytest.mark.asyncio
+async def test_revoke_all_copies_owned_session_cutoff_to_cache(monkeypatch):
+    from app.core import token_revocation
+
+    cutoff = datetime(2033, 5, 18, 3, 33, 20, 875000, tzinfo=timezone.utc)
+
+    async def durable(statement, _params):
+        assert "returning valid_from" in statement.lower()
+        return [(cutoff,)]
+
+    cached = {}
+
+    class Cache:
+        async def set(self, key, value, *, ex):
+            cached.update(key=key, value=value, ex=ex)
+
+    async def redis():
+        return Cache()
+
+    monkeypatch.setattr(token_revocation, "_durable_execute", durable)
+    monkeypatch.setattr(token_revocation, "_redis", redis)
+    user_id = uuid.uuid4()
+
+    await token_revocation.revoke_all_user_tokens(user_id)
+
+    assert cached["key"] == f"auth:tokens_valid_from:{user_id}"
+    assert cached["value"] == str(cutoff.timestamp())

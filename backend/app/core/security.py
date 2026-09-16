@@ -42,8 +42,13 @@ def hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def create_access_token(subject: Any, expires_delta: Optional[timedelta] = None) -> str:
-    now = datetime.now(timezone.utc)
+def create_access_token(
+    subject: Any,
+    expires_delta: Optional[timedelta] = None,
+    *,
+    issued_at: Optional[datetime] = None,
+) -> str:
+    now = issued_at or datetime.now(timezone.utc)
     expire = now + (
         expires_delta or timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
     )
@@ -93,7 +98,12 @@ MFA_CHALLENGE_TOKEN_TYPE = "mfa_challenge"      # password OK, awaiting TOTP
 MFA_ENROLLMENT_TOKEN_TYPE = "mfa_enroll"        # password OK, policy requires enrollment
 
 
-def create_mfa_token(subject: Any, token_type: str) -> tuple[str, str, int]:
+def create_mfa_token(
+    subject: Any,
+    token_type: str,
+    *,
+    issued_at: Optional[datetime] = None,
+) -> tuple[str, str, int]:
     """Mint a short-lived MFA interstitial token.
 
     Returns ``(encoded_token, jti, expires_in_seconds)``. ``token_type`` must be
@@ -103,13 +113,13 @@ def create_mfa_token(subject: Any, token_type: str) -> tuple[str, str, int]:
     """
     if token_type not in (MFA_CHALLENGE_TOKEN_TYPE, MFA_ENROLLMENT_TOKEN_TYPE):
         raise ValueError(f"Not an MFA interstitial token type: {token_type!r}")
-    now = datetime.now(timezone.utc)
+    now = issued_at or datetime.now(timezone.utc)
     ttl = max(30, int(settings.MFA_CHALLENGE_TTL_SECONDS))
     expire = now + timedelta(seconds=ttl)
     jti = uuid.uuid4().hex
     payload = {
         "sub": str(subject),
-        "iat": now,
+        "iat": now.timestamp(),
         "exp": expire,
         "type": token_type,
         "jti": jti,
