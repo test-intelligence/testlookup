@@ -19,6 +19,11 @@ shown only after acceptance, or clearly watermarked under the project draft
 opt-in. Cause, confidence, hypothesis tally, and investigation links remain
 available when the prose is withheld.
 
+Expanded the frontend test-management service contract suite across case, plan,
+strategy, suite, review, duplicate-detection, export, and download operations.
+The tests pin project scoping, encoded suite names, exact mutation bodies,
+filename fallback behavior, DOM cleanup, and object-URL release.
+
 ## 2026-09-15 - Ratchet frontend coverage and add hermetic browser journeys
 
 Added an evidence-based testability assessment with requirement traceability,
