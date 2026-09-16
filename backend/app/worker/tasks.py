@@ -1891,6 +1891,8 @@ def run_agent_pipeline(
     project_id: str,
     build_number: str,
     workflow_type: str = "offline",
+    workflow_id: str | None = None,
+    workflow_version: int | None = None,
     rerun_of: str | None = None,
     requested_by: str | None = None,
 ):
@@ -1904,7 +1906,12 @@ def run_agent_pipeline(
     from app.agents.workflow import run_offline_pipeline, run_deep_pipeline
 
     # Include workflow_type in dedup key so a deep run isn't blocked by a prior offline run
-    dedup_key = f"testlookup:dedup:pipeline:{test_run_id}:{workflow_type}"
+    selected_ref = (
+        f"{workflow_id}@{workflow_version}"
+        if workflow_id is not None and workflow_version is not None
+        else workflow_type
+    )
+    dedup_key = f"testlookup:dedup:pipeline:{test_run_id}:{selected_ref}"
     dedup_owner = str(self.request.id)
     request_headers = getattr(self.request, "headers", None) or {}
     source_outbox_id = request_headers.get("downstream_outbox_id")
@@ -1967,6 +1974,8 @@ def run_agent_pipeline(
                 build_number=build_number,
                 cost_budget_mode_override=cost_budget_mode_override,
                 rerun_of=rerun_of,
+                workflow_id=workflow_id,
+                workflow_version=workflow_version,
                 requested_by=requested_by,
             )
         return await run_offline_pipeline(
@@ -1978,6 +1987,8 @@ def run_agent_pipeline(
             create_if_missing=durable_pipeline_id is not None,
             cost_budget_mode_override=cost_budget_mode_override,
             rerun_of=rerun_of,
+            workflow_id=workflow_id,
+            workflow_version=workflow_version,
             requested_by=requested_by,
         )
 
@@ -2082,6 +2093,8 @@ def run_agent_pipeline(
                 "project_id": project_id,
                 "build_number": build_number,
                 "workflow_type": workflow_type,
+                "workflow_id": workflow_id,
+                "workflow_version": workflow_version,
                 "rerun_of": rerun_of,
                 "requested_by": requested_by,
             },

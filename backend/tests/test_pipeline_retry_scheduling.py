@@ -301,6 +301,11 @@ async def test_trigger_queues_when_nothing_is_in_progress(monkeypatch):
         current_user=SimpleNamespace(id=requester),
         _=None,
     )
-    assert resp == {"message": "Pipeline queued", "task_id": "task-1", "run_id": str(run.id)}
+    assert resp == {
+        "message": "Pipeline queued",
+        "task_id": "task-1",
+        "run_id": str(run.id),
+        "workflow_ref": "offline@1",
+    }
     delay.assert_called_once()
     assert delay.call_args.kwargs["requested_by"] == str(requester)

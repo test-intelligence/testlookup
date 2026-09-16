@@ -39,6 +39,7 @@ from app.services.workflow_run_state import (
     is_resumable,
     passes_without_review,
 )
+from app.services.workflow_step_context import workflow_step_scope
 
 from app.agents.analysis_agent import AnalysisAgent
 from app.agents.anomaly_agent import AnomalyDetectionAgent
@@ -70,6 +71,7 @@ from app.services.agent_planner import (
     _LIVE_STAGES as _PLANNER_LIVE_STAGES,
     attach_workflow_plan_and_verification,
     build_workflow_plan,
+    compute_workflow_plan_hash,
 )
 from app.services.agent_capability_registry import get_capability
 from app.services.agent_step_tracing import trace_agent_step
@@ -777,10 +779,9 @@ def _route_after_summary_deep(state: WorkflowState) -> str:
 def workflow_node_executors() -> dict[str, Any]:
     """Return the production executors available to ``WorkflowCompiler``.
 
-    The compiler keys by the public capability id while checkpoint rows retain
-    the canonical registry stage name.  E3.3 will bind selected published
-    definitions to pipeline runs; E3.2 keeps the existing hand-built graphs as
-    the live runtime and diff-tests them against these executors.
+    The generic compiler accepts these public capability keys. Runtime binding
+    additionally maps each published step id to the underlying implementation,
+    so repeated capabilities retain independent durable checkpoint identities.
     """
 
     nodes = {
@@ -809,6 +810,125 @@ def workflow_node_executors() -> dict[str, Any]:
         f"agent.{stage}.v1": _make_checkpointed_node(node, stage)
         for stage, node in nodes.items()
     }
+
+
+def _workflow_runtime_executors(
+    body: Any, agent_configs: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Bind every published step id to its capability implementation."""
+    capability_nodes = workflow_node_executors()
+    executors: dict[str, Any] = {}
+    steps = {step.id: step for step in body.steps}
+    configs = agent_configs or {}
+    for step in body.steps:
+        if step.agent_id == "agent.reviewer.v1":
+            from app.agents.reviewer_agent import ReviewerAgent
+            from app.services.agent_config_service import AGENT_TOOL_PERMISSIONS
+
+            async def review_node(state: WorkflowState, *, review_step: Any = step) -> dict[str, Any]:
+                outputs = dict(state.get("_workflow_step_outputs") or {})
+                reviewed_steps = []
+                for target_id in review_step.reviews:
+                    target = steps[target_id]
+                    target_stage = target.agent_id.removeprefix("agent.").removesuffix(".v1")
+                    target_output = dict(outputs.get(target_id) or {})
+                    reviewed_steps.append({
+                        "step_name": target_stage,
+                        "output": target_output,
+                        "mode": str(configs.get(target.agent_id, {}).get("mode") or "shadow"),
+                        "tools_used": list(target_output.get("tools_used") or []),
+                        "tool_permissions": {
+                            tool: AGENT_TOOL_PERMISSIONS[tool] for tool in target.tools
+                        },
+                    })
+                reviewer_input = {
+                    "reviewed_steps": reviewed_steps,
+                    "references": {
+                        "test_case_ids": list(state.get("failed_test_ids") or []),
+                        "cluster_ids": [
+                            str(item.get("cluster_id"))
+                            for item in state.get("failure_clusters") or []
+                            if isinstance(item, dict) and item.get("cluster_id")
+                        ],
+                        "artifact_ids": [],
+                    },
+                    "numeric_facts": {
+                        "total_tests": float(state.get("total_tests") or 0),
+                        "pass_rate": float(state.get("pass_rate") or 0.0),
+                    },
+                    "run_data": dict(state.get("test_run_data") or {}),
+                    "analyses": dict(state.get("analyses") or {}),
+                }
+                return await ReviewerAgent().run({**state, "reviewer_input": reviewer_input})
+
+            executors[step.id] = _make_checkpointed_node(review_node, step.id)
+            continue
+        canonical = capability_nodes.get(step.agent_id)
+        if canonical is None:
+            continue
+        # Canonical ids can use the normal wrapper. Named/repeated steps get a
+        # wrapper with their own durable checkpoint identity around the raw
+        # capability function.
+        stage_name = step.agent_id.removeprefix("agent.").removesuffix(".v1")
+        if step.id == stage_name:
+            executors[step.id] = canonical
+            continue
+        raw = getattr(canonical, "__workflow_original_node__", None)
+        executors[step.id] = _make_checkpointed_node(raw or canonical, step.id)
+    return executors
+
+
+def _definition_checksum(snapshot: dict[str, Any]) -> str:
+    canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _compile_frozen_workflow(setup: dict[str, Any]) -> Any:
+    from app.agents.workflow_compiler import compile_workflow
+    from app.services.workflow_definition_service import WorkflowBodyV1
+
+    snapshot = setup.get("workflow_definition")
+    expected = setup.get("workflow_definition_sha256")
+    if not isinstance(snapshot, dict) or not isinstance(expected, str):
+        raise ValueError("workflow_definition_snapshot_missing")
+    if _definition_checksum(snapshot) != expected:
+        raise ValueError("workflow_definition_snapshot_mismatch")
+    body = WorkflowBodyV1.model_validate(snapshot)
+    agent_configs = setup.get("workflow_agent_configs") or {}
+    return compile_workflow(
+        body,
+        agent_configs=agent_configs,
+        node_executors=_workflow_runtime_executors(body, agent_configs),
+    ).graph.compile()
+
+
+def _frozen_workflow_authority_valid(
+    metadata: dict[str, Any], initial_plan: dict[str, Any]
+) -> bool:
+    snapshot = metadata.get("workflow_definition")
+    digest = metadata.get("workflow_definition_sha256")
+    expected_ref = f"{metadata.get('workflow_id')}@{metadata.get('workflow_version')}"
+    return bool(
+        isinstance(snapshot, dict)
+        and isinstance(digest, str)
+        and _definition_checksum(snapshot) == digest
+        and metadata.get("workflow_ref") == expected_ref
+        and metadata.get("workflow_plan_sha256") == compute_workflow_plan_hash(initial_plan)
+    )
+
+
+def _checkpoint_authority_matches(
+    metadata: dict[str, Any],
+    *,
+    workflow_ref: str,
+    workflow_definition_sha256: str | None,
+    workflow_plan_sha256: str | None,
+) -> bool:
+    return bool(
+        metadata.get("workflow_ref") == workflow_ref
+        and metadata.get("workflow_definition_sha256") == workflow_definition_sha256
+        and metadata.get("workflow_plan_sha256") == workflow_plan_sha256
+    )
 
 
 def _build_offline_graph() -> StateGraph:
@@ -1172,6 +1292,9 @@ async def _load_checkpoint(
     workflow_type: str,
     *,
     pipeline_run_id: str | None = None,
+    workflow_ref: str | None = None,
+    workflow_definition_sha256: str | None = None,
+    workflow_plan_sha256: str | None = None,
 ) -> Optional[dict]:
     """
     Look for a prior failed pipeline run for the same test_run_id.
@@ -1211,6 +1334,20 @@ async def _load_checkpoint(
             prev_run = result.scalar_one_or_none()
             if not prev_run:
                 return None
+            if workflow_ref is not None:
+                previous_metadata = dict(getattr(prev_run, "execution_metadata", None) or {})
+                if not _checkpoint_authority_matches(
+                    previous_metadata,
+                    workflow_ref=workflow_ref,
+                    workflow_definition_sha256=workflow_definition_sha256,
+                    workflow_plan_sha256=workflow_plan_sha256,
+                ):
+                    logger.info(
+                        "checkpoint_restore_skipped",
+                        previous_pipeline_run_id=str(prev_run.id),
+                        reason="workflow_authority_mismatch",
+                    )
+                    return None
             prev_status = getattr(prev_run, "status", None)
             if prev_status is not None and not is_resumable(
                 prev_status, getattr(prev_run, "execution_metadata", None)
@@ -1319,6 +1456,9 @@ async def _claim_pipeline_resume(
             # Never reconstruct a plan during resume; the original authority is
             # required to keep budgets/flags and task selection stable.
             return None
+        if metadata.get("workflow_ref") is not None:
+            if not _frozen_workflow_authority_valid(metadata, initial_plan):
+                return None
         mode_snapshot = metadata.get("analysis_mode_resolution")
         if not isinstance(mode_snapshot, dict) or not mode_snapshot.get("resolved"):
             # Analysis routing is part of the replay authority. Legacy rows that
@@ -1402,6 +1542,14 @@ async def _claim_pipeline_resume(
             "project_id": str(project_id),
             "workflow_type": pipeline.workflow_type,
             "initial_workflow_plan": initial_plan,
+            "workflow_id": metadata.get("workflow_id"),
+            "workflow_version": metadata.get("workflow_version"),
+            "workflow_ref": metadata.get("workflow_ref"),
+            "workflow_definition": metadata.get("workflow_definition"),
+            "workflow_definition_sha256": metadata.get("workflow_definition_sha256"),
+            "workflow_plan_sha256": metadata.get("workflow_plan_sha256"),
+            "workflow_deadline_seconds": metadata.get("workflow_deadline_seconds"),
+            "workflow_agent_configs": metadata.get("workflow_agent_configs") or {},
             "cluster_child_settings": metadata.get("cluster_child_settings") or {},
             "async_decision_report_supersession_enabled": bool(
                 metadata.get("async_decision_report_supersession_enabled", False)
@@ -1624,14 +1772,16 @@ def _planner_stage_selection(
     return True, "legacy_plan_stage_missing"
 
 
-def _pipeline_deadline() -> float:
+def _pipeline_deadline(deadline_seconds: int | None = None) -> float:
     """The ``time.monotonic()`` instant after which no new stage may start.
 
     Returns 0.0 when the budget is disabled. Computed once per pipeline attempt,
     so a resumed run gets a fresh budget (it is a fresh Celery task with a fresh
     soft limit) while no single attempt can outrun that limit.
     """
-    budget = int(getattr(settings, "AI_PIPELINE_DEADLINE_SECONDS", 0) or 0)
+    configured = int(getattr(settings, "AI_PIPELINE_DEADLINE_SECONDS", 0) or 0)
+    requested = int(deadline_seconds or 0)
+    budget = min(configured, requested) if configured > 0 and requested > 0 else max(configured, requested)
     return time.monotonic() + budget if budget > 0 else 0.0
 
 
@@ -1783,7 +1933,11 @@ def _make_checkpointed_node(original_node, stage_name: str):
             # call must not look dead to the reaper, and a stage that never
             # calls the BaseAgent lifecycle hooks must still hold its lease.
             async with held_lease(pipeline_run_id, fencing_token) as lease_lost:
-                node = asyncio.ensure_future(original_node(state))
+                async def invoke_bound_node() -> dict[str, Any]:
+                    with workflow_step_scope(stage_name):
+                        return cast(dict[str, Any], await original_node(state))
+
+                node = asyncio.ensure_future(invoke_bound_node())
                 if lease_lost is None:
                     result = cast(dict[str, Any], await node)
                 else:
@@ -1853,6 +2007,11 @@ def _make_checkpointed_node(original_node, stage_name: str):
                 fencing_token=fencing_token,
             )
 
+        if "_workflow_step_outputs" in state:
+            return {
+                **result,
+                "_workflow_step_outputs": {stage_name: dict(result)},
+            }
         return result
 
     async def wrapper(state: WorkflowState) -> dict[str, Any]:
@@ -1860,6 +2019,7 @@ def _make_checkpointed_node(original_node, stage_name: str):
             return await execute(state)
 
     wrapper.__name__ = original_node.__name__
+    wrapper.__workflow_original_node__ = original_node  # type: ignore[attr-defined]
     return wrapper
 
 
@@ -1911,6 +2071,8 @@ async def run_offline_pipeline(
     invocation_stage: str | None = None,
     invocation_config_snapshot: dict[str, Any] | None = None,
     requested_by: str | None = None,
+    workflow_id: str | None = None,
+    workflow_version: int | None = None,
 ) -> dict:
     """
     Execute the full offline analysis pipeline for a completed test run.
@@ -1940,6 +2102,8 @@ async def run_offline_pipeline(
                 invocation_stage=invocation_stage,
                 invocation_config_snapshot=invocation_config_snapshot,
                 requested_by=requested_by,
+                workflow_id=workflow_id,
+                workflow_version=workflow_version,
             )
         test_run_id = pipeline_setup["test_run_id"]
         project_id = pipeline_setup["project_id"]
@@ -1952,6 +2116,8 @@ async def run_offline_pipeline(
             invocation_stage=invocation_stage,
             invocation_config_snapshot=invocation_config_snapshot,
             requested_by=requested_by,
+            workflow_id=workflow_id,
+            workflow_version=workflow_version,
         )
 
     try:
@@ -1959,7 +2125,12 @@ async def run_offline_pipeline(
         # reads only the atomically claimed pipeline; new attempts use the legacy
         # latest-failed source and intentionally get a new pipeline identity.
         checkpoint = await _load_checkpoint(
-            test_run_id, workflow_type, pipeline_run_id=pipeline_run_id if pipeline_setup.get("resume_attempt") else None
+            test_run_id,
+            workflow_type,
+            pipeline_run_id=pipeline_run_id if pipeline_setup.get("resume_attempt") else None,
+            workflow_ref=pipeline_setup.get("workflow_ref"),
+            workflow_definition_sha256=pipeline_setup.get("workflow_definition_sha256"),
+            workflow_plan_sha256=pipeline_setup.get("workflow_plan_sha256"),
         )
         if pipeline_setup.get("resume_attempt") and pipeline_setup.get("analysis_mode_resolution"):
             mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
@@ -1980,7 +2151,7 @@ async def run_offline_pipeline(
             "project_id":         project_id,
             "build_number":       build_number,
             "workflow_type":      workflow_type,
-            "pipeline_deadline_ts": _pipeline_deadline(),
+            "pipeline_deadline_ts": _pipeline_deadline(pipeline_setup.get("workflow_deadline_seconds")),
             "_fencing_token": pipeline_setup.get("fencing_token"),
             "_attempt": int(pipeline_setup.get("attempt") or 1),
             # Stage outputs (initialised empty — agents populate these)
@@ -2040,6 +2211,8 @@ async def run_offline_pipeline(
             "analysis_mode_resolved": mode_snapshot["resolved"],
             "analysis_mode_resolution": mode_snapshot,
             "_workflow_route_decisions": [],
+            "_workflow_loop_iterations": {},
+            "_workflow_step_outputs": {},
             "_checkpoint_stages": [],
             "_checkpoint_replay_metadata": {},
             "workflow_plan": pipeline_setup["initial_workflow_plan"],
@@ -2061,13 +2234,6 @@ async def run_offline_pipeline(
                 checkpoint_stages=checkpoint_stages,
             )
         _apply_pipeline_cost_budget(cast(dict[str, Any], initial_state), cost_budget_snapshot)
-
-        if workflow_type == "deep":
-            app = _deep_app
-        elif workflow_type == "live":
-            app = _live_app
-        else:
-            app = _offline_app
 
         blocked_state = await _complete_cost_budget_block(
             pipeline_run_id=pipeline_run_id,
@@ -2096,6 +2262,7 @@ async def run_offline_pipeline(
         raise
     if blocked_state is not None:
         return blocked_state
+    app = _compile_frozen_workflow(pipeline_setup)
 
     try:
         logger.info(
@@ -2195,6 +2362,8 @@ async def run_deep_pipeline(
     invocation_stage: str | None = None,
     invocation_config_snapshot: dict[str, Any] | None = None,
     requested_by: str | None = None,
+    workflow_id: str | None = None,
+    workflow_version: int | None = None,
 ) -> dict:
     """
     Execute the deep investigation pipeline with clustering, flaky sentinel,
@@ -2217,6 +2386,8 @@ async def run_deep_pipeline(
                 invocation_stage=invocation_stage,
                 invocation_config_snapshot=invocation_config_snapshot,
                 requested_by=requested_by,
+                workflow_id=workflow_id,
+                workflow_version=workflow_version,
             )
         test_run_id = pipeline_setup["test_run_id"]
         project_id = pipeline_setup["project_id"]
@@ -2229,11 +2400,18 @@ async def run_deep_pipeline(
             invocation_stage=invocation_stage,
             invocation_config_snapshot=invocation_config_snapshot,
             requested_by=requested_by,
+            workflow_id=workflow_id,
+            workflow_version=workflow_version,
         )
 
     try:
         checkpoint = await _load_checkpoint(
-            test_run_id, "deep", pipeline_run_id=pipeline_run_id if pipeline_setup.get("resume_attempt") else None
+            test_run_id,
+            "deep",
+            pipeline_run_id=pipeline_run_id if pipeline_setup.get("resume_attempt") else None,
+            workflow_ref=pipeline_setup.get("workflow_ref"),
+            workflow_definition_sha256=pipeline_setup.get("workflow_definition_sha256"),
+            workflow_plan_sha256=pipeline_setup.get("workflow_plan_sha256"),
         )
         if pipeline_setup.get("resume_attempt") and pipeline_setup.get("analysis_mode_resolution"):
             mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
@@ -2254,7 +2432,7 @@ async def run_deep_pipeline(
             "project_id":         project_id,
             "build_number":       build_number,
             "workflow_type":      "deep",
-            "pipeline_deadline_ts": _pipeline_deadline(),
+            "pipeline_deadline_ts": _pipeline_deadline(pipeline_setup.get("workflow_deadline_seconds")),
             "_fencing_token": pipeline_setup.get("fencing_token"),
             "_attempt": int(pipeline_setup.get("attempt") or 1),
             "test_run_data":      None,
@@ -2312,6 +2490,8 @@ async def run_deep_pipeline(
             "analysis_mode_resolved": mode_snapshot["resolved"],
             "analysis_mode_resolution": mode_snapshot,
             "_workflow_route_decisions": [],
+            "_workflow_loop_iterations": {},
+            "_workflow_step_outputs": {},
             "_checkpoint_stages": [],
             "_checkpoint_replay_metadata": {},
             "workflow_plan": pipeline_setup["initial_workflow_plan"],
@@ -2357,6 +2537,7 @@ async def run_deep_pipeline(
         raise
     if blocked_state is not None:
         return blocked_state
+    app = _compile_frozen_workflow(pipeline_setup)
 
     try:
         logger.info(
@@ -2369,7 +2550,7 @@ async def run_deep_pipeline(
 
         # Re-audit M13: as the standard graph above.
         with cost_budget_scope(cast(dict[str, Any], initial_state).get("project_id")):
-            final_state = await cast(Any, _deep_app).ainvoke(initial_state)
+            final_state = await cast(Any, app).ainvoke(initial_state)
         final_state = attach_workflow_plan_and_verification(
             cast(dict[str, Any], final_state),
             workflow_type="deep",
@@ -2681,18 +2862,30 @@ async def _create_pipeline_run(
     project_id: str,
     workflow_type: str,
     *,
+    workflow_id: str | None = None,
+    workflow_version: int | None = None,
     rerun_of: str | None = None,
     invocation_stage: str | None = None,
     invocation_config_snapshot: dict[str, Any] | None = None,
     requested_by: str | None = None,
 ) -> dict[str, Any]:
-    if workflow_type == "deep":
-        stages = _DEEP_PIPELINE_STAGES
-    elif workflow_type == "live":
-        stages = _LIVE_PIPELINE_STAGES
-    else:
-        stages = _PIPELINE_STAGES
     async with AsyncSessionLocal() as db:
+        from app.services import workflow_definition_service as workflow_svc
+
+        selected = await workflow_svc.get_published_definition(
+            db,
+            uuid.UUID(str(project_id)),
+            workflow_id or workflow_type,
+            workflow_version,
+        )
+        selected_item = selected if isinstance(selected, dict) else workflow_svc.serialize(selected)
+        body = workflow_svc.body_from_item(selected)
+        if body.base != workflow_type:
+            raise ValueError("workflow_base_mismatch")
+        workflow_snapshot = body.model_dump(mode="json")
+        workflow_sha256 = _definition_checksum(workflow_snapshot)
+        workflow_ref = f"{body.workflow_id}@{int(selected_item['version'])}"
+        stages = [step.id for step in body.steps]
         cluster_settings: dict[str, Any] = {
             "enabled": False,
             "feature_flag_enabled": False,
@@ -2742,10 +2935,21 @@ async def _create_pipeline_run(
             resolve_frozen_for_project,
         )
         from app.services.agent_config_service import config_versions as _agent_config_versions
+        from app.services.agent_config_service import (
+            list_config_rows as _list_agent_config_rows,
+            serialize as _serialize_agent_config,
+        )
 
         # E4.1: freeze each configured agent's config_version, so a later
         # config change never alters how this run is interpreted.
         agent_config_versions = await _agent_config_versions(db, uuid.UUID(str(project_id)))
+        config_rows = await _list_agent_config_rows(db, uuid.UUID(str(project_id)))
+        workflow_agent_configs = {
+            step.agent_id: _serialize_agent_config(
+                step.agent_id, config_rows.get(step.agent_id)
+            )["config"]
+            for step in body.steps
+        }
         frozen_config = None
         frozen_snapshot = None
         if invocation_config_snapshot is not None:
@@ -2801,6 +3005,39 @@ async def _create_pipeline_run(
             defect_commander_enabled=defect_commander_enabled,
             invocation_stage=invocation_stage,
         )
+        by_capability = {
+            str(item.get("stage")): dict(item)
+            for item in initial_plan.get("stages", [])
+            if isinstance(item, dict)
+        }
+        incoming: dict[str, list[str]] = {step.id: [] for step in body.steps}
+        for edge in body.edges:
+            sources = edge.source if isinstance(edge.source, list) else [edge.source]
+            if edge.to in incoming:
+                incoming[edge.to].extend(str(source) for source in sources)
+        selected_plan: list[dict[str, Any]] = []
+        for step in body.steps:
+            capability_stage = step.agent_id.removeprefix("agent.").removesuffix(".v1")
+            planned = dict(by_capability.get(capability_stage) or {})
+            planned.update({
+                "stage": step.id,
+                "capability_id": step.agent_id,
+                "dependencies": incoming[step.id],
+                "planned": bool(planned.get("planned", True))
+                and bool(workflow_agent_configs[step.agent_id]["enabled"]),
+                "required": bool(planned.get("required", False)),
+            })
+            selected_plan.append(planned)
+        initial_plan = {
+            **initial_plan,
+            "workflow_id": body.workflow_id,
+            "workflow_version": int(selected_item["version"]),
+            "workflow_ref": workflow_ref,
+            "stages": selected_plan,
+        }
+        plan_sha256 = compute_workflow_plan_hash(initial_plan)
+        initial_plan["plan_id"] = f"plan:{plan_sha256[:20]}"
+        initial_plan["plan_sha256"] = plan_sha256
         if frozen_config is not None and invocation_stage is not None:
             for planned_stage in initial_plan.get("stages", []):
                 if planned_stage.get("stage") != invocation_stage:
@@ -2841,15 +3078,25 @@ async def _create_pipeline_run(
             rerun_of=uuid.UUID(str(rerun_of)) if rerun_of else None,
             status="running",
             max_attempts=(
-                frozen_config.retry.max_attempts if frozen_config is not None else 5
+                frozen_config.retry.max_attempts
+                if frozen_config is not None
+                else body.retry_policy.max_attempts
             ),
             review_policy=(
                 frozen_config.review.policy
                 if frozen_config is not None
-                else "human_required"
+                else body.review_policy
             ),
             started_at=datetime.now(timezone.utc),
             execution_metadata={
+                "workflow_id": body.workflow_id,
+                "workflow_version": int(selected_item["version"]),
+                "workflow_ref": workflow_ref,
+                "workflow_definition": workflow_snapshot,
+                "workflow_definition_sha256": workflow_sha256,
+                "workflow_plan_sha256": initial_plan["plan_sha256"],
+                "workflow_deadline_seconds": body.deadline_seconds,
+                "workflow_agent_configs": workflow_agent_configs,
                 "eval_manifest_checksum": eval_checksum,
                 "initial_workflow_plan": initial_plan,
                 "cluster_child_settings": cluster_settings,
@@ -2887,7 +3134,9 @@ async def _create_pipeline_run(
         }
         for stage in stages:
             planned = plan_stages.get(stage, {})
-            capability = get_capability(stage)
+            capability_id = str(planned.get("capability_id") or "")
+            capability_stage = capability_id.removeprefix("agent.").removesuffix(".v1")
+            capability = get_capability(capability_stage)
             db.add(AgentStageResult(
                 pipeline_run_id=pipeline_run_id,
                 task_key=stage,
@@ -2910,6 +3159,14 @@ async def _create_pipeline_run(
             "attempt": 1,
             "eval_manifest_checksum": eval_checksum,
             "initial_workflow_plan": initial_plan,
+            "workflow_id": body.workflow_id,
+            "workflow_version": int(selected_item["version"]),
+            "workflow_ref": workflow_ref,
+            "workflow_definition": workflow_snapshot,
+            "workflow_definition_sha256": workflow_sha256,
+            "workflow_plan_sha256": initial_plan["plan_sha256"],
+            "workflow_deadline_seconds": body.deadline_seconds,
+            "workflow_agent_configs": workflow_agent_configs,
             "cluster_child_settings": cluster_settings,
             "async_decision_report_supersession_enabled": async_report_supersession_enabled,
                 "contract_agent_settings": {"enabled": contract_agent_enabled},
@@ -3078,6 +3335,14 @@ async def _mark_pipeline_done(
                         reason="pipeline_terminalized" if success else "pipeline_failed",
                     )
                 run.execution_metadata = {
+                    "workflow_id": prior_metadata.get("workflow_id"),
+                    "workflow_version": prior_metadata.get("workflow_version"),
+                    "workflow_ref": prior_metadata.get("workflow_ref"),
+                    "workflow_definition": prior_metadata.get("workflow_definition"),
+                    "workflow_definition_sha256": prior_metadata.get("workflow_definition_sha256"),
+                    "workflow_plan_sha256": prior_metadata.get("workflow_plan_sha256"),
+                    "workflow_deadline_seconds": prior_metadata.get("workflow_deadline_seconds"),
+                    "workflow_agent_configs": prior_metadata.get("workflow_agent_configs") or {},
                     "eval_manifest_checksum": prior_metadata.get(
                         "eval_manifest_checksum"
                     ),

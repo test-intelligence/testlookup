@@ -224,6 +224,7 @@ async def test_pipeline_row_attempt_is_forwarded_to_the_graph_state(monkeypatch)
             raise RuntimeError("stop after observing state")
 
     monkeypatch.setattr(workflow, "_offline_app", _Graph())
+    monkeypatch.setattr(workflow, "_compile_frozen_workflow", lambda _setup: _Graph())
 
     with pytest.raises(RuntimeError, match="stop after observing state"):
         await workflow.run_offline_pipeline(

@@ -614,7 +614,10 @@ def compile_workflow(
     steps = {step.id: step for step in body.steps}
     graph = StateGraph(WorkflowState)
     for step in body.steps:
-        executor = node_executors.get(step.agent_id)
+        # A published workflow may use the same capability more than once
+        # under distinct step ids.  Runtime binding therefore gets first
+        # refusal by step identity; capability keyed maps remain compatible.
+        executor = node_executors.get(step.id) or node_executors.get(step.agent_id)
         if executor is None:
             raise WorkflowCompileError([f"step {step.id}: no runtime executor for {step.agent_id!r}"])
         # LangGraph accepts both members of NodeExecutor; its overload does not
