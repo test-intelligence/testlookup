@@ -24,6 +24,11 @@ strategy, suite, review, duplicate-detection, export, and download operations.
 The tests pin project scoping, encoded suite names, exact mutation bodies,
 filename fallback behavior, DOM cleanup, and object-URL release.
 
+The Test Cases page now distinguishes request failure from a successful empty
+catalog, keeps stale rows visible during an outage, retries both the paginated
+list and health roll together, and prevents overlapping retry requests. Failed
+retries remain explicit without discarding the last usable data.
+
 ## 2026-09-15 - Ratchet frontend coverage and add hermetic browser journeys
 
 Added an evidence-based testability assessment with requirement traceability,

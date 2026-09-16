@@ -21,9 +21,9 @@ statements, 56.17% branches, 52.46% functions and 62.34% lines. Frontend
 service statements rose from 24.97% to 26.14%; `reviewService.ts` moved from 0%
 to 100% statements and lines.
 
-The consolidated minor-release branch now completes 233 files / 1,761 tests at
-61.41% statements, 56.35% branches, 53.69% functions and 62.91% lines.
-`testManagementService.ts` reaches 91.20% statements, 60.37% branches, 98.43%
+The consolidated minor-release branch now completes 234 files / 1,765 tests at
+62.23% statements, 57.06% branches, 54.38% functions and 63.78% lines.
+`testManagementService.ts` reaches 91.20% statements, 62.26% branches, 98.43%
 functions and 92.77% lines.
 
 ## Coverage added in this change
@@ -47,6 +47,9 @@ functions and 92.77% lines.
 - `testManagementService.test.ts` pins project omission/scoping, every major
   CRUD and AI request family, encoded suite routes, duplicate-detection bodies,
   export filtering, download filenames, DOM cleanup, and object-URL release.
+- Test Cases page tests pin stale-row preservation, initial-load failure copy,
+  joint table/health retries, failed-retry visibility, and the single-flight
+  retry control. The page no longer presents an outage as an empty catalog.
 - CI now runs frontend unit tests with coverage and the hermetic browser lane.
 
 These tests target prior 0%-covered high-risk services and a previously live-only
@@ -57,7 +60,7 @@ trivial constants.
 
 | Priority | Target | Current signal | Required tests |
 |---|---|---|---|
-| P0 | TestManagement page | service at 91.20%; page remains thin | lifecycle mutations, stale/race/error states |
+| P0 | TestManagement page | request failure/retry states covered | lifecycle mutation races and remaining tabs |
 | P0 | notification distribution | AI summaries, digests, and Investigator excerpts are gated | webhook/comment repost after acceptance and provider-level delivery proofs |
 | P0 | release decision/override browser path | live-only integration | hermetic decision rendering plus PostgreSQL audit integration |
 | P1 | RAG drawers/components | roughly 0–14% | empty/citation/error/unsafe-link states |

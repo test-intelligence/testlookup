@@ -19,14 +19,24 @@ import { describe, expect, it } from 'vitest'
 
 import source from './TestManagementPage.tsx?raw'
 
+function destructuredCaseRolls(): string[] {
+  return [...source.matchAll(/const\s*\{([^{}]+)\}\s*=\s*useTestCases\(/g)].map(match => match[1])
+}
+
+function capturedCaseMutations(): string[] {
+  return destructuredCaseRolls()
+    .map(fields => fields.match(/mutate:\s*(\w+)/)?.[1])
+    .filter((alias): alias is string => alias !== undefined)
+}
+
 describe('TestManagementPage refresh wiring', () => {
   it('captures the mutate of every useTestCases roll it holds', () => {
-    // `const { data: x, mutate: y } = useTestCases(...)`
+    // Handles both single-line and formatted multi-line destructuring.
     const rolls = [...source.matchAll(/=\s*useTestCases\(/g)]
     expect(rolls.length, 'expected the page to hold at least two cases rolls').toBeGreaterThanOrEqual(2)
 
-    const captured = [...source.matchAll(/mutate:\s*(\w+)\s*\}\s*=\s*useTestCases\(/g)].map(m => m[1])
-    const plainAliases = [...source.matchAll(/\{\s*data:\s*\w+\s*\}\s*=\s*useTestCases\(/g)]
+    const captured = capturedCaseMutations()
+    const plainAliases = destructuredCaseRolls().filter(fields => /\bdata\b/.test(fields) && !/\bmutate\b/.test(fields))
 
     expect(
       plainAliases.length,
@@ -36,7 +46,7 @@ describe('TestManagementPage refresh wiring', () => {
   })
 
   it('revalidates every captured roll inside handleRefresh', () => {
-    const captured = [...source.matchAll(/mutate:\s*(\w+)\s*\}\s*=\s*useTestCases\(/g)].map(m => m[1])
+    const captured = capturedCaseMutations()
     const decl = source.indexOf('const handleRefresh')
     expect(decl, 'handleRefresh not found').toBeGreaterThan(-1)
 

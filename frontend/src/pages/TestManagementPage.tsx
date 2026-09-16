@@ -931,7 +931,7 @@ function GenerateStrategyModal({ projectId, onClose }: GenerateStrategyModalProp
 
 interface TestCasesTabProps { projectId: string | null; lifecycleV2: boolean }
 
-function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
+export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   const navigate = useNavigate()
   const now = useNow()  // captured at mount — avoids impure Date.now() in render
   // ── Filter state ────────────────────────────────────────────────────
@@ -1006,7 +1006,12 @@ function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
     })
   }, [page, status, testType, priority, search, ownerFilter, suiteFilter, includeAutomation])
 
-  const { data, isLoading, mutate: mutateCases } = useTestCases(params)
+  const {
+    data,
+    isLoading,
+    error: casesError,
+    mutate: mutateCases,
+  } = useTestCases(params)
   // Was a hardcoded "knowledge graph rebuilt just now" -- a fabricated
   // freshness claim (#893) about an event this page cannot observe. Report
   // when the payload actually arrived instead.
@@ -1015,8 +1020,15 @@ function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   // Wider read used to power Library Verdict + right-rail synthesis (review
   // queue, strategy gaps, coverage matrix). The /test-cases/health endpoint
   // the spec assumes (README §14 q1) doesn't exist yet, so we synthesise.
-  const { data: healthRoll, mutate: mutateHealthRoll } = useTestCases({ page: 1, size: 200 })
+  const {
+    data: healthRoll,
+    error: healthError,
+    mutate: mutateHealthRoll,
+  } = useTestCases({ page: 1, size: 200 })
   const { data: auditRoll } = useAuditLog({ page: 1, size: 5, entity_type: 'test_case' })
+  const [caseRetrying, setCaseRetrying] = useState(false)
+  const [caseRefreshWarning, setCaseRefreshWarning] = useState<string | null>(null)
+  const hasPreviouslyLoadedCases = Boolean(data?.items.length || healthRoll?.items.length)
 
   // Both rolls must be revalidated. The library-health panel reads its own
   // `useTestCases({page:1,size:200})` roll, a DIFFERENT SWR key from the
@@ -1026,6 +1038,19 @@ function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
     () => { void mutateCases(); void mutateHealthRoll() },
     [mutateCases, mutateHealthRoll],
   )
+
+  const retryCaseData = useCallback(async () => {
+    if (caseRetrying) return
+    setCaseRetrying(true)
+    setCaseRefreshWarning(null)
+    try {
+      await Promise.all([mutateCases(), mutateHealthRoll()])
+    } catch {
+      setCaseRefreshWarning('Test-case data is still unavailable. Previously loaded results remain visible.')
+    } finally {
+      setCaseRetrying(false)
+    }
+  }, [caseRetrying, mutateCases, mutateHealthRoll])
 
   const casesRaw = data?.items ?? []
   const { sorted: cases } = useTableSort(casesRaw, 'updated_at', 'desc')
@@ -1223,6 +1248,36 @@ function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
         onToggleAutomation={(v) => { setIncludeAutomation(v); setPage(1) }}
       />
 
+      {(casesError || healthError) && (
+        <div
+          role="alert"
+          className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--status-failed)]"
+        >
+          <span>
+            {hasPreviouslyLoadedCases
+              ? 'Test cases could not be refreshed. Previously loaded results remain visible.'
+              : 'Test cases could not be loaded.'}
+          </span>
+          <button
+            type="button"
+            className="btn-secondary flex-shrink-0 text-xs"
+            disabled={caseRetrying}
+            onClick={() => void retryCaseData()}
+          >
+            {caseRetrying ? 'Retrying…' : 'Retry case data'}
+          </button>
+        </div>
+      )}
+
+      {caseRefreshWarning && (
+        <p
+          role="status"
+          className="mt-3 rounded-lg border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-3 text-sm text-[var(--status-broken)]"
+        >
+          {caseRefreshWarning}
+        </p>
+      )}
+
       {/* Body grid */}
       <div className="grid gap-3.5 mt-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
         <div className="flex flex-col gap-3.5 min-w-0">
@@ -1273,7 +1328,11 @@ function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
               </div>
             </div>
 
-            {isLoading ? (
+            {casesError && !data ? (
+              <div role="status" className="px-4 py-12 text-center text-sm text-[var(--color-text-muted)]">
+                No test-case data is available until the request succeeds.
+              </div>
+            ) : isLoading ? (
               <div className="flex items-center justify-center py-12"><LoadingSpinner size="lg" /></div>
             ) : cases.length === 0 ? (
               <EmptyStateBlock
