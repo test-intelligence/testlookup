@@ -7,7 +7,7 @@ candidate_sha: 49ce63a18245292be95804cf2ae7c2a6ca28066e
 candidate_tree: d711e93f69e186123d40e067f61ca98a9124b056
 planning_snapshot: 34110eace555423a4326b15e3ba502ac3ac2e4d4
 started_at_utc: 2026-09-16T13:23:48Z
-last_checkpoint_at_utc: 2026-09-16T22:53:08Z
+last_checkpoint_at_utc: 2026-09-16T23:25:37Z
 environment:
   kind: homelab
   kube_context_name: default
@@ -86,7 +86,7 @@ inventory:
 progress:
   mission_ledger: missions.csv
   defect_ledger: defects.csv
-  next_exact_action: "Start M05 local-defect deduplication variants on the same minor-release branch; keep Jira ambiguity cases blocked until a dedicated sandbox exists."
+  next_exact_action: "Start M06 release decision boundary and outcome-history variants on the same minor-release branch; M05's external Jira boundary remains blocked until a dedicated sandbox exists."
   active_agent_file_ownership: {}
   injected_faults_to_restore: []
   global_settings_to_restore: []

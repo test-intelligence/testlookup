@@ -163,6 +163,17 @@ defect persists with truthful integration state. Refused role leaves no effect.
 **Observe/capture:** sink issue count, signature, ledger claim, response reason,
 audit rows and timestamps. Capture both sides of the lost-response boundary.
 
+**Executed 2026-09-16 (blocked at external boundary):** all 37 focused endpoint
+tests, all three real-PostgreSQL exactly-once tests, and 36 local
+defect/promotion tests passed against the exact homelab-deployed candidate. The
+database proof serialized a double submit, survived a post-acceptance local
+rollback, kept an ambiguous claim explicit, refused blind retry, and reconciled
+by signature label; three wrong-behavior mutations were killed. A dedicated
+Jira sandbox and fault-capable request journal are unavailable, so real Jira
+create/drop-response, 429/5xx, sink-count, and eventual-index behavior remain
+BLOCKED. Evidence:
+`architecture/verification/exploratory-20260916/M05-defect-deduplication.md`.
+
 ## M06 — Release decisions, overrides and outcome history (P0, release QA)
 
 **Preconditions:** F3; policy thresholds, roles and review settings known.
