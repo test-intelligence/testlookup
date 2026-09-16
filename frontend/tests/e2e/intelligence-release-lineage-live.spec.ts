@@ -71,14 +71,14 @@ test.describe('Intelligence to release lineage — live read contract', () => {
     await expect(page.getByText(buildNumber, { exact: true })).toBeVisible({
       timeout: 30_000,
     })
-    await expect(page.getByText(clusterLabel, { exact: true })).toBeVisible()
+    await expect(page.getByText(clusterLabel, { exact: true }).first()).toBeVisible()
     await expect(page.getByText(/Human review required/i).first()).toBeVisible()
 
     await page.reload({ waitUntil: 'domcontentloaded' })
     await expect(page.getByText(buildNumber, { exact: true })).toBeVisible({
       timeout: 30_000,
     })
-    await expect(page.getByText(clusterLabel, { exact: true })).toBeVisible()
+    await expect(page.getByText(clusterLabel, { exact: true }).first()).toBeVisible()
 
     await page.goto('/defects')
     await expect(page.getByText('payment_authorize', { exact: true })).toBeVisible({
