@@ -406,11 +406,6 @@ NONPATH_KNOWN_EXEMPT: frozenset[tuple[str, str]] = frozenset({
     # The project is derived server-side from ``X-Session-Token`` via
     # ``resolve_project_id_for_session`` -- the caller cannot name one.
     ("POST", "/api/v1/stream/events/batch"),
-    # Returns one boolean (is this flag on for me?) and is deliberately open
-    # to any authenticated user so the SPA can render without ADMIN. Documented
-    # as such on the handler.
-    ("GET",  "/api/v1/feature-flags/{key}/status"),
-
     # The three entries that sat here as "suspected, needs triage" were all
     # triaged and all three were real cross-tenant holes. They are fixed, not
     # exempted. Triaging them also surfaced a fourth
