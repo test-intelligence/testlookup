@@ -1,0 +1,100 @@
+programme_id: exploratory-20260916
+state: RUNNING
+coordinator: GPT-6 Astra
+branch: codex/exploratory-quality-release
+base_sha: 34110eace555423a4326b15e3ba502ac3ac2e4d4
+candidate_sha: null
+candidate_tree: null
+planning_snapshot: 34110eace555423a4326b15e3ba502ac3ac2e4d4
+started_at_utc: 2026-09-16T13:23:48Z
+last_checkpoint_at_utc: 2026-09-16T13:23:48Z
+environment:
+  kind: homelab
+  kube_context_name: default
+  namespace: testlookup
+  frontend_origin: http://testlookup.local
+  backend_origin: http://testlookup.local
+  ingress_address_at_checkpoint: 192.168.0.201
+  image_tag: build-20260912-012628
+  image_digests:
+    backend_and_workers: sha256:4f9d5d5f
+    frontend: sha256:ba72e8ec
+    mcp: sha256:fe3c1744
+  build_identity:
+    version: 0.0.1
+    revision: unknown
+    built_at: unknown
+  schema_head: "0172"
+  source_schema_head: "0189"
+  resources:
+    deployment_pods: 17
+    memory_requests_approx: 8.94Gi
+    memory_limits_approx: 48.25Gi
+  fixture_version: null
+  synthetic_project_ids: []
+  account_role_aliases: {}
+  review_enforcement: false
+  draft_policy: unknown
+  offline_mode: false
+  model_tags_and_digests: {}
+  feature_flags:
+    llm_provider: openrouter
+    llm_model: mistralai/mistral-nemo
+  external_test_sinks: {}
+  backup_restore_evidence: "Backup CronJob scheduled at 17 2 * * *; the three latest observed jobs succeeded. Restore rehearsal has not run."
+baseline:
+  source_sha: 34110eace555423a4326b15e3ba502ac3ac2e4d4
+  commands_and_exit_codes:
+    - "backend ruff app tests: 0"
+    - "backend mypy ratchet: 0 (369 errors in 114 files; baseline 369)"
+    - "key backend pytest: 0 (421 passed)"
+    - "quality guard pytest: 0 (273 passed)"
+    - "quality gate: 0 (43 guards)"
+    - "agent API docs --check: 0"
+    - "frontend typecheck: 0"
+    - "frontend eslint: 0 (19 pre-existing warnings)"
+    - "frontend vitest coverage: 0 (1769 passed in 235 files)"
+    - "MCP pytest: 0 (173 passed)"
+    - "CLI pytest: 0 (137 passed, 2 skipped)"
+    - "hermetic Playwright: 0 (10 passed after host rerun; sandbox spawn was EPERM)"
+    - "prompt eval recordings --check: 0 (five grandfathered insufficient-sample notices)"
+  pass_fail_skip_counts:
+    backend_key: "421/0/0"
+    quality_guards: "273/0/0"
+    frontend_vitest: "1769/0/0"
+    mcp: "173/0/0"
+    cli: "137/0/2"
+    hermetic_playwright: "10/0/0"
+  coverage:
+    frontend_statements_percent: 62.22
+    frontend_branches_percent: 57.05
+    frontend_functions_percent: 54.36
+    frontend_lines_percent: 63.77
+    mcp_percent: 41.96
+    cli_percent: 63.16
+  mypy_baseline: 369
+  guards: 43
+  blockers:
+    - "The stable homelab image does not report a source revision or build date."
+    - "The stable homelab schema is 0172 while this source tree has Alembic head 0189; candidate deployment is required before candidate claims."
+    - "The homelab has no installed Ollama models and uses hosted OpenRouter; exact local model comparison preconditions are absent."
+    - "No isolated namespace or disposable cluster is available yet for destructive outage, restore, and load missions."
+inventory:
+  ui_route_to_mission: "See architecture/testing/EXPLORATORY_MISSIONS.md"
+  api_router_to_mission: "See architecture/testing/EXPLORATORY_MISSIONS.md"
+  cli_command_to_mission: "See architecture/testing/EXPLORATORY_MISSIONS.md"
+  mcp_tool_to_mission: "See architecture/testing/EXPLORATORY_MISSIONS.md"
+  unmatched_surfaces: []
+progress:
+  mission_ledger: missions.csv
+  defect_ledger: defects.csv
+  next_exact_action: "Commit the reviewed execution package, build and deploy that exact commit to the homelab, verify every application image and schema 0189, then restart M01."
+  active_agent_file_ownership: {}
+  injected_faults_to_restore: []
+  global_settings_to_restore: []
+release:
+  pr_number: null
+  latest_head_ci_evidence: null
+  merge_sha: null
+  final_homelab_evidence: null
+  completion: NOT_STARTED

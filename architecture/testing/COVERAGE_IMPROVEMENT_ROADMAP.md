@@ -7,11 +7,13 @@
 3. Hermetic pending/accept/reject review journeys and producer/reviewer
    separation are implemented. Notification redaction remains because its
    security authority is the backend distribution gate.
-4. Add a service integration fixture spanning ingest, intelligence persistence,
-   defect promotion and release decision with one correlation lineage.
+4. The PostgreSQL service integration fixture spanning ingest, intelligence,
+   defect promotion and release decision shipped in PR #119. Extend its shared
+   lineage to a deployed UI/API journey using real Redis workers (M04).
 
-Exit: GAP-01 has blocking coverage for auth, review, release and defect paths;
-GAP-03 has one reproducible service-level proof.
+Exit target: GAP-01 has blocking coverage for auth, review, release and defect
+paths (release/defect browser expansion remains); GAP-03's service-level proof
+is implemented, with deployed full-stack proof remaining.
 
 ## Next — risk-weighted expansion
 
@@ -24,8 +26,9 @@ GAP-03 has one reproducible service-level proof.
    user paths.
 4. Version live fixtures and emit a machine-readable manifest of build, data,
    scenario, result, trace and correlation IDs.
-5. Add the Investigator narrative review subject and its full distribution
-   matrix when the product story is implemented.
+5. Investigator narrative review subjects shipped in PR #119. Execute the full
+   distribution matrix against real sinks, including retry after acceptance
+   and rejected/superseded content (M07–M08).
 
 Exit: no P0 module below 70% branch coverage without a documented reason; all
 critical requirements have an asserted negative case.
@@ -42,6 +45,10 @@ critical requirements have an asserted negative case.
    smallest durable regression at that layer.
 
 ## Governance
+
+The next execution programme is [the Sol exploratory package](EXPLORATORY_EXECUTION_PACKAGE.md),
+prepared on 2026-09-16 without executing tests. It uses one consolidated branch,
+one PR and one merge, with mandatory unit and real E2E tests for every defect.
 
 - Coverage floors may increase independently; do not update all baselines in a
   single cleanup.

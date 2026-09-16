@@ -10,7 +10,22 @@
 
 ## 0. Requirements traceability (read this first)
 
-| # | Requirement | Status today | Evidence | Gap closed by |
+> **Current-status clarification, 2026-09-16 (`34110eac`).** The table below is
+> the historical pre-programme design-gap inventory from revision 3; its
+> “PARTIAL” / “missing” descriptions are not current implementation status.
+> E1–E9 implementation
+> stories are shipped as recorded individually in §12. Current code includes
+> per-agent invocation/config overrides, model tiers, the generic reviewer,
+> versioned workflows, lease/fenced retry and human-review subjects (including
+> Investigator). Enforcement rollout still depends on the user-configured
+> release date; live delivery/operational checks and fresh inference-backed
+> promotion evidence remain distinct from implementation completion. Use
+> [the current exploratory knowledge map](testing/EXPLORATORY_EXECUTION_PACKAGE.md)
+> and §12 deviations/gaps for remaining verification, rather than implementing
+> the historical “missing” features again. No new live verification is claimed
+> by this clarification.
+
+| # | Requirement | Historical baseline before E1–E9 implementation | Evidence at that baseline | Planned closure |
 |---|---|---|---|---|
 | 1 | Agents callable via OpenAPI / curl / Postman | **PARTIAL** — whole pipelines are triggerable (`POST /api/v1/agents/pipelines/trigger`), two agents have direct endpoints (`/defect-command`, `/regression-watch`), investigations are startable. No per-agent invoke surface, no shared request/response envelope. | `backend/app/routers/agents.py:281,917,946`, `routers/agent_investigations.py:157` | Epic E1 |
 | 2 | Framework with orchestrator + tools separation | **EXISTS** — LangGraph `StateGraph` per workflow type; `BaseAgent` (stage lifecycle, cost, provenance); `app/tools/` for LangChain tools; capability registry declares inputs/outputs/permission per stage. | `agents/workflow.py:746-964`, `agents/base.py`, `services/agent_capability_registry.py` | Hardening only (E2) |

@@ -12,19 +12,19 @@
 ```
 Dev PC (kubectl + Rancher Desktop)
     │
-    ▼  http://testlookup.local  →  Traefik (K3s built-in)  →  MetalLB VIP .200
+    ▼  http://testlookup.local  →  Traefik (K3s built-in)  →  discovered MetalLB VIP
     │
 ┌───┴──────────────────────────────────────────────────────────────────┐
 │  K3s Cluster — Namespace: testlookup                                 │
 │                                                                      │
 │  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────────┐  │
-│  │  Frontend    │  │   Backend    │  │  Celery Workers (4 queues) │  │
+│  │  Frontend    │  │   Backend    │  │  Celery Workers (5 queues) │  │
 │  │  (nginx)     │  │  (FastAPI)   │  │  + Beat scheduler          │  │
 │  └──────┬──────┘  └──────┬───────┘  └────────────┬───────────────┘  │
 │         │                │                        │                  │
 │  ┌──────┴────────────────┴────────────────────────┴───────────────┐  │
 │  │  PostgreSQL 16 │ MongoDB 7 │ Redis 7 │ MinIO │ ChromaDB │Ollama│  │
-│  │  (local-path)  │(local-p.) │(in-mem) │(l-p) │ (l-p)   │(l-p) │  │
+│  │  (local-path)  │(local-p.) │(AOF/PVC)│(l-p) │ (l-p)   │(l-p) │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  Node 1 (.101)         Node 2 (.102)         Node 3 (.103)          │
@@ -34,20 +34,22 @@ Dev PC (kubectl + Rancher Desktop)
 
 **Resource budget (~87 GB RAM across 3 nodes):**
 
+Redis persistence follows `k8s/overlays/homelab/infra-redis.yaml`: AOF with
+`appendfsync everysec`, a local-path PVC and `volatile-lru`. This supports pod
+restart recovery; it does not guarantee zero data loss on host/disk failure.
+
 | Component | Pods | Memory (req/lim) |
 |-----------|------|------------------|
-| Backend + Frontend | 2 | 576Mi / 2.3Gi |
-| Workers (4) + Beat | 5 | 1.8Gi / 10Gi |
+| Backend + Frontend | 2 | 576Mi / 2.25Gi |
+| Workers (5 queue deployments, 7 current worker replicas) + Beat | 8 | 4.5Gi / 23Gi |
 | Ollama | 1 | 2Gi / 16Gi |
-| PostgreSQL | 1 | 512Mi / 2Gi |
-| MongoDB | 1 | 512Mi / 2Gi |
-| Redis | 1 | 256Mi / 768Mi |
-| MinIO | 1 | 256Mi / 1Gi |
-| ChromaDB | 1 | 256Mi / 1Gi |
+| PostgreSQL + MongoDB + Redis + MinIO + ChromaDB | 5 | 1.75Gi / 6.75Gi |
 | MCP Server | 1 | 128Mi / 256Mi |
-| **Total requests** | **14** | **~6.3 Gi** |
+| **Current total** | **17** | **~8.94Gi / 48.25Gi** |
 
-Plenty of headroom on 87 GB.
+These values were inspected from the running homelab on 2026-09-16. Re-run
+`kubectl -n testlookup get deployments` and inspect resource requests before
+using them for capacity decisions because replica counts can change.
 
 ---
 
@@ -88,10 +90,14 @@ Add to `C:\Windows\System32\drivers\etc\hosts` (run editor as Admin):
 192.168.0.101 registry.local k8s-node1
 192.168.0.102 k8s-node2
 192.168.0.103 k8s-node3
-192.168.0.200 testlookup.local
+<current-ingress-address> testlookup.local
 ```
 
-> **Note:** `testlookup.local` points to the MetalLB VIP (192.168.0.200), NOT a node IP. The Traefik ingress uses Host-based routing on this VIP.
+> **Note:** `testlookup.local` points to the current MetalLB ingress address,
+> not a node IP. Discover it with
+> `kubectl -n testlookup get ingress testlookup-traefik-ingress`; it was
+> `192.168.0.201` when this guide was last verified. Traefik uses Host-based
+> routing on this address.
 
 ### 0b. Configure Rancher Desktop for insecure registry
 
@@ -485,21 +491,21 @@ Add to your `hosts` file so `testlookup.local` resolves to the Traefik MetalLB V
 First, find the Traefik external IP:
 
 ```bash
-kubectl -n kube-system get svc traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-# Should return: 192.168.0.200
+kubectl -n testlookup get ingress testlookup-traefik-ingress
+# Use the ADDRESS value below.
 ```
 
 On **Windows** (run as Admin PowerShell):
 
 ```powershell
-Add-Content C:\Windows\System32\drivers\etc\hosts "192.168.0.200 testlookup.local"
+Add-Content C:\Windows\System32\drivers\etc\hosts "<current-ingress-address> testlookup.local"
 ipconfig /flushdns
 ```
 
 On **Linux/Mac**:
 
 ```bash
-echo "192.168.0.200 testlookup.local" | sudo tee -a /etc/hosts
+echo "<current-ingress-address> testlookup.local" | sudo tee -a /etc/hosts
 ```
 
 > **Browser note:** Some browsers (especially Chrome) may auto-upgrade `.local` domains to HTTPS. If the page doesn't load, try:
@@ -591,15 +597,15 @@ testlookup-mcp-xxxx                           1/1     Running   0
 
 ```bash
 # Health check (use Traefik IP with Host header for reliable test)
-curl -H "Host: testlookup.local" http://192.168.0.200/health/live
+curl -H "Host: testlookup.local" http://<current-ingress-address>/health/live
 # -> {"status":"alive",...}
 
 # API docs
-curl -s -H "Host: testlookup.local" http://192.168.0.200/docs | head -5
+curl -s -H "Host: testlookup.local" http://<current-ingress-address>/docs | head -5
 # -> Should return HTML (Swagger UI)
 
 # Frontend
-curl -s -H "Host: testlookup.local" http://192.168.0.200/ | head -5
+curl -s -H "Host: testlookup.local" http://<current-ingress-address>/ | head -5
 # -> Should return HTML (React SPA)
 ```
 

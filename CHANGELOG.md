@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased - Exploratory testing execution plan
+
+Added a repository-grounded GPT-5.6 Sol execution package with 26 live missions,
+specialized QA/developer/reviewer assignments, mandatory unit and deployed E2E
+regressions for every defect, evidence templates, homelab deployment/rollback
+verification and a single-branch/PR/merge workflow. Corrected stale coverage,
+Investigator review-subject and homelab Redis documentation. This is planning
+only; it does not claim new test, deployment or release results.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,

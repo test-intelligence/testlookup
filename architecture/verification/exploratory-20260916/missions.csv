@@ -1,0 +1,27 @@
+mission,priority,state,record,defects,blocker
+M01,P0,RUNNING,M01-authentication.md,,
+M02,P0,NOT_RUN,,,
+M03,P0,NOT_RUN,,,
+M04,P0,NOT_RUN,,,
+M05,P0,NOT_RUN,,,
+M06,P0,NOT_RUN,,,
+M07,P0,NOT_RUN,,,
+M08,P0,NOT_RUN,,,
+M09,P1,NOT_RUN,,,
+M10,P1,NOT_RUN,,,
+M11,P0,NOT_RUN,,,
+M12,P0,NOT_RUN,,,
+M13,P1,NOT_RUN,,,
+M14,P0,BLOCKED,,,Requires an isolated disposable environment for destructive outage injection
+M15,P1,NOT_RUN,,,
+M16,P1,NOT_RUN,,,
+M17,P1,NOT_RUN,,,
+M18,P1,NOT_RUN,,,
+M19,P1,NOT_RUN,,,
+M20,P0,NOT_RUN,,,
+M21,P0,NOT_RUN,,,
+M22,P1,NOT_RUN,,,
+M23,P0,BLOCKED,,,Requires an isolated disposable environment and a second worker process for stale-writer injection
+M24,P1,BLOCKED,,,Requires an isolated full ingestion environment and production benchmark access token
+M25,P0,BLOCKED,,,Homelab has no installed Ollama models and no fresh paired-inference producer
+M26,P0,RUNNING,M26-preflight.md,,Candidate deployment and rollback rehearsal remain
