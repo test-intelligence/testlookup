@@ -28,6 +28,16 @@ deployed API reset/login/read probe passed.
 
 The next cross-browser run exposed EXP-BUG-008. All three browsers retained
 `/reset-password` as the login return target and resumed it after the permanent
-login despite the server flag being false. M01 remains RUNNING until the
-return-path fix is deployed exactly, the complete browser journey passes,
-mutation is green, and independent review approves the combined M01 changes.
+login despite the server flag being false. Exact revision
+`e40fbddb564d6139c9ac2ad0c899773d0da4608c` fixed the return path and passed the
+complete reset/onboarding journey in Chromium, Firefox, and WebKit.
+
+Independent review then found EXP-BUG-009: the durable cutoff used PostgreSQL
+transaction-start time, and session issuance did not serialize with password
+changes. A concurrent old-password login, refresh, or MFA exchange could
+therefore escape revoke-all. The candidate now uses statement-time cutoffs,
+copies the exact durable cutoff to Redis, locks the user row across every
+session issuance/password-change boundary, and invalidates predating MFA
+interstitial tokens. M01 remains RUNNING until this combined fix is deployed
+exactly, its unit/integration/mutation/live suites pass, and independent review
+approves it.

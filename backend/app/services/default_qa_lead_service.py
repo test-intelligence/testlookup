@@ -220,6 +220,8 @@ async def reset_default_qa_lead_password(
     delay is the thing keeping the product down.
     """
     user = await ensure_default_qa_lead(db, project)
+    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await db.refresh(user)
     chosen = new_password if new_password else _unguessable_password()
     user.hashed_password = get_password_hash(chosen)
     user.must_change_password = False

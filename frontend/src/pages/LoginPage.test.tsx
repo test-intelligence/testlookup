@@ -156,6 +156,24 @@ describe('LoginPage — three-way login response routing', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/overview', { replace: true })
   })
 
+  it('still resumes an ordinary protected deep link after login', async () => {
+    mockLogin.mockResolvedValue(TOKENS)
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/login',
+        state: { from: { pathname: '/reviews' } },
+      }]}
+      >
+        <LoginPage />
+      </MemoryRouter>,
+    )
+
+    await submitPassword()
+
+    await waitFor(() => expect(mockSetAuth).toHaveBeenCalledWith('acc', 'ref', USER))
+    expect(mockNavigate).toHaveBeenCalledWith('/reviews', { replace: true })
+  })
+
   it('shows the code step on mfa_required', async () => {
     mockLogin.mockResolvedValue({
       mfa_required: true,

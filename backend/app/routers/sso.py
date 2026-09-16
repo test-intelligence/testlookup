@@ -203,6 +203,9 @@ async def saml_acs(
             detail="Account is deactivated",
         )
 
+    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await db.refresh(user)
+
     # Issue tokens
     access_token = create_access_token(str(user.id))
     refresh_token = await issue_refresh_token(db, user.id)

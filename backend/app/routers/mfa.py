@@ -27,7 +27,12 @@ from app.core.security import (
     decode_token,
     verify_password,
 )
-from app.core.token_revocation import RevocationUnavailable, is_jti_revoked, revoke_jti
+from app.core.token_revocation import (
+    RevocationUnavailable,
+    is_jti_revoked,
+    is_token_before_cutoff,
+    revoke_jti,
+)
 from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, User
 from app.models.schemas import (
@@ -138,9 +143,25 @@ async def _user_from_mfa_token(
     except ValueError:
         raise _INVALID_TOKEN
 
-    user = (await db.execute(select(User).where(User.id == uid))).scalar_one_or_none()
+    user = (
+        await db.execute(select(User).where(User.id == uid).with_for_update())
+    ).scalar_one_or_none()
     if user is None or not user.is_active:
         raise _INVALID_TOKEN
+    iat = payload.get("iat")
+    iat_value = float(iat) if isinstance(iat, (int, float)) else None
+    try:
+        if await is_token_before_cutoff(uid, iat_value):
+            raise _INVALID_TOKEN
+    except RevocationUnavailable:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "MFA token revocation status cannot be verified right now "
+                "(revocation store unavailable). Retry shortly."
+            ),
+            headers={"Retry-After": "5"},
+        )
     setattr(user, "_mfa_token_jti", str(jti))
     setattr(user, "_mfa_token_exp", payload.get("exp"))
     return user

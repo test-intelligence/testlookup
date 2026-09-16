@@ -21,6 +21,8 @@ TESTS = (
     "tests/core/test_token_revocation.py",
     "tests/core/test_deps_revocation_fail_closed.py::test_fractional_iat_reaches_cutoff_check",
     "tests/regression/test_durable_token_revocation.py::test_durable_cutoff_preserves_subsecond_ordering",
+    "tests/regression/test_durable_token_revocation.py::test_revoke_all_cutoff_uses_wall_clock_not_transaction_start",
+    "tests/regression/test_auth_session_serialization.py",
 )
 
 SECURITY = BACKEND / "app" / "core" / "security.py"
@@ -41,6 +43,28 @@ MUTATIONS = (
     ),
     (REVOCATION, "        precise_cutoff = float(legacy)", "        precise_cutoff = int(legacy)"),
     (REVOCATION, "        cutoff = float(cutoff_str)", "        cutoff = int(cutoff_str)"),
+    (
+        REVOCATION,
+        '    "VALUES (:jti, :uid, clock_timestamp()) "\n'
+        '    "ON CONFLICT (jti) DO UPDATE SET valid_from=clock_timestamp() "',
+        '    "VALUES (:jti, :uid, now()) "\n'
+        '    "ON CONFLICT (jti) DO UPDATE SET valid_from=now() "',
+    ),
+    (
+        BACKEND / "app" / "routers" / "auth.py",
+        "        ).with_for_update()\n    )\n    user = result.scalar_one_or_none()",
+        "        )\n    )\n    user = result.scalar_one_or_none()",
+    ),
+    (
+        BACKEND / "app" / "routers" / "auth.py",
+        "    result = await db.execute(select(User).where(User.id == uid).with_for_update())",
+        "    result = await db.execute(select(User).where(User.id == uid))",
+    ),
+    (
+        BACKEND / "app" / "routers" / "mfa.py",
+        "        await db.execute(select(User).where(User.id == uid).with_for_update())",
+        "        await db.execute(select(User).where(User.id == uid))",
+    ),
 )
 
 

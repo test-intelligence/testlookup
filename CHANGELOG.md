@@ -33,6 +33,12 @@ Login return-path handling now discards an obsolete `/reset-password` target
 after the bootstrap session is cleared, while preserving normal protected
 deep-link resume behavior.
 
+Password changes and every session-issuance path now serialize on the user's
+PostgreSQL row. Revocation cutoffs use statement-time wall clock values for
+both durable storage and the Redis cache, and MFA interstitials issued before a
+password change are rejected. This closes races where an old-password login,
+refresh, or MFA exchange could otherwise create a session after revoke-all.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,

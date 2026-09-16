@@ -84,6 +84,12 @@ logger = structlog.get_logger("core.token_revocation")
 
 _JTI_KEY = "auth:revoked_jti:{jti}"
 _USER_CUTOFF_KEY = "auth:tokens_valid_from:{user_id}"
+_UPSERT_USER_CUTOFF = (
+    "INSERT INTO auth_token_revocations (jti, user_id, valid_from) "
+    "VALUES (:jti, :uid, clock_timestamp()) "
+    "ON CONFLICT (jti) DO UPDATE SET valid_from=clock_timestamp() "
+    "RETURNING valid_from"
+)
 
 
 async def _durable_execute(statement: str, params: dict) -> list:
@@ -240,12 +246,16 @@ async def revoke_all_user_tokens(user_id: uuid.UUID, db=None) -> None:
     The TTL matches the access-token max lifetime so the marker self-prunes
     once it can no longer possibly invalidate a still-live token.
     """
+    cutoff = datetime.now(timezone.utc).timestamp()
     try:
+        params = {"jti": f"cutoff:{user_id}", "uid": user_id}
         if db is not None:
             from sqlalchemy import text
-            await db.execute(text("INSERT INTO auth_token_revocations (jti, user_id, valid_from) VALUES (:jti, :uid, now()) ON CONFLICT (jti) DO UPDATE SET valid_from=now()"), {"jti": f"cutoff:{user_id}", "uid": user_id})
+            result = await db.execute(text(_UPSERT_USER_CUTOFF), params)
+            cutoff = result.scalar_one().timestamp()
         else:
-            await _durable_execute("INSERT INTO auth_token_revocations (jti, user_id, valid_from) VALUES (:jti, :uid, now()) ON CONFLICT (jti) DO UPDATE SET valid_from=now()", {"jti": f"cutoff:{user_id}", "uid": user_id})
+            rows = await _durable_execute(_UPSERT_USER_CUTOFF, params)
+            cutoff = rows[0][0].timestamp()
     except Exception as exc:
         logger.error("durable_revocation_unavailable", operation="revoke_all_user_tokens", error=str(exc))
         if _durable_required():
@@ -261,12 +271,11 @@ async def revoke_all_user_tokens(user_id: uuid.UUID, db=None) -> None:
             detail="Password change did not write a cutoff; existing access tokens stay valid.",
         )
         return
-    now = datetime.now(timezone.utc).timestamp()
     ttl = max(60, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
     try:
         await redis.set(
             _USER_CUTOFF_KEY.format(user_id=str(user_id)),
-            str(now),
+            str(cutoff),
             ex=ttl,
         )
     except Exception as exc:  # noqa: BLE001

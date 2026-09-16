@@ -17,36 +17,46 @@ TESTS = (
     "--run",
     "src/pages/LoginPage.test.tsx",
 )
-GOOD = "  const from = fromPath && fromPath !== '/reset-password' ? fromPath : '/overview';"
-BAD = "  const from = fromPath || '/overview';"
+MUTATIONS = (
+    (
+        "  const from = fromPath && fromPath !== '/reset-password' ? fromPath : '/overview';",
+        "  const from = fromPath || '/overview';",
+    ),
+    (
+        "  const from = fromPath && fromPath !== '/reset-password' ? fromPath : '/overview';",
+        "  const from = '/overview';",
+    ),
+)
 
 
 def main() -> int:
     original = SOURCE.read_bytes()
     original_hash = hashlib.sha256(original).digest()
     text = original.decode("utf-8")
-    count = text.count(GOOD)
-    if count != 1:
-        raise AssertionError(f"mutation must apply exactly once; found {count}")
-    SOURCE.write_text(text.replace(GOOD, BAD, 1), encoding="utf-8")
-    try:
-        run = subprocess.run(
-            TESTS,
-            cwd=ROOT / "frontend",
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=90,
-            check=False,
-        )
-    finally:
-        SOURCE.write_bytes(original)
-    if run.returncode == 0:
-        raise AssertionError("stale reset-route mutation survived")
-    if hashlib.sha256(SOURCE.read_bytes()).digest() != original_hash:
-        raise AssertionError("source restoration changed the original bytes")
-    print("M01 resume mutation check: 1 mutation killed")
+    for good, bad in MUTATIONS:
+        text = original.decode("utf-8")
+        count = text.count(good)
+        if count != 1:
+            raise AssertionError(f"mutation must apply exactly once; found {count}")
+        SOURCE.write_text(text.replace(good, bad, 1), encoding="utf-8")
+        try:
+            run = subprocess.run(
+                TESTS,
+                cwd=ROOT / "frontend",
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=90,
+                check=False,
+            )
+        finally:
+            SOURCE.write_bytes(original)
+        if run.returncode == 0:
+            raise AssertionError(f"resume mutation survived: {bad!r}")
+        if hashlib.sha256(SOURCE.read_bytes()).digest() != original_hash:
+            raise AssertionError("source restoration changed the original bytes")
+    print(f"M01 resume mutation check: {len(MUTATIONS)} mutations killed")
     return 0
 
 

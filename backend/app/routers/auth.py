@@ -144,7 +144,7 @@ async def login(
     result = await db.execute(
         select(User).where(
             (User.username == form_data.username) | (User.email == form_data.username)
-        )
+        ).with_for_update()
     )
     user = result.scalar_one_or_none()
 
@@ -380,6 +380,8 @@ async def dev_login(
         role_slug=role,
         username=username,
     )
+    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await db.refresh(user)
 
     # dev-login skips the password, so it would also skip the second factor.
     # It is already unreachable outside APP_ENV=development, but "the dev
@@ -421,6 +423,8 @@ async def first_time_reset(
     - Does NOT require the current/registration password.
     - Clears the must_change_password flag after a successful change.
     """
+    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+    await db.refresh(current_user)
     if not current_user.must_change_password:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -478,7 +482,7 @@ async def refresh_tokens(
     except ValueError:
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.id == uid))
+    result = await db.execute(select(User).where(User.id == uid).with_for_update())
     user = result.scalar_one_or_none()
 
     if user is None or not user.is_active:
@@ -638,6 +642,8 @@ async def change_password(
     db: AsyncSession = Depends(get_db),
 ):
     """Change the current user's password."""
+    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+    await db.refresh(current_user)
     if not verify_password(payload.current_password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

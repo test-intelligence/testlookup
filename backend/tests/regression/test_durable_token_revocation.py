@@ -63,3 +63,33 @@ async def test_durable_cutoff_preserves_subsecond_ordering(monkeypatch):
 
     assert await token_revocation.is_token_before_cutoff(uid, 2_000_000_000.100) is True
     assert await token_revocation.is_token_before_cutoff(uid, 2_000_000_000.750) is False
+
+
+@pytest.mark.asyncio
+async def test_revoke_all_cutoff_uses_wall_clock_not_transaction_start(monkeypatch):
+    """A password transaction may start before a concurrent token is issued.
+
+    PostgreSQL ``now()`` is the transaction-start timestamp, so using it for
+    the cutoff can leave that newer token valid.  ``clock_timestamp()`` reads
+    the wall clock at the revocation statement and closes that race.  Both the
+    insert and conflict-update paths must use the wall clock.
+    """
+    from app.core import token_revocation
+
+    class Session:
+        statement = ""
+
+        async def execute(self, statement, _params):
+            self.statement = str(statement)
+
+    async def no_cache():
+        return None
+
+    session = Session()
+    monkeypatch.setattr(token_revocation, "_redis", no_cache)
+
+    await token_revocation.revoke_all_user_tokens(uuid.uuid4(), db=session)
+
+    normalized = " ".join(session.statement.lower().split())
+    assert normalized.count("clock_timestamp()") == 2
+    assert "now()" not in normalized
