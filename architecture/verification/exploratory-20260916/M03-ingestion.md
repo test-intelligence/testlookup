@@ -1,6 +1,6 @@
 # M03 upload, parse, deduplicate, and recover
 
-**Final validation candidate:**
+**Ingestion validation candidate:**
 `617eb41e2820d26f4505bc6077d6f54fabd996be`, tag
 `build-20260916-202123`, schema `0189`. Before the maintained test ran,
 all nine application deployments were fully updated and available on this tag.
@@ -42,13 +42,27 @@ were clean.
 
 Supporting maintained tests passed: 249 focused backend parser, upload,
 archive, format-detection, idempotency, security, and ingestion API tests, plus
-18 focused frontend upload and deep-link tests. No M03 product defect was
-found, so no defect-specific regression or mutation artifact was required.
+18 focused frontend upload and deep-link tests. No ingestion product defect was
+found.
 
 The deploy command's immediate authority pass sampled a terminating prior
 critical-worker pod and exited nonzero after Kubernetes reported every rollout
 complete. A subsequent fail-closed inventory showed no terminating app pod,
 all desired/updated/ready/available counts equal, and every serving pod on the
-candidate tag and expected digest before testing began.
+candidate tag and expected digest before testing began. Two subsequent exact
+deployments reproduced the same false failure, establishing EXP-BUG-012.
 
-**Result:** PASSED.
+The fix excludes only pods already marked for deletion and still requires at
+least one active pod; every active sibling remains subject to exact tag,
+readiness, and digest validation. Its behavioral suite passed 22 tests and the
+mutation harness killed all 21 mutations. Exact remediation candidate
+`a837835534fb3c78c652449144462fd35b3495a2`, tag
+`build-20260916-203805`, completed the full deploy command with exit code zero
+during the prior failure window. The script verified every app digest and the
+serving revision; an independent check found all nine deployments fully ready,
+`/health/version` exact, dependencies ready, and schema `0189 (head)`. The
+backend/worker digest was
+`sha256:c5325afdeb5585cb8a49015e2b0252189ad38bdbb38800c5056f6439e0df73f2`;
+frontend and MCP retained their recorded digests above.
+
+**Result:** PASSED with EXP-BUG-012 remediated and homelab-verified.
