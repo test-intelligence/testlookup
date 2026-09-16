@@ -25,5 +25,10 @@ reload, and removes the synthetic fixtures.
 the live navigation trace contained `/overview` before `/login`; the component
 regression observed no logout call.
 
-**Green evidence, mutation, review, and deployed retest:** pending deployment
-of the fixing commit.
+**Partial green evidence:** exact deployed revision `2f106277` navigates
+directly to login; the component regression passes and all three reset-flow
+mutations are killed. The full journey remains blocked by follow-on
+EXP-BUG-006, which rejects an immediate permanent-login token.
+
+**Independent review and complete deployed retest:** pending the combined M01
+fix.

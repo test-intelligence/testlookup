@@ -410,14 +410,14 @@ async def get_current_user(
     )
     jti = payload.get("jti")
     iat = payload.get("iat")
-    iat_int: Optional[int] = None
+    iat_value: Optional[float] = None
     if isinstance(iat, (int, float)):
-        iat_int = int(iat)
+        iat_value = float(iat)
     try:
         if jti and await is_jti_revoked(str(jti)):
             _count_auth_failure("invalid_token")
             raise credentials_exception
-        if await is_token_before_cutoff(uid, iat_int):
+        if await is_token_before_cutoff(uid, iat_value):
             _count_auth_failure("invalid_token")
             raise credentials_exception
     except RevocationUnavailable:

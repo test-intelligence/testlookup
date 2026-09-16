@@ -48,3 +48,18 @@ async def test_cutoff_survives_cache_eviction(monkeypatch):
 
     monkeypatch.setattr(token_revocation, "_durable_execute", durable)
     assert await token_revocation.is_token_before_cutoff(uuid.uuid4(), cutoff - 1) is True
+
+
+@pytest.mark.asyncio
+async def test_durable_cutoff_preserves_subsecond_ordering(monkeypatch):
+    from app.core import token_revocation
+    cutoff = 2_000_000_000.125
+
+    async def durable(statement, params):
+        return [(type("Stamp", (), {"timestamp": lambda self: cutoff})(),)]
+
+    monkeypatch.setattr(token_revocation, "_durable_execute", durable)
+    uid = uuid.uuid4()
+
+    assert await token_revocation.is_token_before_cutoff(uid, 2_000_000_000.100) is True
+    assert await token_revocation.is_token_before_cutoff(uid, 2_000_000_000.750) is False

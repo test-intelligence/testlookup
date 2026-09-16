@@ -25,6 +25,10 @@ session and sends the user directly to sign-in with the permanent password.
 This prevents a misleading transition through the overview before the first
 protected request discovers the revoked tokens.
 
+Bulk access-token revocation now preserves subsecond cutoff and JWT issuance
+times. An immediate sign-in after a password reset can therefore use its new
+token without weakening rejection of tokens issued at or before the cutoff.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,

@@ -17,9 +17,10 @@ Two revocation scopes
 
 * **Per-user cutoff** — password change / compromise response revokes
   **every** access token issued before the cutoff timestamp, including ones
-  we've never seen. Key: ``auth:tokens_valid_from:{user_id}``, value: unix
-  seconds. ``get_current_user`` rejects any access token whose ``iat`` is
-  earlier than that cutoff. TTL matches ``JWT_ACCESS_TOKEN_EXPIRE_MINUTES``
+  we've never seen. Key: ``auth:tokens_valid_from:{user_id}``, value: a unix
+  timestamp with subsecond precision. ``get_current_user`` rejects any access
+  token whose ``iat`` is not later than that cutoff. TTL matches
+  ``JWT_ACCESS_TOKEN_EXPIRE_MINUTES``
   because tokens older than that max lifetime are already expired anyway.
 
 Fail-CLOSED semantics (changed 2026-08-03)
@@ -260,7 +261,7 @@ async def revoke_all_user_tokens(user_id: uuid.UUID, db=None) -> None:
             detail="Password change did not write a cutoff; existing access tokens stay valid.",
         )
         return
-    now = int(datetime.now(timezone.utc).timestamp())
+    now = datetime.now(timezone.utc).timestamp()
     ttl = max(60, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
     try:
         await redis.set(
@@ -278,11 +279,10 @@ async def revoke_all_user_tokens(user_id: uuid.UUID, db=None) -> None:
         )
 
 
-async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[int]) -> bool:
+async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[float]) -> bool:
     """
-    Return True iff the user has a revocation cutoff and ``token_iat`` is
-    earlier than it (i.e., the token was issued before the cutoff and must
-    be rejected).
+    Return True iff the user has a revocation cutoff and ``token_iat`` is not
+    later than it (i.e., the token cannot be proved to postdate the cutoff).
 
     ``token_iat`` is the unix timestamp from the JWT's ``iat`` claim. When
     ``None`` (legacy tokens issued before we added ``iat``) we conservatively
@@ -295,7 +295,7 @@ async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[int]) -
         rows = await _durable_execute("SELECT valid_from FROM auth_token_revocations WHERE jti=:jti AND user_id=:uid", {"jti": f"cutoff:{user_id}", "uid": user_id})
         cutoff_value = rows[0][0] if rows else None
         if cutoff_value is not None:
-            return token_iat is None or token_iat <= int(cutoff_value.timestamp())
+            return token_iat is None or token_iat <= cutoff_value.timestamp()
         # During the bounded migration window, honor legacy Redis markers too.
         redis = await _redis()
         if redis is None:
@@ -305,8 +305,9 @@ async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[int]) -
             return False
         if isinstance(legacy, bytes):
             legacy = legacy.decode()
-        await _durable_execute("INSERT INTO auth_token_revocations (jti, user_id, valid_from) VALUES (:jti, :uid, to_timestamp(:cutoff)) ON CONFLICT (jti) DO NOTHING", {"jti": f"cutoff:{user_id}", "uid": user_id, "cutoff": int(legacy)})
-        return token_iat is None or token_iat <= int(legacy)
+        precise_cutoff = float(legacy)
+        await _durable_execute("INSERT INTO auth_token_revocations (jti, user_id, valid_from) VALUES (:jti, :uid, to_timestamp(:cutoff)) ON CONFLICT (jti) DO NOTHING", {"jti": f"cutoff:{user_id}", "uid": user_id, "cutoff": precise_cutoff})
+        return token_iat is None or token_iat <= precise_cutoff
     except Exception as exc:
         logger.error("durable_revocation_unavailable", operation="is_token_before_cutoff", error=str(exc))
         if _durable_required():
@@ -324,7 +325,7 @@ async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[int]) -
         # A cutoff we cannot parse is also "cannot verify" — the store is in a
         # state we can't reason about, so it takes the 503 path rather than
         # being rounded down to "not revoked".
-        cutoff = int(cutoff_str)
+        cutoff = float(cutoff_str)
         if token_iat is None:
             return True  # legacy token, any cutoff invalidates it
         return token_iat <= cutoff

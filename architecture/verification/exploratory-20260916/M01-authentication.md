@@ -16,7 +16,12 @@ cases remain component evidence only.
 The synthetic first-time reset journey exposed EXP-BUG-005. The backend
 correctly revoked the bootstrap token family, while the frontend navigated to
 `/overview` with those revoked credentials before the first protected read
-forced a login redirect. The strengthened live trace and component regression
-are red on the deployed revision. M01 remains RUNNING until the fixing commit
-is deployed exactly, the component and live regressions pass, mutation is
-killed, and independent review approves the change.
+forced a login redirect. Exact revision `2f106277550c0a0f18a1400ab6f92f1d788cc7e6`
+fixed that direct transition and passed its component and mutation checks.
+
+The deployed follow-up journey then exposed EXP-BUG-006. Password reset and
+the cleared server flag commit correctly, but whole-second JWT and cutoff
+comparisons reject an immediately issued permanent-login token as if it
+predated the cutoff. M01 remains RUNNING until the precision fix is deployed
+exactly, the full component and live regressions pass, both mutation harnesses
+are green, and independent review approves the combined authentication fix.
