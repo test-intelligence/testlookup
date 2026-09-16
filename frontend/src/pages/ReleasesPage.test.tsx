@@ -179,6 +179,7 @@ describe('ReleasesPage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: 'Target Release' })).toBeVisible()
+    expect(screen.getByText(/1 active across Target Project/)).toBeVisible()
     expect(screen.queryByText('Persisted Project Release')).not.toBeInTheDocument()
     expect(document.getElementById('phase-phase-target')).toHaveTextContent('Target phase')
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' }))

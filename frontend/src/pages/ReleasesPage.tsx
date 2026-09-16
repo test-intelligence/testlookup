@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   Calendar, CheckCircle2, Package, Plus, RotateCcw, Trash2, TriangleAlert, X,
 } from 'lucide-react'
@@ -346,6 +346,7 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
   onEdit: (r: Release) => void
 }) {
   const navigate = useNavigate()
+  const { hash } = useLocation()
   const { data: detail, isLoading, mutate: refetch } = useRelease(releaseId)
   const [showLinkModal, setShowLinkModal] = useState(false)
   const [markingReleased, setMarkingReleased] = useState(false)
@@ -358,10 +359,10 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
   const [linkedPage, setLinkedPage] = useState(1)
 
   useEffect(() => {
-    if (!detail || !window.location.hash.startsWith('#phase-')) return
-    const targetId = decodeURIComponent(window.location.hash.slice(1))
+    if (!detail || !hash.startsWith('#phase-')) return
+    const targetId = decodeURIComponent(hash.slice(1))
     document.getElementById(targetId)?.scrollIntoView({ block: 'center' })
-  }, [detail])
+  }, [detail, hash])
 
   async function updatePhaseStatus(phaseId: string, status: string) {
     try {
@@ -708,6 +709,9 @@ export default function ReleasesPage() {
   )
   const isLoading = releaseId ? routedReleaseLoading : listLoading
   const pageError = releaseId ? routedReleaseError : releasesError
+  const scopeName = releaseId
+    ? (routedRelease?.project_name ?? 'the linked project')
+    : (project?.name ?? 'this project')
 
   const [showModal, setShowModal]     = useState(false)
   const [editRelease, setEditRelease] = useState<Release | undefined>()
@@ -796,7 +800,7 @@ export default function ReleasesPage() {
           subtitle={
             isAllProjects
               ? `${stageCounts.all} active across all projects`
-              : `${stageCounts.all} active across ${project?.name ?? 'this project'}`
+              : `${stageCounts.all} active across ${scopeName}`
             + ` · ${stageCounts.in_progress} in progress · ${derived.filter(r => r.blockers.some(b => b.severity === 'red')).length} blocked`
           }
           actions={
