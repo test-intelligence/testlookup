@@ -20,6 +20,11 @@ migration runner no longer lets shell command substitution execute text in its
 generated YAML comments. The MCP Deployment now propagates its component label
 to pods so it participates in the same fail-closed authority verification.
 
+First-time password reset now clears the deliberately revoked bootstrap
+session and sends the user directly to sign-in with the permanent password.
+This prevents a misleading transition through the overview before the first
+protected request discovers the revoked tokens.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,
