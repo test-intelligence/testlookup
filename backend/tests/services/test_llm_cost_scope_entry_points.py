@@ -72,7 +72,9 @@ async def test_the_standard_pipeline_graph_runs_inside_its_projects_scope(monkey
     run_id, project_id = str(uuid.uuid4()), str(uuid.uuid4())
     _unblocked(monkeypatch, workflow, _setup(run_id, project_id, "offline", ["ingestion", "summary"]))
     seen: list = []
-    monkeypatch.setattr(workflow, "_offline_app", _recording_graph(seen))
+    monkeypatch.setattr(
+        workflow, "_compile_frozen_workflow", lambda _setup: _recording_graph(seen)
+    )
 
     with pytest.raises(_Stop):
         await workflow.run_offline_pipeline(test_run_id=run_id, project_id=project_id, build_number="1")
@@ -87,7 +89,9 @@ async def test_the_deep_pipeline_graph_runs_inside_its_projects_scope(monkeypatc
     run_id, project_id = str(uuid.uuid4()), str(uuid.uuid4())
     _unblocked(monkeypatch, workflow, _setup(run_id, project_id, "deep", ["ingestion", "failure_clustering"]))
     seen: list = []
-    monkeypatch.setattr(workflow, "_deep_app", _recording_graph(seen))
+    monkeypatch.setattr(
+        workflow, "_compile_frozen_workflow", lambda _setup: _recording_graph(seen)
+    )
 
     with pytest.raises(_Stop):
         await workflow.run_deep_pipeline(test_run_id=run_id, project_id=project_id, build_number="1")

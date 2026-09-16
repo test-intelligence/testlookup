@@ -145,6 +145,35 @@ async def test_published_definition_cannot_be_deleted() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execution_resolution_selects_latest_published_not_newer_draft() -> None:
+    db = _db()
+    published = _row(status="published", version=3)
+    db.execute.return_value = _scalar_result(published)
+
+    resolved = await svc.get_published_definition(
+        db, published.project_id, published.workflow_id
+    )
+
+    assert resolved is published
+    statement = str(db.execute.await_args.args[0])
+    assert "workflow_definitions.status" in statement
+    assert "workflow_definitions.status = " in statement
+    assert "workflow_definitions.version DESC" in statement
+    assert "published" in db.execute.await_args.args[0].compile().params.values()
+
+
+@pytest.mark.asyncio
+async def test_execution_resolution_refuses_draft_only_workflow() -> None:
+    db = _db()
+    db.execute.side_effect = [_scalar_result(None), _scalar_result(uuid.uuid4())]
+
+    with pytest.raises(svc.WorkflowNotPublished):
+        await svc.get_published_definition(
+            db, uuid.uuid4(), "wf.custom.fast", version=2
+        )
+
+
+@pytest.mark.asyncio
 async def test_fork_rewrites_identity_and_starts_at_version_one() -> None:
     db = _db()
     db.execute.side_effect = [MagicMock(), _scalar_result(None)]

@@ -1544,6 +1544,19 @@ class NotificationTransitionPolicyResponse(BaseModel):
 
 class TriggerPipelineRequest(BaseModel):
     test_run_id: uuid.UUID
+    workflow_id: Optional[str] = Field(
+        default=None,
+        min_length=3,
+        max_length=80,
+        pattern=r"^(?:wf\.[a-z0-9_.-]+|offline|deep|live)$",
+    )
+    workflow_version: Optional[int] = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def version_requires_workflow(self) -> "TriggerPipelineRequest":
+        if self.workflow_version is not None and self.workflow_id is None:
+            raise ValueError("workflow_version requires workflow_id")
+        return self
 
 
 class AgentStageResultResponse(BaseModel):

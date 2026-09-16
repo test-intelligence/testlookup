@@ -84,7 +84,7 @@ async def world(monkeypatch):
     async def _quiet(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(workflow, "_offline_app", graph)
+    monkeypatch.setattr(workflow, "_compile_frozen_workflow", lambda _setup: graph)
     monkeypatch.setattr(workflow, "emit_event", _quiet)
     monkeypatch.setattr(workflow, "_persist_memory", _quiet)
     try:
@@ -185,7 +185,7 @@ async def test_a_setup_failure_fails_the_pipeline_and_the_retry_resumes_it(world
     assert await _status(world, pipeline_run_id) == "completed"
 
 
-async def test_a_graph_failure_marks_the_pipeline_failed(world):
+async def test_a_graph_failure_marks_the_pipeline_failed(world, monkeypatch):
     """The other failure path (re-audit N28): marking a pipeline failed without
     a final state raised UnboundLocalError, so every failed pipeline stayed
     'running' and its real error was replaced by that one."""
@@ -195,17 +195,13 @@ async def test_a_graph_failure_marks_the_pipeline_failed(world):
         async def ainvoke(self, _state):
             raise ValueError("a stage failed")
 
-    workflow_app = workflow._offline_app
-    try:
-        workflow._offline_app = _Failing()
-        pipeline_run_id = str(uuid.uuid4())
-        with pytest.raises(ValueError, match="a stage failed"):
-            await workflow.run_offline_pipeline(
-                test_run_id=world["run"], project_id=world["project"], build_number="b-1",
-                workflow_type="offline", pipeline_run_id=pipeline_run_id, create_if_missing=True,
-            )
-    finally:
-        workflow._offline_app = workflow_app
+    monkeypatch.setattr(workflow, "_compile_frozen_workflow", lambda _setup: _Failing())
+    pipeline_run_id = str(uuid.uuid4())
+    with pytest.raises(ValueError, match="a stage failed"):
+        await workflow.run_offline_pipeline(
+            test_run_id=world["run"], project_id=world["project"], build_number="b-1",
+            workflow_type="offline", pipeline_run_id=pipeline_run_id, create_if_missing=True,
+        )
     assert await _status(world, pipeline_run_id) == "failed"
 
 

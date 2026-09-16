@@ -19,6 +19,7 @@ from app.core.tracing import get_tracer
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import AgentPipelineRun, AgentStageResult
 from app.services.pipeline_event_log import emit_event
+from app.services.workflow_step_context import runtime_stage_name
 
 import structlog
 
@@ -33,8 +34,8 @@ class BaseAgent(ABC):
     stage_name: str = "unknown"
 
     def __init__(self):
-        self.logger = structlog.get_logger(f"agents.{self.stage_name}")
-        self._tracer = get_tracer(f"agents.{self.stage_name}")
+        self.logger = structlog.get_logger(f"agents.{runtime_stage_name(type(self).stage_name)}")
+        self._tracer = get_tracer(f"agents.{runtime_stage_name(type(self).stage_name)}")
         # Track per-run start times and OTEL spans so mark_stage_done can calculate duration
         self._stage_start: dict[str, float] = {}
         self._stage_spans: dict[str, Any] = {}
@@ -119,7 +120,7 @@ class BaseAgent(ABC):
         await emit_event(
             pipeline_run_id,
             "decision_made",
-            stage_name=self.stage_name,
+            stage_name=runtime_stage_name(type(self).stage_name),
             test_case_id=test_case_id,
             detail=entry,
         )
@@ -150,7 +151,7 @@ class BaseAgent(ABC):
             return True
         self.logger.warning(
             "stage_lifecycle_skipped_no_pipeline_run_id",
-            stage_name=self.stage_name,
+            stage_name=runtime_stage_name(type(self).stage_name),
             call=call,
         )
         return False
@@ -168,20 +169,20 @@ class BaseAgent(ABC):
         # event log alone, without reconstructing the upstream state.
         await emit_event(
             pipeline_run_id, "stage_started",
-            stage_name=self.stage_name,
+            stage_name=runtime_stage_name(type(self).stage_name),
             detail={"input_state_keys": input_keys} if input_keys else None,
         )
 
         # Start OTEL span
         attrs: dict[str, Any] = {
             "pipeline.run_id": pipeline_run_id,
-            "agent.stage": self.stage_name,
+            "agent.stage": runtime_stage_name(type(self).stage_name),
         }
         if input_keys:
             # Limit to 40 keys; otel attribute values have a size cap.
             attrs["stage.input_keys"] = ",".join(sorted(input_keys)[:40])
         span = self._tracer.start_span(
-            f"agent.{self.stage_name}",
+            f"agent.{runtime_stage_name(type(self).stage_name)}",
             attributes=attrs,
         )
         self._stage_spans[pipeline_run_id] = span
@@ -197,7 +198,7 @@ class BaseAgent(ABC):
             stage = (await db.execute(
                 select(AgentStageResult).where(
                     AgentStageResult.pipeline_run_id == pipeline_run_id,
-                    AgentStageResult.stage_name == self.stage_name,
+                    AgentStageResult.stage_name == runtime_stage_name(type(self).stage_name),
                 )
             )).scalar_one_or_none()
             pipeline = (await db.execute(
@@ -207,7 +208,7 @@ class BaseAgent(ABC):
             )).scalar_one_or_none()
             context = {
                 "pipeline_run_id": pipeline_run_id,
-                "stage_name": self.stage_name,
+                "stage_name": runtime_stage_name(type(self).stage_name),
                 "blocked": False,
                 "stop_reason": None,
             }
@@ -224,12 +225,12 @@ class BaseAgent(ABC):
                         else {}
                     )
                     reservation_id = __import__("hashlib").sha256(
-                        f"{pipeline_run_id}:{self.stage_name}:{int(stage.attempt or 1)}".encode()
+                        f"{pipeline_run_id}:{runtime_stage_name(type(self).stage_name)}:{int(stage.attempt or 1)}".encode()
                     ).hexdigest()
                     reservation = reserve_stage_in_metadata(
                         pipeline_metadata,
                         reservation_id=reservation_id,
-                        stage_name=self.stage_name,
+                        stage_name=runtime_stage_name(type(self).stage_name),
                         attempt=int(stage.attempt or 1),
                         llm_calls=int(stage.allocated_budget.get("max_llm_calls") or 0),
                         tokens=int(stage.allocated_budget.get("max_tokens") or 0),
@@ -334,7 +335,7 @@ class BaseAgent(ABC):
         )
         await emit_event(
             pipeline_run_id, event_type,
-            stage_name=self.stage_name,
+            stage_name=runtime_stage_name(type(self).stage_name),
             detail={
                 "duration_seconds": duration_secs,
                 "input_tokens": input_tokens,
@@ -360,32 +361,32 @@ class BaseAgent(ABC):
         # Record Prometheus metrics
         duration = time.perf_counter() - self._stage_start.pop(pipeline_run_id, time.perf_counter())
         pipeline_stage_duration_seconds.labels(
-            stage_name=self.stage_name, status=status
+            stage_name=runtime_stage_name(type(self).stage_name), status=status
         ).observe(duration)
         pipeline_stage_runs_total.labels(
-            stage_name=self.stage_name, status=status
+            stage_name=runtime_stage_name(type(self).stage_name), status=status
         ).inc()
 
         # Phase 6: Token, cost, LLM call, fallback, and error metrics
         if input_tokens > 0:
             pipeline_stage_tokens_total.labels(
-                stage_name=self.stage_name, direction="input"
+                stage_name=runtime_stage_name(type(self).stage_name), direction="input"
             ).inc(input_tokens)
         if output_tokens > 0:
             pipeline_stage_tokens_total.labels(
-                stage_name=self.stage_name, direction="output"
+                stage_name=runtime_stage_name(type(self).stage_name), direction="output"
             ).inc(output_tokens)
         if cost_usd > 0:
-            pipeline_stage_cost_usd.labels(stage_name=self.stage_name).inc(cost_usd)
+            pipeline_stage_cost_usd.labels(stage_name=runtime_stage_name(type(self).stage_name)).inc(cost_usd)
         if llm_calls_count > 0:
-            pipeline_stage_llm_calls_total.labels(stage_name=self.stage_name).inc(llm_calls_count)
+            pipeline_stage_llm_calls_total.labels(stage_name=runtime_stage_name(type(self).stage_name)).inc(llm_calls_count)
         if fallback_reason:
             pipeline_fallback_total.labels(
-                stage_name=self.stage_name, reason=fallback_reason[:50]
+                stage_name=runtime_stage_name(type(self).stage_name), reason=fallback_reason[:50]
             ).inc()
         if error_category:
             pipeline_stage_errors_by_category.labels(
-                stage_name=self.stage_name, error_category=error_category
+                stage_name=runtime_stage_name(type(self).stage_name), error_category=error_category
             ).inc()
 
         # Tier 1 item 2 — feed the LLM cost meter. Runs only when the caller
@@ -483,7 +484,7 @@ class BaseAgent(ABC):
             stage_probe = await db.execute(
                 select(AgentStageResult).where(
                     AgentStageResult.pipeline_run_id == pipeline_run_id,
-                    AgentStageResult.stage_name == self.stage_name,
+                    AgentStageResult.stage_name == runtime_stage_name(type(self).stage_name),
                 )
             )
             stage_probe_row = stage_probe.scalar_one_or_none()
@@ -505,7 +506,7 @@ class BaseAgent(ABC):
                     settlement_reason = queue_stage_settlement(
                         pipeline_metadata,
                         reservation_id=reservation_id,
-                        stage_name=self.stage_name,
+                        stage_name=runtime_stage_name(type(self).stage_name),
                         attempt=stage_attempt,
                         actual_llm_calls=int(llm_calls_count or 0),
                         actual_tokens=int(total_tokens or 0),
@@ -516,7 +517,7 @@ class BaseAgent(ABC):
             result = await db.execute(
                 select(AgentStageResult).where(
                     AgentStageResult.pipeline_run_id == pipeline_run_id,
-                    AgentStageResult.stage_name == self.stage_name,
+                    AgentStageResult.stage_name == runtime_stage_name(type(self).stage_name),
                 )
             )
             stage = result.scalar_one_or_none()
@@ -559,7 +560,7 @@ class BaseAgent(ABC):
                 self.logger.warning(
                     "pipeline_budget_settlement_deferred",
                     pipeline_run_id=pipeline_run_id,
-                    stage_name=self.stage_name,
+                    stage_name=runtime_stage_name(type(self).stage_name),
                     error_type=type(exc).__name__,
                 )
 
@@ -596,7 +597,7 @@ class BaseAgent(ABC):
             from app.streams.live_fanout import publish_live_notification
             await publish_live_notification(
                 project_id,
-                {"type": "pipeline_progress", "stage": self.stage_name, **payload},
+                {"type": "pipeline_progress", "stage": runtime_stage_name(type(self).stage_name), **payload},
             )
         except Exception as exc:
             self.logger.debug("ws_broadcast_failed", error=str(exc))

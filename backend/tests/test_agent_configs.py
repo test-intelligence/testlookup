@@ -472,6 +472,7 @@ async def test_a_pipeline_run_freezes_the_projects_config_versions(monkeypatch):
     monkeypatch.setattr(feature_flags, "is_enabled", AsyncMock(return_value=False))
     monkeypatch.setattr(agent_investigation_service, "get_effective_policy", AsyncMock(return_value={"budgets": {}}))
     monkeypatch.setattr(svc, "config_versions", AsyncMock(return_value={SUMMARY: 4}))
+    monkeypatch.setattr(svc, "list_config_rows", AsyncMock(return_value={}))
 
     requester = uuid.uuid4()
     await workflow._create_pipeline_run(
@@ -538,6 +539,7 @@ async def test_an_invocation_run_uses_and_persists_its_frozen_config(monkeypatch
         AsyncMock(return_value={"budgets": {}}),
     )
     monkeypatch.setattr(svc, "config_versions", AsyncMock(return_value={SUMMARY: 4}))
+    monkeypatch.setattr(svc, "list_config_rows", AsyncMock(return_value={}))
 
     await workflow._create_pipeline_run(
         str(uuid.uuid4()),

@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-15 - Execute immutable published workflows (T17 / E3.3)
+
+Pipeline triggers can now select a published workflow version. Each run freezes
+the exact `workflow_id@version`, canonical definition digest, compiled plan
+digest, deadline, retry/review policy, and project agent configurations before
+executing the compiler-emitted LangGraph. Resumes and checkpoint restores fail
+closed when any part of that authority differs.
+
+Named and repeated capability steps receive distinct durable stage identities,
+and reviewer steps receive bounded upstream outputs plus authoritative run
+references and numeric facts. The trigger contract remains backward compatible:
+omitting workflow selection executes `offline@1`. Four asserted mutations cover
+published-only selection, repeated-capability binding, version integrity, and
+cross-version checkpoint refusal.
+
 ## 2026-09-15 - Compile and validate versioned workflows (T17 / E3.2)
 
 Added the semantic `WorkflowCompiler` for stored workflow definitions. It

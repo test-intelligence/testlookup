@@ -126,6 +126,10 @@ class WorkflowConflict(ValueError):
     pass
 
 
+class WorkflowNotPublished(ValueError):
+    pass
+
+
 def is_builtin(workflow_id: str) -> bool:
     return workflow_id in BUILTIN_WORKFLOW_IDS
 
@@ -289,6 +293,44 @@ async def get_definition(
     return row
 
 
+async def get_published_definition(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    workflow_id: str,
+    version: Optional[int] = None,
+) -> WorkflowDefinition | dict[str, Any]:
+    """Resolve the immutable workflow version that a run may execute.
+
+    Drafts are editable and therefore can never be execution authority.  When
+    the caller omits a version, select the newest *published* version instead
+    of ``get_definition``'s newest version (which may be a later draft).
+    """
+    if is_builtin(workflow_id):
+        return await get_definition(db, project_id, workflow_id, version)
+    query = select(WorkflowDefinition).where(
+        WorkflowDefinition.project_id == project_id,
+        WorkflowDefinition.workflow_id == workflow_id,
+        WorkflowDefinition.status == "published",
+    )
+    query = (
+        query.where(WorkflowDefinition.version == version)
+        if version is not None
+        else query.order_by(WorkflowDefinition.version.desc()).limit(1)
+    )
+    row = (await db.execute(query)).scalar_one_or_none()
+    if row is None:
+        exists = (await db.execute(
+            select(WorkflowDefinition.id).where(
+                WorkflowDefinition.project_id == project_id,
+                WorkflowDefinition.workflow_id == workflow_id,
+            ).limit(1)
+        )).scalar_one_or_none()
+        if exists is not None:
+            raise WorkflowNotPublished(workflow_id)
+        raise WorkflowNotFound(workflow_id)
+    return row
+
+
 async def _lock_version(db: AsyncSession, project_id: uuid.UUID, workflow_id: str) -> None:
     key = f"workflow-definition:{project_id}:{workflow_id}"
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": key})
@@ -430,10 +472,10 @@ def validation_result(
 
 
 __all__ = [
-    "BUILTIN_WORKFLOW_IDS", "WorkflowBodyV1", "WorkflowConflict",
+    "BUILTIN_WORKFLOW_IDS", "WorkflowBodyV1", "WorkflowConflict", "WorkflowNotPublished",
     "WorkflowEvaluateV1", "WorkflowForkV1", "WorkflowNotFound", "WorkflowPublishV1",
     "body_from_item", "create_definition",
-    "delete_definition", "fork_definition", "get_definition", "is_builtin",
+    "delete_definition", "fork_definition", "get_definition", "get_published_definition", "is_builtin",
     "list_definitions", "publish_definition", "serialize", "update_definition",
     "validation_result",
 ]

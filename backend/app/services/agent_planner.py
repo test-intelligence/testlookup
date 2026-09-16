@@ -1057,6 +1057,15 @@ def attach_workflow_plan_and_verification(
     state = dict(final_state)
     initial_plan = state.get("initial_workflow_plan") or state.get("workflow_plan")
     plan_inputs = initial_plan if isinstance(initial_plan, dict) else {}
+    workflow_id = plan_inputs.get("workflow_id")
+    if isinstance(workflow_id, str) and workflow_id.startswith("wf."):
+        # Custom workflow topology is immutable run authority. Rebuilding here
+        # would silently replace it with the base built-in plan immediately
+        # before verification and terminal persistence.
+        state["initial_workflow_plan"] = initial_plan
+        state["workflow_plan"] = initial_plan
+        state["workflow_verification"] = verify_workflow_execution(plan_inputs, state)
+        return state
     # Every input below must be recovered from the original plan. A kwarg left
     # to its default here does not raise -- it silently rewrites the plan with a
     # different answer, and the verifier then checks execution against a plan

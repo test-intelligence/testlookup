@@ -316,10 +316,34 @@ async def trigger_pipeline(
         raise HTTPException(404, detail="TestRun not found")
     await resolve_project_scope(db, current_user, str(run.project_id))
 
+    from app.services import workflow_definition_service as workflow_svc
+
+    requested_workflow_id = getattr(payload, "workflow_id", None) or "offline"
+    try:
+        selected_workflow = await workflow_svc.get_published_definition(
+            db,
+            run.project_id,
+            requested_workflow_id,
+            getattr(payload, "workflow_version", None),
+        )
+    except workflow_svc.WorkflowNotFound:
+        raise HTTPException(404, detail="Workflow definition not found") from None
+    except workflow_svc.WorkflowNotPublished:
+        raise HTTPException(409, detail="Workflow definition is not published") from None
+    selected_item = (
+        selected_workflow
+        if isinstance(selected_workflow, dict)
+        else workflow_svc.serialize(selected_workflow)
+    )
+    workflow_type = str(selected_item["base"])
+    workflow_id = str(selected_item["workflow_id"])
+    workflow_version = int(selected_item["version"])
+    workflow_ref = f"{workflow_id}@{workflow_version}"
+
     # E7.2: the state machine, not the Redis admission lock, decides whether a
     # new trigger is accepted. A run that is pending / running / retry_wait is
     # returned as-is (200) instead of queueing a second concurrent pipeline.
-    existing = await _latest_in_progress_pipeline(db, run.id, "offline")
+    existing = await _latest_in_progress_pipeline(db, run.id, workflow_type)
     if existing is not None:
         return JSONResponse(
             status_code=200,
@@ -339,7 +363,9 @@ async def trigger_pipeline(
         test_run_id=str(run.id),
         project_id=str(run.project_id),
         build_number=run.build_number,
-        workflow_type="offline",
+        workflow_type=workflow_type,
+        workflow_id=workflow_id,
+        workflow_version=workflow_version,
         requested_by=str(current_user.id),
     )
 
@@ -352,9 +378,18 @@ async def trigger_pipeline(
         actor=ActorRef.from_user(current_user),
         entity_id=run.id,
         entity_label=f"Build {run.build_number}",
-        context={"workflow_type": "offline", "task_id": task.id},
+        context={
+            "workflow_type": workflow_type,
+            "workflow_ref": workflow_ref,
+            "task_id": task.id,
+        },
     )
-    return {"message": "Pipeline queued", "task_id": task.id, "run_id": str(run.id)}
+    return {
+        "message": "Pipeline queued",
+        "task_id": task.id,
+        "run_id": str(run.id),
+        "workflow_ref": workflow_ref,
+    }
 
 
 async def _latest_in_progress_pipeline(
@@ -534,11 +569,15 @@ async def retry_pipeline(
     if plan.is_rerun:
         from app.worker.tasks import run_agent_pipeline
 
+        frozen_metadata = dict(pipeline.execution_metadata or {})
+
         run_agent_pipeline.delay(
             test_run_id=str(run.id),
             project_id=str(run.project_id),
             build_number=run.build_number,
             workflow_type=pipeline.workflow_type,
+            workflow_id=frozen_metadata.get("workflow_id"),
+            workflow_version=frozen_metadata.get("workflow_version"),
             rerun_of=str(pipeline.id),
             requested_by=str(current_user.id),
         )
