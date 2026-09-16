@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Route } from '@playwright/test'
 
 const PROJECT_A = '00000000-0000-4000-8000-000000000101'
 const PROJECT_B = '00000000-0000-4000-8000-000000000102'
