@@ -9,6 +9,11 @@ verification and a single-branch/PR/merge workflow. Corrected stale coverage,
 Investigator review-subject and homelab Redis documentation. This is planning
 only; it does not claim new test, deployment or release results.
 
+The first M26 preflight found that homelab images built by the supported deploy
+script reported an unknown revision and build date. Homelab backend builds now
+refuse tracked uncommitted changes and embed the exact Git revision and UTC
+build time, allowing `/health/version` to prove which candidate is serving.
+
 ## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,
