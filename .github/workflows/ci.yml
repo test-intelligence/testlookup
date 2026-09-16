@@ -604,6 +604,7 @@ jobs:
           tests/integration/test_evidence_artifact_authority_postgres.py
           tests/integration/test_ingestion_identity_postgres.py
           tests/integration/test_ingestion_savepoint_postgres.py
+          tests/integration/test_ingest_intelligence_defect_release_postgres.py
           tests/integration/test_investigator_budget_postgres.py
           tests/integration/test_investigator_claim_provider_postgres.py
           tests/integration/test_investigator_resume_postgres.py

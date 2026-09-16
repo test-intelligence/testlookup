@@ -93,9 +93,10 @@ def _cluster():
 async def _drive_promote(*, offline: bool, jira_spy: AsyncMock):
     db = AsyncMock()
     # member_test_ids=[] → analyses + tc_id queries are skipped; execute is
-    # called for cluster then finding.
+    # called for cluster, the run's release, then the finding.
     db.execute = AsyncMock(side_effect=[
         _ScalarsResult(scalar=_cluster()),   # cluster load
+        _ScalarsResult(scalar=None),         # run release load
         _ScalarsResult(scalar=None),         # deep finding load
     ])
     db.add = MagicMock()
@@ -121,6 +122,38 @@ async def _drive_promote(*, offline: bool, jira_spy: AsyncMock):
                      "project_key": "PROJ"},
             db=db,
         )
+
+
+@pytest.mark.asyncio
+async def test_promote_carries_the_source_runs_release_to_the_defect():
+    """A promoted blocker must remain visible to its release gate."""
+    release_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        _ScalarsResult(scalar=_cluster()),
+        _ScalarsResult(scalar=release_id),
+        _ScalarsResult(scalar=None),
+    ])
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+
+    with patch.object(svc, "_resolve_defect_owner_from_memory", AsyncMock(return_value=None)), \
+         patch.object(svc, "_find_duplicate_semantic", AsyncMock(return_value=(None, False))), \
+         patch.object(svc, "check_defect_promotion_policy", AsyncMock(return_value={
+             "initial_status": svc.ActionStatus.APPROVED.value,
+             "requires_approval": False,
+             "policy_reasons": [],
+         })):
+        await svc.promote_cluster(
+            run_id=str(uuid.uuid4()),
+            cluster_id="c1",
+            project_id=str(uuid.uuid4()),
+            request={"title": "Release blocker", "severity": "HIGH"},
+            db=db,
+        )
+
+    promoted = db.add.call_args.args[0]
+    assert promoted.release_id == release_id
 
 
 @pytest.mark.asyncio

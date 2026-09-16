@@ -1,11 +1,16 @@
 # Changelog
 
-## Unreleased - Expand hermetic human-review coverage
+## Unreleased - Expand critical-journey coverage
 
 Added blocking browser journeys for accepting and rejecting pending AI reports,
 including reason persistence, read-only role behavior, and a separation-of-
 duties refusal that must leave the report pending. These journeys use the real
 SPA and controlled HTTP boundary without a backend, credentials, or VPN.
+
+Added a PostgreSQL integration journey that carries one batch from ingestion
+through run intelligence, failure-cluster promotion, and an append-only release
+gate decision. Promoted defects now inherit the source run's release, fixing a
+gap where a HIGH or CRITICAL defect could disappear from the release gate.
 
 ## 2026-09-15 - Ratchet frontend coverage and add hermetic browser journeys
 

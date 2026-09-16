@@ -29,6 +29,12 @@ to 100% statements and lines.
   and the distinct accept/reject payload contracts.
 - `critical-journeys.spec.ts` exercises deep-link protection, resume-after-login,
   and explicit rejection of a cached token through a real browser.
+- `review-gate.spec.ts` exercises review acceptance, required rejection reasons,
+  separation of duties, and a read-only QA Engineer queue through the real SPA.
+- `test_ingest_intelligence_defect_release_postgres.py` proves that persisted
+  ingestion, run intelligence, defect promotion, and the append-only release
+  gate share one release identity. It also caught and pins the missing release
+  attribution on promoted defects.
 - CI now runs frontend unit tests with coverage and the hermetic browser lane.
 
 These tests target prior 0%-covered high-risk services and a previously live-only
@@ -40,7 +46,7 @@ trivial constants.
 | Priority | Target | Current signal | Required tests |
 |---|---|---|---|
 | P0 | `testManagementService` and TestManagement page | about 5–10% | lifecycle mutations, stale/race/error states, request contracts |
-| P0 | review UI and notification distribution | service was 0%; gate is safety-critical | accepted/rejected/pending browser flows and narrative redaction |
+| P0 | notification distribution | review UI journey is covered; narrative delivery remains safety-critical | reviewed/pending narrative subject and redaction rules |
 | P0 | release decision/override browser path | live-only integration | hermetic decision rendering plus PostgreSQL audit integration |
 | P1 | RAG drawers/components | roughly 0–14% | empty/citation/error/unsafe-link states |
 | P1 | integrations settings | roughly 22–28% | saved/masked secrets, validation, provider failures |
