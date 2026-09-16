@@ -56,7 +56,7 @@ async def test_compiler_prefers_step_specific_executor_for_repeated_capability()
 
 
 def test_resume_authority_rejects_definition_plan_and_version_mutations() -> None:
-    snapshot = _body().model_dump(mode="json")
+    snapshot = _body().model_dump(mode="json", by_alias=True)
     plan = {"stages": [{"stage": "first_ingest"}], "workflow_ref": "wf.runtime.test@4"}
     metadata = {
         "workflow_id": "wf.runtime.test",
@@ -82,15 +82,18 @@ def test_resume_authority_rejects_definition_plan_and_version_mutations() -> Non
 
 
 def test_compile_frozen_workflow_refuses_tampered_snapshot() -> None:
-    snapshot = _body().model_dump(mode="json")
+    snapshot = _body().model_dump(mode="json", by_alias=True)
     setup = {
         "workflow_definition": snapshot,
         "workflow_definition_sha256": workflow._definition_checksum(snapshot),
     }
-    setup["workflow_definition"]["deadline_seconds"] = 2
+    assert workflow._compile_frozen_workflow(setup) is not None
+
+    tampered = deepcopy(setup)
+    tampered["workflow_definition"]["deadline_seconds"] = 2
 
     with pytest.raises(ValueError, match="snapshot_mismatch"):
-        workflow._compile_frozen_workflow(setup)
+        workflow._compile_frozen_workflow(tampered)
 
 
 def test_checkpoint_restore_requires_exact_workflow_authority() -> None:

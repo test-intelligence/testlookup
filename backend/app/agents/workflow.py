@@ -2882,7 +2882,7 @@ async def _create_pipeline_run(
         body = workflow_svc.body_from_item(selected)
         if body.base != workflow_type:
             raise ValueError("workflow_base_mismatch")
-        workflow_snapshot = body.model_dump(mode="json")
+        workflow_snapshot = body.model_dump(mode="json", by_alias=True)
         workflow_sha256 = _definition_checksum(workflow_snapshot)
         workflow_ref = f"{body.workflow_id}@{int(selected_item['version'])}"
         stages = [step.id for step in body.steps]
