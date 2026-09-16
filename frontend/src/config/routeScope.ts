@@ -49,6 +49,7 @@ export type RouteScope =
  */
 const SINGLE_PROJECT_ROUTES: ReadonlySet<string> = new Set([
   '/activity',
+  '/agents/workflows',
   '/flaky-coach',
   '/reviews',
   '/settings/api-keys',

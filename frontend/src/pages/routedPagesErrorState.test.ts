@@ -80,6 +80,7 @@ const REVIEWED: Record<string, ErrorState> = {
   OwnershipEditorPage: 'own-error-ui',
   QuarantinePage: 'own-error-ui',
   ReviewsPage: 'data-unavailable',
+  WorkflowEditorPage: 'data-unavailable',
   MyFailuresPage: 'own-error-ui',
   'settings/AIConfigPage': 'own-error-ui',
   'settings/DigestsPage': 'own-error-ui',

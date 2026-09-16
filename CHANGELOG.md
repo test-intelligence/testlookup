@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-15 - Add the versioned workflow editor (T17 / E3.4)
+
+Added a project-scoped workflow editor at `/agents/workflows`. It lists built-in
+and custom versions with evaluation coverage, keeps built-ins and historical
+versions read-only, and lets QA Leads fork, edit, preview, validate, evaluate,
+and publish workflow definitions. Publication always performs server-side
+semantic validation, and measured regressions require explicit acceptance with
+a reason.
+
+The editor uses the existing versioned workflow API without changing its wire
+contract. Frontend regressions cover role and immutability controls, graph
+fan-in and loop rendering, API methods, evaluation evidence, and publication;
+six asserted mutations prove those controls fail closed.
+
 ## 2026-09-15 - Execute immutable published workflows (T17 / E3.3)
 
 Pipeline triggers can now select a published workflow version. Each run freezes
