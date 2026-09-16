@@ -37,6 +37,15 @@ export default defineConfig({
       reporter: ['text', 'json', 'html'],
       include: ['src/**/*.{ts,tsx}'],
       exclude: ['src/test/**', 'src/**/*.d.ts'],
+      // Measured 2026-09-15: 60.80 / 56.12 / 52.34 / 62.26. Keep a small
+      // operating margin for V8 instrumentation drift while making a material
+      // loss of exercised frontend behaviour block CI.
+      thresholds: {
+        statements: 60,
+        branches: 55,
+        functions: 51,
+        lines: 61,
+      },
     },
   },
   resolve: {
