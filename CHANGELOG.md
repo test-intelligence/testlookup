@@ -71,6 +71,11 @@ Added a live cross-browser ingestion recovery journey that uploads a report
 through the UI, reloads immediately after acceptance, then reconciles the same
 task and verifies the durable run and parsed test result.
 
+Added a live cross-browser read journey for a completed ingest-to-intelligence
+flow. It reloads the run intelligence page, checks the pipeline cluster and
+review warning, then follows the same run through Defects and Releases while
+rechecking the public run, defect and stored-gate contracts.
+
 Homelab image-authority verification now excludes old ReplicaSet pods already
 marked for deletion while still requiring at least one active pod. This keeps a
 successful rollout fail-closed without rejecting it during normal termination.
