@@ -142,7 +142,7 @@ def test_non_commit_build_input_is_rejected(
 
 
 def _run_image_check(
-    tmp_path: Path, *, rows: str
+    tmp_path: Path, *, rows: str, component: str = "api"
 ) -> subprocess.CompletedProcess[str]:
     function = textwrap.dedent(_extract("verify_deployment_image"))
     body = (
@@ -151,9 +151,16 @@ def _run_image_check(
         f"{rows}\n"
         "__PODS__\n"
         ")\n"
-        "kubectl() { printf '%s\\n' \"$POD_ROWS\"; }\n"
+        "kubectl() {\n"
+        "  printf '%s\\n' \"$*\" >> kubectl.log\n"
+        "  case \" $* \" in\n"
+        f"    *\" get deployment \"*) printf '%s\\n' '{component}' ;;\n"
+        "    *) printf '%s\\n' \"$POD_ROWS\" ;;\n"
+        "  esac\n"
+        "}\n"
         f"{function}\n"
         "verify_deployment_image testlookup-backend expected/backend:tag sha256:abc\n"
+        "cat kubectl.log\n"
     )
     return _run_script(tmp_path, body)
 
@@ -164,6 +171,27 @@ def test_ready_pod_on_exact_tag_and_digest_is_accepted(tmp_path: Path):
         rows="expected/backend:tag true registry/expected/backend@sha256:abc",
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_deployment_component_excludes_retained_migration_job_pods(tmp_path: Path):
+    result = _run_image_check(
+        tmp_path,
+        rows="expected/backend:tag true registry/expected/backend@sha256:abc",
+    )
+    assert result.returncode == 0, result.stderr
+    assert (
+        "-l app=testlookup-backend,app.kubernetes.io/component=api"
+        in result.stdout
+    )
+
+
+def test_deployment_without_component_label_is_rejected(tmp_path: Path):
+    result = _run_image_check(
+        tmp_path,
+        rows="expected/backend:tag true registry/expected/backend@sha256:abc",
+        component="",
+    )
+    assert result.returncode != 0
 
 
 @pytest.mark.parametrize(

@@ -23,12 +23,14 @@ After the implementation all seven provenance tests and the 29 focused
 deploy/provenance regression tests passed.
 
 **Mutation:** `scripts/mutation_check_exploratory_m26_provenance.py` asserts
-each of fourteen mutations applies exactly once. It kills unknown revision/date,
+each of seventeen mutations applies exactly once. It kills unknown revision/date,
 bypassed unstaged/staged/untracked cleanliness guards, unknown revision/date
 build arguments, inverted pod and serving-revision comparisons, a wrong backend
 authority map, mixed pod sets that try to skip invalid siblings, leaked
 generated CA staging, and an invocation that checks for `unknown` instead of
-the candidate.
+the candidate. The expanded run also kills removal of Deployment component
+scoping, acceptance of a missing component label, and reintroduction of shell
+command substitution in migration YAML comments.
 
 **Deployed E2E:** pending. After review and commit, deploy that exact commit and
 assert `/health/version.build.revision` equals the commit SHA and `built_at` is

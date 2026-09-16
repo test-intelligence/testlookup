@@ -79,7 +79,7 @@ spec:
       securityContext:
         runAsNonRoot: true
         # runAsUser/runAsGroup are REQUIRED alongside runAsNonRoot here, not
-        # decoration. The backend image ends with `USER testlookup` — a NAME —
+        # decoration. The backend image ends with "USER testlookup" — a NAME —
         # and the kubelet cannot prove a non-numeric user is non-root, so it
         # refuses the container outright:
         #

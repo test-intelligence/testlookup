@@ -227,6 +227,9 @@ def test_runner_uses_unique_attempt_jobs_and_readiness_init_container(tmp_path: 
     assert "name: wait-for-postgres" in payload
     assert 'url = make_url(os.environ["DATABASE_URL"])' in payload
     assert "value: operation" in payload
+    assert "USER testlookup" in payload
+    assert "command not found" not in first.stderr
+    assert "command not found" not in second.stderr
 
 
 def test_runner_failed_condition_exits_promptly_with_diagnostics(tmp_path: Path):

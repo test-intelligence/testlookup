@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "homelabsetup/deploy-homelab.sh"
+MIGRATION_RUNNER = ROOT / "scripts/run-k8s-migrations.sh"
 TESTS = (
     sys.executable,
     "-m",
@@ -17,9 +18,10 @@ TESTS = (
     "--basetemp=backend/.pytest-tmp-exploratory-m26-provenance-mutation",
     "backend/tests/test_health_build_provenance.py::test_homelab_backend_image_receives_exact_build_provenance",
     "backend/tests/regression/test_homelab_build_authority.py",
+    "backend/tests/regression/test_k8s_migration_runner.py::test_runner_uses_unique_attempt_jobs_and_readiness_init_container",
 )
 
-MUTATIONS = (
+DEPLOY_MUTATIONS = (
     ('BUILD_REVISION="$(git rev-parse HEAD)"', 'BUILD_REVISION="unknown"'),
     ('BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"', 'BUILD_DATE="unknown"'),
     (
@@ -70,12 +72,31 @@ MUTATIONS = (
         'verify_serving_revision "$TRAEFIK_IP" "$BUILD_REVISION" \\',
         'verify_serving_revision "$TRAEFIK_IP" "unknown" \\',
     ),
+    (
+        '-l "app=${deployment},app.kubernetes.io/component=${component}" \\',
+        '-l "app=${deployment}" \\',
+    ),
+    (
+        '[ -n "$component" ] || return 1',
+        'true # [ -n "$component" ] || return 1',
+    ),
+)
+
+MIGRATION_MUTATIONS = (
+    (
+        'ends with "USER testlookup" — a NAME —',
+        'ends with `USER testlookup` — a NAME —',
+    ),
+)
+
+MUTATIONS = tuple((DEPLOY, good, bad) for good, bad in DEPLOY_MUTATIONS) + tuple(
+    (MIGRATION_RUNNER, good, bad) for good, bad in MIGRATION_MUTATIONS
 )
 
 
 def main() -> int:
-    original = DEPLOY.read_text(encoding="utf-8")
-    for good, bad in MUTATIONS:
+    for source_path, good, bad in MUTATIONS:
+        original = source_path.read_text(encoding="utf-8")
         count = original.count(good)
         if count != 1:
             raise AssertionError(
@@ -84,7 +105,7 @@ def main() -> int:
         mutated = original.replace(good, bad, 1)
         if mutated == original:
             raise AssertionError(f"mutation did not change source: {good!r}")
-        DEPLOY.write_text(mutated, encoding="utf-8")
+        source_path.write_text(mutated, encoding="utf-8")
         try:
             run = subprocess.run(
                 TESTS,
@@ -95,7 +116,7 @@ def main() -> int:
                 check=False,
             )
         finally:
-            DEPLOY.write_text(original, encoding="utf-8")
+            source_path.write_text(original, encoding="utf-8")
         if run.returncode == 0:
             raise AssertionError(f"mutation survived: {bad!r}")
     print(f"M26 provenance mutation check: {len(MUTATIONS)} mutations killed")

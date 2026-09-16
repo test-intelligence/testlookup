@@ -13,6 +13,11 @@ The first M26 preflight found that homelab images built by the supported deploy
 script reported an unknown revision and build date. Homelab backend builds now
 refuse tracked uncommitted changes and embed the exact Git revision and UTC
 build time, allowing `/health/version` to prove which candidate is serving.
+Live validation also found that the authority check included retained migration
+Job pods when verifying the backend Deployment. It now derives the component
+label from each Deployment and verifies only that workload's ready pods. The
+migration runner no longer lets shell command substitution execute text in its
+generated YAML comments.
 
 ## Unreleased - Expand critical-journey coverage
 
