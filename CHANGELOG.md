@@ -39,6 +39,11 @@ CI now measures the MCP server and CLI independently. The MCP suite records
 The SDK remains a separate test invocation so its dynamic module loading cannot
 hide CLI coverage or dilute the CLI ratchet.
 
+Added a hermetic two-project browser journey for scope changes during a service
+outage. It proves Project A rows disappear before a failed Project B request is
+reported, every request carries an explicit project ID, and Retry recovers only
+Project B data. A hook regression pins project identity in the SWR cache key.
+
 ## 2026-09-15 - Ratchet frontend coverage and add hermetic browser journeys
 
 Added an evidence-based testability assessment with requirement traceability,

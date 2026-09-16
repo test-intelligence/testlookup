@@ -9,9 +9,9 @@
 | GAP-05 | Medium | Live browser evidence can vary with deployment data and credentials | Version fixtures, create per-run projects, retain traces/correlation IDs, and publish result manifests |
 | GAP-06 | Medium | MCP/CLI are tested but have no numeric coverage ratchet | Measure each package independently and introduce conservative non-decreasing floors |
 | GAP-07 | Medium | Provider quality/tier promotion cannot be proven by mocks | Complete inference-backed E9.3 paired evaluation before promoting defaults |
-| GAP-08 | Medium | Combined outages and sustained broker partitions are outside per-PR testing | Add quarterly chaos game day with explicit recovery and alert-clear assertions |
+| GAP-08 | Medium | Per-request UI outage/retry recovery is now blocking; combined outages and sustained broker partitions remain outside per-PR testing | Add quarterly chaos game day with explicit recovery and alert-clear assertions |
 | GAP-09 | Medium | Accessibility coverage is mainly component/manual | Add axe scan plus keyboard browser cases for login, triage, review and release dialogs |
-| GAP-10 | Medium | Cross-project protection lacks a production canary | Add synthetic two-project canary for list/detail/search/export with alert on disclosure |
+| GAP-10 | Medium | A hermetic two-project run-list canary now blocks stale cache disclosure during outage/recovery; production list/detail/search/export coverage remains absent | Add production-safe synthetic canary for the remaining routes with alert on disclosure |
 | GAP-11 | Low | Historical test plan contains stale counts and failures | Mark it historical and link this evidence-dated suite from the architecture index |
 | GAP-12 | Low | Coverage reports were available locally but not enforced in frontend CI | Closed here with four metric floors and CI coverage execution |
 

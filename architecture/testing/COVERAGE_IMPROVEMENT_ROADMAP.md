@@ -32,7 +32,8 @@ critical requirements have an asserted negative case.
 
 ## Later — operational confidence
 
-1. Run two-project isolation canaries in staging/production-safe synthetic data.
+1. Extend the blocking two-project run-list outage canary to production-safe
+   list/detail/search/export probes in staging and production.
 2. Schedule provider paired evals and drift review; never promote a tier from
    unit-test results.
 3. Conduct quarterly broker/database/provider fault exercises and verify alerts

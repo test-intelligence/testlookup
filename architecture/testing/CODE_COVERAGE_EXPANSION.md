@@ -57,6 +57,10 @@ functions and 92.77% lines.
   review, server, token-verifier, and tool modules: 41.96% measured with a 41%
   CI floor. CLI coverage is measured separately at 63.16% with a 62% floor;
   its SDK tests run in a distinct invocation to preserve the measurement.
+- `project-isolation-outage.spec.ts` switches between two projects while the
+  destination scope is unavailable, proves stale rows from the source scope
+  are absent, and verifies an explicit retry recovers only destination data.
+  The hook regression pins project identity in every SWR cache key.
 - CI now runs frontend unit tests with coverage and the hermetic browser lane.
 
 These tests target prior 0%-covered high-risk services and a previously live-only
